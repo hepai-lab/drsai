@@ -3924,6 +3924,9 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
 }
 
 .agent-run-composer textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   min-height: 88px;
   max-height: 180px;
   resize: vertical;
@@ -3934,6 +3937,8 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   color: var(--app-text-primary);
   padding: 12px;
   line-height: 1.45;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
 }
 
 .agent-run-composer textarea:focus {
@@ -5553,6 +5558,13 @@ button.structured-activity-detail:hover {
   gap: 6px;
 }
 
+.composer-editor {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .message-actions {
   display: flex;
   gap: 4px;
@@ -5592,6 +5604,9 @@ button.structured-activity-detail:hover {
 }
 
 .composer textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   min-height: 46px;
   max-height: 120px;
   padding: 12px 4px 9px;
@@ -5601,6 +5616,8 @@ button.structured-activity-detail:hover {
   line-height: 1.45;
   outline: none;
   overflow: auto;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
 }
 
 .composer-voice-capture {

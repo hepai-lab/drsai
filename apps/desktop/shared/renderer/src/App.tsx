@@ -313,6 +313,7 @@ function AuthenticatedApp({
   const [remoteRecentPaths, setRemoteRecentPaths] = useState<string[]>(() => loadRemoteRecentPaths());
   const [threads, setThreads] = useState<DesktopThread[]>([]);
   const [threadBackgroundTasks, setThreadBackgroundTasks] = useState<DesktopBackgroundTask[]>([]);
+  const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState(() => loadRestoredThreadId());
   const [threadSnapshots, setThreadSnapshots] = useState<
     Record<string, ChatThreadSnapshot>
@@ -392,33 +393,25 @@ function AuthenticatedApp({
     });
     return () => { active = false; };
   }, [health?.gatewayReady, platformDescriptor]);
-  const workspacePath = health?.install.repoPath || health?.install.home || "";
-  const currentWorkspaceTime = "1970-01-01T00:00:00.000Z";
-  const currentWorkspace: WorkspaceProject = {
-    id: "current",
-    name: language === "zh" ? "默认" : "Default",
-    path: workspacePath,
-    location: "local",
-    type: "local",
-    description: language === "zh" ? "当前项目" : "Current project",
-    createdAt: currentWorkspaceTime,
-    updatedAt: currentWorkspaceTime,
-    lastOpenedAt: currentWorkspaceTime,
-    trusted: true,
-    pinned: true,
-  };
-  const workspaces: WorkspaceProject[] = [
-    currentWorkspace,
-    ...storedWorkspaces.filter(
-      (workspace) => workspace.path !== currentWorkspace.path,
-    ),
-  ];
+  const workspaces = storedWorkspaces;
   const sortedWorkspaces = sortWorkspacesForSidebar(workspaces, workspaceSortMode);
   const activeWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
-    currentWorkspace;
+    workspaces[0] ??
+    EMPTY_WORKSPACE;
   const activeWorkspacePathKey = getComparablePath(activeWorkspace.path);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
+  const activeThreadInCatalog = Boolean(activeThread);
+  const rawActiveSnapshot = threadSnapshots[activeThreadId] ?? null;
+  // Suppress localStorage ghosts until/unless the thread exists in the sidebar catalog.
+  const activeThreadSnapshot =
+    !threadsLoaded
+      ? null
+      : activeThreadInCatalog
+        ? rawActiveSnapshot
+        : (rawActiveSnapshot?.messages?.length ?? 0) > 0
+          ? null
+          : rawActiveSnapshot;
   const activeThreadWorkspacePath = activeThread?.workspacePath?.trim();
   const effectiveWorkspacePath = activeThread?.execution?.canonicalPath || activeThreadWorkspacePath || activeWorkspace.path;
   const effectiveWorkspace =
@@ -487,7 +480,7 @@ function AuthenticatedApp({
     id: thread.id,
     title: thread.title,
     timeLabel: formatThreadTime(thread.updatedAt, language),
-    workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
+    workspaceId: resolveThreadWorkspaceId(thread, workspaces),
     workspacePath: thread.workspacePath,
     fork: thread.fork,
     active: thread.id === activeThreadId,
@@ -541,11 +534,15 @@ function AuthenticatedApp({
           ? language === "zh"
             ? "本地运行时未安装，请先完成安装。"
             : "The local runtime is not installed. Install it first."
-          : !workspaceTrusted
+          : !effectiveWorkspacePath
             ? language === "zh"
-              ? "请先信任当前工作区。"
-              : "Trust this workspace before sending."
-            : undefined;
+              ? "请先创建或打开一个工作区。"
+              : "Create or open a workspace first."
+            : !workspaceTrusted
+              ? language === "zh"
+                ? "请先信任当前工作区。"
+                : "Trust this workspace before sending."
+              : undefined;
   const chat = useDesktopChatAdapter({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
@@ -553,6 +550,7 @@ function AuthenticatedApp({
       !sessionRestoring
         && !servicePreparing
         && runtimeAvailable
+        && effectiveWorkspacePath
         && workspaceTrusted,
     ),
     developerMode,
@@ -572,7 +570,7 @@ function AuthenticatedApp({
     onThreadUpdated: handleThreadUpdated,
     language,
     threadId: activeThreadId,
-    threadSnapshot: threadSnapshots[activeThreadId] ?? null,
+    threadSnapshot: activeThreadSnapshot,
     workspaceInstructions: effectiveWorkspaceInstructions,
     workspaceId: effectiveRuntimeWorkspaceId,
     workspaceName: effectiveWorkspace.name,
@@ -633,6 +631,7 @@ function AuthenticatedApp({
     !sessionRestoring &&
     !servicePreparing &&
     runtimeAvailable &&
+    effectiveWorkspacePath &&
     workspaceTrusted &&
     !chat.activeRequestId,
   );
@@ -651,29 +650,30 @@ function AuthenticatedApp({
     void refreshWorkspaces();
   }, []);
 
+  // Cold start / empty list: listWorkspaces() ensures a user-writable Default workspace.
+  // Retry once gateway is ready so Runtime can rebind any locally-persisted id.
   useEffect(() => {
-    if (!workspacesLoaded || !health?.gatewayReady || !workspacePath) return;
-    if (storedWorkspaces.some((workspace) => getComparablePath(workspace.path) === getComparablePath(workspacePath))) return;
+    if (!workspacesLoaded || !health?.gatewayReady) return;
+    if (storedWorkspaces.length > 0) return;
     let cancelled = false;
-    void desktopApi.createWorkspace({
-      source: "existing",
-      path: workspacePath,
-      name: getWorkspaceName(workspacePath) || (language === "zh" ? "默认" : "Default"),
-      description: language === "zh" ? "当前项目" : "Current project",
-      trusted: true,
-      pinned: true,
-    }).then((workspace) => {
+    void refreshWorkspaces().then(() => {
       if (cancelled) return;
-      setStoredWorkspaces((current) => [
-        workspace,
-        ...current.filter((item) => item.id !== workspace.id && getComparablePath(item.path) !== getComparablePath(workspace.path)),
-      ]);
-    }).catch(() => {
-      // Runtime health and workspace registration can briefly race during startup.
-      // A later health transition or manual workspace refresh will retry safely.
     });
     return () => { cancelled = true; };
-  }, [health?.gatewayReady, language, storedWorkspaces, workspacePath, workspacesLoaded]);
+  }, [health?.gatewayReady, storedWorkspaces.length, workspacesLoaded]);
+
+  // Bind selection to real listWorkspaces() ids only (never the old synthetic "current").
+  useEffect(() => {
+    if (!workspacesLoaded) return;
+    if (storedWorkspaces.length === 0) {
+      if (activeWorkspaceId) setActiveWorkspaceId("");
+      return;
+    }
+    const selectedExists = storedWorkspaces.some((workspace) => workspace.id === activeWorkspaceId);
+    if (!selectedExists || activeWorkspaceId === "current") {
+      setActiveWorkspaceId(storedWorkspaces[0].id);
+    }
+  }, [activeWorkspaceId, storedWorkspaces, workspacesLoaded]);
 
   useEffect(() => desktopApi.onRemoteWorkspaceStatus((status) => {
     setStoredWorkspaces((current) => current.map((workspace) => workspace.id === status.workspaceId ? { ...workspace, remote: status, updatedAt: new Date().toISOString() } : workspace));
@@ -792,7 +792,12 @@ function AuthenticatedApp({
 
   useEffect(() => desktopApi.onCompletionNotificationClick((event) => {
     if (event.target.workspacePath) {
-      setActiveWorkspaceId(getWorkspaceId(event.target.workspacePath));
+      const pathKey = getComparablePath(event.target.workspacePath);
+      setStoredWorkspaces((current) => {
+        const match = current.find((workspace) => getComparablePath(workspace.path) === pathKey);
+        if (match) setActiveWorkspaceId(match.id);
+        return current;
+      });
     }
     if (event.target.threadId) setActiveThreadId(event.target.threadId);
     setActiveNav(MENU_IDS.currentSession);
@@ -852,12 +857,66 @@ function AuthenticatedApp({
   }, [activeThreadId, restoreLastSession, threads]);
 
   useEffect(() => {
-    if (restoreLastWorkspace) window.localStorage.setItem(LAST_WORKSPACE_STORAGE_KEY, activeWorkspaceId);
+    if (restoreLastWorkspace && activeWorkspaceId) {
+      window.localStorage.setItem(LAST_WORKSPACE_STORAGE_KEY, activeWorkspaceId);
+    }
   }, [activeWorkspaceId, restoreLastWorkspace]);
 
   useEffect(() => {
     void refreshThreads();
   }, []);
+
+  // One-shot: drop restored localStorage ghosts that are not in the thread catalog.
+  const restoredSessionValidatedRef = useRef(false);
+  useEffect(() => {
+    if (!threadsLoaded || !workspacesLoaded || restoredSessionValidatedRef.current) return;
+    restoredSessionValidatedRef.current = true;
+    const catalogThread = threads.find((thread) => thread.id === activeThreadId);
+    if (!catalogThread) {
+      const orphan = threadSnapshots[activeThreadId];
+      if ((orphan?.messages?.length ?? 0) > 0 || (orphan?.messageCount ?? 0) > 0) {
+        const orphanId = activeThreadId;
+        setThreadSnapshots((current) => {
+          if (!(orphanId in current)) return current;
+          const next = { ...current };
+          delete next[orphanId];
+          return next;
+        });
+        setActiveThreadId(createLocalThreadId());
+        window.localStorage.removeItem(LAST_THREAD_STORAGE_KEY);
+      }
+      return;
+    }
+    if (!activeWorkspace.id || !activeWorkspace.path || !catalogThread.workspacePath) return;
+    const sameWorkspace =
+      catalogThread.execution?.workspaceId === activeWorkspace.id
+      || getComparablePath(catalogThread.workspacePath) === getComparablePath(activeWorkspace.path);
+    if (!sameWorkspace) {
+      setActiveThreadId(createLocalThreadId());
+    }
+  }, [
+    activeThreadId,
+    activeWorkspace.id,
+    activeWorkspace.path,
+    threadSnapshots,
+    threads,
+    threadsLoaded,
+    workspacesLoaded,
+  ]);
+
+  // When switching workspaces, do not keep showing a conversation from another path.
+  useEffect(() => {
+    if (!threadsLoaded || !workspacesLoaded || !activeWorkspace.id || !activeWorkspace.path) return;
+    if (!activeThreadId) return;
+    const catalogThread = threads.find((thread) => thread.id === activeThreadId);
+    if (!catalogThread?.workspacePath) return;
+    const sameWorkspace =
+      catalogThread.execution?.workspaceId === activeWorkspace.id
+      || getComparablePath(catalogThread.workspacePath) === getComparablePath(activeWorkspace.path);
+    if (!sameWorkspace) {
+      setActiveThreadId(createLocalThreadId());
+    }
+  }, [activeWorkspace.id, activeWorkspace.path, threadsLoaded, workspacesLoaded]);
 
   useEffect(() => {
     function handleThreadsUpdated(): void {
@@ -1084,35 +1143,31 @@ function AuthenticatedApp({
 
   async function handleWorkspaceChange(workspaceId: string): Promise<void> {
     setActiveWorkspaceId(workspaceId);
-    if (workspaceId !== "current") {
-      try {
-        const workspace = await desktopApi.updateWorkspace({
-          id: workspaceId,
-          lastOpenedAt: new Date().toISOString(),
-        });
-        setStoredWorkspaces((current) => [
-          workspace,
-          ...current.filter((item) => item.id !== workspace.id),
-        ]);
-      } catch {
-        // Keep navigation responsive even if the recent timestamp refresh fails.
-      }
+    try {
+      const workspace = await desktopApi.updateWorkspace({
+        id: workspaceId,
+        lastOpenedAt: new Date().toISOString(),
+      });
+      setStoredWorkspaces((current) => [
+        workspace,
+        ...current.filter((item) => item.id !== workspace.id),
+      ]);
+    } catch {
+      // Keep navigation responsive even if the recent timestamp refresh fails.
     }
     navigateTo(MENU_IDS.currentSession);
   }
 
   async function handleRemoveWorkspace(workspaceId: string): Promise<void> {
-    if (workspaceId === "current") return;
     const workspace = storedWorkspaces.find((item) => item.id === workspaceId);
     if (workspace?.location === "remote") {
       await desktopApi.disconnectRemoteWorkspace(workspaceId).catch(() => false);
     }
     await desktopApi.deleteWorkspace(workspaceId);
-    setStoredWorkspaces((current) =>
-      current.filter((workspace) => workspace.id !== workspaceId),
-    );
+    const remaining = storedWorkspaces.filter((item) => item.id !== workspaceId);
+    setStoredWorkspaces(remaining);
     if (activeWorkspaceId === workspaceId) {
-      setActiveWorkspaceId("current");
+      setActiveWorkspaceId(remaining[0]?.id ?? "");
       navigateTo(MENU_IDS.currentSession);
     }
   }
@@ -1123,7 +1178,6 @@ function AuthenticatedApp({
       Pick<WorkspaceProject, "name" | "description" | "trusted" | "pinned">
     >,
   ): Promise<void> {
-    if (workspaceId === "current") return;
     const workspace = await desktopApi.updateWorkspace({
       id: workspaceId,
       ...updates,
@@ -1176,6 +1230,15 @@ function AuthenticatedApp({
     setRightPanelCollapsed(true);
     setActiveThreadId(createLocalThreadId());
     navigateTo(MENU_IDS.currentSession);
+  }
+
+  async function handleLogout(): Promise<void> {
+    await chat.abort();
+    // Re-login should open 新建任务 (empty chat), not the pre-logout conversation/page.
+    window.localStorage.removeItem(LAST_THREAD_STORAGE_KEY);
+    setActiveThreadId(createLocalThreadId());
+    navigateTo(MENU_IDS.currentSession);
+    await onLogout();
   }
 
   function handleForkThreadCreated(thread: DesktopThread): void {
@@ -1291,7 +1354,6 @@ function AuthenticatedApp({
     setActiveWorkspaceId(workspaceId);
     setResultsScopeRequestKey((current) => current + 1);
     navigateTo(MENU_IDS.results);
-    if (workspaceId === "current") return;
     void desktopApi.updateWorkspace({
       id: workspaceId,
       lastOpenedAt: new Date().toISOString(),
@@ -1380,11 +1442,9 @@ function AuthenticatedApp({
       const updated = await desktopApi.updateThread({ id: thread.id, workspacePath: workspace.path });
       setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
     }
-    if (workspace.id !== "current") {
-      void desktopApi.updateWorkspace({ id: workspace.id, lastOpenedAt: new Date().toISOString() })
-        .then((updated) => setStoredWorkspaces((current) => [updated, ...current.filter((item) => item.id !== updated.id)]))
-        .catch(() => undefined);
-    }
+    void desktopApi.updateWorkspace({ id: workspace.id, lastOpenedAt: new Date().toISOString() })
+      .then((updated) => setStoredWorkspaces((current) => [updated, ...current.filter((item) => item.id !== updated.id)]))
+      .catch(() => undefined);
   }
 
   function handleChatModelSelect(model: string): void {
@@ -1471,7 +1531,11 @@ function AuthenticatedApp({
   }
 
   async function refreshThreads(): Promise<void> {
-    setThreads(await desktopApi.listThreads());
+    try {
+      setThreads(await desktopApi.listThreads());
+    } finally {
+      setThreadsLoaded(true);
+    }
   }
 
   const openPreviewBrowser = useCallback((url?: string): void => {
@@ -1718,7 +1782,7 @@ function AuthenticatedApp({
           chatUnavailableReason={chatUnavailableReason}
           conversationId={activeThreadId}
           conversationHistoryPending={Boolean(
-            (activeThread?.messageCount ?? 0) > 0 && !threadSnapshots[activeThreadId],
+            (activeThread?.messageCount ?? 0) > 0 && !activeThreadSnapshot,
           )}
           health={health}
           input={chat.input}
@@ -1933,7 +1997,7 @@ function AuthenticatedApp({
         }}
         onExportLocalData={() => exportLocalDesktopData(threadSnapshots)}
         onLanguageChange={setLanguage}
-        onLogout={onLogout}
+        onLogout={() => void handleLogout()}
         onNewAgentTask={() => void handleNewAgentTask()}
         onOpenMobilePairing={() => setMobilePairingOpen(true)}
         mobilePairingRefreshToken={mobilePairingRefreshToken}
@@ -2298,9 +2362,8 @@ function AuthenticatedApp({
       onGetWorktreeDiff={(request) => desktopApi.getWorkspaceGitDiff(request)}
       onCreateWorkspaceSession={handleNewWorkspaceChat}
       onCreateWorktreeSession={handleNewWorktreeChat}
-      onLogout={async () => {
-        await chat.abort();
-        await onLogout();
+      onLogout={() => {
+        void handleLogout();
       }}
       onNavChange={navigateTo}
       onNewChat={() => {
@@ -2672,8 +2735,9 @@ function loadRestoredThreadId(): string {
 }
 
 function loadRestoredWorkspaceId(): string {
-  if (!loadBooleanSetting(RESTORE_WORKSPACE_STORAGE_KEY, true)) return "current";
-  return loadOptionalSetting(LAST_WORKSPACE_STORAGE_KEY) ?? "current";
+  if (!loadBooleanSetting(RESTORE_WORKSPACE_STORAGE_KEY, true)) return "";
+  const restored = loadOptionalSetting(LAST_WORKSPACE_STORAGE_KEY) ?? "";
+  return restored === "current" ? "" : restored;
 }
 
 function exportLocalDesktopData(threadSnapshots: Record<string, ChatThreadSnapshot>): void {
@@ -2774,6 +2838,31 @@ function formatThreadTime(updatedAt: string, language: AppLanguage): string {
 function getWorkspaceId(path: string): string {
   return `workspace:${path.toLowerCase()}`;
 }
+
+function resolveThreadWorkspaceId(thread: DesktopThread, workspaces: WorkspaceProject[]): string {
+  if (thread.execution?.workspaceId) return thread.execution.workspaceId;
+  if (thread.workspacePath) {
+    const pathKey = getComparablePath(thread.workspacePath);
+    const match = workspaces.find((workspace) => getComparablePath(workspace.path) === pathKey);
+    if (match) return match.id;
+    return getWorkspaceId(thread.workspacePath);
+  }
+  return "";
+}
+
+const EMPTY_WORKSPACE: WorkspaceProject = {
+  id: "",
+  name: "",
+  path: "",
+  location: "local",
+  type: "local",
+  description: "",
+  createdAt: "",
+  updatedAt: "",
+  lastOpenedAt: "",
+  trusted: false,
+  pinned: false,
+};
 
 function getComparablePath(path: string | null | undefined): string {
   return (path ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();

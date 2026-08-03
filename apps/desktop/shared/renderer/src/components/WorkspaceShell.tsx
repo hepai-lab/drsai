@@ -431,7 +431,7 @@ export function WorkspaceShell({
     try {
       const request = {
         workspacePath: activeWorkspace.path,
-        ...(activeWorkspace.id === "current" ? {} : { workspaceId: activeWorkspace.id }),
+        ...(activeWorkspace.id ? { workspaceId: activeWorkspace.id } : {}),
       };
       setWorktrees(await onListWorktrees(request));
       setWorktreeMigrationDiagnostics(await onGetWorktreeMigrationDiagnostics(request));
@@ -478,7 +478,7 @@ export function WorkspaceShell({
       try {
         const batch = await onListWorktreeEvents({
           workspacePath: activeWorkspace.path,
-          ...(activeWorkspace.id === "current" ? {} : { workspaceId: activeWorkspace.id }),
+          ...(activeWorkspace.id ? { workspaceId: activeWorkspace.id } : {}),
           afterSequence: worktreeEventCursor.current,
         });
         if (disposed) return;
@@ -791,7 +791,7 @@ export function WorkspaceShell({
   }
 
   async function saveWorkspaceDetails(): Promise<void> {
-    if (!workspaceDetails || workspaceDetails.id === "current") return;
+    if (!workspaceDetails?.id) return;
     const name = workspaceNameDraft.trim();
     if (!name) {
       setWorkspaceSaveError(zh ? "工作区名称不能为空。" : "Workspace name cannot be empty.");
@@ -812,17 +812,17 @@ export function WorkspaceShell({
   }
 
   async function toggleWorkspaceTrusted(): Promise<void> {
-    if (!workspaceDetails || workspaceDetails.id === "current") return;
+    if (!workspaceDetails?.id) return;
     await onUpdateWorkspace(workspaceDetails.id, { trusted: !workspaceDetails.trusted });
   }
 
   async function toggleWorkspacePinned(): Promise<void> {
-    if (!workspaceDetails || workspaceDetails.id === "current") return;
+    if (!workspaceDetails?.id) return;
     await onUpdateWorkspace(workspaceDetails.id, { pinned: !workspaceDetails.pinned });
   }
 
   async function confirmWorkspaceRemoval(): Promise<void> {
-    if (!workspaceDetails || workspaceDetails.id === "current") return;
+    if (!workspaceDetails?.id) return;
     if (!workspaceDeleteConfirm) {
       setWorkspaceDeleteConfirm(true);
       return;
@@ -3471,7 +3471,7 @@ export function WorkspaceShell({
                 <span>{zh ? "名称" : "Name"}</span>
                 <input
                   value={workspaceNameDraft}
-                  disabled={workspaceDetails.id === "current"}
+                  disabled={!workspaceDetails.id}
                   onChange={(event) => setWorkspaceNameDraft(event.target.value)}
                 />
               </label>
@@ -3479,7 +3479,7 @@ export function WorkspaceShell({
                 <span>{zh ? "描述" : "Description"}</span>
                 <input
                   value={workspaceDescriptionDraft}
-                  disabled={workspaceDetails.id === "current"}
+                  disabled={!workspaceDetails.id}
                   onChange={(event) => setWorkspaceDescriptionDraft(event.target.value)}
                   placeholder={zh ? "给这个工作区加一句说明" : "Add a short note for this workspace"}
                 />
@@ -3552,7 +3552,7 @@ export function WorkspaceShell({
                 <RefreshCw size={14} />
                 {zh ? "刷新状态" : "Refresh"}
               </button>
-              {workspaceDetails.id !== "current" && (
+              {workspaceDetails.id ? (
                 <>
                   <button type="button" onClick={toggleWorkspaceTrusted}>
                     {workspaceDetails.trusted ? (zh ? "取消信任" : "Untrust") : (zh ? "信任" : "Trust")}
@@ -3568,7 +3568,7 @@ export function WorkspaceShell({
                     {workspaceDeleteConfirm ? (zh ? "确认移除" : "Confirm Remove") : (zh ? "移除" : "Remove")}
                   </button>
                 </>
-              )}
+              ) : null}
             </div>
           </section>
         </div>
