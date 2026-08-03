@@ -344,6 +344,7 @@ import {
   logout,
   pollDesktopSsoLogin,
   refreshAuthSession,
+  refreshAuthContextAfterUnauthorized,
   requireAuthContext,
   startDesktopSsoLogin,
   startOidcLogin,
@@ -3168,9 +3169,20 @@ function isMobilePairingRegistrationRequired(reason: unknown): reason is { state
     && (reason.state === "not_registered" || reason.state === "credential_invalid"));
 }
 
-function mobilePairingRelayBaseUrl(): string {
+function mobilePairingRelayBaseUrl(issuer?: string): string {
   const configured = process.env.OPENDRSAI_RUNTIME_RELAY_BASE_URL?.trim().replace(/\/+$/, "");
-  const value = configured || `${is.dev ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn"}/api/runtime-relay`;
+  let issuerOrigin: string | undefined;
+  if (!configured && issuer) {
+    const parsedIssuer = new URL(issuer);
+    if (parsedIssuer.protocol !== "https:"
+      || parsedIssuer.port
+      || !["ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"].includes(parsedIssuer.hostname)
+      || parsedIssuer.username || parsedIssuer.password) {
+      throw new Error("mobile_pairing_oidc_issuer_not_trusted");
+    }
+    issuerOrigin = parsedIssuer.origin;
+  }
+  const value = configured || `${issuerOrigin || (is.dev ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn")}/api/runtime-relay`;
   const parsed = new URL(value);
   if (parsed.protocol !== "https:"
     || parsed.port
@@ -3182,29 +3194,61 @@ function mobilePairingRelayBaseUrl(): string {
   return `${parsed.origin}/api/runtime-relay`;
 }
 
-async function issueMobilePairingRegistrationCode(relayBaseUrl: string): Promise<string> {
-  const auth = await requireAuthContext();
+async function issueMobilePairingRegistrationCode(): Promise<{ code: string; relayBaseUrl: string }> {
+  let auth = await requireAuthContext();
   if (auth.authMode !== "oidc" || !auth.accessToken) {
     throw new Error("mobile_pairing_oidc_login_required");
   }
+  const relayBaseUrl = mobilePairingRelayBaseUrl(auth.issuer);
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), 15_000);
   try {
-    const response = await fetch(`${relayBaseUrl}/v1/registration-codes`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${auth.accessToken}`, Accept: "application/json" },
-      redirect: "error",
-      signal: abort.signal,
-    });
-    if (!response.ok) throw new Error(`mobile_pairing_registration_code_failed:${response.status}`);
+    const request = (accessToken: string): Promise<Response> => fetch(`${relayBaseUrl}/v1/registration-codes`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+        redirect: "error",
+        signal: abort.signal,
+      });
+    let response = await request(auth.accessToken);
+    let errorCode = response.ok ? null : await mobilePairingRelayErrorCode(response);
+    if (response.status === 401 && errorCode !== "device_proof_required") {
+      auth = await refreshAuthContextAfterUnauthorized();
+      if (auth.authMode !== "oidc" || !auth.accessToken) {
+        throw new Error("mobile_pairing_oidc_login_required");
+      }
+      response = await request(auth.accessToken);
+      errorCode = response.ok ? null : await mobilePairingRelayErrorCode(response);
+    }
+    if (!response.ok) {
+      if (errorCode === "device_proof_required") {
+        throw new Error("mobile_pairing_registration_device_proof_misconfigured");
+      }
+      throw new Error(response.status === 401
+        ? "mobile_pairing_oidc_session_rejected"
+        : `mobile_pairing_registration_code_failed:${response.status}`);
+    }
     const body = await response.json() as Record<string, unknown>;
     const code = typeof body.registration_code === "string" ? body.registration_code.trim() : "";
     if (code.length < 16 || code.length > 2_048 || /[\r\n\0]/.test(code)) {
       throw new Error("mobile_pairing_registration_code_invalid");
     }
-    return code;
+    return { code, relayBaseUrl };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function mobilePairingRelayErrorCode(response: Response): Promise<string | null> {
+  try {
+    const body = await response.clone().json() as Record<string, unknown>;
+    const detail = body.detail && typeof body.detail === "object"
+      ? body.detail as Record<string, unknown>
+      : body;
+    return typeof detail.code === "string" && /^[a-z][a-z0-9_]{1,63}$/.test(detail.code)
+      ? detail.code
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -3250,8 +3294,7 @@ async function repairMobilePairingRuntime(
     }
     if (!isMobilePairingRegistrationRequired(readiness)) return client;
 
-    const relayBaseUrl = mobilePairingRelayBaseUrl();
-    const registrationCode = await issueMobilePairingRegistrationCode(relayBaseUrl);
+    const { code: registrationCode, relayBaseUrl } = await issueMobilePairingRegistrationCode();
     await client.registerMobilePairingRuntime({
       registrationCode,
       relayHttpsUrl: relayBaseUrl,
@@ -4153,6 +4196,9 @@ function registerIpc(): void {
   secureHandle("desktop:stop-gateway", () => stopGateway());
   secureHandle("desktop:mobile-pairing-readiness", (event) =>
     mobilePairingControllerFor(event.sender).readiness(),
+  );
+  secureHandle("desktop:mobile-remote-enable", (event) =>
+    mobilePairingControllerFor(event.sender).enable(),
   );
   secureHandle("desktop:mobile-pairing-create", (event) =>
     mobilePairingControllerFor(event.sender).create(),

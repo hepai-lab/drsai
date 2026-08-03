@@ -6,7 +6,7 @@
   "protocol_version": "owop/1",
   "x-relay-bindings": ["https", "wss"],
   "x-relay-capabilities": [
-    "runtime.identity", "runtime.capabilities", "runtime.rename", "workspace.list",
+    "runtime.identity", "runtime.capabilities", "runtime.rename", "workspace.list", "workspace.sync",
     "session.list", "session.read", "session.create", "conversation.read",
     "run.list", "run.create", "run.read", "run.cancel",
     "event.resume", "event.stream", "event.cursor_expired",
@@ -69,6 +69,7 @@
     "runtime_rename": "PATCH /v1/runtimes/{runtime_id}",
     "runtime_capabilities": "GET /v1/runtimes/{runtime_id}/capabilities",
     "workspace_list": "GET /v1/runtimes/{runtime_id}/workspaces",
+    "workspace_sync": "POST /v1/runtimes/{runtime_id}/workspaces/sync",
     "session_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
     "session_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
     "session_create": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",

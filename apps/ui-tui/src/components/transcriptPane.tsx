@@ -34,7 +34,7 @@ import { useStore } from '@nanostores/react'
 import { Box, Static, Text } from 'ink'
 
 import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
-import type { AssistantTurn, Turn } from '../app/types.js'
+import { getPartText, type AssistantTurn, type Turn } from '../app/types.js'
 import { $transcript, $transcriptGeneration } from '../app/turnStore.js'
 import { theme } from '../theme.js'
 
@@ -52,6 +52,46 @@ function UserBlock({ text }: { text: string }) {
 }
 
 function AssistantBlock({ turn }: { turn: AssistantTurn }) {
+  // If we have ordered contentParts, render text segments and tool calls
+  // in their real interleaving order. Each text segment is rendered
+  // with MarkdownRenderer (completed turns use Markdown; streaming
+  // turns in StreamingAssistant use plain <Text> for performance).
+  if (turn.contentParts.length > 0) {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text color={theme.primary} bold>● assistant</Text>
+        {turn.contentParts.map(part => {
+          if (part.kind === 'tool') {
+            const tool = turn.tools.find(t => t.id === part.toolId)
+            if (!tool) return null
+            return <ToolCallLine key={part.id} tool={tool} />
+          }
+          // Text part
+          const cleanText = stripTodoWriteArtifacts(getPartText(part))
+          if (!cleanText) return null
+          return (
+            <Box key={part.id}>
+              <MarkdownRenderer text={cleanText} color={theme.assistant} />
+            </Box>
+          )
+        })}
+        {turn.status === 'error' && (
+          <Text color={theme.error}>✗ error: {turn.errorMessage}</Text>
+        )}
+        {turn.status === 'interrupted' && (
+          <Text color={theme.warn}>⚠ interrupted</Text>
+        )}
+        {turn.usage && (
+          <Text color={theme.muted} dimColor>
+            {`  ${turn.usage.model} · in=${turn.usage.prompt_tokens} out=${turn.usage.completion_tokens}`}
+          </Text>
+        )}
+      </Box>
+    )
+  }
+
+  // Legacy fallback: no contentParts (e.g. history-loaded turns).
+  // Render tools first, then text — the old behaviour.
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text color={theme.primary} bold>● assistant</Text>

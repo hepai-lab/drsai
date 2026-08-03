@@ -62,18 +62,27 @@ if ($VerifyOnline) {
             [int64]$head.Headers["Content-Length"] -ne [int64]$cdn.apk.sizeBytes) {
             throw "$($asset.source) Content-Length mismatch"
         }
-        $range = Invoke-WebRequest `
-            -Uri $asset.url `
-            -Headers @{ Range = "bytes=0-1" } `
-            -MaximumRedirection 6 `
-            -UseBasicParsing
-        if ([int]$range.StatusCode -notin @(200, 206)) {
-            throw "$($asset.source) Range request failed: $($range.StatusCode)"
+        # Windows PowerShell 5.1 rejects Range as a restricted header when it
+        # is supplied through Invoke-WebRequest -Headers. HttpWebRequest's
+        # AddRange API works on both Windows PowerShell 5.1 and PowerShell 7.
+        $rangeRequest = [System.Net.HttpWebRequest]::Create([string]$asset.url)
+        $rangeRequest.Method = "GET"
+        $rangeRequest.AllowAutoRedirect = $true
+        $rangeRequest.MaximumAutomaticRedirections = 6
+        $rangeRequest.AddRange(0, 1)
+        $rangeResponse = $rangeRequest.GetResponse()
+        try {
+            $rangeStatus = [int]$rangeResponse.StatusCode
+        } finally {
+            $rangeResponse.Dispose()
+        }
+        if ($rangeStatus -notin @(200, 206)) {
+            throw "$($asset.source) Range request failed: $rangeStatus"
         }
         $onlineChecks += [ordered]@{
             source = $asset.source
             headStatus = [int]$head.StatusCode
-            rangeStatus = [int]$range.StatusCode
+            rangeStatus = $rangeStatus
             contentLength = $head.Headers["Content-Length"]
         }
     }

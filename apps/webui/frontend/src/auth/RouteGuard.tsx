@@ -5,20 +5,9 @@ import { verifyAuthSession, saveAuthSession } from "../utils/authSession";
 import { authAPI } from "../components/views/api";
 import ScienceUserErrorPage from "./ScienceUserErrorPage";
 
-const PUBLIC_ROUTES = ["/login", "/auth", "/share"];
+const PUBLIC_ROUTES = ["/welcome", "/login", "/auth", "/share"];
 
 const normalizePath = (path: string) => path.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
-
-function isPublicPath(pathname: string): boolean {
-  const normalizedPath = normalizePath(pathname);
-  return PUBLIC_ROUTES.some((route) => {
-    const normalizedRoute = normalizePath(route);
-    return (
-      normalizedPath === normalizedRoute ||
-      normalizedPath.startsWith(`${normalizedRoute}/`)
-    );
-  });
-}
 
 interface RouteGuardProps {
     children: React.ReactNode;
@@ -35,7 +24,6 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
         let cancelled = false;
 
         const guard = async () => {
-            try {
             const searchParams = new URLSearchParams(location.search);
 
             // Science user iframe embed:
@@ -90,24 +78,21 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             }
 
             const normalizedPath = normalizePath(location.pathname);
-            const isPublicRoute = isPublicPath(location.pathname);
+            const isPublicRoute = PUBLIC_ROUTES.some(
+                (route) => normalizePath(route) === normalizedPath
+            );
 
             // 用户主动退出后带 ?logout=1，跳过 verifyAuthSession 避免
             // refreshAccessToken 自动重新登录（httpOnly cookie 可能未清除）。
             const isLogout = searchParams.get("logout") === "1";
 
             if (isPublicRoute) {
-                // Share pages are anonymously readable — never block on auth/me.
                 if (normalizedPath === "/login" && !isLogout) {
-                    try {
-                        const session = await verifyAuthSession();
-                        if (!cancelled && session.ok) {
-                            setUser({ email: session.userEmail, name: session.userEmail });
-                            navigate("/", { replace: true });
-                            return;
-                        }
-                    } catch {
-                        // Ignore auth probe failures on public routes.
+                    const session = await verifyAuthSession();
+                    if (!cancelled && session.ok) {
+                        setUser({ email: session.userEmail, name: session.userEmail });
+                        navigate("/", { replace: true });
+                        return;
                     }
                 }
                 if (!cancelled) {
@@ -117,19 +102,14 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             }
 
             if (isLogout) {
-                // 退出后从 /umt/logout 跳回 /，直接放行到 /login
+                // 退出后从 /umt/logout 跳回公开欢迎页
                 if (!cancelled) {
-                    navigate("/login?logout=1", { replace: true });
+                    navigate("/welcome", { replace: true });
                 }
                 return;
             }
 
-            let session: Awaited<ReturnType<typeof verifyAuthSession>> = { ok: false };
-            try {
-                session = await verifyAuthSession();
-            } catch {
-                session = { ok: false };
-            }
+            const session = await verifyAuthSession();
             if (cancelled) {
                 return;
             }
@@ -148,20 +128,7 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                 if (search) {
                     try { document.cookie = "drsai_pending_search=" + encodeURIComponent(search) + "; path=/; max-age=600; SameSite=Lax"; } catch {}
                 }
-                navigate("/login?logout=1", { replace: true });
-            } else if (!cancelled) {
-                setChecked(true);
-            }
-            } catch {
-                if (!cancelled) {
-                    // Fail open for anonymous share pages; otherwise send to login.
-                    const path = normalizePath(location.pathname);
-                    if (isPublicPath(path)) {
-                        setChecked(true);
-                    } else {
-                        navigate("/login?logout=1", { replace: true });
-                    }
-                }
+                navigate("/welcome", { replace: true });
             }
         };
 

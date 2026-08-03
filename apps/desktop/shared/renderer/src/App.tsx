@@ -114,6 +114,10 @@ import { stripAttachmentContextFromUserContent } from "@shared/attachmentContext
 // import type { ChatCommandAction } from "./chatCommands";
 import type { DesktopPlatformDescriptor } from "@shared/platform";
 import { useDesktopHealthAdapter } from "./adapters/useDesktopHealthAdapter";
+import {
+  deriveThreadActivity,
+  indexBackgroundTasksByThread,
+} from "./threadActivity";
 import { resolveAvailableVoiceName, useVoicePreferences } from "./voice/useVoicePreferences";
 import { deriveVoiceModeCapabilities, getVoiceModeAvailability } from "./voice/voiceMode";
 import {
@@ -288,6 +292,7 @@ function AuthenticatedApp({
   ]);
   const [navHistoryIndex, setNavHistoryIndex] = useState(0);
   const [activeRightTab, setActiveRightTab] = useState<RightTab>("files");
+  const [debugViewRequest, setDebugViewRequest] = useState<{ view: "activity"; nonce: number } | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadRestoredWorkspaceId());
   const [storedWorkspaces, setStoredWorkspaces] = useState<WorkspaceProject[]>(
     [],
@@ -307,6 +312,7 @@ function AuthenticatedApp({
   const [remoteShowHidden, setRemoteShowHidden] = useState(false);
   const [remoteRecentPaths, setRemoteRecentPaths] = useState<string[]>(() => loadRemoteRecentPaths());
   const [threads, setThreads] = useState<DesktopThread[]>([]);
+  const [threadBackgroundTasks, setThreadBackgroundTasks] = useState<DesktopBackgroundTask[]>([]);
   const [activeThreadId, setActiveThreadId] = useState(() => loadRestoredThreadId());
   const [threadSnapshots, setThreadSnapshots] = useState<
     Record<string, ChatThreadSnapshot>
@@ -333,13 +339,14 @@ function AuthenticatedApp({
   const [selectedChatExamples, setSelectedChatExamples] = useState<
     DesktopAgent["examples"]
   >();
+  const selectedChatAgent = availableChatAgents.find((agent) => agent.id === selectedChatAgentId);
   const chatModelOptions = useMemo(
     () => getAgentModelOptions(
       availableChatModels,
-      availableChatAgents.find((agent) => agent.id === selectedChatAgentId),
+      selectedChatAgent,
       selectedChatModel,
     ),
-    [availableChatAgents, availableChatModels, selectedChatAgentId, selectedChatModel],
+    [availableChatModels, selectedChatAgent, selectedChatModel],
   );
   const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
   const [resultsScopeRequestKey, setResultsScopeRequestKey] = useState(0);
@@ -472,6 +479,27 @@ function AuthenticatedApp({
     if (document.visibilityState === "visible") void handleVisibilityChange();
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
+  const backgroundTaskByThreadId = useMemo(
+    () => indexBackgroundTasksByThread(threads, threadBackgroundTasks),
+    [threadBackgroundTasks, threads],
+  );
+  const toWorkspaceThread = (thread: DesktopThread): WorkspaceThread => ({
+    id: thread.id,
+    title: thread.title,
+    timeLabel: formatThreadTime(thread.updatedAt, language),
+    workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
+    workspacePath: thread.workspacePath,
+    fork: thread.fork,
+    active: thread.id === activeThreadId,
+    pinned: thread.pinned,
+    archived: thread.archived,
+    unread: thread.unread,
+    activity: deriveThreadActivity({
+      thread,
+      snapshot: threadSnapshots[thread.id],
+      backgroundTask: backgroundTaskByThreadId.get(thread.id),
+    }),
+  });
   const scopedThreads =
     sessionScope === "all"
       ? threads
@@ -485,47 +513,21 @@ function AuthenticatedApp({
   );
   const recentThreads: WorkspaceThread[] = visibleThreads
     .slice(0, 12)
-    .map((thread) => ({
-      id: thread.id,
-      title: thread.title,
-      timeLabel: formatThreadTime(thread.updatedAt, language),
-      workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
-      workspacePath: thread.workspacePath,
-      fork: thread.fork,
-      active: thread.id === activeThreadId,
-      pinned: thread.pinned,
-      archived: thread.archived,
-      unread: thread.unread,
-    }));
-  const searchableThreads: WorkspaceThread[] = visibleThreads.map((thread) => ({
-    id: thread.id,
-    title: thread.title,
-    timeLabel: formatThreadTime(thread.updatedAt, language),
-    workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
-    workspacePath: thread.workspacePath,
-    fork: thread.fork,
-    active: thread.id === activeThreadId,
-    pinned: thread.pinned,
-    archived: thread.archived,
-    unread: thread.unread,
-  }));
+    .map(toWorkspaceThread);
+  const searchableThreads: WorkspaceThread[] = visibleThreads.map(toWorkspaceThread);
   const workspaceThreads: WorkspaceThread[] = threads
     .filter((thread) => !thread.archived)
-    .map((thread) => ({
-      id: thread.id,
-      title: thread.title,
-      timeLabel: formatThreadTime(thread.updatedAt, language),
-      workspaceId: thread.execution?.workspaceId || (thread.workspacePath ? getWorkspaceId(thread.workspacePath) : "current"),
-      workspacePath: thread.workspacePath,
-      fork: thread.fork,
-      active: thread.id === activeThreadId,
-      pinned: thread.pinned,
-      archived: thread.archived,
-      unread: thread.unread,
-    }));
-  const servicePreparing = auth.serviceBusy || !auth.serviceReady;
-  const runtimeAvailable = Boolean(health?.installed || health?.gateway?.externalReady);
-  const chatUnavailableReason = auth.serviceBusy
+    .map(toWorkspaceThread);
+  const remotePlatformChatAvailable = Boolean(
+    selectedChatAgent?.source === "remote"
+    && selectedChatAgent.available !== false
+    && selectedChatAgent.status === "running",
+  );
+  const servicePreparing = !remotePlatformChatAvailable && (auth.serviceBusy || !auth.serviceReady);
+  const runtimeAvailable = remotePlatformChatAvailable || Boolean(health?.installed || health?.gateway?.externalReady);
+  const chatUnavailableReason = remotePlatformChatAvailable
+    ? undefined
+    : auth.serviceBusy
     ? language === "zh"
       ? "正在后台检查模型服务，完成后即可发送。"
       : "Checking model services in the background. Sending will be available shortly."
@@ -688,6 +690,43 @@ function AuthenticatedApp({
       ...current.filter((item) => item.id !== event.thread.id),
     ]));
   }), []);
+  useEffect(() => {
+    let disposed = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    async function refreshThreadBackgroundTasks(): Promise<void> {
+      try {
+        const next = await desktopApi.listBackgroundTasks({ limit: 100 });
+        if (disposed) return;
+        setThreadBackgroundTasks((current) =>
+          haveSameThreadTaskActivity(current, next) ? current : next,
+        );
+      } catch {
+        // Thread snapshots and persisted thread status remain valid fallbacks.
+      } finally {
+        if (!disposed) {
+          refreshTimer = setTimeout(
+            () => void refreshThreadBackgroundTasks(),
+            document.visibilityState === "visible" ? 1_000 : 15_000,
+          );
+        }
+      }
+    }
+
+    function refreshWhenVisible(): void {
+      if (document.visibilityState !== "visible") return;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      void refreshThreadBackgroundTasks();
+    }
+
+    void refreshThreadBackgroundTasks();
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      disposed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
   useEffect(() => {
     if (!activeThreadId) return;
     let subscribed = false;
@@ -1273,9 +1312,18 @@ function AuthenticatedApp({
     navigateTo(MENU_IDS.currentSession);
   }
 
-  async function selectChatAgent(agentId: string): Promise<boolean> {
-    const agent = availableChatAgents.find((item) => item.id === agentId);
+  async function selectChatAgent(
+    agentId: string,
+    options: { persistInBackground?: boolean; agent?: DesktopAgent } = {},
+  ): Promise<boolean> {
+    const agent = options.agent ?? availableChatAgents.find((item) => item.id === agentId);
     if (!agent) return false;
+    if (options.agent) {
+      setAvailableChatAgents((current) => [
+        agent,
+        ...current.filter((item) => item.id !== agent.id),
+      ]);
+    }
     const activeThread = threads.find((thread) => thread.id === activeThreadId);
     const snapshotCount = threadSnapshots[activeThreadId]?.messageCount ?? 0;
     const hasConversation = (activeThread?.messageCount ?? 0) > 0 || snapshotCount > 0;
@@ -1301,8 +1349,18 @@ function AuthenticatedApp({
     }
     applyChatAgent(agent);
     if (activeThread && !hasConversation) {
-      const updated = await desktopApi.updateThread({ id: activeThread.id, boundAgentId: agent.id, boundAgentName: agent.name });
-      setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
+      const persistSelection = desktopApi
+        .updateThread({ id: activeThread.id, boundAgentId: agent.id, boundAgentName: agent.name })
+        .then((updated) => {
+          setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
+        });
+      if (options.persistInBackground) {
+        void persistSelection.catch(() => {
+          // Keep navigation responsive; the selected agent remains applied in renderer state.
+        });
+      } else {
+        await persistSelection;
+      }
     }
     return true;
   }
@@ -1673,7 +1731,7 @@ function AuthenticatedApp({
           selectedModelName={selectedChatModel ?? undefined}
           agentOptions={availableChatAgents}
           modelOptions={chatModelOptions}
-          samplePrompts={selectedChatExamples}
+          samplePrompts={selectedChatAgent?.examples ?? selectedChatExamples}
           structuredTurnFocus={structuredTurnFocus}
           externalAttachments={externalChatAttachments}
           ideContext={ideContext}
@@ -1697,6 +1755,7 @@ function AuthenticatedApp({
           onSelectModel={handleChatModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
           onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : () => {
+            setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
             setActiveRightTab("debug");
             setRightPanelCollapsed(false);
           }}
@@ -1755,16 +1814,14 @@ function AuthenticatedApp({
           userGroups={user?.groups ?? []}
           workspacePath={effectiveWorkspacePath}
           selectedAgentId={selectedChatAgentId}
-          onSetDefault={(agent) => void selectChatAgent(agent.id)}
+          onSetDefault={(agent) => void selectChatAgent(agent.id, { agent })}
           onStartChat={(agent) => {
-            void selectChatAgent(agent.id).then((selected) => {
+            void selectChatAgent(agent.id, {
+              persistInBackground: true,
+              agent,
+            }).then((selected) => {
               if (!selected) return;
               setRightPanelCollapsed(true);
-              setPendingChatInput(
-                language === "zh"
-                  ? `我想使用 ${agent.name} 处理一个任务：`
-                  : `I want to use ${agent.name} for a task:`,
-              );
               navigateTo(MENU_IDS.currentSession);
             });
           }}
@@ -1955,6 +2012,7 @@ function AuthenticatedApp({
     activeRightTab === "debug" ? (
       <DebugPanel
         language={language}
+        requestedView={debugViewRequest}
         onSelectTurn={(turnId) => setStructuredTurnFocus((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }))}
       />
     ) : activeRightTab === "terminal" && platformDescriptor?.capabilities.terminal !== false ? (
@@ -2681,6 +2739,23 @@ function sortThreadsForSidebar(threads: DesktopThread[]): DesktopThread[] {
 
 function createLocalThreadId(): string {
   return `thread-${crypto.randomUUID()}`;
+}
+
+function haveSameThreadTaskActivity(
+  current: DesktopBackgroundTask[],
+  next: DesktopBackgroundTask[],
+): boolean {
+  if (current.length !== next.length) return false;
+  return current.every((task, index) => {
+    const candidate = next[index];
+    return candidate?.id === task.id
+      && candidate.updatedAt === task.updatedAt
+      && candidate.status === task.status
+      && candidate.threadId === task.threadId
+      && candidate.targetId === task.targetId
+      && candidate.approvalId === task.approvalId
+      && (candidate.pendingDecisions?.length ?? 0) === (task.pendingDecisions?.length ?? 0);
+  });
 }
 
 function formatThreadTime(updatedAt: string, language: AppLanguage): string {
@@ -5270,7 +5345,7 @@ function formatUpdateStatus(
 }
 
 type SettingsPane = "general" | "voice" | "agent-defaults" | "agent-task" | "approvals" | "analytics" | "integrations" | "remote-workspace" | "channels" | "other";
-type AndroidDeviceLoadState = "idle" | "loading" | "ready" | "runtime-offline" | "platform-offline" | "permission-denied" | "failed";
+type AndroidDeviceLoadState = "idle" | "loading" | "ready" | "runtime-offline" | "platform-offline" | "management-unavailable" | "failed";
 
 function isPermissionError(reason: unknown): boolean {
   const raw = reason instanceof Error ? reason.message : String(reason);
@@ -5280,7 +5355,7 @@ function isPermissionError(reason: unknown): boolean {
 function classifyAndroidDeviceError(reason: unknown, readiness: DesktopMobilePairingReadiness | null): AndroidDeviceLoadState {
   if (readiness?.state === "offline") return "platform-offline";
   if (readiness?.state === "not_registered" || readiness?.state === "credential_invalid") return "runtime-offline";
-  if (isPermissionError(reason)) return "permission-denied";
+  if (isPermissionError(reason)) return "management-unavailable";
   return "failed";
 }
 
@@ -5505,6 +5580,24 @@ function SettingsPanel({
     }
   }
 
+  async function enableMobileRemoteAccess(): Promise<void> {
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      const readiness = await desktopApi.enableMobileRemoteAccess();
+      setMobilePairingReadiness(readiness);
+      setMobileAssociationsState(readiness.state === "ready" ? "ready" : "runtime-offline");
+      if (readiness.state === "ready") {
+        await refreshAndroidDevices();
+      }
+    } catch (reason) {
+      setMobileAssociationsState("runtime-offline");
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
   async function refreshAndroidDevices(): Promise<void> {
     setMobileAssociationsState("loading");
     setMobileEnrollmentError(null);
@@ -5522,8 +5615,9 @@ function SettingsPanel({
       setMobileAssociationsState("ready");
     } catch (reason) {
       setMobileAssociations([]);
-      setMobileAssociationsState(classifyAndroidDeviceError(reason, readiness));
-      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+      const state = classifyAndroidDeviceError(reason, readiness);
+      setMobileAssociationsState(state);
+      setMobileEnrollmentError(state === "management-unavailable" ? null : mobilePairingErrorText(reason, language));
     }
   }
 
@@ -5678,7 +5772,8 @@ function SettingsPanel({
       .filter((item) => item.access_state === "online" || item.access_state === "accessing")
       .map((item) => item.device_summary),
   ).size;
-  const androidRemoteEnabled = mobilePairingReadiness?.state === "ready";
+  const androidRemoteEnabled = mobilePairingReadiness?.state === "ready"
+    || (mobilePairingReadiness?.state === "offline" && Boolean(mobilePairingReadiness.runtime_id));
   const androidDeviceStateText: Record<DesktopMobileAssociation["access_state"], string> = zh ? {
     accessing: "正在访问",
     online: "在线",
@@ -5693,11 +5788,13 @@ function SettingsPanel({
   const androidPanelMessage = mobileAssociationsState === "loading"
     ? null
     : mobileAssociationsState === "runtime-offline"
-      ? (zh ? "此电脑尚未允许远程连接，或 Runtime Host enrollment 不可用。" : "Remote connection is not enabled for this computer, or Runtime Host enrollment is unavailable.")
+      ? (!androidRemoteEnabled
+          ? (zh ? "Android 远程连接已关闭。" : "Android remote connection is disabled.")
+          : (zh ? "Runtime Host enrollment 暂时不可用。" : "Runtime Host enrollment is temporarily unavailable."))
       : mobileAssociationsState === "platform-offline"
         ? (zh ? "暂时无法连接 HepAI Platform Relay，请稍后重试。" : "HepAI Platform Relay is currently unreachable. Try again later.")
-        : mobileAssociationsState === "permission-denied"
-          ? (zh ? "当前账号没有查看此 Host Android 设备的权限。" : "This account cannot view Android devices for this Host.")
+        : mobileAssociationsState === "management-unavailable"
+          ? (zh ? "已允许 Android 连接，但当前 Relay 暂不支持查看和管理设备列表。" : "Android connections are allowed, but the current Relay does not support viewing or managing the device list.")
           : mobileAssociationsState === "failed"
             ? (mobileEnrollmentError ?? (zh ? "请求 Android 设备列表失败。" : "Could not load Android devices."))
             : activeAndroidAssociations.length === 0
@@ -6066,9 +6163,9 @@ function SettingsPanel({
                     <small>{zh ? "OpenDrSai Android 远程连接与设备管理。" : "OpenDrSai Android remote connection and device management."}</small>
                   </span>
                   <div className="settings-integration-actions">
-                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={zh ? "允许远程连接" : "Allow remote connection"} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" disabled={mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (androidRemoteEnabled) void revokeMobileEnrollment(); else onOpenMobilePairing(); }}><span aria-hidden="true" /></button>
+                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={androidRemoteEnabled ? (zh ? "不允许 Android 连接" : "Disallow Android connections") : (zh ? "允许 Android 连接" : "Allow Android connections")} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" disabled={mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (androidRemoteEnabled) void revokeMobileEnrollment(); else void enableMobileRemoteAccess(); }}><span aria-hidden="true" /></button>
                     <button type="button" className={`android-refresh-button ${mobileAssociationsState === "loading" ? "is-loading" : ""}`} onClick={() => void refreshAndroidDevices()} disabled={mobileAssociationsState === "loading"} aria-label={zh ? "刷新 Android 设备" : "Refresh Android devices"} aria-busy={mobileAssociationsState === "loading"} title={zh ? "刷新" : "Refresh"} data-testid="android-refresh"><RefreshCw size={15} aria-hidden="true" /></button>
-                    <button type="button" onClick={onOpenMobilePairing} data-testid="android-connect">{zh ? "连接 Android" : "Connect Android"}</button>
+                    <button type="button" onClick={onOpenMobilePairing} disabled={!androidRemoteEnabled || mobileEnrollmentBusy} data-testid="android-connect">{zh ? "连接 Android" : "Connect Android"}</button>
                   </div>
                 </div>
                 <div className="android-remote-counts" data-testid="android-device-counts">

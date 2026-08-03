@@ -755,7 +755,7 @@ export function useDesktopChatAdapter({
     }
     if (
       structuredRequests.current.has(event.requestId) &&
-      (event.type === "chunk" || event.type === "reasoning" || event.type === "status" || event.type === "tool_timeline")
+      (event.type === "chunk" || event.type === "reasoning" || event.type === "status")
     ) return;
     if (event.type === "chunk") {
       emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: event.content ?? "", at: Date.now() });
@@ -778,6 +778,7 @@ export function useDesktopChatAdapter({
         formatToolTimelineDebugLog(toolTimeline),
         "chat",
       );
+      appendStructuredActivityLog(createStructuredToolActivity(event.requestId, toolTimeline));
       setMessages((current) =>
         publishAndReturn(
           appendAssistantToolTimeline(
@@ -796,9 +797,13 @@ export function useDesktopChatAdapter({
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             inputRequest: {
-              requestId: event.requestId,
+              requestId: event.inputRequestId || event.requestId,
               prompt: event.prompt || "Input required",
               inputType: event.inputType || "text_input",
+              options: event.inputOptions,
+              defaultValue: event.inputDefault,
+              allowCustom: event.inputAllowCustom,
+              timeoutAt: event.inputTimeoutAt,
             },
           })),
         ),
@@ -815,6 +820,7 @@ export function useDesktopChatAdapter({
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             streaming: false,
+            inputRequest: undefined,
             structuredTurn: finalizeStructuredTurn(
               message.structuredTurn,
               message.id,
@@ -838,6 +844,7 @@ export function useDesktopChatAdapter({
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             streaming: false,
+            inputRequest: undefined,
             structuredTurn: finalizeStructuredTurn(
               message.structuredTurn,
               message.id,
@@ -936,7 +943,8 @@ export function useDesktopChatAdapter({
     appliedSnapshotUpdatedAtRef.current = updatedAt;
     onThreadUpdated?.({
       threadId: threadIdRef.current,
-      title: firstUser?.content.slice(0, 48) || (languageRef.current === "zh" ? "新会话" : "New chat"),
+      title: firstUser?.content.replace(/[\r\n]+/g, " ").trim().slice(0, 48)
+        || (languageRef.current === "zh" ? "新会话" : "New chat"),
       messages: nextMessages,
       updatedAt,
       messageCount: nonWelcome.length,
@@ -2344,12 +2352,7 @@ function createWelcomeMessage(language: "en" | "zh", preferences: DesktopUserPre
 }
 
 function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
-  const coalesced = coalesceUiAssistantMessages(messages);
-  return coalesced.map((message) => {
-    if (message.role === "user") {
-      const content = stripAttachmentContextFromUserContent(message.content);
-      return content === message.content ? message : { ...message, content };
-    }
+  const hydrated = messages.map((message) => {
     if (message.role !== "assistant") return message;
     if (message.structuredTurn) return sanitizeStructuredAssistantMessage(message);
     return sanitizeStructuredAssistantMessage({
@@ -2365,6 +2368,72 @@ function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
         toolTimeline: message.toolTimeline as Array<Record<string, unknown>> | undefined,
       }),
     });
+  });
+  return consolidateHydratedAssistantRuns(hydrated);
+}
+
+function consolidateHydratedAssistantRuns(messages: UiMessage[]): UiMessage[] {
+  const consolidated: UiMessage[] = [];
+  const assistantIndexByRun = new Map<string, number>();
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      assistantIndexByRun.clear();
+      consolidated.push(message);
+      continue;
+    }
+    const runId = readPersistedRunId(message.id);
+    if (!runId) {
+      consolidated.push(message);
+      continue;
+    }
+    const existingIndex = assistantIndexByRun.get(runId);
+    if (existingIndex === undefined) {
+      assistantIndexByRun.set(runId, consolidated.length);
+      consolidated.push(message);
+      continue;
+    }
+    consolidated[existingIndex] = mergeHydratedAssistantMessages(consolidated[existingIndex], message);
+  }
+  return consolidated;
+}
+
+function readPersistedRunId(messageId: string): string | undefined {
+  return messageId.match(/(?:^|:)run-[A-Za-z0-9-]{8,}(?=:|$)/)?.[0].replace(/^:/, "");
+}
+
+function mergeHydratedAssistantMessages(primary: UiMessage, secondary: UiMessage): UiMessage {
+  const primaryTurn = primary.structuredTurn;
+  const secondaryTurn = secondary.structuredTurn;
+  if (!primaryTurn || !secondaryTurn) return primary;
+  const partIds = new Set(primaryTurn.parts.map((part) => part.id));
+  const activityIds = new Set(primaryTurn.activities.map((activity) => activity.id));
+  const parts = [
+    ...primaryTurn.parts,
+    ...secondaryTurn.parts.filter((part) => !partIds.has(part.id)),
+  ];
+  const activities = [
+    ...primaryTurn.activities,
+    ...secondaryTurn.activities
+      .filter((activity) => !activityIds.has(activity.id))
+      .map((activity) => ({ ...activity, turnId: primaryTurn.turnId })),
+  ];
+  const structuredTurn: StructuredTurnState = {
+    ...primaryTurn,
+    parts,
+    activities,
+    lastSequence: Math.max(primaryTurn.lastSequence, secondaryTurn.lastSequence),
+    seenDedupeKeys: [...new Set([...primaryTurn.seenDedupeKeys, ...secondaryTurn.seenDedupeKeys])],
+    protocolIssues: [...primaryTurn.protocolIssues, ...secondaryTurn.protocolIssues],
+  };
+  const secondaryContent = secondary.content.trim();
+  return sanitizeStructuredAssistantMessage({
+    ...primary,
+    content: secondaryContent && !primary.content.includes(secondaryContent)
+      ? [primary.content, secondary.content].filter(Boolean).join("\n\n")
+      : primary.content,
+    reasoningContent: [primary.reasoningContent, secondary.reasoningContent].filter(Boolean).join(""),
+    structuredTurn,
+    lastEventAt: Math.max(primary.lastEventAt ?? 0, secondary.lastEventAt ?? 0) || undefined,
   });
 }
 
@@ -2498,19 +2567,30 @@ function appendStructuredActivity(
   if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
   return applyLocalStructuredEvent(state, {
     type: "activity.updated",
-    activity: {
-      id: event.id,
-      turnId,
-      timestamp: event.timestamp ?? new Date().toISOString(),
-      source: "desktop-sse",
-      status: event.status === "failed" ? "error" : event.status === "completed" ? "completed" : "running",
-      title: event.title,
-      kind: "tool",
-      toolName: event.toolName ?? event.title,
-      callId: event.id,
-      ...(event.content ? { output: event.content } : {}),
-    },
+    activity: createStructuredToolActivity(state.turnId, event),
   });
+}
+
+function createStructuredToolActivity(
+  turnId: string,
+  event: NonNullable<ChatEvent["toolTimeline"]>,
+): Extract<StructuredActivityEvent, { kind: "tool" }> {
+  return {
+    id: event.id,
+    turnId,
+    timestamp: event.timestamp?.trim() || new Date().toISOString(),
+    source: "desktop-sse",
+    status: event.status === "failed" ? "error" : event.status === "completed" ? "completed" : "running",
+    title: event.title,
+    kind: "tool",
+    toolName: event.toolName ?? event.title,
+    callId: event.id,
+    ...(event.content
+      ? event.kind === "tool_call"
+        ? { input: event.content }
+        : { output: event.content }
+      : {}),
+  };
 }
 
 function appendConnectionActivity(
@@ -2585,15 +2665,14 @@ function applyStructuredEventToMessage(
     reasoningContent,
     streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
     error: structuredTurn.status === "error" || message.error,
-    ...(activeInteraction
+    inputRequest: activeInteraction
       ? {
-          inputRequest: {
-            requestId: activeInteraction.requestId,
-            prompt: activeInteraction.prompt,
-            inputType: activeInteraction.interactionType === "approval" ? "approval" as const : "text_input" as const,
-          },
+          requestId: activeInteraction.requestId,
+          prompt: activeInteraction.prompt,
+          inputType: activeInteraction.interactionType,
+          options: activeInteraction.options,
         }
-      : {}),
+      : undefined,
     lastEventAt: Date.now(),
   });
 }

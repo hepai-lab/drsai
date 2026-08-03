@@ -28,12 +28,12 @@ const MAX_INSTRUCTION_CHARS = 8000;
 const MAX_REPO_URL_CHARS = 2048;
 const WORKSPACE_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const FOLDER_NAME_PATTERN = /^[^<>:"/\\|?*\u0000-\u001f]+$/;
+let workspaceUpdateQueue: Promise<void> = Promise.resolve();
 
 export async function listWorkspaces(): Promise<WorkspaceProject[]> {
   const workspaces = await readWorkspaces();
   await synchronizeRuntimeWorkspaceNames(workspaces);
   const refreshed = await Promise.all(workspaces.map(refreshWorkspaceStatus));
-  await writeWorkspaces(refreshed);
   return sortWorkspaces(refreshed);
 }
 
@@ -64,6 +64,15 @@ export async function createWorkspace(rawRequest: unknown): Promise<WorkspacePro
 
 export async function updateWorkspace(rawRequest: unknown): Promise<WorkspaceProject> {
   const request = validateUpdateWorkspaceRequest(rawRequest);
+  const operation = workspaceUpdateQueue.then(() => performWorkspaceUpdate(request));
+  workspaceUpdateQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
+}
+
+async function performWorkspaceUpdate(request: UpdateWorkspaceRequest): Promise<WorkspaceProject> {
   const workspaces = await readWorkspaces();
   const existing = workspaces.find((workspace) => workspace.id === request.id);
   if (!existing) {
@@ -71,7 +80,11 @@ export async function updateWorkspace(rawRequest: unknown): Promise<WorkspacePro
   }
   const now = new Date().toISOString();
   if (request.name !== undefined && request.name !== existing.name && existing.location !== "remote") {
-    await (await LocalRuntimeClient.connect()).updateWorkspaceDisplayName(existing.id, request.name);
+    try {
+      await (await LocalRuntimeClient.connect()).updateWorkspaceDisplayName(existing.id, request.name);
+    } catch {
+      // Persist the desktop name even while Runtime is unavailable. The next list refresh synchronizes it.
+    }
   }
   const next = await refreshWorkspaceStatus({
     ...existing,

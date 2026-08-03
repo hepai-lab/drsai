@@ -169,6 +169,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
         }
         return <NoticeItem key={part.id} part={part} />;
       })}
+      <StructuredActivityTimeline turn={turn} language={language} onOpenDebug={onOpenDebug} />
       <StructuredActivitySummary
         turn={turn}
         language={language}
@@ -179,6 +180,78 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     </div>
   );
 });
+
+function StructuredActivityTimeline({
+  turn,
+  language,
+  onOpenDebug,
+}: {
+  turn: StructuredTurnState;
+  language: "en" | "zh";
+  onOpenDebug?: () => void;
+}): React.JSX.Element | null {
+  if (!turn.activities.length) return null;
+  const failedActivities = turn.activities.filter((activity) => activity.status === "error");
+  const failed = failedActivities.length;
+  const active = turn.activities.filter(
+    (activity) => activity.status === "pending" || activity.status === "running",
+  ).length;
+  const aggregateStatus: StructuredActivityEvent["status"] = failed
+    ? "error"
+    : active
+      ? "running"
+      : "completed";
+  const aggregateLabel = failed
+    ? language === "zh"
+      ? `工具操作有 ${failed} 项失败`
+      : `${failed} tool operation${failed === 1 ? "" : "s"} failed`
+    : active
+      ? language === "zh"
+        ? "正在执行工具操作"
+        : "Running tool operations"
+      : language === "zh"
+        ? "工具操作已完成"
+        : "Tool operations completed";
+  const failedTitle = failedActivities[0]?.title?.replace(/\s+response$/i, "").trim();
+  const label = failed && failedTitle
+    ? language === "zh"
+      ? `步骤失败：${failedTitle}`
+      : `Step failed: ${failedTitle}`
+    : aggregateLabel;
+  const content = (
+    <>
+      <ActivityStatusIcon status={aggregateStatus} />
+      <span>{label}</span>
+      {onOpenDebug ? <small>{language === "zh" ? "在调试中查看详情" : "View details in Debug"}</small> : null}
+    </>
+  );
+  return (
+    <section
+      className="structured-activity-timeline"
+      aria-label={language === "zh" ? "工具活动摘要" : "Tool activity summary"}
+      data-activity-count={turn.activities.length}
+      data-activity-status={aggregateStatus}
+    >
+      {onOpenDebug ? (
+        <button type="button" className="structured-activity-compact" onClick={onOpenDebug}>
+          {content}
+        </button>
+      ) : (
+        <div className="structured-activity-compact">{content}</div>
+      )}
+    </section>
+  );
+}
+
+function ActivityStatusIcon({
+  status,
+}: {
+  status: StructuredActivityEvent["status"];
+}): React.JSX.Element {
+  if (status === "completed") return <CheckCircle2 size={16} aria-hidden="true" />;
+  if (status === "error") return <AlertCircle size={16} aria-hidden="true" />;
+  return <CircleEllipsis size={16} aria-hidden="true" />;
+}
 
 function StructuredActivitySummary({
   turn,

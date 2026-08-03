@@ -69,6 +69,7 @@ export async function enqueueBackgroundTask(
     createdAt: now,
     updatedAt: now,
     ...(typed.workspacePath ? { workspacePath: typed.workspacePath } : {}),
+    ...(typed.threadId ? { threadId: typed.threadId } : {}),
     ...(typed.targetId ? { targetId: typed.targetId } : {}),
     ...(typed.approvalId ? { approvalId: typed.approvalId } : {}),
     ...(typed.currentStep ? { currentStep: typed.currentStep } : {}),
@@ -333,6 +334,7 @@ export async function upsertBackgroundTaskForAgentRun(
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     ...(request.workspacePath ? { workspacePath: request.workspacePath } : {}),
+    ...(request.threadId ? { threadId: request.threadId } : existing?.threadId ? { threadId: existing.threadId } : {}),
     targetId: event.requestId,
     currentStep: agentRunStepLabel(event, planSteps, hasIncompleteAdjustment),
     progress: agentRunProgress(event.type),
@@ -551,6 +553,9 @@ function normalizeEnqueueRequest(
     title: normalizeRequiredText(typed.title, "Background task title is required."),
     ...(typeof typed.workspacePath === "string" && typed.workspacePath.trim()
       ? { workspacePath: typed.workspacePath.trim() }
+      : {}),
+    ...(typeof typed.threadId === "string" && /^thread-[A-Za-z0-9-]{1,160}$/.test(typed.threadId)
+      ? { threadId: typed.threadId }
       : {}),
     ...(typeof typed.targetId === "string" && typed.targetId.trim()
       ? { targetId: typed.targetId.trim() }

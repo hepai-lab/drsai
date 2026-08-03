@@ -7,6 +7,7 @@ const root = process.cwd();
 const storePath = join(root, "../shared/renderer/src/debugLogStore.ts");
 const storeSource = readFileSync(storePath, "utf8");
 const panelSource = readFileSync(join(root, "../shared/renderer/src/components/DebugPanel.tsx"), "utf8");
+const stylesSource = readFileSync(join(root, "../shared/renderer/src/styles.css"), "utf8");
 const clipboardPath = join(root, "../shared/renderer/src/clipboard.ts");
 const clipboardSource = readFileSync(clipboardPath, "utf8");
 const workspaceSource = readFileSync(join(root, "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
@@ -53,6 +54,7 @@ let entries = store.getDebugLogs();
 assert.equal(entries.length, 1, "Activity updates must replace the existing timeline item.");
 assert.equal(entries[0].activityStatus, "completed");
 assert.equal(entries[0].durationMs, 1000);
+assert.equal(entries[0].activity.output, "ok", "The typed activity payload must remain available to the detail view.");
 assert.match(entries[0].raw, /"output": "ok"/);
 
 store.appendStructuredProtocolLog({
@@ -169,9 +171,16 @@ for (const contract of [
   "groupActivities(filtered)",
   "copyTextSafely(body)",
   "window.openDrSai.clearDiagnostics()",
-  "onSelectTurn?.(entry.turnId)",
+  "getActivityDetails(activity, zh)",
+  "getActivityPayloads(activity, zh)",
+  'open={entry.activityStatus === "error" || undefined}',
+  "debug-activity-missing-error",
+  "copyTextSafely(copyText)",
 ]) {
   assert.ok(panelSource.includes(contract), `Missing DebugPanel contract: ${contract}`);
+}
+for (const contract of [".debug-activity-entry > summary", ".debug-activity-details pre", ".debug-activity-missing-error"]) {
+  assert.ok(stylesSource.includes(contract), `Missing activity detail style: ${contract}`);
 }
 assert.ok(adapterSource.includes("appendStructuredProtocolLog(structuredEvent)"));
 assert.ok(adapterSource.includes("appendStructuredActivityLog(structuredEvent.activity)"));
@@ -182,7 +191,7 @@ assert.ok(adapterSource.includes("settleInterruptedStructuredTurn("));
 assert.ok(adapterSource.includes("30_000"), "Interrupted turns need a bounded recovery wait.");
 assert.match(desktopApiSource, /type:\s*"start"[^;]+\|\s*"connection"\s*\|/);
 assert.ok(desktopApiSource.includes('source: "gateway" | "remote-gateway" | "codex-runtime"'));
-assert.ok(mainChatSource.includes('source: remoteGateway ? "remote-gateway" : "gateway"'));
+assert.ok(mainChatSource.includes('source === "remote-gateway" ? "remote-runtime"'), "Remote gateway activity must retain its diagnostic component mapping.");
 assert.ok(mainChatSource.includes('source: "codex-runtime"'));
 assert.ok(adapterSource.includes('event.type === "connection" && event.connection'));
 assert.ok(adapterSource.includes('kind: "retry"'));

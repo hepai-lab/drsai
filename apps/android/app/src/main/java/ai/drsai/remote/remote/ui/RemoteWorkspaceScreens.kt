@@ -78,6 +78,8 @@ data class RemoteComputerUi(
     val pendingApprovalCount: Int = 0,
     val workspacesCached: Boolean = false,
     val lastSyncedAtMillis: Long? = null,
+    val workspaceSyncStatus: String? = null,
+    val workspaceSyncFailed: Boolean = false,
 )
 
 data class RemoteHomeUiState(
@@ -310,6 +312,17 @@ private fun RemoteComputerCard(
                             "OpenDrSai ${computer.version}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    computer.workspaceSyncStatus?.let { status ->
+                        Text(
+                            status,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (computer.workspaceSyncFailed) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
                         )
                     }
                 }

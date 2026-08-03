@@ -468,6 +468,45 @@
         "title": "Workspace",
         "type": "object"
       },
+      "WorkspaceCatalogSyncRequest": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "WorkspaceCatalogSyncRequest",
+        "type": "object"
+      },
+      "WorkspaceCatalogSyncResult": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_revision": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Catalog Revision",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Workspace"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "synced_at": {
+            "format": "date-time",
+            "title": "Synced At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "items"
+        ],
+        "title": "WorkspaceCatalogSyncResult",
+        "type": "object"
+      },
       "WorkspacePublishRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1991,6 +2030,55 @@
           }
         },
         "summary": "Workspaces"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/sync": {
+      "post": {
+        "operationId": "sync_workspaces_v1_runtimes__runtime_id__workspaces_sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceCatalogSyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceCatalogSyncResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Workspaces"
       }
     },
     "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/approvals": {

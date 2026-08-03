@@ -68,6 +68,8 @@ import { getAssistantVisibleAnswer } from "../chatOutputModel";
 import { extractShareConclusion, extractShareMessageText } from "@shared/threadShareHtml";
 import { ChatMessageContent } from "./ChatMessageContent";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
+import { ThreadActivityBubble } from "./ThreadActivityBubble";
+import type { ThreadActivityState } from "../threadActivity";
 import {
   getConflictMarkerCount,
   getForkConflictFileKind,
@@ -94,6 +96,7 @@ export interface WorkspaceThread {
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  activity: ThreadActivityState;
 }
 
 export interface ForkConflictFile {
@@ -311,6 +314,8 @@ export function WorkspaceShell({
   const [workspaceDetailsId, setWorkspaceDetailsId] = useState<string | null>(null);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceDescriptionDraft, setWorkspaceDescriptionDraft] = useState("");
+  const [workspaceSavePending, setWorkspaceSavePending] = useState(false);
+  const [workspaceSaveError, setWorkspaceSaveError] = useState<string | null>(null);
   const [workspaceDeleteConfirm, setWorkspaceDeleteConfirm] = useState(false);
   const [workspaceCreateSource, setWorkspaceCreateSource] = useState<CreateWorkspaceRequest["source"]>("existing");
   const [workspaceCreateName, setWorkspaceCreateName] = useState("");
@@ -760,6 +765,8 @@ export function WorkspaceShell({
     setWorkspaceDetailsId(workspace.id);
     setWorkspaceNameDraft(workspace.name);
     setWorkspaceDescriptionDraft(workspace.description ?? "");
+    setWorkspaceSavePending(false);
+    setWorkspaceSaveError(null);
     setWorkspaceDeleteConfirm(false);
   }
 
@@ -767,6 +774,8 @@ export function WorkspaceShell({
     setWorkspaceDetailsId(null);
     setWorkspaceNameDraft("");
     setWorkspaceDescriptionDraft("");
+    setWorkspaceSavePending(false);
+    setWorkspaceSaveError(null);
     setWorkspaceDeleteConfirm(false);
   }
 
@@ -783,10 +792,23 @@ export function WorkspaceShell({
 
   async function saveWorkspaceDetails(): Promise<void> {
     if (!workspaceDetails || workspaceDetails.id === "current") return;
-    await onUpdateWorkspace(workspaceDetails.id, {
-      name: workspaceNameDraft,
-      description: workspaceDescriptionDraft,
-    });
+    const name = workspaceNameDraft.trim();
+    if (!name) {
+      setWorkspaceSaveError(zh ? "工作区名称不能为空。" : "Workspace name cannot be empty.");
+      return;
+    }
+    setWorkspaceSavePending(true);
+    setWorkspaceSaveError(null);
+    try {
+      await onUpdateWorkspace(workspaceDetails.id, {
+        name,
+        description: workspaceDescriptionDraft,
+      });
+      closeWorkspaceDetails();
+    } catch (error) {
+      setWorkspaceSaveError(error instanceof Error ? error.message : String(error));
+      setWorkspaceSavePending(false);
+    }
   }
 
   async function toggleWorkspaceTrusted(): Promise<void> {
@@ -1234,7 +1256,13 @@ export function WorkspaceShell({
           )}
           {thread.title}
         </span>
-        <time>{thread.timeLabel}</time>
+        <span className="thread-item-status">
+          {thread.activity.kind === "idle" ? (
+            <time>{thread.timeLabel}</time>
+          ) : (
+            <ThreadActivityBubble state={thread.activity} language={language} />
+          )}
+        </span>
       </button>
     );
   }
@@ -3456,6 +3484,9 @@ export function WorkspaceShell({
                   placeholder={zh ? "给这个工作区加一句说明" : "Add a short note for this workspace"}
                 />
               </label>
+              {workspaceSaveError && (
+                <div className="workspace-details-error" role="alert">{workspaceSaveError}</div>
+              )}
 
               <div className="workspace-path-box">
                 <span>{zh ? "路径" : "Path"}</span>
@@ -3529,8 +3560,8 @@ export function WorkspaceShell({
                   <button type="button" onClick={toggleWorkspacePinned}>
                     {workspaceDetails.pinned ? (zh ? "取消置顶" : "Unpin") : (zh ? "置顶" : "Pin")}
                   </button>
-                  <button type="button" onClick={saveWorkspaceDetails}>
-                    {zh ? "保存" : "Save"}
+                  <button type="button" disabled={workspaceSavePending} onClick={saveWorkspaceDetails}>
+                    {workspaceSavePending ? (zh ? "保存中…" : "Saving…") : (zh ? "保存" : "Save")}
                   </button>
                   <button className="danger" type="button" onClick={confirmWorkspaceRemoval}>
                     <Trash2 size={14} />

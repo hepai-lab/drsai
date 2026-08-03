@@ -367,7 +367,7 @@ App (启动编排 + Bootstrap 状态机)
  │    └── Base URL 输入
  │
  └── AppLayout              ← 主界面布局
-      ├── Banner            ← ⚡ DrSai 标题
+      ├── Banner            ← ⚡ OpenDrSai 标题
       │
       ├── TranscriptPane    ← 对话主区域
       │    ├── <Static>     ← 已完成的历史 turn（只写一次，永不重绘）

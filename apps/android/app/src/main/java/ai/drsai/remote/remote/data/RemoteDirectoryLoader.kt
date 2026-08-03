@@ -41,6 +41,7 @@ interface RemoteDirectoryCache {
         runtimeId: RuntimeId,
         workspaces: List<RemoteWorkspaceRef>,
         syncedAt: Long,
+        catalogRevision: String? = null,
     )
     suspend fun removeRuntime(subject: String, organization: String, runtimeId: RuntimeId)
     suspend fun clear(subject: String, organization: String)
@@ -90,8 +91,10 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
         syncedAt: Long,
     ) = database.withTransaction {
         val dao = database.remoteDao()
+        val existingRuntimes = dao.runtimes(subject, organization)
+            .associateBy { it.runtimeId }
         val authorized = runtimes.map { it.reference.runtimeId.value }.toSet()
-        dao.runtimes(subject, organization)
+        existingRuntimes.values
             .filterNot { it.runtimeId in authorized }
             .forEach { purgeRuntime(dao, subject, organization, it.runtimeId) }
         dao.saveRuntimes(runtimes.map { runtime ->
@@ -106,6 +109,8 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
                 capabilitiesJson = JSONArray(runtime.capabilities.toList().sorted()).toString(),
                 lastSyncedAt = syncedAt,
                 authoritative = false,
+                workspaceCatalogRevision = existingRuntimes[runtime.reference.runtimeId.value]
+                    ?.workspaceCatalogRevision.orEmpty(),
             )
         })
     }
@@ -116,6 +121,7 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
         runtimeId: RuntimeId,
         workspaces: List<RemoteWorkspaceRef>,
         syncedAt: Long,
+        catalogRevision: String?,
     ) = database.withTransaction {
         val dao = database.remoteDao()
         val activeIds = workspaces.map { it.workspaceId.value }.toSet()
@@ -138,6 +144,16 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
                 updatedAt = workspace.updatedAt,
             )
         })
+        catalogRevision?.let {
+            dao.saveWorkspaceCatalogRevision(
+                subject = subject,
+                organization = organization,
+                runtimeId = runtimeId.value,
+                catalogRevision = it,
+                syncedAt = syncedAt,
+            )
+        }
+        Unit
     }
 
     override suspend fun removeRuntime(
@@ -285,28 +301,39 @@ class RemoteDirectoryLoader(
         cache?.removeRuntime(subject, organization, runtimeId)
     }
 
-    /** Refreshes one authorized Runtime's complete Workspace Catalog. */
-    suspend fun refreshWorkspaces(
+    /**
+     * Explicitly asks Platform to synchronize one Runtime's complete catalog.
+     * Ordinary page refreshes must continue to use [synchronize], which only
+     * reads Platform's saved projection.
+     */
+    suspend fun forceSyncWorkspaces(
         subject: String,
         runtimeId: RuntimeId,
         organization: String = "",
-        now: Long = System.currentTimeMillis(),
-    ): List<RemoteWorkspaceRef> {
-        val workspaces = try {
-            collectAllPages { cursor ->
-                relay.listWorkspaces(runtimeId = runtimeId, cursor = cursor)
-            }
+    ): WorkspaceCatalogSync {
+        val result = try {
+            relay.syncWorkspaces(runtimeId)
         } catch (failure: RelayHttpException) {
             if (failure.status == 403) cache?.removeRuntime(subject, organization, runtimeId)
             throw failure
         }
-        cache?.replaceWorkspaces(subject, organization, runtimeId, workspaces, now)
-        return workspaces.sortedWith(
+        require(result.runtimeId == runtimeId) { "relay_workspace_runtime_mismatch" }
+        val sorted = result.items.sortedWith(
             compareByDescending<RemoteWorkspaceRef> {
                 recency.lastOpened(WorkspaceRecencyKey(subject, it.runtimeId, it.workspaceId))
                     ?: Long.MIN_VALUE
             }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.displayName },
         )
+        val syncedAtMillis = java.time.Instant.parse(result.syncedAt).toEpochMilli()
+        cache?.replaceWorkspaces(
+            subject,
+            organization,
+            runtimeId,
+            sorted,
+            syncedAtMillis,
+            result.catalogRevision,
+        )
+        return result.copy(items = sorted)
     }
 
     /**

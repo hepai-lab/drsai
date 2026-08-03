@@ -1,0 +1,94 @@
+{
+  "version": "1.0",
+  "events": [
+    {
+      "version": "1.0",
+      "event_id": "event-1",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "sequence": 1,
+      "type": "event.run.started",
+      "timestamp": "2026-08-02T10:00:00Z",
+      "dedupe_key": "run-1:started",
+      "source": { "backend": "opendrsai" },
+      "data": {}
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-2",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "message-1",
+      "sequence": 2,
+      "type": "event.item.started",
+      "timestamp": "2026-08-02T10:00:01Z",
+      "dedupe_key": "run-1:message-1:started",
+      "source": { "backend": "opendrsai", "backend_item_id": "message-1" },
+      "data": {
+        "item": {
+          "id": "message-1",
+          "session_id": "session-1",
+          "run_id": "run-1",
+          "type": "message",
+          "status": "running",
+          "sequence": 1,
+          "created_at": "2026-08-02T10:00:01Z",
+          "updated_at": "2026-08-02T10:00:01Z",
+          "source": { "backend": "opendrsai", "backend_item_id": "message-1" },
+          "content": { "role": "assistant", "phase": "final", "text": "" }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-3",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "message-1",
+      "sequence": 3,
+      "type": "event.item.delta",
+      "timestamp": "2026-08-02T10:00:02Z",
+      "dedupe_key": "run-1:message-1:delta:1",
+      "source": { "backend": "opendrsai", "backend_item_id": "message-1" },
+      "data": { "delta": { "kind": "message.text.append", "text": "正在分析项目。" } }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-4",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "item_id": "message-1",
+      "sequence": 4,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-02T10:00:03Z",
+      "dedupe_key": "run-1:message-1:completed",
+      "source": { "backend": "opendrsai", "backend_item_id": "message-1" },
+      "data": {
+        "item": {
+          "id": "message-1",
+          "session_id": "session-1",
+          "run_id": "run-1",
+          "type": "message",
+          "status": "completed",
+          "sequence": 1,
+          "created_at": "2026-08-02T10:00:01Z",
+          "updated_at": "2026-08-02T10:00:03Z",
+          "source": { "backend": "opendrsai", "backend_item_id": "message-1" },
+          "content": { "role": "assistant", "phase": "final", "text": "正在分析项目。" }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "event-5",
+      "session_id": "session-1",
+      "run_id": "run-1",
+      "sequence": 5,
+      "type": "event.run.completed",
+      "timestamp": "2026-08-02T10:00:04Z",
+      "dedupe_key": "run-1:completed",
+      "source": { "backend": "opendrsai" },
+      "data": { "result_item_id": "message-1" }
+    }
+  ]
+}

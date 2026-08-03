@@ -2,6 +2,7 @@ import type { DesktopAgent, PlatformAgentStatus } from "../api/desktopApi";
 import type { PlatformAgentExecutionDescriptor } from "./agentCatalog";
 
 const AGENTS_PATH = "/api/native/v1/agents";
+const HEPAI_AGENTS_PATH = "/agents/list_agents";
 
 export interface PlatformAgentAuthProvider {
   getAccessToken(): Promise<string>;
@@ -10,7 +11,10 @@ export interface PlatformAgentAuthProvider {
 }
 
 export interface PlatformAgentClientOptions {
+  /** Portal Native API root, used for chat and preference mutations. */
   baseUrl: string;
+  /** HepAI API root, used to discover the active platform's agents. */
+  catalogBaseUrl?: string;
   auth: PlatformAgentAuthProvider;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -124,14 +128,36 @@ export async function fetchPlatformAgents(
   }
   const record = readRecord(body);
   const dataRecord = readRecord(record.data);
-  const apiVersion = firstString(
+  let apiVersion = firstString(
     response.headers.get("x-opendrsai-api-version"),
     record.api_version,
     record.version,
     dataRecord.api_version,
     dataRecord.version,
   );
-  const capabilities = normalizeCapabilities(record.capabilities ?? dataRecord.capabilities);
+  let capabilities = normalizeCapabilities(record.capabilities ?? dataRecord.capabilities);
+  if (options.catalogBaseUrl) {
+    try {
+      const nativeResponse = await requestNativeMetadata(fetchImpl, options, accessToken);
+      if (nativeResponse.ok) {
+        const nativeBody = readRecord(await nativeResponse.json());
+        const nativeData = readRecord(nativeBody.data);
+        apiVersion = firstString(
+          nativeResponse.headers.get("x-opendrsai-api-version"),
+          nativeBody.api_version,
+          nativeBody.version,
+          nativeData.api_version,
+          nativeData.version,
+          apiVersion,
+        );
+        capabilities = normalizeCapabilities(
+          nativeBody.capabilities ?? nativeData.capabilities ?? capabilities,
+        );
+      }
+    } catch {
+      // Agent discovery remains usable when optional Native API metadata fails.
+    }
+  }
   const normalized = extractAgentArray(body)
     .map(normalizePlatformAgent)
     .filter((item): item is NonNullable<ReturnType<typeof normalizePlatformAgent>> => item !== null);
@@ -150,6 +176,90 @@ export async function fetchPlatformAgents(
   };
 }
 
+export async function respondDdfAgentInput(
+  options: PlatformAgentClientOptions,
+  input: {
+    model: string;
+    chatId: string;
+    runId: string;
+    requestId: string;
+    response: string | Record<string, unknown>;
+  },
+): Promise<PlatformAgentMutationResult> {
+  let accessToken: string;
+  try {
+    accessToken = await options.auth.getAccessToken();
+  } catch {
+    return { ok: false, message: "Sign in with HepAI to respond to the agent." };
+  }
+  const request = async (token: string): Promise<Response> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
+    try {
+      return await (options.fetchImpl ?? fetch)(joinUrl(options.catalogBaseUrl ?? options.baseUrl, "/agents/input"), {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": input.requestId,
+        },
+        body: JSON.stringify({
+          model: input.model,
+          chat_id: input.chatId,
+          run_id: input.runId,
+          request_id: input.requestId,
+          response: input.response,
+        }),
+        redirect: "error",
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+  let response = await request(accessToken);
+  if (response.status === 401) {
+    try {
+      accessToken = await options.auth.refreshAfterUnauthorized();
+      response = await request(accessToken);
+    } catch {
+      options.auth.invalidate();
+      return { ok: false, message: "Your HepAI session expired. Sign in again." };
+    }
+  }
+  if (response.ok) return { ok: true, message: "Agent input accepted." };
+  const messages: Record<number, string> = {
+    404: "The agent input request is no longer available.",
+    409: "The agent input request conflicts with its current state.",
+    410: "The agent input request expired.",
+    503: "The remote agent is temporarily unavailable. Retry the response.",
+  };
+  return { ok: false, message: messages[response.status] ?? `Agent input failed (HTTP ${response.status}).` };
+}
+
+async function requestNativeMetadata(
+  fetchImpl: typeof fetch,
+  options: PlatformAgentClientOptions,
+  accessToken: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
+  try {
+    return await fetchImpl(joinUrl(options.baseUrl, AGENTS_PATH), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      redirect: "error",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function requestAgents(
   fetchImpl: typeof fetch,
   options: PlatformAgentClientOptions,
@@ -158,7 +268,8 @@ async function requestAgents(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
   try {
-    const url = new URL(joinUrl(options.baseUrl, AGENTS_PATH));
+    const directCatalog = Boolean(options.catalogBaseUrl);
+    const url = new URL(joinUrl(options.catalogBaseUrl || options.baseUrl, directCatalog ? HEPAI_AGENTS_PATH : AGENTS_PATH));
     url.searchParams.set("refresh", options.refresh ? "true" : "false");
     return await fetchImpl(url.toString(), {
       method: "GET",
@@ -314,17 +425,28 @@ function isModelLikeEntry(name: string, agent: Record<string, unknown>): boolean
 }
 
 function normalizeExamples(value: unknown): DesktopAgent["examples"] | undefined {
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (!Array.isArray(value)) return undefined;
+  if (typeof value === "string" && value.trim()) return value.trim().slice(0, 500);
+  if (!Array.isArray(value)) {
+    const localized = readRecord(value);
+    const zh = Array.isArray(localized.zh) ? localized.zh : [];
+    const en = Array.isArray(localized.en) ? localized.en : [];
+    const examples: Exclude<DesktopAgent["examples"], string | undefined> = [];
+    for (let index = 0; index < Math.min(4, Math.max(zh.length, en.length)); index += 1) {
+      const zhText = typeof zh[index] === "string" ? zh[index].trim().slice(0, 500) : "";
+      const enText = typeof en[index] === "string" ? en[index].trim().slice(0, 500) : "";
+      if (zhText || enText) examples.push({ zh: zhText, en: enText });
+    }
+    return examples.length > 0 ? examples : undefined;
+  }
   const examples: Exclude<DesktopAgent["examples"], string | undefined> = [];
-  for (const item of value) {
+  for (const item of value.slice(0, 4)) {
     if (typeof item === "string" && item.trim()) {
-      examples.push(item.trim());
+      examples.push(item.trim().slice(0, 500));
       continue;
     }
     const record = readRecord(item);
-    const en = firstString(record.en);
-    const zh = firstString(record.zh);
+    const en = firstString(record.en).slice(0, 500);
+    const zh = firstString(record.zh).slice(0, 500);
     if (en || zh) examples.push({ en, zh });
   }
   return examples.length > 0 ? examples : undefined;

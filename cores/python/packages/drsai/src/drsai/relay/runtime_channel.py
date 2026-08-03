@@ -48,6 +48,10 @@ class RuntimeChannelHub:
             return current is not None and current.generation == generation
 
     async def request(self, runtime_id: str, operation: str, arguments: dict[str, Any]) -> Any:
+        result, _ = await self.request_current(runtime_id, operation, arguments)
+        return result
+
+    async def request_current(self, runtime_id: str, operation: str, arguments: dict[str, Any]) -> tuple[Any, str]:
         async with self._lock:
             connection = self._connections.get(runtime_id)
             if connection is None:
@@ -64,9 +68,51 @@ class RuntimeChannelHub:
                 "operation": operation,
                 "arguments": arguments,
             })
-            return await asyncio.wait_for(future, timeout=self.request_timeout)
+            result = await asyncio.wait_for(future, timeout=self.request_timeout)
+            if not await self.is_current(runtime_id, connection.generation):
+                raise RelayRegistryError("runtime_generation_stale", "Runtime generation changed during request",
+                                         retryable=True, source="runtime")
+            return result, connection.generation
         except TimeoutError as exc:
             raise RelayRegistryError("runtime_timeout", "Runtime response timed out", retryable=True,
+                                     source="runtime") from exc
+        finally:
+            connection.pending.pop(request_id, None)
+
+    async def request_http_current(
+        self,
+        runtime_id: str,
+        method: str,
+        path: str,
+        *,
+        body: dict[str, Any] | None = None,
+        timeout_code: str = "runtime_timeout",
+    ) -> tuple[dict[str, Any], str]:
+        async with self._lock:
+            connection = self._connections.get(runtime_id)
+            if connection is None:
+                raise RelayRegistryError("host_offline", "Runtime Host is offline",
+                                         retryable=True, source="runtime")
+            request_id = uuid4().hex
+            future = asyncio.get_running_loop().create_future()
+            connection.pending[request_id] = future
+            socket = connection.socket
+        try:
+            await socket.send_json({
+                "type": "request",
+                "request_id": request_id,
+                "correlation_id": uuid4().hex,
+                "method": method,
+                "path": path,
+                "body": body,
+            })
+            result = await asyncio.wait_for(future, timeout=self.request_timeout)
+            if not await self.is_current(runtime_id, connection.generation):
+                raise RelayRegistryError("stale_runtime_generation", "Runtime generation changed during request",
+                                         retryable=True, source="runtime")
+            return result, connection.generation
+        except TimeoutError as exc:
+            raise RelayRegistryError(timeout_code, "Runtime response timed out", retryable=True,
                                      source="runtime") from exc
         finally:
             connection.pending.pop(request_id, None)
@@ -76,6 +122,19 @@ class RuntimeChannelHub:
         request_id = str(message.get("request_id") or "")
         future = connection.pending.get(request_id) if connection else None
         if future is None or future.done():
+            return
+        if message.get("type") == "response":
+            status = int(message.get("status") or 0)
+            if 200 <= status < 400:
+                future.set_result(message)
+                return
+            error = message.get("error") if isinstance(message.get("error"), dict) else {}
+            future.set_exception(RelayRegistryError(
+                str(error.get("code") or f"runtime_http_{status or 503}"),
+                str(error.get("message") or "Runtime request failed"),
+                retryable=bool(error.get("retryable", status >= 500)),
+                source="runtime",
+            ))
             return
         if message.get("ok") is True:
             future.set_result(message.get("result"))

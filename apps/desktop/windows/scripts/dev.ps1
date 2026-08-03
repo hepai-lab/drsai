@@ -514,6 +514,7 @@ if (-not $DrsaiHome) {
 # Desktop development must exercise the same OIDC-only credential boundary as
 # a clean packaged install. Static keys in the host environment or ~/.drsai/.env
 # must not mask missing request-scoped OIDC propagation.
+$env:OPENDRSAI_DESKTOP_DEV = "1"
 $env:OPENDRSAI_OIDC_ONLY = "1"
 Remove-Item Env:HEPAI_API_KEY, Env:OPENAI_API_KEY, Env:OPENAI_ADMIN_KEY -ErrorAction SilentlyContinue
 

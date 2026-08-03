@@ -30,6 +30,22 @@ data class DiscoveredRuntime(
     val lastSeenAt: String? = null,
 )
 
+data class WorkspaceCatalogSync(
+    val runtimeId: RuntimeId,
+    val catalogRevision: String,
+    val syncedAt: String,
+    val items: List<RemoteWorkspaceRef>,
+) {
+    init {
+        require(catalogRevision.isNotBlank()) { "relay_workspace_catalog_revision_invalid" }
+        java.time.Instant.parse(syncedAt)
+        require(items.all { it.runtimeId == runtimeId }) { "relay_workspace_runtime_mismatch" }
+        require(items.map { it.workspaceId }.distinct().size == items.size) {
+            "relay_workspace_duplicate_id"
+        }
+    }
+}
+
 internal const val MINIMUM_WINDOWS_RUNTIME_VERSION = "1.5.3"
 
 internal fun compatibleWindowsRuntimeVersion(version: String): Boolean {
@@ -68,6 +84,8 @@ internal fun runtimeConnectionState(status: String, version: String): RemoteConn
 interface RelayDiscoveryService {
     suspend fun listRuntimes(cursor: String? = null, query: String? = null): Page<DiscoveredRuntime>
     suspend fun listWorkspaces(runtimeId: RuntimeId, cursor: String? = null, query: String? = null): Page<RemoteWorkspaceRef>
+    suspend fun syncWorkspaces(runtimeId: RuntimeId): WorkspaceCatalogSync =
+        throw UnsupportedOperationException("workspace_catalog_sync_not_supported")
     suspend fun associate(accessGrantPayload: String): RuntimeId
     suspend fun revokeAssociation(runtimeId: RuntimeId)
     suspend fun recordPresence(runtimeId: RuntimeId, accessing: Boolean = false)
@@ -111,6 +129,42 @@ class HttpRelayDiscoveryService(
         query: String?,
     ): Page<RemoteWorkspaceRef> = listWorkspacePage(runtimeId, cursor, query)
 
+    override suspend fun syncWorkspaces(runtimeId: RuntimeId): WorkspaceCatalogSync =
+        withContext(Dispatchers.IO) {
+            require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
+            val url = root.newBuilder()
+                .addPathSegments("v1/runtimes/${runtimeId.value}/workspaces/sync")
+                .build()
+            val requestBody = "{}".toRequestBody("application/json".toMediaType())
+            fun execute(token: String) = http.newCall(
+                authorizeRelayRequest(
+                    deviceProof,
+                    Request.Builder().url(url)
+                        .header("Authorization", "Bearer $token")
+                        .post(requestBody)
+                        .build(),
+                    token,
+                )
+            ).execute()
+            val initialToken = accessToken()
+            var response = execute(initialToken)
+            if (response.code == 401) {
+                response.close()
+                val refreshed = refreshAfter(initialToken)
+                if (refreshed.isNullOrBlank()) {
+                    throw RelayHttpException(401, null, "oidc_auth_invalid")
+                }
+                response = execute(refreshed)
+            }
+            response.use {
+                if (!response.isSuccessful) throw relayHttpException(response)
+                decodeWorkspaceCatalogSync(
+                    requestedRuntime = runtimeId,
+                    payload = JSONObject(response.body?.string() ?: error("relay_empty_response")),
+                )
+            }
+        }
+
     suspend fun listWorkspacePage(
         runtimeId: RuntimeId,
         cursor: String? = null,
@@ -123,18 +177,8 @@ class HttpRelayDiscoveryService(
             cursor,
             query,
             listOf("lifecycle" to "active", "limit" to limit.toString()),
-        ) { item ->
-            val returnedRuntime = RuntimeId(item.getString("runtime_id"))
-            require(returnedRuntime == runtimeId) { "relay_workspace_runtime_mismatch" }
-            RemoteWorkspaceRef(
-                returnedRuntime,
-                WorkspaceId(item.getString("workspace_id")),
-                item.getString("display_name"),
-                RemoteResourceLifecycle.fromWire(item.getString("lifecycle")),
-                item.getLong("revision"),
-                item.getString("updated_at"),
-            )
-        }.let { page -> page.copy(items = page.items.activeOnly()) }
+        ) { item -> decodeWorkspace(item, runtimeId) }
+            .let { page -> page.copy(items = page.items.activeOnly()) }
     }
 
     override suspend fun associate(accessGrantPayload: String): RuntimeId = withContext(Dispatchers.IO) {
@@ -170,6 +214,36 @@ class HttpRelayDiscoveryService(
         }
     }
 
+    private fun decodeWorkspaceCatalogSync(
+        requestedRuntime: RuntimeId,
+        payload: JSONObject,
+    ): WorkspaceCatalogSync {
+        val returnedRuntime = RuntimeId(payload.getString("runtime_id"))
+        require(returnedRuntime == requestedRuntime) { "relay_workspace_runtime_mismatch" }
+        val values = payload.getJSONArray("items")
+        val items = List(values.length()) { index ->
+            decodeWorkspace(values.getJSONObject(index), requestedRuntime)
+        }.activeOnly()
+        return WorkspaceCatalogSync(
+            runtimeId = returnedRuntime,
+            catalogRevision = payload.getString("catalog_revision"),
+            syncedAt = payload.getString("synced_at"),
+            items = items,
+        )
+    }
+
+    private fun decodeWorkspace(item: JSONObject, requestedRuntime: RuntimeId): RemoteWorkspaceRef {
+        val returnedRuntime = RuntimeId(item.getString("runtime_id"))
+        require(returnedRuntime == requestedRuntime) { "relay_workspace_runtime_mismatch" }
+        return RemoteWorkspaceRef(
+            returnedRuntime,
+            WorkspaceId(item.getString("workspace_id")),
+            item.getString("display_name"),
+            RemoteResourceLifecycle.fromWire(item.getString("lifecycle")),
+            item.getLong("revision"),
+            item.get("updated_at").toString(),
+        )
+    }
     override suspend fun revokeAssociation(runtimeId: RuntimeId): Unit = withContext(Dispatchers.IO) {
         require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
         val url = root.newBuilder()

@@ -16,11 +16,11 @@ const dict = {
   "topnav.logout":                 { zh: "退出登录",       en: "Sign Out" },
 
   "login.brand.ihep":              { zh: "IHEP CAS",               en: "IHEP Computing Center" },
-  "login.brand.platform":          { zh: "Open Dr. Sai 智能体平台", en: "Open Dr. Sai Agent Platform" },
+  "login.brand.platform":          { zh: "OpenDrSai 智能体平台", en: "OpenDrSai Agent Platform" },
   "login.brand.subtitle":          { zh: "智能体平台",             en: "Agent Platform" },
 
   "login.features.smartChat":      { zh: "智能对话",       en: "Smart Chat" },
-  "login.features.smartChatDesc":  { zh: "与 Open Dr. Sai 进行自然语言交互，快速获取专业解答", en: "Interact with Open Dr. Sai in natural language for quick expert answers" },
+  "login.features.smartChatDesc":  { zh: "与 OpenDrSai 进行自然语言交互，快速获取专业解答", en: "Interact with OpenDrSai in natural language for quick expert answers" },
   "login.features.powerfulAgents": { zh: "强大智能体",     en: "Powerful Agents" },
   "login.features.powerfulAgentsDesc": { zh: "支持多种 AI 智能体，覆盖科研计算全流程", en: "Multiple AI agents covering the full scientific computing workflow" },
   "login.features.secure":         { zh: "安全可靠",       en: "Secure & Reliable" },

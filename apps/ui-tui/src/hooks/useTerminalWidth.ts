@@ -30,7 +30,7 @@ const RESIZE_THROTTLE_MS = 100
 
 export function useTerminalWidth(fallback = 80): number {
   const { stdout } = useStdout()
-  const [width, setWidth] = useState<number>(stdout?.columns ?? fallback)
+  const [width, setWidth] = useState<number>(stdout?.columns || fallback)
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -38,7 +38,7 @@ export function useTerminalWidth(fallback = 80): number {
 
     function commit() {
       pendingTimerRef.current = null
-      const next = stdout.columns ?? fallback
+      const next = stdout.columns || fallback
       // setState is reference-equal-aware for primitives: no re-render
       // unless the value actually changed.
       setWidth(next)
@@ -49,6 +49,10 @@ export function useTerminalWidth(fallback = 80): number {
       if (pendingTimerRef.current) return
       pendingTimerRef.current = setTimeout(commit, RESIZE_THROTTLE_MS)
     }
+
+    // Sync once on mount — stdout.columns may have been 0/undefined at
+    // useState init time and corrected by the time the effect runs.
+    commit()
 
     stdout.on('resize', onResize)
     return () => {

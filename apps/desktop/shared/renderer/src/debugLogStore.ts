@@ -18,6 +18,7 @@ export interface DebugLogEntry {
   activityId?: string;
   activityKind?: StructuredActivityEvent["kind"];
   activityStatus?: StructuredActivityEvent["status"];
+  activity?: StructuredActivityEvent;
   durationMs?: number;
   raw?: string;
   diagnosticId?: string;
@@ -75,6 +76,7 @@ export function appendStructuredActivityLog(activity: StructuredActivityEvent): 
     activityId: activity.id,
     activityKind: activity.kind,
     activityStatus: activity.status,
+    activity,
     ...(activity.kind === "tool" && activity.durationMs !== undefined ? { durationMs: activity.durationMs } : {}),
     raw: serializeBounded(activity),
   };

@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import type { DiagnosticEvent, DiagnosticPackagePreview, DiagnosticSnapshot, DiagnosticSourceContext, DiagnosticSourceContextRequest, DiagnosticSourceLocation, DiagnosticTrace, InteractiveDebugPolicy, InteractiveDebugScope, InteractiveDebugSession, InteractiveDebugTarget, InteractiveDebugVariable, ProductionDiagnosticStatus } from "@shared/diagnostics";
+import type { StructuredActivityEvent } from "@shared/structuredConversation";
 import {
   clearDebugLogs,
   getDebugLogs,
@@ -36,9 +37,10 @@ type DebugView = "overview" | "traces" | "errors" | "causes" | "interactive" | "
 interface DebugPanelProps {
   language: AppLanguage;
   onSelectTurn?: (turnId: string) => void;
+  requestedView?: { view: DebugView; nonce: number } | null;
 }
 
-export function DebugPanel({ language, onSelectTurn }: DebugPanelProps): React.JSX.Element {
+export function DebugPanel({ language, onSelectTurn, requestedView }: DebugPanelProps): React.JSX.Element {
   const logs = useSyncExternalStore(subscribeDebugLogs, getDebugLogs);
   const [visible, setVisible] = useState(logs);
   const [snapshot, setSnapshot] = useState<DiagnosticSnapshot | null>(null);
@@ -56,6 +58,10 @@ export function DebugPanel({ language, onSelectTurn }: DebugPanelProps): React.J
   }, [logs, paused]);
 
   useEffect(() => {
+    if (requestedView) setView(requestedView.view);
+  }, [requestedView]);
+
+  useEffect(() => {
     if (paused) return;
     let cancelled = false;
     void window.openDrSai.getDiagnosticSnapshot({ limit: 1_000 }).then((next) => {
@@ -71,7 +77,7 @@ export function DebugPanel({ language, onSelectTurn }: DebugPanelProps): React.J
       if (view === "activity" && entry.source !== "activity") return false;
       if (view === "raw" && entry.source === "activity") return false;
       if (!normalizedQuery) return true;
-      return [entry.message, entry.raw, entry.activityKind, entry.activityStatus, entry.module, entry.component, entry.operation, entry.traceId]
+      return [entry.message, entry.raw, entry.activityKind, entry.activityStatus, formatActivitySearchText(entry.activity), entry.module, entry.component, entry.operation, entry.traceId]
         .some((value) => value?.toLowerCase().includes(normalizedQuery));
     });
   }, [levels, query, view, visible]);
@@ -372,7 +378,34 @@ function groupActivities(entries: DebugLogEntry[]): ActivityGroupModel[] {
 function ActivityGroup({ group, zh, onSelectTurn }: { group: ActivityGroupModel; zh: boolean; onSelectTurn?: (turnId: string) => void }): React.JSX.Element {
   const hasAttention = group.entries.some((entry) => entry.activityStatus === "running" || entry.activityStatus === "pending" || entry.activityStatus === "error");
   const latest = group.entries.at(-1);
-  return <details className="debug-activity-group" open={hasAttention || undefined}><summary><span>{zh ? "本轮活动" : "Turn activity"}</span><small>{group.entries.length}</small><time>{latest ? new Date(latest.timestamp).toLocaleTimeString() : ""}</time></summary><ol>{group.entries.map((entry) => <li key={entry.id} className={entry.activityStatus || "completed"}><button type="button" disabled={!entry.turnId || !onSelectTurn} onClick={() => entry.turnId && onSelectTurn?.(entry.turnId)}><span className="debug-activity-dot" aria-hidden="true" /><span><strong>{entry.message}</strong><small>{formatActivityKind(entry.activityKind, zh)} · {formatActivityStatus(entry.activityStatus, zh)}{entry.durationMs !== undefined ? ` · ${formatDuration(entry.durationMs)}` : ""}</small></span><time>{new Date(entry.timestamp).toLocaleTimeString()}</time></button></li>)}</ol></details>;
+  return <details className="debug-activity-group" open={hasAttention || undefined}><summary><span>{zh ? "本轮活动" : "Turn activity"}</span><small>{group.entries.length}</small><time>{latest ? new Date(latest.timestamp).toLocaleTimeString() : ""}</time></summary><ol>{group.entries.map((entry) => <ActivityEntry key={entry.id} entry={entry} zh={zh} onSelectTurn={onSelectTurn} />)}</ol></details>;
+}
+
+function ActivityEntry({ entry, zh, onSelectTurn }: { entry: DebugLogEntry; zh: boolean; onSelectTurn?: (turnId: string) => void }): React.JSX.Element {
+  const activity = entry.activity;
+  const details = activity ? getActivityDetails(activity, zh) : [];
+  const payloads = activity ? getActivityPayloads(activity, zh) : [];
+  const missingFailureDetail = entry.activityStatus === "error" && payloads.length === 0
+    && !(activity?.kind === "retry" && activity.errorCode);
+  const copyText = activity ? formatActivityCopyText(activity, zh) : entry.raw || entry.message;
+  return <li className={entry.activityStatus || "completed"}>
+    <details className="debug-activity-entry" open={entry.activityStatus === "error" || undefined}>
+      <summary>
+        <span className="debug-activity-dot" aria-hidden="true" />
+        <span><strong>{entry.message}</strong><small>{formatActivityKind(entry.activityKind, zh)} · {formatActivityStatus(entry.activityStatus, zh)}{entry.durationMs !== undefined ? ` · ${formatDuration(entry.durationMs)}` : ""}</small></span>
+        <time>{new Date(entry.timestamp).toLocaleTimeString()}</time>
+      </summary>
+      <div className="debug-activity-details">
+        {details.length ? <dl>{details.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl> : null}
+        {payloads.map(({ label, value, error }) => <section className={error ? "error" : ""} key={label}><h4>{label}</h4><pre>{formatActivityPayload(value)}</pre></section>)}
+        {missingFailureDetail ? <p className="debug-activity-missing-error"><AlertTriangle size={12} />{zh ? "上游只报告了失败状态，没有提供错误正文。可在“错误”或“原始”页按本轮 ID 查找相邻事件。" : "The upstream reported failure without an error body. Search the Errors or Raw tab for adjacent events with this turn ID."}</p> : null}
+        <footer>
+          <button type="button" onClick={() => void copyTextSafely(copyText)}><Clipboard size={11} />{zh ? "复制详情" : "Copy details"}</button>
+          {entry.turnId && onSelectTurn ? <button type="button" onClick={() => onSelectTurn(entry.turnId!)}><Search size={11} />{zh ? "定位到对话" : "Locate turn"}</button> : null}
+        </footer>
+      </div>
+    </details>
+  </li>;
 }
 
 function RawDebugEntry({ entry, zh }: { entry: DebugLogEntry; zh: boolean }): React.JSX.Element {
@@ -411,6 +444,74 @@ function shortId(value: string): string { return value.length > 18 ? `${value.sl
 function formatDuration(durationMs: number): string { return durationMs < 1000 ? `${durationMs} ms` : `${(durationMs / 1000).toFixed(1)} s`; }
 function formatBytes(bytes: number): string { return bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`; }
 function createAiAnalysisBrief(analysis: DiagnosticSnapshot["rootCause"]["analyses"][number]): string { return [`TRACE: ${analysis.traceId}`, `SUMMARY: ${analysis.summary}`, "FACTS:", ...analysis.facts.map((item) => `- ${item}`), "INFERENCES:", ...analysis.inferences.map((item) => `- (${Math.round(item.confidence * 100)}%) ${item.text}`), "UNCERTAINTIES:", ...analysis.uncertainties.map((item) => `- ${item}`)].join("\n"); }
+
+function getActivityDetails(activity: StructuredActivityEvent, zh: boolean): Array<[string, string]> {
+  const details: Array<[string, string]> = [
+    [zh ? "来源" : "Source", activity.source],
+    [zh ? "活动 ID" : "Activity ID", activity.id],
+    [zh ? "本轮 ID" : "Turn ID", activity.turnId],
+  ];
+  if (activity.kind === "tool") {
+    details.unshift([zh ? "工具" : "Tool", activity.toolName], [zh ? "调用 ID" : "Call ID", activity.callId]);
+    if (activity.durationMs !== undefined) details.push([zh ? "耗时" : "Duration", formatDuration(activity.durationMs)]);
+  } else if (activity.kind === "model") {
+    if (activity.model) details.unshift([zh ? "模型" : "Model", activity.model]);
+    if (activity.requestId) details.push([zh ? "请求 ID" : "Request ID", activity.requestId]);
+    if (activity.usage) details.push([zh ? "用量" : "Usage", formatActivityPayload(activity.usage)]);
+  } else if (activity.kind === "retry") {
+    details.unshift([zh ? "重试" : "Attempt", `${activity.attempt}/${activity.limit}`]);
+    if (activity.delayMs !== undefined) details.push([zh ? "等待" : "Delay", formatDuration(activity.delayMs)]);
+    if (activity.errorCode) details.push([zh ? "错误代码" : "Error code", activity.errorCode]);
+  } else if (activity.kind === "file_change") {
+    details.unshift([zh ? "文件" : "File", activity.path], [zh ? "操作" : "Action", activity.action]);
+  } else if (activity.kind === "subtask") {
+    details.unshift([zh ? "子任务 ID" : "Subtask ID", activity.taskId]);
+    if (activity.agentName) details.push([zh ? "智能体" : "Agent", activity.agentName]);
+  } else {
+    details.unshift([zh ? "级别" : "Level", activity.level]);
+  }
+  return details;
+}
+
+function getActivityPayloads(activity: StructuredActivityEvent, zh: boolean): Array<{ label: string; value: unknown; error: boolean }> {
+  if (activity.kind === "tool") {
+    const payloads: Array<{ label: string; value: unknown; error: boolean }> = [];
+    if (activity.input !== undefined) payloads.push({ label: zh ? "输入" : "Input", value: activity.input, error: false });
+    if (activity.output !== undefined) payloads.push({
+      label: activity.status === "error" ? (zh ? "错误详情" : "Error details") : (zh ? "输出" : "Output"),
+      value: activity.output,
+      error: activity.status === "error",
+    });
+    return payloads;
+  }
+  if (activity.kind === "log" && activity.content) return [{
+    label: activity.status === "error" || activity.level === "error" ? (zh ? "错误详情" : "Error details") : (zh ? "日志内容" : "Log content"),
+    value: activity.content,
+    error: activity.status === "error" || activity.level === "error",
+  }];
+  return [];
+}
+
+function formatActivityPayload(value: unknown): string {
+  const text = typeof value === "string" ? value : (() => {
+    try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+  })();
+  return text.length > 16_000 ? `${text.slice(0, 16_000)}\n… [truncated]` : text;
+}
+
+function formatActivitySearchText(activity: StructuredActivityEvent | undefined): string {
+  if (!activity) return "";
+  return formatActivityPayload(activity).slice(0, 4_000);
+}
+
+function formatActivityCopyText(activity: StructuredActivityEvent, zh: boolean): string {
+  return [
+    `${zh ? "活动" : "Activity"}: ${activity.title}`,
+    `${zh ? "状态" : "Status"}: ${activity.status}`,
+    ...getActivityDetails(activity, zh).map(([label, value]) => `${label}: ${value}`),
+    ...getActivityPayloads(activity, zh).flatMap(({ label, value }) => [`${label}:`, formatActivityPayload(value)]),
+  ].join("\n");
+}
 
 function formatActivityKind(kind: DebugLogEntry["activityKind"], zh: boolean): string {
   const labels = { tool: ["工具", "Tool"], model: ["模型", "Model"], retry: ["重试", "Retry"], file_change: ["文件", "File"], subtask: ["子任务", "Subtask"], log: ["日志", "Log"] } as const;

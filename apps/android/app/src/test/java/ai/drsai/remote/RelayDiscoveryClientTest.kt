@@ -163,6 +163,68 @@ class RelayDiscoveryClientTest {
             .listWorkspaces(RuntimeId("rt-a"))
     }
 
+    @Test fun `manual workspace sync posts once and returns one atomic active revision`() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {"runtime_id":"rt-a","catalog_revision":"9","synced_at":"2026-07-28T04:00:00Z",
+             "items":[
+               {"runtime_id":"rt-a","workspace_id":"active","display_name":"Project",
+                "lifecycle":"active","revision":4,"updated_at":"2026-07-28T03:59:59Z",
+                "absolute_path":"C:\\private","credential":"secret"},
+               {"runtime_id":"rt-a","workspace_id":"archived","display_name":"Old",
+                "lifecycle":"archived","revision":5,"updated_at":"2026-07-28T03:59:58Z"}
+             ]}
+        """.trimIndent()))
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "token" },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        val result = service.syncWorkspaces(RuntimeId("rt-a"))
+
+        assertEquals("9", result.catalogRevision)
+        assertEquals("2026-07-28T04:00:00Z", result.syncedAt)
+        assertEquals(listOf("active"), result.items.map { it.workspaceId.value })
+        assertEquals(false, result.toString().contains("C:\\private"))
+        assertEquals(false, result.toString().contains("secret"))
+        server.takeRequest().apply {
+            assertEquals("POST", method)
+            assertEquals("/v1/runtimes/rt-a/workspaces/sync", path)
+            assertEquals("{}", body.readUtf8())
+            assertEquals("Bearer token", getHeader("Authorization"))
+            assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+        }
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `manual workspace sync keeps structured offline and timeout failures`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(503)
+            .setBody("""{"code":"host_offline","correlation_id":"offline-safe"}"""))
+        val service = HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+
+        val failure = runCatching {
+            service.syncWorkspaces(RuntimeId("rt-a"))
+        }.exceptionOrNull() as RelayHttpException
+
+        assertEquals(503, failure.status)
+        assertEquals("host_offline", failure.errorCode)
+        assertEquals("offline-safe", failure.correlationId)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `manual workspace sync rejects cross runtime projection`() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {"runtime_id":"rt-b","catalog_revision":"1","synced_at":"2026-07-28T04:00:00Z","items":[]}
+        """.trimIndent()))
+        HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+            .syncWorkspaces(RuntimeId("rt-a"))
+    }
+
     @Test fun `401 refreshes and replays exactly once`() = runTest {
         server.enqueue(MockResponse().setResponseCode(401))
         server.enqueue(MockResponse().setResponseCode(200).setBody("{\"items\":[],\"next_cursor\":null}"))

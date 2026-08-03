@@ -293,6 +293,8 @@ if __name__ == "__main__":
                     {"en": "try the latest Dr.Sai features today!", "zh": "尝试最新的Dr.Sai功能今天！"},
                 ],
             },
+            # ── 权限配置 ──
+            # permission="groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, ddf_free; owner: xiongdb@ihep.ac.cn",
             # ── 智能体实体 ──
             agent_factory=create_agent,
             # ── 后端服务配置 ──

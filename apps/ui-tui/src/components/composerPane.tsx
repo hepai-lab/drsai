@@ -504,6 +504,46 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     pasteCounterRef.current = 0
   }
 
+  /**
+   * Path completion callback for the TextInput @-mode.
+   *
+   * Splits the user's prefix into a directory part and a name part,
+   * resolves the directory to an absolute path (using DRSAI_USER_CWD
+   * so relative paths map to the user's real cwd, not the ui-tui
+   * package dir), and calls the ``complete.path`` RPC.
+   *
+   * Returns items whose ``text`` is relative to the resolved directory,
+   * so the TextInput can build the full path as ``dirPart + candidate.text``.
+   */
+  async function completePath(prefix: string): Promise<Array<{
+    text: string; display: string; meta: string
+  }>> {
+    const baseCwd = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
+
+    // Split "src/app" → dir="src/", name="app"
+    // Split "src/"   → dir="src/", name=""
+    // Split "app"    → dir="",     name="app"
+    let dir = ''
+    let name = prefix
+    const lastSlash = prefix.lastIndexOf('/')
+    if (lastSlash >= 0) {
+      dir = prefix.substring(0, lastSlash + 1)
+      name = prefix.substring(lastSlash + 1)
+    }
+
+    // Resolve the directory part to an absolute path
+    const absCwd = dir ? resolveFilePath(dir) : baseCwd
+
+    try {
+      const result = await controller.gw.request<{
+        items: Array<{ text: string; display: string; meta: string }>
+      }>('complete.path', { prefix: name, cwd: absCwd })
+      return result.items || []
+    } catch {
+      return []
+    }
+  }
+
   async function handleSubmit(text: string) {
     // Fix 4.4: Prevent concurrent requests
     if (isProcessingRef.current) {
@@ -591,12 +631,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   Ctrl+C (2x)     - Exit TUI
   Ctrl+D          - Exit TUI
   Tab             - Autocomplete slash commands
+  @ <path>        - Insert file/directory path (Tab/↑↓ navigate)
 
 🖱️  Mouse:
   Scroll wheel    - Native terminal scrollback
   Drag select     - In copy mode (Ctrl+Y) to copy text
 
 💡 Tips:
+  • Type @ to browse files — images (@/path/to.png) are sent as multimodal
   • Completed turns flow into terminal scrollback (scroll natively)
   • Token usage shown in status bar
   • History loads automatically on restart
@@ -665,45 +707,53 @@ For more info: https://github.com/yourusername/drsai
     }
 
     // Detect slash command
+    // Only treat input as a slash command if the first token matches a
+    // known command from the catalog. This prevents pasted paths like
+    // /tmp/file.txt from being misinterpreted as slash commands.
     if (trimmed.startsWith('/')) {
       const parts = trimmed.slice(1).split(/\s+/)
       const command = parts[0]
       const args = parts.slice(1).join(' ')
 
-      // Special case: /quit should exit
-      if (command === 'quit' || command === 'exit' || command === 'q') {
-        controller.gw.kill()
-        exit()
-        return
-      }
+      // Check if this is a known command. If completions are loaded and
+      // the command is not in the catalog, treat the input as plain text.
+      if (completions.length > 0 && !completions.includes('/' + command.toLowerCase())) {
+        // Not a known slash command — fall through to normal message submission
+      } else {
+        // Special case: /quit should exit
+        if (command === 'quit' || command === 'exit' || command === 'q') {
+          controller.gw.kill()
+          exit()
+          return
+        }
 
-      // /find without args: open empty smart search
-      if (command === 'find' && !args) {
-        setSmartSearch({ query: '', results: [] })
-        return
-      }
+        // /find without args: open empty smart search
+        if (command === 'find' && !args) {
+          setSmartSearch({ query: '', results: [] })
+          return
+        }
 
-      // Interactive pickers (when called with no args)
-      if ((command === 'list' || command === 'ls' || command === 'switch') && !args) {
-        await openSessionPicker()
-        return
-      }
-      if ((command === 'model' || command === 'm') && !args) {
-        await openModelPicker()
-        return
-      }
+        // Interactive pickers (when called with no args)
+        if ((command === 'list' || command === 'ls' || command === 'switch') && !args) {
+          await openSessionPicker()
+          return
+        }
+        if ((command === 'model' || command === 'm') && !args) {
+          await openModelPicker()
+          return
+        }
 
-      // Execute via slash.exec RPC
-      try {
-        const result = await controller.gw.request('slash.exec', {
-          session_id: sessionId,
-          command,
-          args,
-        }) as { output?: string; ui_action?: string; name?: string; target?: string; n?: number }
-        const output = result.output || '(no output)'
+        // Execute via slash.exec RPC
+        try {
+          const result = await controller.gw.request('slash.exec', {
+            session_id: sessionId,
+            command,
+            args,
+          }) as { output?: string; ui_action?: string; name?: string; target?: string; n?: number }
+          const output = result.output || '(no output)'
 
-        // Handle UI actions returned by handlers
-        switch (result.ui_action) {
+          // Handle UI actions returned by handlers
+          switch (result.ui_action) {
           case 'session.new': {
             try {
               const created = await controller.gw.request<{
@@ -816,11 +866,12 @@ For more info: https://github.com/yourusername/drsai
 
         // Keep informational slash-command output visible until the user dismisses it.
         showSlashOutput(output)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        showSlashOutput(`Error: ${msg}`, 5000)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          showSlashOutput(`Error: ${msg}`, 5000)
+        }
+        return
       }
-      return
     }
 
     // Regular prompt
@@ -1115,12 +1166,13 @@ For more info: https://github.com/yourusername/drsai
         isActive={activeOverlay === null}
         placeholder={isStreaming
           ? '⏳ streaming… (Ctrl+C to cancel)'
-          : 'Send a message · Ctrl+O newline · / commands · Tab complete · Ctrl+P/N history'}
+          : 'Send a message · @ files · / commands · Tab complete · Ctrl+O newline'}
         onSubmit={handleSubmit}
         completions={completions}
         history={historyRef.current}
         onHistoryChange={savePromptHistory}
         onPaste={maybeCollapsePaste}
+        onCompletePath={completePath}
       />
     </Box>
   )

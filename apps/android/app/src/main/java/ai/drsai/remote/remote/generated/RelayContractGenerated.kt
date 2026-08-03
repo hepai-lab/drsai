@@ -33,7 +33,8 @@ object RelayContractGenerated {
         "session_event_stream" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream",
         "session_list" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
         "session_read" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
-        "workspace_list" to "GET /v1/runtimes/{runtime_id}/workspaces"
+        "workspace_list" to "GET /v1/runtimes/{runtime_id}/workspaces",
+        "workspace_sync" to "POST /v1/runtimes/{runtime_id}/workspaces/sync"
     )
     val CAPABILITIES: Set<String> = setOf(
         "approval.decide",
@@ -57,7 +58,8 @@ object RelayContractGenerated {
         "session.create",
         "session.list",
         "session.read",
-        "workspace.list"
+        "workspace.list",
+        "workspace.sync"
     )
     val CAPABILITY_PROFILES: Map<String, Set<String>> = mapOf(
         "device-association/1" to setOf("association.device-bound", "association.list", "association.revoke"),

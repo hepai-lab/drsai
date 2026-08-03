@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.local/cores/protocol/oaep/1.0/oaep.schema.json",
+  "title": "OpenDrSai Agent Event Protocol",
+  "version": "1.0",
+  "description": "OAEP v1 Session/Run/Item resources and internal event envelopes. A Delta is never a top-level message; it exists only as event.item.delta data.delta.",
+  "oneOf": [
+    { "$ref": "#/$defs/session" },
+    { "$ref": "#/$defs/run" },
+    { "$ref": "#/$defs/item" },
+    { "$ref": "#/$defs/event" }
+  ],
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["backend"],
+      "properties": {
+        "backend": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "backend_item_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "backend_event_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "runtime_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object" }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "workspace_id", "status", "created_at", "updated_at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "maxLength": 1000 },
+        "status": { "enum": ["active", "archived", "deleted"] },
+        "backend": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "session_id", "status", "created_at", "updated_at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "parent_run_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "status": { "enum": ["queued", "running", "waiting", "completed", "failed", "cancelled"] },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "completed_at": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }
+      }
+    },
+    "itemStatus": { "enum": ["pending", "running", "waiting", "completed", "failed", "cancelled"] },
+    "itemType": {
+      "enum": [
+        "message",
+        "reasoning",
+        "plan",
+        "command_execution",
+        "file_change",
+        "tool_call",
+        "artifact",
+        "interaction",
+        "subtask",
+        "notice"
+      ]
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "session_id", "run_id", "type", "status", "sequence", "created_at", "updated_at", "source", "content"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "run_id": { "$ref": "#/$defs/id" },
+        "type": { "$ref": "#/$defs/itemType" },
+        "status": { "$ref": "#/$defs/itemStatus" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "source": { "$ref": "#/$defs/source" },
+        "content": { "type": "object" }
+      }
+    },
+    "eventType": {
+      "enum": [
+        "event.session.created",
+        "event.session.updated",
+        "event.session.archived",
+        "event.session.unarchived",
+        "event.session.deleted",
+        "event.run.created",
+        "event.run.started",
+        "event.run.waiting",
+        "event.run.resumed",
+        "event.run.completed",
+        "event.run.failed",
+        "event.run.cancelled",
+        "event.item.created",
+        "event.item.started",
+        "event.item.delta",
+        "event.item.updated",
+        "event.item.completed",
+        "event.item.failed",
+        "event.item.cancelled"
+      ]
+    },
+    "deltaKind": {
+      "enum": [
+        "message.text.append",
+        "reasoning.segment.added",
+        "reasoning.text.append",
+        "plan.text.append",
+        "command.output.append",
+        "tool.output.append",
+        "subtask.summary.append"
+      ]
+    },
+    "delta": {
+      "type": "object",
+      "description": "An Item increment carried only inside event.item.delta data.delta. It has no independent identity, sequence, timestamp, cursor, or transport lifecycle.",
+      "additionalProperties": true,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/deltaKind" },
+        "text": { "type": "string" },
+        "segment_id": { "type": "string", "minLength": 1 },
+        "stream": { "enum": ["stdout", "stderr", "combined"] }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["version", "event_id", "session_id", "sequence", "type", "timestamp", "dedupe_key", "source", "data"],
+      "properties": {
+        "version": { "const": "1.0" },
+        "event_id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "run_id": { "$ref": "#/$defs/id" },
+        "item_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "type": { "$ref": "#/$defs/eventType" },
+        "timestamp": { "$ref": "#/$defs/timestamp" },
+        "dedupe_key": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "source": { "$ref": "#/$defs/source" },
+        "data": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "item": { "$ref": "#/$defs/item" },
+            "delta": { "$ref": "#/$defs/delta" },
+            "error": { "$ref": "#/$defs/error" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "pattern": "^event\\.item\\." } }, "required": ["type"] },
+          "then": { "required": ["run_id", "item_id"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "event.item.delta" } }, "required": ["type"] },
+          "then": { "properties": { "data": { "required": ["delta"] } } },
+          "else": {
+            "properties": {
+              "data": {
+                "not": { "required": ["delta"] }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "enum": ["event.item.completed", "event.item.failed"] } }, "required": ["type"] },
+          "then": { "properties": { "data": { "required": ["item"] } } }
+        }
+      ]
+    }
+  }
+}

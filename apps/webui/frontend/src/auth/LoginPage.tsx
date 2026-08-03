@@ -277,7 +277,7 @@ const LoginPage: React.FC = () => {
                         <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-cyan-600 rounded-full flex items-center justify-center mr-2.5 shadow shadow-blue-500/30">
                             <span className="text-white font-bold text-xs">AI</span>
                         </div>
-                        <div className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-transparent dark:bg-gradient-to-r dark:from-blue-400 dark:to-cyan-400 dark:bg-clip-text">Open Dr. Sai</div>
+                        <div className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-transparent dark:bg-gradient-to-r dark:from-blue-400 dark:to-cyan-400 dark:bg-clip-text">OpenDrSai</div>
                         <span className="text-gray-400 dark:text-slate-500 text-sm sm:text-base ml-2 font-normal">
                             {t("login.brand.subtitle")}
                         </span>
