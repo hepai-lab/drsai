@@ -15,12 +15,13 @@ import {
   ListTree,
   Network,
   RotateCcw,
+  ScrollText,
   Search,
   ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
-import type { DiagnosticEvent, DiagnosticPackagePreview, DiagnosticSnapshot, DiagnosticSourceContext, DiagnosticSourceContextRequest, DiagnosticSourceLocation, DiagnosticTrace, InteractiveDebugPolicy, InteractiveDebugScope, InteractiveDebugSession, InteractiveDebugTarget, InteractiveDebugVariable, ProductionDiagnosticStatus } from "@shared/diagnostics";
+import type { AgentRunDiagnosticState, DiagnosticEvent, DiagnosticIncident, DiagnosticPackagePreview, DiagnosticSnapshot, DiagnosticSourceContext, DiagnosticSourceContextRequest, DiagnosticSourceLocation, DiagnosticTrace, InteractiveDebugPolicy, InteractiveDebugScope, InteractiveDebugSession, InteractiveDebugTarget, InteractiveDebugVariable, ProductionDiagnosticStatus } from "@shared/diagnostics";
 import type { StructuredActivityEvent } from "@shared/structuredConversation";
 import {
   clearDebugLogs,
@@ -32,22 +33,26 @@ import {
 import type { AppLanguage } from "../navigation";
 import { copyTextSafely } from "../clipboard";
 
-type DebugView = "overview" | "traces" | "errors" | "causes" | "interactive" | "production" | "activity" | "raw";
+type DebugView = "agent" | "app-errors" | "runtime" | "overview" | "traces" | "errors" | "causes" | "interactive" | "production" | "activity" | "raw";
+type RuntimeLogScope = "current-agent" | "all-agent" | "app" | "all";
 
 interface DebugPanelProps {
   language: AppLanguage;
   onSelectTurn?: (turnId: string) => void;
+  onPrepareRerun?: (runId: string) => boolean;
   requestedView?: { view: DebugView; nonce: number } | null;
 }
 
-export function DebugPanel({ language, onSelectTurn, requestedView }: DebugPanelProps): React.JSX.Element {
+export function DebugPanel({ language, onSelectTurn, onPrepareRerun, requestedView }: DebugPanelProps): React.JSX.Element {
   const logs = useSyncExternalStore(subscribeDebugLogs, getDebugLogs);
   const [visible, setVisible] = useState(logs);
   const [snapshot, setSnapshot] = useState<DiagnosticSnapshot | null>(null);
   const [paused, setPaused] = useState(false);
-  const [view, setView] = useState<DebugView>("overview");
+  const [view, setView] = useState<DebugView>("agent");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [levels, setLevels] = useState<Set<DebugLogLevel>>(new Set(["log", "info", "warn", "error"]));
+  const [runtimeScope, setRuntimeScope] = useState<RuntimeLogScope>("current-agent");
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [sourceRequest, setSourceRequest] = useState<DiagnosticSourceContextRequest | null>(null);
   const outputRef = useRef<HTMLDivElement | null>(null);
@@ -58,7 +63,11 @@ export function DebugPanel({ language, onSelectTurn, requestedView }: DebugPanel
   }, [logs, paused]);
 
   useEffect(() => {
-    if (requestedView) setView(requestedView.view);
+    if (!requestedView) return;
+    setView(requestedView.view);
+    if (["overview", "traces", "errors", "causes", "interactive", "production", "activity", "raw"].includes(requestedView.view)) {
+      setAdvancedOpen(true);
+    }
   }, [requestedView]);
 
   useEffect(() => {
@@ -70,25 +79,27 @@ export function DebugPanel({ language, onSelectTurn, requestedView }: DebugPanel
     return () => { cancelled = true; };
   }, [logs.length, paused]);
 
+  const activeRun = snapshot?.agentRuns?.find((item) => !["completed", "failed", "cancelled"].includes(item.status)) ?? snapshot?.agentRuns?.[0];
   const filtered = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return visible.filter((entry) => {
       if (!levels.has(entry.level)) return false;
       if (view === "activity" && entry.source !== "activity") return false;
+      if (view === "runtime" && !matchesRuntimeScope(entry, runtimeScope, activeRun)) return false;
       if (view === "raw" && entry.source === "activity") return false;
       if (!normalizedQuery) return true;
       return [entry.message, entry.raw, entry.activityKind, entry.activityStatus, formatActivitySearchText(entry.activity), entry.module, entry.component, entry.operation, entry.traceId]
         .some((value) => value?.toLowerCase().includes(normalizedQuery));
     });
-  }, [levels, query, view, visible]);
+  }, [activeRun, levels, query, runtimeScope, view, visible]);
 
   const diagnosticEvents = useMemo(() => filterDiagnosticEvents(snapshot?.events ?? [], query), [query, snapshot?.events]);
   const traces = useMemo(() => filterTraces(snapshot?.traces ?? [], diagnosticEvents, query), [diagnosticEvents, query, snapshot?.traces]);
   const errors = diagnosticEvents.filter((event) => event.status === "failed" || event.level === "error").reverse();
-  const activityGroups = useMemo(() => groupActivities(filtered), [filtered]);
+  const activityGroups = useMemo(() => groupActivities(visible.filter((entry) => entry.source === "activity")), [visible]);
 
   useEffect(() => {
-    if (view === "raw") outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight });
+    if (view === "raw" || view === "runtime") outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight });
   }, [filtered.length, view]);
 
   function toggleLevel(level: DebugLogLevel): void {
@@ -120,9 +131,14 @@ export function DebugPanel({ language, onSelectTurn, requestedView }: DebugPanel
   }
 
   const tabs: Array<{ id: DebugView; icon: typeof Activity; zh: string; en: string }> = [
+    { id: "agent", icon: Activity, zh: "Agent", en: "Agent" },
+    { id: "app-errors", icon: AlertTriangle, zh: "App 错误", en: "App Errors" },
+    { id: "runtime", icon: ScrollText, zh: "运行日志", en: "Runtime Log" },
+  ];
+  const advancedTabs: Array<{ id: DebugView; icon: typeof Activity; zh: string; en: string }> = [
     { id: "overview", icon: Activity, zh: "概览", en: "Overview" },
     { id: "traces", icon: Network, zh: "链路", en: "Traces" },
-    { id: "errors", icon: AlertTriangle, zh: "错误", en: "Errors" },
+    { id: "errors", icon: AlertTriangle, zh: "全部错误", en: "All Errors" },
     { id: "causes", icon: BrainCircuit, zh: "根因", en: "Causes" },
     { id: "interactive", icon: Bug, zh: "调试", en: "Debug" },
     { id: "production", icon: ShieldCheck, zh: "治理", en: "Governance" },
@@ -148,14 +164,21 @@ export function DebugPanel({ language, onSelectTurn, requestedView }: DebugPanel
           const Icon = tab.icon;
           return <button type="button" key={tab.id} role="tab" aria-selected={view === tab.id} className={view === tab.id ? "active" : ""} onClick={() => setView(tab.id)}><Icon size={13} aria-hidden="true" /><span>{zh ? tab.zh : tab.en}</span></button>;
         })}
+        <button type="button" className={advancedOpen ? "advanced active" : "advanced"} aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((current) => !current)}><Braces size={13} /><span>{zh ? "高级" : "Advanced"}</span></button>
       </div>
+      {advancedOpen && <div className="debug-advanced-tabs" role="tablist" aria-label={zh ? "高级诊断视图" : "Advanced diagnostic views"}>{advancedTabs.map((tab) => { const Icon = tab.icon; return <button type="button" key={tab.id} role="tab" aria-selected={view === tab.id} className={view === tab.id ? "active" : ""} onClick={() => setView(tab.id)}><Icon size={12} /><span>{zh ? tab.zh : tab.en}</span></button>; })}</div>}
 
       <div className="debug-filter-bar">
         <label><Search size={14} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={zh ? "筛选模块、操作、链路或消息" : "Filter module, operation, trace, or message"} /></label>
-        {(view === "activity" || view === "raw") && <div>{(["log", "info", "warn", "error"] as DebugLogLevel[]).map((level) => <button type="button" key={level} className={levels.has(level) ? `active ${level}` : ""} onClick={() => toggleLevel(level)}>{level}</button>)}</div>}
+        {view === "runtime" && <div className="runtime-log-scopes">{([
+          ["current-agent", zh ? "当前任务" : "Current"], ["all-agent", zh ? "全部 Agent" : "All Agents"], ["app", "App"], ["all", zh ? "全部" : "All"],
+        ] as Array<[RuntimeLogScope, string]>).map(([scope, label]) => <button type="button" key={scope} className={runtimeScope === scope ? "active" : ""} onClick={() => setRuntimeScope(scope)}>{label}</button>)}</div>}
+        {(view === "activity" || view === "runtime" || view === "raw") && <div>{(["log", "info", "warn", "error"] as DebugLogLevel[]).map((level) => <button type="button" key={level} className={levels.has(level) ? `active ${level}` : ""} onClick={() => toggleLevel(level)}>{level}</button>)}</div>}
       </div>
 
       <div className={`debug-output ${view}`} ref={outputRef} role="log">
+        {view === "agent" && <AgentDiagnosticView snapshot={snapshot} activityGroups={activityGroups} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} onSelectTurn={onSelectTurn} onPrepareRerun={onPrepareRerun} onMessage={setActionMessage} />}
+        {view === "app-errors" && <AppErrorView snapshot={snapshot} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} />}
         {view === "overview" && <DiagnosticOverview snapshot={snapshot} traces={traces} zh={zh} />}
         {view === "traces" && (traces.length ? traces.map((trace) => <TraceCard key={trace.traceId} trace={trace} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} />) : <DebugEmpty zh={zh} />)}
         {view === "errors" && (errors.length ? errors.map((event) => <DiagnosticErrorCard key={event.id} event={event} zh={zh} onOpenSource={(source) => setSourceRequest({ source, workspaceId: event.workspaceId })} />) : <DebugEmpty zh={zh} />)}
@@ -163,6 +186,7 @@ export function DebugPanel({ language, onSelectTurn, requestedView }: DebugPanel
         {view === "interactive" && <InteractiveDebugWorkbench zh={zh} onOpenSource={(source) => setSourceRequest({ source })} onMessage={setActionMessage} />}
         {view === "production" && <ProductionDiagnosticsWorkbench zh={zh} onMessage={setActionMessage} />}
         {view === "activity" && (activityGroups.length ? activityGroups.map((group) => <ActivityGroup key={group.turnId} group={group} zh={zh} onSelectTurn={onSelectTurn} />) : <DebugEmpty zh={zh} />)}
+        {view === "runtime" && (filtered.length ? filtered.map((entry) => <RuntimeLogEntry key={entry.id} entry={entry} zh={zh} />) : <DebugEmpty zh={zh} />)}
         {view === "raw" && (filtered.length ? filtered.map((entry) => <RawDebugEntry key={entry.id} entry={entry} zh={zh} />) : <DebugEmpty zh={zh} />)}
       </div>
       {sourceRequest && <SourceInspector request={sourceRequest} zh={zh} onClose={() => setSourceRequest(null)} onMessage={setActionMessage} />}
@@ -413,6 +437,119 @@ function RawDebugEntry({ entry, zh }: { entry: DebugLogEntry; zh: boolean }): Re
   return <article className={`debug-entry ${entry.level}`}><time>{new Date(entry.timestamp).toLocaleTimeString()}</time><span>{entry.module || entry.source}</span><pre>{body}</pre><button type="button" className="debug-entry-copy" onClick={() => void copyTextSafely(body)} title={zh ? "复制" : "Copy"} aria-label={zh ? "复制此诊断记录" : "Copy diagnostic record"}><Clipboard size={14} /></button></article>;
 }
 
+function AgentDiagnosticView({ snapshot, activityGroups, zh, onOpenSource, onSelectTurn, onPrepareRerun, onMessage }: {
+  snapshot: DiagnosticSnapshot | null;
+  activityGroups: ActivityGroupModel[];
+  zh: boolean;
+  onOpenSource: (source: DiagnosticSourceLocation, workspaceId?: string) => void;
+  onSelectTurn?: (turnId: string) => void;
+  onPrepareRerun?: (runId: string) => boolean;
+  onMessage?: (message: string) => void;
+}): React.JSX.Element {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const runs = snapshot?.agentRuns ?? [];
+  const run = runs.find((item) => !["completed", "failed", "cancelled"].includes(item.status)) ?? runs[0];
+  if (!run) return <div className="agent-diagnostic-empty"><Activity size={22} /><strong>{zh ? "当前没有 Agent 运行记录" : "No Agent run is available"}</strong><span>{zh ? "启动任务后，这里会显示阶段、动作、耗时和错误。" : "Start a task to see its phase, action, timing, and failures."}</span></div>;
+  const terminal = ["completed", "failed", "cancelled"].includes(run.status);
+  const elapsed = terminal ? run.elapsedMs : Math.max(run.elapsedMs, now - Date.parse(run.startedAt));
+  const phaseElapsed = terminal ? run.phaseElapsedMs : Math.max(run.phaseElapsedMs, now - Date.parse(run.phaseStartedAt));
+  const incident = (snapshot?.incidents ?? []).find((item) => item.domain === "agent" && item.traceId === run.traceId);
+  const milestones = run.recentEvents.filter((event) => event.visibility === "milestone" || event.status === "failed");
+  const activityGroup = activityGroups.find((group) => group.turnId === run.runId || group.turnId === run.traceId);
+  return <div className="agent-diagnostic-view">
+    <section className={`agent-current-state ${run.status}`}>
+      <header><span className="diagnostic-state-dot" /><span><strong>{formatAgentStatus(run, zh)}</strong><small>{zh ? "当前 Agent 状态" : "Current Agent state"}</small></span><time>{formatLongDuration(elapsed)}</time></header>
+      <div className="agent-current-action"><b>{formatAgentPhase(run.phase, zh)}</b><span>{run.action}</span></div>
+      <dl>
+        <div><dt>Backend</dt><dd>{run.backendId || "—"}</dd></div>
+        <div><dt>{zh ? "模型" : "Model"}</dt><dd>{run.model || "—"}</dd></div>
+        <div><dt>{zh ? "连接" : "Connection"}</dt><dd>{formatConnectionState(run.connectionState, zh)}</dd></div>
+        <div><dt>{zh ? "阶段耗时" : "Phase time"}</dt><dd>{formatLongDuration(phaseElapsed)}</dd></div>
+        {run.currentTool && <div><dt>{zh ? "当前工具" : "Current tool"}</dt><dd>{run.currentTool}</dd></div>}
+        <div><dt>Run</dt><dd title={run.runId || run.traceId}>{shortId(run.runId || run.traceId)}</dd></div>
+      </dl>
+    </section>
+    {incident && <section className="agent-failure-section"><h3>{zh ? "运行失败" : "Run failure"}</h3><IncidentCard incident={incident} zh={zh} onOpenSource={onOpenSource} /></section>}
+    {run.status === "failed" && onPrepareRerun && <div className="agent-retry-actions"><button type="button" onClick={() => {
+      const prepared = onPrepareRerun(run.runId || run.traceId);
+      onMessage?.(prepared ? (zh ? "已将原任务放回输入框，请确认后重新运行。" : "The original task is ready in the composer for confirmation.") : (zh ? "未找到本轮的原始用户输入。" : "The original user input could not be found."));
+    }}><RotateCcw size={11} />{zh ? "准备重新运行" : "Prepare rerun"}</button></div>}
+    <section className="agent-milestone-section"><h3>{zh ? "关键时间线" : "Milestone timeline"}</h3>{milestones.length ? <ol>{milestones.map((event) => <li key={event.id} className={event.status}><time>{new Date(event.timestamp).toLocaleTimeString()}</time><span className="diagnostic-state-dot" /><span><strong>{formatAgentPhase(event.agentPhase ?? "preparing", zh)}</strong><small>{event.message}</small></span>{event.durationMs !== undefined && <em>{formatDuration(event.durationMs)}</em>}</li>)}</ol> : <p>{zh ? "等待第一个关键事件。" : "Waiting for the first milestone."}</p>}</section>
+    {activityGroup && <section className="agent-tool-activity"><h3>{zh ? "工具与活动" : "Tools and activity"}</h3><ActivityGroup group={activityGroup} zh={zh} onSelectTurn={onSelectTurn} /></section>}
+  </div>;
+}
+
+function AppErrorView({ snapshot, zh, onOpenSource }: { snapshot: DiagnosticSnapshot | null; zh: boolean; onOpenSource: (source: DiagnosticSourceLocation, workspaceId?: string) => void }): React.JSX.Element {
+  const incidents = (snapshot?.incidents ?? []).filter((incident) => incident.domain === "app");
+  return <div className="app-error-view">
+    <header><span><strong>{incidents.length}</strong><small>{zh ? "类 App 错误" : "App error groups"}</small></span><p>{zh ? "这里只显示 Desktop、Runtime、网络、存储和权限等应用自身问题。" : "Only Desktop, Runtime, network, storage, and permission failures appear here."}</p></header>
+    {incidents.length ? incidents.map((incident) => <IncidentCard key={incident.id} incident={incident} zh={zh} onOpenSource={onOpenSource} />) : <div className="app-error-empty"><ShieldCheck size={22} /><strong>{zh ? "未发现 App 错误" : "No App errors detected"}</strong></div>}
+  </div>;
+}
+
+function IncidentCard({ incident, zh, onOpenSource }: { incident: DiagnosticIncident; zh: boolean; onOpenSource: (source: DiagnosticSourceLocation, workspaceId?: string) => void }): React.JSX.Element {
+  const copyText = JSON.stringify(incident, null, 2);
+  return <details className={`diagnostic-incident-card ${incident.severity}`} open={incident.domain === "agent" || undefined}>
+    <summary><AlertTriangle size={14} /><span><strong>{incident.title}</strong><small>{incident.component} · {incident.operation}{incident.count > 1 ? ` · ${incident.count}×` : ""}</small></span><time>{new Date(incident.lastSeenAt).toLocaleTimeString()}</time></summary>
+    <div>
+      <p>{incident.message}</p>
+      <dl><div><dt>{zh ? "影响" : "Impact"}</dt><dd>{incident.impact}</dd></div>{incident.errorCode && <div><dt>{zh ? "错误码" : "Error code"}</dt><dd>{incident.errorCode}</dd></div>}{incident.agentPhase && <div><dt>{zh ? "阶段" : "Phase"}</dt><dd>{formatAgentPhase(incident.agentPhase, zh)}</dd></div>}<div><dt>{zh ? "首次" : "First seen"}</dt><dd>{new Date(incident.firstSeenAt).toLocaleString()}</dd></div></dl>
+      {incident.source?.file && <button type="button" className="diagnostic-primary-source" onClick={() => onOpenSource(incident.source!, incident.contextBefore.at(-1)?.workspaceId)}><FileCode2 size={12} />{zh ? "查看代码位置" : "View source"}: <code>{formatLocation(incident.source)}</code></button>}
+      {incident.stack.length > 0 && <details><summary>{zh ? "调用栈" : "Stack"}</summary><pre>{incident.stack.map((frame) => frame.raw).join("\n")}</pre></details>}
+      <details><summary>{zh ? "错误前后事件" : "Adjacent events"}</summary><ol>{[...incident.contextBefore, ...incident.contextAfter].map((event) => <li key={event.id}><time>{new Date(event.timestamp).toLocaleTimeString()}</time><span>{event.message}</span></li>)}</ol></details>
+      <ul>{incident.suggestedActions.map((action) => <li key={action}>{action}</li>)}</ul>
+      <button type="button" onClick={() => void copyTextSafely(copyText)}><Clipboard size={11} />{zh ? "复制完整诊断" : "Copy full diagnostic"}</button>
+    </div>
+  </details>;
+}
+
+function RuntimeLogEntry({ entry, zh }: { entry: DebugLogEntry; zh: boolean }): React.JSX.Element {
+  const runtime = entry.runtime;
+  if (!runtime) return <RawDebugEntry entry={entry} zh={zh} />;
+  const body = entry.raw || entry.message;
+  const context = runtime.runId || runtime.sessionId;
+  const logLine = `[${formatRuntimeLogTimestamp(entry.timestamp)}] [${runtime.protocol}] [${runtime.phase}] [${context}] [${runtime.level.toUpperCase()}]: ${runtime.message}`;
+  return <details className={`debug-runtime-entry ${entry.level}`} open={entry.level === "error" || entry.level === "warn" || undefined}>
+    <summary title={logLine}>
+      <time>[{formatRuntimeLogTime(entry.timestamp)}]</time>
+      <span className="protocol">[{runtime.protocol}]</span>
+      <span className="phase">[{runtime.phase}]</span>
+      <span className="context">[{context}]</span>
+      <span className={`level ${entry.level}`}>[{runtime.level.toUpperCase()}]:</span>
+      <strong>{runtime.message}{entry.coalescedCount && entry.coalescedCount > 1 ? ` ×${entry.coalescedCount}` : ""}</strong>
+    </summary>
+    <div className="debug-runtime-details">
+      <dl>
+        <div><dt>{zh ? "操作" : "Operation"}</dt><dd>{runtime.operation}</dd></div>
+        <div><dt>{zh ? "会话" : "Session"}</dt><dd>{runtime.sessionId}</dd></div>
+        {runtime.eventType && <div><dt>{zh ? "事件" : "Event"}</dt><dd>{runtime.eventType}</dd></div>}
+        {runtime.sequence !== undefined && <div><dt>{zh ? "序号" : "Sequence"}</dt><dd>{runtime.sequence}</dd></div>}
+        {runtime.runId && <div><dt>{zh ? "运行" : "Run"}</dt><dd>{runtime.runId}</dd></div>}
+        {runtime.itemId && <div><dt>{zh ? "项目" : "Item"}</dt><dd>{runtime.itemId}</dd></div>}
+        {runtime.source && <div><dt>{zh ? "来源" : "Source"}</dt><dd>{runtime.source}</dd></div>}
+      </dl>
+      {runtime.details && Object.keys(runtime.details).length > 0 ? <section><h4>{zh ? "协议数据" : "Protocol data"}</h4><pre>{JSON.stringify(runtime.details, null, 2)}</pre></section> : null}
+      <button type="button" onClick={() => void copyTextSafely(body)}><Clipboard size={12} />{zh ? "复制完整日志" : "Copy full log"}</button>
+    </div>
+  </details>;
+}
+
+function formatRuntimeLogTimestamp(timestamp: number): string {
+  const date = new Date(timestamp);
+  const two = (value: number): string => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())},${String(date.getMilliseconds()).padStart(3, "0")}`;
+}
+
+function formatRuntimeLogTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const two = (value: number): string => String(value).padStart(2, "0");
+  return `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())},${String(date.getMilliseconds()).padStart(3, "0")}`;
+}
+
 function DebugEmpty({ zh }: { zh: boolean }): React.JSX.Element { return <div className="debug-empty">{zh ? "暂无匹配记录" : "No matching records"}</div>; }
 
 function filterDiagnosticEvents(events: DiagnosticEvent[], query: string): DiagnosticEvent[] {
@@ -442,6 +579,39 @@ function formatSource(event: DiagnosticEvent): string { const source = event.sou
 function formatLocation(source: DiagnosticSourceLocation): string { return source.file ? `${source.file}${source.line ? `:${source.line}${source.column ? `:${source.column}` : ""}` : ""}` : "Unknown source"; }
 function shortId(value: string): string { return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value; }
 function formatDuration(durationMs: number): string { return durationMs < 1000 ? `${durationMs} ms` : `${(durationMs / 1000).toFixed(1)} s`; }
+function formatLongDuration(durationMs: number): string { const seconds = Math.max(0, Math.floor(durationMs / 1000)); return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`; }
+function formatAgentStatus(run: AgentRunDiagnosticState, zh: boolean): string {
+  const labels = zh
+    ? { started: "启动中", running: "运行中", waiting: "等待中", completed: "已完成", failed: "失败", cancelled: "已取消" }
+    : { started: "Starting", running: "Running", waiting: "Waiting", completed: "Completed", failed: "Failed", cancelled: "Cancelled" };
+  return labels[run.status];
+}
+
+function matchesRuntimeScope(entry: DebugLogEntry, scope: RuntimeLogScope, activeRun?: AgentRunDiagnosticState): boolean {
+  if (scope === "all") return true;
+  const isAgent = entry.diagnosticDomain === "agent" || entry.source === "activity" || entry.source === "runtime" || entry.source === "protocol";
+  if (scope === "all-agent") return isAgent;
+  if (scope === "app") return entry.diagnosticDomain === "app" || ["console", "window", "promise"].includes(entry.source);
+  if (!activeRun) return entry.source === "runtime";
+  const ids = new Set([activeRun.runId, activeRun.traceId, activeRun.sessionId].filter(Boolean));
+  return isAgent && [entry.turnId, entry.traceId, entry.runtime?.runId, entry.runtime?.sessionId].some((id) => id && ids.has(id));
+}
+function formatAgentPhase(phase: AgentRunDiagnosticState["phase"], zh: boolean): string {
+  const labels = zh ? {
+    preparing: "准备任务", connecting: "连接 Runtime", waiting_model: "等待模型", reasoning: "推理中", calling_tool: "调用工具",
+    waiting_approval: "等待确认", responding: "生成结果", completed: "已完成", failed: "运行失败", cancelled: "已取消",
+  } : {
+    preparing: "Preparing", connecting: "Connecting", waiting_model: "Waiting for model", reasoning: "Reasoning", calling_tool: "Calling tool",
+    waiting_approval: "Waiting for approval", responding: "Responding", completed: "Completed", failed: "Failed", cancelled: "Cancelled",
+  };
+  return labels[phase];
+}
+function formatConnectionState(state: AgentRunDiagnosticState["connectionState"], zh: boolean): string {
+  const labels = zh
+    ? { unknown: "未知", connecting: "连接中", connected: "正常", retrying: "正在重连", disconnected: "已断开" }
+    : { unknown: "Unknown", connecting: "Connecting", connected: "Connected", retrying: "Retrying", disconnected: "Disconnected" };
+  return labels[state];
+}
 function formatBytes(bytes: number): string { return bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`; }
 function createAiAnalysisBrief(analysis: DiagnosticSnapshot["rootCause"]["analyses"][number]): string { return [`TRACE: ${analysis.traceId}`, `SUMMARY: ${analysis.summary}`, "FACTS:", ...analysis.facts.map((item) => `- ${item}`), "INFERENCES:", ...analysis.inferences.map((item) => `- (${Math.round(item.confidence * 100)}%) ${item.text}`), "UNCERTAINTIES:", ...analysis.uncertainties.map((item) => `- ${item}`)].join("\n"); }
 

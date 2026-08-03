@@ -33,10 +33,12 @@ assert.deepEqual(parseCatalogAgentExamples(["A", "A", "B", "C", "D", "E"], "en")
 assert.equal(parseCatalogAgentExamples(["x".repeat(600)], "en")[0].length, 500);
 assert.deepEqual(parseCatalogAgentExamples(['{"zh":"中文任务","en":"English task"}'], "zh"), ["中文任务"]);
 
+const agentExampleSource = readFileSync(resolve(root, "../shared/renderer/src/agentExamplePrompts.ts"), "utf8");
 const chatWorkspace = readFileSync(resolve(root, "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
 assert(
-  chatWorkspace.includes("if (dedicated.length > 0) return dedicated;"),
-  "ChatWorkspace must use dedicated agent examples without padding them with generic prompts",
+  agentExampleSource.includes("if (dedicated.length > 0) return dedicated;")
+  && chatWorkspace.includes("getAgentEmptyChatPrompts(parsedSamplePrompts, language)"),
+  "ChatWorkspace must use the shared dedicated agent examples helper without padding them with generic prompts",
 );
 const app = readFileSync(resolve(root, "../shared/renderer/src/App.tsx"), "utf8");
 assert(
@@ -46,7 +48,7 @@ assert(
 );
 assert(
   app.includes("const agent = options.agent ?? availableChatAgents.find")
-  && app.includes("agent,\n            }).then")
+  && /selectChatAgent\(agent\.id,\s*\{\s*persistInBackground:\s*true,\s*agent,\s*\}\)\.then/.test(app)
   && app.includes("samplePrompts={selectedChatAgent?.examples ?? selectedChatExamples}"),
   "Agent Square must carry its freshly fetched remote-agent examples into the empty chat view",
 );

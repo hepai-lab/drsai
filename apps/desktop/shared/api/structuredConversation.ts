@@ -190,6 +190,9 @@ export interface StructuredProtocolIssue {
 export interface StructuredTurnMeta {
   model?: string;
   durationMs?: number;
+  /** Backend identity is presentation metadata only; rendering remains OAEP-part driven. */
+  backend?: string;
+  workspaceLabel?: string;
   stopReason?: string;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | Record<string, unknown>;
 }
@@ -463,7 +466,7 @@ export function applyStructuredConversationEvent(
 
   switch (event.type) {
     case "turn.started":
-      return { ...next, status: "running" };
+      return { ...next, status: "running", meta: { ...next.meta, backend: event.source } };
     case "part.started":
       return startPart(next, event.part, event.sequence);
     case "part.delta":
@@ -473,7 +476,7 @@ export function applyStructuredConversationEvent(
     case "activity.updated":
       return { ...next, activities: upsertById(next.activities, event.activity) };
     case "turn.completed":
-      return { ...next, status: "completed", ...(event.meta ? { meta: event.meta } : {}) };
+      return { ...next, status: "completed", meta: { ...next.meta, ...event.meta } };
     case "turn.cancelled":
       return {
         ...next,
@@ -543,25 +546,11 @@ export function isStructuredAssistantPart(part: unknown): part is StructuredAssi
   }
 }
 
-function startPart(state: StructuredTurnState, part: StructuredAssistantPart, sequence: number): StructuredTurnState {
-  if (part.kind === "reasoning" && state.parts.some((item) => item.kind === "reasoning" && item.id !== part.id)) {
-    return appendIssue(state, {
-      code: "duplicate_reasoning",
-      message: "A turn can contain only one reasoning part.",
-      sequence,
-    });
-  }
+function startPart(state: StructuredTurnState, part: StructuredAssistantPart, _sequence: number): StructuredTurnState {
   return { ...state, parts: upsertById(state.parts, part) };
 }
 
-function completePart(state: StructuredTurnState, part: StructuredAssistantPart, sequence: number): StructuredTurnState {
-  if (part.kind === "reasoning" && state.parts.some((item) => item.kind === "reasoning" && item.id !== part.id)) {
-    return appendIssue(state, {
-      code: "duplicate_reasoning",
-      message: "A turn can contain only one reasoning part.",
-      sequence,
-    });
-  }
+function completePart(state: StructuredTurnState, part: StructuredAssistantPart, _sequence: number): StructuredTurnState {
   const status = part.status === "pending" || part.status === "running" ? "completed" : part.status;
   return { ...state, parts: upsertById(state.parts, { ...part, status }) };
 }
@@ -843,6 +832,8 @@ function sanitizeStructuredMeta(meta: StructuredTurnMeta): StructuredTurnMeta {
   return {
     ...(meta.model ? { model: meta.model.slice(0, 300) } : {}),
     ...(Number.isFinite(meta.durationMs) ? { durationMs: meta.durationMs } : {}),
+    ...(meta.backend ? { backend: meta.backend.slice(0, 200) } : {}),
+    ...(meta.workspaceLabel ? { workspaceLabel: meta.workspaceLabel.slice(0, 500) } : {}),
     ...(meta.stopReason ? { stopReason: meta.stopReason.slice(0, 200) } : {}),
     ...(meta.usage ? { usage: boundStructuredPayload(meta.usage) as Record<string, unknown> } : {}),
   };

@@ -10,10 +10,16 @@ export interface DesktopPlatformConfig {
   oidcIssuer: string;
 }
 
-const DESKTOP_DEVELOPMENT = isDesktopDevelopment();
-const CONFIG_PATH = join(DRSAI_HOME, getPlatformConfigFileName(DESKTOP_DEVELOPMENT));
-const DEFAULT_ACTIVE_PLATFORM = DESKTOP_DEVELOPMENT ? "development" : "production";
-const DEFAULT_CONFIG = `active_platform = "${DEFAULT_ACTIVE_PLATFORM}"
+function defaultActivePlatform(): string {
+  return isDesktopDevelopment() ? "development" : "production";
+}
+
+function platformConfigPath(): string {
+  return join(DRSAI_HOME, getPlatformConfigFileName(isDesktopDevelopment()));
+}
+
+function defaultConfig(): string {
+  return `active_platform = "${defaultActivePlatform()}"
 
 [platforms.production]
 portal_url = "https://ai.ihep.ac.cn"
@@ -23,6 +29,7 @@ base_url = "https://aiapi.ihep.ac.cn/apiv2"
 portal_url = "https://ai-dev.ihep.ac.cn"
 base_url = "https://ai-dev.ihep.ac.cn/apiv2"
 `;
+}
 
 const BUILT_INS: Record<string, { portalUrl: string; baseUrl: string }> = {
   production: {
@@ -36,7 +43,7 @@ const BUILT_INS: Record<string, { portalUrl: string; baseUrl: string }> = {
 };
 
 export function getPlatformConfigPath(): string {
-  return CONFIG_PATH;
+  return platformConfigPath();
 }
 
 export function getPlatformConfigFileName(development = isDesktopDevelopment()): string {
@@ -44,23 +51,24 @@ export function getPlatformConfigFileName(development = isDesktopDevelopment()):
 }
 
 export function ensurePlatformConfig(): string {
-  if (existsSync(CONFIG_PATH)) return CONFIG_PATH;
+  const configPath = platformConfigPath();
+  if (existsSync(configPath)) return configPath;
   mkdirSync(DRSAI_HOME, { recursive: true });
   try {
-    writeFileSync(CONFIG_PATH, DEFAULT_CONFIG, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    writeFileSync(configPath, defaultConfig(), { encoding: "utf8", flag: "wx", mode: 0o600 });
   } catch (error) {
-    if (!existsSync(CONFIG_PATH)) throw error;
+    if (!existsSync(configPath)) throw error;
   }
-  return CONFIG_PATH;
+  return configPath;
 }
 
 export function getActivePlatformConfig(): DesktopPlatformConfig {
-  ensurePlatformConfig();
-  const parsed = parsePlatformConfig(readFileSync(CONFIG_PATH, "utf8"));
+  const configPath = ensurePlatformConfig();
+  const parsed = parsePlatformConfig(readFileSync(configPath, "utf8"));
   const builtIn = BUILT_INS[parsed.activePlatform];
   const configured = parsed.platforms[parsed.activePlatform];
   if (!builtIn && !configured) {
-    throw new Error(`Unknown active_platform ${JSON.stringify(parsed.activePlatform)} in ${CONFIG_PATH}.`);
+    throw new Error(`Unknown active_platform ${JSON.stringify(parsed.activePlatform)} in ${configPath}.`);
   }
   const portalUrl = normalizeUrl(
     process.env.OPENDRSAI_PLATFORM_BASE_URL || configured?.portalUrl || builtIn?.portalUrl,
@@ -82,39 +90,63 @@ function parsePlatformConfig(raw: string): {
   activePlatform: string;
   platforms: Record<string, { portalUrl?: string; baseUrl?: string }>;
 } {
-  let activePlatform = DEFAULT_ACTIVE_PLATFORM;
+  const configPath = platformConfigPath();
+  let activePlatform = defaultActivePlatform();
   let section: string | null = null;
   const platforms: Record<string, { portalUrl?: string; baseUrl?: string }> = {};
   for (const [lineIndex, original] of raw.split(/\r?\n/).entries()) {
     const line = stripTomlComment(original).trim();
     if (!line) continue;
-    const header = line.match(/^\[platforms\.([A-Za-z0-9_-]+)\]$/);
+    const header = line.match(/^\[([A-Za-z0-9_.-]+)\]$/);
     if (header) {
       section = header[1];
-      platforms[section] ||= {};
+      const platformName = platformSectionName(section);
+      if (platformName) platforms[platformName] ||= {};
       continue;
     }
-    const assignment = line.match(/^([A-Za-z0-9_]+)\s*=\s*"([^"]*)"\s*$/);
+    const assignment = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$/);
     if (!assignment) {
-      throw new Error(`Unsupported TOML syntax at ${CONFIG_PATH}:${lineIndex + 1}.`);
+      throw new Error(`Unsupported TOML syntax at ${configPath}:${lineIndex + 1}.`);
     }
-    const [, key, value] = assignment;
+    const [, key, rawValue] = assignment;
+    const value = parseTomlString(rawValue);
     if (!section && key === "active_platform") {
-      activePlatform = value.trim();
+      if (value !== null && value.trim()) activePlatform = value.trim();
       continue;
     }
-    if (section && key === "portal_url") {
-      platforms[section].portalUrl = value;
+    const platformName = section ? platformSectionName(section) : null;
+    if (platformName && key === "portal_url") {
+      if (value === null) throw new Error(`portal_url must be a string in ${configPath}:${lineIndex + 1}.`);
+      platforms[platformName] ||= {};
+      platforms[platformName].portalUrl = value;
       continue;
     }
-    if (section && key === "base_url") {
-      platforms[section].baseUrl = value;
+    if (platformName && key === "base_url") {
+      if (value === null) throw new Error(`base_url must be a string in ${configPath}:${lineIndex + 1}.`);
+      platforms[platformName] ||= {};
+      platforms[platformName].baseUrl = value;
       continue;
     }
-    throw new Error(`Unknown platform configuration key ${JSON.stringify(key)} at ${CONFIG_PATH}:${lineIndex + 1}.`);
   }
-  if (!activePlatform) throw new Error(`active_platform must not be empty in ${CONFIG_PATH}.`);
+  if (!activePlatform) activePlatform = defaultActivePlatform();
   return { activePlatform, platforms };
+}
+
+function platformSectionName(section: string): string | null {
+  const match = section.match(/^platforms\.([A-Za-z0-9_-]+)$/);
+  return match ? match[1] : null;
+}
+
+function parseTomlString(raw: string): string | null {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^"((?:[^"\\]|\\.)*)"$/);
+  if (!match) return null;
+  return match[1]
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\"/g, "\"")
+    .replace(/\\\\/g, "\\");
 }
 
 function stripTomlComment(line: string): string {
@@ -133,19 +165,19 @@ function stripTomlComment(line: string): string {
     if (character === "\"") quoted = !quoted;
     if (character === "#" && !quoted) return line.slice(0, index);
   }
-  if (quoted) throw new Error(`Unterminated string in ${CONFIG_PATH}.`);
+  if (quoted) throw new Error(`Unterminated string in ${platformConfigPath()}.`);
   return line;
 }
 
 function normalizeUrl(value: string | undefined, field: string): string {
-  if (!value) throw new Error(`${field} is required for the active platform in ${CONFIG_PATH}.`);
+  if (!value) throw new Error(`${field} is required for the active platform in ${platformConfigPath()}.`);
   const normalized = value.trim().replace(/\/+$/, "");
   const parsed = new URL(normalized);
   if (!["http:", "https:"].includes(parsed.protocol)) {
-    throw new Error(`${field} must be an HTTP(S) URL in ${CONFIG_PATH}.`);
+    throw new Error(`${field} must be an HTTP(S) URL in ${platformConfigPath()}.`);
   }
   if (parsed.username || parsed.password) {
-    throw new Error(`${field} must not contain URL credentials in ${CONFIG_PATH}.`);
+    throw new Error(`${field} must not contain URL credentials in ${platformConfigPath()}.`);
   }
   return normalized;
 }

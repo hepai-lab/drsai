@@ -53,15 +53,17 @@ for (const marker of [
 
 for (const marker of [
   "auth: AuthContext",
-  "auth.authMode === \"oidc\" && auth.accessToken",
+  "function isPlatformBearerAuth",
+  "auth.authMode === \"oidc\" || auth.authMode === \"sso\"",
   "accessToken: auth.accessToken",
   "userId: auth.userId",
 ]) assert(chatSource.includes(marker), `Runtime Agent chat auth caller lacks ${marker}`);
 
 for (const marker of [
-  "function runtimeEventText",
-  "\"content\", \"delta\", \"text\"",
-  "event.type === \"agent.message.delta\"",
+  "function mapCodexOaepEvent",
+  "projectOaepEventForPresentation(event, target.projection, currentItem)",
+  "type: \"structured\"",
+  "structuredEvent",
 ]) assert(chatSource.includes(marker), `Runtime Agent event text bridge lacks ${marker}`);
 
 console.log("Unified Runtime Client contract verification passed.");

@@ -5,6 +5,9 @@ import { monitorEventLoopDelay } from "perf_hooks";
 import { dirname, join } from "path";
 import { DRSAI_HOME } from "./paths";
 import { DiagnosticRootCauseEngine } from "./rootCauseAnalysis";
+import { classifyDiagnosticEvent } from "./diagnosticClassifier";
+import { projectAgentRunStates } from "./agentDiagnosticProjector";
+import { projectDiagnosticIncidents } from "./diagnosticIncidentProjector";
 import {
   DIAGNOSTIC_SCHEMA_VERSION,
   isTerminalDiagnosticStatus,
@@ -32,6 +35,7 @@ const EVENT_FILE = join(DIAGNOSTIC_DIR, "events.jsonl");
 const ISSUE_STATE_FILE = join(DIAGNOSTIC_DIR, "issue-overrides.json");
 
 type DiagnosticPublisher = (event: DiagnosticEvent) => void;
+type DiagnosticAttributeValue = string | number | boolean | null;
 
 export interface DiagnosticOperationHandle {
   traceId: string;
@@ -130,6 +134,7 @@ export class DesktopDiagnostics {
           errorCode: errorCode ?? normalized.code,
           stack: normalized.stack,
           source: normalized.stack.find((frame) => frame.file) ?? normalized.stack[0],
+          attributes: normalized.attributes,
         });
       },
       cancel: (message = `${input.operation} cancelled`) => followup("cancelled", message),
@@ -146,6 +151,8 @@ export class DesktopDiagnostics {
     return {
       generatedAt: new Date().toISOString(),
       events,
+      agentRuns: projectAgentRunStates(events),
+      incidents: projectDiagnosticIncidents(events),
       traces,
       health,
       findings: deriveFindings(events.filter((event) => !this.historicalEventIds.has(event.id)), health),
@@ -336,6 +343,7 @@ function normalizeEvent(input: DiagnosticEventInput | DiagnosticEvent): Diagnost
   const traceId = safeId(input.traceId, "trace");
   const spanId = safeId(input.spanId, "span");
   const message = redactText(input.message).slice(0, 8_000) || input.operation;
+  const classification = classifyDiagnosticEvent(input);
   const event: DiagnosticEvent = {
     schemaVersion: DIAGNOSTIC_SCHEMA_VERSION,
     id: safeId(input.id, "event"),
@@ -349,6 +357,7 @@ function normalizeEvent(input: DiagnosticEventInput | DiagnosticEvent): Diagnost
     component: safeLabel(input.component, "unknown"),
     operation: safeLabel(input.operation, "operation"),
     message,
+    ...classification,
   };
   if (input.parentSpanId) event.parentSpanId = safeId(input.parentSpanId, "span");
   if (input.endedAt) event.endedAt = validDate(input.endedAt);
@@ -379,6 +388,10 @@ function filterEvents(events: DiagnosticEvent[], query: DiagnosticQuery): Diagno
     && (!query.component || event.component === query.component)
     && (!query.status || event.status === query.status)
     && (!query.level || event.level === query.level)
+    && (!query.domain || event.domain === query.domain)
+    && (!query.visibility || event.visibility === query.visibility)
+    && (!query.sessionId || event.sessionId === query.sessionId)
+    && (!query.runId || event.runId === query.runId)
     && Date.parse(event.timestamp) >= since
   );
   return filtered.slice(-Math.max(1, Math.min(query.limit ?? 1_000, MAX_EVENTS)));
@@ -587,15 +600,55 @@ export function deriveFindings(events: DiagnosticEvent[], health: DiagnosticComp
   return findings.slice(0, 50);
 }
 
-export function normalizeError(error: unknown): { message: string; code?: string; stack: DiagnosticStackFrame[] } {
+export function normalizeError(error: unknown): {
+  message: string;
+  code?: string;
+  stack: DiagnosticStackFrame[];
+  attributes?: Record<string, DiagnosticAttributeValue>;
+} {
   const value = error instanceof Error ? error : new Error(typeof error === "string" ? error : JSON.stringify(error));
   const code = typeof (error as NodeJS.ErrnoException | undefined)?.code === "string"
     ? (error as NodeJS.ErrnoException).code
     : undefined;
+  const attributes = diagnosticAttributesFromError(error);
   return {
     message: redactText(value.message || String(error)).slice(0, 8_000),
     ...(code ? { code } : {}),
+    ...(attributes ? { attributes } : {}),
     stack: parseStack(value.stack ?? value.message),
+  };
+}
+
+function diagnosticAttributesFromError(error: unknown): Record<string, DiagnosticAttributeValue> | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const record = error as Record<string, unknown>;
+  const status = record.gatewayStatus;
+  if (!status || typeof status !== "object") return undefined;
+  const gateway = status as Record<string, unknown>;
+  const endpoints = gateway.endpoints && typeof gateway.endpoints === "object"
+    ? gateway.endpoints as Record<string, unknown>
+    : {};
+  const health = endpoints.health && typeof endpoints.health === "object"
+    ? endpoints.health as Record<string, unknown>
+    : {};
+  const models = endpoints.models && typeof endpoints.models === "object"
+    ? endpoints.models as Record<string, unknown>
+    : {};
+  const pickString = (value: unknown) => typeof value === "string" ? value : undefined;
+  const pickBoolean = (value: unknown) => typeof value === "boolean" ? value : undefined;
+  const pickStatusCode = (value: unknown) => typeof value === "number" && Number.isInteger(value) ? value : null;
+  return {
+    runtimeUnavailable: true,
+    gatewayReady: pickBoolean(gateway.ready) ?? false,
+    gatewayManaged: pickBoolean(gateway.managed) ?? false,
+    gatewayExternalReady: pickBoolean(gateway.externalReady) ?? false,
+    gatewayExternalConflict: pickBoolean(gateway.externalConflict) ?? false,
+    gatewayPortOpen: pickBoolean(gateway.portOpen) ?? false,
+    gatewayDiagnosticCode: pickString(gateway.diagnosticCode) ?? "gateway_unknown",
+    gatewayHealthState: pickString(health.state) ?? "unknown",
+    gatewayHealthStatusCode: pickStatusCode(health.statusCode),
+    gatewayModelsState: pickString(models.state) ?? "unknown",
+    gatewayModelsStatusCode: pickStatusCode(models.statusCode),
   };
 }
 
@@ -624,9 +677,9 @@ function sanitizeFrame(frame: DiagnosticStackFrame): DiagnosticStackFrame {
   };
 }
 
-function sanitizeAttributes(input?: Record<string, unknown>): Record<string, string | number | boolean | null> | undefined {
+function sanitizeAttributes(input?: Record<string, unknown>): Record<string, DiagnosticAttributeValue> | undefined {
   if (!input) return undefined;
-  const result: Record<string, string | number | boolean | null> = {};
+  const result: Record<string, DiagnosticAttributeValue> = {};
   for (const [rawKey, rawValue] of Object.entries(input).slice(0, 50)) {
     const key = safeLabel(rawKey, "attribute");
     if (/token|secret|password|cookie|authorization|api.?key/i.test(key)) continue;

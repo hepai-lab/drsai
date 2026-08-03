@@ -35,6 +35,7 @@ import type {
   DesktopWorkflowTemplate,
   DesktopThread,
   DesktopThreadSnapshot,
+  DesktopRuntimeLogEvent,
   DesktopTrustAssessment,
   DesktopTrustStatus,
   DesktopVoiceTranscriptHandoffResult,
@@ -50,6 +51,7 @@ import type {
   DesktopWorkflowRunStartResult,
   MyDrSaiCliConfig,
   MyDrSaiConfig,
+  MyDrSaiModelConnection,
   OidcLoginDebugEvent,
   BrowserTaskEvent,
   DesktopPendingApproval,
@@ -686,6 +688,29 @@ export function installMockDesktopApi(): void {
   let threads: DesktopThread[] = [];
   let threadSnapshots: Record<string, DesktopThreadSnapshot> = {};
   let workspaces: WorkspaceProject[] = [];
+  const longConversationFixtureRuns = Math.min(500, Math.max(0, Number(new URLSearchParams(window.location.search).get("longConversationFixture")) || 0));
+  if (longConversationFixtureRuns > 0) {
+    const threadId = "mock-long-codex-thread";
+    const now = new Date().toISOString();
+    const messages = Array.from({ length: longConversationFixtureRuns }, (_, index) => {
+      const turn = index + 1;
+      return [
+        { id: `long-user-${turn}`, role: "user" as const, content: `Performance fixture request ${turn}` },
+        { id: `long-assistant-${turn}`, role: "assistant" as const, content: `## Result ${turn}\n\nRendered Markdown for a long Codex conversation.\n\n\`\`\`ts\nconst turn = ${turn};\n\`\`\`` },
+      ];
+    }).flat();
+    threads = [{ id: threadId, kind: "chat", title: `${longConversationFixtureRuns}-turn Codex fixture`, createdAt: now, updatedAt: now, runtimeSessionId: "mock-codex-session", boundAgentId: "my-codex", boundAgentName: "Codex", messageCount: messages.length }];
+    threadSnapshots = {
+      [threadId]: {
+        threadId,
+        title: threads[0].title,
+        messages,
+        updatedAt: Date.now(),
+        messageCount: messages.length,
+        history: { state: "ready", source: "codex", syncedAt: now, loadedRuns: longConversationFixtureRuns, totalRuns: longConversationFixtureRuns, loadedItems: messages.length, totalItems: messages.length },
+      },
+    };
+  }
   let terminalSessions: TerminalSessionInfo[] = [];
   let myDrSaiCliConfig: MyDrSaiCliConfig = {
     user_id: "desktop",
@@ -695,6 +720,19 @@ export function installMockDesktopApi(): void {
     dangerous_allowed: false,
     max_agent_concurrent: 4,
     context_type: "auto",
+  };
+  let myDrSaiModelConnection: MyDrSaiModelConnection = {
+    model: "deepseek-v4-flash",
+    model_provider: "hepai",
+    provider: {
+      name: "hepai",
+      base_url: "https://aiapi.ihep.ac.cn/apiv2",
+      wire_api: "openai",
+      requires_api_key: true,
+      has_api_key: true,
+      api_key_source: "env:HEPAI_API_KEY",
+    },
+    path: "C:\\Users\\Demo\\.drsai\\config.toml",
   };
   let terminalCounter = 0;
   const chatListeners = new Set<Listener<ChatEvent>>();
@@ -711,6 +749,7 @@ export function installMockDesktopApi(): void {
   const updateListeners = new Set<Listener<UpdateStatus>>();
   const browserTaskListeners = new Set<Listener<BrowserTaskEvent>>();
   const diagnosticListeners = new Set<Listener<DiagnosticEvent>>();
+  const runtimeLogListeners = new Set<Listener<DesktopRuntimeLogEvent>>();
   const interactiveDebugListeners = new Set<Listener<InteractiveDebugSession>>();
   let diagnosticEvents: DiagnosticEvent[] = [];
   let interactiveDebugSessions: InteractiveDebugSession[] = [];
@@ -1151,6 +1190,8 @@ export function installMockDesktopApi(): void {
         component: input.component,
         operation: input.operation,
         message: input.message,
+        domain: input.domain || (input.runId || input.turnId || input.backendId ? "agent" : "app"),
+        visibility: input.visibility || (input.status === "failed" || input.level === "error" ? "milestone" : "detail"),
       };
       diagnosticEvents = [...diagnosticEvents, event].slice(-500);
       emit(diagnosticListeners, event);
@@ -1457,6 +1498,11 @@ export function installMockDesktopApi(): void {
     getCodexBackendStatus: async () => ({ backendId: "codex", state: "available", available: true,
       version: "0.142.5", loggedIn: true, authMode: "chatgpt", accountLabel: "demo@example.test",
       reason: null, retryable: false, action: "none" }),
+    restartCodexBackend: async () => ({ backendId: "codex", state: "available", available: true,
+      version: "0.142.5", loggedIn: true, authMode: "chatgpt", accountLabel: "demo@example.test",
+      reason: null, retryable: false, action: "none" }),
+    syncCodexWorkspaceSessions: async (workspaceId) => ({ workspaceId, discovered: 0, active: 0,
+      archived: 0, created: 0, updated: 0, skipped: 0, threads: [] }),
     startCodexBackendLogin: async (type = "chatgpt") => ({ type, loginId: "mock-codex-login",
       verificationUrl: "https://example.test/device", userCode: "MOCK-CODE" }),
     cancelCodexBackendLogin: async () => true,
@@ -1909,6 +1955,7 @@ export function installMockDesktopApi(): void {
       cliPath: "C:\\Users\\Demo\\.drsai\\cli_config.json",
       config: myDrSaiCliConfig,
       defaultModelAlias: myDrSaiCliConfig.defult_config_name,
+      modelConnection: myDrSaiModelConnection,
       models: [
         {
           alias: "hepai/deepseek-v4-flash",
@@ -1949,6 +1996,32 @@ export function installMockDesktopApi(): void {
     updateMyDrSaiConfig: async (request): Promise<MyDrSaiConfig> => {
       myDrSaiCliConfig = { ...myDrSaiCliConfig, ...request };
       return api.getMyDrSaiConfig();
+    },
+    updateMyDrSaiModelConnection: async (request) => {
+      myDrSaiModelConnection = {
+        model: request.model,
+        model_provider: request.model_provider,
+        provider: {
+          name: request.model_provider,
+          base_url: request.base_url || myDrSaiModelConnection.provider.base_url,
+          wire_api: request.wire_api || "openai",
+          requires_api_key: request.requires_api_key ?? true,
+          has_api_key: Boolean(request.api_key || request.api_key_env || myDrSaiModelConnection.provider.has_api_key),
+          api_key_source: request.api_key ? "config" : request.api_key_env ? `env:${request.api_key_env}` : myDrSaiModelConnection.provider.api_key_source,
+        },
+        path: myDrSaiModelConnection.path,
+      };
+      return structuredClone(myDrSaiModelConnection);
+    },
+    testMyDrSaiModelProvider: async (provider) => ({ ok: provider === myDrSaiModelConnection.model_provider, provider, wire_api: myDrSaiModelConnection.provider.wire_api }),
+    testMyDrSaiModelDraft: async (request) => ({ ok: Boolean(request.model && request.model_provider && request.base_url), provider: request.model_provider, wire_api: request.wire_api ?? "openai", persisted: false }),
+    listMyDrSaiModelProviderPresets: async () => [{ id: "hepai", label: "HepAI", base_url: "https://aiapi.ihep.ac.cn/apiv2", wire_api: "openai", requires_api_key: true, api_key_env: "HEPAI_API_KEY", base_url_editable: false, supports_model_discovery: true }],
+    discoverMyDrSaiProviderModels: async (provider) => ({ ok: true, provider, models: [myDrSaiModelConnection.model], cached: false }),
+    deleteMyDrSaiModelProvider: async (provider, _deleteCredential = true) => {
+      if (provider === myDrSaiModelConnection.model_provider) {
+        myDrSaiModelConnection = { ...myDrSaiModelConnection, model_provider: "hepai", provider: { ...myDrSaiModelConnection.provider, name: "hepai", base_url: "https://aiapi.ihep.ac.cn/apiv2" } };
+      }
+      return { ok: true, active: myDrSaiModelConnection.model_provider };
     },
     createThread: async (request) => {
       const now = new Date().toISOString();
@@ -2012,6 +2085,7 @@ export function installMockDesktopApi(): void {
     subscribeThreadSnapshot: async () => false,
     unsubscribeThreadSnapshot: async () => false,
     onThreadSnapshot: () => () => undefined,
+    onRuntimeLogEvent: (callback) => subscribe(runtimeLogListeners, callback),
     onThreadCatalogUpdate: () => () => undefined,
     searchThreadMessages: async (request) => {
       const query = request.query.trim().toLowerCase();
@@ -2150,6 +2224,15 @@ export function installMockDesktopApi(): void {
       const requestId = request.requestId || crypto.randomUUID();
       const turnId = request.runId || requestId;
       const visualFixture = request.messages.some((message) => message.content.includes("__STRUCTURED_VISUAL_FIXTURE__"));
+      if (visualFixture) {
+        const runtimeBase = {
+          timestamp: new Date().toISOString(), threadId: "mock-thread", sessionId: "oaep-session-visual",
+          protocol: "oaep/1" as const, level: "info" as const,
+        };
+        emit(runtimeLogListeners, { ...runtimeBase, id: "runtime-visual-capability", status: "completed", phase: "capability", operation: "runtime.protocol.selected", message: "Runtime selected OAEP v1 for this session.", details: { capabilities: ["oaep.v1", "oaep.session.events.stream"] } });
+        emit(runtimeLogListeners, { ...runtimeBase, id: "runtime-visual-stream", status: "running", phase: "stream", operation: "oaep.stream.connected", message: "OAEP event stream connected after cursor 41.", cursor: 41, details: { httpStatus: 200 } });
+        emit(runtimeLogListeners, { ...runtimeBase, id: "runtime-visual-event", level: "debug", status: "running", phase: "event", operation: "oaep.event.received", message: "event.item.delta · sequence 42", eventType: "event.item.delta", sequence: 42, cursor: 42, runId: "run-visual", itemId: "item-visual", source: "codex", details: { eventId: "oaep-event-42", dedupeKey: "run-visual:item-visual:42", data: { delta: { kind: "message.text", text: "Runtime output" } }, authorization: "[REDACTED]" } });
+      }
       const markdownContent = visualFixture ? createStructuredVisualFixtureMarkdown(drsaiImageUrl) : [
         "Mock **desktop** chat stream.\n\n",
         "| item | status |\n| --- | --- |\n| renderer | ok |\n\n",

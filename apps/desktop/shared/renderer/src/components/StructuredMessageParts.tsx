@@ -4,7 +4,6 @@ import {
   ArrowUpRight,
   CheckCircle2,
   ChevronDown,
-  ChevronRight,
   CircleEllipsis,
   FileDiff,
   FileText,
@@ -34,11 +33,12 @@ interface StructuredMessagePartsProps {
   onOpenLink: (href: string | undefined) => void;
   onOpenArtifact: (part: ArtifactPart) => void;
   onOpenCitation: (part: CitationPart) => void;
-  onRespondInteraction: (part: InteractionPart, response: { approved: boolean }) => void;
+  onRespondInteraction: (part: InteractionPart, response: { approved?: boolean; decision?: "accept" | "acceptForSession" | "decline" }) => void;
   onRequestTextInteraction: (part: InteractionPart) => void;
   onOpenDebug?: () => void;
   now: number;
   startedAt?: number;
+  completedAt?: number;
 }
 
 export function getStructuredVisibleText(turn: StructuredTurnState): string {
@@ -61,24 +61,46 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   onOpenDebug,
   now,
   startedAt,
+  completedAt,
 }: StructuredMessagePartsProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const relationTimerRef = useRef<number | null>(null);
   const [focusedPartId, setFocusedPartId] = useState<string | null>(null);
+  const [processOpen, setProcessOpen] = useState(turn.status === "running" || turn.status === "error");
   const citationParts = turn.parts.filter((part): part is CitationPart => part.kind === "citation");
-  const visibleParts = turn.parts.filter((part) => {
-    if (part.kind === "progress") {
-      return part.status === "running" || part.status === "pending" || part.status === "error";
-    }
-    if (part.kind === "interaction") {
-      return part.status === "running" || part.status === "pending";
-    }
-    return true;
-  });
+  const processParts = turn.parts.filter((part) => part.kind === "progress" || part.kind === "reasoning" || part.kind === "subtask");
+  const interactionParts = turn.parts.filter((part): part is InteractionPart => part.kind === "interaction" && (part.status === "running" || part.status === "pending"));
+  const resultParts = turn.parts.filter((part) => part.kind === "markdown" || part.kind === "artifact" || part.kind === "citation");
+  const noticeParts = turn.parts.filter((part): part is NoticePart => part.kind === "notice");
+  const hasProcess = processParts.length > 0 || turn.activities.length > 0 || noticeParts.length > 0;
+  const waitingApproval = turn.parts.some((part) => part.kind === "interaction" && part.interactionType === "approval" && (part.status === "pending" || part.status === "running"));
+  const turnStatusLabel = waitingApproval
+    ? (language === "zh" ? "等待审批" : "Waiting for approval")
+    : turn.status === "pending" ? (language === "zh" ? "排队中" : "Queued")
+    : turn.status === "running" && !hasProcess ? (language === "zh" ? "已发送" : "Sent")
+    : turn.status === "running" ? (language === "zh" ? "生成中" : "Generating")
+    : turn.status === "completed" ? (language === "zh" ? "已完成" : "Completed")
+    : turn.status === "error" ? (language === "zh" ? "失败" : "Failed")
+    : (language === "zh" ? "已停止" : "Stopped");
+  const inferredEnd = turn.status === "running" ? now : completedAt;
+  const inferredDuration = startedAt !== undefined && inferredEnd !== undefined && inferredEnd > startedAt
+    ? inferredEnd - startedAt
+    : undefined;
+  const durationMs = turn.meta?.durationMs !== undefined && turn.meta.durationMs > 0
+    ? turn.meta.durationMs
+    : inferredDuration;
+  const durationLabel = durationMs === undefined ? "" : formatRunDuration(durationMs, language);
+  const backendLabel = formatBackendLabel(turn.meta?.backend);
+  const statusMeta = ["OpenDrSai", backendLabel, turn.meta?.workspaceLabel].filter(Boolean).join(" · ");
 
   useEffect(() => () => {
     if (relationTimerRef.current !== null) window.clearTimeout(relationTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    if (turn.status === "running" || turn.status === "error") setProcessOpen(true);
+    else if (turn.status === "completed") setProcessOpen(false);
+  }, [turn.status]);
 
   function focusPart(partId: string): void {
     setFocusedPartId(partId);
@@ -90,96 +112,81 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     relationTimerRef.current = window.setTimeout(() => setFocusedPartId(null), 1800);
   }
 
+  function renderPart(part: StructuredAssistantPart): React.JSX.Element | null {
+    if (part.kind === "markdown") {
+      return part.markdown ? (
+        <div key={part.id} className={`structured-markdown-part ${focusedPartId === part.id ? "relation-focus" : ""}`} data-structured-part-id={part.id}>
+          <ChatMessageContent content={part.markdown} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
+          {part.citationIds?.length ? <div className="structured-inline-citations" aria-label={language === "zh" ? "本段引用" : "Citations for this section"}>
+            {part.citationIds.map((citationId) => {
+              const citation = citationParts.find((candidate) => candidate.citationId === citationId);
+              if (!citation) return null;
+              const index = citationParts.findIndex((candidate) => candidate.id === citation.id);
+              return <button type="button" key={citationId} onClick={() => focusPart(citation.id)} title={citation.title} aria-label={`${language === "zh" ? "定位引用" : "Go to citation"} ${index + 1}: ${citation.title}`}>[{index + 1}]</button>;
+            })}
+          </div> : null}
+        </div>
+      ) : null;
+    }
+    if (part.kind === "reasoning") return <StructuredReasoning key={part.id} part={part} language={language} onOpenLink={onOpenLink} />;
+    if (part.kind === "progress") return <div className={`structured-progress ${part.status}`} key={part.id} role="status">
+      {part.status === "completed" ? <CheckCircle2 size={14} aria-hidden="true" /> : <CircleEllipsis size={14} aria-hidden="true" />}
+      <ChatMessageContent content={part.summary} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
+      {part.total !== undefined && part.completed !== undefined ? <small>{part.completed}/{part.total}</small> : null}
+    </div>;
+    if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} />;
+    if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
+    if (part.kind === "interaction") return <InteractionItem key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} />;
+    if (part.kind === "subtask") return <div className={`structured-subtask ${part.status}`} key={part.id}><ListChecks size={14} aria-hidden="true" /><span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span></div>;
+    return <NoticeItem key={part.id} part={part} />;
+  }
+
   return (
     <div ref={containerRef} className="structured-message-parts" data-turn-id={turn.turnId} data-turn-status={turn.status}>
-      {visibleParts.map((part) => {
-        if (part.kind === "markdown") {
-          return part.markdown ? (
-            <div key={part.id} className={`structured-markdown-part ${focusedPartId === part.id ? "relation-focus" : ""}`} data-structured-part-id={part.id}>
-              <ChatMessageContent
-                content={part.markdown}
-                streaming={part.status === "running"}
-                language={language}
-                onOpenLink={onOpenLink}
-              />
-              {part.citationIds?.length ? (
-                <div className="structured-inline-citations" aria-label={language === "zh" ? "本段引用" : "Citations for this section"}>
-                  {part.citationIds.map((citationId) => {
-                    const citation = citationParts.find((candidate) => candidate.citationId === citationId);
-                    if (!citation) return null;
-                    const index = citationParts.findIndex((candidate) => candidate.id === citation.id);
-                    return (
-                      <button type="button" key={citationId} onClick={() => focusPart(citation.id)} title={citation.title} aria-label={`${language === "zh" ? "定位引用" : "Go to citation"} ${index + 1}: ${citation.title}`}>
-                        [{index + 1}]
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          ) : null;
-        }
-        if (part.kind === "reasoning") {
-          return <StructuredReasoning key={part.id} part={part} language={language} onOpenLink={onOpenLink} />;
-        }
-        if (part.kind === "progress") {
-          return (
-            <div className={`structured-progress ${part.status}`} key={part.id} role="status">
-              <CircleEllipsis size={14} aria-hidden="true" />
-              <span>{part.summary}</span>
-              {part.total !== undefined && part.completed !== undefined ? <small>{part.completed}/{part.total}</small> : null}
-            </div>
-          );
-        }
-        if (part.kind === "artifact") {
-          return <ArtifactItem key={part.id} part={part} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} />;
-        }
-        if (part.kind === "citation") {
-          return (
-            <CitationItem
-              key={part.id}
-              part={part}
-              index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1}
-              language={language}
-              focused={focusedPartId === part.id}
-              onOpen={() => onOpenCitation(part)}
-              onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined}
-            />
-          );
-        }
-        if (part.kind === "interaction") {
-          return (
-            <InteractionItem
-              key={part.id}
-              part={part}
-              language={language}
-              responded={respondedRequestIds.has(part.requestId)}
-              onRespond={onRespondInteraction}
-              onRequestText={onRequestTextInteraction}
-            />
-          );
-        }
-        if (part.kind === "subtask") {
-          return (
-            <div className={`structured-subtask ${part.status}`} key={part.id}>
-              <ListChecks size={14} aria-hidden="true" />
-              <span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span>
-            </div>
-          );
-        }
-        return <NoticeItem key={part.id} part={part} />;
-      })}
-      <StructuredActivityTimeline turn={turn} language={language} onOpenDebug={onOpenDebug} />
-      <StructuredActivitySummary
-        turn={turn}
-        language={language}
-        now={now}
-        startedAt={startedAt}
-        onOpenDebug={onOpenDebug}
-      />
+      {hasProcess ? <details className="structured-process" open={processOpen} onToggle={(event) => setProcessOpen(event.currentTarget.open)}>
+        <summary className="structured-run-status" title={statusMeta}>
+          <span className="structured-run-context">{statusMeta}</span>
+          <span className="structured-run-actions">
+            <span className={`structured-turn-status status-${turn.status}`}>{turnStatusLabel}{durationLabel ? ` · ${durationLabel}` : ""}</span>
+            <span className="structured-process-label">{language === "zh" ? "处理过程" : "Process"}</span>
+            <ChevronDown size={14} aria-hidden="true" />
+          </span>
+        </summary>
+        <div className="structured-process-content">
+          <StructuredActivityTimeline turn={turn} language={language} onOpenDebug={onOpenDebug} />
+          {processParts.filter((part) => part.kind === "progress").length ? <section className="structured-process-section"><h4>{language === "zh" ? "过程记录" : "Progress"}</h4>{processParts.filter((part) => part.kind === "progress").map(renderPart)}</section> : null}
+          {processParts.filter((part) => part.kind === "reasoning").length ? <section className="structured-process-section"><h4>{language === "zh" ? "分析摘要" : "Analysis summary"}</h4>{processParts.filter((part) => part.kind === "reasoning").map(renderPart)}</section> : null}
+          {turn.activities.length ? <section className="structured-process-section"><h4>{language === "zh" ? "操作与变更" : "Actions and changes"}</h4><StructuredActivityDetails turn={turn} language={language} onOpenDebug={onOpenDebug} /></section> : null}
+          {processParts.filter((part) => part.kind === "subtask").length ? <section className="structured-process-section"><h4>{language === "zh" ? "子任务" : "Subtasks"}</h4>{processParts.filter((part) => part.kind === "subtask").map(renderPart)}</section> : null}
+          {noticeParts.length ? <section className="structured-process-section"><h4>{language === "zh" ? "运行信息" : "Run information"}</h4>{noticeParts.map(renderPart)}</section> : null}
+          <StructuredActivitySummary turn={turn} language={language} now={now} startedAt={startedAt} onOpenDebug={onOpenDebug} />
+        </div>
+      </details> : <header className="structured-run-status" title={statusMeta}>
+        <span className="structured-run-context">{statusMeta}</span>
+        <span className={`structured-turn-status status-${turn.status}`}>{turnStatusLabel}{durationLabel ? ` · ${durationLabel}` : ""}</span>
+      </header>}
+      {interactionParts.length ? <section className="structured-interaction-layer" aria-label={language === "zh" ? "待用户交互" : "User action required"}>{interactionParts.map(renderPart)}</section> : null}
+      {resultParts.length ? <section className="structured-result-layer"><h3>{language === "zh" ? "最终回答" : "Final answer"}</h3>{resultParts.map(renderPart)}</section> : null}
     </div>
   );
 });
+
+function formatBackendLabel(backend: string | undefined): string {
+  if (!backend) return "";
+  if (/codex/i.test(backend)) return "Codex";
+  if (/opendrsai|drsai/i.test(backend)) return "OpenDrSai Agent";
+  return backend;
+}
+
+function summarizeProcess(turn: StructuredTurnState, language: "en" | "zh"): string {
+  const files = new Set(turn.activities.filter((activity) => activity.kind === "file_change").map((activity) => activity.kind === "file_change" ? activity.path : "")).size;
+  const tools = turn.activities.filter((activity) => activity.kind === "tool").length;
+  const tasks = turn.parts.filter((part) => part.kind === "subtask").length;
+  const chunks = language === "zh"
+    ? [files ? `${files} 个文件` : "", tools ? `${tools} 项操作` : "", tasks ? `${tasks} 个子任务` : ""]
+    : [files ? `${files} file${files === 1 ? "" : "s"}` : "", tools ? `${tools} operation${tools === 1 ? "" : "s"}` : "", tasks ? `${tasks} subtask${tasks === 1 ? "" : "s"}` : ""];
+  return chunks.filter(Boolean).join(" · ");
+}
 
 function StructuredActivityTimeline({
   turn,
@@ -196,6 +203,10 @@ function StructuredActivityTimeline({
   const active = turn.activities.filter(
     (activity) => activity.status === "pending" || activity.status === "running",
   ).length;
+  const changedFiles = new Set(turn.activities
+    .filter((activity) => activity.kind === "file_change")
+    .map((activity) => activity.kind === "file_change" ? activity.path : ""));
+  const toolCount = turn.activities.filter((activity) => activity.kind === "tool").length;
   const aggregateStatus: StructuredActivityEvent["status"] = failed
     ? "error"
     : active
@@ -210,8 +221,12 @@ function StructuredActivityTimeline({
         ? "正在执行工具操作"
         : "Running tool operations"
       : language === "zh"
-        ? "工具操作已完成"
-        : "Tool operations completed";
+        ? changedFiles.size
+          ? `已修改 ${changedFiles.size} 个文件${toolCount ? `，执行 ${toolCount} 项工具操作` : ""}`
+          : `处理过程已完成${toolCount ? ` · ${toolCount} 项工具操作` : ""}`
+        : changedFiles.size
+          ? `Changed ${changedFiles.size} file${changedFiles.size === 1 ? "" : "s"}${toolCount ? ` · ${toolCount} tool operation${toolCount === 1 ? "" : "s"}` : ""}`
+          : `Work completed${toolCount ? ` · ${toolCount} tool operation${toolCount === 1 ? "" : "s"}` : ""}`;
   const failedTitle = failedActivities[0]?.title?.replace(/\s+response$/i, "").trim();
   const label = failed && failedTitle
     ? language === "zh"
@@ -251,6 +266,26 @@ function ActivityStatusIcon({
   if (status === "completed") return <CheckCircle2 size={16} aria-hidden="true" />;
   if (status === "error") return <AlertCircle size={16} aria-hidden="true" />;
   return <CircleEllipsis size={16} aria-hidden="true" />;
+}
+
+function StructuredActivityDetails({
+  turn,
+  language,
+  onOpenDebug,
+}: {
+  turn: StructuredTurnState;
+  language: "en" | "zh";
+  onOpenDebug?: () => void;
+}): React.JSX.Element {
+  return <div className="structured-activity-details">
+    {turn.activities.map((activity) => <div className={`structured-activity-row ${activity.status}`} key={activity.id}>
+      <ActivityStatusIcon status={activity.status} />
+      <span>{formatActivitySummary(activity, language)}</span>
+      {activity.kind === "file_change" ? <small>{activity.action}</small> : null}
+      {activity.kind === "tool" && activity.durationMs !== undefined ? <time>{formatRunDuration(activity.durationMs, language)}</time> : null}
+    </div>)}
+    {onOpenDebug ? <button type="button" className="structured-debug-link" onClick={onOpenDebug}>{language === "zh" ? "查看技术详情" : "View technical details"}</button> : null}
+  </div>;
 }
 
 function StructuredActivitySummary({
@@ -294,6 +329,7 @@ function StructuredActivitySummary({
 }
 
 function formatRunDuration(durationMs: number, language: "en" | "zh"): string {
+  if (durationMs < 1000) return language === "zh" ? "少于 1 秒" : "<1s";
   const totalSeconds = Math.floor(durationMs / 1000);
   if (totalSeconds < 60) return `${totalSeconds}${language === "zh" ? " 秒" : "s"}`;
   const minutes = Math.floor(totalSeconds / 60);
@@ -326,25 +362,16 @@ function StructuredReasoning({
   language: "en" | "zh";
   onOpenLink: (href: string | undefined) => void;
 }): React.JSX.Element | null {
-  const [open, setOpen] = useState(false);
   const content = part.segments.map((segment) => segment.text).filter(Boolean).join("\n\n");
   if (!content && !part.summary) return null;
   const running = part.status === "running" || part.status === "pending";
-  const title = running
-    ? language === "zh" ? "正在思考" : "Thinking"
-    : language === "zh" ? "思考过程" : "Reasoning";
   return (
-    <details className="chat-reasoning structured-reasoning" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span>{title}</span>
-        {part.segments.length > 1 ? <small>{part.segments.length}</small> : null}
-      </summary>
+    <div className="structured-reasoning" data-segment-count={part.segments.length}>
       <div className="chat-reasoning-content">
         {part.summary ? <p className="structured-reasoning-summary">{part.summary}</p> : null}
         {content ? <ChatMessageContent content={content} streaming={running} language={language} onOpenLink={onOpenLink} /> : null}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -436,12 +463,14 @@ function InteractionItem({
   responded,
   onRespond,
   onRequestText,
+  onOpenResult,
 }: {
   part: InteractionPart;
   language: "en" | "zh";
   responded: boolean;
-  onRespond: (part: InteractionPart, response: { approved: boolean }) => void;
+  onRespond: (part: InteractionPart, response: { approved?: boolean; decision?: "accept" | "acceptForSession" | "decline" }) => void;
   onRequestText: (part: InteractionPart) => void;
+  onOpenResult?: () => void;
 }): React.JSX.Element {
   const zh = language === "zh";
   return (
@@ -451,13 +480,14 @@ function InteractionItem({
       <div>
         {part.interactionType === "approval" || part.interactionType === "confirmation" ? (
           <>
-            <button type="button" disabled={responded} onClick={() => onRespond(part, { approved: false })}>{zh ? "拒绝" : "Reject"}</button>
-            <button type="button" disabled={responded} onClick={() => onRespond(part, { approved: true })}>{zh ? "批准" : "Approve"}</button>
+            <button type="button" disabled={responded} onClick={() => onRespond(part, { decision: "decline" })}>{zh ? "拒绝" : "Reject"}</button>
+            <button type="button" disabled={responded} title={zh ? "只允许这一次操作" : "Allow only this operation"} onClick={() => onRespond(part, { decision: "accept" })}>{zh ? "仅允许一次" : "Allow once"}</button>
+            <button type="button" disabled={responded} title={zh ? "在当前会话内允许同类操作；关闭会话后失效" : "Allow equivalent operations in this session; expires when the session ends"} onClick={() => onRespond(part, { decision: "acceptForSession" })}>{zh ? "本会话允许" : "Allow for session"}</button>
           </>
         ) : (
           <button type="button" disabled={responded} onClick={() => onRequestText(part)}>{zh ? "回复" : "Respond"}</button>
         )}
-        {responded ? <span>{zh ? "已发送" : "Sent"}</span> : null}
+        {responded ? <span>{zh ? "已发送" : "Sent"}{onOpenResult ? <button type="button" onClick={onOpenResult}>{zh ? "查看操作/审计结果" : "View operation/audit result"}</button> : null}</span> : null}
       </div>
     </section>
   );
