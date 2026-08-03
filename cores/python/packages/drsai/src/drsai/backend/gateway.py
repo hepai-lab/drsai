@@ -98,7 +98,7 @@ from pathlib import Path
 
 from typing import Any, Optional
 
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 
 
@@ -110,7 +110,7 @@ from fastapi.responses import JSONResponse, Response as FastAPIResponse, Streami
 
 from loguru import logger
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from drsai.backend.remote_ssh.workspace import PROTOCOL_VERSION, canonical_workspace, ensure_protocol, workspace_child
 from drsai.backend.remote_ssh.checkpoints import accept_checkpoint, create_checkpoint, list_checkpoints, preview_checkpoint, restore_checkpoint
@@ -137,6 +137,7 @@ from drsai.backend.runtime.agent import (
 )
 from drsai.backend.codex_adapter import build_codex_adapter
 from drsai.backend.runtime.conversation import StructuredConversationProjector
+from drsai.backend.runtime.desktop_oaep_bridge import DesktopOaepJournalBridge
 from drsai.backend.runtime.desktop_threads import DesktopThreadProjection
 from drsai.backend.tui_gateway.adapter.event_translator import (
     TurnState as ConversationTranslationState,
@@ -192,6 +193,29 @@ from drsai.backend.run_drsai_agent_factory import (
 )
 
 from drsai.configs.constant import FS_DIR, WORKSPACE_DIR
+from drsai.config import (
+    ConfigError as ModelProviderConfigError,
+    ConfigConflict as ModelProviderConfigConflict,
+    ConfigUpdateRequest,
+    ProviderDraft,
+    diagnose_model_config,
+    discover_provider_models,
+    guidance_for,
+    last_known_good_path,
+    list_provider_presets,
+    latest_probe_result,
+    probe_provider_draft,
+    preview_update as preview_model_config_update,
+    restore_last_known_good,
+    commit_update as commit_model_config_update,
+    config_revision as model_config_revision,
+    load_user_config as load_model_provider_config,
+    resolve_model_config,
+    builtin_provider_names,
+    test_provider_connection,
+    telemetry_snapshot,
+)
+from drsai.config.loader import default_config_path as default_model_config_path
 
 from drsai.modules.managers.database import DatabaseManager
 
@@ -414,6 +438,16 @@ class ChatRequest(BaseModel):
 
     )
 
+    display_message: Optional[str] = Field(
+        default=None,
+        description="User-visible Desktop message mirrored into the OAEP journal.",
+    )
+
+    source_message_id: Optional[str] = Field(
+        default=None,
+        description="Stable client message identity used for cross-client deduplication.",
+    )
+
 
 
 
@@ -544,6 +578,15 @@ async def _load_remote_hepai_tools(force: bool = False) -> tuple[list[Any], list
     return tools, rows
 
 
+def _model_config_stamp() -> tuple[int, int] | None:
+    """Cheap fingerprint used to detect manual config.toml edits."""
+    try:
+        stat = default_model_config_path().stat()
+        return stat.st_mtime_ns, stat.st_size
+    except OSError:
+        return None
+
+
 class AgentManager:
 
     """Manage OpenDrSai agent instances keyed by (user_id, thread_id) for session isolation.
@@ -573,6 +616,13 @@ class AgentManager:
         self._model_aliases: dict[str, str] = {}     # key â current model alias
 
         self._locks: dict[str, asyncio.Lock] = {}    # key â request lock
+
+        self._config_revisions: dict[str, int] = {}
+
+        self._agent_config_revisions: dict[str, int] = {}
+
+        self._agent_config_stamps: dict[str, tuple[int, int] | None] = {}
+        self._agent_model_config_revisions: dict[str, str] = {}
 
         self._global_lock = asyncio.Lock()
 
@@ -807,9 +857,24 @@ class AgentManager:
 
             current_alias = self._model_aliases.get(key)
 
+            current_revision = self._config_revisions.get(uid, 0)
+
+            agent_revision = self._agent_config_revisions.get(key, -1)
+
+            active_config_stamp = _model_config_stamp()
+
+            agent_config_stamp = self._agent_config_stamps.get(key)
 
 
-            if agent is None or (model_alias and model_alias != current_alias):
+
+            if (
+                agent is None
+                or agent_revision != current_revision
+                or agent_config_stamp != active_config_stamp
+                or (model_alias and model_alias != current_alias)
+            ):
+
+                previous_agent = agent
 
                 logger.info(
 
@@ -874,6 +939,17 @@ class AgentManager:
                 self._agents[key] = agent
 
                 self._model_aliases[key] = model_alias
+
+                self._agent_config_revisions[key] = current_revision
+
+                self._agent_config_stamps[key] = active_config_stamp
+                self._agent_model_config_revisions[key] = model_config_revision()
+
+                if previous_agent is not None and previous_agent is not agent and hasattr(previous_agent, "close"):
+                    try:
+                        await previous_agent.close()
+                    except Exception as exc:
+                        logger.debug(f"close() after model config refresh failed for {key}: {exc}")
 
 
 
@@ -1127,12 +1203,50 @@ class AgentManager:
             for k in keys:
                 agent = self._agents.pop(k, None)
                 self._model_aliases.pop(k, None)
+                self._agent_config_revisions.pop(k, None)
+                self._agent_config_stamps.pop(k, None)
+                self._agent_model_config_revisions.pop(k, None)
                 if agent is not None and hasattr(agent, "close"):
                     try:
                         await agent.close()
                     except Exception as e:
                         logger.debug(f"close() during evict failed for {k}: {e}")
             return len(keys)
+
+    async def mark_user_config_stale(self, user_id: str) -> int:
+        """Apply model config on the next turn without interrupting active streams."""
+        async with self._global_lock:
+            revision = self._config_revisions.get(user_id, 0) + 1
+            self._config_revisions[user_id] = revision
+            return revision
+
+    async def model_config_state(self, user_id: str) -> dict[str, object]:
+        """Report configured versus live revisions without exposing session data."""
+        configured = model_config_revision()
+        async with self._global_lock:
+            prefix = f"{user_id}:"
+            runtime_count = sum(
+                1 for key in self._agent_model_config_revisions if key.startswith(prefix)
+            )
+            active = sorted({
+                revision
+                for key, revision in self._agent_model_config_revisions.items()
+                if key.startswith(prefix)
+            })
+        if not active:
+            status = "not_started"
+        elif active == [configured]:
+            status = "applied"
+        elif configured in active:
+            status = "partially_applied"
+        else:
+            status = "pending_next_turn"
+        return {
+            "configured_revision": configured,
+            "runtime_revisions": active,
+            "runtime_status": status,
+            "active_runtime_count": runtime_count,
+        }
 
 
 
@@ -1269,6 +1383,27 @@ _REMOTE_CAPABILITY_VERSIONS = {
     "session.event.resume": 1,
     "session.event.stream": 1,
     "session.event.cursor_expired": 1,
+    "oaep.v1": 1,
+    "oaep.session.snapshot": 1,
+    "oaep.session.events": 1,
+    "oaep.session.events.stream": 1,
+    "event.cursor_expired": 1,
+}
+
+_RUNTIME_PROTOCOLS = {
+    "oaep": {
+        "version": "1.0",
+        "profiles": ["oaep.session-stream/1"],
+    },
+    "owop": {
+        "version": "1.0",
+        "capabilities": [
+            "workspace", "worktree", "files", "search", "watch", "git",
+            "process", "pty", "checkpoint", "artifact",
+        ],
+    },
+    "control": {"version": "1"},
+    "relay": {"version": "2.0.0"},
 }
 
 
@@ -1310,6 +1445,8 @@ async def _start_runtime_relay_bridge():
             http_request_handler=handler.handle_http_request,
             event_provider=handler.relay_events,
             session_event_provider=handler.relay_session_events,
+            oaep_event_provider=handler.relay_oaep_events,
+            oaep_event_ack=handler.ack_relay_oaep_event,
             workspace_provider=handler.published_workspaces,
             backend_health={"opendrsai": "healthy"},
             wire_protocol=(
@@ -2023,6 +2160,121 @@ def _workspace_child(workspace_id: str, path: str) -> Path:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _chat_runtime_workspace_id(request: ChatRequest, raw_request: Request) -> str:
+    """Resolve a Desktop chat request to one open, registered Workspace."""
+    registry = _runtime_registry()
+    explicit = (
+        registry.get_workspace(request.workspace_id, include_closed=True)
+        if request.workspace_id
+        else None
+    )
+    if request.workspace_id and (explicit is None or not explicit.open):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "workspace_not_open",
+                "message": "Desktop OAEP mirroring requires an open registered Workspace.",
+                "retryable": False,
+            },
+        )
+
+    raw_header = raw_request.headers.get("x-opendrsai-workspace", "").strip()
+    supplied_path = request.work_dir or (unquote(raw_header) if raw_header else "")
+    candidate = _canonical_workspace(supplied_path) if supplied_path else None
+    matches = []
+    if candidate is not None:
+        for record in registry.list_workspaces(include_closed=False):
+            root = _canonical_workspace(record.path)
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                continue
+            matches.append((len(root.parts), record))
+    resolved = max(matches, key=lambda entry: entry[0])[1] if matches else explicit
+    if resolved is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "workspace_not_registered",
+                "message": "Desktop OAEP mirroring requires a registered Workspace.",
+                "retryable": False,
+            },
+        )
+    if explicit is not None and explicit.workspace_id != resolved.workspace_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "workspace_identity_mismatch",
+                "message": "Desktop Workspace id and path identify different Workspaces.",
+                "retryable": False,
+            },
+        )
+    return str(resolved.workspace_id)
+
+
+def _prepare_desktop_oaep_bridge(
+    request: ChatRequest,
+    raw_request: Request,
+) -> DesktopOaepJournalBridge | None:
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    request_id = str(metadata.get("desktop_request_id") or "").strip()
+    if not request_id:
+        return None
+    if not request.thread_id or request.display_message is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "desktop_oaep_identity_required",
+                "message": "Desktop OAEP mirroring requires Session and display-message identities.",
+                "retryable": False,
+            },
+        )
+    workspace_id = _chat_runtime_workspace_id(request, raw_request)
+    _sync_desktop_session_id(request.thread_id)
+    engine = _runtime_engine()
+    try:
+        session = engine.get_session(request.thread_id)
+    except KeyError:
+        session, _ = engine.import_session(
+            request.thread_id,
+            workspace_id,
+            str(request.display_message).strip()[:80] or "Desktop session",
+            agent_definition="opendrsai@1",
+            backend_id="opendrsai",
+        )
+    if str(session["workspace_id"]) != workspace_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_workspace_mismatch",
+                "message": "Desktop Session belongs to another Workspace.",
+                "retryable": False,
+            },
+        )
+    try:
+        return DesktopOaepJournalBridge.begin(
+            engine,
+            session_id=request.thread_id,
+            request_id=request_id,
+            display_message=request.display_message,
+            source_message_id=str(request.source_message_id or request_id),
+            correlation_id=str(metadata.get("correlation_id") or request_id),
+            agent_definition=str(session.get("agent_definition") or "opendrsai@1"),
+            backend_id=str(session.get("backend_id") or "opendrsai"),
+            retry_attempt=int(metadata.get("network_retry_attempt") or 0),
+            resume_from_chars=int(metadata.get("resume_from_chars") or 0),
+        )
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "desktop_oaep_conflict",
+                "message": str(exc),
+                "retryable": False,
+            },
+        ) from exc
+
+
 @app.middleware("http")
 async def authenticate_desktop_gateway(request: Request, call_next):
     supplied_correlation = request.headers.get("x-correlation-id", "")
@@ -2120,6 +2372,7 @@ async def runtime_identity():
         "version": runtime_version,
         "protocol_version": _REMOTE_PROTOCOL_VERSION,
         "platform": sys.platform,
+        "dev_managed": os.environ.get("DRSAI_GATEWAY_DEV_MANAGED") == "1",
     }
 
 
@@ -2135,6 +2388,7 @@ async def runtime_shutdown():
 async def runtime_capabilities():
     return {
         "protocol_version": _REMOTE_PROTOCOL_VERSION,
+        "protocols": _RUNTIME_PROTOCOLS,
         "capabilities": sorted(_REMOTE_CAPABILITY_VERSIONS),
         "capability_versions": _REMOTE_CAPABILITY_VERSIONS,
         "agent_backends": await _runtime_agent_service().health(),
@@ -2376,6 +2630,35 @@ async def runtime_backend_account_logout(backend_id: str):
         return {"logged_out": True}
     except RuntimeExecutionError as exc:
         raise _backend_account_http_error(exc) from exc
+
+
+@app.post("/v1/agent-backends/{backend_id}/restart")
+async def runtime_backend_restart(backend_id: str):
+    try:
+        return await _runtime_agent_service().restart_backend(backend_id)
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@app.post("/v1/workspaces/{workspace_id}/agent-backends/{backend_id}/sessions/sync")
+async def runtime_backend_session_sync(workspace_id: str, backend_id: str):
+    try:
+        return await _runtime_agent_service().sync_backend_sessions(backend_id, workspace_id)
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@app.post("/v1/sessions/{session_id}/agent-backend/history/sync")
+async def runtime_backend_session_history_sync(session_id: str):
+    try:
+        return await _runtime_agent_service().sync_backend_session_history(session_id)
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Session not found") from exc
+    except Exception:
+        logger.exception(f"Backend session history sync failed for {session_id}")
+        raise
 
 
 @app.websocket("/v1/pty")
@@ -2640,6 +2923,16 @@ async def runtime_session_conversation_snapshot(session_id: str):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.get("/v1/sessions/{session_id}/oaep-snapshot")
+async def runtime_session_oaep_snapshot(session_id: str):
+    """Return the OAEP v1 Session/Run/Item projection for one Runtime Session."""
+    try:
+        _sync_desktop_session_id(session_id)
+        return _runtime_engine().oaep_snapshot(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 def _session_cursor_expired(exc: SessionCursorExpired) -> HTTPException:
     return HTTPException(
         status_code=409,
@@ -2672,6 +2965,33 @@ async def runtime_session_event_list(
             "next_sequence": (
                 int(events[-1]["session_sequence"]) if events else after_sequence
             ),
+        }
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SessionCursorExpired as exc:
+        raise _session_cursor_expired(exc) from exc
+
+
+@app.get("/v1/sessions/{session_id}/oaep-events")
+async def runtime_session_oaep_event_list(
+    session_id: str,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=2000),
+):
+    """Replay durable OAEP v1 Events after an exclusive Session sequence cursor."""
+    try:
+        _sync_desktop_session_id(session_id)
+        events = _runtime_engine().list_oaep_events(
+            session_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+        return {
+            "version": "1.0",
+            "object": "list",
+            "data": events,
+            "next_sequence": int(events[-1]["sequence"]) if events else after_sequence,
+            "has_more": len(events) == limit,
         }
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2723,6 +3043,58 @@ async def runtime_session_event_stream(
                     event, ensure_ascii=False, separators=(",", ":")
                 )
                 yield f"id: {cursor}\nevent: session.event\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+@app.get("/v1/sessions/{session_id}/oaep-events/stream")
+async def runtime_session_oaep_event_stream(
+    session_id: str,
+    raw_request: Request,
+    after_sequence: int = Query(default=0, ge=0),
+):
+    """Resume an OAEP v1 Session Event stream without a snapshot/subscribe race."""
+    try:
+        _sync_desktop_session_id(session_id)
+        _runtime_engine().list_oaep_events(
+            session_id,
+            after_sequence=after_sequence,
+            limit=1,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SessionCursorExpired as exc:
+        raise _session_cursor_expired(exc) from exc
+
+    async def stream():
+        cursor = after_sequence
+        while not await raw_request.is_disconnected():
+            try:
+                events = await asyncio.to_thread(
+                    _runtime_engine().wait_oaep_events,
+                    session_id,
+                    after_sequence=cursor,
+                    timeout=15.0,
+                    limit=500,
+                )
+            except SessionCursorExpired:
+                return
+            if not events:
+                yield ": heartbeat\n\n"
+                continue
+            for event in events:
+                cursor = int(event["sequence"])
+                payload = json.dumps(
+                    event, ensure_ascii=False, separators=(",", ":")
+                )
+                yield f"id: {cursor}\nevent: oaep.event\ndata: {payload}\n\n"
 
     return StreamingResponse(
         stream(),
@@ -4383,6 +4755,30 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
     cancel_token = CancellationToken()
 
+    desktop_oaep_bridge = _prepare_desktop_oaep_bridge(request, raw_request)
+
+    controlled_desktop_turn = metadata.get("v4_controlled_desktop_turn") is True
+    if controlled_desktop_turn and not (
+        os.environ.get("DRSAI_RUNTIME_CONTROLLED_MODEL") == "1"
+        and raw_request.headers.get("x-opendrsai-auth-mode") == "offline"
+        and request.user_id == "v4-acceptance-windows"
+        and desktop_oaep_bridge is not None
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "controlled_desktop_turn_forbidden",
+                "message": "The deterministic Desktop turn is available only to the V4 acceptance launcher.",
+                "retryable": False,
+                "details": {
+                    "controlled_model_enabled": os.environ.get("DRSAI_RUNTIME_CONTROLLED_MODEL") == "1",
+                    "offline_auth": raw_request.headers.get("x-opendrsai-auth-mode") == "offline",
+                    "acceptance_user": request.user_id == "v4-acceptance-windows",
+                    "bridge_ready": desktop_oaep_bridge is not None,
+                },
+            },
+        )
+
 
 
     async def generate_sse():
@@ -4404,6 +4800,53 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
             for frame in conversation_projector.encode(conversation_projector.start()):
                 yield frame
 
+            if controlled_desktop_turn:
+                controlled_events = [
+                    ("message.delta", {"text": "controlled desktop response"}),
+                    (
+                        "tool.start",
+                        {
+                            "tool_id": f"tool:{conversation_turn_id}",
+                            "name": "shell",
+                            "args": {"command": "controlled-read-only"},
+                        },
+                    ),
+                    (
+                        "tool.complete",
+                        {
+                            "tool_id": f"tool:{conversation_turn_id}",
+                            "name": "shell",
+                            "result": "completed",
+                        },
+                    ),
+                    (
+                        "agent.item.file_change",
+                        {
+                            "backend_metadata": {
+                                "item_id": f"file-change:{conversation_turn_id}",
+                            },
+                            "phase": "completed",
+                            "item": {
+                                "path": "acceptance/controlled-result.txt",
+                                "operation": "modify",
+                                "summary": "Controlled acceptance file-change metadata",
+                            },
+                        },
+                    ),
+                ]
+                for semantic_type, semantic_payload in controlled_events:
+                    desktop_oaep_bridge.record(semantic_type, semantic_payload)
+                    for frame in conversation_projector.encode(
+                        conversation_projector.project(semantic_type, semantic_payload)
+                    ):
+                        yield frame
+                complete_payload = {"text": "controlled desktop response"}
+                desktop_oaep_bridge.record("message.complete", complete_payload)
+                desktop_oaep_bridge.complete(complete_payload)
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': 'controlled desktop response'}}]})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
             with platform_auth_scope(auth_context) if auth_context else nullcontext():
                 event_stream = manager.run_stream(
                     task=task,
@@ -4418,6 +4861,8 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                     try:
                         semantic_events = translate_conversation_event(event, conversation_state)
                         for semantic_type, semantic_payload in semantic_events:
+                            if desktop_oaep_bridge is not None:
+                                desktop_oaep_bridge.record(semantic_type, semantic_payload)
                             structured_events = conversation_projector.project(semantic_type, semantic_payload)
                             for frame in conversation_projector.encode(structured_events):
                                 yield frame
@@ -4440,10 +4885,15 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                         yield sse
 
             complete_type, complete_payload = finalize_conversation_translation(conversation_state)
+            if desktop_oaep_bridge is not None:
+                desktop_oaep_bridge.record(complete_type, complete_payload)
             for frame in conversation_projector.encode(
                 conversation_projector.project(complete_type, complete_payload)
             ):
                 yield frame
+
+            if desktop_oaep_bridge is not None:
+                desktop_oaep_bridge.complete(complete_payload)
 
             yield "data: [DONE]\n\n"
 
@@ -4452,6 +4902,9 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
         except asyncio.CancelledError:
 
             logger.info(f"Request cancelled for session {thread_id}")
+
+            if desktop_oaep_bridge is not None:
+                desktop_oaep_bridge.cancel()
 
             for frame in conversation_projector.encode(
                 conversation_projector.complete(status="cancelled")
@@ -4464,7 +4917,14 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
 
 
-        except HTTPException:
+        except HTTPException as exc:
+
+            if desktop_oaep_bridge is not None:
+                desktop_oaep_bridge.fail({
+                    "code": "desktop_gateway_error",
+                    "message": str(exc.detail),
+                    "retryable": exc.status_code >= 500,
+                })
 
             raise
 
@@ -4492,6 +4952,8 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                 diagnostic,
             )
             logger.debug(traceback.format_exc())
+            if desktop_oaep_bridge is not None:
+                desktop_oaep_bridge.fail(error)
             for frame in conversation_projector.encode(
                 conversation_projector.complete(
                     {"message": error.get("message") or "Agent turn failed."},
@@ -4504,6 +4966,12 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
             yield "data: [DONE]\n\n"
 
             return
+
+        finally:
+            # Async-generator close does not always enter CancelledError. Never
+            # leave a mirrored Runtime Run indefinitely in the running state.
+            if desktop_oaep_bridge is not None:
+                desktop_oaep_bridge.cancel()
 
 
 
@@ -5664,6 +6132,351 @@ async def set_cli_config(key: str, req: CliConfigSetRequest):
     update_config(**{key: req.value})
     evicted = await manager.evict_user(_get_user_id())
     return {"ok": True, "key": key, "value": req.value, "evicted_sessions": evicted}
+
+
+class ActiveModelConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: str = Field(..., min_length=1, max_length=256)
+    model_provider: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    expected_revision: Optional[str] = Field(default=None, min_length=64, max_length=64)
+    base_url: Optional[str] = Field(default=None, min_length=1, max_length=2048)
+    api_key: Optional[str] = Field(default=None, min_length=1, max_length=8192, repr=False)
+    api_key_env: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    api_key_credential: Optional[str] = Field(default=None, min_length=1, max_length=512)
+    wire_api: str = Field(default="openai", pattern=r"^(openai|anthropic)$")
+    requires_api_key: bool = True
+
+
+class ModelProviderConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_url: str = Field(..., min_length=1, max_length=2048)
+    api_key: Optional[str] = Field(default=None, min_length=1, max_length=8192)
+    api_key_env: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    api_key_credential: Optional[str] = Field(default=None, min_length=1, max_length=512)
+    wire_api: str = Field(default="openai", pattern=r"^(openai|anthropic)$")
+    requires_api_key: bool = True
+    expected_revision: Optional[str] = Field(default=None, min_length=64, max_length=64)
+
+
+class ModelProviderTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: Optional[str] = Field(default=None, min_length=1, max_length=256)
+
+
+class ModelProviderDraftTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    base_url: str = Field(..., min_length=1, max_length=2048)
+    model: str = Field(..., min_length=1, max_length=256)
+    wire_api: str = Field(default="openai", pattern=r"^(openai|anthropic)$")
+    requires_api_key: bool = True
+    api_key: Optional[str] = Field(default=None, min_length=1, max_length=8192, repr=False)
+    api_key_env: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    mode: str = Field(default="basic", pattern=r"^(basic|model)$")
+
+
+class ModelConfigRestoreRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: Optional[str] = Field(default=None, min_length=64, max_length=64)
+
+
+class ModelDoctorRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    online: bool = False
+
+
+class ModelDiscoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    refresh: bool = False
+
+
+def _commit_metadata(committed: object) -> dict[str, object]:
+    return {
+        "changed_fields": list(getattr(committed, "changed_fields", ())),
+        "restart_required": bool(getattr(committed, "restart_required", False)),
+        "apply_strategy": str(getattr(committed, "apply_strategy", "next_turn_atomic_client_swap")),
+    }
+
+
+@app.get("/v1/config/model")
+async def get_active_model_config():
+    """Return the effective compact model configuration without secrets."""
+    try:
+        config = await asyncio.to_thread(load_model_provider_config)
+        resolved = resolve_model_config(config, environ=os.environ, require_credentials=False)
+        result = resolved.public_dict()
+        result["path"] = config.source_path
+        result["revision"] = model_config_revision()
+        return result
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/config/model-state")
+async def get_model_config_state():
+    """Return effective state and recovery metadata, never credentials."""
+    try:
+        config = await asyncio.to_thread(load_model_provider_config)
+        resolved = resolve_model_config(config, environ=os.environ, require_credentials=False)
+        target = default_model_config_path()
+        runtime = await manager.model_config_state(_get_user_id())
+        return {
+            "path": str(target),
+            "revision": model_config_revision(target),
+            "last_known_good_available": last_known_good_path(target).is_file(),
+            "effective": resolved.public_dict(),
+            "runtime": runtime,
+            "last_test": latest_probe_result(resolved.provider.name),
+            "telemetry": telemetry_snapshot(),
+        }
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/v1/config/model/doctor")
+async def doctor_model_config(req: ModelDoctorRequest = ModelDoctorRequest()):
+    """Run offline configuration and credential diagnostics."""
+    return await asyncio.to_thread(diagnose_model_config, online=req.online)
+
+
+@app.post("/v1/config/model/restore")
+async def restore_model_config(req: ModelConfigRestoreRequest):
+    """Restore the last-known-good configuration with optimistic concurrency."""
+    try:
+        committed = await asyncio.to_thread(
+            restore_last_known_good,
+            expected_revision=req.expected_revision,
+        )
+    except ModelProviderConfigConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={**guidance_for("config_conflict"), "message": str(exc)},
+        ) from exc
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    revision = await manager.mark_user_config_stale(_get_user_id())
+    return {
+        "ok": True,
+        "effective": committed.resolved.public_dict(),
+        "revision": committed.revision,
+        "config_revision": revision,
+        **_commit_metadata(committed),
+    }
+
+
+@app.put("/v1/config/model")
+async def set_active_model_config(req: ActiveModelConfigRequest):
+    """Persist the selected model and Provider, preserving unrelated TOML."""
+    try:
+        provider_values = None
+        if req.base_url is not None:
+            provider_values = {
+                "base_url": req.base_url,
+                "wire_api": req.wire_api,
+                "requires_api_key": req.requires_api_key,
+                **({"api_key_env": req.api_key_env} if req.api_key_env else {}),
+                **({"api_key_credential": req.api_key_credential} if req.api_key_credential else {}),
+            }
+        committed = await asyncio.to_thread(
+            commit_model_config_update,
+            ConfigUpdateRequest(
+                model=req.model,
+                model_provider=req.model_provider,
+                provider_name=req.model_provider if provider_values is not None else None,
+                provider_values=provider_values,
+                provider_secret=req.api_key,
+            ),
+            expected_revision=req.expected_revision,
+        )
+        resolved = committed.resolved
+    except ModelProviderConfigConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": "config_conflict", "message": str(exc)}) from exc
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    revision = await manager.mark_user_config_stale(_get_user_id())
+    return {"ok": True, **resolved.public_dict(), "evicted_sessions": 0, "config_revision": revision, "revision": committed.revision, "warnings": list(committed.warnings), **_commit_metadata(committed)}
+
+
+@app.post("/v1/config/model/preview")
+async def preview_active_model_config(req: ActiveModelConfigRequest):
+    """Validate and render an atomic model/provider change without persistence."""
+    try:
+        provider_values = None
+        if req.base_url is not None:
+            provider_values = {
+                "base_url": req.base_url,
+                "wire_api": req.wire_api,
+                "requires_api_key": req.requires_api_key,
+                **({"api_key_env": req.api_key_env} if req.api_key_env else {}),
+                **({"api_key_credential": req.api_key_credential} if req.api_key_credential else {}),
+            }
+        preview = await asyncio.to_thread(
+            preview_model_config_update,
+            ConfigUpdateRequest(
+                model=req.model,
+                model_provider=req.model_provider,
+                provider_name=req.model_provider if provider_values is not None else None,
+                provider_values=provider_values,
+                provider_secret=req.api_key,
+            ),
+            environ=os.environ,
+        )
+        if req.expected_revision and req.expected_revision != preview.base_revision:
+            raise ModelProviderConfigConflict("Model configuration changed; reload it before saving")
+        return {
+            "ok": True,
+            "persisted": False,
+            "base_revision": preview.base_revision,
+            "effective": preview.resolved.public_dict(),
+        }
+    except ModelProviderConfigConflict as exc:
+        raise HTTPException(status_code=409, detail={**guidance_for("config_conflict"), "message": str(exc)}) from exc
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/config/model-providers")
+async def list_model_provider_configs():
+    """List user-defined Providers and the effective built-in Provider."""
+    try:
+        config = await asyncio.to_thread(load_model_provider_config)
+        providers: list[dict[str, object]] = []
+        names = set(config.providers)
+        names.update(builtin_provider_names())
+        names.add(config.model_provider or "hepai")
+        for name in sorted(names):
+            try:
+                resolved = resolve_model_config(
+                    config,
+                    environ=os.environ,
+                    provider=name,
+                    require_credentials=False,
+                )
+            except ModelProviderConfigError:
+                continue
+            providers.append(resolved.provider.public_dict())
+        return {"providers": providers, "active": config.model_provider or "hepai"}
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/config/model-providers/presets")
+async def get_model_provider_presets():
+    """List user-facing presets whose invariant fields stay out of TOML."""
+    return {"presets": list_provider_presets()}
+
+
+@app.post("/v1/config/model-providers/models")
+async def discover_model_provider_models(req: ModelDiscoveryRequest):
+    """Discover models with a short-lived in-memory cache."""
+    try:
+        config = await asyncio.to_thread(load_model_provider_config)
+        resolved = resolve_model_config(
+            config,
+            environ=os.environ,
+            provider=req.provider,
+            require_credentials=True,
+        )
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await discover_provider_models(resolved, refresh=req.refresh)
+
+
+@app.put("/v1/config/model-providers/{name}")
+async def put_model_provider_config(name: str, req: ModelProviderConfigRequest):
+    """Create or replace a user Provider without returning its secret."""
+    try:
+        values = req.model_dump(exclude_none=True, exclude={"expected_revision"})
+        raw_key = values.pop("api_key", None)
+        committed = await asyncio.to_thread(
+            commit_model_config_update,
+            ConfigUpdateRequest(
+                provider_name=name,
+                provider_values=values,
+                provider_secret=raw_key if isinstance(raw_key, str) else None,
+            ),
+            expected_revision=req.expected_revision or model_config_revision(),
+        )
+        resolved = resolve_model_config(
+            committed.config,
+            environ=os.environ,
+            provider=name,
+            require_credentials=False,
+        )
+    except ModelProviderConfigConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": "config_conflict", "message": str(exc)}) from exc
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    revision = await manager.mark_user_config_stale(_get_user_id())
+    return {"ok": True, "provider": resolved.provider.public_dict(), "evicted_sessions": 0, "config_revision": revision, "revision": committed.revision, "warnings": list(committed.warnings), **_commit_metadata(committed)}
+
+
+@app.delete("/v1/config/model-providers/{name}")
+async def remove_model_provider_config(
+    name: str,
+    expected_revision: Optional[str] = None,
+    delete_credential: bool = True,
+):
+    """Delete a user Provider and safely fall back to HepAI if it was active."""
+    try:
+        base_revision = expected_revision or model_config_revision()
+        config = await asyncio.to_thread(load_model_provider_config)
+        active = (config.model_provider or "hepai") == name
+        committed = await asyncio.to_thread(
+            commit_model_config_update,
+            ConfigUpdateRequest(
+                delete_provider_name=name,
+                delete_provider_credential=delete_credential,
+                model=config.model or DEFAULT_CONFIG_NAME if active else None,
+                model_provider="hepai" if active else None,
+            ),
+            expected_revision=base_revision,
+        )
+    except ModelProviderConfigConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": "config_conflict", "message": str(exc)}) from exc
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    revision = await manager.mark_user_config_stale(_get_user_id())
+    return {"ok": True, "active": "hepai" if active else config.model_provider, "evicted_sessions": 0, "config_revision": revision, "revision": committed.revision}
+
+
+@app.post("/v1/config/model-providers/{name}/test")
+async def test_model_provider_config(name: str, req: ModelProviderTestRequest):
+    """Perform a bounded, authenticated protocol check against a Provider."""
+    try:
+        config = await asyncio.to_thread(load_model_provider_config)
+        resolved = resolve_model_config(
+            config,
+            environ=os.environ,
+            provider=name,
+            model=req.model,
+        )
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return await test_provider_connection(resolved)
+
+
+@app.post("/v1/config/model-providers/test")
+async def test_model_provider_draft(req: ModelProviderDraftTestRequest):
+    """Test an unsaved Provider draft without writing TOML or credentials."""
+    try:
+        return await probe_provider_draft(
+            ProviderDraft(
+                name=req.name,
+                base_url=req.base_url,
+                model=req.model,
+                wire_api=req.wire_api,  # type: ignore[arg-type]
+                requires_api_key=req.requires_api_key,
+                api_key=req.api_key,
+                api_key_env=req.api_key_env,
+            ),
+            mode=req.mode,  # type: ignore[arg-type]
+            environ=os.environ,
+        )
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # ════════════════════════════════════════════════════════════════════════════

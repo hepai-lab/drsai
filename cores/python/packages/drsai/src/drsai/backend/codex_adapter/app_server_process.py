@@ -27,6 +27,11 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"),
 )
 
+# App Server uses newline-delimited JSON. A thread/list response can contain
+# hundreds of historical threads in a single frame, so asyncio's 64 KiB
+# default StreamReader limit is not sufficient for a real Codex profile.
+CODEX_JSONL_FRAME_LIMIT = 16 * 1024 * 1024
+
 
 def redact_secrets(value: str, explicit_secrets: Sequence[str] = ()) -> str:
     result = value
@@ -119,6 +124,7 @@ class CodexAppServerProcess:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    limit=CODEX_JSONL_FRAME_LIMIT,
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
                 )
             except (OSError, ValueError) as exc:

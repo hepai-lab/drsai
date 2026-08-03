@@ -5,6 +5,8 @@ import hashlib
 import hmac
 import json
 import time
+import asyncio
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -67,6 +69,70 @@ def register(client: TestClient):
     })
     assert response.status_code == 200
     return private, response.json()["runtime_id"], response.json()["registration_token"]
+
+
+def test_native_oaep_replay_is_authorized_before_cache_read() -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    _, runtime_id, token = register(client)
+    app.state.registry.publish_workspaces(runtime_id, token, [
+        Workspace.model_validate({
+            "runtime_id": runtime_id,
+            "workspace_id": "workspace-one",
+            "display_name": "Project",
+        })
+    ])
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": token},
+    ).json()["code"]
+    assert client.post(
+        "/v1/associations",
+        headers={"x-subject": "alice"},
+        json=association_body(grant),
+    ).status_code == 200
+
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[5] / "cores/protocol/oaep/examples.json")
+        .read_text(encoding="utf-8")
+    )
+    event = dict(fixture["events"][0])
+    event["source"] = {**event["source"], "runtime_id": runtime_id}
+    frame = {
+        "type": "event",
+        "protocol": "oaep/1",
+        "scope": "session",
+        "runtime_id": runtime_id,
+        "workspace_id": "workspace-one",
+        "session_id": event["session_id"],
+        "sequence": event["sequence"],
+        "event": event,
+    }
+    asyncio.run(app.state.oaep_replay.attach(runtime_id, "generation-one"))
+    asyncio.run(app.state.oaep_replay.accept(runtime_id, "generation-one", frame))
+    url = (
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/"
+        f"{event['session_id']}/oaep-events?after_sequence=0&limit=100"
+    )
+    allowed = client.get(url, headers={"x-subject": "alice"})
+    assert allowed.status_code == 200
+    assert allowed.json()["data"] == [event]
+
+    # A different authenticated subject cannot infer cached Session presence.
+    denied = client.get(url, headers={"x-subject": "bob"})
+    assert denied.status_code == 403
+    assert "event" not in denied.text
+
+
+def test_oaep_metrics_are_content_free_and_expose_schema_identity() -> None:
+    client = TestClient(_testing_app())
+    response = client.get("/v1/metrics/oaep")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["protocol"] == "oaep/1"
+    assert len(payload["schema_hash"]) == 64
+    assert payload["counters"] == {}
+    assert not ({"event", "payload", "body", "token"} & payload.keys())
 
 
 def test_registration_association_heartbeat_and_discovery_flow() -> None:
@@ -311,6 +377,18 @@ def test_generated_openapi_contains_runtime_handshake_and_pagination() -> None:
     assert "/v1/runtimes/{runtime_id}/associations/{association_id}" in schema["paths"]
     assert "/v1/runtimes/{runtime_id}/enrollment" in schema["paths"]
     assert "patch" in schema["paths"]["/v1/runtimes/{runtime_id}"]
+
+
+def test_generated_openapi_contains_native_oaep_response_contracts() -> None:
+    schema = create_relay_app().openapi()
+    base = "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}"
+    snapshot = schema["paths"][f"{base}/oaep-snapshot"]["get"]["responses"]["200"]
+    page = schema["paths"][f"{base}/oaep-events"]["get"]["responses"]["200"]
+    stream = schema["paths"][f"{base}/oaep-events/stream"]["get"]["responses"]["200"]
+    assert snapshot["content"]["application/json"]["schema"]["$ref"].endswith("/OaepSnapshot")
+    assert page["content"]["application/json"]["schema"]["$ref"].endswith("/OaepEventPage")
+    assert stream["content"]["text/event-stream"]["schema"]["$ref"].endswith("/OaepEvent")
+    assert {"OaepSnapshot", "OaepEventPage", "OaepEvent"} <= set(schema["components"]["schemas"])
 
 
 def test_runtime_establishes_authenticated_outbound_websocket() -> None:
@@ -565,6 +643,113 @@ def test_runtime_workspace_catalog_sync_error_contract() -> None:
         body = response.json()
         assert body["code"] == code
         assert body["retryable"] is True
+
+
+def test_public_oaep_session_routes_proxy_authoritative_runtime_projection() -> None:
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[5] / "cores/protocol/oaep/examples.json")
+        .read_text(encoding="utf-8")
+    )
+    fixture["session"]["id"] = "session-one"
+    fixture["session"]["workspace_id"] = "workspace-one"
+    for run in fixture["runs"]:
+        run["session_id"] = "session-one"
+    for item in fixture["items"]:
+        item["session_id"] = "session-one"
+    for event in fixture["events"]:
+        event["session_id"] = "session-one"
+    fixture["snapshot_sequence"] = max(event["sequence"] for event in fixture["events"])
+
+    class OaepAuthority:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple, dict]] = []
+            self.runtime_id = ""
+
+        def oaep_snapshot_for_subject(self, *args, **kwargs):
+            self.calls.append(("snapshot", args, kwargs))
+            return {key: fixture[key] for key in ("version", "session", "runs", "items", "snapshot_sequence")}
+
+        def conversation_snapshot_for_subject(self, *args, **kwargs):
+            self.calls.append(("legacy-snapshot", args, kwargs))
+            return {"session_id": args[2], "snapshot_sequence": 1, "items": [], "next_cursor": None}
+
+        def session_events_for_subject(self, *args, **kwargs):
+            self.calls.append(("legacy-events", args, kwargs))
+            return {"object": "list", "items": [], "next_sequence": kwargs.get("after_sequence", 0)}
+
+        def oaep_events_for_subject(self, *args, **kwargs):
+            self.calls.append(("events", args, kwargs))
+            return {
+                "version": "1.0",
+                "object": "list",
+                "data": [fixture["events"][2]],
+                "next_sequence": fixture["events"][2]["sequence"],
+                "has_more": False,
+            }
+
+    authority = OaepAuthority()
+    client = TestClient(create_relay_app(principal_resolver=lambda request: request.headers.get("x-subject", "")))
+    _, runtime_id, token = register(client)
+    authority.runtime_id = runtime_id
+    registry = client.app.state.registry
+    client.app.state.registry.publish_workspaces(runtime_id, token, [
+        Workspace.model_validate({
+            "runtime_id": runtime_id,
+            "workspace_id": "workspace-one",
+            "display_name": "Project",
+        })
+    ])
+
+    relay = create_relay_app(
+        runtimes={runtime_id: authority},
+        registry=registry,
+        principal_resolver=lambda request: request.headers.get("x-subject", ""),
+    )
+    client = TestClient(relay)
+    _, code, _ = client.app.state.registry.issue_access_grant(runtime_id, token)
+    device = association_body(code)
+    client.app.state.registry.associate(
+        "alice",
+        code,
+        device["device_id"],
+        device["device_name"],
+        device["device_public_key"],
+    )
+
+    snapshot = client.get(
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/session-one/oaep-snapshot",
+        headers={"x-subject": "alice"},
+    )
+    assert snapshot.status_code == 200
+    assert snapshot.json()["items"][0]["content"]["text"]
+
+    legacy_snapshot = client.get(
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/session-one/conversation-snapshot",
+        headers={"x-subject": "alice"},
+    )
+    assert legacy_snapshot.status_code == 200
+    assert "version" not in legacy_snapshot.json() and "session_id" in legacy_snapshot.json()
+
+    events = client.get(
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/session-one/oaep-events"
+        "?after_sequence=7&limit=1",
+        headers={"x-subject": "alice"},
+    )
+    assert events.status_code == 200
+    assert events.json()["data"][0]["item_id"] == "reasoning-1"
+
+    legacy_events = client.get(
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/session-one/events",
+        headers={"x-subject": "alice"},
+    )
+    assert legacy_events.status_code == 200
+    assert "data" not in legacy_events.json() and "items" in legacy_events.json()
+
+    encoded_oaep = json.dumps(snapshot.json()) + json.dumps(events.json())
+    assert "C:/" not in encoded_oaep and "C:\\\\" not in encoded_oaep
+    assert [call[0] for call in authority.calls] == [
+        "snapshot", "legacy-snapshot", "events", "legacy-events",
+    ]
 
 
 def test_runtime_websocket_rejects_unauthenticated_client() -> None:

@@ -41,6 +41,7 @@ for line in sys.stdin:
         {'id':'gpt-5.4','displayName':'GPT-5.4','isDefault':True,'hidden':False,
          'supportedReasoningEfforts':['medium','high'],'inputModalities':['text','image']}
     ]}})
+    elif method=='large': send({'id':identity,'result':{'value':'x' * 200000}})
     elif method=='batch':
         pending.append((identity,message.get('params')))
         if len(pending)==100:
@@ -103,6 +104,7 @@ async def test_initialize_jsonl_framing_concurrent_out_of_order_and_timeout(tmp_
             await never
         assert caught.value.code == "codex_request_timeout"
         assert await client.request("echo", {"after": "timeout"}) == {"after": "timeout"}
+        assert len((await client.request("large"))["value"]) == 200000
     finally:
         await client.close()
 

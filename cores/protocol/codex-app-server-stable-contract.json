@@ -1,6 +1,19 @@
 {
   "contractVersion": 1,
   "experimentalApi": false,
+  "generatedBaseline": {
+    "codexVersion": "0.142.5",
+    "schemaPath": "cores/protocol/codex-app-server/0.142.5",
+    "v2BundleSha256": "7e164fed2c3d3de0e6c3520d42e6d53f1433937b41a950e1b44f72172a3d2086"
+  },
+  "threadItemCoverage": {
+    "userMessage": "message", "hookPrompt": "interaction", "agentMessage": "message",
+    "plan": "plan", "reasoning": "reasoning", "commandExecution": "command_execution",
+    "fileChange": "file_change", "mcpToolCall": "tool_call", "dynamicToolCall": "tool_call",
+    "collabAgentToolCall": "subtask", "subAgentActivity": "subtask", "webSearch": "tool_call",
+    "imageView": "tool_call", "sleep": "tool_call", "imageGeneration": "artifact",
+    "enteredReviewMode": "notice", "exitedReviewMode": "notice", "contextCompaction": "notice"
+  },
   "clientMethods": {
     "initialize": ["clientInfo"],
     "model/list": ["includeHidden"],

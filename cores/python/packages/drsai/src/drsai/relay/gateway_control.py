@@ -85,8 +85,11 @@ class GatewayRuntimeControlHandler:
         self.execution_failures: dict[str, str] = {}
         self._relay_event_cursors: dict[str, int] = {}
         self._relay_session_event_cursors: dict[str, int] = {}
+        self._relay_oaep_event_cursors: dict[str, int] = {}
         self._relay_session_scan_offsets: dict[str, int] = {}
         self._relay_terminal_runs: set[str] = set()
+        self._session_waterlines_available = False
+        self._oaep_waterlines_available = False
         self._approval_decision_lock = asyncio.Lock()
         self._initialize()
 
@@ -118,6 +121,15 @@ class GatewayRuntimeControlHandler:
                 session_id TEXT PRIMARY KEY,
                 after_sequence INTEGER NOT NULL CHECK(after_sequence >= 0)
               );
+              CREATE TABLE IF NOT EXISTS relay_oaep_event_cursors(
+                session_id TEXT PRIMARY KEY,
+                after_sequence INTEGER NOT NULL CHECK(after_sequence >= 0)
+              );
+              CREATE TABLE IF NOT EXISTS relay_run_event_cursors(
+                run_id TEXT PRIMARY KEY,
+                after_sequence INTEGER NOT NULL CHECK(after_sequence >= 0),
+                terminal INTEGER NOT NULL DEFAULT 0 CHECK(terminal IN (0,1))
+              );
             """)
             columns = {
                 str(row["name"])
@@ -133,6 +145,100 @@ class GatewayRuntimeControlHandler:
                     )
                 }
             )
+            self._relay_oaep_event_cursors.update(
+                {
+                    str(row["session_id"]): int(row["after_sequence"])
+                    for row in db.execute(
+                        "SELECT session_id,after_sequence FROM relay_oaep_event_cursors"
+                    )
+                }
+            )
+            for row in db.execute(
+                "SELECT run_id,after_sequence,terminal FROM relay_run_event_cursors"
+            ):
+                run_id = str(row["run_id"])
+                self._relay_event_cursors[run_id] = int(row["after_sequence"])
+                if int(row["terminal"]):
+                    self._relay_terminal_runs.add(run_id)
+        self._bootstrap_existing_session_cursors()
+
+    def _bootstrap_existing_session_cursors(self) -> None:
+        """Seed waterlines for Sessions that predate this connector process."""
+        if not self.journal_database.is_file():
+            return
+        try:
+            with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                legacy = [
+                    (str(session_id), int(sequence))
+                    for session_id, sequence in journal.execute(
+                        "SELECT session_id,last_sequence FROM runtime_session_sequences"
+                    )
+                ]
+                oaep = [
+                    (str(session_id), int(sequence))
+                    for session_id, sequence in journal.execute(
+                        "SELECT q.session_id,COALESCE((SELECT MAX(o.session_sequence) "
+                        "FROM runtime_oaep_events o WHERE o.session_id=q.session_id),0) "
+                        "FROM runtime_session_sequences q"
+                    )
+                ]
+                runs = [
+                    (str(run_id), int(sequence), str(status))
+                    for run_id, sequence, status in journal.execute(
+                        "SELECT r.run_id,COALESCE((SELECT MAX(e.sequence) "
+                        "FROM runtime_events e WHERE e.run_id=r.run_id),0),r.status "
+                        "FROM runtime_runs r"
+                    )
+                ]
+        except sqlite3.Error:
+            return
+        self._session_waterlines_available = True
+        self._oaep_waterlines_available = True
+        with self._connect() as control:
+            control.executemany(
+                "INSERT INTO relay_session_event_cursors(session_id,after_sequence) "
+                "VALUES(?,?) ON CONFLICT(session_id) DO NOTHING",
+                legacy,
+            )
+            control.executemany(
+                "INSERT INTO relay_oaep_event_cursors(session_id,after_sequence) "
+                "VALUES(?,?) ON CONFLICT(session_id) DO NOTHING",
+                oaep,
+            )
+            control.executemany(
+                "INSERT INTO relay_run_event_cursors(run_id,after_sequence,terminal) "
+                "VALUES(?,?,?) ON CONFLICT(run_id) DO NOTHING",
+                [
+                    (run_id, sequence, int(status in {"completed", "failed", "cancelled"}))
+                    for run_id, sequence, status in runs
+                ],
+            )
+        for session_id, sequence in legacy:
+            self._relay_session_event_cursors.setdefault(session_id, sequence)
+        for session_id, sequence in oaep:
+            self._relay_oaep_event_cursors.setdefault(session_id, sequence)
+        for run_id, sequence, status in runs:
+            self._relay_event_cursors.setdefault(run_id, sequence)
+            if status in {"completed", "failed", "cancelled"}:
+                self._relay_terminal_runs.add(run_id)
+
+    def _store_run_event_cursor(
+        self, run_id: str, sequence: int, *, terminal: bool,
+    ) -> None:
+        value = max(0, int(sequence))
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO relay_run_event_cursors(run_id,after_sequence,terminal) "
+                "VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET "
+                "after_sequence=MAX(relay_run_event_cursors.after_sequence,excluded.after_sequence),"
+                "terminal=MAX(relay_run_event_cursors.terminal,excluded.terminal)",
+                (run_id, value, int(terminal)),
+            )
+        self._relay_event_cursors[run_id] = max(
+            value, self._relay_event_cursors.get(run_id, 0)
+        )
+        if terminal:
+            self._relay_terminal_runs.add(run_id)
 
     def _store_session_event_cursor(self, session_id: str, sequence: int) -> None:
         value = max(0, int(sequence))
@@ -151,6 +257,28 @@ class GatewayRuntimeControlHandler:
                 (session_id,),
             ).fetchone()
         self._relay_session_event_cursors[session_id] = int(stored["after_sequence"])
+
+    def _store_oaep_event_cursor(self, session_id: str, sequence: int) -> None:
+        value = max(0, int(sequence))
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO relay_oaep_event_cursors(session_id,after_sequence)
+                VALUES(?,?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  after_sequence=MAX(relay_oaep_event_cursors.after_sequence,excluded.after_sequence)
+                """,
+                (session_id, value),
+            )
+            stored = db.execute(
+                "SELECT after_sequence FROM relay_oaep_event_cursors WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        self._relay_oaep_event_cursors[session_id] = int(stored["after_sequence"])
+
+    def ack_relay_oaep_event(self, session_id: str, sequence: int) -> None:
+        """Commit an OAEP cursor only after its WSS frame was written."""
+        self._store_oaep_event_cursor(session_id, sequence)
 
     def _sessions_with_pending_journal_events(self) -> list[str]:
         """Read Runtime waterlines without scanning every Session over HTTP."""
@@ -172,9 +300,31 @@ class GatewayRuntimeControlHandler:
         pending = [
             (int(latest_rowid), str(session_id))
             for session_id, last_sequence, latest_rowid in rows
-            if str(session_id) in self._relay_session_event_cursors
-            and int(last_sequence)
-            > self._relay_session_event_cursors[str(session_id)]
+            if int(last_sequence)
+            > self._relay_session_event_cursors.get(str(session_id), 0)
+        ]
+        pending.sort(reverse=True)
+        return [session_id for _, session_id in pending]
+
+    def _sessions_with_pending_oaep_events(self) -> list[str]:
+        """Find canonical OAEP waterlines without translating legacy rows."""
+        if not self.journal_database.is_file():
+            return []
+        try:
+            with sqlite3.connect(self.journal_database, timeout=5) as db:
+                rows = db.execute(
+                    "SELECT q.session_id,q.last_sequence,COALESCE(o.rowid,0) "
+                    "FROM runtime_session_sequences q "
+                    "LEFT JOIN runtime_oaep_events o "
+                    "ON o.session_id=q.session_id "
+                    "AND o.session_sequence=q.last_sequence"
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        pending = [
+            (int(latest_rowid), str(session_id))
+            for session_id, last_sequence, latest_rowid in rows
+            if int(last_sequence) > self._relay_oaep_event_cursors.get(str(session_id), 0)
         ]
         pending.sort(reverse=True)
         return [session_id for _, session_id in pending]
@@ -191,6 +341,18 @@ class GatewayRuntimeControlHandler:
         self._store_session_event_cursor(session_id, sequence)
         return sequence
 
+    async def _ensure_oaep_event_cursor(self, session_id: str) -> int:
+        existing = self._relay_oaep_event_cursors.get(session_id)
+        if existing is not None:
+            return existing
+        snapshot = await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/oaep-snapshot",
+        )
+        sequence = int(snapshot.get("snapshot_sequence") or 0)
+        self._store_oaep_event_cursor(session_id, sequence)
+        return sequence
+
     async def __call__(self, operation: str, arguments: dict[str, Any]) -> Any:
         args, kwargs = arguments.get("args", []), arguments.get("kwargs", {})
         if not isinstance(args, list) or not isinstance(kwargs, dict) or operation.startswith("_"):
@@ -200,7 +362,7 @@ class GatewayRuntimeControlHandler:
             "list_agent_definitions", "list_sessions", "list_sessions_for_subject", "create_session", "get_session",
             "authorize_session", "list_runs", "list_runs_for_subject", "authorize_run",
             "conversation_for_subject", "conversation_snapshot_for_subject",
-            "session_events_for_subject",
+            "session_events_for_subject", "oaep_snapshot_for_subject", "oaep_events_for_subject",
             "idempotency_result", "create_run", "get_run", "list_events", "cancel_run",
             "pending_approvals", "pending_approvals_for_subject", "audit_entries", "audit_entries_for_subject",
             "execute_owop", "decide_approval",
@@ -293,7 +455,74 @@ class GatewayRuntimeControlHandler:
 
     async def relay_events(self) -> list[dict[str, Any]]:
         """Poll authoritative Runtime events for HAI's bounded SSE replay buffer."""
+        if not self._session_waterlines_available:
+            self._bootstrap_existing_session_cursors()
         forwarded: list[dict[str, Any]] = []
+        indexed_rows: list[tuple[Any, ...]] | None = None
+        if self.journal_database.is_file():
+            try:
+                with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                    indexed_rows = list(journal.execute(
+                        "SELECT r.run_id,r.session_id,r.workspace_id,r.backend_id,"
+                        "r.status,r.created_at,"
+                        "COALESCE((SELECT MAX(e.sequence) FROM runtime_events e "
+                        "WHERE e.run_id=r.run_id),0) AS latest_sequence,"
+                        "COALESCE((SELECT MAX(e.rowid) FROM runtime_events e "
+                        "WHERE e.run_id=r.run_id),0) AS latest_rowid "
+                        "FROM runtime_runs r"
+                    ))
+            except sqlite3.Error:
+                indexed_rows = None
+
+        if indexed_rows is not None:
+            pending = [
+                row for row in indexed_rows
+                if str(row[0]) not in self._relay_terminal_runs
+                and int(row[6]) > self._relay_event_cursors.get(str(row[0]), 0)
+            ]
+            if not pending:
+                return []
+            pending.sort(key=lambda row: int(row[7]), reverse=True)
+            active_workspace_ids = {
+                str(workspace["workspace_id"])
+                for workspace in await self.published_workspaces()
+                if workspace["lifecycle"] == "active"
+            }
+            for row in [
+                candidate for candidate in pending
+                if str(candidate[2]) in active_workspace_ids
+            ][:16]:
+                run_id = str(row[0])
+                after = self._relay_event_cursors.get(run_id, 0)
+                events = await self.transport.request(
+                    "GET",
+                    f"/v1/runs/{quote(run_id, safe='')}/events"
+                    f"?after_sequence={after}&limit=2000",
+                )
+                item = {
+                    "run_id": run_id,
+                    "session_id": str(row[1]),
+                    "workspace_id": str(row[2]),
+                    "backend_id": str(row[3]),
+                    "status": str(row[4]),
+                    "created_at": str(row[5]),
+                }
+                projected = [
+                    self._event_projection(event, self._run_binding_optional(run_id, item), run_id)
+                    for event in events.get("data", [])
+                ]
+                if projected:
+                    terminal = (
+                        item["status"] in {"completed", "failed", "cancelled"}
+                        and len(projected) < 2000
+                    )
+                    self._store_run_event_cursor(
+                        run_id, int(projected[-1]["sequence"]), terminal=terminal,
+                    )
+                    forwarded.extend(projected)
+            return forwarded
+
+        # Compatibility fallback for transports without the local Runtime DB.
         published = await self.published_workspaces()
         active_workspace_ids = {
             str(workspace["workspace_id"])
@@ -396,6 +625,8 @@ class GatewayRuntimeControlHandler:
 
     async def relay_session_events(self) -> list[dict[str, Any]]:
         """Poll authoritative Session Journal events for Relay fan-out/replay."""
+        if not self._session_waterlines_available:
+            self._bootstrap_existing_session_cursors()
         forwarded: list[dict[str, Any]] = []
         # Keep loopback polling parallel enough to avoid serial startup scans,
         # but bounded below the Gateway's shared DB/HTTP capacity.  A burst of
@@ -403,18 +634,18 @@ class GatewayRuntimeControlHandler:
         # co-hosted server and delay interactive/mobile traffic.
         concurrency = asyncio.Semaphore(4)
         pending_session_ids = self._sessions_with_pending_journal_events()
+        if not pending_session_ids and self._session_waterlines_available:
+            return []
 
         async def poll_session(session: dict[str, Any]) -> list[dict[str, Any]]:
             session_id = str(session["session_id"])
             async with concurrency:
                 if session_id not in self._relay_session_event_cursors:
-                    # A legacy Windows Session may contain years of Journal
-                    # history. Its first Relay observation establishes the
-                    # current waterline; subsequent restarts resume from the
-                    # durable cursor and therefore retain downtime events
-                    # without replaying the entire historical Journal.
-                    await self._ensure_session_event_cursor(session_id)
-                    return []
+                    if self._session_waterlines_available:
+                        self._store_session_event_cursor(session_id, 0)
+                    else:
+                        await self._ensure_session_event_cursor(session_id)
+                        return []
                 after = self._relay_session_event_cursors[session_id]
                 try:
                     page = await self.transport.request(
@@ -521,6 +752,144 @@ class GatewayRuntimeControlHandler:
             pages = await asyncio.gather(
                 *(poll_session(session) for session in selected)
             )
+            for events in pages:
+                forwarded.extend(events)
+        return forwarded
+
+    async def relay_oaep_events(self) -> list[dict[str, Any]]:
+        """Poll canonical OAEP Events and return strict Runtime WSS envelopes.
+
+        OAEP and V3 cursors are physically separate.  That keeps fallback
+        clients operational while preventing a legacy payload from being
+        relabelled as OAEP during rollout.
+        """
+        if not self._oaep_waterlines_available:
+            self._bootstrap_existing_session_cursors()
+        forwarded: list[dict[str, Any]] = []
+        concurrency = asyncio.Semaphore(4)
+        pending_session_ids = self._sessions_with_pending_oaep_events()
+        if not pending_session_ids and self._oaep_waterlines_available:
+            return []
+
+        async def poll_session(session: dict[str, Any], workspace_id: str) -> list[dict[str, Any]]:
+            session_id = str(session["session_id"])
+            async with concurrency:
+                if session_id not in self._relay_oaep_event_cursors:
+                    if self._oaep_waterlines_available:
+                        self._store_oaep_event_cursor(session_id, 0)
+                    else:
+                        await self._ensure_oaep_event_cursor(session_id)
+                        return []
+                after = self._relay_oaep_event_cursors[session_id]
+                try:
+                    page = await self.transport.request(
+                        "GET",
+                        f"/v1/sessions/{quote(session_id, safe='')}/oaep-events"
+                        f"?after_sequence={after}&limit=2000",
+                    )
+                except GatewayControlError as exc:
+                    if exc.code != "cursor_expired":
+                        raise
+                    snapshot = await self.transport.request(
+                        "GET",
+                        f"/v1/sessions/{quote(session_id, safe='')}/oaep-snapshot",
+                    )
+                    self._store_oaep_event_cursor(
+                        session_id, int(snapshot["snapshot_sequence"])
+                    )
+                    return []
+                events = page.get("data", [])
+                return [
+                    {
+                        "runtime_id": self.runtime_id,
+                        "workspace_id": workspace_id,
+                        "session_id": session_id,
+                        "sequence": int(event["sequence"]),
+                        "event": event,
+                    }
+                    for event in events
+                ]
+
+        published = await self.published_workspaces()
+        active = {
+            str(workspace["workspace_id"]): workspace
+            for workspace in published
+            if workspace["lifecycle"] == "active"
+        }
+        # Pending canonical rows are the latency-sensitive path and are safe to
+        # bind from the local Runtime DB before the rotating catalog scan.
+        if pending_session_ids and active and self.journal_database.is_file():
+            placeholders = ",".join("?" for _ in pending_session_ids)
+            workspace_placeholders = ",".join("?" for _ in active)
+            try:
+                with sqlite3.connect(self.journal_database, timeout=5) as journal:
+                    eligible = [
+                        {
+                            "session_id": str(row[0]),
+                            "workspace_id": str(row[1]),
+                        }
+                        for row in journal.execute(
+                            "SELECT session_id,workspace_id FROM runtime_sessions "
+                            f"WHERE session_id IN ({placeholders}) "
+                            f"AND workspace_id IN ({workspace_placeholders})",
+                            (*pending_session_ids, *active),
+                        )
+                    ][:8]
+            except sqlite3.Error:
+                eligible = []
+            if eligible:
+                pages = await asyncio.gather(*(
+                    poll_session(session, str(session["workspace_id"]))
+                    for session in eligible
+                ))
+                for events in pages:
+                    forwarded.extend(events)
+                if forwarded:
+                    return forwarded
+
+        for workspace_id in active:
+            sessions = await self.transport.request(
+                "GET",
+                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
+            )
+            session_items = list(sessions.get("data", []))
+            unknown = [
+                session for session in session_items
+                if str(session["session_id"]) not in self._relay_oaep_event_cursors
+            ]
+            sessions_by_id = {
+                str(session["session_id"]): session for session in session_items
+            }
+            changed = [
+                sessions_by_id[session_id]
+                for session_id in pending_session_ids
+                if session_id in sessions_by_id
+            ][:4]
+            hot = session_items[:4]
+            cold = session_items[4:]
+            offset_key = f"oaep:{workspace_id}"
+            cold_offset = self._relay_session_scan_offsets.get(offset_key, 0)
+            rotating = (
+                [
+                    cold[(cold_offset + index) % len(cold)]
+                    for index in range(min(4, len(cold)))
+                ]
+                if cold else []
+            )
+            if cold:
+                self._relay_session_scan_offsets[offset_key] = (
+                    cold_offset + len(rotating)
+                ) % len(cold)
+            selected: list[dict[str, Any]] = []
+            selected_ids: set[str] = set()
+            for session in [*changed, *hot, *rotating, *unknown]:
+                session_id = str(session["session_id"])
+                if session_id not in selected_ids:
+                    selected.append(session)
+                    selected_ids.add(session_id)
+            pages = await asyncio.gather(*(
+                poll_session(session, workspace_id) for session in selected
+            ))
             for events in pages:
                 forwarded.extend(events)
         return forwarded
@@ -733,6 +1102,35 @@ class GatewayRuntimeControlHandler:
         return await self.transport.request(
             "GET",
             f"/v1/sessions/{quote(session_id, safe='')}/events"
+            f"?after_sequence={max(0, int(after_sequence))}"
+            f"&limit={max(1, min(2000, int(limit)))}",
+        )
+
+    async def oaep_snapshot_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        await self.authorize_session(subject, workspace_id, session_id)
+        return await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/oaep-snapshot",
+        )
+
+    async def oaep_events_for_subject(
+        self,
+        subject: str,
+        workspace_id: str,
+        session_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        await self.authorize_session(subject, workspace_id, session_id)
+        return await self.transport.request(
+            "GET",
+            f"/v1/sessions/{quote(session_id, safe='')}/oaep-events"
             f"?after_sequence={max(0, int(after_sequence))}"
             f"&limit={max(1, min(2000, int(limit)))}",
         )

@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
+import inspect
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import uuid4
 
@@ -106,6 +107,8 @@ class RuntimeOutboundConnector:
                  ] | None = None,
                  event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
                  session_event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
+                 oaep_event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
+                 oaep_event_ack: Callable[[str, int], Any] | None = None,
                  workspace_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
                  backend_health: dict[str, str] | None = None,
                  wire_protocol: str = "legacy-operation") -> None:
@@ -118,12 +121,15 @@ class RuntimeOutboundConnector:
         self.http_request_handler = http_request_handler
         self.event_provider = event_provider
         self.session_event_provider = session_event_provider
+        self.oaep_event_provider = oaep_event_provider
+        self.oaep_event_ack = oaep_event_ack
         self.workspace_provider = workspace_provider
         self._workspace_dirty = asyncio.Event()
         self._workspace_sync_lock = asyncio.Lock()
         self._workspace_sync_task: asyncio.Task[list[dict[str, Any]]] | None = None
         self._workspace_revision = 0
         self._workspace_published_revision = -1
+        self._socket_send_lock = asyncio.Lock()
         self.backend_health = dict(backend_health or {})
         if wire_protocol not in {"legacy-operation", "hai-http"}:
             raise ValueError("runtime_wire_protocol_invalid")
@@ -147,18 +153,26 @@ class RuntimeOutboundConnector:
             async with session.ws_connect(connection_url, heartbeat=20) as socket:
                 background_tasks: list[asyncio.Task[Any]] = []
                 if self.wire_protocol == "hai-http":
-                    await socket.send_json({"type": "heartbeat", "timestamp": time.time()})
+                    await self._send_json(socket, {"type": "heartbeat", "timestamp": time.time()})
                     background_tasks.append(asyncio.create_task(self._send_heartbeats(socket)))
                     if self.workspace_provider is not None:
                         background_tasks.append(asyncio.create_task(self._forward_workspaces(socket)))
                     if self.event_provider is not None:
-                        background_tasks.append(asyncio.create_task(self._forward_events(socket)))
+                        background_tasks.append(asyncio.create_task(
+                            self._forward_events(socket), name="runtime-run-events"
+                        ))
                     if self.session_event_provider is not None:
-                        background_tasks.append(asyncio.create_task(self._forward_session_events(socket)))
+                        background_tasks.append(asyncio.create_task(
+                            self._forward_session_events(socket), name="runtime-session-events"
+                        ))
+                    if self.oaep_event_provider is not None:
+                        background_tasks.append(asyncio.create_task(
+                            self._forward_oaep_events(socket), name="runtime-oaep-events"
+                        ))
                 else:
                     nonce = str(uuid4())
                     proof = f"{self.credential.runtime_id}\n{self.instance_id}\n{nonce}".encode()
-                    await socket.send_json({
+                    await self._send_json(socket, {
                         "type": "runtime.hello", "runtime_id": self.credential.runtime_id,
                         "instance_id": self.instance_id, "version": self.version,
                         "protocol_version": PROTOCOL_VERSION, "capabilities": sorted(CAPABILITIES),
@@ -170,14 +184,32 @@ class RuntimeOutboundConnector:
                         if message.type == aiohttp.WSMsgType.TEXT:
                             payload = json.loads(message.data)
                             if payload.get("type") == "ping":
-                                await socket.send_json({"type": "pong", "request_id": payload.get("request_id")})
-                            elif payload.get("type") == "runtime.connected" and self.workspace_provider is not None:
-                                await self._try_publish_workspaces(socket)
-                                if not any(task.get_name() == "runtime-workspaces" for task in background_tasks):
+                                await self._send_json(
+                                    socket,
+                                    {"type": "pong", "request_id": payload.get("request_id")},
+                                )
+                            elif payload.get("type") == "runtime.connected":
+                                if self.workspace_provider is not None:
+                                    await self._try_publish_workspaces(socket)
+                                if self.workspace_provider is not None and not any(
+                                    task.get_name() == "runtime-workspaces" for task in background_tasks
+                                ):
                                     background_tasks.append(asyncio.create_task(
                                         self._forward_workspaces(socket, publish_initial=False),
                                         name="runtime-workspaces"
                                     ))
+                                providers = (
+                                    ("runtime-run-events", self.event_provider, self._forward_events),
+                                    ("runtime-session-events", self.session_event_provider, self._forward_session_events),
+                                    ("runtime-oaep-events", self.oaep_event_provider, self._forward_oaep_events),
+                                )
+                                for task_name, provider, forwarder in providers:
+                                    if provider is not None and not any(
+                                        task.get_name() == task_name for task in background_tasks
+                                    ):
+                                        background_tasks.append(asyncio.create_task(
+                                            forwarder(socket), name=task_name
+                                        ))
                             elif payload.get("type") == "runtime.request":
                                 await self._handle_request(socket, payload)
                             elif payload.get("type") == "request":
@@ -190,11 +222,15 @@ class RuntimeOutboundConnector:
                     if background_tasks:
                         await asyncio.gather(*background_tasks, return_exceptions=True)
 
-    @staticmethod
-    async def _send_heartbeats(socket: Any) -> None:
+    async def _send_json(self, socket: Any, payload: dict[str, Any]) -> None:
+        """Serialize control and event frames on the shared WebSocket writer."""
+        async with self._socket_send_lock:
+            await socket.send_json(payload)
+
+    async def _send_heartbeats(self, socket: Any) -> None:
         while True:
             await asyncio.sleep(15)
-            await socket.send_json({"type": "heartbeat", "timestamp": time.time()})
+            await self._send_json(socket, {"type": "heartbeat", "timestamp": time.time()})
 
     def mark_workspaces_dirty(self) -> None:
         if self.workspace_provider is None:
@@ -208,7 +244,7 @@ class RuntimeOutboundConnector:
         target_revision = self._workspace_revision
         try:
             workspaces = await self._workspace_catalog_snapshot()
-            await socket.send_json({"type": "runtime.workspaces", "workspaces": workspaces})
+            await self._send_json(socket, {"type": "runtime.workspaces", "workspaces": workspaces})
         except Exception:
             self._workspace_dirty.set()
             return False
@@ -267,7 +303,7 @@ class RuntimeOutboundConnector:
                 for event in await self.event_provider():
                     run_id = str(event.get("run_id") or "")
                     if run_id:
-                        await socket.send_json({"type": "event", "run_id": run_id, "event": event})
+                        await self._send_json(socket, {"type": "event", "run_id": run_id, "event": event})
             except Exception:
                 # A failed poll must not tear down the control channel. The
                 # next iteration resumes from the Runtime-owned sequence.
@@ -281,7 +317,7 @@ class RuntimeOutboundConnector:
                     session_id = str(event.get("session_id") or "")
                     sequence = int(event.get("session_sequence") or 0)
                     if session_id and sequence > 0:
-                        await socket.send_json({
+                        await self._send_json(socket, {
                             "type": "event",
                             "scope": "session",
                             "session_id": session_id,
@@ -290,6 +326,56 @@ class RuntimeOutboundConnector:
                         })
             except Exception:
                 # The next poll resumes from the Runtime-owned Session cursor.
+                pass
+            await asyncio.sleep(1)
+
+    async def _forward_oaep_events(self, socket: Any) -> None:
+        """Forward canonical OAEP independently from the legacy Session stream.
+
+        The provider owns the durable cursor.  This connector deliberately does
+        not translate legacy Journal rows: a frame labelled ``oaep/1`` must
+        already contain an authoritative OAEP Event.
+        """
+        while True:
+            try:
+                for item in await self.oaep_event_provider():
+                    event = item.get("event")
+                    runtime_id = str(item.get("runtime_id") or "")
+                    workspace_id = str(item.get("workspace_id") or "")
+                    session_id = str(item.get("session_id") or "")
+                    sequence = int(item.get("sequence") or 0)
+                    if not isinstance(event, dict):
+                        continue
+                    source = event.get("source")
+                    if (
+                        runtime_id != self.credential.runtime_id
+                        or not workspace_id
+                        or not session_id
+                        or sequence <= 0
+                        or event.get("session_id") != session_id
+                        or event.get("sequence") != sequence
+                        or not isinstance(source, dict)
+                        or source.get("runtime_id") != runtime_id
+                    ):
+                        # Provider/identity drift is fail-closed.  A malformed
+                        # frame must never enter Relay replay under a false key.
+                        continue
+                    await self._send_json(socket, {
+                        "type": "event",
+                        "protocol": "oaep/1",
+                        "scope": "session",
+                        "runtime_id": runtime_id,
+                        "workspace_id": workspace_id,
+                        "session_id": session_id,
+                        "sequence": sequence,
+                        "event": event,
+                    })
+                    if self.oaep_event_ack is not None:
+                        acknowledged = self.oaep_event_ack(session_id, sequence)
+                        if inspect.isawaitable(acknowledged):
+                            await acknowledged
+            except Exception:
+                # The Runtime-owned cursor makes the next poll/reconnect safe.
                 pass
             await asyncio.sleep(1)
 
@@ -312,7 +398,7 @@ class RuntimeOutboundConnector:
             response = {"type": "runtime.response", "request_id": request_id, "ok": False, "error": {
                 "code": str(code), "message": str(exc), "retryable": bool(getattr(exc, "retryable", False)),
             }}
-        await socket.send_json(response)
+        await self._send_json(socket, response)
 
     async def _handle_http_request(self, socket: Any, payload: dict[str, Any]) -> None:
         request_id = str(payload.get("request_id") or "")
@@ -396,7 +482,7 @@ class RuntimeOutboundConnector:
                     "source": "runtime",
                 },
             }
-        await socket.send_json(response)
+        await self._send_json(socket, response)
 
     async def run_forever(self, stop: asyncio.Event, *, maximum_backoff: float = 30.0) -> None:
         backoff = 1.0

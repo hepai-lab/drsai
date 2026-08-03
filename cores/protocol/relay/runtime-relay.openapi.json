@@ -311,6 +311,1164 @@
         "title": "HeartbeatRequest",
         "type": "object"
       },
+      "OaepArtifactContent": {
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "artifact_type": {
+            "title": "Artifact Type",
+            "type": "string"
+          },
+          "downloadable": {
+            "title": "Downloadable",
+            "type": "boolean"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime Type"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "previewable": {
+            "title": "Previewable",
+            "type": "boolean"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "artifact_type",
+          "name",
+          "summary"
+        ],
+        "title": "OaepArtifactContent",
+        "type": "object"
+      },
+      "OaepCommandExecutionContent": {
+        "properties": {
+          "command": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Command",
+            "type": "array"
+          },
+          "cwd": {
+            "title": "Cwd",
+            "type": "string"
+          },
+          "display_command": {
+            "title": "Display Command",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          },
+          "stderr_tail": {
+            "title": "Stderr Tail",
+            "type": "string"
+          },
+          "stdout_tail": {
+            "title": "Stdout Tail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "display_command",
+          "cwd",
+          "output"
+        ],
+        "title": "OaepCommandExecutionContent",
+        "type": "object"
+      },
+      "OaepDelta": {
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "segment_id": {
+            "title": "Segment Id",
+            "type": "string"
+          },
+          "stream": {
+            "enum": [
+              "stdout",
+              "stderr",
+              "combined"
+            ],
+            "title": "Stream",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "OaepDelta",
+        "type": "object"
+      },
+      "OaepError": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "title": "OaepError",
+        "type": "object"
+      },
+      "OaepEvent": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/OaepEventData"
+          },
+          "dedupe_key": {
+            "title": "Dedupe Key",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/OaepSource"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "event.session.created",
+              "event.session.updated",
+              "event.session.archived",
+              "event.session.unarchived",
+              "event.session.deleted",
+              "event.run.created",
+              "event.run.started",
+              "event.run.waiting",
+              "event.run.resumed",
+              "event.run.completed",
+              "event.run.failed",
+              "event.run.cancelled",
+              "event.item.created",
+              "event.item.started",
+              "event.item.delta",
+              "event.item.updated",
+              "event.item.completed",
+              "event.item.failed",
+              "event.item.cancelled"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "version": {
+            "const": "1.0",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "event_id",
+          "session_id",
+          "sequence",
+          "type",
+          "timestamp",
+          "dedupe_key",
+          "source",
+          "data"
+        ],
+        "title": "OaepEvent",
+        "type": "object"
+      },
+      "OaepEventData": {
+        "properties": {
+          "delta": {
+            "$ref": "#/components/schemas/OaepDelta"
+          },
+          "error": {
+            "$ref": "#/components/schemas/OaepError"
+          },
+          "item": {
+            "$ref": "#/components/schemas/OaepItem"
+          }
+        },
+        "title": "OaepEventData",
+        "type": "object"
+      },
+      "OaepEventPage": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/OaepEvent"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_sequence": {
+            "title": "Next Sequence",
+            "type": "integer"
+          },
+          "object": {
+            "const": "list",
+            "title": "Object",
+            "type": "string"
+          },
+          "version": {
+            "const": "1.0",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "object",
+          "data",
+          "next_sequence",
+          "has_more"
+        ],
+        "title": "OaepEventPage",
+        "type": "object"
+      },
+      "OaepFileChangeContent": {
+        "properties": {
+          "changes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "changes",
+          "summary"
+        ],
+        "title": "OaepFileChangeContent",
+        "type": "object"
+      },
+      "OaepInteractionContent": {
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "deadline_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline At"
+          },
+          "interaction_type": {
+            "title": "Interaction Type",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "options": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "related_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Item Id"
+          },
+          "request_summary": {
+            "additionalProperties": true,
+            "title": "Request Summary",
+            "type": "object"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          },
+          "response": {
+            "title": "Response"
+          }
+        },
+        "required": [
+          "interaction_type",
+          "prompt",
+          "options"
+        ],
+        "title": "OaepInteractionContent",
+        "type": "object"
+      },
+      "OaepItem": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OaepMessageContent"
+              },
+              {
+                "$ref": "#/components/schemas/OaepReasoningContent"
+              },
+              {
+                "$ref": "#/components/schemas/OaepPlanContent"
+              },
+              {
+                "$ref": "#/components/schemas/OaepCommandExecutionContent"
+              },
+              {
+                "$ref": "#/components/schemas/OaepToolCallContent"
+              },
+              {
+                "$ref": "#/components/schemas/OaepFileChangeContent"
+              },
+              {
+                "$ref": "#/components/schemas/OaepArtifactContent"
+              },
+              {
+                "$ref": "#/components/schemas/OaepInteractionContent"
+              },
+              {
+                "$ref": "#/components/schemas/OaepSubtaskContent"
+              },
+              {
+                "$ref": "#/components/schemas/OaepNoticeContent"
+              }
+            ],
+            "title": "Content"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/OaepSource"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "waiting",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "message",
+              "reasoning",
+              "plan",
+              "command_execution",
+              "file_change",
+              "tool_call",
+              "artifact",
+              "interaction",
+              "subtask",
+              "notice"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "run_id",
+          "type",
+          "status",
+          "sequence",
+          "created_at",
+          "updated_at",
+          "source",
+          "content"
+        ],
+        "title": "OaepItem",
+        "type": "object"
+      },
+      "OaepMessageContent": {
+        "properties": {
+          "citations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "parts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "phase": {
+            "enum": [
+              "commentary",
+              "final"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant",
+              "system"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "text"
+        ],
+        "title": "OaepMessageContent",
+        "type": "object"
+      },
+      "OaepNoticeContent": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "error": {
+            "$ref": "#/components/schemas/OaepError"
+          },
+          "level": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "level",
+          "code",
+          "message"
+        ],
+        "title": "OaepNoticeContent",
+        "type": "object"
+      },
+      "OaepOperationRef": {
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "owop/1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "operation_id",
+          "workspace_id",
+          "operation",
+          "correlation_id"
+        ],
+        "title": "OaepOperationRef",
+        "type": "object"
+      },
+      "OaepPlanContent": {
+        "properties": {
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          },
+          "steps": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "steps"
+        ],
+        "title": "OaepPlanContent",
+        "type": "object"
+      },
+      "OaepReasoningContent": {
+        "properties": {
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          },
+          "segments": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Segments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "segments"
+        ],
+        "title": "OaepReasoningContent",
+        "type": "object"
+      },
+      "OaepResourceRef": {
+        "properties": {
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "owop/1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "resource_id": {
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "enum": [
+              "workspace",
+              "worktree",
+              "file",
+              "git",
+              "process",
+              "pty",
+              "checkpoint",
+              "artifact"
+            ],
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "workspace_id",
+          "resource_type",
+          "resource_id"
+        ],
+        "title": "OaepResourceRef",
+        "type": "object"
+      },
+      "OaepRun": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/OaepSource"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OaepRun",
+        "type": "object"
+      },
+      "OaepSession": {
+        "properties": {
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "archived",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OaepSession",
+        "type": "object"
+      },
+      "OaepSnapshot": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OaepItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepRun"
+            },
+            "title": "Runs",
+            "type": "array"
+          },
+          "session": {
+            "$ref": "#/components/schemas/OaepSession"
+          },
+          "snapshot_sequence": {
+            "title": "Snapshot Sequence",
+            "type": "integer"
+          },
+          "version": {
+            "const": "1.0",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "session",
+          "runs",
+          "items",
+          "snapshot_sequence"
+        ],
+        "title": "OaepSnapshot",
+        "type": "object"
+      },
+      "OaepSource": {
+        "properties": {
+          "adapter": {
+            "title": "Adapter",
+            "type": "string"
+          },
+          "adapter_version": {
+            "title": "Adapter Version",
+            "type": "string"
+          },
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "backend_event_id": {
+            "title": "Backend Event Id",
+            "type": "string"
+          },
+          "backend_item_id": {
+            "title": "Backend Item Id",
+            "type": "string"
+          },
+          "backend_run_id": {
+            "title": "Backend Run Id",
+            "type": "string"
+          },
+          "backend_run_index": {
+            "title": "Backend Run Index",
+            "type": "integer"
+          },
+          "backend_version": {
+            "title": "Backend Version",
+            "type": "string"
+          },
+          "client": {
+            "title": "Client",
+            "type": "string"
+          },
+          "mapping_version": {
+            "title": "Mapping Version",
+            "type": "string"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend"
+        ],
+        "title": "OaepSource",
+        "type": "object"
+      },
+      "OaepSubtaskContent": {
+        "properties": {
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name"
+          },
+          "child_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Child Run Id"
+          },
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          },
+          "result": {
+            "title": "Result"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "summary"
+        ],
+        "title": "OaepSubtaskContent",
+        "type": "object"
+      },
+      "OaepToolCallContent": {
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "operation_ref": {
+            "$ref": "#/components/schemas/OaepOperationRef"
+          },
+          "resource_refs": {
+            "items": {
+              "$ref": "#/components/schemas/OaepResourceRef"
+            },
+            "title": "Resource Refs",
+            "type": "array"
+          },
+          "result": {
+            "title": "Result"
+          },
+          "server": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server"
+          },
+          "tool_kind": {
+            "title": "Tool Kind",
+            "type": "string"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_kind",
+          "tool_name",
+          "call_id",
+          "arguments",
+          "result"
+        ],
+        "title": "OaepToolCallContent",
+        "type": "object"
+      },
       "RegistrationRequest": {
         "additionalProperties": false,
         "properties": {
@@ -929,6 +2087,22 @@
           }
         },
         "summary": "Record User Association Presence"
+      }
+    },
+    "/v1/metrics/oaep": {
+      "get": {
+        "operationId": "oaep_metrics_v1_metrics_oaep_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Oaep Metrics"
       }
     },
     "/v1/runtime-connections/{runtime_id}/heartbeat": {
@@ -2580,6 +3754,413 @@
           }
         },
         "summary": "Conversation"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot": {
+      "get": {
+        "operationId": "conversation_snapshot_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__conversation_snapshot_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Conversation Snapshot"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events": {
+      "get": {
+        "operationId": "session_events_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Sequence",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Session Events"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream": {
+      "get": {
+        "operationId": "session_event_stream_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__events_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Sequence",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Session Event Stream"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events": {
+      "get": {
+        "operationId": "oaep_events_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__oaep_events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Sequence",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OaepEventPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oaep Events"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events/stream": {
+      "get": {
+        "operationId": "oaep_event_stream_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__oaep_events_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Sequence",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/OaepEvent"
+                }
+              }
+            },
+            "description": "OAEP Event stream"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oaep Event Stream"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-snapshot": {
+      "get": {
+        "operationId": "oaep_snapshot_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__oaep_snapshot_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OaepSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oaep Snapshot"
       }
     },
     "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs": {

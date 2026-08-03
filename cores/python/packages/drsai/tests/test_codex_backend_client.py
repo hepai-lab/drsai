@@ -21,7 +21,7 @@ from drsai.backend.runtime.agent import (
     RuntimeToolDispatcher,
 )
 from drsai.backend.codex_adapter import CodexAdapter
-from drsai.backend.codex_adapter.backend_client import CodexAgentBackendClient
+from drsai.backend.codex_adapter.backend_client import CodexAgentBackendClient, _codex_turn_timing
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.runtime.registry import RuntimeRegistry
 from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
@@ -81,9 +81,15 @@ class FakeRPC:
         self.read_turns: list[dict[str, Any]] = []
         self.delivery_gate: asyncio.Event | None = None
         self.interrupt_no_active = False
+        self.thread_lists: dict[bool, list[dict[str, Any]]] = {False: [], True: []}
 
     async def connect(self):
         return {"connected": True}
+
+    async def reconnect(self):
+        self._generation += 1
+        self._state = "ready"
+        return {"protocolVersion": "1", "connected": True}
 
     async def request(self, method: str, params: Mapping[str, Any] | None = None, **_kwargs):
         values = dict(params or {})
@@ -93,6 +99,8 @@ class FakeRPC:
         if method == "model/list":
             return {"data": [{"id": "gpt-5.4", "isDefault": True,
                                "supportedReasoningEfforts": ["medium", "high"], "inputModalities": ["text"]}]}
+        if method == "thread/list":
+            return {"data": list(self.thread_lists[bool(values.get("archived"))]), "nextCursor": None}
         if method == self.fail_method:
             if method == "thread/start":
                 self.thread_count += 1
@@ -180,6 +188,82 @@ def _services():
     return AgentExecutionServices(state, None, None), state
 
 
+@pytest.mark.anyio
+async def test_backend_restart_rotates_generation_without_restarting_runtime(tmp_path: Path):
+    rpc = FakeRPC()
+    client = CodexAgentBackendClient(rpc, AgentBackendBindingStore(tmp_path / "restart.sqlite3"))
+    result = await client.restart_backend()
+    assert result["restarted"] is True
+    assert result["protocol_version"] == "1"
+    assert result["available"] is True
+    assert rpc._generation == 2
+
+
+@pytest.mark.anyio
+async def test_workspace_session_discovery_filters_path_classifies_archive_and_binds_idempotently(tmp_path: Path):
+    workspace = tmp_path / "project"
+    other = tmp_path / "other"
+    workspace.mkdir(); other.mkdir()
+    rpc = FakeRPC()
+    rpc.thread_lists[False] = [
+        {"id": "thread-active", "cwd": str(workspace), "title": "Active", "updatedAt": 1_800_000_000},
+        {"id": "thread-other", "cwd": str(other), "title": "Wrong project"},
+    ]
+    rpc.thread_lists[True] = [
+        {"id": "thread-archived", "cwd": str(workspace), "name": "Archived", "updated_at": "2026-01-01T00:00:00+00:00"},
+    ]
+    bindings = AgentBackendBindingStore(tmp_path / "sync.sqlite3")
+    client = CodexAgentBackendClient(rpc, bindings)
+    sessions = await client.discover_sessions(str(workspace))
+    assert [(item["backend_session_id"], item["archived"]) for item in sessions] == [
+        ("thread-active", False), ("thread-archived", True),
+    ]
+    await client.bind_imported_session("session-a", "workspace-a", "runtime-a", "thread-active")
+    await client.bind_imported_session("session-a", "workspace-a", "runtime-a", "thread-active")
+    assert bindings.find_session_by_backend_id("codex", "thread-active").session_id == "session-a"
+    with pytest.raises(RuntimeExecutionError) as caught:
+        await client.bind_imported_session("session-b", "workspace-a", "runtime-a", "thread-active")
+    assert caught.value.code == "codex_import_binding_conflict"
+
+
+@pytest.mark.anyio
+async def test_imported_thread_read_normalizes_historical_items(tmp_path: Path):
+    rpc = FakeRPC()
+    rpc.read_turns = [{
+        "id": "turn-history", "status": "completed",
+        "startedAt": 1785542400, "completedAt": 1785542428, "durationMs": 28000,
+        "items": [
+            {"id": "user-history", "type": "userMessage", "text": "old question"},
+            {"id": "assistant-history", "type": "agentMessage", "text": "old answer"},
+            {"id": "reasoning-history", "type": "reasoning", "summary": "old reasoning"},
+        ],
+    }]
+    client = CodexAgentBackendClient(rpc, AgentBackendBindingStore(tmp_path / "history.sqlite3"))
+    await client.bind_imported_session("session-history", "workspace-history", "runtime-history", "thread-history")
+    history = await client.read_imported_session_history("session-history")
+
+    assert history[0]["backend_run_id"] == "turn-history"
+    assert history[0]["created_at"] == "2026-08-01T00:00:00+00:00"
+    assert history[0]["completed_at"] == "2026-08-01T00:00:28+00:00"
+    assert history[0]["duration_ms"] == 28000
+    assert [(item["kind"], item["role"], item["payload"].get("text") or item["payload"].get("summary"))
+            for item in history[0]["items"]] == [
+        ("message", "user", "old question"),
+        ("message", "assistant", "old answer"),
+        ("reasoning", None, "old reasoning"),
+    ]
+
+
+def test_codex_turn_duration_repairs_missing_started_at():
+    started_at, completed_at, duration_ms = _codex_turn_timing({
+        "completedAt": 1785542428,
+        "durationMs": 28000,
+    })
+    assert started_at == "2026-08-01T00:00:00+00:00"
+    assert completed_at == "2026-08-01T00:00:28+00:00"
+    assert duration_ms == 28000
+
+
 @pytest.mark.parametrize("backend_config", [
     {"approvalPolicy": "never"},
     {"approvalPolicy": "bypass"},
@@ -214,10 +298,13 @@ async def test_session_thread_run_turn_mapping_uses_authoritative_workspace_and_
     assert thread_request["model"] == "gpt-5.4"
     assert thread_request["developerInstructions"] == "Follow exact instructions."
     assert thread_request["personality"] == "pragmatic"
+    assert thread_request["approvalsReviewer"] == "user"
     turn_request = next(params for method, params in rpc.calls if method == "turn/start")
     assert turn_request["effort"] == "high"
     assert context.session_id == "session-1" and context.run_id == "run-1"
-    assert [event["type"] for event in state.events] == ["agent.started", "agent.message.delta", "agent.completed"]
+    # RuntimeAgentService owns the single Run lifecycle producer; the Adapter
+    # client emits only normalized Item semantics.
+    assert [event["type"] for event in state.events] == ["oaep.item.message.delta"]
 
 
 @pytest.mark.anyio
@@ -321,12 +408,30 @@ async def test_restart_resumes_same_thread_and_unsupported_config_fails_closed(t
     resumes = [params for method, params in rpc.calls if method == "thread/resume"]
     assert resumes[-1]["threadId"] == "thread-1"
     assert resumes[-1]["cwd"] == str(second_context.workspace_path)
+    assert resumes[-1]["approvalsReviewer"] == "user"
 
     invalid_context = _context(tmp_path, session="session-invalid", run="run-invalid")
     with pytest.raises(RuntimeExecutionError) as caught:
         await second.execute_turn(invalid_context, _definition(backend_config={"cwd": "C:/attacker"}), "x", services)
     assert caught.value.code == "codex_capability_unsupported"
     assert all(params.get("cwd") != "C:/attacker" for _, params in rpc.calls)
+
+
+@pytest.mark.anyio
+async def test_twenty_turns_reuse_one_codex_thread_and_create_one_turn_each(tmp_path: Path):
+    rpc = FakeRPC()
+    client = CodexAgentBackendClient(rpc, AgentBackendBindingStore(tmp_path / "twenty.sqlite3"))
+    services, _ = _services()
+    thread_ids = []
+    turn_ids = []
+    for index in range(20):
+        context = _context(tmp_path, session="session-continuous", run=f"run-continuous-{index}")
+        result = await client.execute_turn(context, _definition(), f"message {index}", services)
+        thread_ids.append(result["backend_metadata"]["thread_id"])
+        turn_ids.append(result["backend_metadata"]["turn_id"])
+    assert len(set(thread_ids)) == 1
+    assert len(set(turn_ids)) == 20
+    assert rpc.thread_count == 1 and rpc.turn_count == 20
 
 
 @pytest.mark.anyio
@@ -420,7 +525,9 @@ async def test_formal_runtime_service_executes_codex_without_changing_product_id
     restarted_engine = RuntimeEngine(engine.database, engine.identity, engine.workspace_exists)
     persisted = restarted_engine.list_events(run["run_id"])
     assert any(event["type"] == "agent.message.delta" for event in persisted)
-    assert any(event["type"] == "agent.completed" for event in persisted)
+    oaep = restarted_engine.list_oaep_events(session["session_id"], limit=2000)
+    assert sum(event["type"] == "event.run.started" for event in oaep) == 1
+    assert sum(event["type"] == "event.run.completed" for event in oaep) == 1
     await service.close()
 
 

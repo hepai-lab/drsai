@@ -14,6 +14,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from drsai.backend.runtime.oaep import (
+    project_event,
+    project_item,
+    project_run,
+    project_session,
+)
 from drsai.relay.security import redact_secrets
 
 
@@ -34,9 +40,12 @@ SESSION_EVENT_KINDS = {
 CONVERSATION_ITEM_KINDS = {
     "message",
     "reasoning",
+    "plan",
     "tool",
+    "file_change",
     "approval",
     "artifact",
+    "subtask",
     "error",
 }
 CONVERSATION_ROLES = {"user", "assistant", "system", "tool", None}
@@ -73,6 +82,11 @@ def _redact_credentials(value: Any, key: str = "") -> Any:
 def _canonical_json(value: Any) -> str:
     safe = _redact_credentials(value)
     return json.dumps(safe, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _oaep_json(value: Any) -> str:
+    """Encode an already-sanitized OAEP envelope without rewriting stable IDs."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 class SessionCursorExpired(ValueError):
@@ -181,6 +195,42 @@ class RuntimeConversationJournal:
                   WHERE source_message_id IS NOT NULL;
                 CREATE INDEX IF NOT EXISTS idx_runtime_conversation_snapshot
                   ON runtime_conversation_items(session_id, latest_sequence, item_id);
+                CREATE TABLE IF NOT EXISTS runtime_oaep_items (
+                  item_id TEXT PRIMARY KEY REFERENCES runtime_conversation_items(item_id),
+                  session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
+                  run_id TEXT NOT NULL,
+                  run_sequence INTEGER NOT NULL,
+                  revision INTEGER NOT NULL,
+                  latest_sequence INTEGER NOT NULL,
+                  envelope_json TEXT NOT NULL,
+                  UNIQUE(run_id, run_sequence)
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_oaep_items_snapshot
+                  ON runtime_oaep_items(session_id, latest_sequence, item_id);
+                CREATE TABLE IF NOT EXISTS runtime_oaep_events (
+                  event_id TEXT PRIMARY KEY REFERENCES runtime_session_journal(event_id)
+                    ON DELETE CASCADE,
+                  session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
+                  session_sequence INTEGER NOT NULL,
+                  envelope_json TEXT NOT NULL,
+                  UNIQUE(session_id, session_sequence)
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_oaep_events_replay
+                  ON runtime_oaep_events(session_id, session_sequence);
+                CREATE TABLE IF NOT EXISTS runtime_oaep_migration_state (
+                  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                  schema_version INTEGER NOT NULL,
+                  status TEXT NOT NULL CHECK(status IN ('running','completed','failed')),
+                  legacy_items INTEGER NOT NULL DEFAULT 0,
+                  migratable_items INTEGER NOT NULL DEFAULT 0,
+                  degraded_items INTEGER NOT NULL DEFAULT 0,
+                  projected_items INTEGER NOT NULL DEFAULT 0,
+                  legacy_events INTEGER NOT NULL DEFAULT 0,
+                  projected_events INTEGER NOT NULL DEFAULT 0,
+                  started_at TEXT NOT NULL,
+                  completed_at TEXT,
+                  last_error_code TEXT
+                );
                 CREATE TABLE IF NOT EXISTS runtime_session_journal_checkpoints (
                   session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
                   checkpoint_sequence INTEGER NOT NULL,
@@ -203,6 +253,393 @@ class RuntimeConversationJournal:
                   BEGIN SELECT RAISE(ABORT, 'Runtime Session Journal is append-only'); END;
                 """
             )
+            try:
+                if not self._oaep_projection_is_current(db):
+                    self._migrate_legacy_oaep(db)
+            except Exception as error:
+                db.execute(
+                    "UPDATE runtime_oaep_migration_state SET status='failed',"
+                    "completed_at=?,last_error_code=? WHERE singleton=1",
+                    (_now(), type(error).__name__),
+                )
+                raise
+
+    @staticmethod
+    def _oaep_projection_is_current(db: sqlite3.Connection) -> bool:
+        """Return whether every projectable legacy row already has OAEP state.
+
+        New writes persist legacy and canonical rows in the same transaction, so
+        a completed migration normally needs only this indexed anti-join check on
+        restart.  Replaying the entire legacy journal here makes cold start grow
+        linearly with history and can starve the co-hosted Relay connection.
+        """
+        state = db.execute(
+            "SELECT status FROM runtime_oaep_migration_state WHERE singleton=1"
+        ).fetchone()
+        if state is None or str(state["status"]) != "completed":
+            return False
+        missing_item = db.execute(
+            "SELECT 1 FROM runtime_conversation_items AS legacy "
+            "WHERE legacy.run_id IS NOT NULL AND NOT EXISTS ("
+            "SELECT 1 FROM runtime_oaep_items AS canonical "
+            "WHERE canonical.item_id=legacy.item_id) LIMIT 1"
+        ).fetchone()
+        if missing_item is not None:
+            return False
+        missing_event = db.execute(
+            "SELECT 1 FROM runtime_session_journal AS legacy WHERE NOT EXISTS ("
+            "SELECT 1 FROM runtime_oaep_events AS canonical "
+            "WHERE canonical.event_id=legacy.event_id) LIMIT 1"
+        ).fetchone()
+        return missing_event is None
+
+    @staticmethod
+    def _run_item_sequence(
+        db: sqlite3.Connection, run_id: str, item_id: str
+    ) -> int:
+        existing = db.execute(
+            "SELECT run_sequence FROM runtime_oaep_items WHERE item_id=?",
+            (item_id,),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["run_sequence"])
+        row = db.execute(
+            "SELECT COALESCE(MAX(run_sequence),0) AS value "
+            "FROM runtime_oaep_items WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        return int(row["value"]) + 1
+
+    @staticmethod
+    def _canonical_oaep_item(
+        item: dict[str, Any], *, run_sequence: int
+    ) -> dict[str, Any]:
+        return project_item({**item, "oaep_item_sequence": run_sequence})
+
+    @staticmethod
+    def _canonical_oaep_event(
+        event: dict[str, Any],
+        *,
+        run_sequence: int | None = None,
+        omit_legacy_item: bool = False,
+    ) -> dict[str, Any]:
+        envelope = project_event(event)
+        if omit_legacy_item:
+            envelope.pop("item_id", None)
+            envelope.pop("item_revision", None)
+            envelope["type"] = "event.session.updated"
+            envelope["data"] = {"legacy_projection_omitted": True}
+            return envelope
+        item = envelope.get("data", {}).get("item")
+        if isinstance(item, dict) and run_sequence is not None:
+            item["sequence"] = run_sequence
+        return envelope
+
+    @staticmethod
+    def _normalize_oaep_event_shape(envelope: dict[str, Any]) -> dict[str, Any]:
+        """Keep auxiliary legacy events valid without inventing Item identity.
+
+        Runtime backend events such as ``tool.state.changed`` are mirrored once
+        as an audit event and once as the canonical OAEP Item mutation.  The
+        audit event has a Run but deliberately has no Item identity, so it
+        cannot legally use an ``event.item.*`` type.  Preserve its Session
+        cursor and safe metadata as a Session update; the following canonical
+        Item event remains the authoritative tool/file/artifact mutation.
+
+        This normalization also applies on replay so databases written by an
+        earlier build stop emitting an invalid OAEP envelope immediately.
+        """
+        normalized = dict(envelope)
+        event_type = str(normalized.get("type") or "")
+        if event_type.startswith("event.item.") and not (
+            normalized.get("run_id") and normalized.get("item_id")
+        ):
+            normalized["type"] = "event.session.updated"
+            normalized.pop("item_id", None)
+            normalized.pop("item_revision", None)
+        return normalized
+
+    def _store_oaep_event(
+        self,
+        db: sqlite3.Connection,
+        event: dict[str, Any],
+        *,
+        run_sequence: int | None = None,
+        omit_legacy_item: bool = False,
+    ) -> dict[str, Any]:
+        envelope = self._canonical_oaep_event(
+            event,
+            run_sequence=run_sequence,
+            omit_legacy_item=omit_legacy_item,
+        )
+        row = db.execute(
+            "SELECT * FROM runtime_sessions WHERE session_id=?",
+            (event["session_id"],),
+        ).fetchone()
+        if row is not None:
+            # Every Event carries the current lightweight Session projection.
+            # This closes the create-Session/create-Run transaction boundary
+            # and makes replay from zero sufficient to rebuild a Snapshot.
+            envelope["data"] = {
+                **dict(envelope.get("data") or {}),
+                "session": project_session(dict(row)),
+            }
+        if envelope["type"].startswith("event.run.") and event.get("run_id"):
+            row = db.execute(
+                "SELECT * FROM runtime_runs WHERE run_id=?",
+                (event["run_id"],),
+            ).fetchone()
+            if row is not None:
+                run = dict(row)
+                run["attachment_refs"] = json.loads(
+                    str(run.get("attachment_refs_json") or "[]")
+                )
+                envelope["data"] = {
+                    **dict(envelope.get("data") or {}),
+                    "run": project_run(run),
+                }
+        envelope = self._normalize_oaep_event_shape(envelope)
+        db.execute(
+            "INSERT OR IGNORE INTO runtime_oaep_events("
+            "event_id,session_id,session_sequence,envelope_json) VALUES(?,?,?,?)",
+            (
+                event["event_id"],
+                event["session_id"],
+                event["session_sequence"],
+                _oaep_json(envelope),
+            ),
+        )
+        return envelope
+
+    def _store_oaep_item(
+        self, db: sqlite3.Connection, item: dict[str, Any]
+    ) -> tuple[dict[str, Any], int]:
+        run_id = str(item.get("run_id") or "")
+        if not run_id:
+            raise ValueError("OAEP Item must belong to a Run")
+        run_sequence = self._run_item_sequence(db, run_id, str(item["item_id"]))
+        envelope = self._canonical_oaep_item(item, run_sequence=run_sequence)
+        run_row = db.execute(
+            "SELECT workspace_id FROM runtime_runs WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if run_row is None:
+            raise KeyError("Run not found")
+        workspace_id = str(run_row["workspace_id"])
+        content = envelope.get("content") if isinstance(envelope.get("content"), dict) else {}
+        if envelope.get("type") == "artifact" and not content.get("resource_refs"):
+            artifact_id = content.get("artifact_id")
+            if artifact_id:
+                content["resource_refs"] = [{
+                    "protocol": "owop/1",
+                    "workspace_id": workspace_id,
+                    "resource_type": "artifact",
+                    "resource_id": str(artifact_id),
+                }]
+        operation_ref = content.get("operation_ref")
+        if isinstance(operation_ref, dict) and operation_ref.get("workspace_id") != workspace_id:
+            raise ValueError("OAEP operation_ref belongs to another Workspace")
+        for resource_ref in content.get("resource_refs") or []:
+            if not isinstance(resource_ref, dict) or resource_ref.get("workspace_id") != workspace_id:
+                raise ValueError("OAEP resource_ref belongs to another Workspace")
+        envelope["content"] = content
+        previous_row = db.execute(
+            "SELECT revision,envelope_json FROM runtime_oaep_items WHERE item_id=?",
+            (item["item_id"],),
+        ).fetchone()
+        if previous_row is not None:
+            previous = json.loads(str(previous_row["envelope_json"]))
+            if previous.get("session_id") != envelope.get("session_id"):
+                raise ValueError("OAEP Item belongs to another Session")
+            if previous.get("run_id") != envelope.get("run_id"):
+                raise ValueError("OAEP Item belongs to another Run")
+            if previous.get("type") != envelope.get("type"):
+                raise ValueError("OAEP Item type cannot change")
+            old_status = str(previous.get("status") or "pending")
+            new_status = str(envelope.get("status") or "pending")
+            is_mapping_correction = (
+                isinstance(item.get("payload"), dict)
+                and item["payload"].get("projection_correction") is True
+                and bool(item["payload"].get("mapping_version"))
+                and item["payload"].get("mapping_version")
+                != (previous.get("source") or {}).get("mapping_version")
+            )
+            allowed = {
+                "pending": {"pending", "running", "waiting", "completed", "failed", "cancelled"},
+                "running": {"running", "waiting", "completed", "failed", "cancelled"},
+                "waiting": {"waiting", "running", "completed", "failed", "cancelled"},
+                "completed": {"completed"},
+                "failed": {"failed"},
+                "cancelled": {"cancelled"},
+            }
+            if new_status not in allowed.get(old_status, set()) and not is_mapping_correction:
+                raise ValueError(
+                    f"OAEP Item status cannot transition from {old_status} to {new_status}"
+                )
+            if (
+                old_status in {"completed", "failed", "cancelled"}
+                and int(item["revision"]) > int(previous_row["revision"])
+                and previous != envelope
+                and not is_mapping_correction
+            ):
+                raise ValueError("OAEP Item cannot change after reaching a terminal status")
+        db.execute(
+            "INSERT INTO runtime_oaep_items("
+            "item_id,session_id,run_id,run_sequence,revision,latest_sequence,envelope_json"
+            ") VALUES(?,?,?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET "
+            "revision=excluded.revision,latest_sequence=excluded.latest_sequence,"
+            "envelope_json=excluded.envelope_json",
+            (
+                item["item_id"],
+                item["session_id"],
+                run_id,
+                run_sequence,
+                item["revision"],
+                item["session_sequence"],
+                _oaep_json(envelope),
+            ),
+        )
+        return envelope, run_sequence
+
+    def _migrate_legacy_oaep(self, db: sqlite3.Connection) -> None:
+        """Idempotently add canonical OAEP projections for V3 journal rows."""
+        started_at = _now()
+        db.execute(
+            "INSERT INTO runtime_oaep_migration_state("
+            "singleton,schema_version,status,started_at) VALUES(1,1,'running',?) "
+            "ON CONFLICT(singleton) DO UPDATE SET status='running',"
+            "started_at=excluded.started_at,completed_at=NULL,last_error_code=NULL",
+            (started_at,),
+        )
+        items = db.execute(
+            "SELECT * FROM runtime_conversation_items ORDER BY latest_sequence,item_id"
+        ).fetchall()
+        item_sequences: dict[str, int] = {}
+        migratable_items = 0
+        degraded_items = 0
+        for row in items:
+            item = self._item(row)
+            if not item.get("run_id"):
+                degraded_items += 1
+                continue
+            migratable_items += 1
+            _, item_sequences[str(item["item_id"])] = self._store_oaep_item(db, item)
+        events = db.execute(
+            "SELECT * FROM runtime_session_journal ORDER BY session_id,session_sequence"
+        ).fetchall()
+        for row in events:
+            event = self._event(row)
+            self._store_oaep_event(
+                db,
+                event,
+                run_sequence=item_sequences.get(str(event.get("item_id") or "")),
+                omit_legacy_item=bool(event.get("item_id") and not event.get("run_id")),
+            )
+        projected_items = int(db.execute(
+            "SELECT COUNT(*) FROM runtime_oaep_items"
+        ).fetchone()[0])
+        projected_events = int(db.execute(
+            "SELECT COUNT(*) FROM runtime_oaep_events"
+        ).fetchone()[0])
+        db.execute(
+            "UPDATE runtime_oaep_migration_state SET status='completed',"
+            "legacy_items=?,migratable_items=?,degraded_items=?,projected_items=?,"
+            "legacy_events=?,projected_events=?,completed_at=?,last_error_code=NULL "
+            "WHERE singleton=1",
+            (
+                len(items), migratable_items, degraded_items, projected_items,
+                len(events), projected_events, _now(),
+            ),
+        )
+
+    def oaep_migration_report(self) -> dict[str, Any]:
+        """Return a content-free, restart-stable OAEP migration audit report."""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM runtime_oaep_migration_state WHERE singleton=1"
+            ).fetchone()
+            if row is None:
+                return {
+                    "schema_version": 1,
+                    "status": "pending",
+                    "legacy_items": 0,
+                    "migratable_items": 0,
+                    "degraded_items": 0,
+                    "projected_items": 0,
+                    "legacy_events": 0,
+                    "projected_events": 0,
+                    "complete": False,
+                }
+            report = dict(row)
+            report.pop("singleton", None)
+            report["complete"] = (
+                report["status"] == "completed"
+                and int(report["projected_items"]) == int(report["migratable_items"])
+                and int(report["projected_events"]) == int(report["legacy_events"])
+            )
+            report["totals"] = {
+                "items": int(report["legacy_items"]),
+                "events": int(report["legacy_events"]),
+            }
+            report["projectable"] = {
+                "items": int(report["migratable_items"]),
+                "events": int(report["legacy_events"]),
+            }
+            report["degraded_notices"] = [
+                {
+                    "code": "legacy_item_without_run",
+                    "count": int(report["degraded_items"]),
+                }
+            ]
+            report["failures"] = {
+                "count": 0 if report["status"] == "completed" else 1,
+                "last_error_code": report.get("last_error_code"),
+            }
+            return report
+
+    def downgrade_empty_oaep_schema(self) -> None:
+        """Drop only an empty OAEP projection schema; populated data fails closed."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            item_count = int(db.execute(
+                "SELECT COUNT(*) FROM runtime_oaep_items"
+            ).fetchone()[0])
+            event_count = int(db.execute(
+                "SELECT COUNT(*) FROM runtime_oaep_events"
+            ).fetchone()[0])
+            if item_count or event_count:
+                db.rollback()
+                raise RuntimeError("oaep_downgrade_data_present")
+            db.executescript(
+                "DROP TABLE runtime_oaep_events;"
+                "DROP TABLE runtime_oaep_items;"
+                "DROP TABLE runtime_oaep_migration_state;"
+            )
+
+    def ensure_oaep_projection(self, session_id: str) -> bool:
+        """Lazily repair a missing OAEP projection; returns whether work ran."""
+        with self._connect() as db:
+            self._session(db, session_id)
+            legacy_items = int(db.execute(
+                "SELECT COUNT(*) FROM runtime_conversation_items "
+                "WHERE session_id=? AND run_id IS NOT NULL", (session_id,),
+            ).fetchone()[0])
+            projected_items = int(db.execute(
+                "SELECT COUNT(*) FROM runtime_oaep_items WHERE session_id=?",
+                (session_id,),
+            ).fetchone()[0])
+            legacy_events = int(db.execute(
+                "SELECT COUNT(*) FROM runtime_session_journal WHERE session_id=?",
+                (session_id,),
+            ).fetchone()[0])
+            projected_events = int(db.execute(
+                "SELECT COUNT(*) FROM runtime_oaep_events WHERE session_id=?",
+                (session_id,),
+            ).fetchone()[0])
+        if projected_items == legacy_items and projected_events == legacy_events:
+            return False
+        with self._lock, self._connect() as db:
+            self._migrate_legacy_oaep(db)
+        return True
 
     @staticmethod
     def _session(db: sqlite3.Connection, session_id: str) -> sqlite3.Row:
@@ -338,7 +775,9 @@ class RuntimeConversationJournal:
             "SELECT * FROM runtime_session_journal WHERE event_id=?",
             (event_id,),
         ).fetchone()
-        return self._event(row), True
+        event = self._event(row)
+        self._store_oaep_event(db, event)
+        return event, True
 
     def notify_committed(self) -> None:
         """Wake local subscribers after a caller-owned transaction commits."""
@@ -546,7 +985,17 @@ class RuntimeConversationJournal:
             "SELECT * FROM runtime_session_journal WHERE event_id=?",
             (event_id,),
         ).fetchone()
-        return self._item(item_row), self._event(event_row), True
+        item = self._item(item_row)
+        event = self._event(event_row)
+        if item.get("run_id"):
+            _, run_sequence = self._store_oaep_item(db, item)
+            self._store_oaep_event(db, event, run_sequence=run_sequence)
+        else:
+            # V3 allowed Session-level Conversation Items. They remain visible
+            # through the legacy projection, but OAEP Items always belong to a
+            # Run; preserve the Session cursor without forging a synthetic Run.
+            self._store_oaep_event(db, event, omit_legacy_item=True)
+        return item, event, True
 
     def snapshot(self, session_id: str) -> dict[str, Any]:
         with self._connect() as db:
@@ -608,6 +1057,94 @@ class RuntimeConversationJournal:
                 (session_id, after_sequence, limit),
             ).fetchall()
         return [self._event(row) for row in rows]
+
+    def oaep_items(
+        self, session_id: str, *, through_sequence: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Return canonical OAEP Items at a Session waterline."""
+        self.ensure_oaep_projection(session_id)
+        with self._connect() as db:
+            self._session(db, session_id)
+            if through_sequence is None:
+                state = db.execute(
+                    "SELECT last_sequence FROM runtime_session_sequences WHERE session_id=?",
+                    (session_id,),
+                ).fetchone()
+                through_sequence = int(state["last_sequence"]) if state else 0
+            rows = db.execute(
+                "SELECT envelope_json FROM runtime_oaep_items "
+                "WHERE session_id=? AND latest_sequence<=? "
+                "ORDER BY run_id,run_sequence,item_id",
+                (session_id, through_sequence),
+            ).fetchall()
+        return [json.loads(str(row["envelope_json"])) for row in rows]
+
+    def replay_oaep(
+        self,
+        session_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Replay canonical OAEP Events using the Session-scoped cursor."""
+        # Reuse the legacy cursor validation while both physical views coexist.
+        legacy = self.replay(
+            session_id, after_sequence=after_sequence, limit=limit
+        )
+        if not legacy:
+            return []
+        event_ids = [str(event["event_id"]) for event in legacy]
+        placeholders = ",".join("?" for _ in event_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"SELECT event_id,envelope_json FROM runtime_oaep_events "
+                f"WHERE event_id IN ({placeholders})",
+                event_ids,
+            ).fetchall()
+        by_id = {
+            str(row["event_id"]): json.loads(str(row["envelope_json"]))
+            for row in rows
+        }
+        if len(by_id) != len(event_ids):
+            self.ensure_oaep_projection(session_id)
+            with self._connect() as db:
+                rows = db.execute(
+                    f"SELECT event_id,envelope_json FROM runtime_oaep_events "
+                    f"WHERE event_id IN ({placeholders})",
+                    event_ids,
+                ).fetchall()
+            by_id = {
+                str(row["event_id"]): json.loads(str(row["envelope_json"]))
+                for row in rows
+            }
+            if len(by_id) != len(event_ids):
+                raise RuntimeError("Canonical OAEP Journal projection is incomplete")
+        return [
+            self._normalize_oaep_event_shape(by_id[event_id])
+            for event_id in event_ids
+        ]
+
+    def wait_for_oaep_events(
+        self,
+        session_id: str,
+        *,
+        after_sequence: int,
+        timeout: float = 15.0,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        legacy = self.wait_for_events(
+            session_id,
+            after_sequence=after_sequence,
+            timeout=timeout,
+            limit=limit,
+        )
+        if not legacy:
+            return []
+        return self.replay_oaep(
+            session_id,
+            after_sequence=after_sequence,
+            limit=len(legacy),
+        )
 
     def wait_for_events(
         self,
@@ -762,6 +1299,8 @@ class RuntimeConversationJournal:
             "session_sequence": int(row["session_sequence"]),
             "kind": str(row["event_kind"]),
             "timestamp": str(row["created_at"]),
+            "item_id": str(row["item_id"]) if row["item_id"] is not None else None,
+            "item_revision": int(row["item_revision"]) if row["item_revision"] is not None else None,
             "payload": json.loads(str(row["payload_json"])),
         }
 

@@ -41,8 +41,8 @@ async def test_long_turn_delta_batching_remains_bounded_and_event_loop_responsiv
     class Context:
         run_id = "run-long"
     class Services:
-        def emit_backend(self, _context, event_type, data, key):
-            emitted.append((event_type, data, key))
+        def emit_normalized(self, _context, event):
+            emitted.append(event)
 
     async def heartbeat():
         for _ in range(100):
@@ -60,8 +60,8 @@ async def test_long_turn_delta_batching_remains_bounded_and_event_loop_responsiv
         asyncio.to_thread(map_long_delta),
     )
     assert emitted
-    assert all(len(str(data).encode("utf-8")) < 70 * 1024 for _, data, _ in emitted)
-    assert any(data.get("truncated") is True for _, data, _ in emitted)
+    assert all(len(str(event.payload).encode("utf-8")) < 70 * 1024 for event in emitted)
+    assert any(event.payload.get("truncated") is True for event in emitted)
 
 
 def test_release_secret_canaries_are_removed_from_process_diagnostics():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import tempfile
@@ -71,6 +72,9 @@ class FakeCodexClient:
         return {"type": login_type, "loginId": "login-1", "verificationUrl": "https://example.test"}
     async def account_login_cancel(self, login_id): self.account_calls.append(("cancel_login", login_id))
     async def account_logout(self): self.account_calls.append(("logout", None))
+    async def discover_sessions(self, workspace_path): return []
+    async def bind_imported_session(self, *args, **kwargs): return None
+    async def read_imported_session_history(self, backend_session_id): return []
 
 
 class AgentBackendContractTests(unittest.TestCase):
@@ -178,6 +182,110 @@ class AgentBackendContractTests(unittest.TestCase):
             asyncio.run(service.backend_account_status("opendrsai"))
         self.assertEqual(caught.exception.code, "backend_account_unsupported")
 
+    def test_synced_codex_session_materializes_history_for_desktop_snapshot(self) -> None:
+        client = FakeCodexClient()
+
+        async def discover(_workspace_path):
+            return [{"backend_session_id": "codex-thread-1", "title": "Imported Codex", "archived": False}]
+
+        async def history(_backend_session_id):
+            return [{
+                "backend_run_id": "codex-turn-1", "status": "completed",
+                "items": [
+                    {"item_id": "user-1", "kind": "message", "role": "user", "payload": {"text": "hello"}},
+                    {"item_id": "assistant-1", "kind": "message", "role": "assistant", "payload": {"text": "world"}},
+                ],
+            }]
+
+        client.discover_sessions = discover
+        client.read_imported_session_history = history
+        service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}), CodexAdapter(client))
+        first = asyncio.run(service.sync_backend_sessions("codex", self.workspace_record.workspace_id))
+        session_id = first["sessions"][0]["session_id"]
+        first_history = asyncio.run(service.sync_backend_session_history(session_id))
+        second_history = asyncio.run(service.sync_backend_session_history(session_id))
+        snapshot = self.engine.oaep_snapshot(session_id)
+
+        self.assertEqual(first["sessions"][0]["message_count"], 0)
+        self.assertEqual(first_history["total"], 2)
+        self.assertEqual(second_history["imported"], 0)
+        self.assertEqual([(item["content"]["role"], item["content"]["text"]) for item in snapshot["items"]], [
+            ("user", "hello"), ("assistant", "world"),
+        ])
+        self.assertEqual(len(self.engine.list_session_runs(session_id)), 1)
+
+    def test_codex_history_mapping_upgrade_corrects_terminal_item_without_duplicate(self) -> None:
+        client = FakeCodexClient()
+
+        async def discover(_workspace_path):
+            return [{"backend_session_id": "codex-thread-upgrade", "title": "Upgrade", "archived": False}]
+
+        async def history(_backend_session_id):
+            return [{"backend_run_id": "codex-turn-upgrade", "backend_run_index": 0, "status": "completed",
+                     "created_at": "2026-08-01T00:00:00+00:00",
+                     "completed_at": "2026-08-01T00:00:28+00:00",
+                     "items": [{"item_id": "user-upgrade", "kind": "message", "role": "user",
+                                "payload": {"text": "plain user text"}}]}]
+
+        client.discover_sessions = discover
+        client.read_imported_session_history = history
+        service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}), CodexAdapter(client))
+        synced = asyncio.run(service.sync_backend_sessions("codex", self.workspace_record.workspace_id))
+        session_id = synced["sessions"][0]["session_id"]
+        imported_run, _ = self.engine.import_backend_run(
+            session_id, "codex", "codex-turn-upgrade", backend_run_index=0,
+        )
+        digest = hashlib.sha256(
+            f"{session_id}\0codex-turn-upgrade\0user-upgrade".encode("utf-8")
+        ).hexdigest()[:32]
+        self.engine.record_conversation_items(session_id, [{
+            "item_id": f"codex-item-{digest}", "kind": "message", "role": "user", "revision": 1,
+            "source_client": "runtime", "source_message_id": f"codex:{digest}",
+            "payload": {"text": "[{'text': 'plain user text', 'type': 'text'}]", "status": "completed"},
+            "run_id": imported_run["run_id"], "event_kind": "conversation.item.upsert",
+        }])
+
+        result = asyncio.run(service.sync_backend_session_history(session_id))
+        snapshot = self.engine.oaep_snapshot(session_id)
+
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(result["migration"]["mode"], "dry-run")
+        self.assertEqual(result["migration"]["mapping_version"], "oaep-codex/2.0")
+        self.assertGreaterEqual(result["migration"]["affected_items"], 1)
+        self.assertEqual(result["migration"]["reasons"]["serialized_message_parts"], 1)
+        self.assertEqual(result["migration"]["corrected_items"], 1)
+        self.assertTrue(result["migration"]["content_redacted"])
+        self.assertEqual(len(snapshot["items"]), 1)
+        self.assertEqual(snapshot["items"][0]["content"]["text"], "plain user text")
+        self.assertEqual(snapshot["items"][0]["source"]["mapping_version"], "oaep-codex/2.0")
+        self.assertEqual(snapshot["runs"][0]["sequence"], 1)
+        self.assertEqual(snapshot["runs"][0]["created_at"], "2026-08-01T00:00:00+00:00")
+        self.assertEqual(snapshot["runs"][0]["completed_at"], "2026-08-01T00:00:28+00:00")
+        self.assertEqual(self.engine.list_oaep_events(session_id)[-1]["type"], "event.item.updated")
+
+    def test_backend_sync_preserves_newer_local_archive_decision(self) -> None:
+        client = FakeCodexClient()
+
+        async def discover(_workspace_path):
+            return [{
+                "backend_session_id": "codex-thread-archive-conflict",
+                "title": "Archive conflict",
+                "archived": False,
+                "created_at": "2020-01-01T00:00:00Z",
+                "updated_at": "2020-01-01T00:00:00Z",
+            }]
+
+        client.discover_sessions = discover
+        service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}), CodexAdapter(client))
+        first = asyncio.run(service.sync_backend_sessions("codex", self.workspace_record.workspace_id))
+        session_id = first["sessions"][0]["session_id"]
+        self.engine.update_session(session_id, archived=True)
+
+        second = asyncio.run(service.sync_backend_sessions("codex", self.workspace_record.workspace_id))
+
+        self.assertEqual(second["conflicts"], 1)
+        self.assertTrue(self.engine.get_session(session_id)["archived"])
+
     def test_router_selects_exact_backend_without_changing_workspace(self) -> None:
         open_calls: list[str] = []
         open_backend = OpenDrSaiAgentBackend(
@@ -250,6 +358,18 @@ class AgentBackendContractTests(unittest.TestCase):
         asyncio.run(service.archive_session(session["session_id"], archived=False))
 
         self.assertEqual(client.archived_sessions, [(session["session_id"], True), (session["session_id"], False)])
+
+    def test_imported_codex_session_without_runs_still_mirrors_archive(self) -> None:
+        client = FakeCodexClient()
+        service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}), CodexAdapter(client))
+        session, created = self.engine.import_session(
+            "session-imported-codex", self.workspace_record.workspace_id, "imported",
+            agent_definition="codex@1", backend_id="codex",
+        )
+
+        self.assertTrue(created)
+        asyncio.run(service.archive_session(session["session_id"], archived=True))
+        self.assertEqual(client.archived_sessions, [(session["session_id"], True)])
 
     def test_session_rejects_mixed_backend_history_before_archive(self) -> None:
         client = FakeCodexClient()

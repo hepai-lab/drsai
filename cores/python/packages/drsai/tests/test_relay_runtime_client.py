@@ -279,6 +279,195 @@ def test_runtime_connector_forwards_session_scoped_event_frames(tmp_path: Path) 
     asyncio.run(scenario())
 
 
+def test_runtime_connector_forwards_strict_oaep_frames_and_rejects_identity_drift(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        acknowledgements = []
+        event = {
+            "version": "1.0",
+            "event_id": "event-one",
+            "session_id": "session-one",
+            "run_id": "run-one",
+            "sequence": 7,
+            "type": "event.item.updated",
+            "timestamp": "2026-08-02T00:00:00+00:00",
+            "dedupe_key": "event-one",
+            "source": {"backend": "runtime", "runtime_id": "rt-one"},
+            "data": {"item_id": "item-one", "revision": 2},
+        }
+
+        async def events():
+            return [
+                {
+                    "runtime_id": "rt-one",
+                    "workspace_id": "workspace-one",
+                    "session_id": "session-one",
+                    "sequence": 7,
+                    "event": event,
+                },
+                {
+                    "runtime_id": "forged-runtime",
+                    "workspace_id": "workspace-one",
+                    "session_id": "session-one",
+                    "sequence": 8,
+                    "event": {**event, "sequence": 8},
+                },
+            ]
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "2.0.0",
+            oaep_event_provider=events,
+            oaep_event_ack=lambda session_id, sequence: acknowledgements.append(
+                (session_id, sequence)
+            ),
+            wire_protocol="hai-http",
+        )
+        task = asyncio.create_task(connector._forward_oaep_events(socket))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert socket.sent == [{
+            "type": "event",
+            "protocol": "oaep/1",
+            "scope": "session",
+            "runtime_id": "rt-one",
+            "workspace_id": "workspace-one",
+            "session_id": "session-one",
+            "sequence": 7,
+            "event": event,
+        }]
+        assert acknowledgements == [("session-one", 7)]
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_does_not_ack_oaep_frame_when_socket_write_fails(
+    tmp_path: Path,
+) -> None:
+    class FailingSocket(FakeSocket):
+        async def send_json(self, payload):
+            raise ConnectionError("injected_disconnect")
+
+    async def scenario() -> None:
+        acknowledgements = []
+        event = {
+            "version": "1.0",
+            "event_id": "event-one",
+            "session_id": "session-one",
+            "run_id": None,
+            "sequence": 1,
+            "type": "event.session.updated",
+            "timestamp": "2026-08-02T00:00:00+00:00",
+            "dedupe_key": "event-one",
+            "source": {"backend": "runtime", "runtime_id": "rt-one"},
+            "data": {"title": "Session"},
+        }
+
+        async def events():
+            return [{
+                "runtime_id": "rt-one",
+                "workspace_id": "workspace-one",
+                "session_id": "session-one",
+                "sequence": 1,
+                "event": event,
+            }]
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "2.0.0",
+            oaep_event_provider=events,
+            oaep_event_ack=lambda session_id, sequence: acknowledgements.append(
+                (session_id, sequence)
+            ),
+            wire_protocol="hai-http",
+        )
+        task = asyncio.create_task(connector._forward_oaep_events(FailingSocket()))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert acknowledgements == []
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_keeps_control_correlation_separate_from_oaep_push(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        event = {
+            "version": "1.0",
+            "event_id": "event-one",
+            "session_id": "session-one",
+            "run_id": None,
+            "sequence": 1,
+            "type": "event.session.updated",
+            "timestamp": "2026-08-02T00:00:00+00:00",
+            "dedupe_key": "event-one",
+            "source": {"backend": "runtime", "runtime_id": "rt-one"},
+            "data": {"status": "active"},
+        }
+
+        async def events():
+            return [{
+                "runtime_id": "rt-one",
+                "workspace_id": "workspace-one",
+                "session_id": "session-one",
+                "sequence": 1,
+                "event": event,
+            }]
+
+        async def request_handler(method, path, body, correlation_id):
+            await asyncio.sleep(0)
+            return 200, {"correlation": correlation_id}
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "2.0.0",
+            http_request_handler=request_handler,
+            oaep_event_provider=events,
+            wire_protocol="hai-http",
+        )
+        event_task = asyncio.create_task(connector._forward_oaep_events(socket))
+        response_task = asyncio.create_task(connector._handle_http_request(socket, {
+            "type": "request",
+            "request_id": "request-one",
+            "correlation_id": "correlation-one",
+            "method": "GET",
+            "path": "/v1/capabilities",
+            "body": None,
+        }))
+        await response_task
+        await asyncio.sleep(0.01)
+        event_task.cancel()
+        await asyncio.gather(event_task, return_exceptions=True)
+
+        assert {frame["type"] for frame in socket.sent} == {"event", "response"}
+        response = next(frame for frame in socket.sent if frame["type"] == "response")
+        pushed = next(frame for frame in socket.sent if frame["type"] == "event")
+        assert response["request_id"] == "request-one"
+        assert response["body"] == {"correlation": "correlation-one"}
+        assert "request_id" not in pushed
+        assert pushed["protocol"] == "oaep/1"
+
+    asyncio.run(scenario())
+
+
 def test_runtime_connector_normalizes_hai_http_error_envelope(tmp_path: Path) -> None:
     async def scenario():
         socket = FakeSocket()
