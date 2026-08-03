@@ -1,0 +1,973 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T13:33:07.838009+00:00",
+  "plan": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+  "total": 58,
+  "accepted": 58,
+  "passed": true,
+  "checks": [
+    {
+      "name": "python-adapter-fake-security-recovery",
+      "passed": true,
+      "command": [
+        "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "cores/python/packages/drsai/tests/test_codex_native_decoder.py",
+        "cores/python/packages/drsai/tests/test_codex_event_mapper.py",
+        "cores/python/packages/drsai/tests/test_codex_jsonrpc_client.py",
+        "cores/python/packages/drsai/tests/test_codex_backend_client.py",
+        "cores/python/packages/drsai/tests/test_codex_security.py",
+        "cores/python/packages/drsai/tests/test_codex_app_server_process.py",
+        "-q"
+      ],
+      "output_tail": ".............................................                            [100%]\n45 passed in 60.19s (0:01:00)\n"
+    },
+    {
+      "name": "python-oaep-schema-relay-stress",
+      "passed": true,
+      "command": [
+        "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "cores/python/packages/drsai/tests/test_oaep_protocol.py",
+        "cores/python/packages/drsai/tests/test_oaep_codegen.py",
+        "cores/python/packages/drsai/tests/test_oaep_compatibility.py",
+        "cores/python/packages/drsai/tests/test_relay_oaep_replay.py",
+        "cores/python/packages/drsai/tests/test_relay_oaep_performance.py",
+        "cores/python/packages/drsai/tests/test_codex_release_stress.py",
+        "-q"
+      ],
+      "output_tail": "........................                                                 [100%]\n24 passed in 17.29s\n"
+    },
+    {
+      "name": "desktop-types",
+      "passed": true,
+      "command": [
+        "npm.cmd",
+        "run",
+        "typecheck:windows"
+      ],
+      "output_tail": "\n> typecheck:windows\n> npm run typecheck --workspace opendrsai-windows-desktop\n\n\n> opendrsai-windows-desktop@1.5.3 typecheck\n> npm run typecheck:node && npm run typecheck:web\n\n\n> opendrsai-windows-desktop@1.5.3 typecheck:node\n> tsc --noEmit -p tsconfig.node.json --composite false\n\n\n> opendrsai-windows-desktop@1.5.3 typecheck:web\n> tsc --noEmit -p tsconfig.web.json --composite false\n\n"
+    },
+    {
+      "name": "desktop-oaep-contract",
+      "passed": true,
+      "command": [
+        "npm.cmd",
+        "run",
+        "verify:oaep-runtime-contract"
+      ],
+      "output_tail": "\n> opendrsai-windows-desktop@1.5.3 verify:oaep-runtime-contract\n> node scripts/verify-oaep-runtime-contract.mjs\n\nOAEP Runtime contract verification passed.\n"
+    },
+    {
+      "name": "desktop-session-reducer",
+      "passed": true,
+      "command": [
+        "npm.cmd",
+        "run",
+        "verify:session-conversation-subscription"
+      ],
+      "output_tail": "\n> opendrsai-windows-desktop@1.5.3 verify:session-conversation-subscription\n> node --experimental-strip-types scripts/verify-session-conversation-subscription.mts\n\nSession Conversation subscription verification passed.\n"
+    },
+    {
+      "name": "desktop-session-recovery",
+      "passed": true,
+      "command": [
+        "npm.cmd",
+        "run",
+        "verify:session-sync-state"
+      ],
+      "output_tail": "\n> opendrsai-windows-desktop@1.5.3 verify:session-sync-state\n> node ../shared/test-kit/run-bundled-test.mjs scripts/verify-session-sync-state.mts\n\nSession sync cursor/outbox verification passed.\n"
+    },
+    {
+      "name": "android-oaep-relay",
+      "passed": true,
+      "command": [
+        "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\gradlew.bat",
+        ":app:testDebugUnitTest",
+        "--tests",
+        "ai.drsai.remote.OaepJsonCodecTest",
+        "--tests",
+        "ai.drsai.remote.OaepProjectionTest",
+        "--tests",
+        "ai.drsai.remote.RelayRemoteRepositoryTest",
+        "--tests",
+        "ai.drsai.remote.RemoteConversationTest"
+      ],
+      "output_tail": "> Task :app:kaptGenerateStubsDebugKotlin UP-TO-DATE\n> Task :app:kaptDebugKotlin UP-TO-DATE\n> Task :app:compileDebugKotlin UP-TO-DATE\n> Task :app:javaPreCompileDebug UP-TO-DATE\n> Task :app:compileDebugJavaWithJavac UP-TO-DATE\n> Task :app:bundleDebugClassesToRuntimeJar UP-TO-DATE\n> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE\n> Task :app:kaptGenerateStubsDebugUnitTestKotlin UP-TO-DATE\n> Task :app:kaptDebugUnitTestKotlin UP-TO-DATE\n> Task :app:compileDebugUnitTestKotlin UP-TO-DATE\n> Task :app:preDebugUnitTestBuild\n> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE\n> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE\n> Task :app:processDebugJavaRes UP-TO-DATE\n> Task :app:processDebugUnitTestJavaRes UP-TO-DATE\n> Task :app:testDebugUnitTest\n\nBUILD SUCCESSFUL in 4s\n34 actionable tasks: 3 executed, 31 up-to-date\n"
+    }
+  ],
+  "features": [
+    {
+      "id": "S2-M01-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M01-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M01-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M01-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M01-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M01-F06",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M01-F07",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M02-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M02-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M02-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M02-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M02-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M02-F06",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M02-F07",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M03-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M03-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M03-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M03-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M03-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M03-F06",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M04-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M04-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M04-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M04-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M04-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M04-F06",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M05-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M05-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M05-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M05-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M05-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M05-F06",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M06-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M06-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M06-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M06-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M06-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M07-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M07-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M07-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M07-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M07-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M07-F06",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M08-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M08-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M08-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M08-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M08-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M09-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "docs/remote_workespace/evidence/codex-adapter-oaep-v2-stage2-live.json"
+    },
+    {
+      "id": "S2-M09-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "docs/remote_workespace/evidence/codex-adapter-oaep-v2-stage2-live.json"
+    },
+    {
+      "id": "S2-M09-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "docs/remote_workespace/evidence/codex-adapter-oaep-v2-stage2-live.json"
+    },
+    {
+      "id": "S2-M09-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "docs/remote_workespace/evidence/codex-adapter-oaep-v2-stage2-live.json"
+    },
+    {
+      "id": "S2-M09-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "docs/remote_workespace/evidence/codex-adapter-oaep-v2-stage2-live.json"
+    },
+    {
+      "id": "S2-M10-F01",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M10-F02",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M10-F03",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M10-F04",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    },
+    {
+      "id": "S2-M10-F05",
+      "status": "accepted",
+      "implementation": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP重构开发方案V2_第二阶段.md",
+      "tests": [
+        "python-adapter-fake-security-recovery",
+        "python-oaep-schema-relay-stress",
+        "desktop-types",
+        "desktop-oaep-contract",
+        "desktop-session-reducer",
+        "desktop-session-recovery",
+        "android-oaep-relay"
+      ],
+      "evidence": "generated:test-results"
+    }
+  ]
+}

@@ -159,10 +159,10 @@ const sevenDeltaMatrix = [
   ["message.text.append", tenItemMatrix[0]],
   ["reasoning.text.append", tenItemMatrix[1]],
   ["reasoning.segment.added", tenItemMatrix[1]],
-  ["plan.step.updated", tenItemMatrix[2]],
+  ["plan.text.append", tenItemMatrix[2]],
   ["command.output.append", tenItemMatrix[3]],
   ["tool.output.append", tenItemMatrix[5]],
-  ["subtask.progress.updated", tenItemMatrix[8]],
+  ["subtask.summary.append", tenItemMatrix[8]],
 ] as const;
 for (const [kind, candidate] of sevenDeltaMatrix) {
   const deltaProjection = createOaepPresentationProjection(`delta-${kind}`);

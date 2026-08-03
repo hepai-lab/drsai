@@ -733,6 +733,7 @@ export function useDesktopChatAdapter({
         }
         structuredRequests.current.delete(event.requestId);
         delete streamingAssistantByRequest.current[event.requestId];
+        delete lastSequenceByRequest.current[event.requestId];
         delete pendingDeltasByRequest.current[event.requestId];
       }
       return;

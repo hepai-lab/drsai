@@ -197,7 +197,7 @@ def validate_approval_proof(proof: dict[str, Any]) -> dict[str, Any]:
     ):
         raise RuntimeError("v3_approval_single_execution_proof_invalid")
     return {
-        "name": "approval_single_execution",
+        "name": "approval_single_decision",
         "status": "passed",
         "terminal_status": "completed",
         "approval_status": "approved",
@@ -209,6 +209,63 @@ def validate_approval_proof(proof: dict[str, Any]) -> dict[str, Any]:
         "conversation_sha256": conversation_sha256,
         "session_ui_visible": True,
     }
+
+
+def validate_two_run_oaep_proof(
+    proof: dict[str, Any],
+    *,
+    direction: str,
+    p95_seconds: float,
+) -> dict[str, Any]:
+    """Validate the V4 OAEP counters emitted by the shared real-device driver."""
+    if direction not in {"windows_to_android", "android_to_windows"}:
+        raise ValueError("v4_two_run_direction_invalid")
+    digest = proof.get("oaep_sha256")
+    valid = (
+        int(proof.get("run_count", 0)) == 2
+        and int(proof.get("duplicate_run_count", -1)) == 0
+        and int(proof.get("missing_sequence_count", -1)) == 0
+        and int(proof.get("delta_run_count", 0)) >= 2
+        and int(proof.get("terminal_run_count", 0)) >= 2
+        and 0 <= p95_seconds < 2
+        and isinstance(digest, str)
+        and DIGEST.fullmatch(digest)
+    )
+    if direction == "windows_to_android":
+        valid = valid and (
+            int(proof.get("tool_run_count", 0)) >= 2
+        )
+    if not valid:
+        diagnostics = {
+            "run": int(proof.get("run_count", 0)),
+            "duplicate": int(proof.get("duplicate_run_count", -1)),
+            "missing": int(proof.get("missing_sequence_count", -1)),
+            "delta": int(proof.get("delta_run_count", 0)),
+            "terminal": int(proof.get("terminal_run_count", 0)),
+            "tool": int(proof.get("tool_run_count", 0)),
+            "p95_ms": round(p95_seconds * 1000),
+            "digest": bool(isinstance(digest, str) and DIGEST.fullmatch(digest)),
+        }
+        raise RuntimeError(
+            f"v4_{direction}_two_runs_invalid:"
+            f"{json.dumps(diagnostics, sort_keys=True, separators=(',', ':'))}"
+        )
+    result = {
+        "name": f"{direction}_two_runs",
+        "status": "passed",
+        "run_count": 2,
+        "duplicate_run_count": 0,
+        "missing_sequence_count": 0,
+        "delta_run_count": int(proof["delta_run_count"]),
+        "terminal_run_count": int(proof["terminal_run_count"]),
+        "p95_seconds": p95_seconds,
+        "oaep_sha256": digest,
+    }
+    if direction == "windows_to_android":
+        result.update({
+            "tool_run_count": int(proof["tool_run_count"]),
+        })
+    return result
 
 
 def _proof_from_instrumentation(output: str, phase_name: str) -> dict[str, Any]:
@@ -321,37 +378,45 @@ async def _wait_windows_monitor_ready(args: argparse.Namespace) -> dict[str, Any
 async def _send_windows_runs(
     client: GatewayPairingClient,
     session_id: str,
+    workspace_id: str,
     source_ids: list[str],
     marker: str,
 ) -> dict[str, int]:
-    session = await client._request("GET", f"/v1/sessions/{session_id}")  # noqa: SLF001
-    definition = session.get("agent_definition")
-    if not isinstance(definition, str) or not definition:
-        raise RuntimeError("v3_windows_session_agent_definition_missing")
-
     async def send(index: int, source_id: str) -> tuple[str, int]:
         key = f"v3-windows-{source_id}"
         started = round(__import__("time").time() * 1000)
-        run = await client._request(  # noqa: SLF001
-            "POST",
-            f"/v1/sessions/{session_id}/runs",
-            {"agent_definition": definition},
-            {"Idempotency-Key": key},
-        )
-        run_id = run.get("run_id")
-        if not isinstance(run_id, str) or not run_id:
-            raise RuntimeError("v3_windows_run_create_invalid")
-        await client._request(  # noqa: SLF001
-            "POST",
-            f"/v1/runs/{run_id}/execute",
-            {
-                "prompt": f"{marker} {index}",
-                "metadata": {
-                    "source_client": "windows",
-                    "source_message_id": source_id,
-                },
+        body = {
+            "model": "drsai",
+            "messages": [{"role": "user", "content": f"{marker} {index}"}],
+            "display_message": f"{marker} {index}",
+            "source_message_id": source_id,
+            "stream": True,
+            "user_id": "v4-acceptance-windows",
+            "thread_id": session_id,
+            "workspace_id": workspace_id,
+            "metadata": {
+                "desktop_request_id": key,
+                "run_id": key,
+                "v4_controlled_desktop_turn": True,
             },
-        )
+        }
+        async with client.session_factory(timeout=client.timeout) as session:
+            async with session.post(
+                client.root + "/v1/chat/completions",
+                headers={
+                    **client.headers,
+                    "X-OpenDrSai-Auth-Mode": "offline",
+                    "Idempotency-Key": key,
+                },
+                json=body,
+            ) as response:
+                payload = await response.text()
+                if response.status != 200:
+                    raise RuntimeError(
+                        f"v4_windows_desktop_turn_http_{response.status}"
+                    )
+                if "data: [DONE]" not in payload:
+                    raise RuntimeError("v4_windows_desktop_turn_incomplete")
         return source_id, started
 
     return dict(
@@ -393,6 +458,7 @@ async def collect_windows_two_runs(
         starts = await _send_windows_runs(
             client,
             args.session_id,
+            args.workspace_id,
             source_ids,
             marker,
         )
@@ -428,23 +494,14 @@ async def collect_windows_two_runs(
             / 1000
         )
     p95 = max(latencies)
-    if not (
-        int(proof.get("run_count", 0)) == 2
-        and int(proof.get("duplicate_run_count", -1)) == 0
-        and int(proof.get("missing_sequence_count", -1)) == 0
-        and 0 <= p95 < 2
-    ):
-        raise RuntimeError(
-            f"v3_windows_two_runs_proof_invalid:p95_seconds={p95:.3f}"
-        )
+    check = validate_two_run_oaep_proof(
+        proof,
+        direction="windows_to_android",
+        p95_seconds=p95,
+    )
     return (
         {
-            "name": "windows_to_android_two_runs",
-            "status": "passed",
-            "run_count": 2,
-            "duplicate_run_count": 0,
-            "missing_sequence_count": 0,
-            "p95_seconds": p95,
+            **check,
             **capture_screenshot(args, "windows-to-android"),
         },
         source_ids,
@@ -511,29 +568,33 @@ async def collect(args: argparse.Namespace) -> dict[str, Any]:
         )
         if android_runs is None:
             raise RuntimeError("v3_android_two_runs_proof_missing")
-        if not (
-            int(android_runs.get("run_count", 0)) == 2
-            and int(android_runs.get("duplicate_run_count", -1)) == 0
-            and int(android_runs.get("missing_sequence_count", -1)) == 0
-            and float(android_runs.get("p95_seconds", 999)) < 2
-            and isinstance(android_runs.get("transcript_sha256"), str)
-            and DIGEST.fullmatch(android_runs["transcript_sha256"])
-        ):
-            raise RuntimeError("v3_android_two_runs_proof_invalid")
+        android_check = validate_two_run_oaep_proof(
+            android_runs,
+            direction="android_to_windows",
+            p95_seconds=float(android_runs.get("p95_seconds", 999)),
+        )
         expected_source_ids.extend(
             f"android-v3-{interaction_id}-{index}" for index in (1, 2)
         )
         checks.append(
             {
-                "name": "android_to_windows_two_runs",
-                "status": "passed",
-                "run_count": 2,
-                "duplicate_run_count": 0,
-                "missing_sequence_count": 0,
-                "p95_seconds": android_runs["p95_seconds"],
+                **android_check,
                 **capture_screenshot(args, "android-to-windows"),
             }
         )
+
+    # V4 validates the canonical OAEP Snapshot/EventPage with the dedicated
+    # real-device V4 collector.  Keep this driver usable for its two-run
+    # realtime gates without falling through to the superseded V3
+    # conversation projection parser.
+    if args.two_runs_only:
+        if not checks:
+            raise RuntimeError("v3_two_runs_only_requires_two_run_phase")
+        return {
+            "schema_version": 1,
+            "passed": True,
+            "checks": checks,
+        }
 
     if not expected_source_ids:
         raise RuntimeError("v3_expected_source_message_ids_required")
@@ -586,6 +647,7 @@ def main() -> int:
     parser.add_argument("--expected-run-count", type=int, default=4)
     parser.add_argument("--android-two-runs", action="store_true")
     parser.add_argument("--windows-two-runs", action="store_true")
+    parser.add_argument("--two-runs-only", action="store_true")
     parser.add_argument("--approval-only", action="store_true")
     parser.add_argument(
         "--approval-agent-definition-id",

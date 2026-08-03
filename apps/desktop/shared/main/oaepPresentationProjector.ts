@@ -137,10 +137,10 @@ const SUPPORTED_DELTA_KINDS = new Set([
   "message.text.append",
   "reasoning.text.append",
   "reasoning.segment.added",
-  "plan.step.updated",
+  "plan.text.append",
   "command.output.append",
   "tool.output.append",
-  "subtask.progress.updated",
+  "subtask.summary.append",
 ]);
 
 function ensurePartStarted(

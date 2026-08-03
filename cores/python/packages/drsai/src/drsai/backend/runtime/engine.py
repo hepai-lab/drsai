@@ -1700,12 +1700,6 @@ class RuntimeEngine:
             NormalizedEventKind.SESSION_UNARCHIVED: "active",
             NormalizedEventKind.SESSION_DELETED: "removed",
         }.get(event.kind)
-        if session_lifecycle is not None:
-            session_id = str(self.get_run(run_id)["session_id"])
-            current = self.get_session(session_id)
-            if current["lifecycle"] != session_lifecycle:
-                self.update_session(session_id, lifecycle=session_lifecycle)
-
         event_type, data, dedupe_key = normalized_runtime_write(event)
         compatibility_data = redact_sensitive({**dict(audit or {}), **data})
         created = _now()
@@ -1726,6 +1720,49 @@ class RuntimeEngine:
                 db.rollback()
                 raise KeyError("Run not found")
             session_id = str(run["session_id"])
+
+            # Apply a normalized Session lifecycle transition in this same
+            # transaction. Calling update_session() here used to emit a first
+            # journal event before the normalized event below, which made a
+            # single backend notification appear twice in OAEP.
+            if session_lifecycle is not None:
+                current_session = db.execute(
+                    "SELECT title,lifecycle,revision,removed_at FROM runtime_sessions WHERE session_id=?",
+                    (session_id,),
+                ).fetchone()
+                if current_session is None:
+                    db.rollback()
+                    raise KeyError("Session not found")
+                current_lifecycle = str(current_session["lifecycle"])
+                if current_lifecycle == "removed" and session_lifecycle != "removed":
+                    db.rollback()
+                    raise ValueError("Removed Session lifecycle is terminal")
+                revision = int(current_session["revision"])
+                if current_lifecycle != session_lifecycle:
+                    revision += 1
+                    removed_at = (
+                        str(current_session["removed_at"])
+                        if current_session["removed_at"]
+                        else created if session_lifecycle == "removed" else None
+                    )
+                    db.execute(
+                        "UPDATE runtime_sessions SET archived=?, lifecycle=?, revision=?, "
+                        "removed_at=?, updated_at=? WHERE session_id=?",
+                        (
+                            int(session_lifecycle != "active"),
+                            session_lifecycle,
+                            revision,
+                            removed_at,
+                            created,
+                            session_id,
+                        ),
+                    )
+                compatibility_data = {
+                    **compatibility_data,
+                    "title": str(current_session["title"]),
+                    "lifecycle": session_lifecycle,
+                    "revision": revision,
+                }
 
             if event.item_type is not None:
                 runtime_item_id = self._resolve_backend_item_binding_in_transaction(
