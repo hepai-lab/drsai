@@ -252,14 +252,20 @@ def test_normalized_write_rolls_back_item_binding_event_and_snapshot_together(tm
 def test_normalized_session_lifecycle_and_extended_deltas(tmp_path: Path) -> None:
     engine, context, services = _fixture(tmp_path)
     mapper = CodexEventMapper()
+    before_archive = len(engine.list_oaep_events(context.session_id))
     mapper.handle(context, services, {
         "method": "thread/archived", "params": {"threadId": "thread-1"},
     })
     assert engine.get_session(context.session_id)["lifecycle"] == "archived"
+    archive_events = engine.list_oaep_events(context.session_id)[before_archive:]
+    assert [event["type"] for event in archive_events] == ["event.session.archived"]
+    before_unarchive = len(engine.list_oaep_events(context.session_id))
     mapper.handle(context, services, {
         "method": "thread/unarchived", "params": {"threadId": "thread-1"},
     })
     assert engine.get_session(context.session_id)["lifecycle"] == "active"
+    unarchive_events = engine.list_oaep_events(context.session_id)[before_unarchive:]
+    assert [event["type"] for event in unarchive_events] == ["event.session.updated"]
 
     for item_id, item_type, delta_kind, text in (
         ("plan-delta", NormalizedItemType.PLAN, NormalizedDeltaKind.PLAN_TEXT_APPEND, "plan step"),
