@@ -16,6 +16,8 @@ import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
 import ai.drsai.remote.data.MIGRATION_7_8
 import ai.drsai.remote.data.MIGRATION_8_9
+import ai.drsai.remote.data.MIGRATION_9_10
+import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.model.RuntimeId
@@ -73,7 +75,7 @@ object AndroidDevicePresence {
             "opendrsai.db",
         ).addMigrations(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
-            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
         ).build()
         private val cache = RoomRemoteDirectoryCache(database)
         private val hostSource = object : DevicePresenceHostSource {

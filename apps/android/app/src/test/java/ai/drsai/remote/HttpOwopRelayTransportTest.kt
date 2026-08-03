@@ -34,4 +34,28 @@ class HttpOwopRelayTransportTest {
         RelayWorkspaceOperationsClient(HttpOwopRelayTransport(server.url("/").toString(), RuntimeId("rt-a"), { "token" }))
             .gitStatus(WorkspaceId("ws"), "req", "corr")
     }
+
+    @Test fun `OWOP decodes structured errors through relay envelopes`() = runTest {
+        val bodies = listOf(
+            """{"code":"file_not_found","message":"missing","correlation_id":"corr"}""",
+            """{"error":{"code":"file_not_found","message":"missing","correlation_id":"corr"}}""",
+            """{"detail":{"code":"file_not_found","message":"missing","correlation_id":"corr"}}""",
+            """{"detail":{"error":{"code":"file_not_found","message":"missing","correlation_id":"corr"}}}""",
+        )
+        bodies.forEach { body ->
+            server.enqueue(MockResponse().setResponseCode(404).setBody(body))
+            val client = RelayWorkspaceOperationsClient(
+                HttpOwopRelayTransport(
+                    server.url("/").toString(),
+                    RuntimeId("rt-a"),
+                    { "token" },
+                )
+            )
+            val result = client.statFile(WorkspaceId("ws"), "missing", "req", "corr")
+            assertTrue(result is OwopResult.Failure)
+            result as OwopResult.Failure
+            assertEquals("file_not_found", result.code)
+            assertEquals("corr", result.correlationId)
+        }
+    }
 }

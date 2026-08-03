@@ -263,6 +263,7 @@ data class AppState(
     val currentConversation: Conversation? = null,
     val messages: List<ChatMessage> = emptyList(),
     val streaming: Boolean = false,
+    val recovering: Boolean = false,
     val loading: Boolean = false,
     val loginUrl: String? = null,
     val waitingForLogin: Boolean = false,
@@ -271,6 +272,7 @@ data class AppState(
     val error: String? = null,
     val diagnostic: RuntimeDiagnosticUi? = null,
     val runtimeStatus: String? = null,
+    val runtimePolicyDiagnostic: RuntimePolicyDiagnosticUi? = null,
     val toolDowngraded: Boolean = false,
     val agentCatalogStatus: AgentCatalogStatus = AgentCatalogStatus(),
     val darkTheme: Boolean? = null,
@@ -287,6 +289,15 @@ data class AppState(
     val requestedRoutePath: String? = null,
     val workbenchSessionLimits: Map<String, Int> = emptyMap(),
     val associationState: AssociationState = AssociationState.IDLE,
+)
+
+data class RuntimePolicyDiagnosticUi(
+    val status: String,
+    val policyVersion: String?,
+    val reason: String?,
+    val rolloutPercent: Int?,
+    val emergencyDisabled: Boolean?,
+    val recordedAtEpochSeconds: Long,
 )
 
 internal fun sanitizeLegacyAssistantText(role: String, content: String): String {

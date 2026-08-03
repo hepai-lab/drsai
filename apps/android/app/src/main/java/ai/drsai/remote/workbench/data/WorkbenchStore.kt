@@ -90,6 +90,7 @@ data class WorkbenchRunEntity(
     val input: String,
     val skillVersionsJson: String = "{}",
     val completedSideEffectsJson: String = "[]",
+    val pythonStateJson: String = "{}",
     val failureCode: String? = null,
     val updatedAt: Long,
 )
@@ -190,6 +191,9 @@ interface WorkbenchDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun appendAudit(item: WorkbenchAuditEntity)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun appendAuditIfAbsent(item: WorkbenchAuditEntity): Long
+
     @Query("SELECT * FROM workbench_workspaces WHERE subject=:subject AND organization=:organization ORDER BY kind, displayName COLLATE NOCASE")
     suspend fun workspaces(subject: String, organization: String): List<WorkbenchWorkspaceEntity>
 
@@ -235,6 +239,12 @@ interface WorkbenchDao {
     @Query("SELECT * FROM workbench_runs WHERE runId=:runId LIMIT 1")
     suspend fun runById(runId: String): WorkbenchRunEntity?
 
+    @Query("SELECT pythonStateJson FROM workbench_runs WHERE runId=:runId LIMIT 1")
+    suspend fun pythonState(runId: String): String?
+
+    @Query("UPDATE workbench_runs SET pythonStateJson=:stateJson, updatedAt=:updatedAt WHERE runId=:runId")
+    suspend fun updatePythonState(runId: String, stateJson: String, updatedAt: Long): Int
+
     @Query("SELECT * FROM workbench_runs WHERE subject=:subject AND status IN ('QUEUED','RUNNING','WAITING_APPROVAL','PAUSED') ORDER BY updatedAt")
     suspend fun recoverableRuns(subject: String): List<WorkbenchRunEntity>
 
@@ -270,6 +280,9 @@ interface WorkbenchDao {
 
     @Query("SELECT * FROM workbench_audit WHERE subject=:subject AND organization=:organization ORDER BY createdAt DESC")
     suspend fun audit(subject: String, organization: String): List<WorkbenchAuditEntity>
+
+    @Query("SELECT * FROM workbench_audit WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND runId=:runId ORDER BY createdAt, auditId")
+    suspend fun auditForRun(subject: String, organization: String, runtimeId: String, runId: String): List<WorkbenchAuditEntity>
 }
 
 class RoomRunJournal(private val database: ChatDatabase) : RunJournal {
@@ -293,12 +306,12 @@ class RoomRunJournal(private val database: ChatDatabase) : RunJournal {
     override suspend fun append(event: WorkbenchEvent, next: RunCheckpoint): EventAppendDecision =
         database.withTransaction {
             val dao = database.workbenchDao()
-            val current = dao.runById(next.command.runId.value)?.toCheckpoint()
-                ?: error("run_checkpoint_missing")
+            val currentEntity = dao.runById(next.command.runId.value) ?: error("run_checkpoint_missing")
+            val current = currentEntity.toCheckpoint()
             val decision = EventSequencePolicy.decide(current, event, dao.eventExists(event.eventId.value))
             if (decision == EventAppendDecision.APPEND) {
                 dao.insertEvent(event.toEntity(next.command))
-                dao.saveRun(next.toEntity(System.currentTimeMillis()))
+                dao.saveRun(next.toEntity(System.currentTimeMillis(), currentEntity.pythonStateJson))
             }
             decision
         }
@@ -326,7 +339,7 @@ class RoomRunJournal(private val database: ChatDatabase) : RunJournal {
         )
     }
 
-    private fun RunCheckpoint.toEntity(updatedAt: Long) = WorkbenchRunEntity(
+    private fun RunCheckpoint.toEntity(updatedAt: Long, pythonStateJson: String = "{}") = WorkbenchRunEntity(
         subject = command.accountSubject,
         organization = command.organization,
         runtimeId = command.binding.runtimeId.value,
@@ -341,6 +354,7 @@ class RoomRunJournal(private val database: ChatDatabase) : RunJournal {
         input = command.input,
         skillVersionsJson = JSONObject(command.skillVersions).toString(),
         completedSideEffectsJson = JSONArray(completedSideEffects.toList()).toString(),
+        pythonStateJson = pythonStateJson,
         failureCode = failureCode,
         updatedAt = updatedAt,
     )

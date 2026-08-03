@@ -38,6 +38,15 @@ class RuntimeReliabilityTest {
             DeviceConstraints(80, true, ThermalLevel.NORMAL, false, false), true))
     }
 
+    @Test fun resourcePressureReducesConcurrencyOrRoutesAwayWithoutLargeHeap() {
+        val healthy = DeviceConstraints(80, true, ThermalLevel.NORMAL, false, true)
+        assertEquals("python_local", RuntimeResourcePolicy.decide(healthy, 256, 1024).route)
+        assertEquals(2, RuntimeResourcePolicy.decide(healthy, 256, 1024).maxParallelAgents)
+        assertEquals("kotlin_lite", RuntimeResourcePolicy.decide(healthy.copy(lowMemory = true), 256, 1024).route)
+        assertEquals("remote_full", RuntimeResourcePolicy.decide(healthy.copy(thermal = ThermalLevel.SEVERE), 256, 1024).route)
+        assertEquals("resource_artifact_limit", RuntimeResourcePolicy.decide(healthy, 256, 65L * 1024 * 1024).reason)
+    }
+
     @Test fun cursorMergeDropsDuplicatesAndReportsTheFirstGap() {
         val result = EventCursorReconciler.merge(2, setOf("old"), listOf(
             CursorEvent("old", 2), CursorEvent("three", 3), CursorEvent("five", 5),
@@ -54,6 +63,12 @@ class RuntimeReliabilityTest {
         )
         assertFalse(bundle.details.contains("very-secret"))
         assertFalse(bundle.details.contains("also-secret"))
+        val pathBundle = DiagnosticBundleFactory.create(
+            RuntimeFailureCatalog.classify(null, "python_failed"), "request", WorkbenchId("run"),
+            RuntimeAuthority.LOCAL_DEVICE, "https://host/private C:\\Users\\alice\\secret.txt",
+        )
+        assertFalse(pathBundle.details.contains("https://"))
+        assertFalse(pathBundle.details.contains("C:\\Users"))
         assertNotEquals(
             BackgroundRunKeys.uniqueWorkName("alice", WorkbenchId("run")),
             BackgroundRunKeys.uniqueWorkName("alice", WorkbenchId("other")),
@@ -75,6 +90,15 @@ class RuntimeReliabilityTest {
             RuntimeFailureCatalog.classify(null, "cancelled"),
             RuntimeFailureCatalog.classify(null, "journal_write_failed"),
             RuntimeFailureCatalog.classify(500, sideEffectStarted = true),
+            RuntimeFailureCatalog.classify(null, "python_failed"),
+            RuntimeFailureCatalog.classify(null, "binder_died"),
+            RuntimeFailureCatalog.classify(null, "model_timeout"),
+            RuntimeFailureCatalog.classify(null, "tool_failed"),
+            RuntimeFailureCatalog.classify(null, "approval_expired"),
+            RuntimeFailureCatalog.classify(null, "room_write_failed"),
+            RuntimeFailureCatalog.classify(null, "policy_invalid"),
+            RuntimeFailureCatalog.classify(null, "resource_low_memory"),
+            RuntimeFailureCatalog.classify(null, "unexpected"),
         )
         assertEquals(FailureCategory.entries.toSet(), failures.map { it.category }.toSet())
         failures.forEachIndexed { index, failure ->

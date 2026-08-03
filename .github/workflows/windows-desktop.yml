@@ -13,11 +13,17 @@ on:
       - "v*"
     paths:
       - "apps/desktop/windows/**"
+      - "cores/python/packages/drsai/src/drsai/config/**"
+      - "cores/python/packages/drsai/tests/test_model_provider_*.py"
+      - "scripts/verify_model_provider_compatibility.py"
       - "scripts/install.ps1"
       - ".github/workflows/windows-desktop.yml"
   pull_request:
     paths:
       - "apps/desktop/windows/**"
+      - "cores/python/packages/drsai/src/drsai/config/**"
+      - "cores/python/packages/drsai/tests/test_model_provider_*.py"
+      - "scripts/verify_model_provider_compatibility.py"
       - "scripts/install.ps1"
       - ".github/workflows/windows-desktop.yml"
   workflow_dispatch:
@@ -75,6 +81,12 @@ jobs:
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prepare-ci-python-agent.ps1 `
             -Python "$env:pythonLocation\python.exe"
+
+      - name: Verify deterministic model Provider compatibility matrix
+        shell: pwsh
+        run: |
+          & $env:OPENDRSAI_GATEWAY_SMOKE_PYTHON ..\..\..\scripts\verify_model_provider_compatibility.py --local --require-all --output build\acceptance\model-provider-local-deterministic.json
+          if ($LASTEXITCODE -ne 0) { throw "Model Provider compatibility matrix failed with exit code $LASTEXITCODE." }
 
       - name: Generate Windows icon
         run: npm run icon:win

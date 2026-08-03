@@ -20,6 +20,8 @@ import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
 import ai.drsai.remote.data.MIGRATION_7_8
 import ai.drsai.remote.data.MIGRATION_8_9
+import ai.drsai.remote.data.MIGRATION_9_10
+import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.*
@@ -27,9 +29,7 @@ import android.content.Intent
 import android.util.Base64
 import java.io.File
 import ai.drsai.remote.remote.model.*
-import ai.drsai.remote.remote.generated.GeneratedConversationSnapshot
-import ai.drsai.remote.remote.generated.GeneratedSessionConversationItem
-import ai.drsai.remote.remote.generated.GeneratedSessionEvent
+import ai.drsai.remote.remote.generated.*
 import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import org.json.JSONObject
 import java.util.UUID
@@ -78,7 +78,7 @@ class RemoteSessionViewModel(
         )
     )
     private val database = Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
         .build()
     private val cache = RemoteCacheRepository(database)
     private val connectivity = AndroidRemoteConnectivity(app)
@@ -91,6 +91,7 @@ class RemoteSessionViewModel(
     private var activeRun: RemoteRunIdentity? = null
     private var synchronizer: RemoteSequenceSynchronizer? = null
     private var authRefreshAttempted = false
+    @Volatile private var oaepEnabled = false
     private val lifecycleObserver = object : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) {
             startSessionSync()
@@ -115,27 +116,41 @@ class RemoteSessionViewModel(
             val session = repository.session(runtimeId, workspaceId, sessionId)
             require(session.lifecycle == RemoteResourceLifecycle.ACTIVE) { "remote_session_not_active" }
             coroutineScope {
-                val snapshotRequest = async { loadConversationSnapshot() }
+                val selection = repository.protocolSelection(runtimeId)
+                oaepEnabled = selection.oaep
+                val snapshotRequest = async {
+                    if (oaepEnabled) {
+                        val snapshot = repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
+                        cache.replaceOaepSnapshot(
+                            subject, organization, runtimeId.value, workspaceId.value,
+                            snapshot, System.currentTimeMillis(),
+                        )
+                        val messages = projectOaepMessages(snapshot.items).map { it.toUi() }
+                        val artifacts = snapshot.items.mapNotNull(::oaepArtifact).distinctBy { it.artifactId }
+                        messages to artifacts
+                    } else {
+                        val snapshot = loadConversationSnapshot()
+                        cache.replaceSessionSnapshot(
+                            subject, organization, runtimeId.value, workspaceId.value,
+                            snapshot, System.currentTimeMillis(),
+                        )
+                        val conversation = snapshot.toLegacyItems()
+                        val messages = projectConversationMessages(conversation).map { it.toUi() }
+                        val artifacts = conversation.asSequence()
+                            .filter { it.kind == "artifact.created" }
+                            .mapNotNull(::conversationArtifact)
+                            .distinctBy { it.artifactId }
+                            .toList()
+                        messages to artifacts
+                    }
+                }
                 val runsRequest = async {
                     collectAllPages { cursor ->
                         repository.runs(runtimeId, workspaceId, sessionId, cursor)
                     }
                 }
                 val approvalsRequest = async { repository.approvals(runtimeId, workspaceId) }
-                val snapshot = snapshotRequest.await()
-                cache.replaceSessionSnapshot(
-                    subject, organization, runtimeId.value, workspaceId.value,
-                    snapshot, System.currentTimeMillis(),
-                )
-                val conversation = snapshot.toLegacyItems()
-                val messages = projectConversationMessages(conversation).map {
-                    RemoteMessageUi(it.id, it.role, it.text, it.progress)
-                }
-                val artifacts = conversation.asSequence()
-                    .filter { it.kind == "artifact.created" }
-                    .mapNotNull(::conversationArtifact)
-                    .distinctBy { it.artifactId }
-                    .toList()
+                val (messages, artifacts) = snapshotRequest.await()
 
                 // Conversation is the primary screen content. Publish it as
                 // soon as the authoritative Snapshot arrives; slow Run or
@@ -206,16 +221,24 @@ class RemoteSessionViewModel(
         val sourceMessageId = UUID.randomUUID().toString()
         runCatching {
             val session = repository.session(runtimeId, workspaceId, sessionId)
-            cache.saveOptimisticMessage(
-                subject, organization, runtimeId.value, workspaceId.value, sessionId.value,
-                sourceMessageId, message, System.currentTimeMillis(),
-            )
-            renderCachedSessionItems()
+            if (oaepEnabled) {
+                cache.saveOptimisticOaepMessage(
+                    subject, organization, runtimeId.value, workspaceId.value, sessionId.value,
+                    sourceMessageId, message, System.currentTimeMillis(),
+                )
+                renderCachedOaepItems()
+            } else {
+                cache.saveOptimisticMessage(
+                    subject, organization, runtimeId.value, workspaceId.value, sessionId.value,
+                    sourceMessageId, message, System.currentTimeMillis(),
+                )
+                renderCachedSessionItems()
+            }
             repository.createRun(
                 session, message, emptyList(), sourceMessageId,
                 sourceMessageId = sourceMessageId,
             )
-        }.onSuccess { reconcileSession() }
+        }.onSuccess { if (oaepEnabled) reconcileOaepSession() else reconcileSession() }
             .onFailure { failure ->
                 if (!handleAuthoritativeRevocation(failure)) {
                     mutableState.update { it.copy(messages = it.messages +
@@ -324,9 +347,7 @@ class RemoteSessionViewModel(
         val items = cache.sessionItems(
             subject, organization, runtimeId.value, sessionId.value,
         ).mapIndexed { index, item -> item.toLegacyItem(index + 1L) }
-        val messages = projectConversationMessages(items).map {
-            RemoteMessageUi(it.id, it.role, it.text, it.progress)
-        }
+        val messages = projectConversationMessages(items).map { it.toUi() }
         val artifacts = items.asSequence()
             .filter { it.kind == "artifact.created" }
             .mapNotNull(::conversationArtifact)
@@ -335,7 +356,48 @@ class RemoteSessionViewModel(
         mutableState.update { it.copy(messages = messages, artifacts = artifacts) }
     }
 
+    private suspend fun renderCachedOaepItems() {
+        val messages = cache.oaepSessionItems(
+            subject, organization, runtimeId.value, sessionId.value,
+        ).mapNotNull { item ->
+            val content = JSONObject(item.contentJson)
+            val text = when (item.type) {
+                "message" -> content.optString("text")
+                "reasoning" -> content.optJSONArray("segments")?.let { segments ->
+                    (0 until segments.length()).joinToString("\n") {
+                        segments.getJSONObject(it).optString("text")
+                    }
+                }.orEmpty()
+                "plan" -> content.optString("text")
+                "command_execution" -> listOf(
+                    content.optString("display_command"), content.optString("output"),
+                ).filter(String::isNotBlank).joinToString("\n")
+                "tool_call" -> content.optString("tool_name")
+                "file_change", "artifact", "subtask" -> content.optString("summary")
+                "interaction" -> content.optString("prompt")
+                "notice" -> content.optString("message")
+                else -> ""
+            }
+            val safeText = sanitizeRemoteTranscriptText(text)
+            safeText.takeIf(String::isNotBlank)?.let {
+                RemoteMessageUi(
+                    item.itemId,
+                    sanitizeRemoteTranscriptText(content.optString("role", item.type)),
+                    safeText,
+                    item.status,
+                    kind = item.type,
+                    title = oaepCachedTitle(item.type, content)?.let(::sanitizeRemoteTranscriptText),
+                )
+            }
+        }
+        mutableState.update { it.copy(messages = messages) }
+    }
+
     private suspend fun reloadSessionProjection() {
+        if (oaepEnabled) {
+            reloadOaepProjection()
+            return
+        }
         val (snapshot, runs, approvals) = coroutineScope {
             val snapshotRequest = async { loadConversationSnapshot() }
             val runsRequest = async {
@@ -384,6 +446,69 @@ class RemoteSessionViewModel(
         }
     }
 
+    private suspend fun reloadOaepProjection() {
+        val (snapshot, runs, approvals) = coroutineScope {
+            val snapshotRequest = async { repository.oaepSnapshot(runtimeId, workspaceId, sessionId) }
+            val runsRequest = async {
+                collectAllPages { cursor -> repository.runs(runtimeId, workspaceId, sessionId, cursor) }
+            }
+            val approvalsRequest = async { repository.approvals(runtimeId, workspaceId) }
+            Triple(snapshotRequest.await(), runsRequest.await(), approvalsRequest.await())
+        }
+        cache.replaceOaepSnapshot(
+            subject, organization, runtimeId.value, workspaceId.value,
+            snapshot, System.currentTimeMillis(),
+        )
+        val latest = runs.lastOrNull()
+        activeRun = latest?.identity
+        val pending = approvals.firstOrNull {
+            it.sessionId == sessionId && (latest == null || it.runId == latest.identity.runId)
+        }
+        mutableState.update { current -> current.copy(
+            messages = projectOaepMessages(snapshot.items).map { it.toUi() },
+            artifacts = snapshot.items.mapNotNull(::oaepArtifact).distinctBy { it.artifactId },
+            running = latest?.status in setOf(
+                RemoteRunStatus.QUEUED, RemoteRunStatus.RUNNING, RemoteRunStatus.WAITING_APPROVAL,
+            ),
+            correlationId = latest?.correlationId,
+            activeRunId = latest?.identity?.runId,
+            approval = pending?.let { approval -> RemoteApprovalCard(
+                approval.approvalId,
+                latest?.identity ?: RemoteRunIdentity(
+                    runtimeId, workspaceId, sessionId, approval.runId, approval.backendId,
+                ),
+                runtimeName, workspaceName, current.sessionTitle, approval.operation,
+                approval.riskSummary, approval.scope, approval.expiresAt, approval.correlationId,
+            ) },
+            online = true,
+            connectionState = RemoteConnectionState.ONLINE,
+        ) }
+    }
+
+    private suspend fun reconcileOaepSession() {
+        var after = cache.oaepSessionCursor(
+            subject, organization, runtimeId.value, sessionId.value,
+        )?.lastSequence ?: 0L
+        var changed = false
+        while (true) {
+            val page = repository.oaepEvents(runtimeId, workspaceId, sessionId, after)
+            if (page.data.isEmpty()) break
+            for (event in page.data) {
+                when (cache.applyOaepEvent(
+                    subject, organization, runtimeId.value, workspaceId.value,
+                    sessionId.value, event, System.currentTimeMillis(),
+                )) {
+                    EventDecision.APPLY -> { after = event.sequence; changed = true }
+                    EventDecision.DUPLICATE, EventDecision.OUT_OF_ORDER -> after = maxOf(after, event.sequence)
+                    EventDecision.GAP -> { reloadOaepProjection(); return }
+                    EventDecision.CROSS_SCOPE -> error("remote_oaep_event_scope_mismatch")
+                }
+            }
+            if (!page.hasMore) break
+        }
+        if (changed) reloadOaepProjection()
+    }
+
     private suspend fun reconcileSession() {
         var after = cache.sessionCursor(
             subject, organization, runtimeId.value, sessionId.value,
@@ -425,6 +550,31 @@ class RemoteSessionViewModel(
             var attempt = 0
             while (isActive) {
                 try {
+                    if (oaepEnabled) {
+                        reconcileOaepSession()
+                        val after = cache.oaepSessionCursor(
+                            subject, organization, runtimeId.value, sessionId.value,
+                        )?.lastSequence ?: 0L
+                        mutableState.update {
+                            it.copy(online = true, connectionState = RemoteConnectionState.ONLINE)
+                        }
+                        attempt = 0
+                        stream.oaepSessionStream(
+                            runtimeId, workspaceId, sessionId, after,
+                        ).collect { event ->
+                            when (cache.applyOaepEvent(
+                                subject, organization, runtimeId.value, workspaceId.value,
+                                sessionId.value, event, System.currentTimeMillis(),
+                            )) {
+                                EventDecision.APPLY -> reloadOaepProjection()
+                                EventDecision.GAP -> reloadOaepProjection()
+                                EventDecision.DUPLICATE, EventDecision.OUT_OF_ORDER -> Unit
+                                EventDecision.CROSS_SCOPE -> error("remote_oaep_event_scope_mismatch")
+                            }
+                            authRefreshAttempted = false
+                        }
+                        throw java.io.EOFException("relay_oaep_sse_eof")
+                    }
                     reconcileSession()
                     val after = cache.sessionCursor(
                         subject, organization, runtimeId.value, sessionId.value,
@@ -498,6 +648,19 @@ class RemoteSessionViewModel(
             artifactId = artifactId,
             name = item.payload["display_name"]?.toString().orEmpty().ifBlank { "Artifact" },
             mimeType = item.payload["mime_type"]?.toString().orEmpty().ifBlank { "application/octet-stream" },
+            size = size,
+            sha256 = sha256,
+        )
+    }
+
+    private fun oaepArtifact(item: OaepItem): RemoteArtifactUi? {
+        val content = item.content as? OaepArtifactContent ?: return null
+        val size = content.size ?: return null
+        val sha256 = content.sha256?.takeIf(String::isNotBlank) ?: return null
+        return RemoteArtifactUi(
+            artifactId = content.artifactId,
+            name = content.name.ifBlank { "Artifact" },
+            mimeType = content.mimeType.orEmpty().ifBlank { "application/octet-stream" },
             size = size,
             sha256 = sha256,
         )
@@ -580,9 +743,7 @@ class RemoteSessionViewModel(
         val status = repository.getRun(runtimeId, identity.runId).second
         val pending = repository.approvals(runtimeId, workspaceId)
             .firstOrNull { it.sessionId == sessionId && it.runId == identity.runId }
-        val messages = projectConversationMessages(conversation).map {
-            RemoteMessageUi(it.id, it.role, it.text, it.progress)
-        }
+        val messages = projectConversationMessages(conversation).map { it.toUi() }
         val artifacts = conversation.asSequence()
             .filter { it.kind == "artifact.created" }
             .mapNotNull(::conversationArtifact)
@@ -699,6 +860,29 @@ class RemoteSessionViewModel(
         val latestEvents: List<RelayStreamEvent>,
         val pending: ai.drsai.remote.remote.data.RemoteApprovalRecord?,
     )
+
+    private fun RemoteTranscriptMessage.toUi() = RemoteMessageUi(
+        id = id,
+        role = role,
+        text = text,
+        progress = progress,
+        kind = kind,
+        title = title,
+        detail = detail,
+    )
+
+    private fun oaepCachedTitle(type: String, content: JSONObject): String? = when (type) {
+        "command_execution" -> "Command"
+        "tool_call" -> content.optString("tool_name").takeIf(String::isNotBlank) ?: "Tool"
+        "file_change" -> "File change"
+        "artifact" -> content.optString("name").takeIf(String::isNotBlank) ?: "Artifact"
+        "interaction" -> content.optString("interaction_type").takeIf(String::isNotBlank) ?: "Interaction"
+        "subtask" -> content.optString("title").takeIf(String::isNotBlank) ?: "Subtask"
+        "notice" -> content.optString("code").takeIf(String::isNotBlank) ?: "Notice"
+        "reasoning" -> "Reasoning"
+        "plan" -> "Plan"
+        else -> null
+    }
 
     private fun OwopResult.success(): Map<String, Any?> = when (this) {
         is OwopResult.Success -> result

@@ -133,6 +133,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -627,7 +628,7 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                                 else scope.launch { drawerState.open() }
                             },
                             onNewConversation = requestNewTask,
-                            newConversationEnabled = !state.streaming,
+                            newConversationEnabled = !state.streaming && !state.recovering,
                         )
                         if (state.pendingApprovals.isNotEmpty()) {
                             PendingApprovalCard(
@@ -1036,7 +1037,7 @@ internal fun NavigationDrawer(
                         icon = Icons.Default.Add,
                         label = "新对话",
                         selected = newConversationSelected,
-                        enabled = !state.streaming,
+                        enabled = !state.streaming && !state.recovering,
                         onClick = onNewConversation,
                     )
                 }
@@ -1668,6 +1669,7 @@ internal fun Composer(
     onRetryAttachment: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val busy = state.streaming || state.recovering
     var text by rememberSaveable { mutableStateOf("") }
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var awaitingAttachmentAcceptance by rememberSaveable { mutableStateOf(false) }
@@ -1676,7 +1678,7 @@ internal fun Composer(
     var pendingCameraName by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val send = {
-        if ((text.isNotBlank() || state.attachmentDrafts.isNotEmpty()) && state.selectedAgent?.chatSupported == true && !state.streaming) {
+        if ((text.isNotBlank() || state.attachmentDrafts.isNotEmpty()) && state.selectedAgent?.chatSupported == true && !busy) {
             val includesAttachments = state.attachmentDrafts.isNotEmpty()
             onSend(text)
             if (includesAttachments) awaitingAttachmentAcceptance = true else text = ""
@@ -1766,14 +1768,14 @@ internal fun Composer(
                 Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                IconButton(onClick = { attachmentSheetOpen = true }, enabled = !state.streaming) {
+                IconButton(onClick = { attachmentSheetOpen = true }, enabled = !busy) {
                     Icon(Icons.Default.Add, "添加附件")
                 }
                 BasicTextField(
                 value = text,
                 onValueChange = { text = it },
-                modifier = Modifier.weight(1f).padding(vertical = 5.dp),
-                enabled = !state.streaming && state.selectedAgent?.chatSupported == true,
+                modifier = Modifier.weight(1f).padding(vertical = 5.dp).testTag("runtime-composer-input"),
+                enabled = !busy && state.selectedAgent?.chatSupported == true,
                 maxLines = 5,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -1789,7 +1791,9 @@ internal fun Composer(
                 },
                 )
                 when {
-                    state.streaming -> FilledIconButton(onClick = onStop) { Icon(Icons.Default.Stop, "停止") }
+                    busy -> FilledIconButton(onClick = onStop, modifier = Modifier.testTag("runtime-stop")) {
+                        Icon(Icons.Default.Stop, "停止")
+                    }
                     text.isNotBlank() || state.attachmentDrafts.isNotEmpty() -> FilledIconButton(
                         onClick = send,
                         enabled = state.selectedAgent?.chatSupported == true && state.attachmentDrafts.none { it.status == AttachmentStatus.PREPARING },
@@ -1892,6 +1896,21 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
                 "Runtime：${if (state.selectedAgent?.source == "platform") "HAI 平台" else "Android 本机"}",
                 style = MaterialTheme.typography.bodySmall,
             )
+            state.runtimePolicyDiagnostic?.let { diagnostic ->
+                Spacer(Modifier.height(8.dp))
+                Text("Python Runtime 灰度诊断", fontWeight = FontWeight.Medium)
+                Text(
+                    listOfNotNull(
+                        "状态 ${diagnostic.status}",
+                        diagnostic.policyVersion?.let { "策略 $it" },
+                        diagnostic.rolloutPercent?.let { "灰度 $it%" },
+                        diagnostic.reason?.let { "原因 $it" },
+                        diagnostic.emergencyDisabled?.let { "紧急关闭 ${if (it) "是" else "否"}" },
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("runtime-policy-diagnostic"),
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

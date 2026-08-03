@@ -2,6 +2,7 @@ package ai.drsai.remote
 
 import ai.drsai.remote.remote.data.RelaySseClient
 import ai.drsai.remote.remote.model.*
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
@@ -117,10 +118,44 @@ class RelaySseClientTest {
         server.takeRequest().apply {
             assertEquals("3", requestUrl?.queryParameter("after_sequence"))
             assertEquals(
-                "/v1/runtimes/rt/workspaces/ws/sessions/session/events/stream?after_sequence=3",
+                "/v1/runtimes/rt/workspaces/ws/sessions/session/oaep-events/stream?after_sequence=3",
                 path,
             )
         }
+    }
+
+    @Test fun `native OAEP SSE decodes canonical event and ignores optional fields`() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"version\":\"1.0\",\"event_id\":\"event-4\",\"session_id\":\"session\"," +
+                "\"run_id\":\"run-2\",\"sequence\":4,\"type\":\"event.run.started\"," +
+                "\"timestamp\":\"now\",\"dedupe_key\":\"event-4\",\"source\":{" +
+                "\"backend\":\"runtime\",\"runtime_id\":\"rt\"},\"data\":{},\"future\":true}\n\n",
+        ))
+        val events = RelaySseClient(server.url("/").toString(), { "token" })
+            .oaepSessionStream(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 3)
+            .toList()
+        assertEquals(4, events.single().sequence)
+        assertEquals("event.run.started", events.single().type)
+    }
+
+    @Test fun `finite OAEP collector closes a live stream without surfacing transport cancel`() = runTest {
+        val event =
+            "data: {\"version\":\"1.0\",\"event_id\":\"event-4\",\"session_id\":\"session\"," +
+                "\"run_id\":\"run-2\",\"sequence\":4,\"type\":\"event.run.started\"," +
+                "\"timestamp\":\"now\",\"dedupe_key\":\"event-4\",\"source\":{" +
+                "\"backend\":\"runtime\",\"runtime_id\":\"rt\"},\"data\":{}}\n\n"
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(event + " ".repeat(2048))
+                .throttleBody(512, 1, TimeUnit.SECONDS),
+        )
+
+        val first = RelaySseClient(server.url("/").toString(), { "token" })
+            .oaepSessionStream(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 3)
+            .first()
+
+        assertEquals(4, first.sequence)
     }
 
     @Test fun `session SSE does not inherit a finite response body read timeout`() = runTest {

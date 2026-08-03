@@ -176,7 +176,15 @@ fun RemoteAuditScreen(
     }
 }
 
-data class RemoteMessageUi(val id: String, val role: String, val text: String, val progress: String? = null)
+data class RemoteMessageUi(
+    val id: String,
+    val role: String,
+    val text: String,
+    val progress: String? = null,
+    val kind: String = "message",
+    val title: String? = null,
+    val detail: String? = null,
+)
 data class RemoteArtifactUi(val artifactId: String, val name: String, val mimeType: String, val size: Long,
                             val sha256: String, val downloading: Boolean = false, val error: String? = null)
 data class RemoteChatUiState(
@@ -239,8 +247,14 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                         tonalElevation = 0.dp,
                     ) {
                         Column(Modifier.padding(if (isUser) 12.dp else 4.dp)) {
-                            Text(remoteRoleLabel(message.role), fontWeight = FontWeight.SemiBold)
-                            RemoteMarkdownContent(message.text)
+                            Text(
+                                message.title ?: remoteRoleLabel(message.role),
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            message.detail?.takeIf(String::isNotBlank)?.let {
+                                Text(it, style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (message.text.isNotBlank()) RemoteMarkdownContent(message.text)
                             message.progress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                         }
                     }

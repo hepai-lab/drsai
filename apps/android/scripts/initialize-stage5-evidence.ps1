@@ -7,7 +7,7 @@ $project = Split-Path -Parent $PSScriptRoot
 $repo = Resolve-Path (Join-Path $project "..\..")
 $plan = Join-Path $repo "docs\android\ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md"
 if ([string]::IsNullOrWhiteSpace($OutputFile)) {
-    $OutputFile = Join-Path $repo "docs\android\acceptance\stage5\feature-evidence.json"
+    $OutputFile = Join-Path $repo "docs\android\testing\acceptance\stage5\feature-evidence.json"
 }
 if (-not (Test-Path -LiteralPath $plan -PathType Leaf)) { throw "Stage 5 plan missing: $plan" }
 

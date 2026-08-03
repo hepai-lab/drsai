@@ -55,6 +55,68 @@ class RelayDiscoveryClientTest {
         assertNull(empty.nextCursor)
     }
 
+    @Test fun `unassociated runtime discovery retries bearer only after explicit invalid device proof`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody(
+            """{"code":"invalid_device_proof","correlation_id":"safe-correlation"}"""
+        ))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"items":[],"next_cursor":null}"""
+        ))
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "token" },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        assertTrue(service.listRuntimes().items.isEmpty())
+
+        server.takeRequest().apply {
+            assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+            assertEquals("Bearer token", getHeader("Authorization"))
+        }
+        server.takeRequest().apply {
+            assertNull(getHeader("X-Relay-Device-Id"))
+            assertNull(getHeader("X-Relay-Device-Signature"))
+            assertEquals("Bearer token", getHeader("Authorization"))
+        }
+    }
+
+    @Test fun `runtime discovery does not downgrade non device authentication failures`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody(
+            """{"code":"invalid_token"}"""
+        ))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"items":[],"next_cursor":null}"""
+        ))
+        var refreshes = 0
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "expired" },
+            refreshAfter = {
+                refreshes += 1
+                "fresh"
+            },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        assertTrue(service.listRuntimes().items.isEmpty())
+        assertEquals(1, refreshes)
+        listOf("Bearer expired", "Bearer fresh").forEach { expected ->
+            server.takeRequest().apply {
+                assertEquals(expected, getHeader("Authorization"))
+                assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+            }
+        }
+    }
+
     @Test fun `catalog DTO ignores absolute paths process data and credentials`() = runTest {
         server.enqueue(
             MockResponse().setBody(

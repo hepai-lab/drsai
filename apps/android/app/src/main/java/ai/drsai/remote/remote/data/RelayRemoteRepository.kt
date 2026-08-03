@@ -4,6 +4,8 @@ import ai.drsai.remote.remote.model.*
 import ai.drsai.remote.remote.generated.GeneratedConversationSnapshot
 import ai.drsai.remote.remote.generated.GeneratedSessionConversationItem
 import ai.drsai.remote.remote.generated.GeneratedSessionEvent
+import ai.drsai.remote.remote.generated.OaepEventPage
+import ai.drsai.remote.remote.generated.OaepSnapshot
 import ai.drsai.remote.remote.security.RelayDeviceProof
 import ai.drsai.remote.remote.security.authorizeRelayRequest
 import kotlinx.coroutines.delay
@@ -22,6 +24,7 @@ import java.util.concurrent.TimeUnit
 
 data class RemoteAgentDefinition(val id: String, val version: String, val name: String, val backendId: String,
                                  val backendHealth: String, val capabilities: Set<String>)
+data class RemoteProtocolSelection(val oaep: Boolean, val legacySessionEvents: Boolean, val owop: Boolean)
 data class RemoteSessionSummary(val reference: RemoteSessionRef, val definitionId: String, val definitionVersion: String,
                                 val lastRunStatus: String?, val updatedAt: String, val lifecycle: String)
 data class RemoteRunSummary(val identity: RemoteRunIdentity, val status: RemoteRunStatus, val correlationId: String,
@@ -65,6 +68,30 @@ class RelayRemoteRepository(
 ) {
     private val root = baseUrl.trimEnd('/').toHttpUrl()
     private val json = "application/json".toMediaType()
+
+    suspend fun protocolSelection(runtimeId: RuntimeId): RemoteProtocolSelection {
+        val result = get("v1/runtimes/${runtimeId.value}/capabilities")
+        val capabilities = result.optJSONArray("capabilities")?.strings().orEmpty()
+        val profiles = result.optJSONArray("profiles")?.strings().orEmpty()
+        val protocols = result.optJSONObject("protocols")
+        val oaepProtocol = protocols?.optJSONObject("oaep")
+        val oaepProfiles = oaepProtocol?.optJSONArray("profiles")?.strings().orEmpty()
+        val oaepRequired = setOf(
+            "oaep.v1", "oaep.session.snapshot", "oaep.session.events",
+            "oaep.session.events.stream", "event.cursor_expired",
+        )
+        val oaepSignals = capabilities.any { it.startsWith("oaep.") } ||
+            "oaep/1" in profiles || "oaep.session-stream/1" in profiles || oaepProtocol != null
+        val oaep = oaepProtocol?.optString("version") == "1.0" &&
+            "oaep.session-stream/1" in oaepProfiles && oaepRequired.all { it in capabilities }
+        require(!oaepSignals || oaep) { "oaep_capability_partial" }
+        val legacy = "session-events/1" in profiles || setOf(
+            "conversation.snapshot", "session.event.resume", "session.event.stream",
+        ).all { it in capabilities }
+        val owop = protocols?.optJSONObject("owop")?.optString("version") == "1.0"
+        require(oaep || legacy) { "remote_session_protocol_unavailable" }
+        return RemoteProtocolSelection(oaep, legacy, owop)
+    }
 
     suspend fun agentDefinitions(runtimeId: RuntimeId): List<RemoteAgentDefinition> =
         get("v1/runtimes/${runtimeId.value}/agent-definitions").array("items") { row ->
@@ -145,7 +172,7 @@ class RelayRemoteRepository(
     ): GeneratedConversationSnapshot {
         require(limit in 1..500) { "conversation_limit_invalid" }
         val result = get(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/conversation-snapshot",
+            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-snapshot",
             cursor = cursor,
             extraQuery = "limit" to limit.toString(),
         )
@@ -158,6 +185,42 @@ class RelayRemoteRepository(
         )
     }
 
+    suspend fun oaepSnapshot(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+    ): OaepSnapshot {
+        val result = get(
+            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-snapshot",
+        )
+        return OaepJsonCodec.snapshot(result).also { snapshot ->
+            require(snapshot.session.id == sessionId.value) { "remote_session_scope_mismatch" }
+            require(snapshot.session.workspaceId == workspaceId.value) { "remote_workspace_scope_mismatch" }
+        }
+    }
+
+    suspend fun oaepEvents(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        afterSequence: Long,
+        limit: Int = 500,
+    ): OaepEventPage {
+        require(afterSequence >= 0 && limit in 1..500)
+        val result = get(
+            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-events",
+            extraQueries = listOf(
+                "after_sequence" to afterSequence.toString(),
+                "limit" to limit.toString(),
+            ),
+        )
+        return OaepJsonCodec.eventPage(result).also { page ->
+            require(page.data.all { it.sessionId == sessionId.value }) {
+                "remote_session_event_scope_mismatch"
+            }
+        }
+    }
+
     suspend fun sessionEvents(
         runtimeId: RuntimeId,
         workspaceId: WorkspaceId,
@@ -167,7 +230,7 @@ class RelayRemoteRepository(
     ): Page<GeneratedSessionEvent> {
         require(afterSequence >= 0 && limit in 1..500)
         val result = get(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/events",
+            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-events",
             extraQueries = listOf(
                 "after_sequence" to afterSequence.toString(),
                 "limit" to limit.toString(),
@@ -384,6 +447,8 @@ class RelayRemoteRepository(
         workspaceId = row.getString("workspace_id"),
         sessionId = row.getString("session_id"),
         runId = row.nullableString("run_id"),
+        itemId = row.nullableString("item_id"),
+        itemRevision = row.optLongOrNull("item_revision"),
         sessionSequence = row.getLong("session_sequence"),
         kind = row.getString("kind"),
         timestamp = row.getString("timestamp"),
@@ -405,6 +470,8 @@ private inline fun <T> JSONObject.array(name: String, decode: (JSONObject) -> T)
     getJSONArray(name).let { array -> List(array.length()) { decode(array.getJSONObject(it)) } }
 private fun JSONArray.strings(): Set<String> = (0 until length()).map(::getString).toSet()
 private fun JSONObject.nullableString(name: String): String? = optString(name).takeIf { it.isNotBlank() && it != "null" }
+private fun JSONObject.optLongOrNull(name: String): Long? =
+    if (has(name) && !isNull(name)) getLong(name) else null
 private fun JSONObject.toMap(): Map<String, Any?> = keys().asSequence().associateWith { key ->
     when (val value = get(key)) {
         JSONObject.NULL -> null

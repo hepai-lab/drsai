@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasClickAction
@@ -62,6 +64,22 @@ class MainInterfaceTest {
         assertFalse(usesPermanentWorkbenchDrawer(839.dp))
         assertTrue(usesPermanentWorkbenchDrawer(840.dp))
         assertTrue(usesPermanentWorkbenchDrawer(1280.dp))
+    }
+
+    @Test
+    fun recoveringDisablesComposerConflictsButKeepsCancelAvailable() {
+        var stops = 0
+        composeRule.setContent {
+            MaterialTheme {
+                Composer(
+                    state = AppState(destination = AppDestination.Chat, recovering = true),
+                    onSend = {}, onStop = { stops += 1 },
+                )
+            }
+        }
+        composeRule.onNodeWithTag("runtime-composer-input").assertIsNotEnabled()
+        composeRule.onNodeWithTag("runtime-stop").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(1, stops) }
     }
 
     @Test
