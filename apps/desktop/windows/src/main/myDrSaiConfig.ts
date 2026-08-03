@@ -74,7 +74,7 @@ async function loadAvailableGatewayModels(): Promise<Array<{ id: string; name: s
   try {
     const auth = await requireAuthContext();
     if (!auth.accessToken) return [];
-    return await getGatewayModels(auth.accessToken);
+    return (await getGatewayModels(auth.accessToken)).models;
   } catch {
     return [];
   }

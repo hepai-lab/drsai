@@ -33,6 +33,7 @@ const GATEWAY_INSTANCE_TOKEN = loadGatewayInstanceToken();
 const PERSIST_RUNTIME = !HOT_RELOAD_GATEWAY && process.env.OPENDRSAI_RUNTIME_PERSIST !== "0";
 const GATEWAY_START_TIMEOUT_MS = Math.max(5_000, Math.min(120_000,
   Number(process.env.OPENDRSAI_GATEWAY_START_TIMEOUT_MS || "30000") || 30_000));
+const GATEWAY_READY_POLL_MS = 10_000;
 const NODE_PTY_MODULE = (() => {
   try {
     return dirname(dirname(require.resolve("node-pty")));
@@ -88,7 +89,8 @@ function checkGatewayEndpoints(): Promise<boolean> {
         models.ok &&
         models.body &&
         models.body.object === "list" &&
-        Array.isArray(models.body.data),
+        Array.isArray(models.body.data) &&
+        models.body.data.length > 0,
     ),
   );
 }
@@ -200,6 +202,16 @@ async function killPortOccupant(port: string): Promise<boolean> {
   }
 }
 
+async function pollGatewayReady(process: ChildProcess | null, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await checkGatewayReady()) return true;
+    if (process && (!isProcessRunning(process) || gatewaySpawnError)) return false;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
 async function startGatewayOnce(): Promise<boolean> {
   if (!managedProcessRegistry.accepting) return false;
   if (await checkGatewayReady()) return true;
@@ -211,7 +223,9 @@ async function startGatewayOnce(): Promise<boolean> {
     adoptedPersistentRuntime = true;
     return true;
   }
-  if (gatewayProcess && !gatewayProcess.killed) return false;
+  if (gatewayProcess && !gatewayProcess.killed) {
+    return pollGatewayReady(gatewayProcess, GATEWAY_READY_POLL_MS);
+  }
   if (!existsSync(DRSAI_PYTHON)) return false;
 
   const args = HOT_RELOAD_GATEWAY
@@ -271,18 +285,11 @@ async function startGatewayOnce(): Promise<boolean> {
   });
   if (PERSIST_RUNTIME) gatewayProcess.unref();
 
-  const deadline = Date.now() + GATEWAY_START_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (await checkGatewayReady()) return true;
-    if (gatewaySpawnError || !isProcessRunning(gatewayProcess)) {
-      appendGatewayLog(Buffer.from("\nGateway exited before its health checks became ready."));
-      return false;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+  const ready = await pollGatewayReady(gatewayProcess, GATEWAY_START_TIMEOUT_MS);
+  if (ready) return true;
+  if (!gatewaySpawnError && isProcessRunning(gatewayProcess)) {
+    lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within ${GATEWAY_START_TIMEOUT_MS} ms; stopping the spawned process tree.`.slice(-12000);
   }
-  lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within ${GATEWAY_START_TIMEOUT_MS} ms; stopping the spawned process tree.`.slice(-12000);
-  // Do not call stopGateway() here: startGateway() still owns
-  // gatewayStartPromise, and the public stop path waits for that promise.
   const failedProcess = gatewayProcess;
   if (isProcessRunning(failedProcess)) await terminateGatewayProcessTree(failedProcess);
   if (gatewayProcess === failedProcess && !isProcessRunning(failedProcess)) gatewayProcess = null;
@@ -340,7 +347,7 @@ function appendGatewayLog(chunk: Buffer): void {
 function requestJson(
   url: string,
   headers: Record<string, string> = {},
-): Promise<{ ok: boolean; body: Record<string, unknown> | null }> {
+): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
   return new Promise((resolve) => {
     const req = get(url, { headers }, (res) => {
       let body = "";
@@ -349,26 +356,28 @@ function requestJson(
         body = `${body}${chunk}`.slice(0, 64 * 1024);
       });
       res.on("end", () => {
-        if (res.statusCode !== 200) {
-          resolve({ ok: false, body: null });
+        const status = res.statusCode ?? 0;
+        if (status !== 200) {
+          resolve({ ok: false, status, body: null });
           return;
         }
         try {
           const parsed = JSON.parse(body);
           resolve({
             ok: true,
+            status,
             body: typeof parsed === "object" && parsed !== null ? parsed : null,
           });
         } catch {
-          resolve({ ok: false, body: null });
+          resolve({ ok: false, status, body: null });
         }
       });
     });
     req.setTimeout(1200, () => {
       req.destroy();
-      resolve({ ok: false, body: null });
+      resolve({ ok: false, status: 0, body: null });
     });
-    req.on("error", () => resolve({ ok: false, body: null }));
+    req.on("error", () => resolve({ ok: false, status: 0, body: null }));
   });
 }
 
@@ -401,14 +410,17 @@ export async function stopGateway(): Promise<boolean> {
 
 export async function getGatewayModels(
   accessToken: string,
-): Promise<Array<{ id: string; name: string }>> {
+): Promise<{ models: Array<{ id: string; name: string }>; status: number; dataLength: number }> {
   const response = await requestJson(`${GATEWAY_BASE_URL}/v1/models`, {
     ...getGatewayRequestHeaders(),
     Authorization: `Bearer ${accessToken}`,
     "X-OpenDrSai-Auth-Mode": "oidc",
   });
-  if (!response.ok || !Array.isArray(response.body?.data)) return [];
-  return response.body.data.flatMap((item) => {
+  if (!response.ok || !Array.isArray(response.body?.data)) {
+    return { models: [], status: response.status, dataLength: 0 };
+  }
+  const raw = response.body.data as Array<unknown>;
+  const models = raw.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const row = item as Record<string, unknown>;
     if (typeof row.id !== "string" || !row.id.trim()) return [];
@@ -416,6 +428,7 @@ export async function getGatewayModels(
     const name = typeof row.name === "string" && row.name.trim() ? row.name.trim() : id;
     return [{ id, name }];
   });
+  return { models, status: response.status, dataLength: raw.length };
 }
 
 export async function shutdownGateway(preserveRuntime = false): Promise<boolean> {

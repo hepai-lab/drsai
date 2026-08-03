@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuthSession,
   DesktopA5ServiceGuidanceScenario,
@@ -49,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [serviceBusy, setServiceBusy] = useState(false);
   const [serviceReady, setServiceReady] = useState(false);
   const [serviceBlocker, setServiceBlocker] = useState<DesktopBootstrapBlocker | null>(null);
+  const serviceRetryCountRef = useRef(0);
   const [loginFailed, setLoginFailed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -87,6 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       setServiceReady(bootstrap.ready);
       setServiceBlocker(bootstrap.ready ? null : bootstrap.blocker ?? classifyBootstrapBlocker(bootstrap.message));
       setMessage(bootstrap.message);
+      if (bootstrap.ready) serviceRetryCountRef.current = 0;
       return bootstrap.ready;
     } catch (error) {
       setServiceReady(false);
@@ -137,9 +139,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     ) {
       return undefined;
     }
+    const count = serviceRetryCountRef.current;
+    if (count >= 2) {
+      return undefined; // Max retries exhausted — stop auto-retry.
+    }
+    const delays = [5000, 15000];
+    const delay = delays[count] ?? 15000;
     const timer = window.setTimeout(() => {
+      serviceRetryCountRef.current = count + 1;
       void retryBootstrap();
-    }, 1500);
+    }, delay);
     return () => window.clearTimeout(timer);
   }, [
     serviceBlocker?.kind,
