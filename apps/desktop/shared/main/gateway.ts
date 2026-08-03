@@ -113,10 +113,27 @@ export async function getGatewayStatus(): Promise<GatewayStatus> {
 
 export async function startGateway(): Promise<boolean> {
   if (gatewayStartPromise) return gatewayStartPromise;
-  gatewayStartPromise = startGatewayOnce().finally(() => {
-    gatewayStartPromise = null;
-  });
+  gatewayStartPromise = startGatewayOnce()
+    .then(async (ok) => {
+      if (ok) await pushStoredAuthIdentityToGateway();
+      return ok;
+    })
+    .finally(() => {
+      gatewayStartPromise = null;
+    });
   return gatewayStartPromise;
+}
+
+async function pushStoredAuthIdentityToGateway(): Promise<void> {
+  try {
+    const [{ resolveStoredAuthUserId }, { syncCliConfigUserId }] = await Promise.all([
+      import("./auth"),
+      import("./gatewayIdentity"),
+    ]);
+    await syncCliConfigUserId(resolveStoredAuthUserId());
+  } catch {
+    // Best-effort: chat paths still pass per-request auth when available.
+  }
 }
 
 export function getGatewaySnapshot(): GatewayStatus {

@@ -24,7 +24,8 @@ import type {
   ManagerPresentationProgressEvent,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
-import { requireAuthContext } from "./auth";
+import { getAuthSession, requireAuthContext } from "./auth";
+import { resolveCanonicalUserId } from "../../../shared/main/identity";
 import { buildAgentTaskPlan, isMultiMaterialSynthesisTask } from "../../../shared/api/agentTaskPlan";
 import { readDurableJson, writeDurableJson } from "../../../shared/main/durableJsonStore";
 
@@ -221,14 +222,15 @@ export async function upsertBackgroundTaskForWorkflowRun(
 export async function listOwnedBackgroundTasks(
   request: unknown = {},
 ): Promise<DesktopBackgroundTask[]> {
-  const auth = await requireAuthContext();
+  const ownerUserId = await resolveBackgroundTaskOwnerUserId();
+  if (!ownerUserId) return [];
   const typed = normalizeListRequest(request);
   const store = await readBackgroundTaskStore();
   let claimedLegacyTasks = false;
   for (const tasks of Object.values(store.workspaces)) {
     for (const task of tasks) {
       if (!task.ownerUserId) {
-        task.ownerUserId = auth.userId;
+        task.ownerUserId = ownerUserId;
         claimedLegacyTasks = true;
       }
     }
@@ -239,7 +241,7 @@ export async function listOwnedBackgroundTasks(
     ? store.workspaces[workspaceKey(typed.workspacePath)] ?? []
     : Object.values(store.workspaces).flat();
   return tasks
-    .filter((task) => task.ownerUserId === auth.userId)
+    .filter((task) => task.ownerUserId === ownerUserId)
     .filter((task) => !typed.workspacePath || task.workspacePath === typed.workspacePath)
     .sort(compareBackgroundTasks)
     .slice(0, limit)
@@ -763,10 +765,22 @@ function normalizeLimit(limit: unknown): number {
 }
 
 async function currentOwnerUserId(): Promise<string | undefined> {
+  return resolveBackgroundTaskOwnerUserId();
+}
+
+/** Prefer full auth context; fall back to public session so list IPC does not throw Agent sign-in errors. */
+async function resolveBackgroundTaskOwnerUserId(): Promise<string | undefined> {
   try {
     return (await requireAuthContext()).userId;
   } catch {
-    return undefined;
+    try {
+      const session = await getAuthSession();
+      if (!session.authenticated || !session.user) return undefined;
+      const candidate = session.user.id || session.user.email;
+      return resolveCanonicalUserId(candidate) || undefined;
+    } catch {
+      return undefined;
+    }
   }
 }
 
