@@ -3012,8 +3012,6 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   attachments?: ChatAttachment[];
   startedAt?: number;
   lastEventAt?: number;
-  /** Files/folders attached when the user sent this message. */
-  attachments?: ChatAttachment[];
 }
 
 export interface DesktopThreadSnapshot {

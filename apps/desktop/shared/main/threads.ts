@@ -440,7 +440,7 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
   return {
     id,
     role: message.role,
-    content,
+    content: message.content,
     ...(message.streaming ? { streaming: true } : {}),
     ...(message.error ? { error: true } : {}),
     ...(typeof message.statusContent === "string"
