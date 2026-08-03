@@ -1,0 +1,382 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T09:21:41.285542+00:00",
+  "summary": {
+    "total": 40,
+    "passed": 40,
+    "partial": 0,
+    "device_pending": 0
+  },
+  "features": [
+    {
+      "feature_id": "M01-F01",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M01-F02",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M01-F03",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "cross_surface_factory": 30
+      }
+    },
+    {
+      "feature_id": "M01-F04",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M01-F05",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M02-F01",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M02-F02",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "api35_runtime_instrumentation": 3
+      }
+    },
+    {
+      "feature_id": "M02-F03",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "api35_runtime_instrumentation": 3
+      }
+    },
+    {
+      "feature_id": "M02-F04",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M02-F05",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M03-F01",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M03-F02",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M03-F03",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M03-F04",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M03-F05",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M04-F01",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M04-F02",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M04-F03",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M04-F04",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "fault_injection": 26
+      }
+    },
+    {
+      "feature_id": "M04-F05",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M05-F01",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M05-F02",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M05-F03",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M05-F04",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M05-F05",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M06-F01",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M06-F02",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M06-F03",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M06-F04",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "api35_runtime_instrumentation": 3
+      }
+    },
+    {
+      "feature_id": "M06-F05",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "api35_runtime_instrumentation": 3
+      }
+    },
+    {
+      "feature_id": "M07-F01",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M07-F02",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M07-F03",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M07-F04",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "api35_security_instrumentation": 1
+      }
+    },
+    {
+      "feature_id": "M07-F05",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "samsung_arm64_instrumentation": 97
+      }
+    },
+    {
+      "feature_id": "M08-F01",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M08-F02",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M08-F03",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "upgrade_rollback_instrumentation": 3
+      }
+    },
+    {
+      "feature_id": "M08-F04",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279
+      }
+    },
+    {
+      "feature_id": "M08-F05",
+      "status": "passed",
+      "environment": "automated",
+      "test_evidence": {
+        "python_mobile_suite": 33,
+        "android_jvm_suite": 279,
+        "samsung_arm64_instrumentation": 97
+      }
+    }
+  ]
+}

@@ -237,7 +237,7 @@ Kotlin Lite Runtime V2   Relay RuntimeConnection
 
 ## 6. 验收证据目录约定
 
-实施时在 `docs/android/acceptance/stage5/` 维护以下证据：
+实施时在 `docs/android/testing/acceptance/stage5/` 维护以下证据：
 
 - `feature-matrix.md`：96 项状态、提交和测试用例映射。
 - `unit-test-results/`：JVM、Room migration、contract 和 policy 报告。

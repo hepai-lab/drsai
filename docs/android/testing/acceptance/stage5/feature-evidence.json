@@ -63,56 +63,56 @@
                          "id":  "M02-F01",
                          "result":  "passed",
                          "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
-                         "test_ref":  "MainInterfaceTest; docs/android/acceptance/stage5/device/tablet-layout-report.json",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
                          "notes":  "手机采用模态侧栏，保留悬浮标题栏和聊天可视面积; implementation, automation, device, and release gates passed."
                      },
                      {
                          "id":  "M02-F02",
                          "result":  "passed",
                          "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
-                         "test_ref":  "MainInterfaceTest; docs/android/acceptance/stage5/device/tablet-layout-report.json",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
                          "notes":  "平板和宽屏采用可折叠常驻侧栏; implementation, automation, device, and release gates passed."
                      },
                      {
                          "id":  "M02-F03",
                          "result":  "passed",
                          "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
-                         "test_ref":  "MainInterfaceTest; docs/android/acceptance/stage5/device/tablet-layout-report.json",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
                          "notes":  "顶部展示新任务、当前范围及侧栏开关的准确状态; implementation, automation, device, and release gates passed."
                      },
                      {
                          "id":  "M02-F04",
                          "result":  "passed",
                          "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
-                         "test_ref":  "MainInterfaceTest; docs/android/acceptance/stage5/device/tablet-layout-report.json",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
                          "notes":  "工作台分区可折叠并持久化展开状态; implementation, automation, device, and release gates passed."
                      },
                      {
                          "id":  "M02-F05",
                          "result":  "passed",
                          "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
-                         "test_ref":  "MainInterfaceTest; docs/android/acceptance/stage5/device/tablet-layout-report.json",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
                          "notes":  "长列表虚拟化、稳定 key 和滚动位置恢复; implementation, automation, device, and release gates passed."
                      },
                      {
                          "id":  "M02-F06",
                          "result":  "passed",
                          "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
-                         "test_ref":  "MainInterfaceTest; docs/android/acceptance/stage5/device/tablet-layout-report.json",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
                          "notes":  "沿用白色/半透明表面、深浅色和动态字体设计规范; implementation, automation, device, and release gates passed."
                      },
                      {
                          "id":  "M02-F07",
                          "result":  "passed",
                          "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
-                         "test_ref":  "MainInterfaceTest; docs/android/acceptance/stage5/device/tablet-layout-report.json",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
                          "notes":  "Back、预测返回、scrim 点击和 IME 与侧栏协同; implementation, automation, device, and release gates passed."
                      },
                      {
                          "id":  "M02-F08",
                          "result":  "passed",
                          "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
-                         "test_ref":  "MainInterfaceTest; docs/android/acceptance/stage5/device/tablet-layout-report.json",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
                          "notes":  "TalkBack、触控尺寸、焦点顺序和横竖屏无障碍; implementation, automation, device, and release gates passed."
                      },
                      {
@@ -623,7 +623,7 @@
                          "id":  "M12-F01",
                          "result":  "passed",
                          "code_ref":  "apps/android/scripts/build-stage5-release.ps1; apps/android/scripts/run-stage5-instrumentation-shards.ps1; apps/android/scripts/accept-update-e2e.ps1",
-                         "test_ref":  "LocalStoreTest migrations; docs/android/acceptance/stage5/upgrade/upgrade-1.4.6-to-1.5.0.json",
+                         "test_ref":  "LocalStoreTest migrations; docs/android/testing/acceptance/stage5/upgrade/upgrade-1.4.6-to-1.5.0.json",
                          "notes":  "从当前生产 APK 原位升级并迁移会话、附件、登录和远程缓存; implementation, automation, device, and release gates passed."
                      },
                      {

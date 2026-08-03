@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T09:18:03.996337+00:00",
+  "environment": {
+    "kind": "physical_device",
+    "serial": "R5GYB3S8ACH",
+    "manufacturer": "samsung",
+    "model": "SM-X936C",
+    "api": 36,
+    "abi": "arm64-v8a",
+    "package": "ai.drsai.remote.acceptance"
+  },
+  "journey": [
+    {
+      "step": "seed_baseline",
+      "version": "1.5.3",
+      "status": "passed"
+    },
+    {
+      "step": "install_r_upgrade",
+      "version": "1.5.4",
+      "status": "passed"
+    },
+    {
+      "step": "install_r_downgrade",
+      "version": "1.5.3",
+      "status": "passed"
+    }
+  ],
+  "artifacts": {
+    "baseline_sha256": "a4eeec6d377071c5936431bf40ca0a72db3468a0ca9861264e79ba97391f46af",
+    "candidate_sha256": "c02cf04fe371567ab4b5c8c5284eb0d48864456d56dee7f08484ced1a7d26df4"
+  },
+  "preserved": {
+    "encrypted_login_state": true,
+    "local_session": true,
+    "remote_association": true,
+    "remote_session": true,
+    "conversation_history": true
+  },
+  "room_schema_version": 10,
+  "result": "passed"
+}

@@ -12,9 +12,9 @@ OpenDrSai Android 第一版是面向普通用户的原生 Agent 应用。它既�
 → 会话和记忆保存在本机
 ```
 
-当前实现、限制、测试和验收标准以 [REAL_DEVICE_DEVELOPMENT_PLAN.md](./REAL_DEVICE_DEVELOPMENT_PLAN.md) 为准。
-主界面的布局和交互规范见 [MAIN_INTERFACE_DESIGN.md](./MAIN_INTERFACE_DESIGN.md)。
-平台智能体的接口、路由和完成状态见 [REMOTE_AGENT_IMPLEMENTATION.md](./REMOTE_AGENT_IMPLEMENTATION.md)。
+当前实现、限制、测试和验收标准以 [Android 本机 Runtime 架构](../architecture/ANDROID_LOCAL_RUNTIME_ARCHITECTURE.md) 为准。
+主界面的布局和交互规范见 [主界面设计](../design/MAIN_INTERFACE_DESIGN.md)。
+平台智能体的接口、路由和完成状态见 [远程智能体集成](../architecture/ANDROID_REMOTE_AGENT_INTEGRATION.md)。
 
 ## 第一版范围
 

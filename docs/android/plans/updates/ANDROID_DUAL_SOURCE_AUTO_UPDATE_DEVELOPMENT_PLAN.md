@@ -8,11 +8,11 @@
 - 发布主源：`download-opendrsai.ihep.ac.cn`
 - 发布备用源：GitHub Releases
 - 上游发布架构：
-  [`docs/product/opendrsai-download-distribution-plan.md`](../product/opendrsai-download-distribution-plan.md)
+  [`docs/product/opendrsai-download-distribution-plan.md`](../../../product/opendrsai-download-distribution-plan.md)
 - 既有实现基础：
   [`ANDROID_APP_UPDATE_DEVELOPMENT_PLAN.md`](./ANDROID_APP_UPDATE_DEVELOPMENT_PLAN.md)
   和
-  [`ANDROID_APP_UPDATE_IMPLEMENTATION_REPORT.md`](./ANDROID_APP_UPDATE_IMPLEMENTATION_REPORT.md)
+  [`ANDROID_APP_UPDATE_IMPLEMENTATION_REPORT.md`](../../reports/implementation/ANDROID_APP_UPDATE_IMPLEMENTATION_REPORT.md)
 
 本方案不是从零重写更新器。现有 Android 代码已经具备版本判断、断点下载、
 大小与 SHA-256 校验、APK 证书摘要校验、FileProvider、系统安装器入口、
@@ -466,7 +466,7 @@ stable 发布必须重复相同验收，并额外确认使用组织 Release Keys
 - 发布工作流静态契约 13/13 通过；双清单生成、本地一致性校验、发布顺序 Dry Run
   和 stable Debug 签名拒绝均通过。
 - 详细证据见
-  [`ANDROID_DUAL_SOURCE_AUTO_UPDATE_IMPLEMENTATION_REPORT.md`](./ANDROID_DUAL_SOURCE_AUTO_UPDATE_IMPLEMENTATION_REPORT.md)。
+  [`ANDROID_DUAL_SOURCE_AUTO_UPDATE_IMPLEMENTATION_REPORT.md`](../../reports/implementation/ANDROID_DUAL_SOURCE_AUTO_UPDATE_IMPLEMENTATION_REPORT.md)。
 
 尚未把本地验收结果表述为线上发布完成。真实 CDN/GitHub 双源升级和 stable 准入需要
 组织提供固定 Beta/Release Keystore 与 OSS 发布凭据；凭据配置后执行本文 10.6

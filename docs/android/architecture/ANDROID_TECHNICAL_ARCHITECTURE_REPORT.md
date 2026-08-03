@@ -159,9 +159,9 @@ OpenDrSai-Android-v{versionName}.apk
 
 ## 10. 相关文档
 
-- [`apps/android/README.md`](../../apps/android/README.md)：构建、运行和 OIDC 配置入口。
-- [`V1.4.6_ATTACHMENT_DEVELOPMENT_PLAN.md`](V1.4.6_ATTACHMENT_DEVELOPMENT_PLAN.md)：附件功能的开发项、接口契约和完成状态。
-- [`V1.4.6_ATTACHMENT_TEST_REPORT.md`](V1.4.6_ATTACHMENT_TEST_REPORT.md)：自动化测试、构建和当前验收结果。
-- [`V1.4.6_BETA_DEVICE_CHECKLIST.md`](V1.4.6_BETA_DEVICE_CHECKLIST.md)：真机 Beta 验收清单。
-- [`ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md`](ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)：Android 通过 Relay 委托 Full Runtime 的远程工作区开发与验收方案。
-- [`ANDROID_REMOTE_WORKSPACE_UI_DESIGN_V1.md`](ANDROID_REMOTE_WORKSPACE_UI_DESIGN_V1.md)：远程工作区的侧栏、计算机/工作区/会话导航、扫码关联和远程聊天交互方案。
+- [`apps/android/README.md`](../../../apps/android/README.md)：构建、运行和 OIDC 配置入口。
+- [`V1.4.6_ATTACHMENT_DEVELOPMENT_PLAN.md`](../plans/attachments/V1.4.6_ATTACHMENT_DEVELOPMENT_PLAN.md)：附件功能的开发项、接口契约和完成状态。
+- [`V1.4.6_ATTACHMENT_TEST_REPORT.md`](../testing/reports/V1.4.6_ATTACHMENT_TEST_REPORT.md)：自动化测试、构建和当前验收结果。
+- [`V1.4.6_BETA_DEVICE_CHECKLIST.md`](../releases/V1.4.6_BETA_DEVICE_CHECKLIST.md)：真机 Beta 验收清单。
+- [`ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md`](../plans/remote-workspace/ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)：Android 通过 Relay 委托 Full Runtime 的远程工作区开发与验收方案。
+- [`ANDROID_REMOTE_WORKSPACE_UI_DESIGN_V1.md`](../design/ANDROID_REMOTE_WORKSPACE_UI_DESIGN_V1.md)：远程工作区的侧栏、计算机/工作区/会话导航、扫码关联和远程聊天交互方案。

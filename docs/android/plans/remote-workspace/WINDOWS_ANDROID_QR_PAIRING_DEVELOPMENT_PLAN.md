@@ -320,5 +320,5 @@ npm --prefix apps/desktop run verify:android-pairing-release --workspace opendrs
 
 验收证据：
 
-- `docs/android/WINDOWS_ANDROID_QR_PAIRING_ACCEPTANCE.md`
-- `docs/android/WINDOWS_ANDROID_QR_PAIRING_ACCEPTANCE.json`
+- `docs/android/testing/reports/WINDOWS_ANDROID_QR_PAIRING_ACCEPTANCE.md`
+- `docs/android/testing/reports/WINDOWS_ANDROID_QR_PAIRING_ACCEPTANCE.json`

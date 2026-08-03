@@ -1,9 +1,9 @@
 # OpenDrSai Android 远程工作区开发方案 V1
 
-> 架构基线：[OpenDrSai 总体架构 V1](../OpenDrSai总体架构V1.md)  
-> 远程工作区基线：[OpenDrSai 远程工作区实现方案 V1](../remote_workespace/OpenDrSai远程工作区实现方案V1.md)  
-> Codex 基线：[OpenDrSai Codex 工作区开发方案 V1](../remote_workespace/OpenDrSaiCodex工作区开发方案V1.md)  
-> 界面方案：[Android 远程工作区界面方案 V1](./ANDROID_REMOTE_WORKSPACE_UI_DESIGN_V1.md)  
+> 架构基线：[OpenDrSai 总体架构 V1](../../../OpenDrSai总体架构V1.md)  
+> 远程工作区基线：[OpenDrSai 远程工作区实现方案 V1](../../../remote_workespace/OpenDrSai远程工作区实现方案V1.md)  
+> Codex 基线：[OpenDrSai Codex 工作区开发方案 V1](../../../remote_workespace/OpenDrSaiCodex工作区开发方案V1.md)  
+> 界面方案：[Android 远程工作区界面方案 V1](../../design/ANDROID_REMOTE_WORKSPACE_UI_DESIGN_V1.md)  
 > 文档状态：已完成，三项产品架构决策已冻结  
 > 统计口径：共 **12 个模块、96 个功能点**；当前验收范围 **96 项，全部完成**  
 > 更新日期：2026-07-19

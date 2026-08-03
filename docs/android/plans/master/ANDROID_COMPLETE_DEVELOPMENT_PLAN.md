@@ -1,7 +1,7 @@
 # OpenDrSai Android 完整开发计划
 
 > 本文统一整理 Android App 从第一版 MVP 到统一工作台与混合 Runtime V2 的五个开发阶段。
-> 阶段 1、2 是对早期散落在 `docs/android_app` 中的方案和实现记录进行结构化补全；阶段 3、4 沿用已有专项计划；阶段 5 是下一阶段开发基线。
+> 阶段 1、2 是对早期方案和实现记录进行结构化补全；相关文档现已归档到 `docs/android` 的分类子目录中。阶段 3、4 沿用已有专项计划；阶段 5 是下一阶段开发基线。
 
 ## 1. 总体范围
 
@@ -75,7 +75,7 @@ Android 产品形成五条连续能力链：
 
 ### P1-F APP 自动更新（30）
 
-详细方案见 [ANDROID_APP_UPDATE_DEVELOPMENT_PLAN.md](./ANDROID_APP_UPDATE_DEVELOPMENT_PLAN.md)。本模块参考 Windows
+详细方案见 [ANDROID_APP_UPDATE_DEVELOPMENT_PLAN.md](../updates/ANDROID_APP_UPDATE_DEVELOPMENT_PLAN.md)。本模块参考 Windows
 桌面端的版本清单、固定 HTTPS 发布源、大小/SHA-256 校验、渠道和最低版本策略，适配
 Android 的系统 Package Installer：
 
@@ -125,7 +125,7 @@ Android 的系统 Package Installer：
 
 ## 5. 第 3 阶段：v1.4.6 附件闭环
 
-本阶段沿用 [V1.4.6_ATTACHMENT_DEVELOPMENT_PLAN.md](./V1.4.6_ATTACHMENT_DEVELOPMENT_PLAN.md)，共 **10 类模块、66 个功能点**：
+本阶段沿用 [V1.4.6_ATTACHMENT_DEVELOPMENT_PLAN.md](../attachments/V1.4.6_ATTACHMENT_DEVELOPMENT_PLAN.md)，共 **10 类模块、66 个功能点**：
 
 - 产品边界与协议基线：5
 - Android 选择与输入交互：8
@@ -144,7 +144,7 @@ Android 的系统 Package Installer：
 
 ## 6. 第 4 阶段：Android 远程工作区
 
-本阶段沿用 [ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md](./ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)，共 **12 个模块、96 个功能点**：
+本阶段沿用 [ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md](../remote-workspace/ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)，共 **12 个模块、96 个功能点**：
 
 - 架构、领域模型与产品边界：8
 - Relay Runtime Protocol 与 Schema：8
@@ -163,7 +163,7 @@ Android 的系统 Package Installer：
 
 ## 7. 第 5 阶段：统一工作台与混合 Runtime V2
 
-详细计划见 [ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md](./ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md)，共 **12 个模块、96 个功能点**：
+详细计划见 [ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md](../runtime/ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md)，共 **12 个模块、96 个功能点**：
 
 - 统一领域模型与架构边界：8
 - 自适应 Android 左侧工作台：8
@@ -180,7 +180,7 @@ Android 的系统 Package Installer：
 
 本阶段复用既有 OIDC、HAI Agent、聊天、附件、自动更新和 Relay 能力。Android 本地不承载 Python Full Runtime 或任意 Shell；需要项目执行、Git/Worktree、Codex、MCP 和长任务时，通过用户可见的能力协商委派给远程 Full Runtime。
 
-当前实施与验收状态见 [ANDROID_STAGE5_DEVELOPMENT_PROGRESS.md](./ANDROID_STAGE5_DEVELOPMENT_PROGRESS.md)。
+当前实施与验收状态见 [ANDROID_STAGE5_DEVELOPMENT_PROGRESS.md](../../reports/progress/ANDROID_STAGE5_DEVELOPMENT_PROGRESS.md)。
 
 ## 8. 总体验收口径
 
@@ -196,6 +196,6 @@ Android 的系统 Package Installer：
 - APK：`OpenDrSai-Android-v1.4.6.apk`
 - 生产 HAI 地址：`https://ai.ihep.ac.cn`
 - GitHub Release：[android-v1.4.6](https://github.com/hepai-lab/drsai/releases/tag/android-v1.4.6)
-- 远程工作区进度：[ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PROGRESS.md](./ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PROGRESS.md)
-- 附件测试报告：[V1.4.6_ATTACHMENT_TEST_REPORT.md](./V1.4.6_ATTACHMENT_TEST_REPORT.md)
-- 自动更新实现报告：[ANDROID_APP_UPDATE_IMPLEMENTATION_REPORT.md](./ANDROID_APP_UPDATE_IMPLEMENTATION_REPORT.md)
+- 远程工作区进度：[ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PROGRESS.md](../../reports/progress/ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PROGRESS.md)
+- 附件测试报告：[V1.4.6_ATTACHMENT_TEST_REPORT.md](../../testing/reports/V1.4.6_ATTACHMENT_TEST_REPORT.md)
+- 自动更新实现报告：[ANDROID_APP_UPDATE_IMPLEMENTATION_REPORT.md](../../reports/implementation/ANDROID_APP_UPDATE_IMPLEMENTATION_REPORT.md)

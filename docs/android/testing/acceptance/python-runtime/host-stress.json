@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T07:06:27.215873+00:00",
+  "environment": "desktop_automation_python_3_11",
+  "runs": {
+    "short": 500,
+    "tool": 50,
+    "recovery": 20
+  },
+  "duration_seconds": 0.014891,
+  "failures": [],
+  "duplicate_side_effects": 0,
+  "anr": "not_applicable_host_independent",
+  "device_metrics": "not_executed_no_adb_device",
+  "result": "passed"
+}

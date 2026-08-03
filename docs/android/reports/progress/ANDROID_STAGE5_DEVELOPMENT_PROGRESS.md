@@ -1,6 +1,6 @@
 # OpenDrSai Android 第 5 阶段开发与验收结果
 
-> 对应计划：[ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md](./ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md)  
+> 对应计划：[ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md](../../plans/runtime/ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md)  
 > 完成日期：2026-07-21  
 > 验收口径：12 个模块、96 个功能点；代码、自动化测试、模拟器矩阵和发布证据全部通过后才计为完成。
 
@@ -33,7 +33,7 @@
 | M11 | 安全、审计、错误诊断与边界约束 | 完成 |
 | M12 | 测试矩阵、升级、自动更新与发布门禁 | 完成 |
 
-逐功能点的代码与测试映射见 [feature-evidence.json](./acceptance/stage5/feature-evidence.json)。该文件由验收脚本从计划、测试结果和发布报告生成，最终为 **96/96 passed**。
+逐功能点的代码与测试映射见 [feature-evidence.json](../../testing/acceptance/stage5/feature-evidence.json)。该文件由验收脚本从计划、测试结果和发布报告生成，最终为 **96/96 passed**。
 
 ## 3. 最终测试矩阵
 
@@ -64,12 +64,12 @@ Instrumentation 使用分片脚本执行，以规避单次长套件导致模拟�
 
 ## 5. 验收产物
 
-- 总功能证据：`docs/android/acceptance/stage5/feature-evidence.json`
-- API 30/35 XML：`docs/android/acceptance/stage5/emulator-results/`
-- 升级报告：`docs/android/acceptance/stage5/upgrade/upgrade-1.4.6-to-1.5.0.json`
-- 自动更新报告：`docs/android/acceptance/stage5/update/auto-update-1.4.9-to-1.5.0.json`
-- 设备性能报告：`docs/android/acceptance/stage5/device/device-performance-report.json`
-- 平板布局报告：`docs/android/acceptance/stage5/device/tablet-layout-report.json`
+- 总功能证据：`docs/android/testing/acceptance/stage5/feature-evidence.json`
+- API 30/35 XML：`docs/android/testing/acceptance/stage5/emulator-results/`
+- 升级报告：`docs/android/testing/acceptance/stage5/upgrade/upgrade-1.4.6-to-1.5.0.json`
+- 自动更新报告：`docs/android/testing/acceptance/stage5/update/auto-update-1.4.9-to-1.5.0.json`
+- 设备性能报告：`docs/android/testing/acceptance/stage5/device/device-performance-report.json`
+- 平板布局报告：`docs/android/testing/acceptance/stage5/device/tablet-layout-report.json`
 - 发布与总验收报告：`apps/android/app/build/stage5-release/`
 
 ## 6. 最终结论

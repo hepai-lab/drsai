@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T09:21:46.131256+00:00",
+  "decision": "GO",
+  "gates": [
+    {
+      "id": "function_40_of_40",
+      "status": "passed"
+    },
+    {
+      "id": "cross_runtime_exact_parity",
+      "status": "passed"
+    },
+    {
+      "id": "dependency_lock_and_sbom",
+      "status": "passed"
+    },
+    {
+      "id": "host_stress_500_50_20",
+      "status": "passed"
+    },
+    {
+      "id": "apk_under_90_mib",
+      "status": "passed"
+    },
+    {
+      "id": "variant_flags_and_abis",
+      "status": "passed"
+    },
+    {
+      "id": "three_source_secret_scan",
+      "status": "passed"
+    },
+    {
+      "id": "cold_start_p95_under_3s",
+      "status": "passed"
+    },
+    {
+      "id": "foreground_pss_p95_under_220mb",
+      "status": "passed"
+    },
+    {
+      "id": "peak_pss_under_320mb",
+      "status": "passed"
+    },
+    {
+      "id": "storage_under_220mb",
+      "status": "passed"
+    },
+    {
+      "id": "zero_anr",
+      "status": "passed"
+    },
+    {
+      "id": "runtime_release_verified",
+      "status": "passed"
+    },
+    {
+      "id": "samsung_arm64_physical_device_verified",
+      "status": "passed"
+    }
+  ],
+  "blockers": [],
+  "apk_bytes": 55958109
+}

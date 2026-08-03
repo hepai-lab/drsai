@@ -1,6 +1,6 @@
 # OpenDrSai Android 远程工作区界面方案 V1
 
-> 上位方案：[Android 远程工作区开发方案 V1](./ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)  
+> 上位方案：[Android 远程工作区开发方案 V1](../plans/remote-workspace/ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)  
 > 文档状态：产品与交互讨论稿  
 > 日期：2026-07-17
 

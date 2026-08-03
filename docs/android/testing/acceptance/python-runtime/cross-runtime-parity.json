@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T09:21:45.618972+00:00",
+  "fixture": "cores/protocol/android-runtime/fixtures/mobile-core-parity-v1.json",
+  "fixture_sha256": "b754cdb8925db2f972f7b6f0cbc6b4b580dd0bb69aef67727a33aea3feb56745",
+  "scenarios": [
+    {
+      "id": "text-stream-terminal",
+      "expected_event_kinds": [
+        "run.started",
+        "message.delta",
+        "run.completed"
+      ],
+      "desktop": [
+        {
+          "kind": "run.started",
+          "status": "running"
+        },
+        {
+          "kind": "message.delta",
+          "text": "hello"
+        },
+        {
+          "kind": "run.completed",
+          "status": "completed"
+        }
+      ],
+      "tui": [
+        {
+          "kind": "run.started",
+          "status": "running"
+        },
+        {
+          "kind": "message.delta",
+          "text": "hello"
+        },
+        {
+          "kind": "run.completed",
+          "status": "completed"
+        }
+      ],
+      "android_python": [
+        {
+          "kind": "run.started",
+          "status": "running"
+        },
+        {
+          "kind": "message.delta",
+          "text": "hello"
+        },
+        {
+          "kind": "run.completed",
+          "status": "completed"
+        }
+      ],
+      "exact_match": true
+    },
+    {
+      "id": "pure-core-tool",
+      "expected_event_kinds": [
+        "run.started",
+        "tool.started",
+        "tool.result",
+        "run.completed"
+      ],
+      "desktop": [
+        {
+          "kind": "run.started",
+          "status": "running"
+        },
+        {
+          "kind": "tool.started",
+          "name": "core.text_stats",
+          "call_id": "stats-1"
+        },
+        {
+          "kind": "tool.result",
+          "name": "core.text_stats",
+          "call_id": "stats-1"
+        },
+        {
+          "kind": "run.completed",
+          "status": "completed"
+        }
+      ],
+      "tui": [
+        {
+          "kind": "run.started",
+          "status": "running"
+        },
+        {
+          "kind": "tool.started",
+          "name": "core.text_stats",
+          "call_id": "stats-1"
+        },
+        {
+          "kind": "tool.result",
+          "name": "core.text_stats",
+          "call_id": "stats-1"
+        },
+        {
+          "kind": "run.completed",
+          "status": "completed"
+        }
+      ],
+      "android_python": [
+        {
+          "kind": "run.started",
+          "status": "running"
+        },
+        {
+          "call_id": "stats-1",
+          "kind": "tool.started",
+          "name": "core.text_stats"
+        },
+        {
+          "call_id": "stats-1",
+          "kind": "tool.result",
+          "name": "core.text_stats"
+        },
+        {
+          "kind": "run.completed",
+          "status": "completed"
+        }
+      ],
+      "exact_match": true
+    }
+  ],
+  "match_percent": 100,
+  "result": "passed"
+}

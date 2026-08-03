@@ -1,6 +1,6 @@
 # OpenDrSai Android 远程工作区开发进度
 
-> 基准方案：[Android 远程工作区开发方案 V1](./ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)  
+> 基准方案：[Android 远程工作区开发方案 V1](../../plans/remote-workspace/ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)  
 > 统计规则：只有实现、自动化测试和对应验收证据同时存在的功能点才标记完成。  
 > 当前范围：移除真机验收；OpenDrSai 与 Codex 真实 Backend E2E 均已完成，使用本仓库 `apps/desktop/windows`。  
 > 更新时间：2026-07-19
