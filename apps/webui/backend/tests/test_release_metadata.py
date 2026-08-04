@@ -57,3 +57,31 @@ async def test_fetch_latest_android_release_normalizes_manifest() -> None:
     assert release["download"]["file"] == "OpenDrSai-Android-v1.5.3.apk"
     assert release["download"]["sizeBytes"] == 3076779
     assert release["download"]["sha256"].startswith("74fcb63c")
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_macos_release_normalizes_manifest() -> None:
+    manifest = """\
+version: 1.5.1
+files:
+  - url: OpenDrSai-macOS-v1.5.1-arm64.zip
+    size: 117994862
+releaseDate: '2026-07-29T02:54:45.192Z'
+opendrsaiRuntimeSha256: 4f814613e02cadcf6c1c4687ad5f4908f0eb703e3dde9f592cd3336c3ebd0679
+"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"content-length": "583030073"})
+        return httpx.Response(200, text=manifest)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        release = await fetch_latest_release("macos", client)
+
+    assert release["version"] == "1.5.1"
+    assert release["channel"] == "stable"
+    assert release["download"]["file"] == "OpenDrSai-macOS-v1.5.1-arm64.dmg"
+    assert release["download"]["sizeBytes"] == 583030073
+    assert release["program"]["file"] == "OpenDrSai-macOS-v1.5.1-arm64.zip"
+    assert release["program"]["sizeBytes"] == 117994862
+    assert release["program"]["sha256"].startswith("4f814613")

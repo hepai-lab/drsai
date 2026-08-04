@@ -19,13 +19,16 @@ const WINDOWS_DOWNLOAD_URL =
 const ANDROID_DOWNLOAD_URL =
   process.env.GATSBY_ANDROID_DOWNLOAD_URL ||
   "https://download-opendrsai.ihep.ac.cn/releases/v1.5.5/android/OpenDrSai-Android-v1.5.5.apk";
+const MACOS_DOWNLOAD_URL =
+  process.env.GATSBY_MACOS_DOWNLOAD_URL ||
+  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.1/macos/OpenDrSai-macOS-v1.5.1-arm64.dmg";
 const TUI_UNIX_COMMAND =
   "curl -fsSL https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/vQFBjvXqAhxdPFb/download | bash";
 const TUI_WINDOWS_COMMAND =
   "iwr -UseBasicParsing https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/cG0oB5NEhQiEf5r/download | iex";
 type ClientTab = "windows" | "android" | "terminal" | "macos";
 type CopiedCommand = "unix" | "windows";
-type ReleasePlatform = "windows" | "android";
+type ReleasePlatform = "windows" | "android" | "macos";
 
 interface ReleaseAsset {
   url: string;
@@ -82,7 +85,12 @@ const WelcomePage = () => {
   }, [activeClient]);
 
   useEffect(() => {
-    if (activeClient !== "windows" && activeClient !== "android") return;
+    if (
+      activeClient !== "windows" &&
+      activeClient !== "android" &&
+      activeClient !== "macos"
+    )
+      return;
     const platform = activeClient;
     const controller = new AbortController();
     setLoadingRelease(platform);
@@ -373,7 +381,7 @@ const WelcomePage = () => {
               <span className="min-w-0 flex-1">
                 <span className="block font-extrabold">macOS</span>
                 <span className="mt-1 block text-xs font-medium text-slate-400">
-                  Coming soon
+                  {isZh ? "Apple 芯片版" : "Apple silicon"}
                 </span>
               </span>
               <span className="hidden text-xs font-extrabold text-violet-700 sm:inline dark:text-violet-300">
@@ -389,7 +397,9 @@ const WelcomePage = () => {
                 copiedCommand={copiedCommand}
                 onCopy={copyTuiCommand}
                 latestRelease={
-                  activeClient === "windows" || activeClient === "android"
+                  activeClient === "windows" ||
+                  activeClient === "android" ||
+                  activeClient === "macos"
                     ? latestReleases[activeClient]
                     : undefined
                 }
@@ -699,7 +709,8 @@ const ClientDetails = ({
     windows: {
       icon: <WindowsLogo />,
       title: "OpenDrSai for Windows",
-      version: "v1.5.5 Beta",
+      version: "v1.5.5",
+      channel: "beta",
       file: "OpenDrSai-Windows-Installer-x64.msi",
       sizeBytes: 647168,
       sha256:
@@ -711,12 +722,26 @@ const ClientDetails = ({
     android: {
       icon: <AndroidLogo />,
       title: "OpenDrSai for Android",
-      version: "v1.5.5 Beta",
+      version: "v1.5.5",
+      channel: "beta",
       file: "OpenDrSai-Android-v1.5.5.apk",
       sizeBytes: 26370437,
       sha256:
         "d52b7df0cee4fab11fa817e0ba25be4db7e67a2ca3e3a4596c205e1a641321a6",
       href: ANDROID_DOWNLOAD_URL,
+    },
+    macos: {
+      icon: <AppleLogo />,
+      title: "OpenDrSai for macOS",
+      version: "v1.5.1",
+      channel: "stable",
+      file: "OpenDrSai-macOS-v1.5.1-arm64.dmg",
+      sizeBytes: 583030073,
+      sha256:
+        "4f814613e02cadcf6c1c4687ad5f4908f0eb703e3dde9f592cd3336c3ebd0679",
+      programFile: "OpenDrSai-macOS-v1.5.1-arm64.zip",
+      programSizeBytes: 117994862,
+      href: MACOS_DOWNLOAD_URL,
     },
   };
 
@@ -783,32 +808,12 @@ const ClientDetails = ({
     );
   }
 
-  if (active === "macos") {
-    return (
-      <div className="border-t border-slate-200/80 p-6 dark:border-white/10 sm:p-8">
-        <div className="flex items-center gap-4">
-          <span className="grid h-12 w-12 place-items-center rounded-xl bg-slate-100 dark:bg-white/10">
-            <AppleLogo />
-          </span>
-          <div>
-            <h2 className="font-extrabold">OpenDrSai for macOS</h2>
-            <p className="mt-1 text-sm font-medium text-slate-400">
-              Coming soon
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const fallbackRelease = releases[active];
   const release = latestRelease
     ? {
         ...fallbackRelease,
-        version:
-          latestRelease.channel === "beta"
-            ? `v${latestRelease.version} Beta`
-            : `v${latestRelease.version}`,
+        version: `v${latestRelease.version}`,
+        channel: latestRelease.channel,
         file: latestRelease.download.file,
         sizeBytes: latestRelease.download.sizeBytes,
         sha256:
@@ -839,7 +844,7 @@ const ClientDetails = ({
               <h2 className="font-extrabold">{release.title}</h2>
               <p className="mt-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
                 {isZh ? "最新版本" : "Latest release"} · {release.version}
-                {latestRelease ? ` · ${latestRelease.channel}` : ""}
+                {` · ${release.channel === "beta" ? "Beta" : release.channel === "stable" ? "Stable" : release.channel}`}
               </p>
               {loadingRelease && (
                 <p className="mt-1 text-[11px] font-medium text-slate-400">

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 import ssl
@@ -7,12 +9,14 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
+import yaml
 from fastapi import APIRouter, HTTPException, Response
 
 router = APIRouter()
 
 CDN_ORIGIN = "https://download-opendrsai.ihep.ac.cn"
 RELEASE_CHANNEL = os.getenv("OPENDRSAI_RELEASE_CHANNEL", "beta")
+MACOS_RELEASE_CHANNEL = os.getenv("OPENDRSAI_MACOS_RELEASE_CHANNEL", "stable")
 VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 TRUSTASIA_INTERMEDIATE = (
@@ -53,6 +57,15 @@ async def _fetch_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError("Release manifest must be a JSON object")
+    return payload
+
+
+async def _fetch_yaml(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
+    response = await client.get(url)
+    response.raise_for_status()
+    payload = yaml.safe_load(response.text)
+    if not isinstance(payload, dict):
+        raise ValueError("Release manifest must be a YAML object")
     return payload
 
 
@@ -126,13 +139,62 @@ def _android_release(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _macos_release(
+    client: httpx.AsyncClient, manifest: dict[str, Any]
+) -> dict[str, Any]:
+    version = _validated_version(manifest.get("version"))
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files or not isinstance(files[0], dict):
+        raise ValueError("macOS manifest is missing application metadata")
+    application = files[0]
+    application_name = PurePosixPath(str(application.get("url"))).name
+    if not application_name:
+        raise ValueError("macOS application URL has no filename")
+    application_size = int(application.get("size"))
+    if application_size < 1:
+        raise ValueError("macOS application size must be positive")
+
+    installer_name = f"OpenDrSai-macOS-v{version}-arm64.dmg"
+    installer_url = f"{CDN_ORIGIN}/releases/v{version}/macos/{installer_name}"
+    installer_response = await client.head(installer_url)
+    installer_response.raise_for_status()
+    installer_size = int(installer_response.headers.get("content-length", "0"))
+    if installer_size < 1:
+        raise ValueError("macOS installer size must be positive")
+
+    application_url = f"{CDN_ORIGIN}/releases/v{version}/macos/{application_name}"
+    return {
+        "platform": "macos",
+        "version": version,
+        "channel": MACOS_RELEASE_CHANNEL,
+        "publishedAt": manifest.get("releaseDate"),
+        "download": {
+            "url": installer_url,
+            "file": installer_name,
+            "sizeBytes": installer_size,
+        },
+        "program": {
+            "url": application_url,
+            "file": application_name,
+            "sizeBytes": application_size,
+            "sha256": _validated_sha256(manifest.get("opendrsaiRuntimeSha256")),
+        },
+    }
+
+
 async def fetch_latest_release(
-    platform: Literal["windows", "android"],
+    platform: Literal["windows", "android", "macos"],
     client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any]:
-    manifest_url = (
-        f"{CDN_ORIGIN}/channels/{RELEASE_CHANNEL}/latest-{platform}.json"
-    )
+    if platform == "macos":
+        manifest_url = (
+            f"{CDN_ORIGIN}/channels/{MACOS_RELEASE_CHANNEL}"
+            "/macos/arm64/latest-mac.yml"
+        )
+    else:
+        manifest_url = (
+            f"{CDN_ORIGIN}/channels/{RELEASE_CHANNEL}/latest-{platform}.json"
+        )
     owns_client = client is None
     ssl_context = ssl.create_default_context()
     ssl_context.load_verify_locations(cafile=TRUSTASIA_INTERMEDIATE)
@@ -147,10 +209,16 @@ async def fetch_latest_release(
         verify=ssl_context,
     )
     try:
-        manifest = await _fetch_json(active_client, manifest_url)
+        manifest = (
+            await _fetch_yaml(active_client, manifest_url)
+            if platform == "macos"
+            else await _fetch_json(active_client, manifest_url)
+        )
         if platform == "windows":
             return await _windows_release(active_client, manifest)
-        return _android_release(manifest)
+        if platform == "android":
+            return _android_release(manifest)
+        return await _macos_release(active_client, manifest)
     finally:
         if owns_client:
             await active_client.aclose()
@@ -158,7 +226,7 @@ async def fetch_latest_release(
 
 @router.get("/latest/{platform}")
 async def latest_release(
-    platform: Literal["windows", "android"], response: Response
+    platform: Literal["windows", "android", "macos"], response: Response
 ) -> dict[str, Any]:
     try:
         release = await fetch_latest_release(platform)
