@@ -59,7 +59,24 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   // /v1/models which requires DB migration + auth warm-up) are not yet ready.
   // Retry a few times to avoid a transient empty response being mistaken for
   // a permanent permission denial.
-  const { models, dataLength } = await getGatewayModels(auth.accessToken);
+  const RETRY_DELAYS_MS = [500, 1000, 2000];
+  let models: Array<{ id: string; name: string }> = [];
+  let dataLength = 0;
+  let status = 0;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    const response = await getGatewayModels(auth.accessToken);
+    models = response.models;
+    dataLength = response.dataLength;
+    status = response.status;
+    if (models.length > 0) break;
+    // Only retry on transient conditions. Status 200 with empty data means the
+    // account genuinely has no models — do not mask that with a delay.
+    const transient = status === 0 || status === 401 || status === 502 || status === 503 || status === 504;
+    if (!transient) break;
+    const delay = RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) break;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
   if (models.length === 0) {
     if (dataLength > 0) {
       // data 非空但 flatMap 全过滤 — API 返回了模型对象但格式异常
