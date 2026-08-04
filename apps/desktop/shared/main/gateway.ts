@@ -7,6 +7,7 @@ import type { GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
 import { getCliConfigUserId, setCliConfigUserId } from "./modelDefaults";
+import { collectMigrationAliases, rememberUserIdAlias } from "./userIdentity";
 import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
 import { redactDesktopSecrets } from "./secretRedaction";
 
@@ -36,6 +37,7 @@ const GATEWAY_START_TIMEOUT_MS = Math.max(5_000, Math.min(120_000,
   Number(process.env.OPENDRSAI_GATEWAY_START_TIMEOUT_MS || "30000") || 30_000));
 const GATEWAY_READY_POLL_MS = 10_000;
 let lastSyncedGatewayUserId: string | null = null;
+let lastCanonicalizedUserId: string | null = null;
 const NODE_PTY_MODULE = (() => {
   try {
     return dirname(dirname(require.resolve("node-pty")));
@@ -152,11 +154,38 @@ export async function syncAuthIdentityToGateway(explicitUserId?: string): Promis
 
   // cli_config PUT evicts the user's agent pool — only when the id changes.
   if (identityChanged && previousCliUserId !== userId) {
+    if (previousCliUserId) rememberUserIdAlias(previousCliUserId, userId);
     await putGatewayJson("/v1/config/cli/user_id", { value: userId });
   }
 
   lastSyncedGatewayUserId = userId;
+  if (identityChanged || lastCanonicalizedUserId !== userId) {
+    await canonicalizeHistoricalUserIds(userId, previousCliUserId);
+  }
   return userId;
+}
+
+async function canonicalizeHistoricalUserIds(
+  canonicalUserId: string,
+  previousCliUserId: string | null,
+): Promise<void> {
+  let email: string | null = null;
+  try {
+    const { requireAuthContext } = await import("./auth");
+    email = (await requireAuthContext()).session.user?.email ?? null;
+  } catch {
+    email = null;
+  }
+  const aliases = collectMigrationAliases({
+    canonicalUserId,
+    email,
+    previousCliUserId,
+  });
+  await putGatewayJson("/v1/identity/canonicalize", {
+    canonical_user_id: canonicalUserId,
+    aliases,
+  }, "POST");
+  lastCanonicalizedUserId = canonicalUserId;
 }
 
 export function getGatewaySnapshot(): GatewayStatus {
@@ -377,11 +406,15 @@ async function resolveDesktopUserIdForGateway(): Promise<string | null> {
     ?? null;
 }
 
-async function putGatewayJson(path: string, body: Record<string, unknown>): Promise<void> {
+async function putGatewayJson(
+  path: string,
+  body: Record<string, unknown>,
+  method: "PUT" | "POST" = "PUT",
+): Promise<void> {
   try {
     const payload = JSON.stringify(body);
     const response = await fetch(`${GATEWAY_BASE_URL}${path}`, {
-      method: "PUT",
+      method,
       headers: {
         ...getGatewayRequestHeaders(),
         "Content-Type": "application/json",

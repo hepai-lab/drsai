@@ -793,7 +793,24 @@ def create_agent(
 
     # ── Plan-C: workspace strategy ──────────────────────────────────────
     # Resolve effective user_id for storage_dir computation.
-    effective_user_id = user_id or os.environ.get("DRSAI_USER_ID") or "anonymous"
+    effective_user_id = (
+        user_id
+        or os.environ.get("DRSAI_USER_ID")
+        or os.environ.get("DRSAI_DESKTOP_USER")
+        or ""
+    ).strip()
+    if not effective_user_id:
+        try:
+            from drsai.backend.cli.config import load_config
+
+            cfg_uid = load_config().get("user_id")
+            if isinstance(cfg_uid, str):
+                trimmed = cfg_uid.strip()
+                if trimmed and trimmed.lower() != "anonymous":
+                    effective_user_id = trimmed
+        except Exception:
+            effective_user_id = ""
+    effective_user_id = effective_user_id or "anonymous"
     # cwd is the primary tool workspace; internal configs go to WORKDIR/<user_id>
     # When work_dir is explicitly provided (e.g. by Tray GUI), use it instead of os.getcwd()
     if work_dir:
