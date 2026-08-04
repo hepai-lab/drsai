@@ -50,12 +50,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AttachFile
@@ -118,6 +118,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -176,6 +177,7 @@ import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.launch
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import coil.compose.AsyncImage
 
 @Composable
 private fun BrandLogo(size: Dp) {
@@ -185,6 +187,30 @@ private fun BrandLogo(size: Dp) {
         modifier = Modifier.size(size),
         contentScale = ContentScale.Fit,
     )
+}
+
+@Composable
+private fun AccountAvatar(avatarUrl: String?, name: String, size: Dp) {
+    var failed by remember(avatarUrl) { mutableStateOf(false) }
+    if (!avatarUrl.isNullOrBlank() && !failed) {
+        AsyncImage(
+            model = avatarUrl,
+            contentDescription = "用户头像",
+            contentScale = ContentScale.Crop,
+            onError = { failed = true },
+            modifier = Modifier.size(size).clip(CircleShape),
+        )
+    } else {
+        Surface(
+            modifier = Modifier.size(size),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.secondaryContainer,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(name.firstOrNull()?.uppercase() ?: "U", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
 }
 
 @Composable
@@ -1138,7 +1164,7 @@ internal fun NavigationDrawer(
                     Modifier.fillMaxWidth().heightIn(min = 68.dp).padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Default.AccountCircle, null, Modifier.size(28.dp))
+                    AccountAvatar(state.user?.avatarUrl, state.user?.name.orEmpty(), 28.dp)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
@@ -1898,7 +1924,11 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
         Column(Modifier.fillMaxWidth().padding(22.dp)) {
             Text("个人中心", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(16.dp))
-            Text(state.user?.name.orEmpty(), fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AccountAvatar(state.user?.avatarUrl, state.user?.name.orEmpty(), 48.dp)
+                Spacer(Modifier.width(12.dp))
+                Text(state.user?.name.orEmpty(), fontWeight = FontWeight.Bold)
+            }
             Text(state.user?.id.orEmpty())
             state.selectedModel?.takeIf { state.selectedAgent?.source == "local" }
                 ?.let { Text("模型：${it.name}", style = MaterialTheme.typography.bodySmall) }

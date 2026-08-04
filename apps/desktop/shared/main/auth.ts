@@ -589,6 +589,7 @@ async function createOidcSession(
   if (!userId) {
     throw new Error("OIDC token response is missing a user subject.");
   }
+  const userInfo = await fetchOidcUserInfo(token.access_token, userId);
   const now = new Date().toISOString();
   const accessTokenExpiresAt = getJwtExpiry(token.access_token);
   return {
@@ -609,9 +610,9 @@ async function createOidcSession(
     authProvider: "hai",
     user: {
       id: userId,
-      email: idClaims?.email || userId,
-      name: idClaims?.name || idClaims?.email || userId,
-      avatarUrl: idClaims?.picture || undefined,
+      email: userInfo?.email || idClaims?.email || userId,
+      name: userInfo?.name || idClaims?.name || idClaims?.email || userId,
+      avatarUrl: safeOidcAvatarUrl(userInfo?.picture || idClaims?.picture),
       role: Array.isArray(accessClaims?.roles) && accessClaims.roles.includes("admin") ? "admin" : "user",
       roles: Array.isArray(accessClaims?.roles) ? accessClaims.roles : undefined,
       groups: Array.isArray(accessClaims?.groups) ? accessClaims.groups : undefined,
@@ -841,6 +842,7 @@ interface OidcProviderMetadata {
   authorization_endpoint: string;
   token_endpoint: string;
   jwks_uri: string;
+  userinfo_endpoint?: string;
   revocation_endpoint?: string;
 }
 
@@ -850,6 +852,13 @@ interface OidcIdTokenClaims {
   aud?: string | string[];
   exp?: number;
   nonce?: string;
+  email?: string;
+  name?: string;
+  picture?: string;
+}
+
+interface OidcUserInfo {
+  sub?: string;
   email?: string;
   name?: string;
   picture?: string;
@@ -1161,12 +1170,49 @@ async function getOidcMetadata(): Promise<OidcProviderMetadata> {
     authorization_endpoint: payload.authorization_endpoint,
     token_endpoint: payload.token_endpoint,
     jwks_uri: payload.jwks_uri,
+    userinfo_endpoint: typeof payload.userinfo_endpoint === "string"
+      ? payload.userinfo_endpoint
+      : undefined,
     revocation_endpoint: typeof payload.revocation_endpoint === "string"
       ? payload.revocation_endpoint
       : undefined,
   };
   oidcMetadataCache = { metadata, fetchedAt: Date.now() };
   return metadata;
+}
+
+async function fetchOidcUserInfo(accessToken: string, expectedSubject: string): Promise<OidcUserInfo | null> {
+  try {
+    const endpoint = (await getOidcMetadata()).userinfo_endpoint;
+    if (!endpoint) return null;
+    const response = await fetchOidcEndpoint(endpoint, "OIDC UserInfo", {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    if (!response.ok) return null;
+    const profile = await response.json() as OidcUserInfo;
+    if (profile.sub !== expectedSubject) {
+      throw new Error("OIDC UserInfo subject does not match the verified access token.");
+    }
+    return profile;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("subject does not match")) throw error;
+    return null;
+  }
+}
+
+function safeOidcAvatarUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const issuer = new URL(OIDC_ISSUER);
+    const candidate = new URL(raw, issuer.origin);
+    if (candidate.protocol !== "https:" || candidate.origin !== issuer.origin) return undefined;
+    return candidate.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function decodeJwtPayload<T extends object>(token: string): T | null {
