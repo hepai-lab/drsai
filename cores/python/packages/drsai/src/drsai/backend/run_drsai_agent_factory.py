@@ -801,8 +801,6 @@ def create_agent(
     ).strip()
     if not effective_user_id:
         try:
-            from drsai.backend.cli.config import load_config
-
             cfg_uid = load_config().get("user_id")
             if isinstance(cfg_uid, str):
                 trimmed = cfg_uid.strip()
