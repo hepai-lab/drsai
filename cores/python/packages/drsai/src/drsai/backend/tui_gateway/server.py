@@ -336,17 +336,7 @@ def _get_db_manager():
 
 
 def _resolve_user_id() -> str:
-    """Prefer desktop identity.json, then cli_config / env; never invent a new id."""
-    try:
-        home = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
-        identity_path = home / "identity.json"
-        if identity_path.is_file():
-            identity = json.loads(identity_path.read_text(encoding="utf-8"))
-            canonical = identity.get("canonicalUserId") if isinstance(identity, dict) else None
-            if isinstance(canonical, str) and canonical.strip() and canonical.strip().lower() != "anonymous":
-                return canonical.strip()
-    except Exception:
-        pass
+    """Read user_id from cli_config (mirrors run_cli.py); fall back to anonymous."""
     try:
         from drsai.backend.cli import config as cli_config
         cfg = cli_config.load_config()

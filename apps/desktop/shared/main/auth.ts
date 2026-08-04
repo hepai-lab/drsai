@@ -20,7 +20,6 @@ import type {
   OidcLoginDebugEvent,
 } from "../api/desktopApi";
 import { DRSAI_HOME } from "./paths";
-import { bindCanonicalUserId, resolveCanonicalUserId } from "./identity";
 import { isDesktopDevelopment } from "./desktopRuntimeMode";
 import { getActivePlatformConfig } from "./platformConfig";
 import { normalizeModelAlias } from "./modelDefaults";
@@ -140,7 +139,7 @@ export async function requireAuthContext(): Promise<AuthContext> {
   }
   return {
     session: toPublicSession(refreshed),
-    userId: resolveSessionUserId(refreshed),
+    userId: refreshed.user.id || refreshed.user.email,
     accessToken: refreshed.accessToken,
     authMode: refreshed.authMode,
     issuer: refreshed.issuer,
@@ -715,7 +714,6 @@ function writeStoredSession(session: StoredAuthSession): void {
   } finally {
     rmSync(temporaryFile, { force: true });
   }
-  notifyGatewayIdentity(session);
 }
 
 function serializeStoredSession(session: StoredAuthSession): SerializedStoredAuthSession {
@@ -763,32 +761,6 @@ function clearStoredSession(clearLocalData: boolean): void {
   } catch {
     // Best-effort cleanup; logout should still clear renderer state.
   }
-  notifyGatewayIdentity(null);
-}
-
-/** Stable desktop auth user id for gateway cli_config sync (OIDC subject preferred). */
-export function resolveStoredAuthUserId(): string | null {
-  const stored = readStoredSession();
-  if (!stored || !stored.authenticated || isExpired(stored)) return null;
-  bindCanonicalUserId(stored.user?.id || stored.user?.email || null);
-  return resolveSessionUserId(stored);
-}
-
-function resolveSessionUserId(session: StoredAuthSession): string {
-  const candidate = session.user?.id || session.user?.email || null;
-  return resolveCanonicalUserId(candidate) || candidate || "anonymous";
-}
-
-function notifyGatewayIdentity(session: StoredAuthSession | null): void {
-  if (session?.authenticated) {
-    bindCanonicalUserId(session.user?.id || session.user?.email || null);
-  }
-  const userId = session?.authenticated ? resolveSessionUserId(session) : null;
-  void import("./gatewayIdentity")
-    .then(({ scheduleCliConfigUserIdSync }) => scheduleCliConfigUserIdSync(userId))
-    .catch(() => {
-      // Gateway may be down; startGateway will retry sync when ready.
-    });
 }
 
 function credentialReferences(serialized: SerializedStoredAuthSession): string[] {
@@ -1013,7 +985,7 @@ export async function refreshAuthContextAfterUnauthorized(): Promise<AuthContext
     }
     return {
       session: toPublicSession(refreshed),
-      userId: resolveSessionUserId(refreshed),
+      userId: refreshed.user.id || refreshed.user.email,
       accessToken: refreshed.accessToken,
       authMode: refreshed.authMode,
       issuer: refreshed.issuer,

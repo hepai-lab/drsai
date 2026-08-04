@@ -111,7 +111,6 @@ from fastapi.responses import JSONResponse, Response as FastAPIResponse, Streami
 from loguru import logger
 
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 
 from drsai.backend.remote_ssh.workspace import PROTOCOL_VERSION, canonical_workspace, ensure_protocol, workspace_child
 from drsai.backend.remote_ssh.checkpoints import accept_checkpoint, create_checkpoint, list_checkpoints, preview_checkpoint, restore_checkpoint
@@ -298,137 +297,11 @@ _desktop_user_name: str | None = None
 
 
 
-def _drsai_home() -> Path:
-    return Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
-
-
-def _read_desktop_identity() -> dict:
-    """Load ~/.drsai/identity.json written by the desktop auth layer."""
-    path = _drsai_home() / "identity.json"
-    try:
-        if not path.is_file():
-            return {}
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        return raw if isinstance(raw, dict) else {}
-    except Exception as e:
-        logger.debug(f"Failed to read desktop identity: {e}")
-        return {}
-
-
 def _get_user_id() -> str:
-    """Resolve effective user_id: session override > identity.json > cli_config > env/system."""
-    if _desktop_user_name:
-        return _desktop_user_name
-    identity = _read_desktop_identity()
-    canonical = identity.get("canonicalUserId")
-    if isinstance(canonical, str):
-        normalized = canonical.strip()
-        if normalized and normalized.lower() != "anonymous":
-            return normalized
-    try:
-        from drsai.backend.cli.config import load_config
 
-        uid = load_config().get("user_id")
-        if isinstance(uid, str):
-            normalized = uid.strip()
-            if normalized and normalized.lower() != "anonymous":
-                return normalized
-    except Exception as e:
-        logger.debug(f"Failed to read user_id from cli config: {e}")
-    return _DEFAULT_USER_ID
+    """Resolve the effective user_id: API override > env var > system user."""
 
-
-def _resolve_request_user_id(
-    explicit: str | None = None,
-    raw_request: Request | None = None,
-) -> str:
-    """Prefer per-request identity (body/header) over process defaults."""
-    candidates: list[str] = []
-    if isinstance(explicit, str) and explicit.strip():
-        candidates.append(explicit.strip())
-    if raw_request is not None:
-        for header in ("x-opendrsai-user", "x-opendrsai-principal"):
-            value = raw_request.headers.get(header)
-            if isinstance(value, str) and value.strip():
-                candidates.append(value.strip())
-    for candidate in candidates:
-        if candidate.lower() != "anonymous":
-            return candidate
-    return _get_user_id()
-
-
-_USER_ID_MIGRATION_TABLES = (
-    "thread",
-    "sessionmessage",
-    "sessionsummary",
-    "singletask",
-    "tasks",
-    "userinput",
-    "agentjson",
-    "autogenmessage",
-    "plancheck",
-)
-
-
-def _migrate_user_id_aliases(to_id: str, *, extra_from: set[str] | None = None) -> int:
-    """Rewrite historical unstable/alias user_id rows onto the canonical id."""
-    if not isinstance(to_id, str):
-        return 0
-    target = to_id.strip()
-    if not target or target.lower() == "anonymous":
-        return 0
-
-    from_ids: set[str] = {"anonymous"}
-    if extra_from:
-        for item in extra_from:
-            if isinstance(item, str) and item.strip() and item.strip() != target:
-                from_ids.add(item.strip())
-    identity = _read_desktop_identity()
-    aliases = identity.get("aliases")
-    if isinstance(aliases, list):
-        for item in aliases:
-            if isinstance(item, str) and item.strip() and item.strip() != target:
-                from_ids.add(item.strip())
-    from_ids.discard(target)
-    if not from_ids:
-        return 0
-
-    migrated = 0
-    try:
-        db = _get_db()
-        from sqlmodel import Session
-
-        with Session(db.engine) as session:
-            existing = {
-                row[0]
-                for row in session.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'")
-                ).fetchall()
-            }
-            for table in _USER_ID_MIGRATION_TABLES:
-                if table not in existing:
-                    continue
-                cols = {
-                    row[1]
-                    for row in session.execute(text(f"PRAGMA table_info({table})")).fetchall()
-                }
-                if "user_id" not in cols:
-                    continue
-                for from_id in from_ids:
-                    result = session.execute(
-                        text(f"UPDATE {table} SET user_id = :to_id WHERE user_id = :from_id"),
-                        {"to_id": target, "from_id": from_id},
-                    )
-                    migrated += int(result.rowcount or 0)
-            session.commit()
-        if migrated:
-            logger.info(
-                f"Migrated {migrated} DB row(s) onto canonical user_id={target} "
-                f"from aliases={sorted(from_ids)}"
-            )
-    except Exception as e:
-        logger.warning(f"user_id alias migration failed: {e}")
-    return migrated
+    return _desktop_user_name or _DEFAULT_USER_ID
 
 
 def _get_default_model_alias() -> str:
@@ -4565,7 +4438,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
     thread_id = request.thread_id or str(uuid.uuid4())
 
-    user_id = _resolve_request_user_id(request.user_id, raw_request)
+    user_id = request.user_id or _get_user_id()
 
     if request.workspace_id:
         workspace_root = _workspace_root(request.workspace_id)
@@ -5860,22 +5733,11 @@ async def set_cli_config(key: str, req: CliConfigSetRequest):
                 f"{sorted(_CLI_CONFIG_WRITABLE)}"
             ),
         )
-    from drsai.backend.cli.config import load_config, update_config
+    from drsai.backend.cli.config import update_config
 
-    previous = load_config().get(key)
     update_config(**{key: req.value})
-    migrated_rows = 0
-    if key == "user_id" and isinstance(req.value, str):
-        extra = {previous} if isinstance(previous, str) else set()
-        migrated_rows = _migrate_user_id_aliases(req.value, extra_from=extra)
     evicted = await manager.evict_user(_get_user_id())
-    return {
-        "ok": True,
-        "key": key,
-        "value": req.value,
-        "evicted_sessions": evicted,
-        "migrated_rows": migrated_rows,
-    }
+    return {"ok": True, "key": key, "value": req.value, "evicted_sessions": evicted}
 
 
 # ════════════════════════════════════════════════════════════════════════════
