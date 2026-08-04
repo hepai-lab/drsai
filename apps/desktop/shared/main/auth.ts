@@ -714,6 +714,25 @@ function writeStoredSession(session: StoredAuthSession): void {
   } finally {
     rmSync(temporaryFile, { force: true });
   }
+  const userId = session.user?.id || session.user?.email;
+  if (userId) void propagateAuthIdentityToGateway(userId);
+}
+
+let lastPropagatedAuthUserId: string | null = null;
+
+async function propagateAuthIdentityToGateway(userId: string): Promise<void> {
+  const trimmed = userId.trim();
+  if (!trimmed) return;
+  // Token refresh rewrites the session file with the same user. Skip those
+  // so we do not thrash Gateway identity APIs during chat.
+  if (lastPropagatedAuthUserId === trimmed) return;
+  try {
+    const { syncAuthIdentityToGateway } = await import("./gateway");
+    await syncAuthIdentityToGateway(trimmed);
+    lastPropagatedAuthUserId = trimmed;
+  } catch {
+    // Login must succeed even if Gateway is offline; bootstrap/startGateway retries.
+  }
 }
 
 function serializeStoredSession(session: StoredAuthSession): SerializedStoredAuthSession {
@@ -758,6 +777,7 @@ function clearStoredSession(clearLocalData: boolean): void {
     rmSync(LEGACY_AUTH_SESSION_FILE, { force: true });
     for (const reference of references) credentialService?.remove?.(reference);
     if (clearLocalData) oidcMetadataCache = null;
+    lastPropagatedAuthUserId = null;
   } catch {
     // Best-effort cleanup; logout should still clear renderer state.
   }

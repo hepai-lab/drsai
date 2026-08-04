@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import type { DesktopBootstrapResult, DesktopHealth, InstallProgress, InstallStatus, PrerequisiteStatus } from "../../../shared/api/desktopApi";
 import { requireAuthContext } from "../../../shared/main/auth";
-import { getGatewayModels, getGatewayStatus, startGateway } from "./gateway";
+import { getGatewayModels, getGatewayStatus, startGateway, syncAuthIdentityToGateway } from "./gateway";
 import { DRSAI_CONFIG_FILE, DRSAI_ENV_FILE, DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, DRSAI_SCRIPT } from "../../../shared/main/paths";
 import { getUpdateStatus } from "./updater";
 import { ensureBundledRuntimeInstalled, hasBundledRuntime, inspectInstalledRuntime } from "./runtimeInstaller";
@@ -51,6 +51,7 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   if (!auth.session.user || auth.authMode !== "oidc" || !auth.accessToken) {
     throw new Error("HepAI OIDC sign-in is required before preparing OpenDrSai.");
   }
+  await syncAuthIdentityToGateway(auth.userId);
   await ensureBundledRuntimeInstalled();
   const ready = await startGateway();
   const { models, dataLength } = ready ? await getGatewayModels(auth.accessToken) : { models: [] as Array<{ id: string; name: string }>, dataLength: 0 };

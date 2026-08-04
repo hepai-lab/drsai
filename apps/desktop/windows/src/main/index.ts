@@ -34,6 +34,7 @@ import {
   shutdownGateway,
   startGateway,
   stopGateway,
+  syncAuthIdentityToGateway,
 } from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
@@ -3997,7 +3998,11 @@ function registerIpc(): void {
         event.sender.send("desktop:oidc-login-debug", debugEvent);
       }
     });
-    if (result.ok) focusMainWindow();
+    if (result.ok) {
+      const userId = result.session?.user?.id || result.session?.user?.email;
+      if (userId) await syncAuthIdentityToGateway(userId);
+      focusMainWindow();
+    }
     return result;
   });
   secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());

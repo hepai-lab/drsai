@@ -285,9 +285,15 @@ _DB_URI = f"sqlite:///{_DATASET}/drsai.db"
 
 
 
-# Default desktop user â can be overridden via API
+# Default desktop user — API override and cli_config take precedence at runtime.
 
-_DEFAULT_USER_ID = os.environ.get("DRSAI_DESKTOP_USER", os.environ.get("USER", os.environ.get("USERNAME", "desktop")))
+_DEFAULT_USER_ID = os.environ.get(
+    "DRSAI_DESKTOP_USER",
+    os.environ.get(
+        "DRSAI_USER_ID",
+        os.environ.get("USER", os.environ.get("USERNAME", "desktop")),
+    ),
+)
 
 
 
@@ -299,9 +305,25 @@ _desktop_user_name: str | None = None
 
 def _get_user_id() -> str:
 
-    """Resolve the effective user_id: API override > env var > system user."""
+    """Resolve effective user_id: runtime override > env > cli_config > system user."""
 
-    return _desktop_user_name or _DEFAULT_USER_ID
+    if _desktop_user_name:
+        return _desktop_user_name
+    for key in ("DRSAI_DESKTOP_USER", "DRSAI_USER_ID"):
+        value = (os.environ.get(key) or "").strip()
+        if value:
+            return value
+    try:
+        from drsai.backend.cli.config import load_config
+
+        cfg_user = load_config().get("user_id")
+        if isinstance(cfg_user, str):
+            trimmed = cfg_user.strip()
+            if trimmed and trimmed.lower() != "anonymous":
+                return trimmed
+    except Exception as e:
+        logger.debug(f"Failed to read user_id from cli config: {e}")
+    return _DEFAULT_USER_ID
 
 
 def _get_default_model_alias() -> str:

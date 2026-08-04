@@ -39,6 +39,28 @@ export function saveDefaultModelAlias(rawModel: unknown): string | undefined {
   return model;
 }
 
+export function getCliConfigUserId(): string | undefined {
+  const value = readCliConfig().user_id;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === "anonymous" || trimmed.length > 200 || /[\r\n\0]/.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+export function setCliConfigUserId(userId: string): string {
+  const trimmed = userId.trim();
+  if (!trimmed || trimmed.length > 200 || /[\r\n\0]/.test(trimmed)) {
+    throw new Error("My DrSai user_id is invalid.");
+  }
+  const config = readCliConfig();
+  if (config.user_id === trimmed) return trimmed;
+  config.user_id = trimmed;
+  writeCliConfig(config);
+  return trimmed;
+}
+
 function readCliConfig(): Record<string, unknown> {
   if (!existsSync(CLI_CONFIG_FILE)) return {};
   try {
