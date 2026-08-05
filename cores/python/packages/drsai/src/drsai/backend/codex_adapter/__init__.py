@@ -9,6 +9,7 @@ from drsai.backend.codex_adapter.binary_provider import (
     CodexArtifactStore,
     CodexBinary,
     CodexBinaryProvider,
+    discover_windows_codex_desktop,
     CodexPlatformLauncher,
     verify_codex_compatibility,
 )
@@ -26,7 +27,7 @@ from drsai.backend.codex_adapter.factory import build_codex_adapter
 
 __all__ = [
     "CodexAdapter", "CodexAppServerClient", "CodexArtifactStore", "CodexBinary",
-    "CodexBinaryProvider", "CodexPlatformLauncher", "verify_codex_compatibility",
+    "CodexBinaryProvider", "CodexPlatformLauncher", "discover_windows_codex_desktop", "verify_codex_compatibility",
     "CodexAppServerProcess", "CodexRestartPolicy", "redact_secrets",
     "CodexJSONRPCClient",
     "CodexModelCapability", "CodexModelCatalog",

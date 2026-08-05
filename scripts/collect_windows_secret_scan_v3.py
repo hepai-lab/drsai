@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Iterable
@@ -26,8 +27,11 @@ def _link(files: Iterable[Path], destination: Path, *, limit: int = 200) -> int:
         target = destination / f"{count:04d}-{source.name}"
         try:
             os.link(source, target)
-        except OSError as exc:
-            raise RuntimeError("windows_secret_scan_hardlink_failed") from exc
+        except OSError:
+            try:
+                shutil.copy2(source, target)
+            except OSError as exc:
+                raise RuntimeError("windows_secret_scan_copy_failed") from exc
         count += 1
     return count
 

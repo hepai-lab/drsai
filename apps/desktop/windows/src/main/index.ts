@@ -93,7 +93,7 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { getMyDrSaiConfig, updateMyDrSaiConfig } from "../../../shared/main/myDrSaiConfig";
+import { deleteMyDrSaiModelProvider, discoverMyDrSaiProviderModels, getMyDrSaiConfig, listMyDrSaiModelProviderPresets, testMyDrSaiModelDraft, testMyDrSaiModelProvider, updateMyDrSaiConfig, updateMyDrSaiModelConnection } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
@@ -106,6 +106,7 @@ import {
   searchThreadMessages,
   updateThread,
   updateThreadSnapshot,
+  upsertThreadFromRun,
 } from "./threads";
 import {
   createThreadShare,
@@ -457,6 +458,7 @@ import type {
   InteractiveDebugEvaluateRequest,
   InteractiveDebugStartRequest,
   UpdateMyDrSaiConfigRequest,
+  UpdateMyDrSaiModelConnectionRequest,
 } from "../shared/desktopApi";
 import {
   evaluateExecutionPermission,
@@ -495,7 +497,11 @@ function runtimeThreadSubscriptionKey(webContents: WebContents, threadId: string
 function stopRuntimeThreadSubscriptions(webContentsId?: number): void {
   for (const [key, subscription] of runtimeThreadSubscriptions) {
     if (webContentsId === undefined || key.startsWith(`${webContentsId}:`)) {
-      subscription.stop();
+      try {
+        subscription.stop();
+      } catch {
+        // The owning WebContents may already be destroyed during app quit.
+      }
       runtimeThreadSubscriptions.delete(key);
     }
   }
@@ -4081,6 +4087,39 @@ function registerIpc(): void {
     if (externalUrl && isAllowedExternalUrl(externalUrl)) await shell.openExternal(externalUrl);
     return { type: result.type, loginId: result.loginId, verificationUrl: result.verificationUrl, userCode: result.userCode };
   });
+  secureHandle("desktop:restart-codex-backend", async () => {
+    const client = await LocalRuntimeClient.connect();
+    await client.restartBackend("codex");
+    const capability = (await client.getCapabilities()).agent_backends?.codex;
+    return presentCodexBackendStatus(capability, await client.getBackendAccount("codex", true));
+  });
+  secureHandle("desktop:sync-codex-workspace-sessions", async (_event, workspaceId: string, workspacePath: string) => {
+    if (!/^[A-Za-z0-9_.:-]{1,160}$/.test(workspaceId) || typeof workspacePath !== "string" || workspacePath.length > 2048 || /[\r\n\0]/.test(workspacePath)) {
+      throw new Error("Workspace identity for Codex Session sync is invalid.");
+    }
+    const result = await (await LocalRuntimeClient.connect()).syncBackendSessions(workspaceId, "codex");
+    const threads: Awaited<ReturnType<typeof updateThread>>[] = [];
+    for (const session of result.sessions) {
+      const thread = await upsertThreadFromRun({
+        id: session.session_id,
+        kind: "chat",
+        title: session.title,
+        workspacePath,
+        boundAgentId: "my-codex",
+        boundAgentName: "Codex",
+        runtimeSessionId: session.session_id,
+        status: "idle",
+        messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+      });
+      threads.push(await updateThread({
+        id: thread.id,
+        archived: session.archived === true,
+        archiveSource: session.archived === true ? "codex" : undefined,
+      }));
+    }
+    return { workspaceId, discovered: result.discovered, active: result.active, archived: result.archived,
+      created: result.created, updated: result.updated, skipped: result.skipped, conflicts: result.conflicts, threads };
+  });
   secureHandle("desktop:cancel-codex-backend-login", async (_event, loginId: string) => {
     await (await LocalRuntimeClient.connect()).cancelBackendLogin("codex", loginId);
     return true;
@@ -4704,6 +4743,18 @@ function registerIpc(): void {
   secureHandle("desktop:update-my-drsai-config", (_event, request: UpdateMyDrSaiConfigRequest) =>
     updateMyDrSaiConfig(request),
   );
+  secureHandle("desktop:update-my-drsai-model-connection", (_event, request: UpdateMyDrSaiModelConnectionRequest) =>
+    updateMyDrSaiModelConnection(request),
+  );
+  secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
+    testMyDrSaiModelProvider(provider, model),
+  );
+  secureHandle("desktop:test-my-drsai-model-draft", (_event, request: UpdateMyDrSaiModelConnectionRequest, mode?: "basic" | "model") => testMyDrSaiModelDraft(request, mode));
+  secureHandle("desktop:list-my-drsai-model-provider-presets", () => listMyDrSaiModelProviderPresets());
+  secureHandle("desktop:discover-my-drsai-provider-models", (_event, provider: string, refresh?: boolean) => discoverMyDrSaiProviderModels(provider, refresh));
+  secureHandle("desktop:delete-my-drsai-model-provider", (_event, provider: string, deleteCredential?: boolean) =>
+    deleteMyDrSaiModelProvider(provider, deleteCredential),
+  );
   secureHandle("desktop:create-thread", (_event, request) =>
     createThread(request),
   );
@@ -4716,14 +4767,16 @@ function registerIpc(): void {
     if (typeof value?.threadId !== "string" || typeof value.archived !== "boolean") throw new Error("Archive request is invalid.");
     return setThreadArchived(value.threadId, value.archived);
   });
-  secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) =>
-    (await getRemoteThreadSnapshot(threadId))
-    || (await listThreads().then(async (items) => {
-      const thread = items.find((item) => item.id === threadId);
-      return thread ? getRuntimeThreadSnapshot(thread).catch(() => null) : null;
-    }))
-    || getThreadSnapshot(threadId),
-  );
+  secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) => {
+    const remote = await getRemoteThreadSnapshot(threadId);
+    if (remote) return remote;
+    const thread = (await listThreads()).find((item) => item.id === threadId);
+    if (thread?.runtimeSessionId) {
+      const runtime = await getRuntimeThreadSnapshot(thread);
+      if (runtime) return runtime;
+    }
+    return getThreadSnapshot(threadId);
+  });
   secureHandle("desktop:subscribe-thread-snapshot", async (event, threadId: string) => {
     if (typeof threadId !== "string") return false;
     const thread = (await listThreads()).find((item) => item.id === threadId);

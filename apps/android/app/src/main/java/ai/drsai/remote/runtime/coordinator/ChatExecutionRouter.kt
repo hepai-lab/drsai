@@ -55,7 +55,7 @@ interface ChatEngine {
     fun stop(runId: String)
 }
 
-private class LocalChatEngine(private val runtime: LocalAgentRuntime) : ChatEngine {
+internal class LocalChatEngine(private val runtime: LocalAgentRuntime) : ChatEngine {
     override val authority = RuntimeAuthority.LOCAL_DEVICE
     override fun execute(request: ChatRunRequest) = runtime.run(
         request.accountSubject, request.conversation, request.input, request.attachments,
@@ -65,7 +65,7 @@ private class LocalChatEngine(private val runtime: LocalAgentRuntime) : ChatEngi
     override fun stop(runId: String) = runtime.stop(runId)
 }
 
-private class PlatformChatEngine(private val runtime: PlatformAgentRuntime) : ChatEngine {
+internal class PlatformChatEngine(private val runtime: PlatformAgentRuntime) : ChatEngine {
     override val authority = RuntimeAuthority.REMOTE_RUNTIME
     override fun execute(request: ChatRunRequest) = runtime.run(
         request.conversation, request.input, request.attachments, request.runId,

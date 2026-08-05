@@ -201,6 +201,9 @@ class AgentRuntimeTests(unittest.TestCase):
         completed = next(event for event in self.engine.list_events(run["run_id"]) if event["type"] == "tool.completed")
         for key in ("runtime_id", "workspace_id", "session_id", "run_id"):
             self.assertEqual(completed["data"][key], context[key])
+        self.assertTrue(completed["data"]["operation_id"].startswith("operation-"))
+        started = next(event for event in self.engine.list_events(run["run_id"]) if event["type"] == "tool.started")
+        self.assertEqual(started["data"]["operation_id"], completed["data"]["operation_id"])
         self.assertEqual(context["agent_backend_runtime_id"], context["runtime_id"])
         self.assertEqual(context["workspace_runtime_id"], context["runtime_id"])
         with self.assertRaisesRegex(RuntimeExecutionError, "cannot override") as caught:
@@ -336,6 +339,16 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(Path(cwd), self.workspace)
         tool_events = [event for event in self.engine.list_events(run["run_id"]) if event["type"] == "tool.completed"]
         self.assertEqual([event["data"]["kind"] for event in tool_events], ["shell", "process", "test"])
+        self.assertEqual(len({event["data"]["operation_id"] for event in tool_events}), 3)
+        oaep_commands = [
+            item for item in self.engine.oaep_snapshot(run["session_id"])["items"]
+            if item["type"] == "command_execution"
+        ]
+        self.assertEqual(len(oaep_commands), 3)
+        for item in oaep_commands:
+            self.assertEqual(item["content"]["operation_ref"]["operation"], "process.start")
+            self.assertEqual(item["content"]["operation_ref"]["workspace_id"], self.workspace_record.workspace_id)
+            self.assertEqual(item["content"]["resource_refs"][0]["resource_type"], "process")
         with self.assertRaises(RuntimeExecutionError) as caught:
             RuntimeToolDispatcher(self.engine).dispatch(
                 self.service_context(run, reference), "shell", "python", {"command": [sys.executable, "-V"], "cwd": ".."}
@@ -350,6 +363,27 @@ class AgentRuntimeTests(unittest.TestCase):
             with self.subTest(path=forbidden), self.assertRaises(RuntimeExecutionError) as caught:
                 RuntimeToolDispatcher._cwd(context, forbidden)
             self.assertIn(caught.exception.code, {"workspace_absolute_path_rejected", "workspace_escape_rejected"})
+
+    def test_owop_process_failure_maps_to_structured_oaep_error(self) -> None:
+        reference = self.definition("owop-error", "1", ["shell:*"])
+        run = self.create_runtime_run(reference)
+        context = self.service_context(run, reference)
+        with self.assertRaises(RuntimeExecutionError) as caught:
+            RuntimeToolDispatcher(self.engine).dispatch(
+                context,
+                "shell",
+                "missing",
+                {"command": [str(self.workspace / "definitely-missing-executable")]},
+            )
+        self.assertEqual(caught.exception.code, "process_start_failed")
+        failed = next(
+            event for event in self.engine.list_oaep_events(run["session_id"])
+            if event["type"] == "event.item.failed"
+        )
+        self.assertEqual(failed["data"]["error"]["code"], "process_start_failed")
+        self.assertEqual(failed["data"]["error"]["source"], "owop")
+        self.assertFalse(failed["data"]["error"]["retryable"])
+        self.assertNotIn("traceback", str(failed).lower())
 
     def service_context(self, run: Mapping[str, Any], reference: str):
         service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}))
@@ -392,13 +426,28 @@ class AgentRuntimeTests(unittest.TestCase):
         run = self.create_runtime_run(reference, "diagnostic-failure")
         with self.assertRaises(RuntimeExecutionError):
             self.execute(self.service(OpenDrSaiAgentBackend(fail)), run["run_id"], "go")
-        failure = next(event for event in self.engine.list_events(run["run_id"]) if event["type"] == "agent.failed")
+        failure = next(
+            event
+            for event in self.engine.list_events(run["run_id"])
+            if event["type"] == "agent.failed" and "diagnostic" in event["data"]
+        )
         diagnostic = failure["data"]["diagnostic"]
         self.assertTrue(diagnostic["stack"])
         self.assertTrue(any(frame["language"] == "python" and frame["line"] > 0 for frame in diagnostic["stack"]))
         self.assertTrue(any(frame["in_app"] for frame in diagnostic["stack"]))
         self.assertNotIn("provider-secret-canary", json.dumps(diagnostic))
         self.assertNotIn(str(Path.home()), json.dumps(diagnostic))
+        session_id = run["session_id"]
+        oaep_items = {
+            item["id"]: item
+            for item in self.engine.oaep_snapshot(session_id)["items"]
+        }
+        notice = oaep_items[f"error:{run['run_id']}:agent"]
+        self.assertEqual(notice["type"], "notice")
+        self.assertEqual(notice["status"], "failed")
+        self.assertEqual(notice["content"]["code"], "agent_execution_failed")
+        self.assertNotIn("provider-secret-canary", json.dumps(notice))
+        self.assertNotIn(str(Path.home()), json.dumps(notice))
 
 
 if __name__ == "__main__":

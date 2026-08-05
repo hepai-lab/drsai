@@ -64,6 +64,19 @@ export async function setThreadArchivedWithPort(
     await port.updateRuntimeSession(updated, runtimeSessionId, archived);
   } catch (error) {
     port.reportRuntimeSyncFailure(thread.id, error);
+    if (thread.boundAgentId === "my-codex" || thread.archiveSource === "codex") {
+      await port.updateThread({
+        id: thread.id,
+        archived: Boolean(thread.archived),
+        archiveSource: thread.archived ? "codex" : undefined,
+      });
+      throw new Error(
+        archived
+          ? "Codex could not archive this session. Nothing changed; retry when Codex is available."
+          : "Codex could not restore this session. Nothing changed; retry when Codex is available.",
+        { cause: error },
+      );
+    }
   }
   return updated;
 }

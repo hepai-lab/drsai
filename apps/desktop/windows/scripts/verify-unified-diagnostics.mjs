@@ -26,15 +26,50 @@ const rootCause = loadTypeScript(join(root, "../shared/main/rootCauseAnalysis.ts
   if (specifier === "../api/diagnostics") return shared;
   return require(specifier);
 });
+const classifier = loadTypeScript(join(root, "../shared/main/diagnosticClassifier.ts"), (specifier) => {
+  if (specifier === "../api/diagnostics") return shared;
+  return require(specifier);
+});
+const agentProjector = loadTypeScript(join(root, "../shared/main/agentDiagnosticProjector.ts"), (specifier) => {
+  if (specifier === "../api/diagnostics") return shared;
+  return require(specifier);
+});
+const incidentProjector = loadTypeScript(join(root, "../shared/main/diagnosticIncidentProjector.ts"), (specifier) => {
+  if (specifier === "../api/diagnostics") return shared;
+  return require(specifier);
+});
 const mainPath = join(root, "../shared/main/diagnostics.ts");
 const main = loadTypeScript(mainPath, (specifier) => {
   if (specifier === "../api/diagnostics") return shared;
   if (specifier === "./rootCauseAnalysis") return rootCause;
+  if (specifier === "./diagnosticClassifier") return classifier;
+  if (specifier === "./agentDiagnosticProjector") return agentProjector;
+  if (specifier === "./diagnosticIncidentProjector") return incidentProjector;
   if (specifier === "./paths") return { DRSAI_HOME: tempRoot };
   return require(specifier);
 });
 
 try {
+  const agentClassification = classifier.classifyDiagnosticEvent({
+    module: "runtime", component: "runtime-engine", operation: "chat.run", message: "Waiting for model backend", status: "waiting", runId: "run-one",
+  });
+  assert.equal(agentClassification.domain, "agent");
+  assert.equal(agentClassification.agentPhase, "waiting_model");
+  assert.equal(agentClassification.visibility, "milestone");
+  const protocolClassification = classifier.classifyDiagnosticEvent({
+    module: "runtime", component: "oaep/1", operation: "oaep.event.received", message: "event.item.delta", status: "running",
+  });
+  assert.equal(protocolClassification.domain, "protocol");
+  assert.equal(protocolClassification.visibility, "raw");
+  const appClassification = classifier.classifyDiagnosticEvent({
+    module: "desktop", component: "renderer", operation: "window.error", message: "Renderer failed", status: "failed", errorCode: "RENDERER_FAILED",
+  });
+  assert.equal(appClassification.domain, "app");
+  assert.equal(appClassification.visibility, "milestone");
+  assert.equal(appClassification.fingerprint, classifier.classifyDiagnosticEvent({
+    module: "desktop", component: "renderer", operation: "window.error", message: "Renderer failed", status: "failed", errorCode: "RENDERER_FAILED",
+  }).fingerprint, "Equivalent failures must have a stable fingerprint.");
+
   const diagnostics = new main.DesktopDiagnostics();
   const operation = await diagnostics.start({
     traceId: "trace-test",
@@ -74,6 +109,9 @@ try {
   const oldTimestamp = new Date(Date.now() - 20_000).toISOString();
   await diagnostics.record({ traceId: "trace-stuck", spanId: "span-stuck-child", parentSpanId: "span-stuck-root", timestamp: new Date(Date.now() - 19_000).toISOString(), module: "tool", component: "terminal", operation: "terminal.wait", message: "Terminal is still running", status: "waiting" });
   await diagnostics.record({ traceId: "trace-stuck", spanId: "span-stuck-root", timestamp: oldTimestamp, module: "workspace", component: "workspace-operation", operation: "workspace.task", message: "Workspace task started", status: "started" });
+  await diagnostics.record({ traceId: "trace-renderer-one", module: "desktop", component: "renderer", operation: "window.error", message: "Renderer fixture failed", status: "failed", level: "error", errorCode: "RENDERER_FIXTURE" });
+  await diagnostics.record({ traceId: "trace-renderer-two", module: "desktop", component: "renderer", operation: "window.error", message: "Renderer fixture failed", status: "failed", level: "error", errorCode: "RENDERER_FIXTURE" });
+  await diagnostics.record({ traceId: "trace-agent-failed", module: "backend", component: "opendrsai-backend", operation: "runtime.agent.failed", message: "Agent fixture failed", status: "failed", level: "error", runId: "run-agent-failed", backendId: "opendrsai", source: { file: "C:\\repo\\agent.py", line: 12, language: "python" } });
 
   const snapshot = await diagnostics.snapshot({ limit: 100 });
   assert.equal(snapshot.events.filter((event) => event.id === child.id).length, 1, "Duplicate event ids must be ignored.");
@@ -88,6 +126,20 @@ try {
   assert.ok(snapshot.events.every((event) => !JSON.stringify(event).includes("secret-token")));
   assert.ok(snapshot.events.every((event) => !JSON.stringify(event).includes("secret-key")));
   assert.ok(snapshot.events.every((event) => !JSON.stringify(event).includes("must-not-exist")));
+  assert.equal(snapshot.events.find((event) => event.traceId === "trace-failed")?.domain, "app");
+  assert.ok(snapshot.events.some((event) => event.domain === "agent" && event.traceId === "trace-test"));
+  assert.ok((await diagnostics.snapshot({ domain: "agent", limit: 100 })).events.every((event) => event.domain === "agent"));
+  const projectedRun = snapshot.agentRuns.find((run) => run.traceId === "trace-test");
+  assert.equal(projectedRun?.phase, "completed");
+  assert.equal(projectedRun?.status, "completed");
+  assert.ok((projectedRun?.recentEvents.length ?? 0) >= 3);
+  const appIncident = snapshot.incidents.find((incident) => incident.errorCode === "RENDERER_FIXTURE");
+  assert.equal(appIncident?.domain, "app");
+  assert.equal(appIncident?.count, 2);
+  const agentIncident = snapshot.incidents.find((incident) => incident.runId === "run-agent-failed");
+  assert.equal(agentIncident?.domain, "agent");
+  assert.equal(agentIncident?.agentPhase, "failed");
+  assert.equal(agentIncident?.source?.line, 12);
 
   const exported = await diagnostics.serializeExport();
   assert.match(exported, /OpenDrSai Desktop/);
@@ -119,7 +171,7 @@ try {
   assert.ok(preload.includes("onDiagnosticEvent"));
   assert.ok(debugStore.includes("isBenignResizeObserverError(message)"), "ResizeObserver browser warnings must be classified before recording a renderer failure.");
   assert.ok(debugStore.includes('operation: "resize-observer.warning"') && debugStore.includes('status: "completed"'), "ResizeObserver warnings must not degrade renderer health.");
-  for (const contract of ["DiagnosticOverview", "TraceCard", "DiagnosticErrorCard", "Current execution"]) {
+  for (const contract of ["AgentDiagnosticView", "AppErrorView", "IncidentCard", "DiagnosticOverview", "TraceCard", "DiagnosticErrorCard", "Current execution"]) {
     assert.ok(panel.includes(contract), `Missing diagnostic UI contract: ${contract}`);
   }
 

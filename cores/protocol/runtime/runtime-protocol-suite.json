@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "suite": "opendrsai-runtime-protocol-suite/1",
+  "protocols": {
+    "oaep": {
+      "version": "1.0",
+      "profile": "oaep.session-stream/1",
+      "authority": "agent_session_facts",
+      "owns": ["session_projection", "run_projection", "item_projection", "agent_events"],
+      "does_not_own": ["transport", "authentication", "workspace_operations", "control_commands"]
+    },
+    "owop": {
+      "version": "1.0",
+      "authority": "workspace_resources_and_operations",
+      "owns": ["workspace", "files", "git", "process", "pty", "checkpoint", "artifact"],
+      "does_not_own": ["agent_session_history", "run_state_machine", "authentication"]
+    },
+    "control": {
+      "version": "1",
+      "authority": "runtime_commands",
+      "owns": ["session_commands", "run_commands", "approval_decisions"],
+      "does_not_own": ["event_history", "workspace_resource_payloads"]
+    },
+    "relay": {
+      "version": "2.0.0",
+      "authority": "transport_and_access",
+      "owns": ["authentication", "authorization", "routing", "connection_ownership", "bounded_replay"],
+      "does_not_own": ["backend_event_mapping", "agent_terminal_state", "workspace_state"]
+    }
+  },
+  "sequence_scopes": {
+    "oaep_event_sequence": "session",
+    "oaep_item_sequence": "run",
+    "owop_event_sequence": "resource_subscription"
+  },
+  "shared_identifiers": {
+    "runtime_id": ["oaep", "owop", "control", "relay"],
+    "workspace_id": ["oaep", "owop", "control", "relay"],
+    "session_id": ["oaep", "control", "relay"],
+    "run_id": ["oaep", "control", "relay"],
+    "item_id": ["oaep"],
+    "operation_id": ["oaep", "owop"],
+    "resource_ref": ["oaep", "owop"],
+    "correlation_id": ["oaep", "owop", "control", "relay"]
+  },
+  "client_negotiation_order": [
+    "oaep.session-stream/1",
+    "session-events/1",
+    "run-events/1"
+  ]
+}

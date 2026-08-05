@@ -1,6 +1,6 @@
 # OpenDrSai Agent Event Protocol（OAEP）
 
-状态：Draft v1.0
+状态：Stable v1.0
 协议目录：`cores/protocol/oaep`
 
 ## 定义
@@ -180,8 +180,23 @@ Citation 默认作为 Message、Artifact 或 Tool Call 的附属数据；调试 
 规则：
 
 - Event append-only，已经提交的 Event 不更新、不删除。
-- `sequence` 在一个 Run 中严格递增；Session 级 Event 可以不携带 `run_id`，由 Session Journal 分配顺序。
+- 在 `oaep.session-stream/1` profile 中，Event `sequence` 在一个 Session 内严格递增，
+  是 Snapshot、分页与实时订阅共同使用的恢复游标；跨多个 Run 仍保持连续。
+- Item `sequence` 仅表示 Item 在所属 Run 内的稳定展示顺序，不是 Event 游标。
+- Session 级 Event 可以不携带 `run_id`；Item Event 必须携带 `run_id` 和 `item_id`。
 - `event_id` 全局唯一；`dedupe_key` 在其生产者作用域内稳定。
+
+### 6.4 会话顺序与 Backend 映射扩展
+
+当前 `oaep/1` 以向后兼容的可选字段承载 V1.1 会话语义；不识别这些字段的 V1 客户端仍可读取文本：
+
+- `Event.sequence` 是 Session 范围的严格递增回放游标。
+- `Run.sequence` 是 Session 范围的 Backend 轮次序号；Codex Adapter 由 `thread.turns[]` 下标稳定生成。
+- `Item.sequence` 只在所属 Run 内有序，禁止跨 Run 直接按该字段排序。
+- `Run.source` / `Item.source` 可携带 `backend_run_id`、`backend_run_index`、`adapter_version` 和 `mapping_version`。
+- Message `parts` 保存 text/image/audio/file/resource_ref；`text` 是兼容投影，不得是 Backend 私有对象的字符串形式。
+- Backend 本地绝对路径不得进入 OAEP；媒体不可跨 Runtime 读取时必须明确降级，不得伪造可用资源。
+- 历史映射升级使用更高 Item revision 和 `event.item.updated`，保持 Session Event 日志 append-only。
 - Item Event 必须携带 `item_id`。
 - Delta 用于实时显示，最终 `event.item.completed.data.item` 是权威状态。
 

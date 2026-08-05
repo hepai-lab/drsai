@@ -63,6 +63,8 @@ def test_v2_schema_defines_resource_lifecycle_and_complete_mobile_control_surfac
         "session.read", "conversation.read", "run.list", "event.stream",
         "event.cursor_expired", "approval.list", "approval.decide",
         "association.revoke", "association.list", "enrollment.revoke",
+        "oaep.v1", "oaep.session.snapshot", "oaep.session.events",
+        "oaep.session.events.stream",
     }.issubset(schema["x-relay-capabilities"])
 
 
@@ -92,6 +94,70 @@ def test_session_event_profile_is_declared_but_not_advertised_before_runtime_sup
         "desktop": "1.5.3",
     }
     assert set(schema["x-session-event-kinds"]) == SESSION_EVENT_KINDS
+    oaep_profile = schema["x-relay-capability-profiles"]["oaep/1"]
+    assert set(oaep_profile) == {
+        "oaep.v1",
+        "oaep.session.snapshot",
+        "oaep.session.events",
+        "oaep.session.events.stream",
+        "event.cursor_expired",
+    }
+    assert CAPABILITY_PROFILES["oaep/1"] == frozenset(oaep_profile)
+    assert CAPABILITY_PROFILES["oaep/1"].issubset(CAPABILITIES)
+    assert MINIMUM_VERSIONS["oaep/1"] == {
+        "runtime": "1.6.0",
+        "android": "1.6.0",
+        "desktop": "1.6.0",
+    }
+    assert schema["x-relay-capability-profiles"]["oaep.session-stream/1"] == oaep_profile
+    assert schema["x-relay-minimum-versions"]["oaep.session-stream/1"] == {
+        "runtime": "1.6.0",
+        "android": "1.6.0",
+        "desktop": "1.6.0",
+    }
+
+
+def test_relay_oaep_frame_accepts_oaep_and_rejects_legacy_session_shape() -> None:
+    schema = json.loads(
+        (ROOT / "cores/protocol/relay/runtime-relay.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    oaep_schema = json.loads(
+        (ROOT / "cores/protocol/oaep/oaep.schema.json").read_text(encoding="utf-8")
+    )
+    raw_fixture = json.loads(
+        (ROOT / "cores/protocol/oaep/examples.json").read_text(encoding="utf-8")
+    )
+    event = next(item for item in raw_fixture["events"] if item["type"] == "event.item.delta")
+    frame_schema = json.loads(json.dumps(schema["$defs"]["runtime_oaep_event_frame"]))
+    frame_schema["properties"]["event"] = {"$ref": "#/$defs/event"}
+    validator = Draft202012Validator({**frame_schema, "$defs": oaep_schema["$defs"]})
+    frame = {
+        "type": "event",
+        "protocol": "oaep/1",
+        "scope": "session",
+        "runtime_id": "runtime-1",
+        "workspace_id": "workspace-1",
+        "session_id": event["session_id"],
+        "sequence": event["sequence"],
+        "event": event,
+    }
+    validator.validate(frame)
+
+    legacy = {
+        "event_id": "legacy-1",
+        "runtime_id": "runtime-1",
+        "workspace_id": "workspace-1",
+        "session_id": event["session_id"],
+        "run_id": event["run_id"],
+        "session_sequence": event["sequence"],
+        "kind": "conversation.item.delta",
+        "timestamp": event["timestamp"],
+        "payload": {"delta": "legacy"},
+    }
+    forged = {**frame, "event": legacy}
+    assert list(validator.iter_errors(forged))
 
 
 def test_session_conversation_fixture_validates_snapshot_event_and_runtime_frame() -> None:

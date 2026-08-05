@@ -120,11 +120,9 @@ function isSafeImageSource(src: string): boolean {
   }
 }
 
-function ReasoningPart({ text, complete, language }: { text: string; complete: boolean; language: "en" | "zh" }): React.JSX.Element {
+function ReasoningPart({ text, complete }: { text: string; complete: boolean; language: "en" | "zh" }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const labels = language === "zh"
-    ? { reasoning: "思考过程", thinking: "正在思考…" }
-    : { reasoning: "Reasoning", thinking: "Thinking…" };
+  const labels = { reasoning: "Reasoning", thinking: "Thinking" };
   const title = complete ? labels.reasoning : labels.thinking;
   return (
     <details className="chat-reasoning" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>

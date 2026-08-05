@@ -1,0 +1,14 @@
+{
+  "protocol_version": 1,
+  "message_type": "start_run",
+  "request_id": "request-fixture-1",
+  "run_id": "run-fixture-1",
+  "session_id": "session-fixture-1",
+  "sequence": 0,
+  "idempotency_key": "start:run-fixture-1",
+  "payload": {
+    "input": "分析附件并给出摘要",
+    "artifact_ids": ["artifact-opaque-1"],
+    "skill_versions": {"summarize": 1}
+  }
+}

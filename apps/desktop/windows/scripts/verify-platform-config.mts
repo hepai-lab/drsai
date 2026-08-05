@@ -19,8 +19,27 @@ try {
   assert.equal(getActivePlatformConfig().name, "development");
   assert.match(readFileSync(getPlatformConfigPath(), "utf8"), /active_platform = "development"/);
 
-  writeFileSync(getPlatformConfigPath(), 'active_platform = "production"\ninvalid = "value"\n', "utf8");
-  assert.throws(() => getActivePlatformConfig(), /Unknown platform configuration key/);
+  writeFileSync(getPlatformConfigPath(), `active_platform = "production"
+
+config_version = 2
+model = "hepai/deepseek-v4-pro"
+model_provider = "hepai"
+
+[platforms.production]
+portal_url = "https://ai.ihep.ac.cn"
+base_url = "https://aiapi.ihep.ac.cn/apiv2"
+
+[model_providers.hepai]
+base_url = "https://aiapi.ihep.ac.cn/apiv2"
+wire_api = "openai"
+requires_api_key = true
+`, "utf8");
+  const production = getActivePlatformConfig();
+  assert.equal(production.name, "production");
+  assert.equal(production.baseUrl, "https://aiapi.ihep.ac.cn/apiv2");
+
+  writeFileSync(getPlatformConfigPath(), 'active_platform = 2\n', "utf8");
+  assert.equal(getActivePlatformConfig().name, "development");
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

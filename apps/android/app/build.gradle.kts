@@ -15,6 +15,16 @@ fun versionCodeFor(version: String): Int {
         (parts.getOrElse(1) { 0 } * 100) + parts.getOrElse(2) { 0 }
 }
 val systemVersionCode = versionCodeFor(systemVersion)
+val androidBuildPython = providers.gradleProperty("opendrsai.android.buildPython")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_BUILD_PYTHON"))
+    .getOrElse(rootProject.file("../../.venv/Scripts/python.exe").absolutePath)
+val pythonRuntimeEnabled = providers.gradleProperty("opendrsai.android.pythonRuntimeEnabled")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_PYTHON_RUNTIME_ENABLED"))
+    .map(String::toBooleanStrict)
+    .getOrElse(false)
+val runtimePolicyPublicKey = providers.gradleProperty("opendrsai.android.runtimePolicyPublicKey")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_RUNTIME_POLICY_PUBLIC_KEY"))
+    .getOrElse("")
 val acceptanceVersion = providers.gradleProperty("opendrsai.android.acceptanceVersion").orNull?.also {
     require(Regex("\\d+\\.\\d+\\.\\d+").matches(it)) { "Invalid acceptance version: $it" }
 }
@@ -93,13 +103,29 @@ fun String.asBuildConfigString(): String =
 
 plugins {
     id("com.android.application")
+    id("com.chaquo.python")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.kapt")
 }
 
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+        buildPython(androidBuildPython)
+    }
+    sourceSets {
+        getByName("main") {
+            srcDir(rootProject.file("../../cores/python/packages/drsai/src/drsai/backend/runtime"))
+        }
+    }
+}
+
 android {
     namespace = "ai.drsai.remote"
+    sourceSets.getByName("test").resources.srcDir(
+        rootProject.file("../../cores/protocol/android-runtime/fixtures")
+    )
     compileSdk = 35
     testBuildType = providers.gradleProperty("opendrsai.android.testBuildType").getOrElse("debug")
 
@@ -107,6 +133,7 @@ android {
         applicationId = "ai.drsai.remote"
         minSdk = 26
         targetSdk = 35
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testProguardFiles("proguard-android-test.pro")
         versionCode = systemVersionCode
@@ -122,6 +149,9 @@ android {
         buildConfigField("String", "ANDROID_UPDATE_FALLBACK_MANIFEST_URL", stableUpdateFallbackManifestUrl.asBuildConfigString())
         buildConfigField("String", "ANDROID_UPDATE_CHANNEL", "stable".asBuildConfigString())
         buildConfigField("boolean", "ANDROID_UPDATE_ALLOW_INSECURE_LOCAL", "false")
+        buildConfigField("boolean", "PYTHON_LOCAL_RUNTIME_ENABLED", "false")
+        buildConfigField("String", "RUNTIME_POLICY_URL", "$haiBaseUrl/api/runtime-policy/android".asBuildConfigString())
+        buildConfigField("String", "RUNTIME_POLICY_PUBLIC_KEY", runtimePolicyPublicKey.asBuildConfigString())
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         manifestPlaceholders["appLabel"] = "OpenDrSai"
     }
@@ -170,6 +200,8 @@ android {
             buildConfigField("String", "ANDROID_UPDATE_FALLBACK_MANIFEST_URL", devUpdateFallbackManifestUrl.asBuildConfigString())
             buildConfigField("String", "ANDROID_UPDATE_CHANNEL", (androidUpdateChannelOverride ?: "dev").asBuildConfigString())
             buildConfigField("boolean", "ANDROID_UPDATE_ALLOW_INSECURE_LOCAL", androidUpdateAllowInsecureLocal.toString())
+            buildConfigField("boolean", "PYTHON_LOCAL_RUNTIME_ENABLED", pythonRuntimeEnabled.toString())
+            buildConfigField("String", "RUNTIME_POLICY_URL", "$developmentHaiBaseUrl/api/runtime-policy/android".asBuildConfigString())
             manifestPlaceholders["usesCleartextTraffic"] = "true"
         }
         release {
@@ -198,6 +230,7 @@ android {
         }
         create("acceptance") {
             initWith(getByName("release"))
+            isDebuggable = true
             applicationIdSuffix = ".acceptance"
             buildConfigField("String", "HAI_BASE_URL", developmentHaiBaseUrl.asBuildConfigString())
             buildConfigField("String", "OIDC_ISSUER", developmentOidcIssuer.asBuildConfigString())
@@ -208,6 +241,8 @@ android {
             buildConfigField("String", "ANDROID_UPDATE_FALLBACK_MANIFEST_URL", devUpdateFallbackManifestUrl.asBuildConfigString())
             buildConfigField("String", "ANDROID_UPDATE_CHANNEL", (androidUpdateChannelOverride ?: "dev").asBuildConfigString())
             buildConfigField("boolean", "ANDROID_UPDATE_ALLOW_INSECURE_LOCAL", androidUpdateAllowInsecureLocal.toString())
+            buildConfigField("boolean", "PYTHON_LOCAL_RUNTIME_ENABLED", "true")
+            buildConfigField("String", "RUNTIME_POLICY_URL", "$developmentHaiBaseUrl/api/runtime-policy/android".asBuildConfigString())
             isMinifyEnabled = false
             isShrinkResources = false
             isDebuggable = true
@@ -231,6 +266,12 @@ android {
 
 androidComponents {
     onVariants(selector().all()) { variant ->
+        // Chaquopy resolves its native runtimes from defaultConfig, so keep x86_64
+        // available for emulator acceptance builds and remove it only from
+        // production-derived artifacts at packaging time.
+        if (variant.buildType == "release" || variant.buildType == "mvp") {
+            variant.packaging.jniLibs.excludes.add("**/x86_64/*.so")
+        }
         val variantVersion = if (variant.buildType == "acceptance") acceptanceVersion ?: systemVersion else systemVersion
         variant.outputs.forEach { output ->
             (output as VariantOutputImpl).apply {
@@ -291,7 +332,7 @@ tasks.register("verifyAndroidOwopBindings") {
         check(generatedOwopFile.exists()) {
             "Missing generated Android OWOP bindings. Run generateAndroidOwopBindings."
         }
-        check(generatedOwopFile.readText() == renderAndroidOwopBindings()) {
+        check(generatedOwopFile.readText().replace("\r\n", "\n") == renderAndroidOwopBindings().replace("\r\n", "\n")) {
             "Android OWOP bindings drifted from cores/protocol/owop/owop.schema.json. Run generateAndroidOwopBindings."
         }
     }
@@ -405,6 +446,8 @@ data class GeneratedSessionEvent(
     val kind: String,
     val timestamp: String,
     val payload: Map<String, Any?>,
+    val itemId: String? = null,
+    val itemRevision: Long? = null,
 )
 
 data class GeneratedRuntimeSessionEventFrame(
@@ -434,7 +477,7 @@ tasks.register("verifyAndroidRelayBindings") {
         check(generatedRelayFile.exists()) {
             "Missing generated Android Relay bindings. Run generateAndroidRelayBindings."
         }
-        check(generatedRelayFile.readText() == renderAndroidRelayBindings()) {
+        check(generatedRelayFile.readText().replace("\r\n", "\n") == renderAndroidRelayBindings().replace("\r\n", "\n")) {
             "Android Relay bindings drifted from cores/protocol/relay/runtime-relay.schema.json."
         }
     }
@@ -458,6 +501,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    add("acceptanceImplementation", "androidx.compose.ui:ui-test-manifest")
     implementation("androidx.navigation:navigation-compose:2.9.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

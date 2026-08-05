@@ -102,7 +102,7 @@ class HttpRelayDiscoveryService(
     private val pairingIssuer = "${root.scheme}://${root.host}"
 
     override suspend fun listRuntimes(cursor: String?, query: String?): Page<DiscoveredRuntime> =
-        getPage("v1/runtimes", cursor, query) { item ->
+        getPage("v1/runtimes", cursor, query, allowUnassociatedFallback = true) { item ->
             val identity = item.getJSONObject("runtime")
             val runtimeId = RuntimeId(identity.getString("runtime_id"))
             val runtimeVersion = identity.getString("version")
@@ -313,6 +313,7 @@ class HttpRelayDiscoveryService(
         cursor: String?,
         query: String?,
         extraQueries: List<Pair<String, String>> = emptyList(),
+        allowUnassociatedFallback: Boolean = false,
         decode: (JSONObject) -> T,
     ): Page<T> =
         withContext(Dispatchers.IO) {
@@ -322,9 +323,9 @@ class HttpRelayDiscoveryService(
                 extraQueries.forEach { addQueryParameter(it.first, it.second) }
             }.build()
             val initialToken = accessToken()
-            fun execute(token: String) = http.newCall(
+            fun execute(token: String, includeDeviceProof: Boolean = true) = http.newCall(
                 authorizeRelayRequest(
-                    deviceProof,
+                    deviceProof.takeIf { includeDeviceProof },
                     Request.Builder().url(url)
                         .header("Authorization", "Bearer $token")
                         .get()
@@ -332,12 +333,30 @@ class HttpRelayDiscoveryService(
                     token,
                 )
             ).execute()
-            var response = execute(initialToken)
+            fun retryUnassociatedIfAllowed(
+                response: okhttp3.Response,
+                token: String,
+            ): okhttp3.Response {
+                if (!allowUnassociatedFallback || response.code != 401) return response
+                val body = runCatching {
+                    JSONObject(response.peekBody(64 * 1024).string())
+                }.getOrNull()
+                val detail = body?.optJSONObject("detail")
+                val errorCode = body?.optString("code")?.takeIf(String::isNotBlank)
+                    ?: detail?.optString("code")?.takeIf(String::isNotBlank)
+                return if (errorCode == "invalid_device_proof") {
+                    response.close()
+                    execute(token, includeDeviceProof = false)
+                } else {
+                    response
+                }
+            }
+            var response = retryUnassociatedIfAllowed(execute(initialToken), initialToken)
             if (response.code == 401) {
                 response.close()
                 val refreshed = refreshAfter(initialToken)
                 if (refreshed.isNullOrBlank()) throw RelayHttpException(401, null)
-                response = execute(refreshed)
+                response = retryUnassociatedIfAllowed(execute(refreshed), refreshed)
             }
             response.use {
                 if (!response.isSuccessful) throw relayHttpException(response)

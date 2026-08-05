@@ -262,6 +262,8 @@ async function runAgent(
         body: JSON.stringify({
           model,
           messages: [{ role: "user", content: buildAgentExecutionPrompt(request) }],
+          display_message: request.task,
+          source_message_id: requestId,
           stream: true,
           user_id: authContext.userId,
           thread_id: sessionId,

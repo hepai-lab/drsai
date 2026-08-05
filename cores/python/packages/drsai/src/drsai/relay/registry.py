@@ -17,11 +17,13 @@ from .models import ResourceLifecycle, RuntimeCapabilities, RuntimeIdentity, Run
 
 
 class RelayRegistryError(Exception):
-    def __init__(self, code: str, message: str, *, retryable: bool = False, source: str = "relay") -> None:
+    def __init__(self, code: str, message: str, *, retryable: bool = False,
+                 source: str = "relay", details: dict | None = None) -> None:
         super().__init__(message)
         if source not in {"relay", "runtime"}:
             raise ValueError("relay_error_source_invalid")
         self.code, self.message, self.retryable, self.source = code, message, retryable, source
+        self.details = dict(details or {})
 
 
 @dataclass

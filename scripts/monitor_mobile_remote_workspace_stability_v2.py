@@ -137,8 +137,7 @@ def android_probe(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     nonce = uuid4().hex
     started = time.perf_counter()
     component = f"{args.package}/{PROBE_RECEIVER}"
-    dispatched = subprocess.run(
-        [
+    command = [
             args.adb, "-s", args.device, "shell", "am", "broadcast",
             "--receiver-foreground",
             "-a", PROBE_ACTION,
@@ -148,7 +147,12 @@ def android_probe(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "--es", "workspace_id", args.workspace_id,
             "--es", "session_id", args.session_id,
             "--es", "relay_base_url", args.base_url.rstrip("/"),
-        ],
+        ]
+    probe_protocol = getattr(args, "probe_protocol", None)
+    if probe_protocol:
+        command.extend(["--es", "protocol", str(probe_protocol)])
+    dispatched = subprocess.run(
+        command,
         check=False,
         capture_output=True,
         text=True,

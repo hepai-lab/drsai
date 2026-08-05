@@ -70,9 +70,10 @@ function describeDistribution(describedArtifacts, version) {
   const unsigned = signedArtifacts.filter(
     (artifact) => artifact.signatureStatus !== "Valid",
   );
-  const preview = version.includes("-");
+  const releaseChannel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "stable").toLowerCase();
+  const preview = version.includes("-") || releaseChannel !== "stable";
   return {
-    releaseTier: preview ? "preview" : "stable",
+    releaseTier: preview ? releaseChannel : "stable",
     publicDistributionReady: unsigned.length === 0 || preview,
     requiresSignedInstallers: !preview,
     unsignedArtifacts: unsigned.map((artifact) => ({

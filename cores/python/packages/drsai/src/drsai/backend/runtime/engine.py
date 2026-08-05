@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import base64
 import os
 import secrets
@@ -10,10 +11,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from drsai.backend.runtime.security import redact_sensitive
 from drsai.backend.runtime.journal import RuntimeConversationJournal
+from drsai.backend.runtime.oaep import project_event, project_snapshot
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from drsai.relay.device_identity import WindowsDpapiProtector
 from drsai.relay.security import redact_secrets
@@ -28,8 +30,33 @@ RUN_TRANSITIONS = {
     "failed": set(),
 }
 
+_OAEP_RUNTIME_COMPAT = {
+    "oaep.item.message.delta": "agent.message.delta",
+    "oaep.item.reasoning.delta": "agent.item.reasoning.delta",
+    "oaep.item.plan.delta": "agent.item.plan.delta",
+    "oaep.item.command.delta": "agent.item.command.delta",
+    "oaep.item.tool.delta": "agent.item.tool.delta",
+    "oaep.item.subtask.delta": "agent.item.subtask.delta",
+    "oaep.run.started": "agent.started",
+    "oaep.run.completed": "agent.completed",
+    "oaep.run.failed": "agent.failed",
+    "oaep.run.cancelled": "agent.failed",
+    "oaep.run.state": "agent.state",
+}
+
 
 def _session_event_kind(event_type: str) -> str:
+    if event_type.startswith("oaep.session."):
+        return {
+            "oaep.session.archived": "session.archived",
+            "oaep.session.deleted": "session.removed",
+        }.get(event_type, "session.updated")
+    if event_type.startswith("oaep.run."):
+        return "run.state.changed"
+    if event_type.endswith(".delta") and event_type.startswith("oaep.item."):
+        return "conversation.item.delta"
+    if event_type.startswith("oaep.item."):
+        return "conversation.item.upsert"
     if event_type == "run.created":
         return "run.created"
     if event_type.startswith("run."):
@@ -61,6 +88,15 @@ class _ClosingConnection(sqlite3.Connection):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _timestamp(value: str | None) -> float:
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
 
 
 class _CheckpointCipher:
@@ -121,6 +157,7 @@ class RuntimeEngine:
         identity: RuntimeEngineIdentity,
         workspace_exists: Callable[[str], bool],
         worktree_for_workspace: Callable[[str], str | None] | None = None,
+        surface: str = "desktop",
     ):
         self.database = Path(database)
         self._checkpoint_cipher = _CheckpointCipher(self.database)
@@ -128,6 +165,9 @@ class RuntimeEngine:
         self.identity = identity
         self.workspace_exists = workspace_exists
         self.worktree_for_workspace = worktree_for_workspace or (lambda _workspace_id: None)
+        from drsai.backend.runtime.mobile_adapter import create_surface_mobile_core
+
+        self.shared_mobile_core = create_surface_mobile_core(surface)
         self._lock = threading.RLock()
         self._initialize()
         self.conversation_journal = RuntimeConversationJournal(
@@ -159,6 +199,7 @@ class RuntimeEngine:
                   agent_definition TEXT NOT NULL, backend_id TEXT NOT NULL, status TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
                   input_message TEXT NOT NULL DEFAULT '', attachment_refs_json TEXT NOT NULL DEFAULT '[]',
                   correlation_id TEXT, parent_run_id TEXT REFERENCES runtime_runs(run_id),
+                  backend_run_id TEXT, backend_run_index INTEGER,
                   created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, cancel_requested_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS runtime_events (
@@ -167,6 +208,21 @@ class RuntimeEngine:
                   backend_event_key TEXT,
                   PRIMARY KEY(run_id, sequence)
                 );
+                CREATE TABLE IF NOT EXISTS runtime_backend_item_bindings (
+                  backend TEXT NOT NULL,
+                  backend_session_id TEXT NOT NULL,
+                  backend_run_id TEXT NOT NULL,
+                  backend_item_id TEXT NOT NULL,
+                  runtime_item_id TEXT NOT NULL UNIQUE,
+                  session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
+                  run_id TEXT NOT NULL REFERENCES runtime_runs(run_id),
+                  item_type TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  PRIMARY KEY(backend,backend_session_id,backend_run_id,backend_item_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_backend_item_bindings_run
+                  ON runtime_backend_item_bindings(run_id,runtime_item_id);
                 CREATE TRIGGER IF NOT EXISTS runtime_events_no_update BEFORE UPDATE ON runtime_events BEGIN SELECT RAISE(ABORT, 'runtime events are append-only'); END;
                 CREATE TRIGGER IF NOT EXISTS runtime_events_no_delete BEFORE DELETE ON runtime_events BEGIN SELECT RAISE(ABORT, 'runtime events are append-only'); END;
                 CREATE TABLE IF NOT EXISTS runtime_approvals (
@@ -210,6 +266,10 @@ class RuntimeEngine:
                 db.execute("ALTER TABLE runtime_runs ADD COLUMN correlation_id TEXT")
             if "parent_run_id" not in columns:
                 db.execute("ALTER TABLE runtime_runs ADD COLUMN parent_run_id TEXT REFERENCES runtime_runs(run_id)")
+            if "backend_run_id" not in columns:
+                db.execute("ALTER TABLE runtime_runs ADD COLUMN backend_run_id TEXT")
+            if "backend_run_index" not in columns:
+                db.execute("ALTER TABLE runtime_runs ADD COLUMN backend_run_index INTEGER")
             db.execute(
                 "UPDATE runtime_sessions SET agent_definition=("
                 "SELECT agent_definition FROM runtime_runs WHERE runtime_runs.session_id=runtime_sessions.session_id "
@@ -301,6 +361,11 @@ class RuntimeEngine:
                             source_message_id=f"legacy:{run['run_id']}",
                             payload={
                                 "content": str(run["input_message"]),
+                                "text": str(run["input_message"]),
+                                "parts": ([{"type": "text", "text": str(run["input_message"])}]
+                                          if str(run["input_message"]) else []),
+                                "phase": "final",
+                                "status": "completed",
                                 "attachment_refs": json.loads(
                                     str(run["attachment_refs_json"] or "[]")
                                 ),
@@ -434,6 +499,9 @@ class RuntimeEngine:
                 if str(existing["workspace_id"]) != workspace_id:
                     db.rollback()
                     raise ValueError("Imported Session identity is already bound to another Workspace")
+                if _timestamp(str(existing["updated_at"])) > _timestamp(updated):
+                    db.rollback()
+                    return self._session(existing), False
                 normalized_title = title[:240] or "Imported session"
                 effective_agent_definition = (
                     agent_definition
@@ -704,6 +772,83 @@ class RuntimeEngine:
             raise KeyError("Run not found")
         return self._run(row)
 
+    def import_backend_run(
+        self,
+        session_id: str,
+        backend_id: str,
+        backend_run_id: str,
+        *,
+        status: str = "completed",
+        backend_run_index: int | None = None,
+        created_at: str | None = None,
+        completed_at: str | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Create the deterministic Runtime Run that owns imported backend history."""
+        session = self.get_session(session_id)
+        if not backend_id or not backend_run_id:
+            raise ValueError("Imported backend Run identity is required")
+        terminal = {"completed": "completed", "failed": "failed", "interrupted": "cancelled", "cancelled": "cancelled"}
+        runtime_status = terminal.get(status, "completed")
+        digest = hashlib.sha256(f"{backend_id}\0{backend_run_id}".encode("utf-8")).hexdigest()[:32]
+        run_id = f"run-import-{backend_id}-{digest}"
+        idempotency_key = f"import:{backend_id}:{digest}"
+        created = created_at or _now()
+        completed = completed_at or created
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT * FROM runtime_runs WHERE run_id=?", (run_id,)).fetchone()
+            if existing is not None:
+                if str(existing["session_id"]) != session_id or str(existing["backend_id"]) != backend_id:
+                    db.rollback()
+                    raise ValueError("Imported backend Run identity is already bound elsewhere")
+                # Re-import also repairs metadata added by newer Adapters.  In
+                # particular, older Codex imports used import time because the
+                # native fields are startedAt/completedAt rather than createdAt.
+                db.execute(
+                    "UPDATE runtime_runs SET backend_run_id=?,backend_run_index=COALESCE(?,backend_run_index),"
+                    "created_at=COALESCE(?,created_at),started_at=COALESCE(?,started_at),"
+                    "completed_at=COALESCE(?,completed_at) WHERE run_id=?",
+                    (backend_run_id, backend_run_index, created_at, created_at, completed_at, run_id),
+                )
+                db.execute(
+                    "UPDATE runtime_runs SET backend_run_id=? WHERE session_id=? AND backend_id=? "
+                    "AND backend_run_id IS NULL AND EXISTS(SELECT 1 FROM runtime_events e "
+                    "WHERE e.run_id=runtime_runs.run_id AND json_extract(e.data_json,'$.backend_metadata.turn_id')=?)",
+                    (backend_run_id, session_id, backend_id, backend_run_id),
+                )
+                db.commit()
+                return self.get_run(run_id), False
+            agent_definition = str(session.get("agent_definition") or f"{backend_id}@1")
+            db.execute(
+                "INSERT INTO runtime_runs(run_id,session_id,workspace_id,worktree_id,runtime_id,instance_id,"
+                "agent_definition,backend_id,status,idempotency_key,input_message,attachment_refs_json,"
+                "correlation_id,parent_run_id,backend_run_id,backend_run_index,created_at,started_at,completed_at,cancel_requested_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (run_id, session_id, session["workspace_id"], session.get("worktree_id"),
+                 self.identity.runtime_id, self.identity.instance_id, agent_definition, backend_id,
+                 runtime_status, idempotency_key, "", "[]", None, None, backend_run_id, backend_run_index,
+                 created, created, completed, None),
+            )
+            db.execute(
+                "UPDATE runtime_runs SET backend_run_id=? WHERE session_id=? AND backend_id=? "
+                "AND run_id<>? AND backend_run_id IS NULL AND EXISTS(SELECT 1 FROM runtime_events e "
+                "WHERE e.run_id=runtime_runs.run_id AND json_extract(e.data_json,'$.backend_metadata.turn_id')=?)",
+                (backend_run_id, session_id, backend_id, run_id, backend_run_id),
+            )
+            self.conversation_journal.append_event_in_transaction(
+                db, session_id, "run.created",
+                {"agent_definition": agent_definition, "backend_id": backend_id, "status": "queued", "imported": True},
+                run_id=run_id, dedupe_key=f"import-run-created:{run_id}", created_at=created,
+            )
+            self.conversation_journal.append_event_in_transaction(
+                db, session_id, "run.state.changed",
+                {"status": runtime_status, "backend_id": backend_id, "backend_run_id": backend_run_id, "imported": True},
+                run_id=run_id, dedupe_key=f"import-run-terminal:{run_id}", created_at=completed,
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_run(run_id), True
+
     def list_session_runs(self, session_id: str) -> list[dict[str, Any]]:
         """Return the durable backend bindings for one Runtime Session."""
         self.get_session(session_id)
@@ -745,6 +890,10 @@ class RuntimeEngine:
                 source_message_id=source_message_id,
                 payload={
                     "content": safe_message,
+                    "text": safe_message,
+                    "parts": [{"type": "text", "text": safe_message}] if safe_message else [],
+                    "phase": "final",
+                    "status": "completed",
                     "attachment_refs": json.loads(encoded),
                     "correlation_id": correlation_id,
                 },
@@ -809,6 +958,49 @@ class RuntimeEngine:
             limit=limit,
         )
 
+    def oaep_snapshot(self, session_id: str) -> dict[str, Any]:
+        session = self.get_session(session_id)
+        conversation = self.conversation_snapshot(session_id)
+        return project_snapshot(
+            session,
+            self.list_session_runs(session_id),
+            {
+                **conversation,
+                "items": self.conversation_journal.oaep_items(
+                    session_id,
+                    through_sequence=int(conversation["snapshot_sequence"]),
+                ),
+            },
+        )
+
+    def list_oaep_events(
+        self,
+        session_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        self.get_session(session_id)
+        return self.conversation_journal.replay_oaep(
+            session_id, after_sequence=after_sequence, limit=limit
+        )
+
+    def wait_oaep_events(
+        self,
+        session_id: str,
+        *,
+        after_sequence: int,
+        timeout: float = 15.0,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        self.get_session(session_id)
+        return self.conversation_journal.wait_for_oaep_events(
+            session_id,
+            after_sequence=after_sequence,
+            timeout=timeout,
+            limit=limit,
+        )
+
     def record_conversation_item(
         self,
         session_id: str,
@@ -836,6 +1028,32 @@ class RuntimeEngine:
             event_kind=event_kind,
         )
         return {"item": item, "event": event, "created": created}
+
+    def record_conversation_items(
+        self, session_id: str, items: list[Mapping[str, Any]], *, max_items: int = 20_000,
+    ) -> dict[str, int]:
+        """Persist an imported history page in one atomic journal transaction."""
+        if len(items) > max_items:
+            raise ValueError("Conversation Item import exceeds the Runtime limit")
+        created_count = 0
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for value in items:
+                _, _, created = self.conversation_journal.upsert_item_in_transaction(
+                    db, session_id,
+                    item_id=str(value["item_id"]), kind=str(value["kind"]), role=value.get("role"),
+                    revision=int(value.get("revision") or 1), source_client=str(value.get("source_client") or "runtime"),
+                    payload=dict(value.get("payload") or {}), run_id=str(value["run_id"]) if value.get("run_id") else None,
+                    source_message_id=str(value["source_message_id"]) if value.get("source_message_id") else None,
+                    event_kind=str(value["event_kind"]) if value.get("event_kind") else None,
+                    created_at=str(value["created_at"]) if value.get("created_at") else None,
+                    updated_at=str(value["updated_at"]) if value.get("updated_at") else None,
+                )
+                created_count += int(created)
+            db.commit()
+        if created_count:
+            self.conversation_journal.notify_committed()
+        return {"created": created_count, "total": len(items)}
 
     def list_conversation(
         self,
@@ -902,7 +1120,28 @@ class RuntimeEngine:
             )
         return {"object": "list", "data": items, "next_cursor": next_cursor}
 
-    def transition_run(self, run_id: str, status: str) -> dict[str, Any]:
+    @staticmethod
+    def _run_state_payload(
+        status: str,
+        *,
+        reason: str | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"status": status}
+        if reason:
+            payload["reason"] = reason
+        if error:
+            payload["error"] = redact_sensitive(error)
+        return payload
+
+    def transition_run(
+        self,
+        run_id: str,
+        status: str,
+        *,
+        reason: str | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM runtime_runs WHERE run_id=?", (run_id,)).fetchone()
@@ -936,7 +1175,7 @@ class RuntimeEngine:
                 db,
                 str(row["session_id"]),
                 "run.state.changed",
-                {"status": status},
+                self._run_state_payload(status, reason=reason, error=error),
                 run_id=run_id,
                 dedupe_key=f"runtime-event:{runtime_event_id}",
                 created_at=event_created,
@@ -992,7 +1231,10 @@ class RuntimeEngine:
                     db,
                     str(row["session_id"]),
                     "run.state.changed",
-                    {"status": event_type.removeprefix("run.")},
+                    self._run_state_payload(
+                        event_type.removeprefix("run."),
+                        reason="user_requested" if event_type == "run.cancelled" else "cancel_requested",
+                    ),
                     run_id=run_id,
                     dedupe_key=f"runtime-event:{event_id}",
                     created_at=now,
@@ -1033,7 +1275,7 @@ class RuntimeEngine:
                     db,
                     str(row["session_id"]),
                     "run.state.changed",
-                    {"status": "cancel_requested"},
+                    self._run_state_payload("cancel_requested", reason="user_requested"),
                     run_id=run_id,
                     dedupe_key=f"runtime-event:{event_id}",
                     created_at=now,
@@ -1054,15 +1296,80 @@ class RuntimeEngine:
         data: dict[str, Any],
         created_at: str,
     ) -> bool:
+        # Canonical OAEP Run events update the Run/session state through their
+        # journal envelope. They are never assistant message completions.
+        if event_type.startswith("oaep.run."):
+            return False
+        canonical_oaep_item_event = event_type.startswith("oaep.item.")
+        native_oaep_message_delta = event_type == "oaep.item.message.delta"
+        if event_type.startswith("oaep.item.") and not event_type.endswith(".delta"):
+            event_type = "agent.item." + event_type.removeprefix("oaep.item.")
+        else:
+            event_type = _OAEP_RUNTIME_COMPAT.get(event_type, event_type)
         item_kind: str
         role: str | None
         item_id: str
         message_delta_events = {"message.delta", "agent.message.delta"}
         message_complete_events = {"message.complete", "agent.completed"}
-        if event_type in message_delta_events or event_type in message_complete_events:
+        if native_oaep_message_delta:
+            metadata = data.get("backend_metadata") if isinstance(data.get("backend_metadata"), dict) else {}
+            identity = str(metadata.get("item_id") or data.get("item_id") or "default")
+            item_kind, role, item_id = "message", "assistant", f"codex:{run_id}:{identity}"
+        elif event_type in message_delta_events or event_type in message_complete_events:
             item_kind, role, item_id = "message", "assistant", f"assistant:{run_id}"
         elif event_type == "thinking.delta":
             item_kind, role, item_id = "reasoning", "assistant", f"reasoning:{run_id}"
+        elif event_type == "agent.item.command.delta":
+            metadata = data.get("backend_metadata") if isinstance(data.get("backend_metadata"), dict) else {}
+            identity = str(metadata.get("item_id") or data.get("item_id") or "default")
+            item_kind, role, item_id = "tool", "tool", f"codex:{run_id}:{identity}"
+        elif event_type == "agent.item.reasoning.delta":
+            metadata = data.get("backend_metadata") if isinstance(data.get("backend_metadata"), dict) else {}
+            identity = str(metadata.get("item_id") or data.get("item_id") or "default")
+            item_kind, role, item_id = "reasoning", "assistant", f"codex:{run_id}:{identity}"
+        elif event_type == "agent.item.plan.delta":
+            metadata = data.get("backend_metadata") if isinstance(data.get("backend_metadata"), dict) else {}
+            identity = str(metadata.get("item_id") or data.get("item_id") or "plan")
+            item_kind, role, item_id = "plan", "assistant", f"codex:{run_id}:{identity}"
+        elif event_type == "agent.item.subtask.delta":
+            metadata = data.get("backend_metadata") if isinstance(data.get("backend_metadata"), dict) else {}
+            identity = str(metadata.get("item_id") or data.get("item_id") or "subtask")
+            item_kind, role, item_id = "subtask", None, f"codex:{run_id}:{identity}"
+        elif event_type == "agent.item.tool.delta":
+            metadata = data.get("backend_metadata") if isinstance(data.get("backend_metadata"), dict) else {}
+            identity = str(metadata.get("item_id") or data.get("item_id") or "tool")
+            item_kind, role, item_id = "tool", "tool", f"codex:{run_id}:{identity}"
+        elif event_type.startswith("agent.item."):
+            item = data.get("item") if isinstance(data.get("item"), dict) else {}
+            metadata = data.get("backend_metadata") if isinstance(data.get("backend_metadata"), dict) else {}
+            identity = str(
+                metadata.get("item_id")
+                or item.get("id")
+                or data.get("item_id")
+                or "default"
+            )
+            codex_item_type = event_type.rsplit(".", 1)[-1]
+            if codex_item_type == "message":
+                candidate_role = item.get("role")
+                item_kind = "message"
+                role = candidate_role if candidate_role in {"user", "assistant", "system"} else "assistant"
+            elif codex_item_type == "reasoning":
+                item_kind, role = "reasoning", "assistant"
+            elif codex_item_type == "plan":
+                item_kind, role = "plan", "assistant"
+            elif codex_item_type == "command":
+                item_kind, role = "tool", "tool"
+            elif codex_item_type == "file_change":
+                item_kind, role = "file_change", None
+            elif codex_item_type == "tool":
+                item_kind, role = "tool", "tool"
+            elif codex_item_type == "subtask":
+                item_kind, role = "subtask", None
+            else:
+                item_kind, role = "error", None
+            item_id = f"codex:{run_id}:{identity}"
+        elif event_type == "agent.failed":
+            item_kind, role, item_id = "error", None, f"error:{run_id}:agent"
         elif event_type.startswith("tool."):
             identity = str(
                 data.get("tool_id")
@@ -1078,6 +1385,25 @@ class RuntimeEngine:
         else:
             return False
 
+        if canonical_oaep_item_event:
+            metadata = data.get("backend_metadata") if isinstance(data.get("backend_metadata"), dict) else {}
+            backend = str(data.get("backend") or "unknown")
+            backend_session_id = str(metadata.get("thread_id") or "")
+            backend_run_id = str(metadata.get("turn_id") or "")
+            backend_item_id = str(metadata.get("item_id") or "")
+            backend_item_type = str(metadata.get("item_type") or item_kind)
+            item_id = self._resolve_backend_item_binding_in_transaction(
+                db,
+                backend=backend,
+                backend_session_id=backend_session_id,
+                backend_run_id=backend_run_id,
+                backend_item_id=backend_item_id,
+                runtime_session_id=session_id,
+                runtime_run_id=run_id,
+                item_type=backend_item_type,
+                created_at=created_at,
+            )
+
         existing = db.execute(
             "SELECT revision,payload_json FROM runtime_conversation_items WHERE item_id=?",
             (item_id,),
@@ -1085,19 +1411,105 @@ class RuntimeEngine:
         revision = int(existing["revision"]) + 1 if existing is not None else 1
         prior = json.loads(str(existing["payload_json"])) if existing is not None else {}
         payload = {**prior, **data, "event_type": event_type}
-        if event_type in message_delta_events or event_type == "thinking.delta":
-            delta = str(data.get("text") or data.get("content") or data.get("delta") or "")
+        if event_type == "agent.item.command.delta":
+            delta = str(data.get("content") or data.get("text") or data.get("delta") or data.get("output") or "")
+            payload = {**prior, **data, "event_type": event_type}
+            payload["delta"] = delta
+            payload["output"] = f"{prior.get('output', '')}{delta}"
+            payload["status"] = "running"
+            if data.get("stream"):
+                payload["stream"] = data["stream"]
+        elif event_type == "agent.item.reasoning.delta":
+            delta = str(data.get("content") or data.get("text") or data.get("delta") or "")
+            payload = {**prior, **data, "event_type": event_type}
+            payload["delta"] = delta
             payload["text"] = f"{prior.get('text', '')}{delta}"
+            payload["status"] = "running"
+        elif event_type == "agent.item.plan.delta":
+            delta = str(data.get("content") or data.get("text") or data.get("delta") or "")
+            payload = {**prior, **data, "event_type": event_type}
+            payload["delta"] = delta
+            payload["text"] = f"{prior.get('text', '')}{delta}"
+            payload["status"] = "running"
+        elif event_type == "agent.item.subtask.delta":
+            delta = str(data.get("content") or data.get("text") or data.get("delta") or "")
+            payload = {**prior, **data, "event_type": event_type}
+            payload["delta"] = delta
+            payload["summary"] = f"{prior.get('summary', '')}{delta}"
+            payload["status"] = "running"
+        elif event_type == "agent.item.tool.delta":
+            delta = str(data.get("content") or data.get("text") or data.get("delta") or "")
+            payload = {**prior, **data, "event_type": event_type}
+            payload["delta"] = delta
+            payload["result"] = f"{prior.get('result', '')}{delta}"
+            payload["status"] = "running"
+        elif event_type.startswith("agent.item."):
+            item = data.get("item") if isinstance(data.get("item"), dict) else {}
+            phase = str(data.get("phase") or "").lower()
+            payload = {**prior, **item, **data, "event_type": event_type}
+            if data.get("oaep_phase") in {"commentary", "final"}:
+                payload["phase"] = data["oaep_phase"]
+            if payload.get("summary"):
+                payload["display_command"] = payload["summary"]
+            elif "command" in item and "display_command" not in payload:
+                payload["display_command"] = item["command"]
+            if "exitCode" in item and "exit_code" not in payload:
+                payload["exit_code"] = item["exitCode"]
+            if event_type.endswith(".file_change"):
+                change_path = item.get("path") or item.get("relativePath")
+                payload["changes"] = item.get("changes") if isinstance(item.get("changes"), list) else (
+                    [{"path": change_path, "operation": item.get("operation") or "modify"}]
+                    if change_path else []
+                )
+                payload["summary"] = item.get("summary") or item.get("description") or change_path or ""
+            if event_type.endswith(".unknown"):
+                payload["level"] = "warning"
+                payload["code"] = "codex_item_unknown"
+                payload["message"] = str(data.get("method") or item.get("type") or "Unknown Codex item")
+            payload["status"] = phase if phase in {"completed", "failed", "cancelled"} else "running"
+        elif event_type == "agent.failed":
+            error = data.get("error") if isinstance(data.get("error"), dict) else {}
+            payload = {
+                "event_type": event_type,
+                "level": "error",
+                "code": str(error.get("code") or data.get("code") or "agent_execution_failed"),
+                "message": str(error.get("message") or data.get("message") or "Agent execution failed."),
+                "details": {
+                    "retryable": bool(error.get("retryable") or data.get("retryable")),
+                },
+                "status": "failed",
+            }
+        if native_oaep_message_delta or event_type in message_delta_events or event_type == "thinking.delta":
+            delta = str(data.get("text") or data.get("content") or data.get("delta") or "")
+            payload["delta"] = delta
+            payload["text"] = f"{prior.get('text', '')}{delta}"
+            # OAEP message projection prefers ``content`` over ``text``. Keep
+            # the canonical Item's content cumulative while the Event still
+            # carries the single append delta.
+            if native_oaep_message_delta or event_type in message_delta_events:
+                payload["content"] = payload["text"]
             payload["status"] = "streaming"
         elif event_type in message_complete_events:
             final = str(data.get("text") or data.get("content") or "")
             payload["text"] = final or str(prior.get("text") or "")
             payload["status"] = "completed"
         elif event_type.startswith("tool."):
+            arguments = data.get("arguments") if isinstance(data.get("arguments"), dict) else (
+                data.get("args") if isinstance(data.get("args"), dict) else {}
+            )
+            command = data.get("command") or data.get("cmd") or arguments.get("command") or arguments.get("cmd")
+            if command is not None and payload.get("command") is None:
+                payload["command"] = command if isinstance(command, list) else [str(command)]
+            if command is not None and not payload.get("display_command"):
+                payload["display_command"] = " ".join(command) if isinstance(command, list) else str(command)
+            if arguments and not isinstance(payload.get("arguments"), dict):
+                payload["arguments"] = arguments
+            if "result" not in payload and "output" in data:
+                payload["result"] = data.get("output")
             payload["status"] = (
                 "completed"
                 if event_type in {"tool.complete", "tool.completed"}
-                else "running"
+                else ("failed" if event_type == "tool.failed" else "running")
             )
         self.conversation_journal.upsert_item_in_transaction(
             db,
@@ -1111,12 +1523,71 @@ class RuntimeEngine:
             run_id=run_id,
             event_kind=(
                 "conversation.item.delta"
-                if event_type in message_delta_events or event_type == "thinking.delta"
+                if native_oaep_message_delta
+                or event_type in message_delta_events
+                or event_type == "thinking.delta"
+                or event_type in {
+                    "agent.item.command.delta", "agent.item.reasoning.delta",
+                    "agent.item.plan.delta", "agent.item.subtask.delta", "agent.item.tool.delta",
+                }
                 else None
             ),
             updated_at=created_at,
         )
         return True
+
+    def _resolve_backend_item_binding_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        *,
+        backend: str,
+        backend_session_id: str,
+        backend_run_id: str,
+        backend_item_id: str,
+        runtime_session_id: str,
+        runtime_run_id: str,
+        item_type: str,
+        created_at: str,
+    ) -> str:
+        if not all((backend, backend_session_id, backend_run_id, backend_item_id, item_type)):
+            raise ValueError("Canonical Backend Item binding is incomplete")
+        row = db.execute(
+            "SELECT * FROM runtime_backend_item_bindings WHERE backend=? AND backend_session_id=? "
+            "AND backend_run_id=? AND backend_item_id=?",
+            (backend, backend_session_id, backend_run_id, backend_item_id),
+        ).fetchone()
+        if row is not None:
+            actual = (
+                str(row["session_id"]), str(row["run_id"]), str(row["item_type"]),
+            )
+            expected = (runtime_session_id, runtime_run_id, item_type)
+            if actual != expected:
+                raise ValueError("Backend Item binding is already assigned to different Runtime semantics")
+            db.execute(
+                "UPDATE runtime_backend_item_bindings SET updated_at=? WHERE runtime_item_id=?",
+                (created_at, str(row["runtime_item_id"])),
+            )
+            return str(row["runtime_item_id"])
+        runtime_item_id = f"{backend}:{runtime_run_id}:{backend_item_id}"
+        db.execute(
+            "INSERT INTO runtime_backend_item_bindings(backend,backend_session_id,backend_run_id,backend_item_id,"
+            "runtime_item_id,session_id,run_id,item_type,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                backend, backend_session_id, backend_run_id, backend_item_id,
+                runtime_item_id, runtime_session_id, runtime_run_id, item_type,
+                created_at, created_at,
+            ),
+        )
+        return runtime_item_id
+
+    def get_backend_item_bindings(self, run_id: str) -> list[dict[str, Any]]:
+        self.get_run(run_id)
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM runtime_backend_item_bindings WHERE run_id=? ORDER BY created_at,runtime_item_id",
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def append_event(self, run_id: str, event_type: str, data: dict[str, Any]) -> dict[str, Any]:
         safe_data = redact_sensitive(data)
@@ -1181,21 +1652,23 @@ class RuntimeEngine:
                 (event_id, run_id, sequence, event_type,
                  json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key),
             )
-            self.conversation_journal.append_event_in_transaction(
-                db,
-                str(run["session_id"]),
-                _session_event_kind(event_type),
-                {
-                    "runtime_event_id": event_id,
-                    "type": event_type,
-                    "data": safe_data,
-                    "backend_event_key": backend_event_key,
-                },
-                run_id=run_id,
-                dedupe_key=f"backend-event:{run_id}:{backend_event_key}",
-                created_at=created,
-            )
-            self._record_runtime_event_item_in_transaction(
+            canonical_item_event = event_type.startswith("oaep.item.")
+            if not canonical_item_event:
+                self.conversation_journal.append_event_in_transaction(
+                    db,
+                    str(run["session_id"]),
+                    _session_event_kind(event_type),
+                    {
+                        "runtime_event_id": event_id,
+                        "type": event_type,
+                        "data": safe_data,
+                        "backend_event_key": backend_event_key,
+                    },
+                    run_id=run_id,
+                    dedupe_key=f"backend-event:{run_id}:{backend_event_key}",
+                    created_at=created,
+                )
+            item_created = self._record_runtime_event_item_in_transaction(
                 db,
                 session_id=str(run["session_id"]),
                 run_id=run_id,
@@ -1205,8 +1678,192 @@ class RuntimeEngine:
             )
             row = db.execute("SELECT * FROM runtime_events WHERE event_id=?", (event_id,)).fetchone()
             db.commit()
-        self.conversation_journal.notify_committed()
+        if not canonical_item_event or item_created:
+            self.conversation_journal.notify_committed()
         return self._event(row)
+
+    def append_normalized_event(
+        self,
+        run_id: str,
+        event: "NormalizedAgentEvent",
+        audit: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Persist normalized semantics canonically, then write a legacy projection."""
+        from drsai.backend.runtime.normalized_writer import (
+            normalized_canonical_item,
+            normalized_runtime_write,
+        )
+        from drsai.backend.runtime.normalized_events import NormalizedEventKind
+
+        session_lifecycle = {
+            NormalizedEventKind.SESSION_ARCHIVED: "archived",
+            NormalizedEventKind.SESSION_UNARCHIVED: "active",
+            NormalizedEventKind.SESSION_DELETED: "removed",
+        }.get(event.kind)
+        event_type, data, dedupe_key = normalized_runtime_write(event)
+        compatibility_data = redact_sensitive({**dict(audit or {}), **data})
+        created = _now()
+        journal_created = False
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing_event = db.execute(
+                "SELECT * FROM runtime_events WHERE run_id=? AND backend_event_key=?",
+                (run_id, dedupe_key),
+            ).fetchone()
+            if existing_event is not None:
+                db.commit()
+                return self._event(existing_event)
+            run = db.execute(
+                "SELECT session_id FROM runtime_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+            if run is None:
+                db.rollback()
+                raise KeyError("Run not found")
+            session_id = str(run["session_id"])
+
+            # Apply a normalized Session lifecycle transition in this same
+            # transaction. Calling update_session() here used to emit a first
+            # journal event before the normalized event below, which made a
+            # single backend notification appear twice in OAEP.
+            if session_lifecycle is not None:
+                current_session = db.execute(
+                    "SELECT title,lifecycle,revision,removed_at FROM runtime_sessions WHERE session_id=?",
+                    (session_id,),
+                ).fetchone()
+                if current_session is None:
+                    db.rollback()
+                    raise KeyError("Session not found")
+                current_lifecycle = str(current_session["lifecycle"])
+                if current_lifecycle == "removed" and session_lifecycle != "removed":
+                    db.rollback()
+                    raise ValueError("Removed Session lifecycle is terminal")
+                revision = int(current_session["revision"])
+                if current_lifecycle != session_lifecycle:
+                    revision += 1
+                    removed_at = (
+                        str(current_session["removed_at"])
+                        if current_session["removed_at"]
+                        else created if session_lifecycle == "removed" else None
+                    )
+                    db.execute(
+                        "UPDATE runtime_sessions SET archived=?, lifecycle=?, revision=?, "
+                        "removed_at=?, updated_at=? WHERE session_id=?",
+                        (
+                            int(session_lifecycle != "active"),
+                            session_lifecycle,
+                            revision,
+                            removed_at,
+                            created,
+                            session_id,
+                        ),
+                    )
+                compatibility_data = {
+                    **compatibility_data,
+                    "title": str(current_session["title"]),
+                    "lifecycle": session_lifecycle,
+                    "revision": revision,
+                }
+
+            if event.item_type is not None:
+                runtime_item_id = self._resolve_backend_item_binding_in_transaction(
+                    db,
+                    backend=event.backend,
+                    backend_session_id=event.binding.session_id,
+                    backend_run_id=str(event.binding.run_id or ""),
+                    backend_item_id=str(event.binding.item_id or ""),
+                    runtime_session_id=session_id,
+                    runtime_run_id=run_id,
+                    item_type=event.item_type.value,
+                    created_at=created,
+                )
+                existing_item = db.execute(
+                    "SELECT revision,payload_json FROM runtime_conversation_items WHERE item_id=?",
+                    (runtime_item_id,),
+                ).fetchone()
+                prior = json.loads(str(existing_item["payload_json"])) if existing_item is not None else None
+                kind, role, payload, item_event_kind = normalized_canonical_item(
+                    event,
+                    prior,
+                    dict(audit or {}),
+                )
+                revision = int(existing_item["revision"]) + 1 if existing_item is not None else 1
+                _item, _journal_event, journal_created = self.conversation_journal.upsert_item_in_transaction(
+                    db,
+                    session_id,
+                    item_id=runtime_item_id,
+                    kind=kind,
+                    role=role,
+                    revision=revision,
+                    source_client="runtime",
+                    payload=payload,
+                    run_id=run_id,
+                    event_kind=item_event_kind,
+                    updated_at=created,
+                )
+            else:
+                session_event_kind, session_payload = self._normalized_lifecycle_projection(event, compatibility_data)
+                _journal_event, journal_created = self.conversation_journal.append_event_in_transaction(
+                    db,
+                    session_id,
+                    session_event_kind,
+                    session_payload,
+                    run_id=run_id if event.binding.run_id else None,
+                    dedupe_key=f"normalized:{run_id}:{dedupe_key}",
+                    created_at=created,
+                )
+
+            sequence = int(db.execute(
+                "SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_events WHERE run_id=?", (run_id,),
+            ).fetchone()[0])
+            event_id = f"event-{uuid.uuid4()}"
+            db.execute(
+                "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    event_id, run_id, sequence, event_type,
+                    json.dumps(compatibility_data, separators=(",", ":"), sort_keys=True),
+                    created, dedupe_key,
+                ),
+            )
+            row = db.execute("SELECT * FROM runtime_events WHERE event_id=?", (event_id,)).fetchone()
+            db.commit()
+        if journal_created:
+            self.conversation_journal.notify_committed()
+        return self._event(row)
+
+    @staticmethod
+    def _normalized_lifecycle_projection(
+        event: "NormalizedAgentEvent",
+        data: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        """Map non-Item normalized state directly to a Session journal event."""
+        from drsai.backend.runtime.normalized_events import NormalizedEventKind
+
+        if event.kind == NormalizedEventKind.SESSION_ARCHIVED:
+            return "session.archived", data
+        if event.kind == NormalizedEventKind.SESSION_DELETED:
+            return "session.removed", data
+        if event.kind in {
+            NormalizedEventKind.SESSION_CREATED,
+            NormalizedEventKind.SESSION_UPDATED,
+            NormalizedEventKind.SESSION_UNARCHIVED,
+        }:
+            return "session.updated", data
+        status = {
+            NormalizedEventKind.RUN_STARTED: "running",
+            NormalizedEventKind.RUN_WAITING: "waiting",
+            NormalizedEventKind.RUN_RESUMED: "running",
+            NormalizedEventKind.RUN_COMPLETED: "completed",
+            NormalizedEventKind.RUN_FAILED: "failed",
+            NormalizedEventKind.RUN_CANCELLED: "cancelled",
+        }.get(event.kind)
+        if status is None:
+            raise ValueError(f"Unsupported normalized lifecycle: {event.kind.value}")
+        return "run.state.changed", {
+            **data,
+            "status": status,
+            "reason": "resumed" if event.kind == NormalizedEventKind.RUN_RESUMED else "backend",
+        }
 
     def append_backend_events(self, run_id: str, events: list[tuple[str, dict[str, Any], str]]) -> list[dict[str, Any]]:
         """Persist a pressure batch in one transaction while preserving Backend-key idempotency."""
@@ -1224,6 +1881,25 @@ class RuntimeEngine:
             if run is None:
                 db.rollback(); raise KeyError("Run not found")
             sequence = int(db.execute("SELECT COALESCE(MAX(sequence),0) FROM runtime_events WHERE run_id=?", (run_id,)).fetchone()[0])
+            pending_message_delta = ""
+            pending_message_created_at: str | None = None
+
+            def flush_pending_message_delta() -> None:
+                nonlocal pending_message_delta, pending_message_created_at, journal_created
+                if not pending_message_delta:
+                    return
+                self._record_runtime_event_item_in_transaction(
+                    db,
+                    session_id=str(run["session_id"]),
+                    run_id=run_id,
+                    event_type="agent.message.delta",
+                    data={"content": pending_message_delta},
+                    created_at=pending_message_created_at or _now(),
+                )
+                journal_created = True
+                pending_message_delta = ""
+                pending_message_created_at = None
+
             for event_type, data, backend_event_key in events:
                 existing = db.execute(
                     "SELECT * FROM runtime_events WHERE run_id=? AND backend_event_key=?", (run_id, backend_event_key),
@@ -1251,17 +1927,28 @@ class RuntimeEngine:
                     dedupe_key=f"backend-event:{run_id}:{backend_event_key}",
                     created_at=created,
                 )
-                self._record_runtime_event_item_in_transaction(
-                    db,
-                    session_id=str(run["session_id"]),
-                    run_id=run_id,
-                    event_type=event_type,
-                    data=safe_data,
-                    created_at=created,
-                )
+                if event_type in {"message.delta", "agent.message.delta"}:
+                    pending_message_delta += str(
+                        safe_data.get("text")
+                        or safe_data.get("content")
+                        or safe_data.get("delta")
+                        or ""
+                    )
+                    pending_message_created_at = created
+                else:
+                    flush_pending_message_delta()
+                    self._record_runtime_event_item_in_transaction(
+                        db,
+                        session_id=str(run["session_id"]),
+                        run_id=run_id,
+                        event_type=event_type,
+                        data=safe_data,
+                        created_at=created,
+                    )
                 journal_created = journal_created or created_in_journal
                 results.append({"event_id": event_id, "run_id": run_id, "sequence": sequence, "type": event_type,
                                 "data": safe_data, "created_at": created, "backend_event_key": backend_event_key})
+            flush_pending_message_delta()
             db.commit()
         if journal_created:
             self.conversation_journal.notify_committed()
@@ -1465,6 +2152,8 @@ class RuntimeEngine:
                         }
                         if event_type.startswith("approval.")
                         else {"status": target}
+                        if target != "running"
+                        else {"status": target, "reason": "approval_resolved"}
                     ),
                     run_id=str(row["run_id"]),
                     dedupe_key=f"runtime-event:{event_id}",
@@ -1560,8 +2249,13 @@ class RuntimeEngine:
 
     @staticmethod
     def _event(row: sqlite3.Row) -> dict[str, Any]:
+        event_type = str(row["event_type"])
+        if event_type.startswith("oaep.item.") and not event_type.endswith(".delta"):
+            event_type = "agent.item." + event_type.removeprefix("oaep.item.")
+        else:
+            event_type = _OAEP_RUNTIME_COMPAT.get(event_type, event_type)
         result = {"event_id": row["event_id"], "run_id": row["run_id"], "sequence": row["sequence"],
-                  "type": row["event_type"], "data": json.loads(row["data_json"]), "created_at": row["created_at"]}
+                  "type": event_type, "data": json.loads(row["data_json"]), "created_at": row["created_at"]}
         if "backend_event_key" in row.keys() and row["backend_event_key"] is not None:
             result["backend_event_key"] = row["backend_event_key"]
         return result

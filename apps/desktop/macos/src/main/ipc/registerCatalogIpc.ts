@@ -2,7 +2,7 @@ import type { IpcMain, WebContents } from "electron";
 import type { DesktopMobilePairingTarget } from "../../../../shared/api/desktopApi";
 import { getPlatformAgentStatus, listAgents, recordAgentUsage, setDefaultAgent } from "../../../../shared/main/agents";
 import type { MobilePairingController } from "../../../../shared/main/mobilePairingController";
-import { getMyDrSaiConfig, updateMyDrSaiConfig } from "../../../../shared/main/myDrSaiConfig";
+import { deleteMyDrSaiModelProvider, discoverMyDrSaiProviderModels, getMyDrSaiConfig, listMyDrSaiModelProviderPresets, testMyDrSaiModelDraft, testMyDrSaiModelProvider, updateMyDrSaiConfig, updateMyDrSaiModelConnection } from "../../../../shared/main/myDrSaiConfig";
 import { createThread, deleteThread, getThreadSnapshot, listThreads, searchThreadMessages, updateThread, updateThreadSnapshot } from "../../../../shared/main/threads";
 import { getRuntimeThreadSnapshot } from "../../../../shared/main/threadRuntimeSubscription";
 import { createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../../../../shared/main/workspaces";
@@ -66,6 +66,12 @@ export function registerMacosCatalogIpc(
     return getMyDrSaiConfig(workspace?.location === "remote" ? undefined : path);
   });
   ipcMain.handle("desktop:update-my-drsai-config", (_event, request) => updateMyDrSaiConfig(request));
+  ipcMain.handle("desktop:update-my-drsai-model-connection", (_event, request) => updateMyDrSaiModelConnection(request));
+  ipcMain.handle("desktop:test-my-drsai-model-provider", (_event, provider, model) => testMyDrSaiModelProvider(provider, model));
+  ipcMain.handle("desktop:test-my-drsai-model-draft", (_event, request, mode) => testMyDrSaiModelDraft(request, mode));
+  ipcMain.handle("desktop:list-my-drsai-model-provider-presets", () => listMyDrSaiModelProviderPresets());
+  ipcMain.handle("desktop:discover-my-drsai-provider-models", (_event, provider, refresh) => discoverMyDrSaiProviderModels(provider, refresh));
+  ipcMain.handle("desktop:delete-my-drsai-model-provider", (_event, provider, deleteCredential) => deleteMyDrSaiModelProvider(provider, deleteCredential));
 }
 
 function mergeSearchResults<T extends { threadId: string; messageId: string; updatedAt: number }>(remote: T[], local: T[], rawLimit: number): T[] {

@@ -1,4 +1,4 @@
-import type { ChatToolTimelineEvent } from "../../shared/desktopApi";
+import type { ChatToolTimelineEvent } from "@shared/desktopApi";
 
 export type ChatOutputPart =
   | { id: string; type: "text"; text: string }

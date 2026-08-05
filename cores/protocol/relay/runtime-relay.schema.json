@@ -8,6 +8,7 @@
   "x-relay-capabilities": [
     "runtime.identity", "runtime.capabilities", "runtime.rename", "workspace.list", "workspace.sync",
     "session.list", "session.read", "session.create", "conversation.read",
+    "oaep.v1", "oaep.session.snapshot", "oaep.session.events", "oaep.session.events.stream",
     "run.list", "run.create", "run.read", "run.cancel",
     "event.resume", "event.stream", "event.cursor_expired",
     "approval.list", "approval.decide",
@@ -26,6 +27,20 @@
       "session.event.resume",
       "session.event.stream",
       "session.event.cursor_expired"
+    ],
+    "oaep/1": [
+      "oaep.v1",
+      "oaep.session.snapshot",
+      "oaep.session.events",
+      "oaep.session.events.stream",
+      "event.cursor_expired"
+    ],
+    "oaep.session-stream/1": [
+      "oaep.v1",
+      "oaep.session.snapshot",
+      "oaep.session.events",
+      "oaep.session.events.stream",
+      "event.cursor_expired"
     ]
   },
   "x-relay-minimum-versions": {
@@ -38,6 +53,16 @@
       "runtime": "1.5.3",
       "android": "1.5.3",
       "desktop": "1.5.3"
+    },
+    "oaep/1": {
+      "runtime": "1.6.0",
+      "android": "1.6.0",
+      "desktop": "1.6.0"
+    },
+    "oaep.session-stream/1": {
+      "runtime": "1.6.0",
+      "android": "1.6.0",
+      "desktop": "1.6.0"
     }
   },
   "x-session-event-kinds": [
@@ -74,6 +99,9 @@
     "session_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
     "session_create": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
     "conversation_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot",
+    "oaep_snapshot": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-snapshot",
+    "oaep_event_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events",
+    "oaep_event_stream": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events/stream",
     "session_event_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events",
     "session_event_stream": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream",
     "run_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs",
@@ -157,7 +185,7 @@
         },
         "kind": {
           "enum": [
-            "message", "reasoning", "tool", "approval", "artifact", "error"
+            "message", "reasoning", "tool", "file_change", "approval", "artifact", "error"
           ]
         },
         "role": {
@@ -248,6 +276,18 @@
           ]
         },
         "session_sequence": {"type": "integer", "minimum": 1},
+        "item_id": {
+          "oneOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ]
+        },
+        "item_revision": {
+          "oneOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "null"}
+          ]
+        },
         "kind": {
           "enum": [
             "session.updated",
@@ -505,6 +545,33 @@
         "session_id": {"type": "string", "minLength": 1},
         "session_sequence": {"type": "integer", "minimum": 1},
         "event": {"$ref": "#/$defs/session_event"}
+      },
+      "additionalProperties": false
+    },
+    "oaep_event": {
+      "$ref": "https://opendrsai.local/cores/protocol/oaep/1.0/oaep.schema.json#/$defs/event"
+    },
+    "oaep_snapshot": {
+      "$ref": "https://opendrsai.local/cores/protocol/oaep/1.0/oaep.schema.json#/$defs/snapshot"
+    },
+    "oaep_event_page": {
+      "$ref": "https://opendrsai.local/cores/protocol/oaep/1.0/oaep.schema.json#/$defs/eventPage"
+    },
+    "runtime_oaep_event_frame": {
+      "type": "object",
+      "required": [
+        "type", "protocol", "scope", "runtime_id", "workspace_id",
+        "session_id", "sequence", "event"
+      ],
+      "properties": {
+        "type": { "const": "event" },
+        "protocol": { "const": "oaep/1" },
+        "scope": { "const": "session" },
+        "runtime_id": { "type": "string", "minLength": 1 },
+        "workspace_id": { "type": "string", "minLength": 1 },
+        "session_id": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "event": { "$ref": "#/$defs/oaep_event" }
       },
       "additionalProperties": false
     }

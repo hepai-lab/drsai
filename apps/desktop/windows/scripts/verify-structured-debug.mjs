@@ -74,6 +74,28 @@ assert.equal(entries[1].source, "protocol");
 assert.equal(entries[1].turnId, "turn-1");
 assert.equal(entries[1].partId, "answer");
 
+store.appendRuntimeLogEvent({
+  id: "runtime-log-1", timestamp: "2026-07-17T08:00:03.000Z", level: "debug", status: "running",
+  protocol: "oaep/1", phase: "event", operation: "oaep.event.received", message: "event.item.delta · sequence 42",
+  threadId: "thread-1", sessionId: "session-1", runId: "run-1", itemId: "item-1", eventType: "event.item.delta",
+  sequence: 42, cursor: 42, source: "codex", details: { eventId: "event-42", data: { delta: { text: "hello" } } },
+});
+entries = store.getDebugLogs();
+assert.equal(entries[2].source, "runtime");
+assert.equal(entries[2].runtime.protocol, "oaep/1");
+assert.equal(entries[2].runtime.sequence, 42);
+assert.match(entries[2].raw, /"eventId": "event-42"/);
+store.appendRuntimeLogEvent({
+  id: "runtime-log-2", timestamp: "2026-07-17T08:00:03.100Z", level: "debug", status: "running",
+  protocol: "oaep/1", phase: "event", operation: "oaep.event.received", message: "event.item.delta · sequence 43",
+  threadId: "thread-1", sessionId: "session-1", runId: "run-1", itemId: "item-1", eventType: "event.item.delta",
+  sequence: 43, cursor: 43, source: "codex", details: { eventId: "event-43", data: { delta: { text: " world" } } },
+});
+entries = store.getDebugLogs();
+assert.equal(entries.length, 3, "Consecutive Runtime deltas must coalesce into one display record.");
+assert.equal(entries[2].coalescedCount, 2);
+assert.equal(entries[2].runtime.sequence, 43);
+
 store.clearDebugLogs();
 assert.equal(store.getDebugLogs().length, 0, "Clear must affect only this debug store.");
 
@@ -163,12 +185,12 @@ try {
 }
 
 for (const contract of [
-  'type DebugView = "overview" | "traces" | "errors" | "causes" | "interactive" | "production" | "activity" | "raw"',
+  'type DebugView = "agent" | "app-errors" | "runtime" | "overview" | "traces" | "errors" | "causes" | "interactive" | "production" | "activity" | "raw"',
   'role="tablist"',
   'view === "overview"',
   'view === "traces"',
   'view === "errors"',
-  "groupActivities(filtered)",
+  'groupActivities(visible.filter((entry) => entry.source === "activity"))',
   "copyTextSafely(body)",
   "window.openDrSai.clearDiagnostics()",
   "getActivityDetails(activity, zh)",
@@ -176,10 +198,21 @@ for (const contract of [
   'open={entry.activityStatus === "error" || undefined}',
   "debug-activity-missing-error",
   "copyTextSafely(copyText)",
+  'en: "Runtime Log"',
+  'en: "App Errors"',
+  "function AgentDiagnosticView",
+  "function AppErrorView",
+  "function IncidentCard",
+  'snapshot?.agentRuns ?? []',
+  'snapshot?.incidents ?? []',
+  "function RuntimeLogEntry",
+  "matchesRuntimeScope(entry, runtimeScope, activeRun)",
+  'type RuntimeLogScope = "current-agent" | "all-agent" | "app" | "all"',
+  "entry.coalescedCount",
 ]) {
   assert.ok(panelSource.includes(contract), `Missing DebugPanel contract: ${contract}`);
 }
-for (const contract of [".debug-activity-entry > summary", ".debug-activity-details pre", ".debug-activity-missing-error"]) {
+for (const contract of [".debug-activity-entry > summary", ".debug-activity-details pre", ".debug-activity-missing-error", ".debug-runtime-entry > summary", ".debug-runtime-details > section > pre", ".agent-current-state", ".diagnostic-incident-card", ".debug-advanced-tabs"]) {
   assert.ok(stylesSource.includes(contract), `Missing activity detail style: ${contract}`);
 }
 assert.ok(adapterSource.includes("appendStructuredProtocolLog(structuredEvent)"));

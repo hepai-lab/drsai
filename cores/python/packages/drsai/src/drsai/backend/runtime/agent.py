@@ -8,11 +8,11 @@ asset, and dispatches every tool in the Runtime process and Workspace.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
-import os
 import re
 import socket
-import subprocess
 import time
 import traceback
 import uuid
@@ -183,9 +183,19 @@ class RuntimeState(Protocol):
 
     def get_run(self, run_id: str) -> dict[str, Any]: ...
     def list_session_runs(self, session_id: str) -> list[dict[str, Any]]: ...
-    def transition_run(self, run_id: str, status: str) -> dict[str, Any]: ...
+    def transition_run(
+        self,
+        run_id: str,
+        status: str,
+        *,
+        reason: str | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
     def append_event(self, run_id: str, event_type: str, data: dict[str, Any]) -> dict[str, Any]: ...
     def append_backend_event(self, run_id: str, event_type: str, data: dict[str, Any], backend_event_key: str) -> dict[str, Any]: ...
+    def append_normalized_event(
+        self, run_id: str, event: "NormalizedAgentEvent", audit: Mapping[str, Any]
+    ) -> dict[str, Any]: ...
     def create_run(
         self, session_id: str, agent_definition: str, idempotency_key: str,
         backend_id: str = "opendrsai", parent_run_id: str | None = None,
@@ -344,19 +354,47 @@ class RuntimeToolDispatcher:
         if permission not in context.permissions and broad_permission not in context.permissions:
             raise RuntimeExecutionError("permission_denied", f"Run is not permitted to invoke {kind}:{name}.")
         call_id = f"call-{uuid.uuid4()}"
-        audit = {**context.audit_fields(), "call_id": call_id, "kind": kind, "name": name}
+        operation_id = f"operation-{uuid.uuid4()}"
+        correlation_id = context.correlation_id or f"correlation-{uuid.uuid4()}"
+        audit = {
+            **context.audit_fields(),
+            "call_id": call_id,
+            "operation_id": operation_id,
+            "kind": kind,
+            "name": name,
+        }
+        if kind in {"shell", "process", "test"}:
+            command = arguments.get("command")
+            if isinstance(command, list):
+                audit["command"] = [str(part) for part in command]
+                audit["display_command"] = " ".join(str(part) for part in command)
+            audit["cwd"] = str(arguments.get("cwd") or ".")
+            audit["operation_ref"] = {
+                "protocol": "owop/1",
+                "operation_id": operation_id,
+                "workspace_id": context.workspace_id,
+                "operation": "process.start",
+                "correlation_id": correlation_id,
+            }
         self.state.append_event(context.run_id, "tool.started", audit)
         try:
             if kind in {"shell", "process", "test"}:
-                result = self._run_process(context, arguments)
+                result = self._run_process(
+                    context,
+                    arguments,
+                    operation_id=operation_id,
+                    correlation_id=correlation_id,
+                )
             else:
                 registry = {"tool": self.tools, "skill": self.skills, "mcp": self.mcp_servers}.get(kind)
                 if registry is None or name not in registry:
                     raise RuntimeExecutionError("tool_not_found", f"Runtime {kind} {name} is not registered.")
                 result = dict(registry[name](context, arguments))
             event = {**audit, "result": _safe_result(result)}
+            if isinstance(result.get("resource_refs"), list):
+                event["resource_refs"] = list(result["resource_refs"])
             self.state.append_event(context.run_id, "tool.completed", event)
-            return {"call_id": call_id, **result}
+            return {"call_id": call_id, "operation_id": operation_id, **result}
         except RuntimeExecutionError as exc:
             self.state.append_event(context.run_id, "tool.failed", {**audit, "error": exc.as_dict()})
             raise
@@ -387,38 +425,91 @@ class RuntimeToolDispatcher:
             raise RuntimeExecutionError("workspace_path_invalid", "Command cwd is not a directory.")
         return candidate
 
-    def _run_process(self, context: RuntimeRunContext, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    def _run_process(
+        self,
+        context: RuntimeRunContext,
+        arguments: Mapping[str, Any],
+        *,
+        operation_id: str,
+        correlation_id: str,
+    ) -> dict[str, Any]:
         command = arguments.get("command")
         if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
             raise RuntimeExecutionError("command_invalid", "Runtime commands must be a non-empty argv array.")
         cwd = self._cwd(context, arguments.get("cwd"))
         timeout = min(max(float(arguments.get("timeout_seconds", 30)), 0.1), 300.0)
-        env = os.environ.copy()
         supplied_env = arguments.get("env", {})
         if not isinstance(supplied_env, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in supplied_env.items()):
             raise RuntimeExecutionError("command_invalid", "Runtime command environment must contain string pairs.")
-        env.update(supplied_env)
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=cwd,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                shell=False,
-                check=False,
+        if supplied_env:
+            raise RuntimeExecutionError(
+                "owop_environment_unsupported",
+                "OWOP process.start does not accept environment overrides.",
             )
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeExecutionError("command_timeout", "Runtime command timed out.", retryable=True) from exc
-        except OSError as exc:
-            raise RuntimeExecutionError("command_start_failed", "Runtime command could not be started.") from exc
+        from drsai.owop.process_pty import LocalProcessPtyOperations
+        from drsai.owop.protocol import OWOPError, OWOPProtocol
+
+        relative_cwd = cwd.relative_to(context.workspace_path.resolve(strict=True)).as_posix() or "."
+        request = {
+            "version": "1.0",
+            "request_id": operation_id,
+            "correlation_id": correlation_id,
+            "workspace_id": context.workspace_id,
+            "operation": "process.start",
+            "params": {
+                "argv": list(command),
+                "cwd": relative_cwd,
+                "timeout_ms": max(1, int(timeout * 1000)),
+                "max_output_bytes": 4 * 1024 * 1024,
+            },
+            "binding": {"kind": "in_process"},
+        }
+        provider = LocalProcessPtyOperations(context.workspace_path)
+        try:
+            OWOPProtocol().validate_request(request)
+            started = provider.process_start(request["params"])
+            process_id = str(started["process_id"])
+            offset = 0
+            stdout = bytearray()
+            stderr = bytearray()
+            while True:
+                attached = provider.process_attach(
+                    {"process_id": process_id, "after_offset": offset}
+                )
+                for segment in attached["segments"]:
+                    decoded = base64.b64decode(segment["content_base64"])
+                    (stderr if segment["stream"] == "stderr" else stdout).extend(decoded)
+                offset = int(attached["next_offset"])
+                if not attached["running"]:
+                    if attached.get("timed_out"):
+                        raise RuntimeExecutionError(
+                            "command_timeout", "Runtime command timed out.", retryable=True
+                        )
+                    exit_code = attached.get("exit_code")
+                    break
+                time.sleep(0.01)
+        except OWOPError as exc:
+            raise RuntimeExecutionError(
+                exc.code,
+                exc.message,
+                retryable=exc.retryable,
+                detail=dict(exc.details or {}),
+            ) from exc
+        finally:
+            provider.close()
         return {
-            "exit_code": completed.returncode,
-            "stdout": completed.stdout,
-            "stderr": completed.stderr,
+            "exit_code": exit_code,
+            "stdout": stdout.decode(errors="replace"),
+            "stderr": stderr.decode(errors="replace"),
             "hostname": socket.gethostname(),
             "cwd": str(cwd),
+            "resource_refs": [{
+                "protocol": "owop/1",
+                "workspace_id": context.workspace_id,
+                "resource_type": "process",
+                "resource_id": process_id,
+                "operation_id": operation_id,
+            }],
         }
 
 
@@ -439,6 +530,19 @@ class AgentExecutionServices:
         if append is None:
             return self.state.append_event(context.run_id, event_type, payload)
         return append(context.run_id, event_type, payload, backend_event_key)
+
+    def emit_normalized(self, context: RuntimeRunContext, event: "NormalizedAgentEvent") -> dict[str, Any]:
+        """Write a backend event through the Runtime-owned semantic boundary."""
+        # event.binding contains Backend-private ids (for example Codex
+        # thread/turn/item ids), not Runtime ids. The active Runtime context
+        # remains authoritative for persistence; private ids are metadata only.
+        append = getattr(self.state, "append_normalized_event", None)
+        if append is not None:
+            return append(context.run_id, event, context.audit_fields())
+        from drsai.backend.runtime.normalized_writer import normalized_runtime_write
+
+        event_type, data, dedupe_key = normalized_runtime_write(event)
+        return self.emit_backend(context, event_type, data, dedupe_key)
 
 
 class OpenDrSaiAgentBackend:
@@ -617,16 +721,27 @@ class RuntimeAgentService:
         except Exception as exc:
             error = exc if isinstance(exc, RuntimeExecutionError) else RuntimeExecutionError("agent_execution_failed", "Agent execution failed.")
             stack = _safe_diagnostic_stack(exc)
-            self.state.append_event(run_id, "agent.failed", {
-                **context.audit_fields(),
-                "error": error.as_dict(),
-                "diagnostic": {
-                    "stack": stack,
-                    "source": next((frame for frame in reversed(stack) if frame.get("in_app")), stack[-1] if stack else None),
+            self.state.append_backend_event(
+                run_id,
+                "agent.failed",
+                {
+                    **context.audit_fields(),
+                    "error": error.as_dict(),
+                    "diagnostic": {
+                        "stack": stack,
+                        "source": next((frame for frame in reversed(stack) if frame.get("in_app")), stack[-1] if stack else None),
+                    },
                 },
-            })
+                f"agent-failed:{run_id}",
+            )
             if self.state.get_run(run_id)["status"] == "running":
-                self.state.transition_run(run_id, "cancelled" if error.code == "run_cancelled" else "failed")
+                terminal_status = "cancelled" if error.code == "run_cancelled" else "failed"
+                self.state.transition_run(
+                    run_id,
+                    terminal_status,
+                    reason=error.code,
+                    error=error.as_dict(),
+                )
             raise error from exc
 
     async def cancel(self, run_id: str) -> dict[str, Any]:
@@ -660,7 +775,11 @@ class RuntimeAgentService:
         """
         backend_ids = {str(run["backend_id"]) for run in self.state.list_session_runs(session_id)}
         if not backend_ids:
-            return
+            session = self.state.get_session(session_id)
+            session_backend = str(session.get("backend_id") or "").strip()
+            if not session_backend:
+                return
+            backend_ids.add(session_backend)
         if len(backend_ids) != 1:
             raise RuntimeExecutionError(
                 "session_backend_ambiguous",
@@ -707,6 +826,180 @@ class RuntimeAgentService:
         if operation is None:
             raise RuntimeExecutionError("backend_account_unsupported", f"Agent Backend {backend_id} has no managed account.")
         await operation()
+
+    async def restart_backend(self, backend_id: str) -> dict[str, Any]:
+        backend = self.router.require(backend_id)
+        operation = getattr(backend, "restart_backend", None)
+        if operation is None:
+            raise RuntimeExecutionError("backend_restart_unsupported", f"Agent Backend {backend_id} cannot be restarted independently.")
+        return dict(await operation())
+
+    async def sync_backend_sessions(self, backend_id: str, workspace_id: str) -> dict[str, Any]:
+        backend = self.router.require(backend_id)
+        discover = getattr(backend, "discover_sessions", None)
+        bind = getattr(backend, "bind_imported_session", None)
+        if discover is None or bind is None:
+            raise RuntimeExecutionError("backend_session_sync_unsupported", f"Agent Backend {backend_id} cannot discover existing Sessions.")
+        workspace = self.workspaces.get_workspace(workspace_id)
+        if workspace is None:
+            raise RuntimeExecutionError("workspace_not_found", "Workspace is not open on this Runtime.")
+        rows = await discover(str(workspace.path))
+        health = await backend.health()
+        backend_version = str(health.get("version") or "unknown")
+        result = {"backend_id": backend_id, "workspace_id": workspace_id, "discovered": len(rows),
+                  "active": 0, "archived": 0, "created": 0, "updated": 0, "skipped": 0,
+                  "conflicts": 0, "sessions": []}
+        for row in rows:
+            backend_session_id = str(row.get("backend_session_id") or "")
+            if not backend_session_id:
+                result["skipped"] += 1
+                continue
+            session_id = f"session-{backend_id}-{hashlib.sha256(backend_session_id.encode('utf-8')).hexdigest()[:32]}"
+            try:
+                previous = self.state.get_session(session_id)
+            except KeyError:
+                previous = None
+            incoming_updated_at = str(row.get("updated_at") or row.get("created_at") or "")
+            if previous and bool(previous.get("archived")) != bool(row.get("archived")):
+                try:
+                    local_at = datetime.fromisoformat(str(previous.get("updated_at") or "").replace("Z", "+00:00"))
+                    remote_at = datetime.fromisoformat(incoming_updated_at.replace("Z", "+00:00"))
+                    if local_at > remote_at:
+                        result["conflicts"] += 1
+                except ValueError:
+                    pass
+            session, created = self.state.import_session(
+                session_id, workspace_id, str(row.get("title") or "Imported session"),
+                agent_definition=f"{backend_id}@1", backend_id=backend_id,
+                created_at=row.get("created_at"), updated_at=row.get("updated_at"),
+                archived=bool(row.get("archived")),
+            )
+            await bind(
+                session_id, workspace_id, str(self.state.identity.runtime_id), backend_session_id,
+                backend_version=backend_version,
+            )
+            state = "archived" if session["archived"] else "active"
+            result[state] += 1
+            if created:
+                result["created"] += 1
+            elif previous != session:
+                result["updated"] += 1
+            else:
+                result["skipped"] += 1
+            message_count = len(self.state.oaep_snapshot(session_id).get("items") or [])
+            result["sessions"].append({**session, "message_count": message_count})
+        return result
+
+    async def sync_backend_session_history(self, session_id: str) -> dict[str, Any]:
+        # Import after Runtime Agent types are initialized.  The Codex package
+        # exports an Adapter that depends on these Runtime contracts.
+        from drsai.backend.codex_adapter.history_migration import codex_history_migration_dry_run
+        from drsai.backend.codex_adapter.version import CODEX_ADAPTER_MAPPING_VERSION
+
+        session = self.state.get_session(session_id)
+        backend_id = str(session.get("backend_id") or "")
+        backend = self.router.require(backend_id)
+        read_history = getattr(backend, "read_imported_session_history", None)
+        if read_history is None:
+            return {"session_id": session_id, "backend_id": backend_id, "imported": 0, "total": 0}
+        history = await read_history(session_id)
+        kind_map = {
+            "message": "message", "reasoning": "reasoning", "plan": "plan",
+            "command_execution": "tool", "tool_call": "tool", "file_change": "file_change",
+            "interaction": "approval", "artifact": "artifact", "subtask": "subtask", "notice": "error",
+        }
+        mapping_version = CODEX_ADAPTER_MAPPING_VERSION
+        existing_items = {
+            str(item["item_id"]): item
+            for item in self.state.conversation_snapshot(session_id).get("items") or []
+        }
+        migration_scan = codex_history_migration_dry_run(
+            session_id,
+            history,
+            existing_items.values(),
+            self.state.list_oaep_events(session_id),
+            mapping_version=mapping_version,
+        )
+        pending_items: list[dict[str, Any]] = []
+        warning_count = 0
+        for historical_turn in history:
+            backend_run_id = str(historical_turn.get("backend_run_id") or "")
+            if not backend_run_id:
+                continue
+            imported_run, _ = self.state.import_backend_run(
+                session_id, backend_id, backend_run_id,
+                status=str(historical_turn.get("status") or "completed"),
+                backend_run_index=(int(historical_turn["backend_run_index"])
+                                   if historical_turn.get("backend_run_index") is not None else None),
+                created_at=historical_turn.get("created_at"), completed_at=historical_turn.get("completed_at"),
+            )
+            for historical_item in historical_turn.get("items") or []:
+                if not isinstance(historical_item, Mapping):
+                    continue
+                backend_item_id = str(historical_item.get("item_id") or "")
+                if not backend_item_id:
+                    continue
+                item_digest = hashlib.sha256(
+                    f"{session_id}\0{backend_run_id}\0{backend_item_id}".encode("utf-8")
+                ).hexdigest()[:32]
+                role = historical_item.get("role")
+                if role not in {"user", "assistant", "system", "tool", None}:
+                    role = None
+                item_id = f"codex-item-{item_digest}"
+                existing = existing_items.get(item_id)
+                old_payload = dict(existing.get("payload") or {}) if existing else {}
+                payload = {**dict(historical_item.get("payload") or {}), "backend_item_id": backend_item_id,
+                           "backend_run_id": backend_run_id,
+                           "backend_run_index": historical_turn.get("backend_run_index"),
+                           "mapping_version": mapping_version,
+                           "status": str(historical_item.get("status") or "completed")}
+                if payload.get("code") == "codex_item_unknown":
+                    warning_count += 1
+                if existing:
+                    ignored = {"mapping_version", "projection_correction"}
+                    old_semantics = {key: value for key, value in old_payload.items() if key not in ignored}
+                    new_semantics = {key: value for key, value in payload.items() if key not in ignored}
+                    if old_payload.get("mapping_version") == mapping_version:
+                        continue
+                correction = bool(existing)
+                if correction:
+                    payload["projection_correction"] = True
+                pending_items.append({
+                    "item_id": item_id,
+                    "kind": kind_map.get(str(historical_item.get("kind") or "notice"), "error"),
+                    "role": role, "revision": int(existing.get("revision") or 0) + 1 if correction else 1,
+                    "source_client": "runtime",
+                    "source_message_id": f"codex:{item_digest}",
+                    "payload": payload,
+                    "run_id": str(imported_run["run_id"]), "event_kind": "conversation.item.upsert",
+                    "created_at": historical_item.get("created_at") or historical_turn.get("created_at"),
+                    "updated_at": historical_item.get("updated_at") or historical_turn.get("completed_at")
+                                  or historical_turn.get("created_at"),
+                })
+        imported = 0
+        # Bound correction transactions so a large legacy Thread does not lock
+        # the Runtime database for the whole reprojection. Every batch is
+        # append-only and idempotent; interruption resumes from the first
+        # uncommitted mapping revision.
+        for offset in range(0, len(pending_items), 250):
+            imported += self.state.record_conversation_items(
+                session_id, pending_items[offset:offset + 250]
+            )["created"]
+        total = len(self.state.oaep_snapshot(session_id).get("items") or [])
+        return {
+            "session_id": session_id,
+            "backend_id": backend_id,
+            "imported": imported,
+            "total": total,
+            "runs": len(history),
+            "warnings": warning_count,
+            "mapping_version": mapping_version,
+            "migration": {
+                **migration_scan,
+                "corrected_items": imported,
+                "status": "completed",
+            },
+        }
 
     async def close(self) -> None:
         if self._closed:

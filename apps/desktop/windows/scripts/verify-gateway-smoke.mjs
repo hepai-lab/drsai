@@ -48,6 +48,36 @@ try {
   assert(models.statusCode === 200, `/v1/models returned ${models.statusCode}`);
   assert(models.body?.object === "list" && Array.isArray(models.body.data), `/v1/models body was ${JSON.stringify(models.body)}`);
 
+  const unauthorizedConfig = await fetch(`${baseUrl}/v1/config/model-state`);
+  assert(unauthorizedConfig.status === 401, `unauthorized config read returned ${unauthorizedConfig.status}`);
+  const presets = await requestJson("/v1/config/model-providers/presets");
+  assert(presets.statusCode === 200 && presets.body?.presets?.some((item) => item.id === "deepseek"), "provider presets are unavailable");
+  const initialModelState = await requestJson("/v1/config/model-state");
+  assert(initialModelState.statusCode === 200, `initial model-state returned ${initialModelState.statusCode}`);
+  const initialRevision = initialModelState.body?.revision;
+  const localDraft = {
+    model: "gateway-smoke-model",
+    model_provider: "gateway-smoke-local",
+    base_url: "http://127.0.0.1:11434/v1",
+    requires_api_key: false,
+    wire_api: "openai",
+    expected_revision: initialRevision,
+  };
+  const preview = await requestJson("/v1/config/model/preview", { method: "POST", body: localDraft });
+  assert(preview.statusCode === 200 && preview.body?.persisted === false, `model preview failed: ${JSON.stringify(preview.body)}`);
+  const afterPreview = await requestJson("/v1/config/model-state");
+  assert(afterPreview.body?.revision === initialRevision, "model preview changed persisted configuration");
+  const committedModel = await requestJson("/v1/config/model", { method: "PUT", body: localDraft });
+  assert(committedModel.statusCode === 200 && committedModel.body?.model === "gateway-smoke-model", `model commit failed: ${JSON.stringify(committedModel.body)}`);
+  assert(committedModel.body?.restart_required === false, "model commit unexpectedly requires restart");
+  const committedState = await requestJson("/v1/config/model-state");
+  assert(committedState.body?.effective?.provider?.has_api_key === false, "local Provider key state is incorrect");
+  assert(!JSON.stringify(committedState.body).includes("gateway-smoke-secret"), "model-state leaked a secret fixture");
+  const conflict = await requestJson("/v1/config/model", { method: "PUT", body: { ...localDraft, model: "must-conflict", expected_revision: initialRevision } });
+  assert(conflict.statusCode === 409, `stale model commit returned ${conflict.statusCode}`);
+  const doctor = await requestJson("/v1/config/model/doctor", { method: "POST", body: { online: false } });
+  assert(doctor.statusCode === 200 && doctor.body?.ok === true, `model doctor failed: ${JSON.stringify(doctor.body)}`);
+
   const chat = await requestText("/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -99,7 +129,7 @@ try {
   });
   assert(wrongSubject.statusCode === 403, `OIDC subject mismatch returned ${wrongSubject.statusCode}`);
 
-  console.log("Gateway smoke passed: /health, /v1/models, and chat SSE returned chunk + [DONE].");
+  console.log("Gateway smoke passed: health, model configuration preview/commit/conflict/doctor, auth, and chat SSE.");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
@@ -182,9 +212,11 @@ async function waitForJson(path, timeoutMs, logs) {
   throw new Error(`Gateway did not become ready at ${baseUrl}${path} within ${timeoutMs}ms.\n${logs.tail()}`);
 }
 
-async function requestJson(path) {
+async function requestJson(path, init = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
-    headers: { "X-OpenDrSai-Gateway-Token": gatewayInstanceToken },
+    method: init.method || "GET",
+    headers: { "X-OpenDrSai-Gateway-Token": gatewayInstanceToken, ...(init.body ? { "Content-Type": "application/json" } : {}) },
+    body: init.body ? JSON.stringify(init.body) : undefined,
   });
   let body = null;
   try {

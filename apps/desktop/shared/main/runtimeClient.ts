@@ -4,10 +4,26 @@ import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gate
 import { parseRemoteProtocolError, REMOTE_SSH_PROTOCOL_VERSION, type RemoteProtocolErrorBody } from "../api/remoteSshProtocol";
 import type { OWOPOperation, OWOPParamsByOperation } from "../api/owop.generated";
 import type {
+  OaepEventPage,
+  OaepSnapshot,
+} from "../api/oaep.generated";
+export type {
+  OaepEvent,
+  OaepEventPage,
+  OaepItem,
+  OaepItemStatus,
+  OaepItemType,
+  OaepRun,
+  OaepSession,
+  OaepSnapshot,
+  OaepSource,
+} from "../api/oaep.generated";
+import type {
   DesktopMobilePairingGrant,
   DesktopMobilePairingReadiness,
   DesktopMobileAssociation,
   DesktopRuntimeEnrollmentRevocation,
+  GatewayStatus,
   WorkspaceProject,
 } from "../api/desktopApi";
 
@@ -46,12 +62,19 @@ export interface RuntimeIdentity {
   version: string;
   protocol_version: number;
   platform: string;
+  dev_managed?: boolean;
 }
 
 export interface RuntimeCapabilities {
   protocol_version: number;
   capabilities: string[];
   capability_versions: Record<string, number>;
+  protocols?: {
+    oaep?: { version: string; profiles: string[] };
+    owop?: { version: string; capabilities: string[] };
+    control?: { version: string };
+    relay?: { version: string };
+  };
   agent_backends?: Record<string, AgentBackendCapability>;
 }
 
@@ -60,6 +83,10 @@ export interface AgentBackendCapability {
   available: boolean;
   reason?: string | null;
   version?: string;
+  connection_state?: string;
+  app_server_state?: "running" | "stopped" | "fault";
+  transport?: "local-process" | "ssh" | string;
+  adapter_version?: string;
 }
 
 export interface BackendAccountStatus {
@@ -143,14 +170,18 @@ export interface RuntimeSessionList {
   total: number;
 }
 
-export interface RuntimeSession { session_id: string; workspace_id: string; title: string; }
+export interface RuntimeSession { session_id: string; workspace_id: string; title: string; archived?: boolean; lifecycle?: string; created_at?: string; updated_at?: string; message_count?: number; }
+export interface RuntimeBackendSessionSyncResult {
+  backend_id: string; workspace_id: string; discovered: number; active: number; archived: number;
+  created: number; updated: number; skipped: number; conflicts?: number; sessions: RuntimeSession[];
+}
 export interface RuntimeAgentRun { run_id: string; session_id: string; workspace_id: string; backend_id: string; status: string; }
 export interface RuntimeAgentEvent { event_id: string; run_id: string; sequence: number; type: string; data: Record<string, unknown>; }
 export interface RuntimeConversationItem {
   item_id: string;
   session_id: string;
   run_id: string | null;
-  kind: "message" | "reasoning" | "tool" | "approval" | "artifact" | "error";
+  kind: "message" | "reasoning" | "tool" | "file_change" | "approval" | "artifact" | "error";
   role: "user" | "assistant" | "system" | "tool" | null;
   revision: number;
   session_sequence: number;
@@ -183,6 +214,10 @@ export interface RuntimeSessionEventPage {
   next_sequence: number;
 }
 export interface RuntimeSessionEventStream {
+  response: Response;
+  events: ReadableStream<Uint8Array>;
+}
+export interface OaepEventStream {
   response: Response;
   events: ReadableStream<Uint8Array>;
 }
@@ -220,6 +255,9 @@ export interface RuntimeClient {
   getRuntime(): Promise<RuntimeIdentity>;
   getCapabilities(): Promise<RuntimeCapabilities>;
   getBackendAccount(backendId: string, refresh?: boolean): Promise<BackendAccountStatus>;
+  restartBackend(backendId: string): Promise<Record<string, unknown>>;
+  syncBackendSessions(workspaceId: string, backendId: string): Promise<RuntimeBackendSessionSyncResult>;
+  syncBackendSessionHistory(sessionId: string): Promise<{ session_id: string; backend_id: string; imported: number; total: number; runs?: number; warnings?: number; mapping_version?: string }>;
   startBackendLogin(backendId: string, type?: "chatgpt" | "chatgptDeviceCode"): Promise<BackendLoginStart>;
   cancelBackendLogin(backendId: string, loginId: string): Promise<void>;
   logoutBackend(backendId: string): Promise<void>;
@@ -241,6 +279,9 @@ export interface RuntimeClient {
   getConversationSnapshot(sessionId: string): Promise<RuntimeConversationSnapshot>;
   listSessionEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<RuntimeSessionEventPage>;
   openSessionEventStream(sessionId: string, afterSequence: number, signal: AbortSignal): Promise<RuntimeSessionEventStream>;
+  getOaepSnapshot(sessionId: string): Promise<OaepSnapshot>;
+  listOaepEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<OaepEventPage>;
+  openOaepEventStream(sessionId: string, afterSequence: number, signal: AbortSignal): Promise<OaepEventStream>;
   getAgentRun(runId: string): Promise<RuntimeAgentRun>;
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun>;
   executeAgentRun(
@@ -462,6 +503,48 @@ abstract class HttpRuntimeClient implements RuntimeClient {
       { headers: { Accept: "text/event-stream" }, signal },
     );
     if (!response.body) throw new Error("Runtime Session did not return an Event stream.");
+    return { response, events: response.body };
+  }
+
+  restartBackend(backendId: string): Promise<Record<string, unknown>> {
+    return this.requestJson(`/v1/agent-backends/${this.backendId(backendId)}/restart`, { method: "POST" });
+  }
+
+  syncBackendSessions(workspaceId: string, backendId: string): Promise<RuntimeBackendSessionSyncResult> {
+    this.assertResourceId("Workspace", workspaceId);
+    return this.requestJson(`/v1/workspaces/${encodeURIComponent(workspaceId)}/agent-backends/${this.backendId(backendId)}/sessions/sync`, { method: "POST" });
+  }
+
+  syncBackendSessionHistory(sessionId: string): Promise<{ session_id: string; backend_id: string; imported: number; total: number; runs?: number; warnings?: number; mapping_version?: string }> {
+    return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/agent-backend/history/sync`, { method: "POST" });
+  }
+
+  getOaepSnapshot(sessionId: string): Promise<OaepSnapshot> {
+    this.assertResourceId("Session", sessionId);
+    return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/oaep-snapshot`);
+  }
+
+  listOaepEvents(sessionId: string, afterSequence = 0, limit = 500): Promise<OaepEventPage> {
+    this.assertResourceId("Session", sessionId);
+    const cursor = Math.max(0, Math.trunc(afterSequence));
+    const pageSize = Math.max(1, Math.min(2000, Math.trunc(limit)));
+    return this.requestJson(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/oaep-events?after_sequence=${cursor}&limit=${pageSize}`,
+    );
+  }
+
+  async openOaepEventStream(
+    sessionId: string,
+    afterSequence: number,
+    signal: AbortSignal,
+  ): Promise<OaepEventStream> {
+    this.assertResourceId("Session", sessionId);
+    const cursor = Math.max(0, Math.trunc(afterSequence));
+    const response = await this.request(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/oaep-events/stream?after_sequence=${cursor}`,
+      { headers: { Accept: "text/event-stream" }, signal },
+    );
+    if (!response.body) throw new Error("Runtime Session did not return an OAEP Event stream.");
     return { response, events: response.body };
   }
 
@@ -714,16 +797,61 @@ export class LocalRuntimeClient extends HttpRuntimeClient {
   readonly location = "local" as const;
 
   static async connect(): Promise<LocalRuntimeClient> {
-    if (!(await startGateway())) throw new Error("Local Runtime is not ready.");
+    const started = await startGateway();
     const status = await getGatewayStatus();
-    if (!status.ready) throw new Error("Local Runtime failed its health check.");
-    return new LocalRuntimeClient({ baseUrl: status.baseUrl, headers: getGatewayRequestHeaders() });
+    // Dev bootstrap Gateway can become ready between startGateway()'s last probe
+    // and this status read; prefer the live status when the Runtime is up.
+    if (status.ready) {
+      return new LocalRuntimeClient({ baseUrl: status.baseUrl, headers: getGatewayRequestHeaders() });
+    }
+    if (!started) throw createLocalRuntimeUnavailableErrorFromStatus(status, "start");
+    throw createLocalRuntimeUnavailableErrorFromStatus(status, "health");
   }
 
   static forAccess(baseUrl: string, headers: Record<string, string> = {}): LocalRuntimeClient {
     if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(baseUrl)) throw new Error("Local Runtime access must use loopback HTTP.");
     return new LocalRuntimeClient({ baseUrl, headers });
   }
+}
+
+export class LocalRuntimeUnavailableError extends Error {
+  readonly code = "local_runtime_unavailable";
+  readonly retryable = true;
+  readonly gatewayStatus: GatewayStatus;
+
+  constructor(status: GatewayStatus, phase: "start" | "health") {
+    super(localRuntimeUnavailableMessage(status, phase));
+    this.name = "LocalRuntimeUnavailableError";
+    this.gatewayStatus = status;
+  }
+}
+
+export function isLocalRuntimeUnavailableError(error: unknown): error is LocalRuntimeUnavailableError {
+  return error instanceof LocalRuntimeUnavailableError
+    || Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "local_runtime_unavailable");
+}
+
+function createLocalRuntimeUnavailableErrorFromStatus(
+  status: GatewayStatus,
+  phase: "start" | "health",
+): LocalRuntimeUnavailableError {
+  return new LocalRuntimeUnavailableError(status, phase);
+}
+
+function localRuntimeUnavailableMessage(status: GatewayStatus, phase: "start" | "health"): string {
+  const code = status.diagnosticCode && status.diagnosticCode !== "gateway_ready"
+    ? ` (${status.diagnosticCode})`
+    : "";
+  const detail = status.diagnosticMessage ? ` ${status.diagnosticMessage}` : "";
+  if (status.externalConflict) {
+    return `Local Runtime is unavailable${code}: another process is using the Runtime port or rejected this Desktop token.${detail} Stop the other OpenDrSai Runtime or restart Desktop, then retry.`;
+  }
+  if (status.managed) {
+    return `Local Runtime is unavailable${code}.${detail} Restart the OpenDrSai Runtime, then retry.`;
+  }
+  return phase === "start"
+    ? `Local Runtime could not be started${code}.${detail} Check the Runtime installation, then retry.`
+    : `Local Runtime is unavailable${code}.${detail} Check the Runtime installation, then retry.`;
 }
 
 export class RemoteRuntimeClient extends HttpRuntimeClient {

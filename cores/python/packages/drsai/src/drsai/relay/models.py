@@ -158,6 +158,8 @@ class ConversationSnapshot(GeneratedConversationSnapshot):
 class SessionEvent(GeneratedSessionEvent):
     session_sequence: int = Field(ge=1)
     kind: SessionEventKind
+    item_id: str | None = None
+    item_revision: int | None = Field(default=None, ge=1)
     payload: dict[str, Any] = Field(default_factory=dict)
 
 

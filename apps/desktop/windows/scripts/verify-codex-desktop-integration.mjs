@@ -54,11 +54,25 @@ try {
     presentCodexBackendStatus({ backend_id: "codex", available: false, reason: "codex_connection_eof" }).state,
   ];
   assert.deepEqual(states, ["available", "not_installed", "version_incompatible", "not_logged_in", "fault"]);
+  const detailedStatus = presentCodexBackendStatus({
+    backend_id: "codex", available: true, version: "0.142.5", connection_state: "ready",
+    app_server_state: "running", transport: "local-process", adapter_version: "oaep-codex/2.0",
+  }, { logged_in: true, auth_mode: "chatgpt", email: "user@example.test", plan_type: "plus", credential_source: null, requires_openai_auth: true });
+  assert.equal(detailedStatus.appServerState, "running");
+  assert.equal(detailedStatus.transport, "local-process");
+  assert.equal(detailedStatus.adapterVersion, "oaep-codex/2.0");
   assert(app.includes("codex-backend-status") && app.includes("codex-login") && app.includes("codex-logout"));
+  assert(app.includes("conversationHistory=") && app.includes("continuesExistingTask="), "Codex history trust and continuation state must reach the chat UI");
+  const errorsBundle = join(temp, "user-facing-errors.mjs");
+  await build({ entryPoints: [join(root, "../shared/renderer/src/userFacingErrors.ts")], outfile: errorsBundle, bundle: true, platform: "node", format: "esm", target: "node22" });
+  const { describeUserFacingError } = await import(pathToFileURL(errorsBundle).href);
+  const connectionError = describeUserFacingError(new Error("codex_connection_eof: token=secret"), "zh");
+  assert.equal(connectionError.title, "暂时无法连接 Codex。");
+  assert(!connectionError.title.includes("codex_connection_eof") && !connectionError.action.includes("secret"));
 
   const gateway = await readFile(join(root, "../shared/main/gateway.ts"), "utf8");
   assert(gateway.includes("getLocalCodexDevelopmentEnv") && gateway.includes('DRSAI_CODEX_DEVELOPMENT: "1"'));
-  assert(gateway.includes("app.isPackaged"), "packaged releases must keep the managed Codex artifact trust path");
+  assert(gateway.includes("desktopAppRuntime.isPackaged") && gateway.includes("return {}"), "packaged releases must leave Codex discovery and signature verification to the product Runtime provider");
   assert(gateway.includes('"node_modules", ".bin", "codex.cmd"'), "development must prefer the project-owned standalone CLI");
   assert(gateway.includes('/\\\\WindowsApps\\\\/i'), "inaccessible Windows Store package members must not be advertised as available");
 
@@ -66,17 +80,22 @@ try {
   for (const method of ["createSession", "updateSession", "getAgentRun", "createAgentRun", "executeAgentRun", "cancelAgentRun", "listAgentRunEvents", "respondAgentApproval"]) assert(runtimeClient.includes(method));
   for (const forbidden of ["thread/start", "turn/start", "account/read", "turn/interrupt"]) assert(!runtimeClient.includes(forbidden), `Desktop leaked Codex JSON-RPC ${forbidden}`);
   const chat = await readFile(join(root, "../shared/main/chat.ts"), "utf8");
+  const oaepProjector = await readFile(join(root, "../shared/main/oaepPresentationProjector.ts"), "utf8");
   assert(chat.includes('request.agentId === "my-codex"'));
-  assert(chat.includes('createAgentRun(runtimeSessionId, "codex@1"'));
+  assert(chat.includes("createAgentRun(") && chat.includes("runtimeSessionId,") && chat.includes("agentDefinition,"));
   assert(chat.includes("existingThread?.runtimeSessionId"), "Codex follow-up turns must reuse the mapped Runtime Session");
-  assert(chat.includes('type: "chunk"') && chat.includes('type: "tool_timeline"') && chat.includes('inputType: "approval"'));
+  assert(chat.includes("codex_session_resume_required"), "A missing Codex binding must never silently create a replacement task");
+  assert(chat.includes("requiresCodexSessionResume(existingThread, agentDefinition)"), "Only imported or previously-run Codex tasks may require Session recovery");
+  assert(chat.includes('syncBackendSessions(resolved.workspaceId, "codex")'), "Imported Codex tasks must auto-sync before recovery is required");
+  assert(chat.includes("projectOaepEventForPresentation") && chat.includes('type: "structured"'));
   assert(chat.includes("cancelAgentRun") && chat.includes("respondAgentApproval"));
   assert(chat.includes("export async function recoverChatRun"), "Codex Run output must be recoverable after an Electron restart");
-  assert(chat.includes('event.type === "agent.message.delta"') && chat.includes('type: "chunk"'), "Codex deltas must reach the Desktop chat event stream");
-  assert(chat.includes('event.type === "agent.item.reasoning"') && chat.includes('type: "reasoning"'), "Codex reasoning must use the structured reasoning part");
-  assert(chat.includes('event.type === "agent.item.file_change"') && chat.includes('kind: "diff"'), "Codex file changes must use the structured file-change activity");
-  assert(chat.includes('event.type === "agent.item.command"') && chat.includes('kind: "tool_call"'), "Codex commands must use the structured tool activity");
-  assert(chat.includes('event.type === "run.completed"') && chat.includes('type: "done"'), "Recovered Codex runs must settle the pending chat turn");
+  assert(oaepProjector.includes('event.type === "event.item.delta"') && oaepProjector.includes('kind: "markdown.append"'), "Codex deltas must reach the StructuredConversation event stream");
+  assert(oaepProjector.includes('kind: "reasoning.append"'), "Codex reasoning must use the structured reasoning part");
+  assert(oaepProjector.includes("projectOaepAssistantItem"), "Codex tools and file changes must share the history/live OAEP Item projection");
+  const recoveryBlock = chat.slice(chat.indexOf("export async function recoverChatRun"), chat.indexOf("export async function respondChatInput"));
+  assert(recoveryBlock.includes("mapCodexOaepEvent") && recoveryBlock.includes("hasOaepTerminal"), "Recovered Codex runs must settle through the shared OAEP projector");
+  assert(!recoveryBlock.includes('push({ type: "done"') && !recoveryBlock.includes('push({ type: "error"'), "Recovery must not synthesize a second legacy terminal");
   const adapter = await readFile(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
   assert(adapter.includes("desktopApi.recoverChatRun"), "Renderer must request Codex Run replay for an interrupted turn");
   assert(adapter.includes("structuredRequests.current.delete(requestId)"), "Recovered plain-text deltas must not be suppressed as structured events");
@@ -86,6 +105,24 @@ try {
   assert(threads.includes("writeAtomicJson") && threads.includes("parseStoredJson"), "Thread storage must survive interrupted writes without discarding a reusable Codex Session");
   const archive = await readFile(join(root, "src/main/threadArchive.ts"), "utf8");
   assert(archive.includes("updateSession") && archive.includes("getAgentRun"), "Archive actions must go through Runtime and recover legacy Session bindings");
+  const devScript = await readFile(join(root, "scripts/dev.ps1"), "utf8");
+  assert(
+    devScript.includes("Restarting the source Gateway to load current Python code")
+      && !devScript.includes("OK Source Gateway already ready"),
+    "Windows development startup must restart a dev-managed Gateway so Codex Adapter changes take effect",
+  );
+  assert(
+    devScript.includes("Get-GatewayInstanceToken")
+      && devScript.includes("X-OpenDrSai-Gateway-Token")
+      && devScript.includes("$env:OPENDRSAI_GATEWAY_INSTANCE_TOKEN = $instanceToken")
+      && devScript.includes("-Headers $gatewayHeaders -Method Post"),
+    "Source Gateway startup, readiness probes, and shutdown must share the Desktop instance token",
+  );
+  const desktopDevEntry = await readFile(join(root, "../windows-desktop-dev.cmd"), "utf8");
+  assert(
+    desktopDevEntry.includes("-WithGateway"),
+    "The canonical apps/desktop development entry must launch the source Gateway",
+  );
   console.log("Codex Desktop product integration verification passed.");
 } finally {
   await rm(temp, { recursive: true, force: true });

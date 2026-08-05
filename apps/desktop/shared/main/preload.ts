@@ -259,10 +259,13 @@ import type {
   PdfPageOpenRequest,
   PdfPageOpenResult,
   MyDrSaiConfig,
+  MyDrSaiModelConnection,
+  MyDrSaiProviderTestResult,
   OidcLoginDebugEvent,
   SaveApiKeyResult,
   StartInstallOptions,
   UpdateMyDrSaiConfigRequest,
+  UpdateMyDrSaiModelConnectionRequest,
   UpdateThreadRequest,
   UpdateStatus,
   UpdateWorkspaceRequest,
@@ -404,6 +407,9 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:get-gateway-status"),
   getCodexBackendStatus: (refresh = false) =>
     ipcRenderer.invoke("desktop:get-codex-backend-status", refresh),
+  restartCodexBackend: () => ipcRenderer.invoke("desktop:restart-codex-backend"),
+  syncCodexWorkspaceSessions: (workspaceId, workspacePath) =>
+    ipcRenderer.invoke("desktop:sync-codex-workspace-sessions", workspaceId, workspacePath),
   startCodexBackendLogin: (type = "chatgpt") =>
     ipcRenderer.invoke("desktop:start-codex-backend-login", type),
   cancelCodexBackendLogin: (loginId: string) =>
@@ -437,6 +443,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:stop-gateway"),
   getMobilePairingReadiness: (target) =>
     ipcRenderer.invoke("desktop:mobile-pairing-readiness", target),
+  enableMobileRemoteAccess: (target) =>
+    ipcRenderer.invoke("desktop:mobile-remote-enable", target),
   createMobilePairingGrant: (target) =>
     ipcRenderer.invoke("desktop:mobile-pairing-create", target),
   getMobilePairingGrant: (grantId: string, target) =>
@@ -554,6 +562,25 @@ const api: DesktopApi = {
     request: UpdateMyDrSaiConfigRequest,
   ): Promise<MyDrSaiConfig> =>
     ipcRenderer.invoke("desktop:update-my-drsai-config", request),
+  updateMyDrSaiModelConnection: (
+    request: UpdateMyDrSaiModelConnectionRequest,
+  ): Promise<MyDrSaiModelConnection> =>
+    ipcRenderer.invoke("desktop:update-my-drsai-model-connection", request),
+  testMyDrSaiModelProvider: (
+    provider: string,
+    model?: string,
+  ): Promise<MyDrSaiProviderTestResult> =>
+    ipcRenderer.invoke("desktop:test-my-drsai-model-provider", provider, model),
+  testMyDrSaiModelDraft: (request, mode) =>
+    ipcRenderer.invoke("desktop:test-my-drsai-model-draft", request, mode),
+  listMyDrSaiModelProviderPresets: () =>
+    ipcRenderer.invoke("desktop:list-my-drsai-model-provider-presets"),
+  discoverMyDrSaiProviderModels: (provider, refresh) =>
+    ipcRenderer.invoke("desktop:discover-my-drsai-provider-models", provider, refresh),
+  deleteMyDrSaiModelProvider: (
+    provider: string, deleteCredential?: boolean,
+  ): Promise<{ ok: boolean; active?: string }> =>
+    ipcRenderer.invoke("desktop:delete-my-drsai-model-provider", provider, deleteCredential),
   createThread: (request: CreateThreadRequest) =>
     ipcRenderer.invoke("desktop:create-thread", request),
   updateThread: (request: UpdateThreadRequest) =>
@@ -570,6 +597,11 @@ const api: DesktopApi = {
     const listener = (_event: IpcRendererEvent, event: Parameters<typeof callback>[0]): void => callback(event);
     ipcRenderer.on("desktop:thread-snapshot", listener);
     return () => ipcRenderer.removeListener("desktop:thread-snapshot", listener);
+  },
+  onRuntimeLogEvent: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, value: Parameters<typeof callback>[0]): void => callback(value);
+    ipcRenderer.on("desktop:runtime-log", listener);
+    return () => ipcRenderer.removeListener("desktop:runtime-log", listener);
   },
   onThreadCatalogUpdate: (callback): (() => void) => {
     const listener = (_event: IpcRendererEvent, value: Parameters<typeof callback>[0]): void => callback(value);

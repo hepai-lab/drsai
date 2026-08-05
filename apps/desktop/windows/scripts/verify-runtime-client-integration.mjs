@@ -143,6 +143,11 @@ async function startFixture(requireToken) {
       if (state.structuredFailure) return json(response, 503, { error: { code: "fixture_failure", message: "Fixture failure", correlation_id: "fixture-correlation", retryable: true } }, { "X-Correlation-ID": "fixture-correlation" });
       return json(response, 200, { object: "list", data: [], total: 0 });
     }
+    if (url.pathname === "/v1/sessions" && request.method === "GET") {
+      if (state.structuredFailure) return json(response, 503, { error: { code: "fixture_failure", message: "Fixture failure", correlation_id: "fixture-correlation", retryable: true } }, { "X-Correlation-ID": "fixture-correlation" });
+      const workspaceId = url.searchParams.get("workspace_id");
+      return json(response, 200, { object: "list", data: [...state.sessions.values()].filter((session) => !workspaceId || session.workspace_id === workspaceId), has_more: false });
+    }
     if (url.pathname === "/v1/sessions" && request.method === "POST") {
       const body = JSON.parse(await bodyText(request)); const value = { session_id: `session-${state.sessions.size + 1}`, workspace_id: body.workspace_id, title: body.title };
       state.sessions.set(value.session_id, value); return json(response, 200, value);

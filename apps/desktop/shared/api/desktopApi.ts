@@ -9,7 +9,8 @@ import type {
 } from "./browser/types";
 import type { ExecutionActionKind } from "./executionPolicy";
 import type { DesktopPlatformDescriptor } from "./platform";
-import type { StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+import type { InteractionOption, StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+export type { InteractionOption } from "./structuredConversation";
 import type {
   DiagnosticClearResult,
   DiagnosticEvent,
@@ -154,6 +155,27 @@ export interface GatewayStatus {
   baseUrl: string;
   pid: number | null;
   lastLog: string;
+  portOpen?: boolean;
+  diagnosticCode?: string;
+  diagnosticMessage?: string;
+  endpoints?: {
+    health: GatewayEndpointStatus;
+    models: GatewayEndpointStatus;
+  };
+}
+
+export type GatewayEndpointState =
+  | "ok"
+  | "unauthorized"
+  | "unreachable"
+  | "timeout"
+  | "invalid_response"
+  | "http_error";
+
+export interface GatewayEndpointStatus {
+  ok: boolean;
+  statusCode: number | null;
+  state: GatewayEndpointState;
 }
 
 export interface UpdateStatus {
@@ -202,6 +224,10 @@ export interface CodexBackendStatus {
   reason: string | null;
   retryable: boolean;
   action: "none" | "install" | "upgrade" | "login" | "restart";
+  appServerState?: "running" | "stopped" | "fault";
+  connectionState?: string;
+  transport?: "local-process" | "ssh" | string;
+  adapterVersion?: string;
 }
 
 export interface CodexBackendLogin {
@@ -689,7 +715,12 @@ export interface ChatEvent {
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
   toolTimeline?: ChatToolTimelineEvent;
   prompt?: string;
-  inputType?: "text_input" | "approval";
+  inputRequestId?: string;
+  inputType?: "text_input" | "approval" | "choice" | "confirmation";
+  inputOptions?: InteractionOption[];
+  inputDefault?: string;
+  inputAllowCustom?: boolean;
+  inputTimeoutAt?: string;
   sessionId?: string;
   runId?: string;
   failureRecovery?: DesktopFailureRecovery;
@@ -1441,6 +1472,7 @@ export interface DesktopBackgroundTask {
   createdAt: string;
   updatedAt: string;
   workspacePath?: string;
+  threadId?: string;
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
@@ -2022,6 +2054,7 @@ export interface DesktopBackgroundTaskEnqueueRequest {
   source: DesktopBackgroundTaskSource;
   title: string;
   workspacePath?: string;
+  threadId?: string;
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
@@ -2965,7 +2998,83 @@ export interface MyDrSaiConfig {
   config: MyDrSaiCliConfig;
   models: MyDrSaiModelConfig[];
   defaultModelAlias?: string;
+  modelConnection?: MyDrSaiModelConnection;
   error?: string;
+}
+
+export interface CodexWorkspaceSessionSyncResult {
+  workspaceId: string;
+  discovered: number;
+  active: number;
+  archived: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  conflicts?: number;
+  threads: DesktopThread[];
+}
+
+export interface MyDrSaiModelProvider {
+  name: string;
+  base_url: string;
+  wire_api: "openai" | "anthropic";
+  requires_api_key: boolean;
+  has_api_key: boolean;
+  api_key_source?: string;
+}
+
+export interface MyDrSaiModelConnection {
+  model: string;
+  model_provider: string;
+  provider: MyDrSaiModelProvider;
+  path?: string;
+  metadata?: { known_model?: boolean; metadata_source?: string; token_limit?: number; max_tokens?: number; vision?: boolean };
+  revision?: string;
+  warnings?: string[];
+  runtime?: { configured_revision: string; runtime_revisions: string[]; runtime_status: "not_started" | "applied" | "partially_applied" | "pending_next_turn"; active_runtime_count: number };
+  last_test?: { provider: string; mode: string; ok: boolean; tested_at: string; error?: string; status_code?: number } | null;
+}
+
+export interface MyDrSaiProviderPreset {
+  id: string;
+  label: string;
+  base_url: string;
+  wire_api: "openai" | "anthropic";
+  requires_api_key: boolean;
+  api_key_env?: string;
+  base_url_editable: boolean;
+  supports_model_discovery: boolean;
+}
+
+export interface MyDrSaiModelDiscoveryResult {
+  ok: boolean;
+  provider?: string;
+  models: string[];
+  cached?: boolean;
+  error?: string;
+}
+
+export interface UpdateMyDrSaiModelConnectionRequest {
+  model: string;
+  model_provider: string;
+  base_url?: string;
+  api_key?: string;
+  api_key_env?: string;
+  api_key_credential?: string;
+  wire_api?: "openai" | "anthropic";
+  requires_api_key?: boolean;
+  expected_revision?: string;
+}
+
+export interface MyDrSaiProviderTestResult {
+  ok: boolean;
+  provider?: string;
+  wire_api?: string;
+  error?: "timeout" | "connection_failed" | "authentication_failed" | "permission_denied" | "endpoint_not_found" | "model_not_found" | "invalid_response";
+  status_code?: number;
+  persisted?: boolean;
+  may_incur_cost?: boolean;
+  guidance?: { code: string; title: string; message: string; actions: string[]; retryable: boolean; localizations?: Record<string, { title: string; message: string; actions: string[] }> };
 }
 
 export interface UpdateMyDrSaiConfigRequest {
@@ -3010,6 +3119,15 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   structuredTurn?: StructuredTurnState;
   /** User-visible attachment chips; not part of the model prompt text. */
   attachments?: ChatAttachment[];
+  inputRequest?: {
+    requestId: string;
+    prompt: string;
+    inputType: "text_input" | "approval" | "choice" | "confirmation";
+    options?: InteractionOption[];
+    defaultValue?: string;
+    allowCustom?: boolean;
+    timeoutAt?: string;
+  };
   startedAt?: number;
   lastEventAt?: number;
 }
@@ -3020,6 +3138,20 @@ export interface DesktopThreadSnapshot {
   messages: DesktopThreadMessageSnapshot[];
   updatedAt: number;
   messageCount: number;
+  history?: DesktopThreadHistoryState;
+}
+
+export interface DesktopThreadHistoryState {
+  state: "loading" | "ready" | "partial" | "error";
+  source: "opendrsai" | "codex";
+  syncedAt?: string;
+  loadedRuns: number;
+  totalRuns: number;
+  loadedItems: number;
+  totalItems: number;
+  correctedItems?: number;
+  warningCount?: number;
+  message?: string;
 }
 
 export interface DesktopThreadSnapshotEvent {
@@ -3027,6 +3159,30 @@ export interface DesktopThreadSnapshotEvent {
   runtimeSessionId: string;
   sessionSequence: number;
   snapshot: DesktopThreadSnapshot;
+}
+
+export type DesktopRuntimeLogProtocol = "runtime" | "oaep/1" | "conversation/1";
+export type DesktopRuntimeLogPhase = "capability" | "snapshot" | "replay" | "stream" | "event" | "cursor" | "retry" | "lifecycle";
+
+/** Read-only, sanitized evidence describing how Desktop consumes Runtime protocols. */
+export interface DesktopRuntimeLogEvent {
+  id: string;
+  timestamp: string;
+  level: "debug" | "info" | "warn" | "error";
+  status: "started" | "running" | "waiting" | "completed" | "failed" | "cancelled";
+  protocol: DesktopRuntimeLogProtocol;
+  phase: DesktopRuntimeLogPhase;
+  operation: string;
+  message: string;
+  threadId: string;
+  sessionId: string;
+  runId?: string;
+  itemId?: string;
+  eventType?: string;
+  sequence?: number;
+  cursor?: number;
+  source?: string;
+  details?: Record<string, unknown>;
 }
 
 export interface DesktopThreadCatalogEvent {
@@ -3120,6 +3276,11 @@ export interface DesktopWorktreeEventBatch {
     data: Record<string, unknown>;
   }>;
   nextSequence: number;
+  degraded?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+  };
 }
 
 export interface DesktopWorktreeSummary {
@@ -4420,6 +4581,8 @@ export interface DesktopApi {
   getInstallStatus(): Promise<InstallStatus>;
   getGatewayStatus(): Promise<GatewayStatus>;
   getCodexBackendStatus(refresh?: boolean): Promise<CodexBackendStatus>;
+  restartCodexBackend(): Promise<CodexBackendStatus>;
+  syncCodexWorkspaceSessions(workspaceId: string, workspacePath: string): Promise<CodexWorkspaceSessionSyncResult>;
   startCodexBackendLogin(type?: "chatgpt" | "chatgptDeviceCode"): Promise<CodexBackendLogin>;
   cancelCodexBackendLogin(loginId: string): Promise<boolean>;
   logoutCodexBackend(): Promise<boolean>;
@@ -4437,6 +4600,7 @@ export interface DesktopApi {
   startGateway(): Promise<boolean>;
   stopGateway(): Promise<boolean>;
   getMobilePairingReadiness(target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingReadiness>;
+  enableMobileRemoteAccess(target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingReadiness>;
   createMobilePairingGrant(target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingGrant>;
   getMobilePairingGrant(grantId: string, target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingGrant>;
   revokeMobilePairingGrant(grantId: string, target?: DesktopMobilePairingTarget): Promise<DesktopMobilePairingGrant>;
@@ -4548,6 +4712,12 @@ export interface DesktopApi {
   getPlatformAgentStatus(): Promise<PlatformAgentStatus>;
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
   updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
+  updateMyDrSaiModelConnection(request: UpdateMyDrSaiModelConnectionRequest): Promise<MyDrSaiModelConnection>;
+  testMyDrSaiModelProvider(provider: string, model?: string): Promise<MyDrSaiProviderTestResult>;
+  testMyDrSaiModelDraft(request: UpdateMyDrSaiModelConnectionRequest, mode?: "basic" | "model"): Promise<MyDrSaiProviderTestResult>;
+  listMyDrSaiModelProviderPresets(): Promise<MyDrSaiProviderPreset[]>;
+  discoverMyDrSaiProviderModels(provider: string, refresh?: boolean): Promise<MyDrSaiModelDiscoveryResult>;
+  deleteMyDrSaiModelProvider(provider: string, deleteCredential?: boolean): Promise<{ ok: boolean; active?: string }>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
   deleteThread(threadId: string): Promise<boolean>;
@@ -4556,6 +4726,7 @@ export interface DesktopApi {
   subscribeThreadSnapshot(threadId: string): Promise<boolean>;
   unsubscribeThreadSnapshot(threadId: string): Promise<boolean>;
   onThreadSnapshot(callback: (event: DesktopThreadSnapshotEvent) => void): () => void;
+  onRuntimeLogEvent(callback: (event: DesktopRuntimeLogEvent) => void): () => void;
   onThreadCatalogUpdate(callback: (event: DesktopThreadCatalogEvent) => void): () => void;
   searchThreadMessages(
     request: DesktopThreadContentSearchRequest,

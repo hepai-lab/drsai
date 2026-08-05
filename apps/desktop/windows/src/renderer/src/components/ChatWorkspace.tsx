@@ -362,8 +362,8 @@ export function ChatWorkspace({
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    textarea.style.height = "52px";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+    textarea.style.height = "40px";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 116)}px`;
   }, [input]);
 
   useEffect(() => {
@@ -415,13 +415,31 @@ export function ChatWorkspace({
   useEffect(() => {
     const list = messageListRef.current;
     if (!list || !shouldFollowOutputRef.current) return;
-    list.scrollTo({ top: list.scrollHeight, behavior: messages.some((message) => message.streaming) ? "auto" : "smooth" });
+    scrollMessageListToLatest(messages.some((message) => message.streaming) ? "auto" : "smooth");
   }, [messages]);
+
+  function getMessageListMaxScrollTop(list: HTMLDivElement): number {
+    return Math.max(0, list.scrollHeight - list.clientHeight);
+  }
+
+  function scrollMessageListToLatest(behavior: ScrollBehavior = "auto"): void {
+    const list = messageListRef.current;
+    if (!list) return;
+    const target = getMessageListMaxScrollTop(list);
+    list.scrollTo({ top: target, behavior });
+    window.requestAnimationFrame(() => {
+      if (!shouldFollowOutputRef.current) return;
+      const nextTarget = getMessageListMaxScrollTop(list);
+      if (Math.abs(list.scrollTop - nextTarget) > 2) {
+        list.scrollTop = nextTarget;
+      }
+    });
+  }
 
   function handleMessageListScroll(): void {
     const list = messageListRef.current;
     if (!list) return;
-    shouldFollowOutputRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    shouldFollowOutputRef.current = getMessageListMaxScrollTop(list) - list.scrollTop < 80;
   }
 
   useEffect(() => {

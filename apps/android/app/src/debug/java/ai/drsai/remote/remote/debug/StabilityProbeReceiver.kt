@@ -7,9 +7,11 @@ import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.HttpRelayDiscoveryService
 import ai.drsai.remote.remote.data.RelayRemoteRepository
 import ai.drsai.remote.remote.generated.GeneratedSessionConversationItem
+import ai.drsai.remote.remote.generated.OaepContract
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.SessionId
 import ai.drsai.remote.remote.model.WorkspaceId
+import ai.drsai.remote.remote.model.oaepItemsDigest
 import ai.drsai.remote.remote.model.sessionConversationDigest
 import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import android.content.BroadcastReceiver
@@ -74,6 +76,23 @@ class StabilityProbeReceiver : BroadcastReceiver() {
                     refreshAfter = auth::refreshAfter,
                     deviceProof = deviceProof,
                 )
+                val protocol = intent.getStringExtra("protocol").orEmpty()
+                    .ifBlank { "conversation/1" }
+                if (protocol == "oaep/1") {
+                    return@runCatching oaepProof(
+                        nonce,
+                        target.state.name.lowercase(),
+                        target.connectionGeneration,
+                        workspaces.items.size,
+                        repository,
+                        runtimeId,
+                        workspaceId,
+                        sessionId,
+                    )
+                }
+                require(protocol == "conversation/1") {
+                    "stability_protocol_unsupported"
+                }
                 val (snapshotSequence, conversation) = readSnapshot(
                     repository,
                     runtimeId,
@@ -116,6 +135,63 @@ class StabilityProbeReceiver : BroadcastReceiver() {
             writeProof(context, proof)
             pending.finish()
         }
+    }
+
+    private suspend fun oaepProof(
+        nonce: String,
+        runtimeStatus: String,
+        runtimeGeneration: Long?,
+        workspaceCount: Int,
+        repository: RelayRemoteRepository,
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+    ): JSONObject {
+        val snapshot = repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
+        val sequences = mutableListOf<Long>()
+        var afterSequence = 0L
+        do {
+            val page = repository.oaepEvents(
+                runtimeId,
+                workspaceId,
+                sessionId,
+                afterSequence,
+                SESSION_EVENT_PAGE_SIZE,
+            )
+            val pageSequences = page.data.map { it.sequence }
+            require(pageSequences.zipWithNext().all { (left, right) -> left < right }) {
+                "stability_oaep_event_order_invalid"
+            }
+            sequences += pageSequences
+            require(sequences.size <= MAX_SESSION_EVENTS) {
+                "stability_oaep_events_too_large"
+            }
+            if (pageSequences.isNotEmpty()) afterSequence = pageSequences.last()
+        } while (page.hasMore)
+        val duplicateSequenceCount = sequences.size - sequences.distinct().size
+        val missingSequenceCount = sequences.zipWithNext().sumOf { (left, right) ->
+            (right - left - 1).coerceAtLeast(0)
+        }
+        require(duplicateSequenceCount == 0) { "stability_oaep_duplicate_sequence" }
+        require(missingSequenceCount == 0L) { "stability_oaep_sequence_gap" }
+        require(snapshot.snapshotSequence == (sequences.lastOrNull() ?: 0L)) {
+            "stability_oaep_snapshot_event_watermark_mismatch"
+        }
+        return JSONObject()
+            .put("nonce", nonce)
+            .put("status", "passed")
+            .put("protocol", "oaep/1")
+            .put("schema_hash", OaepContract.SCHEMA_SHA256)
+            .put("runtime_status", runtimeStatus)
+            .put("runtime_generation", runtimeGeneration)
+            .put("workspace_count", workspaceCount)
+            .put("snapshot_sequence", snapshot.snapshotSequence)
+            .put("item_count", snapshot.items.size)
+            .put("run_count", snapshot.runs.size)
+            .put("event_count", sequences.size)
+            .put("duplicate_sequence_count", duplicateSequenceCount)
+            .put("missing_sequence_count", missingSequenceCount)
+            .put("oaep_sha256", oaepItemsDigest(snapshot.items))
     }
 
     private suspend fun readSnapshot(

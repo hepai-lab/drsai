@@ -97,6 +97,7 @@ export interface WorkspaceThread {
   archived?: boolean;
   unread?: boolean;
   activity: ThreadActivityState;
+  source?: "codex" | "opendrsai" | "remote";
 }
 
 export interface ForkConflictFile {
@@ -181,6 +182,7 @@ interface WorkspaceShellProps {
   onOpenWorkspaceResults: (workspaceId: string) => void;
   onOpenWorkspacePath: (path: string) => void | Promise<void>;
   onRefreshWorkspaces: () => void | Promise<void>;
+  onSyncWorkspaceSessions: (workspace: WorkspaceProject) => void | Promise<void>;
   onRemoveWorkspace: (id: string) => void | Promise<void>;
   onRequestForkLifecycle: (threadId: string, action: DesktopForkLifecycleAction) => void | Promise<void>;
   onRightTabChange: (id: RightTab) => void;
@@ -271,6 +273,7 @@ export function WorkspaceShell({
   onOpenWorkspaceResults,
   onOpenWorkspacePath,
   onRefreshWorkspaces,
+  onSyncWorkspaceSessions,
   onRemoveWorkspace,
   onRequestForkLifecycle,
   onRightTabChange,
@@ -304,6 +307,7 @@ export function WorkspaceShell({
   const [worktrees, setWorktrees] = useState<DesktopWorktreeSummary[]>([]);
   const [worktreesLoading, setWorktreesLoading] = useState(false);
   const [worktreesError, setWorktreesError] = useState<string | null>(null);
+  const [worktreesDegraded, setWorktreesDegraded] = useState<DesktopWorktreeEventBatch["degraded"] | null>(null);
   const [worktreeMigrationDiagnostics, setWorktreeMigrationDiagnostics] = useState<DesktopWorktreeMigrationDiagnostic[]>([]);
   const [reviewWorktreeId, setReviewWorktreeId] = useState<string | null>(null);
   const [reviewDiff, setReviewDiff] = useState<WorkspaceGitDiffResult | null>(null);
@@ -371,6 +375,7 @@ export function WorkspaceShell({
   const [sidebarWidth, setSidebarWidth] = useState(248);
   const [rightPanelWidth, setRightPanelWidth] = useState(420);
   const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
+  const [rightPanelActivated, setRightPanelActivated] = useState(!rightPanelCollapsed);
   const workbenchMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteRef = useRef<HTMLDivElement | null>(null);
@@ -424,6 +429,7 @@ export function WorkspaceShell({
   async function refreshWorktrees(): Promise<void> {
     if (!activeWorkspace?.path) {
       setWorktrees([]);
+      setWorktreesDegraded(null);
       return;
     }
     setWorktreesLoading(true);
@@ -434,9 +440,11 @@ export function WorkspaceShell({
         ...(activeWorkspace.id ? { workspaceId: activeWorkspace.id } : {}),
       };
       setWorktrees(await onListWorktrees(request));
+      setWorktreesDegraded(null);
       setWorktreeMigrationDiagnostics(await onGetWorktreeMigrationDiagnostics(request));
     } catch (error) {
       setWorktrees([]);
+      setWorktreesDegraded(null);
       setWorktreesError(error instanceof Error ? error.message : String(error));
     } finally {
       setWorktreesLoading(false);
@@ -483,6 +491,11 @@ export function WorkspaceShell({
         });
         if (disposed) return;
         worktreeEventCursor.current = Math.max(worktreeEventCursor.current, batch.nextSequence);
+        if (batch.degraded) {
+          setWorktreesDegraded(batch.degraded);
+          return;
+        }
+        setWorktreesDegraded(null);
         if (batch.events.length > 0) await refreshWorktrees();
       } catch {
         // Keep the last Runtime projection visible; the next generation retries.
@@ -579,6 +592,7 @@ export function WorkspaceShell({
   }, [activeRightTab, capturingShortcut, onGoBack, onGoForward, onNavChange, onNewChat, onRightTabChange, onToggleRightPanel, onToggleSidebar, rightPanelCollapsed, shortcutDrafts]);
 
   useEffect(() => {
+    if (!rightPanelCollapsed) setRightPanelActivated(true);
     if (rightPanelCollapsed) {
       setRightPanelExpanded(false);
     }
@@ -958,7 +972,12 @@ export function WorkspaceShell({
   }
 
   function renameThread(thread: WorkspaceThread): void {
-    const nextTitle = window.prompt(zh ? "重命名对话" : "Rename conversation", thread.title);
+    const nextTitle = window.prompt(
+      thread.source === "codex"
+        ? (zh ? "设置 OpenDrSai 本地显示名（不会修改 Codex 原始任务名）" : "Set the local OpenDrSai display name (the original Codex task name is unchanged)")
+        : (zh ? "重命名对话" : "Rename conversation"),
+      thread.title,
+    );
     if (!nextTitle || nextTitle.trim() === thread.title) return;
     void onThreadUpdate(thread.id, { title: nextTitle.trim() });
   }
@@ -1255,6 +1274,9 @@ export function WorkspaceShell({
             </b>
           )}
           {thread.title}
+          <small className={`thread-source-label source-${thread.source ?? "opendrsai"}`}>
+            {thread.source === "codex" ? "Codex" : thread.source === "remote" ? (zh ? "远程" : "Remote") : "OpenDrSai"}
+          </small>
         </span>
         <span className="thread-item-status">
           {thread.activity.kind === "idle" ? (
@@ -1694,7 +1716,9 @@ export function WorkspaceShell({
 
   function runThreadMenuAction(action: () => void | Promise<void>): void {
     closeThreadMenu();
-    void action();
+    void Promise.resolve(action()).catch((error) => {
+      window.alert(error instanceof Error ? error.message : (zh ? "操作失败，请重试。" : "The operation failed. Please retry."));
+    });
   }
 
   function handleCommandPaletteKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
@@ -1969,6 +1993,11 @@ export function WorkspaceShell({
         </header>
         <div className="worktree-context-body">
           {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "offline" ? <small className="worktree-error">{worktreesError}</small> : null}
+          {worktreesDegraded ? (
+            <small className="worktree-warning" data-testid="worktree-degraded-status" title={worktreesDegraded.code} role="status">
+              {zh ? "本地 Runtime 暂不可用，隔离工作区状态已暂停刷新。" : "Local Runtime is unavailable; isolated workspace refresh is paused."}
+            </small>
+          ) : null}
           {worktreeMigrationDiagnostics.filter((item) => item.status === "pending").map((item) => (
             <small className="worktree-error" key={`migration-${item.threadId}`} title={item.code}>
               {zh ? "旧 Fork 等待迁移" : "Legacy Fork migration pending"}: {item.message}
@@ -2504,8 +2533,7 @@ export function WorkspaceShell({
             />
           )}
 
-          {!rightPanelCollapsed ? (
-            <aside className={rightPanelClassName}>
+          {rightPanelActivated ? <aside className={`${rightPanelClassName} ${rightPanelCollapsed ? "is-collapsed" : ""}`} aria-hidden={rightPanelCollapsed || undefined}>
               <div className="right-tabs">
                 {/* Close control lives on the main float button; only keep one here when panel is fullscreen. */}
                 {isRightPanelExpanded ? (
@@ -2562,8 +2590,7 @@ export function WorkspaceShell({
                   {worktreeOpen ? renderWorktreePanel() : rightPanel}
                 </div>
               ) : rightPanel}
-            </aside>
-          ) : null}
+          </aside> : null}
         </section>
       </main>
       {threadMenu && (
@@ -3096,7 +3123,6 @@ export function WorkspaceShell({
               {zh ? "复制深度链接" : "Copy deep link"}
             </button>
             <div className="thread-context-separator" />
-            {/* Temporarily hide delete conversation — keep for later reuse.
             <button
               type="button"
               role="menuitem"
@@ -3107,9 +3133,10 @@ export function WorkspaceShell({
                 })
               }
             >
-              {zh ? "删除对话" : "Delete conversation"}
+              {threadMenu.thread.source === "codex"
+                ? (zh ? "从 OpenDrSai 列表移除…" : "Remove from OpenDrSai list…")
+                : (zh ? "永久删除本地对话…" : "Permanently delete local conversation…")}
             </button>
-            */}
           </div>
         </div>
       )}
@@ -3284,13 +3311,15 @@ export function WorkspaceShell({
               </span>
               <div className="thread-delete-confirm-copy">
                 <h2 id="thread-delete-confirm-title">
-                  {zh ? "确定删除对话？" : "Delete this conversation?"}
+                  {deleteConfirmThread.source === "codex"
+                    ? (zh ? "从 OpenDrSai 列表移除？" : "Remove from the OpenDrSai list?")
+                    : (zh ? "永久删除本地对话？" : "Permanently delete this local conversation?")}
                 </h2>
                 <p id="thread-delete-confirm-desc">
                   <span className="thread-delete-confirm-name">{deleteConfirmThread.title}</span>
-                  {zh
-                    ? "删除后，聊天记录将不可恢复。"
-                    : "Chat history cannot be recovered after deletion."}
+                  {deleteConfirmThread.source === "codex"
+                    ? (zh ? "只移除 OpenDrSai 的本地列表记录，不会删除或归档 Codex 历史；下次同步可重新导入。" : "This only removes the local OpenDrSai list entry. Codex history is not deleted or archived and can be imported again.")
+                    : (zh ? "这会永久删除 OpenDrSai 本地聊天记录，且不可恢复。若只想隐藏，请改用归档。" : "This permanently deletes the local OpenDrSai chat history and cannot be undone. Use Archive if you only want to hide it.")}
                 </p>
               </div>
             </div>
@@ -3552,7 +3581,11 @@ export function WorkspaceShell({
                 <RefreshCw size={14} />
                 {zh ? "刷新状态" : "Refresh"}
               </button>
-              {workspaceDetails.id ? (
+              {workspaceDetails.location !== "remote" ? <button type="button" data-testid="workspace-sync-codex-sessions" onClick={() => void onSyncWorkspaceSessions(workspaceDetails)}>
+                <RefreshCw size={14} />
+                {zh ? "重新同步 Codex 会话" : "Resync Codex sessions"}
+              </button> : null}
+              {workspaceDetails.id !== "current" ? (
                 <>
                   <button type="button" onClick={toggleWorkspaceTrusted}>
                     {workspaceDetails.trusted ? (zh ? "取消信任" : "Untrust") : (zh ? "信任" : "Trust")}

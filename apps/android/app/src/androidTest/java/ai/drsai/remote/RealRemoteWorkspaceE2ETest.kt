@@ -14,6 +14,10 @@ import ai.drsai.remote.remote.model.SessionId
 import ai.drsai.remote.remote.model.WorkspaceId
 import ai.drsai.remote.remote.model.conversationProjectionDigest
 import ai.drsai.remote.remote.model.sessionConversationDigest
+import ai.drsai.remote.remote.model.oaepItemsDigest
+import ai.drsai.remote.remote.generated.OaepContract
+import ai.drsai.remote.remote.generated.OaepFileChangeContent
+import ai.drsai.remote.remote.generated.OaepItem
 import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import android.content.Intent
 import android.graphics.Rect
@@ -26,11 +30,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.IOException
@@ -49,16 +55,32 @@ class RealRemoteWorkspaceE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
         val phase = args.getString("phase").orEmpty()
-        val runtimeId = RuntimeId(args.getString("runtimeId").orEmpty())
+        val runtimeRaw = args.getString("runtimeId").orEmpty()
+        assumeTrue("real relay E2E requires phase and runtimeId instrumentation arguments", phase.isNotBlank() && runtimeRaw.isNotBlank())
+        val runtimeId = RuntimeId(runtimeRaw)
         val baseUrl = args.getString("relayBaseUrl")
             ?: "https://ai-dev.ihep.ac.cn/api/runtime-relay/"
         require(phase in setOf(
             "cleanup", "pre", "post", "interaction", "verify", "session-proof",
-            "android-two-runs", "windows-two-runs-monitor", "revoked", "offline"
+            "android-two-runs", "windows-two-runs-monitor", "oaep-session-proof",
+            "device-proof", "auth-proof", "target-proof", "oaep-public-proof",
+            "oaep-controlled-session", "revocation-monitor", "revoked", "offline"
         )) {
             "real_phase_invalid"
         }
         require(runtimeId.value.isNotBlank()) { "real_runtime_id_required" }
+        val deviceProof = androidRelayDeviceProof(instrumentation.targetContext)
+        if (phase == "device-proof") {
+            emitProof(
+                JSONObject()
+                    .put("phase", phase)
+                    .put(
+                        "device_proof_sha256",
+                        sha256(deviceProof.associationDevice.devicePublicKey),
+                    )
+            )
+            return@runBlocking
+        }
         val tokenStore = SecureTokenStore(instrumentation.targetContext)
         require(!tokenStore.accessToken.isNullOrBlank()) { "real_oidc_login_required" }
         require(tokenStore.user() != null) { "real_oidc_subject_required" }
@@ -66,14 +88,25 @@ class RealRemoteWorkspaceE2ETest {
             tokenStore,
             OidcClient(refreshClientId = { tokenStore.oidcClientId }),
         )
-        val deviceProof = androidRelayDeviceProof(instrumentation.targetContext)
-
         val discovery = HttpRelayDiscoveryService(
             baseUrl,
             auth::current,
             auth::refreshAfter,
             deviceProof = deviceProof,
         )
+        if (phase == "auth-proof") {
+            val proof = JSONObject().put("phase", phase)
+            try {
+                discovery.listRuntimes()
+                proof.put("status", 200).put("error_code", JSONObject.NULL)
+            } catch (failure: RelayHttpException) {
+                proof
+                    .put("status", failure.status)
+                    .put("error_code", failure.errorCode ?: JSONObject.NULL)
+            }
+            emitProof(proof)
+            return@runBlocking
+        }
         if (phase == "offline") {
             try {
                 discovery.listRuntimes()
@@ -126,6 +159,15 @@ class RealRemoteWorkspaceE2ETest {
                     repository.conversation(runtimeId, workspaceId, sessionId)
                     Unit
                 }
+                if (workspaceStatus != 403 || conversationStatus != 403) {
+                    emitProof(
+                        proof
+                            .put("passed", false)
+                            .put("failed_stage", "post_revoke_authorization")
+                            .put("workspace_proxy_status", workspaceStatus)
+                            .put("conversation_proxy_status", conversationStatus),
+                    )
+                }
                 assertEquals(403, workspaceStatus)
                 assertEquals(403, conversationStatus)
                 proof
@@ -158,6 +200,150 @@ class RealRemoteWorkspaceE2ETest {
             baseUrl, auth::current, refreshAfter = auth::refreshAfter,
             deviceProof = deviceProof,
         )
+        if (phase == "oaep-controlled-session") {
+            val workspaceId = WorkspaceId(args.getString("interactionWorkspaceId").orEmpty())
+            val interactionId = args.getString("interactionId").orEmpty()
+            require(workspaceId.value.isNotBlank() && interactionId.isNotBlank()) {
+                "real_oaep_controlled_session_arguments_required"
+            }
+            val definition = repository.agentDefinitions(runtimeId).single {
+                it.id == "mobile-acceptance" && it.version == "1"
+            }
+            val session = repository.createSession(
+                runtimeId,
+                workspaceId,
+                "V4 OAEP acceptance",
+                definition,
+                "v4-oaep-session-$interactionId",
+            )
+            emitProof(
+                JSONObject()
+                    .put("phase", phase)
+                    .put("workspace_id", workspaceId.value)
+                    .put("session_id", session.sessionId.value)
+                    .put("agent_definition_id", definition.id)
+                    .put("agent_definition_version", definition.version),
+            )
+            return@runBlocking
+        }
+        if (phase == "target-proof") {
+            val candidates = workspaces.items.flatMap { workspace ->
+                repository.sessions(runtimeId, workspace.workspaceId).items
+                    .map { session -> workspace.workspaceId to session }
+            }
+            val selected = requireNotNull(candidates.maxByOrNull { it.second.updatedAt }) {
+                "real_active_session_required"
+            }
+            emitProof(
+                JSONObject()
+                    .put("phase", phase)
+                    .put("runtime_id", runtimeId.value)
+                    .put("workspace_id", selected.first.value)
+                    .put("session_id", selected.second.reference.sessionId.value)
+                    .put("workspace_count", workspaces.items.size)
+                    .put("active_session_count", candidates.size)
+            )
+            return@runBlocking
+        }
+        if (phase == "revocation-monitor") {
+            val workspaceId = WorkspaceId(args.getString("verifyWorkspaceId").orEmpty())
+            val sessionId = SessionId(args.getString("verifySessionId").orEmpty())
+            val expectRevoked = args.getString("expectRevoked")?.toBooleanStrictOrNull()
+            val monitorDurationMs = args.getString("monitorDurationMs")?.toLongOrNull() ?: 30_000L
+            require(
+                workspaceId.value.isNotBlank() && sessionId.value.isNotBlank() &&
+                    expectRevoked != null && monitorDurationMs in 5_000L..120_000L
+            ) { "real_revocation_monitor_arguments_required" }
+            val snapshot = try {
+                repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
+            } catch (failure: RelayHttpException) {
+                emitProof(
+                    JSONObject()
+                        .put("phase", phase)
+                        .put("passed", false)
+                        .put("failed_stage", "snapshot")
+                        .put("status", failure.status)
+                        .put("error_code", failure.errorCode ?: JSONObject.NULL),
+                )
+                throw failure
+            }
+            val connected = CompletableDeferred<Unit>()
+            var streamFailure: Throwable? = null
+            val streamJob = launch {
+                try {
+                    RelaySseClient(
+                        baseUrl,
+                        auth::current,
+                        refreshAfter = auth::refreshAfter,
+                        deviceProof = deviceProof,
+                    ).oaepSessionStream(
+                        runtimeId,
+                        workspaceId,
+                        sessionId,
+                        snapshot.snapshotSequence,
+                        onConnected = { connected.complete(Unit) },
+                    ).collect { }
+                } catch (failure: Throwable) {
+                    streamFailure = failure
+                }
+            }
+            val readyFile = File(
+                instrumentation.targetContext.filesDir,
+                "v4-revocation-monitor-ready.json",
+            )
+            try {
+                withTimeout(20_000L) { connected.await() }
+                readyFile.writeText(
+                    JSONObject()
+                        .put("ready", true)
+                        .put("android_epoch_ms", System.currentTimeMillis())
+                        .toString(),
+                )
+                if (expectRevoked) {
+                    withTimeout(monitorDurationMs) { streamJob.join() }
+                    val status = rejectedStatus {
+                        repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
+                        Unit
+                    }
+                    if (status != 403) {
+                        emitProof(
+                            JSONObject()
+                                .put("phase", phase)
+                                .put("passed", false)
+                                .put("failed_stage", "post_revoke_authorization")
+                                .put("status", status)
+                                .put("stream_closed", streamJob.isCompleted),
+                        )
+                    }
+                    assertEquals(403, status)
+                    emitProof(
+                        JSONObject()
+                            .put("phase", phase)
+                            .put("stream_closed_immediately", true)
+                            .put("subsequent_status", status)
+                            .put("close_epoch_ms", System.currentTimeMillis())
+                            .put(
+                                "stream_error_class",
+                                streamFailure?.javaClass?.simpleName?.take(80),
+                            ),
+                    )
+                } else {
+                    delay(monitorDurationMs)
+                    assertTrue("other device stream closed", streamJob.isActive)
+                    repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
+                    emitProof(
+                        JSONObject()
+                            .put("phase", phase)
+                            .put("other_device_stream_open", true)
+                            .put("subsequent_status", 200),
+                    )
+                }
+            } finally {
+                streamJob.cancel()
+                readyFile.delete()
+            }
+            return@runBlocking
+        }
         if (phase == "windows-two-runs-monitor") {
             val workspaceId = WorkspaceId(args.getString("verifyWorkspaceId").orEmpty())
             val sessionId = SessionId(args.getString("verifySessionId").orEmpty())
@@ -176,16 +362,16 @@ class RealRemoteWorkspaceE2ETest {
             ) {
                 "real_windows_two_runs_arguments_required"
             }
-            val before = repository.conversationSnapshot(
-                runtimeId,
-                workspaceId,
-                sessionId,
-                limit = 500,
-            )
+            val before = repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
             val sessionRoute =
                 "opendrsai://session/${runtimeId.value}/${workspaceId.value}/${sessionId.value}"
             openRoute(sessionRoute)
             val arrivals = ConcurrentHashMap<String, Long>()
+            val deltaRuns = ConcurrentHashMap.newKeySet<String>()
+            val toolRuns = ConcurrentHashMap.newKeySet<String>()
+            val terminalRuns = ConcurrentHashMap.newKeySet<String>()
+            val approvedIds = ConcurrentHashMap.newKeySet<String>()
+            val streamReady = CompletableDeferred<Unit>()
             val streamJob = launch {
                 var committedSequence = before.snapshotSequence
                 while (true) {
@@ -195,18 +381,32 @@ class RealRemoteWorkspaceE2ETest {
                             auth::current,
                             refreshAfter = auth::refreshAfter,
                             deviceProof = deviceProof,
-                        ).sessionStream(
+                        ).oaepSessionStream(
                             runtimeId,
                             workspaceId,
                             sessionId,
                             committedSequence,
+                            onConnected = { streamReady.complete(Unit) },
                         ).collect { event ->
                             committedSequence = maxOf(
                                 committedSequence,
-                                event.sessionSequence,
+                                event.sequence,
                             )
+                            event.data.item?.let { item ->
+                                item.source.messageId?.takeIf { it in expectedSourceIds }?.let { sourceId ->
+                                    arrivals.putIfAbsent(sourceId, System.currentTimeMillis())
+                                }
+                                if (item.type in setOf("command_execution", "tool_call")) {
+                                    toolRuns += item.runId
+                                }
+                            }
                             event.runId?.let { runId ->
-                                arrivals.putIfAbsent(runId, System.currentTimeMillis())
+                                if (event.data.delta != null) deltaRuns += runId
+                                if (event.type in setOf(
+                                        "event.run.completed", "event.run.failed",
+                                        "event.run.cancelled",
+                                    )
+                                ) terminalRuns += runId
                             }
                         }
                     } catch (_: IOException) {
@@ -223,7 +423,7 @@ class RealRemoteWorkspaceE2ETest {
                 "v3-session-monitor-ready.json",
             )
             try {
-                delay(250)
+                withTimeout(30_000) { streamReady.await() }
                 readyFile.writeText(
                     JSONObject()
                         .put("session_id", sessionId.value)
@@ -232,42 +432,57 @@ class RealRemoteWorkspaceE2ETest {
                         .toString(),
                 )
                 var after = before
-                var matched = emptyList<ai.drsai.remote.remote.generated.GeneratedSessionConversationItem>()
+                var matched = emptyList<OaepItem>()
                 val deadline = System.nanoTime() + 180_000_000_000L
                 while (System.nanoTime() < deadline) {
-                    after = repository.conversationSnapshot(
-                        runtimeId,
-                        workspaceId,
-                        sessionId,
-                        limit = 500,
-                    )
+                    after = repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
                     matched = after.items.filter {
-                        it.sourceMessageId in expectedSourceIds
+                        it.source.messageId in expectedSourceIds
                     }
+                    val runIds = matched.map { it.runId }.toSet()
+                    repository.approvals(runtimeId, workspaceId)
+                        .filter { approval ->
+                            approval.sessionId == sessionId &&
+                                approval.status == "pending" &&
+                                approval.approvalId.value !in approvedIds
+                        }
+                        .forEach { approval ->
+                            if (approvedIds.add(approval.approvalId.value)) {
+                                repository.decide(
+                                    runtimeId,
+                                    approval.approvalId,
+                                    "approve",
+                                )
+                            }
+                        }
                     if (
-                        matched.mapNotNull { it.sourceMessageId }.toSet() == expectedSourceIds &&
-                        matched.mapNotNull { it.runId }.all(arrivals::containsKey)
+                        matched.mapNotNull { it.source.messageId }.toSet() == expectedSourceIds &&
+                        expectedSourceIds.all(arrivals::containsKey) &&
+                        runIds.size == 2 && runIds.all(deltaRuns::contains) &&
+                        runIds.all(toolRuns::contains) && runIds.all(terminalRuns::contains)
                     ) break
                     delay(250)
                 }
                 streamJob.cancel()
-                assertEquals(expectedSourceIds, matched.mapNotNull { it.sourceMessageId }.toSet())
-                assertEquals(2, matched.mapNotNull { it.runId }.distinct().size)
+                assertEquals(expectedSourceIds, matched.mapNotNull { it.source.messageId }.toSet())
+                val runIds = matched.map { it.runId }.toSet()
+                assertEquals(2, runIds.size)
                 assertTrue(
                     "real_windows_two_runs_stream_missing",
-                    matched.mapNotNull { it.runId }.all(arrivals::containsKey),
+                    expectedSourceIds.all(arrivals::containsKey),
                 )
+                assertTrue("real_windows_two_runs_delta_missing", runIds.all(deltaRuns::contains))
+                assertTrue("real_windows_two_runs_tool_missing", runIds.all(toolRuns::contains))
+                assertTrue("real_windows_two_runs_terminal_missing", runIds.all(terminalRuns::contains))
                 assertRouteShows(
                     sessionRoute,
                     setOf(expectedMarker),
                 )
                 val arrivalBySourceHash = JSONObject()
-                matched.forEach { item ->
-                    val sourceId = requireNotNull(item.sourceMessageId)
-                    val runId = requireNotNull(item.runId)
+                expectedSourceIds.forEach { sourceId ->
                     arrivalBySourceHash.put(
                         sha256(sourceId),
-                        requireNotNull(arrivals[runId]),
+                        requireNotNull(arrivals[sourceId]),
                     )
                 }
                 emitProof(
@@ -276,8 +491,12 @@ class RealRemoteWorkspaceE2ETest {
                         .put("run_count", 2)
                         .put("duplicate_run_count", 0)
                         .put("missing_sequence_count", 0)
+                        .put("delta_run_count", deltaRuns.intersect(runIds).size)
+                        .put("tool_run_count", toolRuns.intersect(runIds).size)
+                        .put("terminal_run_count", terminalRuns.intersect(runIds).size)
+                        .put("approval_decision_count", approvedIds.size)
                         .put("snapshot_sequence", after.snapshotSequence)
-                        .put("transcript_sha256", sessionConversationDigest(after))
+                        .put("oaep_sha256", oaepItemsDigest(after.items))
                         .put("arrival_epoch_ms_by_source_sha256", arrivalBySourceHash),
                 )
             } finally {
@@ -300,13 +519,10 @@ class RealRemoteWorkspaceE2ETest {
                 "real_android_two_runs_arguments_required"
             }
             val session = repository.session(runtimeId, workspaceId, sessionId)
-            val before = repository.conversationSnapshot(
-                runtimeId,
-                workspaceId,
-                sessionId,
-                limit = 500,
-            )
+            val before = repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
             val arrivals = ConcurrentHashMap<String, Long>()
+            val deltaRuns = ConcurrentHashMap.newKeySet<String>()
+            val terminalRuns = ConcurrentHashMap.newKeySet<String>()
             val streamReady = CompletableDeferred<Unit>()
             val streamJob = launch {
                 var committedSequence = before.snapshotSequence
@@ -317,7 +533,7 @@ class RealRemoteWorkspaceE2ETest {
                             auth::current,
                             refreshAfter = auth::refreshAfter,
                             deviceProof = deviceProof,
-                        ).sessionStream(
+                        ).oaepSessionStream(
                             runtimeId,
                             workspaceId,
                             sessionId,
@@ -326,10 +542,16 @@ class RealRemoteWorkspaceE2ETest {
                         ).collect { event ->
                             committedSequence = maxOf(
                                 committedSequence,
-                                event.sessionSequence,
+                                event.sequence,
                             )
                             event.runId?.let { runId ->
                                 arrivals.putIfAbsent(runId, System.nanoTime())
+                                if (event.data.delta != null) deltaRuns += runId
+                                if (event.type in setOf(
+                                        "event.run.completed", "event.run.failed",
+                                        "event.run.cancelled",
+                                    )
+                                ) terminalRuns += runId
                             }
                         }
                     } catch (_: IOException) {
@@ -340,6 +562,7 @@ class RealRemoteWorkspaceE2ETest {
             withTimeout(30_000) { streamReady.await() }
             val runStarts = linkedMapOf<String, Long>()
             val sourceMessageIds = mutableListOf<String>()
+            val approvedIds = ConcurrentHashMap.newKeySet<String>()
             val runs = (1..2).map { index ->
                 val idempotencyKey = "v3-android-$interactionId-$index"
                 val sourceMessageId = "android-v3-$interactionId-$index"
@@ -357,11 +580,30 @@ class RealRemoteWorkspaceE2ETest {
             }
             val deadline = System.nanoTime() + 180_000_000_000L
             while (System.nanoTime() < deadline) {
+                repository.approvals(runtimeId, workspaceId)
+                    .filter { approval ->
+                        approval.sessionId == sessionId &&
+                            approval.status == "pending" &&
+                            approval.approvalId.value !in approvedIds
+                    }
+                    .forEach { approval ->
+                        if (approvedIds.add(approval.approvalId.value)) {
+                            repository.decide(
+                                runtimeId,
+                                approval.approvalId,
+                                "approve",
+                            )
+                        }
+                    }
                 val terminal = runs.all { run ->
                     repository.getRun(runtimeId, run.runId).second in
                         setOf("completed", "failed", "cancelled")
                 }
-                if (terminal && runs.all { arrivals.containsKey(it.runId.value) }) break
+                if (
+                    terminal && runs.all { arrivals.containsKey(it.runId.value) } &&
+                    runs.all { deltaRuns.contains(it.runId.value) } &&
+                    runs.all { terminalRuns.contains(it.runId.value) }
+                ) break
                 delay(250)
             }
             streamJob.cancel()
@@ -369,19 +611,20 @@ class RealRemoteWorkspaceE2ETest {
             assertTrue("real_android_two_runs_stream_missing", runs.all {
                 arrivals.containsKey(it.runId.value)
             })
+            assertTrue("real_android_two_runs_delta_missing", runs.all {
+                deltaRuns.contains(it.runId.value)
+            })
+            assertTrue("real_android_two_runs_terminal_missing", runs.all {
+                terminalRuns.contains(it.runId.value)
+            })
             val latencies = runs.map { run ->
                 val arrived = requireNotNull(arrivals[run.runId.value])
                 (arrived - requireNotNull(runStarts[run.runId.value])) / 1_000_000_000.0
             }.sorted()
-            val after = repository.conversationSnapshot(
-                runtimeId,
-                workspaceId,
-                sessionId,
-                limit = 500,
-            )
+            val after = repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
             assertTrue(
                 "real_android_two_runs_source_missing",
-                after.items.mapNotNull { it.sourceMessageId }.containsAll(sourceMessageIds),
+                after.items.mapNotNull { it.source.messageId }.containsAll(sourceMessageIds),
             )
             assertRouteShows(
                 "opendrsai://session/${runtimeId.value}/${workspaceId.value}/${sessionId.value}",
@@ -393,13 +636,160 @@ class RealRemoteWorkspaceE2ETest {
                     .put("run_count", runs.size)
                     .put("duplicate_run_count", runs.size - runs.distinctBy { it.runId }.size)
                     .put("missing_sequence_count", 0)
+                    .put("delta_run_count", deltaRuns.intersect(runs.map { it.runId.value }.toSet()).size)
+                    .put("terminal_run_count", terminalRuns.intersect(runs.map { it.runId.value }.toSet()).size)
+                    .put("approval_decision_count", approvedIds.size)
                     .put("p95_seconds", latencies.last())
                     .put("snapshot_sequence", after.snapshotSequence)
-                    .put("transcript_sha256", sessionConversationDigest(after))
+                    .put("oaep_sha256", oaepItemsDigest(after.items))
                     .put(
                         "source_message_sha256",
                         JSONArray(sourceMessageIds.map(::sha256)),
                     ),
+            )
+            return@runBlocking
+        }
+        if (phase == "oaep-session-proof") {
+            val workspaceId = WorkspaceId(args.getString("verifyWorkspaceId").orEmpty())
+            val sessionId = SessionId(args.getString("verifySessionId").orEmpty())
+            val expectedSourceIds = args.getString("expectedSourceMessageIds")
+                .orEmpty().split(",").map(String::trim).filter(String::isNotEmpty).toSet()
+            val expectedRunCount = args.getString("expectedRunCount")?.toIntOrNull() ?: 0
+            require(
+                workspaceId.value.isNotBlank() && sessionId.value.isNotBlank() &&
+                    expectedSourceIds.isNotEmpty() && expectedRunCount > 0
+            ) { "real_oaep_proof_arguments_required" }
+            val snapshot = repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
+            val sourceIds = snapshot.items.mapNotNull { it.source.messageId }.toSet()
+            assertTrue("real_oaep_source_messages_missing", sourceIds.containsAll(expectedSourceIds))
+            assertTrue("real_oaep_run_count_missing", snapshot.runs.size >= expectedRunCount)
+            val events = try {
+                repository.oaepEvents(
+                    runtimeId, workspaceId, sessionId, afterSequence = 0, limit = 500,
+                ).data.sortedBy { it.sequence }
+            } catch (failure: RelayHttpException) {
+                emitProof(
+                    JSONObject()
+                        .put("phase", phase)
+                        .put("passed", false)
+                        .put("failed_stage", "event_page")
+                        .put("status", failure.status)
+                        .put("error_code", failure.errorCode ?: JSONObject.NULL),
+                )
+                throw failure
+            }
+            assertTrue("real_oaep_events_missing", events.isNotEmpty())
+            val duplicateSequenceCount = events.size - events.distinctBy { it.sequence }.size
+            val missingSequenceCount = events.zipWithNext().sumOf { (left, right) ->
+                (right.sequence - left.sequence - 1).coerceAtLeast(0)
+            }
+            assertEquals(0, duplicateSequenceCount)
+            assertEquals(0L, missingSequenceCount)
+            val fileChangeStats = oaepFileChangeStats(snapshot.items)
+            emitProof(
+                JSONObject()
+                    .put("phase", phase)
+                    .put("protocol", "oaep/1")
+                    .put("schema_hash", OaepContract.SCHEMA_SHA256)
+                    .put("snapshot_sequence", snapshot.snapshotSequence)
+                    .put("item_count", snapshot.items.size)
+                    .put("run_count", snapshot.runs.size)
+                    .put("event_count", events.size)
+                    .put("first_sequence", events.first().sequence)
+                    .put("last_sequence", events.last().sequence)
+                    .put("duplicate_sequence_count", duplicateSequenceCount)
+                    .put("missing_sequence_count", missingSequenceCount)
+                    .put("oaep_sha256", oaepItemsDigest(snapshot.items))
+                    .put("file_change_count", fileChangeStats.getInt("file_change_count"))
+                    .put("safe_relative_paths", fileChangeStats.getBoolean("safe_relative_paths"))
+                    .put("absolute_path_count", fileChangeStats.getInt("absolute_path_count"))
+                    .put("sensitive_field_count", fileChangeStats.getInt("sensitive_field_count")),
+            )
+            return@runBlocking
+        }
+        if (phase == "oaep-public-proof") {
+            val workspaceId = WorkspaceId(args.getString("verifyWorkspaceId").orEmpty())
+            val sessionId = SessionId(args.getString("verifySessionId").orEmpty())
+            require(workspaceId.value.isNotBlank() && sessionId.value.isNotBlank()) {
+                "real_oaep_public_proof_arguments_required"
+            }
+            val snapshot = try {
+                repository.oaepSnapshot(runtimeId, workspaceId, sessionId)
+            } catch (failure: RelayHttpException) {
+                emitProof(
+                    JSONObject()
+                        .put("phase", phase)
+                        .put("passed", false)
+                        .put("failed_stage", "snapshot")
+                        .put("status", failure.status)
+                        .put("error_code", failure.errorCode ?: JSONObject.NULL),
+                )
+                throw failure
+            }
+            val events = try {
+                repository.oaepEvents(
+                    runtimeId, workspaceId, sessionId, afterSequence = 0, limit = 500,
+                ).data.sortedBy { it.sequence }
+            } catch (failure: RelayHttpException) {
+                emitProof(
+                    JSONObject()
+                        .put("phase", phase)
+                        .put("passed", false)
+                        .put("failed_stage", "event_page")
+                        .put("status", failure.status)
+                        .put("error_code", failure.errorCode ?: JSONObject.NULL),
+                )
+                throw failure
+            }
+            assertTrue("real_oaep_public_events_missing", events.isNotEmpty())
+            val firstSequence = events.first().sequence
+            val streamEvent = try {
+                withTimeout(20_000L) {
+                    RelaySseClient(
+                        baseUrl,
+                        auth::current,
+                        refreshAfter = auth::refreshAfter,
+                        deviceProof = deviceProof,
+                    ).oaepSessionStream(
+                        runtimeId,
+                        workspaceId,
+                        sessionId,
+                        (firstSequence - 1).coerceAtLeast(0),
+                    ).first()
+                }
+            } catch (failure: RelayHttpException) {
+                emitProof(
+                    JSONObject()
+                        .put("phase", phase)
+                        .put("passed", false)
+                        .put("failed_stage", "event_stream")
+                        .put("status", failure.status)
+                        .put("error_code", failure.errorCode ?: JSONObject.NULL),
+                )
+                throw failure
+            }
+            assertEquals(firstSequence, streamEvent.sequence)
+            val duplicateSequenceCount = events.size - events.distinctBy { it.sequence }.size
+            val missingSequenceCount = events.zipWithNext().sumOf { (left, right) ->
+                (right.sequence - left.sequence - 1).coerceAtLeast(0)
+            }
+            assertEquals(0, duplicateSequenceCount)
+            assertEquals(0L, missingSequenceCount)
+            emitProof(
+                JSONObject()
+                    .put("phase", phase)
+                    .put("protocol", "oaep/1")
+                    .put("schema_hash", OaepContract.SCHEMA_SHA256)
+                    .put("snapshot_sequence", snapshot.snapshotSequence)
+                    .put("item_count", snapshot.items.size)
+                    .put("run_count", snapshot.runs.size)
+                    .put("event_count", events.size)
+                    .put("first_sequence", firstSequence)
+                    .put("last_sequence", events.last().sequence)
+                    .put("sse_sequence", streamEvent.sequence)
+                    .put("duplicate_sequence_count", duplicateSequenceCount)
+                    .put("missing_sequence_count", missingSequenceCount)
+                    .put("oaep_sha256", oaepItemsDigest(snapshot.items)),
             )
             return@runBlocking
         }
@@ -779,6 +1169,37 @@ class RealRemoteWorkspaceE2ETest {
             for (index in 0 until node.childCount) node.getChild(index)?.let(queue::add)
         }
         return result
+    }
+
+    private fun oaepFileChangeStats(items: List<OaepItem>): JSONObject {
+        var fileChangeCount = 0
+        var unsafePathCount = 0
+        var sensitiveFieldCount = 0
+        items.forEach { item ->
+            val content = item.content as? OaepFileChangeContent ?: return@forEach
+            content.changes.forEach { change ->
+                fileChangeCount += 1
+                sensitiveFieldCount += change.keys.count { key ->
+                    key in setOf("content", "raw_content", "absolute_path", "full_path", "local_path", "cwd", "token", "secret")
+                }
+                listOf("path", "old_path", "new_path").forEach { key ->
+                    val value = change[key] as? String ?: return@forEach
+                    if (!isSafeRelativePath(value)) unsafePathCount += 1
+                }
+            }
+        }
+        return JSONObject()
+            .put("file_change_count", fileChangeCount)
+            .put("safe_relative_paths", fileChangeCount > 0 && unsafePathCount == 0 && sensitiveFieldCount == 0)
+            .put("absolute_path_count", unsafePathCount)
+            .put("sensitive_field_count", sensitiveFieldCount)
+    }
+
+    private fun isSafeRelativePath(value: String): Boolean {
+        if (value.isBlank()) return false
+        if (value.startsWith("/") || value.startsWith("\\\\")) return false
+        if (Regex("^[A-Za-z]:[\\\\/].*").matches(value)) return false
+        return value.split('/', '\\').none { it.isBlank() || it == "." || it == ".." }
     }
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")

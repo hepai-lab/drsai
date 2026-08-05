@@ -23,6 +23,9 @@ import ai.drsai.remote.remote.data.RemoteEventCursorEntity
 import ai.drsai.remote.remote.data.RemoteEventEntity
 import ai.drsai.remote.remote.data.RemoteConversationItemEntity
 import ai.drsai.remote.remote.data.RemoteSessionEventEntity
+import ai.drsai.remote.remote.data.RemoteOaepRunEntity
+import ai.drsai.remote.remote.data.RemoteOaepItemEntity
+import ai.drsai.remote.remote.data.RemoteOaepEventEntity
 import ai.drsai.remote.remote.data.RemoteRunEntity
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
 import ai.drsai.remote.remote.data.RemoteSessionEntity
@@ -239,16 +242,35 @@ interface ChatDao {
         RemoteRuntimeEntity::class, RemoteWorkspaceEntity::class, RemoteSessionEntity::class, RemoteRunEntity::class,
         RemoteEventCursorEntity::class, RemoteEventEntity::class, PendingRemoteApprovalEntity::class,
         RemoteConversationItemEntity::class, RemoteSessionEventEntity::class,
+        RemoteOaepRunEntity::class, RemoteOaepItemEntity::class, RemoteOaepEventEntity::class,
         WorkbenchWorkspaceEntity::class, WorkbenchSessionEntity::class, WorkbenchRunEntity::class,
         WorkbenchEventEntity::class, WorkbenchApprovalEntity::class, WorkbenchApprovalGrantEntity::class,
         WorkbenchAuditEntity::class],
-    version = 9,
+    version = 11,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun dao(): ChatDao
     abstract fun remoteDao(): RemoteCacheDao
     abstract fun workbenchDao(): WorkbenchDao
+}
+
+val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_oaep_runs (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, parentRunId TEXT, status TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, completedAt TEXT, PRIMARY KEY(subject,organization,runtimeId,sessionId,runId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_oaep_runs_subject_organization_runtimeId_sessionId_updatedAt ON remote_oaep_runs(subject,organization,runtimeId,sessionId,updatedAt)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_oaep_items (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, itemId TEXT NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, itemSequence INTEGER NOT NULL, latestEventSequence INTEGER NOT NULL, sourceBackend TEXT NOT NULL, sourceClient TEXT, sourceMessageId TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, contentJson TEXT NOT NULL, optimistic INTEGER NOT NULL, PRIMARY KEY(subject,organization,runtimeId,sessionId,itemId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_oaep_items_subject_organization_runtimeId_sessionId_runId_itemSequence ON remote_oaep_items(subject,organization,runtimeId,sessionId,runId,itemSequence)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_remote_oaep_items_subject_organization_runtimeId_sessionId_sourceMessageId ON remote_oaep_items(subject,organization,runtimeId,sessionId,sourceMessageId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_oaep_events (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT, itemId TEXT, eventId TEXT NOT NULL, eventSequence INTEGER NOT NULL, type TEXT NOT NULL, timestamp TEXT NOT NULL, dedupeKey TEXT NOT NULL, eventJson TEXT NOT NULL, PRIMARY KEY(subject,organization,runtimeId,sessionId,eventId))")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_remote_oaep_events_subject_organization_runtimeId_sessionId_eventSequence ON remote_oaep_events(subject,organization,runtimeId,sessionId,eventSequence)")
+    }
+}
+
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE workbench_runs ADD COLUMN pythonStateJson TEXT NOT NULL DEFAULT '{}'")
+    }
 }
 
 val MIGRATION_8_9 = object : Migration(8, 9) {

@@ -477,6 +477,14 @@ class AgentBackendBindingStore:
             raise KeyError("Agent Backend Session binding not found")
         return self._session(row)
 
+    def find_session_by_backend_id(self, backend_id: str, backend_session_id: str) -> AgentBackendSessionBinding | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM agent_backend_session_bindings WHERE backend_id=? AND backend_session_id=?",
+                (backend_id, backend_session_id),
+            ).fetchone()
+        return self._session(row) if row is not None else None
+
     def get_run(self, run_id: str) -> AgentBackendRunBinding:
         with self._connect() as db:
             row = db.execute("SELECT * FROM agent_backend_run_bindings WHERE run_id=?", (run_id,)).fetchone()

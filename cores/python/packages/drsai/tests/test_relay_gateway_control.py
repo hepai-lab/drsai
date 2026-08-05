@@ -149,6 +149,45 @@ class SessionJournalGatewayFixture(GatewayFixture):
         }]
 
     async def request(self, method, path, *, body=None, headers=None):
+        if method == "GET" and "/oaep-events?after_sequence=" in path and path.startswith("/v1/sessions/"):
+            self.calls.append((method, path))
+            after = int(path.split("after_sequence=", 1)[1].split("&", 1)[0])
+            rows = [
+                {
+                    "version": "1.0",
+                    "event_id": row["event_id"],
+                    "session_id": row["session_id"],
+                    "sequence": row["session_sequence"],
+                    "type": "event.session.updated",
+                    "timestamp": row["timestamp"],
+                    "dedupe_key": row["event_id"],
+                    "source": {"backend": "runtime", "runtime_id": "runtime-one"},
+                    "data": row["payload"],
+                }
+                for row in self.session_events
+                if row["session_sequence"] > after
+            ]
+            return {"version": "1.0", "object": "list", "data": rows, "next_sequence": rows[-1]["sequence"] if rows else after}
+        if (
+            method == "GET"
+            and path.split("?", 1)[0].endswith("/oaep-snapshot")
+        ):
+            self.calls.append((method, path))
+            return {
+                "version": "1.0",
+                "session": {
+                    "id": "session-one",
+                    "workspace_id": "workspace-one",
+                    "title": "Session one",
+                    "status": "active",
+                    "backend": "opendrsai",
+                    "created_at": "2026-07-27T00:00:00+00:00",
+                    "updated_at": "2026-07-27T00:00:00+00:00",
+                },
+                "runs": [],
+                "items": [],
+                "snapshot_sequence": 1,
+            }
         if method == "GET" and "/events?after_sequence=" in path and path.startswith("/v1/sessions/"):
             after = int(path.split("after_sequence=", 1)[1].split("&", 1)[0])
             rows = [row for row in self.session_events if row["session_sequence"] > after]
@@ -172,6 +211,46 @@ def write_definition_asset(root: Path, definition_id: str, backend: str) -> None
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"id": definition_id, "version": "1", "name": definition_id, "backend": backend,
                                 "instructions": "test", "permissions": ["chat"]}), encoding="utf-8")
+
+
+def test_existing_runtime_waterlines_avoid_idle_loopback_catalog_scans(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "runtime"
+    state_dir.mkdir(parents=True)
+    with sqlite3.connect(state_dir / "engine.sqlite3") as db:
+        db.executescript(
+            "CREATE TABLE runtime_session_sequences("
+            "session_id TEXT PRIMARY KEY,last_sequence INTEGER NOT NULL);"
+            "CREATE TABLE runtime_session_journal("
+            "event_id TEXT PRIMARY KEY,session_id TEXT,session_sequence INTEGER);"
+            "CREATE TABLE runtime_oaep_events("
+            "event_id TEXT PRIMARY KEY,session_id TEXT,session_sequence INTEGER);"
+            "CREATE TABLE runtime_runs("
+            "run_id TEXT PRIMARY KEY,session_id TEXT,workspace_id TEXT,backend_id TEXT,"
+            "status TEXT,created_at TEXT);"
+            "CREATE TABLE runtime_events("
+            "event_id TEXT PRIMARY KEY,run_id TEXT,sequence INTEGER);"
+        )
+        db.execute("INSERT INTO runtime_session_sequences VALUES('session-old',1)")
+        db.execute("INSERT INTO runtime_session_journal VALUES('legacy-old','session-old',1)")
+        db.execute("INSERT INTO runtime_oaep_events VALUES('oaep-old','session-old',1)")
+        db.execute(
+            "INSERT INTO runtime_runs VALUES("
+            "'run-old','session-old','workspace-one','opendrsai','completed','2026-01-01T00:00:00Z')"
+        )
+        db.execute("INSERT INTO runtime_events VALUES('run-event-old','run-old',1)")
+
+    async def scenario() -> None:
+        gateway = GatewayFixture()
+        handler = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+        gateway.calls.clear()
+        assert await handler.relay_events() == []
+        assert await handler.relay_session_events() == []
+        assert await handler.relay_oaep_events() == []
+        assert gateway.calls == []
+
+    asyncio.run(scenario())
 
 
 def test_session_journal_snapshot_replay_and_relay_cursor(tmp_path: Path) -> None:
@@ -215,6 +294,86 @@ def test_session_journal_snapshot_replay_and_relay_cursor(tmp_path: Path) -> Non
             "alice", "workspace-one", "session-one", after_sequence=0
         )
         assert [event["session_sequence"] for event in page["data"]] == [1, 2, 3]
+
+    asyncio.run(scenario())
+
+
+def test_gateway_handler_authorizes_and_proxies_oaep_snapshot_and_events(
+    tmp_path: Path,
+) -> None:
+    async def scenario():
+        gateway = SessionJournalGatewayFixture()
+        handler = GatewayRuntimeControlHandler(
+            "runtime-one", gateway, tmp_path / "runtime"
+        )
+        snapshot = await handler.oaep_snapshot_for_subject(
+            "alice", "workspace-one", "session-one"
+        )
+        assert snapshot["version"] == "1.0"
+        assert snapshot["session"]["id"] == "session-one"
+        assert gateway.calls[-1] == (
+            "GET",
+            "/v1/sessions/session-one/oaep-snapshot",
+        )
+        page = await handler.oaep_events_for_subject(
+            "alice", "workspace-one", "session-one", after_sequence=0, limit=9999
+        )
+        assert page["version"] == "1.0"
+        assert [event["sequence"] for event in page["data"]] == [1]
+        assert gateway.calls[-1] == (
+            "GET",
+            "/v1/sessions/session-one/oaep-events?after_sequence=0&limit=2000",
+        )
+
+        assert (
+            "GET",
+            "/v1/sessions/session-one",
+        ) in gateway.calls
+
+    asyncio.run(scenario())
+
+
+def test_gateway_handler_oaep_bridge_has_independent_durable_cursor(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        gateway = SessionJournalGatewayFixture()
+        state_dir = tmp_path / "runtime"
+        handler = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+
+        # First observation establishes an OAEP waterline independently of the
+        # legacy Session Event bridge.
+        assert await handler.relay_oaep_events() == []
+        assert handler._relay_oaep_event_cursors == {"session-one": 1}
+        assert handler._relay_session_event_cursors == {}
+
+        gateway.session_events.append({
+            **gateway.session_events[0],
+            "event_id": "session-event-two",
+            "session_sequence": 2,
+        })
+        frames = await handler.relay_oaep_events()
+        assert len(frames) == 1
+        assert frames[0] == {
+            "runtime_id": "runtime-one",
+            "workspace_id": "workspace-one",
+            "session_id": "session-one",
+            "sequence": 2,
+            "event": frames[0]["event"],
+        }
+        assert frames[0]["event"]["sequence"] == 2
+        handler.ack_relay_oaep_event("session-one", 2)
+
+        # A new process resumes after the committed OAEP sequence and backfills
+        # only the event produced while the WSS owner was offline.
+        restarted = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+        gateway.session_events.append({
+            **gateway.session_events[0],
+            "event_id": "session-event-three",
+            "session_sequence": 3,
+        })
+        replay = await restarted.relay_oaep_events()
+        assert [frame["sequence"] for frame in replay] == [3]
 
     asyncio.run(scenario())
 

@@ -1,5 +1,30 @@
 /// <reference types="vite/client" />
 
+declare module "jszip" {
+  interface JSZipObject {
+    async(type: "string"): Promise<string>;
+    async(type: string): Promise<unknown>;
+  }
+
+  interface JSZipInstance {
+    files: Record<string, JSZipObject>;
+  }
+
+  const JSZip: {
+    loadAsync(data: ArrayBuffer | Blob | Uint8Array): Promise<JSZipInstance>;
+  };
+  export default JSZip;
+}
+
+declare module "docx-preview" {
+  export function renderAsync(
+    document: Blob | ArrayBuffer | Uint8Array,
+    bodyContainer: HTMLElement,
+    styleContainer?: HTMLElement,
+    options?: Record<string, unknown>,
+  ): Promise<unknown>;
+}
+
 interface OpenDrSaiWebviewTag extends HTMLElement {
   src: string;
   canGoBack(): boolean;

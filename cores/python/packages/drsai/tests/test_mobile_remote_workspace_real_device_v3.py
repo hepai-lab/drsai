@@ -130,23 +130,36 @@ def test_approval_proof_fails_closed(field: str, value) -> None:
 
 
 def test_windows_two_run_sender_uses_runtime_semantics_and_source_ids() -> None:
-    class Client:
-        def __init__(self) -> None:
-            self.requests: list[tuple] = []
+    requests: list[tuple[str, dict, dict]] = []
 
-        async def _request(
-            self,
-            method,
-            path,
-            body=None,
-            headers=None,
-        ):
-            self.requests.append((method, path, body, headers))
-            if method == "GET":
-                return {"agent_definition": "opendrsai@1"}
-            if path.endswith("/runs"):
-                return {"run_id": f"run-{len([r for r in self.requests if r[1].endswith('/runs')])}"}
-            return {"ok": True}
+    class Response:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def text(self):
+            return "data: [DONE]\n\n"
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def post(self, url, *, headers, json):
+            requests.append((url, headers, json))
+            return Response()
+
+    class Client:
+        root = "http://127.0.0.1:18642"
+        headers = {"X-OpenDrSai-Gateway-Token": "opaque"}
+        timeout = object()
+        session_factory = staticmethod(lambda **_kwargs: Session())
 
     client = Client()
     source_ids = ["windows-one", "windows-two"]
@@ -154,19 +167,19 @@ def test_windows_two_run_sender_uses_runtime_semantics_and_source_ids() -> None:
         MODULE._send_windows_runs(
             client,
             "session-one",
+            "workspace-one",
             source_ids,
             "marker",
         )
     )
     assert set(starts) == set(source_ids)
-    create = [row for row in client.requests if row[1].endswith("/runs")]
-    execute = [row for row in client.requests if row[1].endswith("/execute")]
-    assert len(create) == len(execute) == 2
-    assert all(row[2] == {"agent_definition": "opendrsai@1"} for row in create)
-    assert {
-        row[2]["metadata"]["source_message_id"] for row in execute
-    } == set(source_ids)
-    assert all(row[2]["metadata"]["source_client"] == "windows" for row in execute)
+    assert len(requests) == 2
+    assert all(row[0].endswith("/v1/chat/completions") for row in requests)
+    assert {row[2]["source_message_id"] for row in requests} == set(source_ids)
+    assert all(row[2]["thread_id"] == "session-one" for row in requests)
+    assert all(row[2]["workspace_id"] == "workspace-one" for row in requests)
+    assert all(row[2]["metadata"]["v4_controlled_desktop_turn"] is True for row in requests)
+    assert all(row[1]["X-OpenDrSai-Auth-Mode"] == "offline" for row in requests)
 
 
 @pytest.mark.parametrize(
@@ -197,6 +210,55 @@ def test_monitor_failure_diagnostic_extracts_bounded_real_ui_code() -> None:
         MODULE.monitor_failure_code(output, -1)
         == "real_ui_expected_content_missing_session"
     )
+
+
+def two_run_oaep_proof(*, windows: bool) -> dict:
+    value = {
+        "run_count": 2,
+        "duplicate_run_count": 0,
+        "missing_sequence_count": 0,
+        "delta_run_count": 2,
+        "terminal_run_count": 2,
+        "oaep_sha256": "c" * 64,
+    }
+    if windows:
+        value.update(tool_run_count=2, approval_decision_count=2)
+    return value
+
+
+def test_v4_two_run_proof_preserves_oaep_and_behavior_counters() -> None:
+    windows = MODULE.validate_two_run_oaep_proof(
+        two_run_oaep_proof(windows=True),
+        direction="windows_to_android",
+        p95_seconds=0.4,
+    )
+    android = MODULE.validate_two_run_oaep_proof(
+        two_run_oaep_proof(windows=False),
+        direction="android_to_windows",
+        p95_seconds=0.5,
+    )
+    assert windows["tool_run_count"] == 2
+    assert windows["delta_run_count"] == android["delta_run_count"] == 2
+    assert windows["oaep_sha256"] == android["oaep_sha256"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "direction"),
+    [
+        ("oaep_sha256", "legacy-transcript", "android_to_windows"),
+        ("delta_run_count", 1, "android_to_windows"),
+        ("tool_run_count", 1, "windows_to_android"),
+    ],
+)
+def test_v4_two_run_proof_fails_closed(field: str, value, direction: str) -> None:
+    candidate = two_run_oaep_proof(windows=direction == "windows_to_android")
+    candidate[field] = value
+    with pytest.raises(RuntimeError, match=f"v4_{direction}_two_runs_invalid"):
+        MODULE.validate_two_run_oaep_proof(
+            candidate,
+            direction=direction,
+            p95_seconds=0.4,
+        )
 
 
 def test_public_relay_preflight_requires_https_200_without_redirect() -> None:

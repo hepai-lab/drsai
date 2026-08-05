@@ -47,6 +47,23 @@ class SessionConversationContractTest {
                 .getValue("session_event_stream")
                 .endsWith("/sessions/{session_id}/events/stream"),
         )
+        val oaep = RelayContractGenerated.CAPABILITY_PROFILES.getValue("oaep/1")
+        assertEquals(
+            setOf(
+                "event.cursor_expired",
+                "oaep.session.events",
+                "oaep.session.events.stream",
+                "oaep.session.snapshot",
+                "oaep.v1",
+            ),
+            oaep,
+        )
+        assertTrue(oaep.all { it in RelayContractGenerated.CAPABILITIES })
+        assertTrue(
+            RelayContractGenerated.ENDPOINTS
+                .getValue("oaep_event_stream")
+                .endsWith("/sessions/{session_id}/oaep-events/stream"),
+        )
     }
 
     @Test

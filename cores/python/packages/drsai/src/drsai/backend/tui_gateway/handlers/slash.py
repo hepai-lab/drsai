@@ -8,6 +8,7 @@ invoked via slash.exec RPC.
 from __future__ import annotations
 
 import logging
+import asyncio
 import os
 import threading
 import time
@@ -26,6 +27,20 @@ from drsai.backend.cli.config import (
     set_workdir_session,
 )
 from drsai.backend.run_drsai_agent_factory import load_llm_mode_config
+from drsai.config import (
+    ConfigError as ModelProviderConfigError,
+    ConfigUpdateRequest,
+    ProviderDraft,
+    commit_update,
+    config_revision,
+    load_user_config,
+    resolve_model_config,
+    builtin_provider_names,
+    discover_provider_models,
+    list_provider_presets,
+    probe_provider_draft,
+    test_provider_connection,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -204,16 +219,21 @@ def cmd_model(ctx: SlashContext) -> dict:
     if lower == "info":
         return {"output": "Usage: /model info <alias>"}
 
-    # Validate model alias
-    llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
-    llm_mode_config = load_llm_mode_config(llm_config_path)
-    if args not in llm_mode_config:
-        available = ", ".join(sorted(llm_mode_config.keys()))
-        return {"output": f"Unknown model alias: {args}\nAvailable aliases: {available}"}
+    # Compact TOML Providers accept any model ID. Legacy mode continues to
+    # validate aliases against llm_mode_config.yaml.
+    compact = load_user_config()
+    compact_active = bool(compact.model or compact.model_provider or compact.providers)
+    if not compact_active:
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        llm_mode_config = load_llm_mode_config(llm_config_path)
+        if args not in llm_mode_config:
+            available = ", ".join(sorted(llm_mode_config.keys()))
+            return {"output": f"Unknown model alias: {args}\nAvailable aliases: {available}"}
 
     # Switch model (session-local)
     try:
-        ctx.session.switch_model(args)
+        if not ctx.session.switch_model(args):
+            return {"output": f"Warning: model switch to {args} failed; the previous model is still active"}
         ctx.refresh_info()
         return {"output": f"Model switched to {args} (session-local)"}
     except Exception as e:
@@ -231,18 +251,27 @@ def cmd_model_global(ctx: SlashContext) -> dict:
         global_default = cfg.get("defult_config_name") or "<default>"
         return {"output": f"Global default model: {global_default}"}
 
-    # Validate
-    llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
-    llm_mode_config = load_llm_mode_config(llm_config_path)
-    if args not in llm_mode_config:
-        available = ", ".join(sorted(llm_mode_config.keys()))
-        return {"output": f"Unknown model alias: {args}\nAvailable: {available}"}
+    compact = load_user_config()
+    compact_active = bool(compact.model or compact.model_provider or compact.providers)
+    if not compact_active:
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        llm_mode_config = load_llm_mode_config(llm_config_path)
+        if args not in llm_mode_config:
+            available = ", ".join(sorted(llm_mode_config.keys()))
+            return {"output": f"Unknown model alias: {args}\nAvailable: {available}"}
 
     # Switch session + save global
     try:
-        ctx.session.switch_model(args)
-        cfg["defult_config_name"] = args
-        save_global_config(cfg)
+        if not ctx.session.switch_model(args):
+            return {"output": f"Warning: model switch to {args} failed; global configuration was not changed"}
+        if compact_active:
+            commit_update(ConfigUpdateRequest(
+                model=args,
+                model_provider=compact.model_provider or "hepai",
+            ))
+        else:
+            cfg["defult_config_name"] = args
+            save_global_config(cfg)
         ctx.refresh_info()
         return {"output": f"Model switched to {args} (session + global default, saved to disk)"}
     except Exception as e:
@@ -1829,6 +1858,7 @@ def _model_options(rid, params: dict) -> dict:
         cfg = load_config()
         llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
         llm_mode_config = load_llm_mode_config(llm_config_path)
+        compact = load_user_config()
 
         models = []
         for alias in sorted(llm_mode_config.keys()):
@@ -1850,13 +1880,182 @@ def _model_options(rid, params: dict) -> dict:
                 "vision": getattr(entry, "vision", True),
             })
 
+        compact_active = bool(compact.model or compact.model_provider or compact.providers)
+        if compact_active:
+            resolved = resolve_model_config(compact, environ=os.environ, require_credentials=False)
+            if not any(item["alias"] == resolved.model for item in models):
+                models.insert(0, {
+                    "alias": resolved.model,
+                    "model_name": resolved.model,
+                    "provider": resolved.provider.name,
+                    "reasoning": list(resolved.capabilities.reasoning.effort_levels),
+                    "vision": resolved.capabilities.vision,
+                    "known_model": resolved.known_model,
+                })
+
         return _ok(rid, {
             "models": models,
-            "current": cfg.get("defult_config_name") or "default",
+            "current": compact.model if compact_active else (cfg.get("defult_config_name") or "default"),
         })
     except Exception as exc:
         logger.exception("model.options failed")
         return _err(rid, 5034, f"model.options failed: {exc}")
+
+
+@method("model.config.get")
+def _model_provider_config_get(rid, params: dict) -> dict:
+    """Return compact TOML model configuration with all secrets removed."""
+    try:
+        compact = load_user_config()
+        resolved = resolve_model_config(compact, environ=os.environ, require_credentials=False)
+        providers = []
+        names = set(compact.providers)
+        names.update(builtin_provider_names())
+        names.add(compact.model_provider or "hepai")
+        for name in sorted(names):
+            try:
+                item = resolve_model_config(
+                    compact,
+                    environ=os.environ,
+                    provider=name,
+                    require_credentials=False,
+                )
+            except ModelProviderConfigError:
+                continue
+            providers.append(item.provider.public_dict())
+        return _ok(rid, {
+            **resolved.public_dict(),
+            "providers": providers,
+            "path": compact.source_path,
+            "revision": config_revision(),
+        })
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4001, str(exc))
+
+
+@method("model.config.save")
+def _model_provider_config_save(rid, params: dict) -> dict:
+    """Save a compact Provider and/or active model selection."""
+    try:
+        provider = str(params.get("provider") or "").strip()
+        model = str(params.get("model") or "").strip()
+        base_url = str(params.get("base_url") or "").strip()
+        if not provider or not model:
+            return _err(rid, 4002, "provider and model are required")
+        values = None
+        provider_secret = None
+        if base_url:
+            values = {
+                key: params[key]
+                for key in (
+                    "base_url", "api_key", "api_key_env", "api_key_credential",
+                    "wire_api", "requires_api_key",
+                )
+                if params.get(key) is not None
+            }
+            raw_key = values.pop("api_key", None)
+            provider_secret = raw_key if isinstance(raw_key, str) else None
+        committed = commit_update(ConfigUpdateRequest(
+            provider_name=provider if values is not None else None,
+            provider_values=values,
+            provider_secret=provider_secret,
+            model=model,
+            model_provider=provider,
+        ), expected_revision=str(params.get("expected_revision") or "").strip() or None)
+        session_id = str(params.get("session_id") or "").strip()
+        runtime_applied = True
+        if session_id:
+            user_id = session_module._resolve_user_id()
+            session = session_module._ensure_agent_session(session_id, user_id)
+            if session is not None:
+                runtime_applied = session.switch_model(model)
+                _emit("session.info", session_id, session.info())
+        return _ok(rid, {
+            "ok": True,
+            **committed.resolved.public_dict(),
+            "revision": committed.revision,
+            "runtime_applied": runtime_applied,
+            **({"warning": "Configuration was saved, but the current session kept its previous model"} if not runtime_applied else {}),
+        })
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
+    except Exception as exc:
+        logger.exception("model.config.save failed")
+        return _err(rid, 5001, f"model config save failed: {exc}")
+
+
+@method("model.config.delete")
+def _model_provider_config_delete(rid, params: dict) -> dict:
+    provider = str(params.get("provider") or "").strip()
+    if not provider:
+        return _err(rid, 4002, "provider is required")
+    try:
+        compact = load_user_config()
+        active = (compact.model_provider or "hepai") == provider
+        commit_update(ConfigUpdateRequest(
+            delete_provider_name=provider,
+            delete_provider_credential=bool(params.get("delete_credential", True)),
+            model=compact.model or "deepseek-v4-pro" if active else None,
+            model_provider="hepai" if active else None,
+        ), expected_revision=str(params.get("expected_revision") or "").strip() or None)
+        return _ok(rid, {"ok": True, "active": "hepai"})
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
+
+
+@method("model.config.test")
+def _model_provider_config_test(rid, params: dict) -> dict:
+    """Test the saved Provider using the same redacted probe as the Gateway."""
+    provider = str(params.get("provider") or "").strip()
+    model = str(params.get("model") or "").strip() or None
+    if not provider:
+        return _err(rid, 4002, "provider is required")
+    try:
+        compact = load_user_config()
+        resolved = resolve_model_config(
+            compact,
+            environ=os.environ,
+            provider=provider,
+            model=model,
+        )
+        return _ok(rid, asyncio.run(test_provider_connection(resolved)))
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
+
+
+@method("model.config.test_draft")
+def _model_provider_config_test_draft(rid, params: dict) -> dict:
+    """Test editor values without saving TOML or a credential."""
+    try:
+        draft = ProviderDraft(
+            name=str(params.get("provider") or "").strip(),
+            model=str(params.get("model") or "").strip(),
+            base_url=str(params.get("base_url") or "").strip(),
+            api_key=str(params.get("api_key") or "").strip() or None,
+            api_key_env=str(params.get("api_key_env") or "").strip() or None,
+            wire_api=str(params.get("wire_api") or "openai"),  # type: ignore[arg-type]
+            requires_api_key=bool(params.get("requires_api_key", True)),
+        )
+        result = asyncio.run(probe_provider_draft(draft, mode="basic", environ=os.environ))
+        return _ok(rid, result)
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
+
+
+@method("model.config.presets")
+def _model_provider_presets(rid, params: dict) -> dict:
+    return _ok(rid, {"presets": list_provider_presets()})
+
+
+@method("model.config.models")
+def _model_provider_models(rid, params: dict) -> dict:
+    provider = str(params.get("provider") or "").strip()
+    try:
+        resolved = resolve_model_config(load_user_config(), environ=os.environ, provider=provider)
+        result = asyncio.run(discover_provider_models(resolved, refresh=bool(params.get("refresh"))))
+        return _ok(rid, result)
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
 
 
 @method("commands.catalog")

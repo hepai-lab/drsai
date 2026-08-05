@@ -317,6 +317,11 @@ apps/desktop/macos/release-unsigned-update/
 !apps/android/app/src/test/**
 
 # Android acceptance-test artifacts and device screenshots are generated locally.
-docs/android/acceptance/**/device/*.png
-docs/android/acceptance/**/emulator-results/
+docs/android/testing/acceptance/**/device/*.png
+docs/android/testing/acceptance/**/emulator-results/
 device.png
+
+# Local validation evidence and approval notes; never commit runtime databases,
+# captured schemas, or machine-specific proof files.
+.artifacts/
+approval-proof.txt

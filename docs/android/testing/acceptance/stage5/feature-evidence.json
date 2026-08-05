@@ -1,0 +1,679 @@
+﻿{
+    "schema_version":  1,
+    "generated_at":  "2026-07-21T03:30:22.1890704+00:00",
+    "policy":  "passed requires code reference, automated coverage, API30/API35 reports, and all Stage 5 release gates",
+    "features":  [
+                     {
+                         "id":  "M01-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt",
+                         "test_ref":  "WorkbenchModelsTest; LocalStoreTest; ArchitectureBoundaryTest",
+                         "notes":  "统一 `Workspace`，同时表达本地虚拟工作区和远程工作区; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M01-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt",
+                         "test_ref":  "WorkbenchModelsTest; LocalStoreTest; ArchitectureBoundaryTest",
+                         "notes":  "统一 `Session`，替代 UI 对本地 Conversation 与远程 Session 的分支依赖; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M01-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt",
+                         "test_ref":  "WorkbenchModelsTest; LocalStoreTest; ArchitectureBoundaryTest",
+                         "notes":  "建立 `Run` 聚合，包含状态、Runtime 归属、时间和失败原因; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M01-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt",
+                         "test_ref":  "WorkbenchModelsTest; LocalStoreTest; ArchitectureBoundaryTest",
+                         "notes":  "统一 `Event` envelope、序号、游标、时间和 payload 版本; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M01-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt",
+                         "test_ref":  "WorkbenchModelsTest; LocalStoreTest; ArchitectureBoundaryTest",
+                         "notes":  "统一 `Approval` 与 `AuditEntry` 领域对象; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M01-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt",
+                         "test_ref":  "WorkbenchModelsTest; LocalStoreTest; ArchitectureBoundaryTest",
+                         "notes":  "为对象标记 Runtime authority 与 source，避免缓存成为权威状态; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M01-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt",
+                         "test_ref":  "WorkbenchModelsTest; LocalStoreTest; ArchitectureBoundaryTest",
+                         "notes":  "Room schema 与从既有会话/远程缓存到统一模型的迁移; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M01-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt",
+                         "test_ref":  "WorkbenchModelsTest; LocalStoreTest; ArchitectureBoundaryTest",
+                         "notes":  "建立模块依赖守卫，UI 不直接依赖具体 Runtime 实现; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M02-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
+                         "notes":  "手机采用模态侧栏，保留悬浮标题栏和聊天可视面积; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M02-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
+                         "notes":  "平板和宽屏采用可折叠常驻侧栏; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M02-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
+                         "notes":  "顶部展示新任务、当前范围及侧栏开关的准确状态; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M02-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
+                         "notes":  "工作台分区可折叠并持久化展开状态; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M02-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
+                         "notes":  "长列表虚拟化、稳定 key 和滚动位置恢复; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M02-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
+                         "notes":  "沿用白色/半透明表面、深浅色和动态字体设计规范; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M02-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
+                         "notes":  "Back、预测返回、scrim 点击和 IME 与侧栏协同; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M02-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+                         "test_ref":  "MainInterfaceTest; docs/android/testing/acceptance/stage5/device/tablet-layout-report.json",
+                         "notes":  "TalkBack、触控尺寸、焦点顺序和横竖屏无障碍; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M03-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt",
+                         "test_ref":  "LocalStoreTest; MainInterfaceTest; WorkspaceActionPolicyTest",
+                         "notes":  "提供本地虚拟 Workspace，承载 Android 本地会话; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M03-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt",
+                         "test_ref":  "LocalStoreTest; MainInterfaceTest; WorkspaceActionPolicyTest",
+                         "notes":  "按 Runtime 分组展示远程 Workspace; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M03-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt",
+                         "test_ref":  "LocalStoreTest; MainInterfaceTest; WorkspaceActionPolicyTest",
+                         "notes":  "Workspace 下分页/懒加载 Session，支持嵌套来源展示; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M03-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt",
+                         "test_ref":  "LocalStoreTest; MainInterfaceTest; WorkspaceActionPolicyTest",
+                         "notes":  "当前 Workspace/Session 选中态与聊天页双向同步; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M03-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt",
+                         "test_ref":  "LocalStoreTest; MainInterfaceTest; WorkspaceActionPolicyTest",
+                         "notes":  "每个 Workspace 支持在正确 Runtime 新建 Session; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M03-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt",
+                         "test_ref":  "LocalStoreTest; MainInterfaceTest; WorkspaceActionPolicyTest",
+                         "notes":  "支持置顶优先、最近活动排序和稳定次序; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M03-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt",
+                         "test_ref":  "LocalStoreTest; MainInterfaceTest; WorkspaceActionPolicyTest",
+                         "notes":  "展示连接、离线、运行中、待审批、未读和 stale 状态; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M03-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/workbench/data/WorkbenchStore.kt; apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt",
+                         "test_ref":  "LocalStoreTest; MainInterfaceTest; WorkspaceActionPolicyTest",
+                         "notes":  "Workspace 详情和受控操作，危险动作不在 Android 静默执行; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M04-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/navigation/AppRoute.kt",
+                         "test_ref":  "MainInterfaceTest; AppRouteTest; LocalStoreTest",
+                         "notes":  "新任务入口支持选择本地或远程 Workspace; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M04-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/navigation/AppRoute.kt",
+                         "test_ref":  "MainInterfaceTest; AppRouteTest; LocalStoreTest",
+                         "notes":  "定时任务入口按 Runtime capability 显示并只读/跳转; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M04-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/navigation/AppRoute.kt",
+                         "test_ref":  "MainInterfaceTest; AppRouteTest; LocalStoreTest",
+                         "notes":  "结果入口聚合 Artifact、导出物和已完成后台任务; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M04-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/navigation/AppRoute.kt",
+                         "test_ref":  "MainInterfaceTest; AppRouteTest; LocalStoreTest",
+                         "notes":  "Agent 与 Skill 入口统一展示本地及远程来源和能力; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M04-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/navigation/AppRoute.kt",
+                         "test_ref":  "MainInterfaceTest; AppRouteTest; LocalStoreTest",
+                         "notes":  "全局搜索 Workspace、Session 标题和已落库消息; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M04-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/navigation/AppRoute.kt",
+                         "test_ref":  "MainInterfaceTest; AppRouteTest; LocalStoreTest",
+                         "notes":  "会话重命名、置顶、归档、恢复和未读管理; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M04-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/navigation/AppRoute.kt",
+                         "test_ref":  "MainInterfaceTest; AppRouteTest; LocalStoreTest",
+                         "notes":  "底部账户、设置、Runtime 状态和退出入口; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M04-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/navigation/AppRoute.kt",
+                         "test_ref":  "MainInterfaceTest; AppRouteTest; LocalStoreTest",
+                         "notes":  "深链与返回栈支持通知直达 Session/Run/Approval/Artifact; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M05-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/v2/RuntimeV2.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
+                         "test_ref":  "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest",
+                         "notes":  "定义 Runtime port 和 `RuntimeCoordinator`，替换 UI 直连旧 LocalAgentRuntime; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M05-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/v2/RuntimeV2.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
+                         "test_ref":  "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest",
+                         "notes":  "持久化 `queued/running/waiting_approval/paused/completed/failed/cancelled` 状态机; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M05-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/v2/RuntimeV2.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
+                         "test_ref":  "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest",
+                         "notes":  "本地 Run 产生带序号的统一流式 Event; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M05-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/v2/RuntimeV2.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
+                         "test_ref":  "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest",
+                         "notes":  "支持多轮模型/工具循环并配置轮次、调用数和预算上限; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M05-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/v2/RuntimeV2.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
+                         "test_ref":  "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest",
+                         "notes":  "支持停止、暂停和恢复，取消信号传播到网络及工具; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M05-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/v2/RuntimeV2.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
+                         "test_ref":  "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest",
+                         "notes":  "在消息、工具调用和审批边界写入 checkpoint; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M05-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/v2/RuntimeV2.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
+                         "test_ref":  "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest",
+                         "notes":  "同 Session 单活跃 Run、发送幂等键和并发互斥; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M05-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/v2/RuntimeV2.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
+                         "test_ref":  "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest",
+                         "notes":  "冷启动扫描并恢复可恢复 Run，终结不可恢复 Run; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M06-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalAgentRuntime.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteProjectInstructions.kt",
+                         "test_ref":  "ContextAssemblerTest; LocalAgentRuntimeTest; RemoteProjectInstructionLoaderTest",
+                         "notes":  "按系统、Agent、Project、用户偏好、会话层组装提示词; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M06-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalAgentRuntime.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteProjectInstructions.kt",
+                         "test_ref":  "ContextAssemblerTest; LocalAgentRuntimeTest; RemoteProjectInstructionLoaderTest",
+                         "notes":  "使用模型元数据进行 token 预算和消息裁剪; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M06-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalAgentRuntime.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteProjectInstructions.kt",
+                         "test_ref":  "ContextAssemblerTest; LocalAgentRuntimeTest; RemoteProjectInstructionLoaderTest",
+                         "notes":  "长会话生成可持久化摘要并保留来源范围; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M06-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalAgentRuntime.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteProjectInstructions.kt",
+                         "test_ref":  "ContextAssemblerTest; LocalAgentRuntimeTest; RemoteProjectInstructionLoaderTest",
+                         "notes":  "Session 记忆仅在当前会话生效; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M06-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalAgentRuntime.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteProjectInstructions.kt",
+                         "test_ref":  "ContextAssemblerTest; LocalAgentRuntimeTest; RemoteProjectInstructionLoaderTest",
+                         "notes":  "用户长期记忆按 OIDC subject 隔离并支持查看/删除; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M06-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalAgentRuntime.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteProjectInstructions.kt",
+                         "test_ref":  "ContextAssemblerTest; LocalAgentRuntimeTest; RemoteProjectInstructionLoaderTest",
+                         "notes":  "Project instructions 可来自本地 SAF 或远程 Workspace 快照; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M06-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalAgentRuntime.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteProjectInstructions.kt",
+                         "test_ref":  "ContextAssemblerTest; LocalAgentRuntimeTest; RemoteProjectInstructionLoaderTest",
+                         "notes":  "附件文本、图片描述和结果 Artifact 纳入受预算控制的上下文; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M06-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt; apps/android/app/src/main/java/ai/drsai/remote/data/LocalAgentRuntime.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteProjectInstructions.kt",
+                         "test_ref":  "ContextAssemblerTest; LocalAgentRuntimeTest; RemoteProjectInstructionLoaderTest",
+                         "notes":  "提供敏感内容排除、记忆开关和调试视图脱敏; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M07-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; SkillCatalogTest; ArchitectureBoundaryTest",
+                         "notes":  "建立带 ID、版本、schema、风险和 capability 的 Tool Registry; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M07-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; SkillCatalogTest; ArchitectureBoundaryTest",
+                         "notes":  "调用前校验 JSON Schema、大小和必填参数; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M07-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; SkillCatalogTest; ArchitectureBoundaryTest",
+                         "notes":  "工具执行产生 started/progress/result/error 统一事件; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M07-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; SkillCatalogTest; ArchitectureBoundaryTest",
+                         "notes":  "Skill 定义支持内置、平台和远程只读来源; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M07-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; SkillCatalogTest; ArchitectureBoundaryTest",
+                         "notes":  "Skill/Tool 版本固定和变更刷新; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M07-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; SkillCatalogTest; ArchitectureBoundaryTest",
+                         "notes":  "按 Runtime、Agent、权限和网络状态过滤可用工具; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M07-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; SkillCatalogTest; ArchitectureBoundaryTest",
+                         "notes":  "大工具输出截断、持久化为 Artifact 并保留摘要; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M07-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; SkillCatalogTest; ArchitectureBoundaryTest",
+                         "notes":  "将现有时间、记忆和附件工具迁移到 Registry，行为兼容; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M08-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalPolicy.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalRepository.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; LocalStoreTest; MainInterfaceTest",
+                         "notes":  "工具按只读、写入、外发、敏感和禁止等级分类; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M08-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalPolicy.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalRepository.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; LocalStoreTest; MainInterfaceTest",
+                         "notes":  "高风险工具进入持久化 Approval 等待态; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M08-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalPolicy.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalRepository.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; LocalStoreTest; MainInterfaceTest",
+                         "notes":  "Approval 精确绑定 runId/toolCallId/参数摘要/作用域; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M08-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalPolicy.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalRepository.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; LocalStoreTest; MainInterfaceTest",
+                         "notes":  "支持允许一次、会话内允许、拒绝和取消; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M08-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalPolicy.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalRepository.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; LocalStoreTest; MainInterfaceTest",
+                         "notes":  "审批过期、幂等和多设备竞争采用首个有效决定; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M08-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalPolicy.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalRepository.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; LocalStoreTest; MainInterfaceTest",
+                         "notes":  "决策、执行、失败和操作者写入只追加 Audit; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M08-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalPolicy.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalRepository.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; LocalStoreTest; MainInterfaceTest",
+                         "notes":  "日志、事件、审批参数和导出统一脱敏; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M08-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalPolicy.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalRepository.kt",
+                         "test_ref":  "ToolApprovalPolicyTest; LocalStoreTest; MainInterfaceTest",
+                         "notes":  "聊天审批卡片与集中待审批列表保持一致; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M09-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/device/LocalRunNotifications.kt; apps/android/app/src/main/AndroidManifest.xml",
+                         "test_ref":  "AndroidLocalCapabilitiesTest; AndroidLocalCapabilitiesInstrumentedTest; AttachmentProcessorTest",
+                         "notes":  "提供时间、时区、语言、网络类型等安全设备信息工具; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M09-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/device/LocalRunNotifications.kt; apps/android/app/src/main/AndroidManifest.xml",
+                         "test_ref":  "AndroidLocalCapabilitiesTest; AndroidLocalCapabilitiesInstrumentedTest; AttachmentProcessorTest",
+                         "notes":  "通过 SAF 授权目录进行列出、读取和搜索; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M09-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/device/LocalRunNotifications.kt; apps/android/app/src/main/AndroidManifest.xml",
+                         "test_ref":  "AndroidLocalCapabilitiesTest; AndroidLocalCapabilitiesInstrumentedTest; AttachmentProcessorTest",
+                         "notes":  "SAF 写入使用显式审批、临时文件和原子提交; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M09-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/device/LocalRunNotifications.kt; apps/android/app/src/main/AndroidManifest.xml",
+                         "test_ref":  "AndroidLocalCapabilitiesTest; AndroidLocalCapabilitiesInstrumentedTest; AttachmentProcessorTest",
+                         "notes":  "复用拍照、相册和文件选择作为工具输入; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M09-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/device/LocalRunNotifications.kt; apps/android/app/src/main/AndroidManifest.xml",
+                         "test_ref":  "AndroidLocalCapabilitiesTest; AndroidLocalCapabilitiesInstrumentedTest; AttachmentProcessorTest",
+                         "notes":  "Artifact 支持系统分享、保存和受校验打开; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M09-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/device/LocalRunNotifications.kt; apps/android/app/src/main/AndroidManifest.xml",
+                         "test_ref":  "AndroidLocalCapabilitiesTest; AndroidLocalCapabilitiesInstrumentedTest; AttachmentProcessorTest",
+                         "notes":  "本地 Run 通过通知展示进度并可停止; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M09-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/device/LocalRunNotifications.kt; apps/android/app/src/main/AndroidManifest.xml",
+                         "test_ref":  "AndroidLocalCapabilitiesTest; AndroidLocalCapabilitiesInstrumentedTest; AttachmentProcessorTest",
+                         "notes":  "剪贴板读取需用户动作，写入需提示并执行脱敏; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M09-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/device/LocalRunNotifications.kt; apps/android/app/src/main/AndroidManifest.xml",
+                         "test_ref":  "AndroidLocalCapabilitiesTest; AndroidLocalCapabilitiesInstrumentedTest; AttachmentProcessorTest",
+                         "notes":  "对 Shell、任意路径、浏览器自动化和隐式外发保持硬边界; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M10-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RuntimeConnection.kt",
+                         "test_ref":  "HybridRuntimeCoordinatorTest; RuntimeConnectionContractTest; RemoteModelsTest",
+                         "notes":  "Runtime 发布版本化 CapabilitySet、限制和在线状态; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M10-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RuntimeConnection.kt",
+                         "test_ref":  "HybridRuntimeCoordinatorTest; RuntimeConnectionContractTest; RemoteModelsTest",
+                         "notes":  "用确定性规则从工具、Workspace 和任务需求推导所需能力; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M10-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RuntimeConnection.kt",
+                         "test_ref":  "HybridRuntimeCoordinatorTest; RuntimeConnectionContractTest; RemoteModelsTest",
+                         "notes":  "新任务允许显式本地/远程选择，并在必要时给出自动建议; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M10-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RuntimeConnection.kt",
+                         "test_ref":  "HybridRuntimeCoordinatorTest; RuntimeConnectionContractTest; RemoteModelsTest",
+                         "notes":  "Run 创建后固定 runtimeId 和 authority; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M10-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RuntimeConnection.kt",
+                         "test_ref":  "HybridRuntimeCoordinatorTest; RuntimeConnectionContractTest; RemoteModelsTest",
+                         "notes":  "远程 Workspace/Session 使用本地非权威缓存支持离线查看; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M10-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RuntimeConnection.kt",
+                         "test_ref":  "HybridRuntimeCoordinatorTest; RuntimeConnectionContractTest; RemoteModelsTest",
+                         "notes":  "不可用能力返回结构化 `capability_required` 和可行动入口; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M10-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RuntimeConnection.kt",
+                         "test_ref":  "HybridRuntimeCoordinatorTest; RuntimeConnectionContractTest; RemoteModelsTest",
+                         "notes":  "本地任务可创建经用户确认的 handoff package 委派到远程; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M10-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RuntimeConnection.kt",
+                         "test_ref":  "HybridRuntimeCoordinatorTest; RuntimeConnectionContractTest; RemoteModelsTest",
+                         "notes":  "本地和远程事件经同一 reducer 呈现聊天、工具、审批和结果; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M11-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RuntimeReliability.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteReliability.kt",
+                         "test_ref":  "RuntimeReliabilityTest; RemoteReliabilityTest; AndroidLocalCapabilitiesInstrumentedTest",
+                         "notes":  "可延迟/可恢复任务通过 WorkManager 调度并带唯一工作键; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M11-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RuntimeReliability.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteReliability.kt",
+                         "test_ref":  "RuntimeReliabilityTest; RemoteReliabilityTest; AndroidLocalCapabilitiesInstrumentedTest",
+                         "notes":  "用户可见长任务使用合规前台服务和可取消通知; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M11-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RuntimeReliability.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteReliability.kt",
+                         "test_ref":  "RuntimeReliabilityTest; RemoteReliabilityTest; AndroidLocalCapabilitiesInstrumentedTest",
+                         "notes":  "网络切换、断线重连和 Event cursor 续传; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M11-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RuntimeReliability.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteReliability.kt",
+                         "test_ref":  "RuntimeReliabilityTest; RemoteReliabilityTest; AndroidLocalCapabilitiesInstrumentedTest",
+                         "notes":  "根据电量、温度、内存和后台限制降级本地执行; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M11-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RuntimeReliability.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteReliability.kt",
+                         "test_ref":  "RuntimeReliabilityTest; RemoteReliabilityTest; AndroidLocalCapabilitiesInstrumentedTest",
+                         "notes":  "消息、事件、工具输出、附件缓存和日志均有硬上限与淘汰策略; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M11-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RuntimeReliability.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteReliability.kt",
+                         "test_ref":  "RuntimeReliabilityTest; RemoteReliabilityTest; AndroidLocalCapabilitiesInstrumentedTest",
+                         "notes":  "网络、模型和工具调用使用分类重试、指数退避和幂等键; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M11-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RuntimeReliability.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteReliability.kt",
+                         "test_ref":  "RuntimeReliabilityTest; RemoteReliabilityTest; AndroidLocalCapabilitiesInstrumentedTest",
+                         "notes":  "Token 和敏感数据加密存储，备份策略排除凭据; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M11-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RuntimeReliability.kt; apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt; apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteReliability.kt",
+                         "test_ref":  "RuntimeReliabilityTest; RemoteReliabilityTest; AndroidLocalCapabilitiesInstrumentedTest",
+                         "notes":  "统一可理解错误、诊断包和恢复操作，诊断默认脱敏; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M12-F01",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/scripts/build-stage5-release.ps1; apps/android/scripts/run-stage5-instrumentation-shards.ps1; apps/android/scripts/accept-update-e2e.ps1",
+                         "test_ref":  "LocalStoreTest migrations; docs/android/testing/acceptance/stage5/upgrade/upgrade-1.4.6-to-1.5.0.json",
+                         "notes":  "从当前生产 APK 原位升级并迁移会话、附件、登录和远程缓存; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M12-F02",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/scripts/build-stage5-release.ps1; apps/android/scripts/run-stage5-instrumentation-shards.ps1; apps/android/scripts/accept-update-e2e.ps1",
+                         "test_ref":  "apps/android/app/build/test-results/testDebugUnitTest (166/166)",
+                         "notes":  "建立领域、状态机、策略、Registry、路由和 Repository JVM 测试套件; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M12-F03",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/scripts/build-stage5-release.ps1; apps/android/scripts/run-stage5-instrumentation-shards.ps1; apps/android/scripts/accept-update-e2e.ps1",
+                         "test_ref":  "emulator-results API30 67/67 and API35 67/67; device screenshots; tablet-layout-report.json",
+                         "notes":  "API 30/API 35 的手机、平板、横竖屏 Compose/Instrumentation 套件; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M12-F04",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/scripts/build-stage5-release.ps1; apps/android/scripts/run-stage5-instrumentation-shards.ps1; apps/android/scripts/accept-update-e2e.ps1",
+                         "test_ref":  "RuntimeV2Test; ChatExecutionRouterTest; LocalStoreTest runtime journal/recovery",
+                         "notes":  "本地 Lite Runtime V2 端到端覆盖聊天→工具→审批→恢复→结果; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M12-F05",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/scripts/build-stage5-release.ps1; apps/android/scripts/run-stage5-instrumentation-shards.ps1; apps/android/scripts/accept-update-e2e.ps1",
+                         "test_ref":  "RuntimeConnectionContractTest; RelayRuntimeConnectionTest; RemoteSessionUiTest",
+                         "notes":  "远程 Full Runtime 端到端覆盖 Workspace→Run→Approval→Artifact; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M12-F06",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/scripts/build-stage5-release.ps1; apps/android/scripts/run-stage5-instrumentation-shards.ps1; apps/android/scripts/accept-update-e2e.ps1",
+                         "test_ref":  "LocalStoreTest database downgrade/migrations/cold reopen",
+                         "notes":  "验证数据库升级失败保护、重新启动恢复和不可逆迁移门禁; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M12-F07",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/scripts/build-stage5-release.ps1; apps/android/scripts/run-stage5-instrumentation-shards.ps1; apps/android/scripts/accept-update-e2e.ps1",
+                         "test_ref":  "stage5-release-report.json; device-performance-report.json; lint-results-mvp.html",
+                         "notes":  "Release APK 执行 R8、Lint、依赖/密钥扫描、启动/内存基准和签名校验; implementation, automation, device, and release gates passed."
+                     },
+                     {
+                         "id":  "M12-F08",
+                         "result":  "passed",
+                         "code_ref":  "apps/android/scripts/build-stage5-release.ps1; apps/android/scripts/run-stage5-instrumentation-shards.ps1; apps/android/scripts/accept-update-e2e.ps1",
+                         "test_ref":  "latest-android.json; stage5-release-report.json; auto-update-1.4.9-to-1.5.0.json",
+                         "notes":  "生成版本说明、功能矩阵、测试报告、APK/SHA-256 和自动更新清单; implementation, automation, device, and release gates passed."
+                     }
+                 ]
+}

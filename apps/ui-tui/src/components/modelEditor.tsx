@@ -1,25 +1,4 @@
-/**
- * ModelEditor — overlay form for creating / editing a model entry.
- *
- * Triggered by `/model add` or `/model edit [alias]`. Calls `model.save` RPC
- * on submit; the backend persists to llm_mode_config.yaml and (for new
- * aliases) auto-switches the active session.
- *
- * Layout:
- *
- *   ┌─ Add Model ──────────────────────────────────────────┐
- *   │ alias        [______________________]                │
- *   │ model_id     [______________________]                │
- *   │ token_limit  [128000        ]                        │
- *   │ max_tokens   [0             ]  (0 = auto)            │
- *   │ client_type  < auto >                                │
- *   │ reasoning    [ ] supported                           │
- *   │   param_type < none >          (disabled)            │
- *   │   levels     [low,medium,high]  (disabled)           │
- *   │                                                      │
- *   │ Tab/Shift+Tab fields · ←/→ toggle · Enter save · Esc │
- *   └──────────────────────────────────────────────────────┘
- */
+/** Compact ~/.drsai/config.toml model and Provider editor. */
 
 import { Box, Text, useInput } from 'ink'
 import { useState } from 'react'
@@ -27,325 +6,236 @@ import { useState } from 'react'
 import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import { theme } from '../theme.js'
 
-type ClientType = 'auto' | 'openai' | 'anthropic'
-type ParamType =
-  | 'none'
-  | 'adaptive'
-  | 'enabled'
-  | 'is_r1_model'
-  | 'reasoning_effort'
-  | 'minimax_format'
-  | 'zhipu_format'
+export type WireApi = 'openai' | 'anthropic'
+export type KeySource = 'secure' | 'env' | 'none'
 
-const CLIENT_TYPES: ClientType[] = ['auto', 'openai', 'anthropic']
-const PARAM_TYPES: ParamType[] = [
-  'none',
-  'adaptive',
-  'enabled',
-  'is_r1_model',
-  'reasoning_effort',
-  'minimax_format',
-  'zhipu_format',
-]
+export interface ModelProviderPreset {
+  id: string
+  label: string
+  base_url: string
+  wire_api: WireApi
+  requires_api_key: boolean
+  api_key_env?: string
+}
 
 export interface ModelEditorValues {
-  alias: string
+  provider: string
   model: string
-  token_limit: number
-  max_tokens: number
-  client_type: ClientType
-  reasoning: {
-    supported: boolean
-    effort_levels: string[]
-    param_type: ParamType
-  }
-  vision: boolean
-  /** Original alias if this is an edit; used by the backend to rename. */
-  original_alias?: string
-  is_new: boolean
+  base_url?: string
+  api_key?: string
+  api_key_env?: string
+  wire_api: WireApi
+  requires_api_key: boolean
 }
 
 export interface ModelEditorProps {
   initial?: Partial<ModelEditorValues>
-  /** True when adding a new entry; false when editing an existing one. */
   isNew: boolean
-  /** Original alias when editing (for rename detection). Undefined for add. */
   originalAlias?: string
   onSubmit: (values: ModelEditorValues) => Promise<{ ok: boolean; error?: string }>
+  onTest?: (values: ModelEditorValues) => Promise<{ ok: boolean; error?: string }>
+  presets?: ModelProviderPreset[]
   onCancel: () => void
 }
 
-interface FieldDef {
-  key:
-    | 'alias'
-    | 'model'
-    | 'token_limit'
-    | 'max_tokens'
-    | 'client_type'
-    | 'reasoning_supported'
-    | 'param_type'
-    | 'effort_levels'
-    | 'vision'
-  label: string
-  kind: 'text' | 'number' | 'enum' | 'toggle'
-  /** When non-null and false, the field is rendered dim and skipped on Tab. */
-  enabledFn?: (state: State) => boolean
-}
+type FieldKey = 'preset' | 'provider' | 'model' | 'base_url' | 'key_source' | 'api_key' | 'api_key_env' | 'wire_api'
 
-interface State {
-  alias: string
+interface EditorState {
+  provider: string
   model: string
-  token_limit: string  // kept as string so user can type freely
-  max_tokens: string
-  client_type: ClientType
-  reasoning_supported: boolean
-  param_type: ParamType
-  effort_levels: string
-  vision: boolean
+  base_url: string
+  api_key: string
+  api_key_env: string
+  wire_api: WireApi
+  requires_api_key: boolean
+  preset: string
+  key_source: KeySource
 }
 
-const FIELDS: FieldDef[] = [
-  { key: 'alias', label: 'alias *', kind: 'text' },
-  { key: 'model', label: 'model_id *', kind: 'text' },
-  { key: 'token_limit', label: 'token_limit', kind: 'number' },
-  { key: 'max_tokens', label: 'max_tokens', kind: 'number' },
-  { key: 'client_type', label: 'client_type', kind: 'enum' },
-  { key: 'vision', label: 'vision (image input)', kind: 'toggle' },
-  { key: 'reasoning_supported', label: 'reasoning supported', kind: 'toggle' },
-  {
-    key: 'param_type',
-    label: '  param_type',
-    kind: 'enum',
-    enabledFn: s => s.reasoning_supported,
-  },
-  {
-    key: 'effort_levels',
-    label: '  effort_levels',
-    kind: 'text',
-    enabledFn: s => s.reasoning_supported,
-  },
-]
+type EditorField = { key: FieldKey; label: string; kind: 'text' | 'secret' | 'enum' }
 
-function buildInitial(props: ModelEditorProps): State {
-  const init = props.initial || {}
+function editorFields(state: EditorState, hasPresets: boolean): EditorField[] {
+  return [
+    ...(hasPresets ? [{ key: 'preset', label: 'service preset', kind: 'enum' } as EditorField] : []),
+    { key: 'provider', label: 'provider *', kind: 'text' },
+    { key: 'model', label: 'model ID *', kind: 'text' },
+    { key: 'base_url', label: 'base URL', kind: 'text' },
+    { key: 'key_source', label: 'key source', kind: 'enum' },
+    ...(state.key_source === 'secure' ? [{ key: 'api_key', label: 'API key', kind: 'secret' } as EditorField] : []),
+    ...(state.key_source === 'env' ? [{ key: 'api_key_env', label: 'environment variable', kind: 'text' } as EditorField] : []),
+    { key: 'wire_api', label: 'protocol (advanced)', kind: 'enum' },
+  ]
+}
+
+function initialState(initial?: Partial<ModelEditorValues>): EditorState {
   return {
-    alias: init.alias ?? '',
-    model: init.model ?? '',
-    token_limit: String(init.token_limit ?? 128000),
-    max_tokens: String(init.max_tokens ?? 0),
-    client_type: (init.client_type as ClientType) ?? 'auto',
-    reasoning_supported: init.reasoning?.supported ?? false,
-    param_type: (init.reasoning?.param_type as ParamType) ?? 'none',
-    effort_levels: (init.reasoning?.effort_levels || []).join(','),
-    vision: init.vision ?? true,
+    provider: initial?.provider ?? '',
+    model: initial?.model ?? '',
+    base_url: initial?.base_url ?? '',
+    api_key: '',
+    api_key_env: initial?.api_key_env ?? '',
+    wire_api: initial?.wire_api ?? 'openai',
+    requires_api_key: initial?.requires_api_key ?? true,
+    preset: '',
+    key_source: initial?.requires_api_key === false ? 'none' : initial?.api_key_env ? 'env' : 'secure',
   }
 }
 
 export function ModelEditor(props: ModelEditorProps) {
-  const [state, setState] = useState<State>(() => buildInitial(props))
-  const [focusIdx, setFocusIdx] = useState(0)
+  const [state, setState] = useState<EditorState>(() => initialState(props.initial))
+  const [focus, setFocus] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const fields = editorFields(state, Boolean(props.presets?.length))
 
-  function nextFocus(dir: 1 | -1) {
-    const n = FIELDS.length
-    let i = focusIdx
-    for (let step = 0; step < n; step++) {
-      i = (i + dir + n) % n
-      const f = FIELDS[i]
-      if (!f.enabledFn || f.enabledFn(state)) {
-        setFocusIdx(i)
-        return
-      }
-    }
+  function move(delta: number) {
+    setFocus((focus + delta + fields.length) % fields.length)
   }
 
-  function adjustEnum(key: 'client_type' | 'param_type', dir: 1 | -1) {
-    if (key === 'client_type') {
-      const idx = CLIENT_TYPES.indexOf(state.client_type)
-      const next = (idx + dir + CLIENT_TYPES.length) % CLIENT_TYPES.length
-      setState({ ...state, client_type: CLIENT_TYPES[next] })
-    } else {
-      const idx = PARAM_TYPES.indexOf(state.param_type)
-      const next = (idx + dir + PARAM_TYPES.length) % PARAM_TYPES.length
-      setState({ ...state, param_type: PARAM_TYPES[next] })
-    }
-  }
-
-  function toggleReasoning() {
-    const next = !state.reasoning_supported
-    setState({
-      ...state,
-      reasoning_supported: next,
-      // When turning OFF, snap the dependent fields back to safe defaults
-      // so a stale value isn't accidentally persisted on the next ON.
-      param_type: next ? state.param_type : 'none',
-      effort_levels: next ? state.effort_levels : '',
-    })
-  }
-
-  async function handleSubmit() {
+  async function submit() {
     if (busy) return
-    setError(null)
-
-    const aliasTrim = state.alias.trim()
-    const modelTrim = state.model.trim()
-    if (!aliasTrim) { setError('alias is required'); setFocusIdx(0); return }
-    if (!modelTrim) { setError('model_id is required'); setFocusIdx(1); return }
-    if (/\s/.test(aliasTrim)) { setError('alias must not contain whitespace'); setFocusIdx(0); return }
-    if (aliasTrim.startsWith('_')) { setError('alias must not start with underscore'); setFocusIdx(0); return }
-
-    const tl = parseInt(state.token_limit || '0', 10)
-    const mt = parseInt(state.max_tokens || '0', 10)
-    if (!Number.isFinite(tl) || tl < 0) { setError('token_limit must be a non-negative integer'); setFocusIdx(2); return }
-    if (!Number.isFinite(mt) || mt < 0) { setError('max_tokens must be a non-negative integer'); setFocusIdx(3); return }
-
-    const values: ModelEditorValues = {
-      alias: aliasTrim,
-      model: modelTrim,
-      token_limit: tl,
-      max_tokens: mt,
-      client_type: state.client_type,
-      reasoning: {
-        supported: state.reasoning_supported,
-        param_type: state.reasoning_supported ? state.param_type : 'none',
-        effort_levels: state.reasoning_supported
-          ? state.effort_levels.split(',').map(s => s.trim()).filter(Boolean)
-          : [],
-      },
-      vision: state.vision,
-      original_alias: props.originalAlias,
-      is_new: props.isNew,
+    const provider = state.provider.trim()
+    const model = state.model.trim()
+    const baseUrl = state.base_url.trim()
+    const apiKey = state.api_key.trim()
+    const apiKeyEnv = state.api_key_env.trim()
+    if (!provider) { setError('provider is required'); setFocus(0); return }
+    if (!/^[A-Za-z0-9_-]+$/.test(provider)) {
+      setError("provider may contain only letters, numbers, '_' and '-'")
+      setFocus(0)
+      return
     }
-
+    if (!model) { setError('model is required'); setFocus(1); return }
+    if (provider !== 'hepai' && !baseUrl) { setError('base_url is required'); setFocus(2); return }
+    if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+      setError('base_url must be an absolute http(s) URL')
+      setFocus(2)
+      return
+    }
+    if (apiKey && apiKeyEnv) {
+      setError('api_key and api_key_env are mutually exclusive')
+      setFocus(3)
+      return
+    }
     setBusy(true)
+    setError(null)
     try {
-      const result = await props.onSubmit(values)
-      if (!result.ok && result.error) {
-        setError(result.error)
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const result = await props.onSubmit({
+        provider,
+        model,
+        base_url: baseUrl || undefined,
+        api_key: apiKey || undefined,
+        api_key_env: apiKeyEnv || undefined,
+        wire_api: state.wire_api,
+        requires_api_key: state.key_source !== 'none',
+      })
+      if (!result.ok) setError(result.error || 'save failed')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function testConnection() {
+    if (busy || !props.onTest) return
+    const provider = state.provider.trim()
+    const model = state.model.trim()
+    if (!provider || !model) { setError('provider and model are required'); return }
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await props.onTest({
+        provider,
+        model,
+        base_url: state.base_url.trim() || undefined,
+        api_key: state.api_key.trim() || undefined,
+        api_key_env: state.api_key_env.trim() || undefined,
+        wire_api: state.wire_api,
+        requires_api_key: state.key_source !== 'none',
+      })
+      if (result.ok) setNotice('Connection successful')
+      else setError(result.error || 'connection test failed')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(false)
     }
   }
 
   useInput((input, key) => {
-    if (isTerminalFocusEvent(input)) return
-    if (busy) return
-    if (key.escape) {
-      props.onCancel()
+    if (isTerminalFocusEvent(input) || busy) return
+    if (key.ctrl && input === 't') { void testConnection(); return }
+    if (key.escape) { props.onCancel(); return }
+    if (key.tab) { move(key.shift ? -1 : 1); return }
+    if (key.upArrow) { move(-1); return }
+    if (key.downArrow) { move(1); return }
+    if (key.return) { void submit(); return }
+
+    const field = fields[focus]
+    if (!field) return
+    if (field.key === 'wire_api' && (key.leftArrow || key.rightArrow || input === ' ')) {
+      setState({ ...state, wire_api: state.wire_api === 'openai' ? 'anthropic' : 'openai' })
       return
     }
-
-    const field = FIELDS[focusIdx]
-
-    // Tab navigation
-    if (key.tab) {
-      nextFocus(key.shift ? -1 : 1)
+    if (field.key === 'key_source' && (key.leftArrow || key.rightArrow || input === ' ')) {
+      const choices: KeySource[] = ['secure', 'env', 'none']
+      const delta = key.leftArrow ? -1 : 1
+      const next = choices[(choices.indexOf(state.key_source) + delta + choices.length) % choices.length]
+      setState({ ...state, key_source: next, requires_api_key: next !== 'none', api_key: '', api_key_env: '' })
+      setFocus(Math.min(focus, editorFields({ ...state, key_source: next }, Boolean(props.presets?.length)).length - 1))
       return
     }
-
-    // Enter = submit (anywhere in the form)
-    if (key.return) {
-      void handleSubmit()
+    if (field.key === 'preset' && (key.leftArrow || key.rightArrow || input === ' ')) {
+      const presets = props.presets || []
+      const current = Math.max(0, presets.findIndex(item => item.id === state.preset))
+      const delta = key.leftArrow ? -1 : 1
+      const preset = presets[(current + delta + presets.length) % presets.length]
+      if (preset) setState({ ...state, preset: preset.id, provider: preset.id.startsWith('custom-') ? 'custom' : preset.id, base_url: preset.base_url, wire_api: preset.wire_api, requires_api_key: preset.requires_api_key, key_source: preset.requires_api_key ? 'secure' : 'none', api_key: '', api_key_env: '' })
       return
     }
-
-    if (key.upArrow) { nextFocus(-1); return }
-    if (key.downArrow) { nextFocus(1); return }
-
-    // Field-specific handling
-    if (field.kind === 'toggle') {
-      if (input === ' ' || key.leftArrow || key.rightArrow) {
-        if (field.key === 'vision') {
-          setState({ ...state, vision: !state.vision })
-        } else {
-          toggleReasoning()
-        }
-      }
-      return
-    }
-    if (field.kind === 'enum') {
-      if (key.leftArrow) { adjustEnum(field.key as any, -1); return }
-      if (key.rightArrow) { adjustEnum(field.key as any, 1); return }
-      // Allow space to advance forward as a convenience
-      if (input === ' ') { adjustEnum(field.key as any, 1); return }
-      return
-    }
-
-    // Text/number fields: edit current state[field.key]
+    if (field.kind === 'enum') return
+    const fieldKey = field.key as 'provider' | 'model' | 'base_url' | 'api_key' | 'api_key_env'
+    const current = state[fieldKey]
     if (key.backspace || key.delete) {
-      const cur = (state as any)[field.key] as string
-      setState({ ...state, [field.key]: cur.slice(0, -1) } as State)
+      setState({ ...state, [fieldKey]: current.slice(0, -1) })
       return
     }
-    if (input && !key.ctrl && !key.meta) {
-      // Number fields: digits only
-      if (field.kind === 'number' && !/^\d+$/.test(input)) return
-      const cur = (state as any)[field.key] as string
-      setState({ ...state, [field.key]: cur + input } as State)
-    }
+    if (input && !key.ctrl && !key.meta) setState({ ...state, [fieldKey]: current + input })
   })
-
-  // ── Render ──────────────────────────────────────────────────────────
-  const title = props.isNew ? 'Add Model' : `Edit Model: ${props.originalAlias ?? state.alias}`
 
   return (
     <Box borderStyle="round" borderColor={theme.primary} paddingX={1} flexDirection="column">
-      <Text color={theme.primary} bold>{title}</Text>
+      <Text color={theme.primary} bold>{props.isNew ? 'Add model service' : 'Edit model service'}</Text>
+      <Text color={theme.muted}>Writes the compact ~/.drsai/config.toml configuration.</Text>
       <Box flexDirection="column" marginTop={1}>
-        {FIELDS.map((f, i) => {
-          const focused = i === focusIdx
-          const enabled = !f.enabledFn || f.enabledFn(state)
-          const labelColor = focused ? theme.accent : enabled ? theme.text : theme.muted
-
-          let valueNode
-          if (f.kind === 'toggle') {
-            const toggleState = f.key === 'vision' ? state.vision : state.reasoning_supported
-            const v = toggleState ? '[x]' : '[ ]'
-            const suffix = f.key === 'vision' ? (toggleState ? ' image input' : ' text only') : ' supported'
-            valueNode = <Text color={enabled ? theme.text : theme.muted} inverse={focused}>{v}{suffix}</Text>
-          } else if (f.kind === 'enum') {
-            const v = (state as any)[f.key]
-            valueNode = (
-              <Text color={enabled ? theme.text : theme.muted} inverse={focused}>
-                {`< ${v} >`}
-              </Text>
-            )
+        {fields.map((field, index) => {
+          const selected = index === focus
+          let display: string
+          if (field.kind === 'secret') {
+            display = state.api_key ? '*'.repeat(Math.min(16, state.api_key.length)) : '(unchanged/empty)'
+          } else if (field.key === 'wire_api') {
+            display = `< ${state.wire_api} >`
+          } else if (field.key === 'key_source') {
+            display = `< ${state.key_source} >`
+          } else if (field.key === 'preset') {
+            display = `< ${props.presets?.find(item => item.id === state.preset)?.label || 'choose'} >`
           } else {
-            const v = String((state as any)[f.key] ?? '')
-            const display = v || (f.kind === 'number' ? '0' : ' ')
-            valueNode = (
-              <Text color={enabled ? theme.text : theme.muted} inverse={focused}>
-                {display + (focused ? '▏' : '')}
-              </Text>
-            )
+            display = String(state[field.key] || ' ')
           }
-
           return (
-            <Box key={f.key}>
-              <Box width={20}>
-                <Text color={labelColor}>{(focused ? '▶ ' : '  ') + f.label}</Text>
-              </Box>
-              {valueNode}
+            <Box key={field.key}>
+              <Box width={22}><Text color={selected ? theme.accent : theme.text}>{selected ? '▶ ' : '  '}{field.label}</Text></Box>
+              <Text inverse={selected}>{display}{selected && field.kind === 'text' ? '▌' : ''}</Text>
             </Box>
           )
         })}
       </Box>
-
-      {error && (
-        <Box marginTop={1}>
-          <Text color={theme.error}>✗ {error}</Text>
-        </Box>
-      )}
-
-      <Box marginTop={1}>
-        <Text color={theme.muted} dimColor>
-          {busy ? 'saving…' : 'Tab/↑↓ fields · ←/→ toggle · Enter save · Esc cancel'}
-        </Text>
-      </Box>
+      {error && <Text color={theme.error}>✗ {error}</Text>}
+      {notice && <Text color={theme.good}>{notice}</Text>}
+      <Text color={theme.muted}>{busy ? 'working…' : 'Tab/↑↓ fields · ←/→ toggle · Ctrl+T test · Enter save · Esc cancel'}</Text>
     </Box>
   )
 }

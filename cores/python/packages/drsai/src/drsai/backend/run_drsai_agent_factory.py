@@ -20,6 +20,8 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from drsai.backend.cli.config import load_config, save_config
+from drsai.config import load_user_config, migrate_legacy_model_config, resolve_model_config
+from drsai.config.schema import ResolvedModelConfig
 from drsai.configs.constant import CONFIG_DIR, FS_DIR, WORKSPACE_DIR, WORKSPACE_RUNS_DIR
 from drsai.modules.agents.skills_agent import DrSaiAssistant, DrSaiCLIAssistant
 from drsai.modules.components.model_client import (
@@ -723,13 +725,85 @@ def create_agent(
     llm_config_path = _resolve(cli_cfg, "llm_config_file", "LLM_CONFIG_FILE") or None
     llm_mode_config = load_llm_mode_config(llm_config_path)
 
+    # The compact TOML model configuration is opt-in during the compatibility
+    # window.  A config.toml that only contains the existing platform tables
+    # must not change legacy model routing.
+    user_model_config = load_user_config()
+    if not (
+        user_model_config.model
+        or user_model_config.model_provider
+        or user_model_config.providers
+    ):
+        migration = migrate_legacy_model_config(environ=os.environ)
+        if migration.migrated:
+            logger.info(
+                "Migrated legacy model selection to config.toml (model=%s, provider=%s)",
+                migration.model,
+                migration.provider,
+            )
+            user_model_config = load_user_config()
+    unified_model_config_active = bool(
+        user_model_config.model
+        or user_model_config.model_provider
+        or user_model_config.providers
+    )
+    resolved_user_model: ResolvedModelConfig | None = None
+    compatibility_environ = dict(os.environ)
+    if unified_model_config_active:
+        selected_provider = user_model_config.model_provider or "hepai"
+        if selected_provider in {"hepai", "hepai-anthropic"}:
+            configured_hepai_key = str(
+                cli_cfg.get("api_key") or api_key or compatibility_environ.get("HEPAI_API_KEY") or ""
+            ).strip()
+            if configured_hepai_key:
+                compatibility_environ["HEPAI_API_KEY"] = configured_hepai_key
+        elif selected_provider == "legacy-openai":
+            compatibility_environ.setdefault(
+                "OPENAI_API_KEY",
+                str(cli_cfg.get("openai_api_key") or api_key or ""),
+            )
+        elif selected_provider == "legacy-anthropic":
+            compatibility_environ.setdefault(
+                "ANTHROPIC_API_KEY",
+                str(cli_cfg.get("anthropic_api_key") or api_key or ""),
+            )
+        # HepAI desktop sessions authenticate with request-scoped OIDC tokens via
+        # HepAIChatCompletionClient. Do not fail agent construction when only the
+        # compact model/provider selection is present and no static API key exists.
+        require_credentials = selected_provider not in {"hepai", "hepai-anthropic"} or bool(
+            str(compatibility_environ.get("HEPAI_API_KEY") or "").strip()
+        )
+        resolved_user_model = resolve_model_config(
+            user_model_config,
+            environ=compatibility_environ,
+            model=defult_config_name,
+            require_credentials=require_credentials,
+        )
+        capabilities = resolved_user_model.capabilities
+        llm_mode_config[resolved_user_model.model] = ModelEntry(
+            model=resolved_user_model.model,
+            token_limit=capabilities.token_limit,
+            max_tokens=capabilities.max_tokens,
+            client_type=resolved_user_model.provider.wire_api,
+            reasoning=ReasoningConfig(
+                supported=capabilities.reasoning.supported,
+                effort_levels=list(capabilities.reasoning.effort_levels),
+                param_type=capabilities.reasoning.param_type,
+            ),
+            vision=capabilities.vision,
+        )
+
     # Default alias: explicit arg > env var > cli_cfg > module default.
     env_alias = os.environ.get("LLM_DEFAULT_ALIAS")
     resolved_config_name = (
-        defult_config_name
-        or env_alias
-        or cli_cfg.get("defult_config_name")
-        or DEFAULT_CONFIG_NAME
+        resolved_user_model.model
+        if resolved_user_model is not None
+        else (
+            defult_config_name
+            or env_alias
+            or cli_cfg.get("defult_config_name")
+            or DEFAULT_CONFIG_NAME
+        )
     )
     if resolved_config_name not in llm_mode_config:
         resolved_config_name = next(
@@ -752,6 +826,15 @@ def create_agent(
     openai_api_key = _resolve(
         cli_cfg, "openai_api_key", "OPENAI_API_KEY", "HEPAI_API_KEY",
     ) or api_key
+    if resolved_user_model is not None:
+        provider_secret = resolved_user_model.provider.api_key
+        provider_api_key = provider_secret.reveal() if provider_secret is not None else ""
+        if resolved_user_model.provider.wire_api == "anthropic":
+            anthropic_base_url = resolved_user_model.provider.base_url
+            anthropic_api_key = provider_api_key
+        else:
+            openai_base_url = resolved_user_model.provider.base_url
+            openai_api_key = provider_api_key
     openai_timeout = _model_timeout_seconds(cli_cfg)
 
     anthropic_cache_enabled = _as_bool(
@@ -829,25 +912,69 @@ def create_agent(
         name: Optional[str] = resolved_config_name,
     ) -> HepAIAnthropicChatCompletionClient | HepAIChatCompletionClient:
         alias = name or resolved_config_name
-        entry = llm_mode_config.get(alias)
-        if entry is None:
-            entry = llm_mode_config[resolved_config_name]
+        active_user_model = resolved_user_model
+        if unified_model_config_active:
+            # Reload on every switch so edits made by the Gateway, TUI, or another
+            # process take effect for an already-running session.  The file is
+            # deliberately tiny, so avoiding a stale provider/base URL is more
+            # valuable than caching the parsed TOML here.
+            current_user_model_config = load_user_config()
+            active_provider = current_user_model_config.model_provider or "hepai"
+            active_require_credentials = active_provider not in {"hepai", "hepai-anthropic"} or bool(
+                str(compatibility_environ.get("HEPAI_API_KEY") or "").strip()
+            )
+            active_user_model = resolve_model_config(
+                current_user_model_config,
+                environ=compatibility_environ,
+                model=alias,
+                require_credentials=active_require_credentials,
+            )
+            active_capabilities = active_user_model.capabilities
+            entry = ModelEntry(
+                model=active_user_model.model,
+                token_limit=active_capabilities.token_limit,
+                max_tokens=active_capabilities.max_tokens,
+                client_type=active_user_model.provider.wire_api,
+                reasoning=ReasoningConfig(
+                    supported=active_capabilities.reasoning.supported,
+                    effort_levels=list(active_capabilities.reasoning.effort_levels),
+                    param_type=active_capabilities.reasoning.param_type,
+                ),
+                vision=active_capabilities.vision,
+            )
+        else:
+            entry = llm_mode_config.get(alias)
+            if entry is None:
+                entry = llm_mode_config[resolved_config_name]
         llm_model = entry.model
-        provider_model = normalize_provider_model_name(llm_model, openai_base_url)
+        active_base_url = (
+            active_user_model.provider.base_url
+            if active_user_model is not None
+            else openai_base_url
+        )
+        active_api_key = (
+            active_user_model.provider.api_key.reveal()
+            if active_user_model is not None and active_user_model.provider.api_key is not None
+            else ""
+        )
+        provider_model = normalize_provider_model_name(llm_model, active_base_url)
         token_limit = entry.token_limit
         max_tokens = entry.max_tokens if entry.max_tokens > 0 else int(token_limit * 0.25)
         client_type = entry.client_type
         reasoning_config = entry.reasoning
 
-        # Determine client type
-        if client_type == "auto":
+        # A configured Provider protocol is authoritative. Legacy catalog
+        # entries retain the historical model-name heuristics.
+        if active_user_model is not None:
+            client_type = active_user_model.provider.wire_api
+        elif client_type == "auto":
             if "claude" in llm_model or "anthropic" in llm_model or "minimax" in llm_model:
                 client_type = "anthropic"
             else:
                 client_type = "openai"
 
         # Handle "minimax" specially - use anthropic client with HepAI endpoint
-        if "minimax" in llm_model:
+        if active_user_model is None and "minimax" in llm_model:
             client_type = "anthropic"
 
         if client_type == "anthropic":
@@ -863,8 +990,8 @@ def create_agent(
                 model_info["anthropic_cache_control"] = anthropic_cache_control
             return HepAIAnthropicChatCompletionClient(
                 model=llm_model,
-                base_url=anthropic_base_url,
-                api_key=anthropic_api_key,
+                base_url=active_base_url if active_user_model is not None else anthropic_base_url,
+                api_key=active_api_key if active_user_model is not None else anthropic_api_key,
                 model_info=model_info,
                 max_tokens=max_tokens,
             )
@@ -893,8 +1020,8 @@ def create_agent(
         if needs_max_completion:
             return HepAIChatCompletionClient(
                 model=provider_model,
-                api_key=openai_api_key,
-                base_url=openai_base_url,
+                api_key=active_api_key if active_user_model is not None else openai_api_key,
+                base_url=active_base_url,
                 model_info=model_info,
                 max_completion_tokens=max_tokens,
                 timeout=openai_timeout,
@@ -902,8 +1029,8 @@ def create_agent(
         else:
             return HepAIChatCompletionClient(
                 model=provider_model,
-                api_key=openai_api_key,
-                base_url=openai_base_url,
+                api_key=active_api_key if active_user_model is not None else openai_api_key,
+                base_url=active_base_url,
                 model_info=model_info,
                 max_tokens=max_tokens,
                 timeout=openai_timeout,

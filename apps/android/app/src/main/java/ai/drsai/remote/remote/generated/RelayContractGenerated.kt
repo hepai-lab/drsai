@@ -16,6 +16,9 @@ object RelayContractGenerated {
         "event_list" to "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events",
         "event_stream" to "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events/stream",
         "file_raw" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/files/raw",
+        "oaep_event_list" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events",
+        "oaep_event_stream" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events/stream",
+        "oaep_snapshot" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-snapshot",
         "run_cancel" to "POST /v1/runtimes/{runtime_id}/runs/{run_id}/cancel",
         "run_create" to "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs",
         "run_list" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs",
@@ -48,6 +51,10 @@ object RelayContractGenerated {
         "event.resume",
         "event.stream",
         "file.raw.read",
+        "oaep.session.events",
+        "oaep.session.events.stream",
+        "oaep.session.snapshot",
+        "oaep.v1",
         "run.cancel",
         "run.create",
         "run.list",
@@ -63,10 +70,14 @@ object RelayContractGenerated {
     )
     val CAPABILITY_PROFILES: Map<String, Set<String>> = mapOf(
         "device-association/1" to setOf("association.device-bound", "association.list", "association.revoke"),
+        "oaep.session-stream/1" to setOf("event.cursor_expired", "oaep.session.events", "oaep.session.events.stream", "oaep.session.snapshot", "oaep.v1"),
+        "oaep/1" to setOf("event.cursor_expired", "oaep.session.events", "oaep.session.events.stream", "oaep.session.snapshot", "oaep.v1"),
         "session-events/1" to setOf("conversation.snapshot", "session.event.cursor_expired", "session.event.resume", "session.event.stream")
     )
     val MINIMUM_VERSIONS: Map<String, Map<String, String>> = mapOf(
         "device-association/1" to mapOf("android" to "1.5.3", "relay" to "2.0.0", "runtime" to "1.5.3"),
+        "oaep.session-stream/1" to mapOf("android" to "1.6.0", "desktop" to "1.6.0", "runtime" to "1.6.0"),
+        "oaep/1" to mapOf("android" to "1.6.0", "desktop" to "1.6.0", "runtime" to "1.6.0"),
         "session-events/1" to mapOf("android" to "1.5.3", "desktop" to "1.5.3", "runtime" to "1.5.3")
     )
     val SESSION_EVENT_KINDS: Set<String> = setOf(
@@ -144,6 +155,8 @@ data class GeneratedSessionEvent(
     val kind: String,
     val timestamp: String,
     val payload: Map<String, Any?>,
+    val itemId: String? = null,
+    val itemRevision: Long? = null,
 )
 
 data class GeneratedRuntimeSessionEventFrame(

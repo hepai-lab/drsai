@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "status": "accepted",
+  "codex_cli": "0.146.0-alpha.9.2",
+  "auth_mode": "chatgpt",
+  "session_id": "session-35bbfeb4-20f5-4fc0-933e-0442b09fbc76",
+  "thread_id": "019fc2a7-73cb-7701-81bd-489263c5931b",
+  "turn_ids": [
+    "019fc2a7-74e6-7f90-970c-20f500f5d0f2",
+    "019fc2a7-92e8-7c60-a637-c31af47b6490",
+    "019fc2a7-f558-7702-b343-e1b1bff7364e"
+  ],
+  "gateway_restart_between_turns": [2, 3],
+  "context_retained_after_restart": true,
+  "oaep_runs": [
+    {"event_count": 30, "message_delta_count": 1, "snapshot_sequence": 54, "converged": true},
+    {"event_count": 23, "message_delta_count": 1, "snapshot_sequence": 54, "converged": true},
+    {"event_count": 29, "message_delta_count": 1, "snapshot_sequence": 112, "converged": true}
+  ],
+  "approval_completed": true,
+  "cancel_converged": true,
+  "archive_roundtrip": true,
+  "secrets_persisted": false
+}

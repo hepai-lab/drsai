@@ -3,7 +3,7 @@ import type { DesktopThread, UpdateThreadRequest } from "../../shared/api/deskto
 import {
   setThreadArchivedWithPort,
   type ThreadArchivePort,
-} from "../src/main/threadArchive";
+} from "../src/main/threadArchive.ts";
 
 function createThread(overrides: Partial<DesktopThread> = {}): DesktopThread {
   return {
@@ -88,11 +88,11 @@ function createPort(
 {
   const failure = new Error("Runtime temporarily unavailable");
   const port = createPort(
-    createThread({ runtimeSessionId: "session-test" }),
+    createThread({ runtimeSessionId: "session-test", boundAgentId: "my-codex" }),
     { resolvedSessionId: "session-test", updateRuntimeError: failure },
   );
-  const archived = await setThreadArchivedWithPort(port, "thread-test", true);
-  assert.equal(archived.archived, true);
+  await assert.rejects(setThreadArchivedWithPort(port, "thread-test", true), /Nothing changed; retry/);
+  assert.equal(port.current.archived, false);
   assert.deepEqual(port.runtimeUpdates, [{ sessionId: "session-test", archived: true }]);
   assert.deepEqual(port.failures, [failure]);
 }

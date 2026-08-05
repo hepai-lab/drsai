@@ -10,6 +10,8 @@ import json
 from typing import Callable
 
 from drsai.platform_auth import context_from_bearer
+from drsai.oaep.generated import OaepEvent, OaepEventPage, OaepSnapshot
+from drsai.oaep.protocol import OAEPValidationError
 
 from .models import (
     AccessGrantResult,
@@ -30,6 +32,7 @@ from .models import (
 from .registry import RelayRegistry, RelayRegistryError
 from .runtime_domain import RuntimeAuthority
 from .runtime_channel import RuntimeChannelHub
+from .oaep_replay import OAEPReplayHub
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 
@@ -84,6 +87,37 @@ def create_relay_app(registry: RelayRegistry | None = None,
     authorities = runtimes or {}
     channel_hub = channels or RuntimeChannelHub()
     app.state.runtime_channels = channel_hub
+    oaep_replay = OAEPReplayHub()
+    app.state.oaep_replay = oaep_replay
+
+    def validated_oaep_snapshot(
+        value: object, *, workspace_id: str, session_id: str
+    ) -> dict:
+        if not isinstance(value, dict):
+            raise RelayRegistryError("oaep_snapshot_invalid", "Runtime OAEP Snapshot is invalid")
+        try:
+            oaep_replay.protocol.validate_snapshot(value)
+        except OAEPValidationError as exc:
+            raise RelayRegistryError("oaep_snapshot_invalid", "Runtime OAEP Snapshot is invalid") from exc
+        session = value.get("session")
+        if not isinstance(session, dict) or session.get("id") != session_id or session.get("workspace_id") != workspace_id:
+            raise RelayRegistryError("oaep_identity_mismatch", "Runtime OAEP Snapshot identity is invalid")
+        return value
+
+    def validated_oaep_page(value: object, *, session_id: str) -> dict:
+        if not isinstance(value, dict):
+            raise RelayRegistryError("oaep_event_page_invalid", "Runtime OAEP Event page is invalid")
+        try:
+            oaep_replay.protocol.validate_event_page(value)
+        except OAEPValidationError as exc:
+            raise RelayRegistryError("oaep_event_page_invalid", "Runtime OAEP Event page is invalid") from exc
+        if any(event.get("session_id") != session_id for event in value["data"]):
+            raise RelayRegistryError("oaep_identity_mismatch", "Runtime OAEP Event identity is invalid")
+        return value
+
+    @app.get("/v1/metrics/oaep")
+    async def oaep_metrics():
+        return oaep_replay.metrics()
     workspace_sync_tasks: dict[str, asyncio.Task[WorkspaceCatalogSyncResult]] = {}
 
     def oidc_subject(request: Request) -> str:
@@ -131,9 +165,9 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def registry_error(request: Request, exc: RelayRegistryError) -> JSONResponse:
         correlation_id = request.headers.get("x-correlation-id", str(uuid4()))
         error = ErrorEnvelope(code=exc.code, message=exc.message, correlation_id=correlation_id,
-                              retryable=exc.retryable, details={}, source=exc.source)
+                              retryable=exc.retryable, details=exc.details, source=exc.source)
         status = 503 if exc.code in {"host_offline", "catalog_sync_timeout"} else 409 if (
-            exc.code == "stale_runtime_generation"
+            exc.code in {"stale_runtime_generation", "cursor_expired"}
         ) else 401 if exc.code in {"oidc_auth_invalid", "runtime_auth_invalid"} else 403 if (
             exc.code.endswith("forbidden") or exc.code == "association_required"
         ) else 404 if exc.code in {
@@ -418,6 +452,188 @@ def create_relay_app(registry: RelayRegistry | None = None,
             cursor=cursor, limit=limit)
         return {"items": rows, "next_cursor": next_cursor}
 
+    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot")
+    async def conversation_snapshot(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        return await runtime_call(
+            runtime_id, "conversation_snapshot_for_subject", x_subject, workspace_id, session_id,
+        )
+
+    @app.get(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-snapshot",
+        response_model=OaepSnapshot,
+    )
+    async def oaep_snapshot(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        return validated_oaep_snapshot(
+            await runtime_call(
+                runtime_id, "oaep_snapshot_for_subject", x_subject, workspace_id, session_id,
+            ),
+            workspace_id=workspace_id,
+            session_id=session_id,
+        )
+
+    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events")
+    async def session_events(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+        after_sequence: int = Query(0, ge=0),
+        limit: int = Query(500, ge=1, le=500),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        return await runtime_call(
+            runtime_id, "session_events_for_subject", x_subject, workspace_id, session_id,
+            after_sequence=after_sequence, limit=limit,
+        )
+
+    @app.get(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events",
+        response_model=OaepEventPage,
+    )
+    async def oaep_events(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+        after_sequence: int = Query(0, ge=0),
+        limit: int = Query(500, ge=1, le=500),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        cached = await oaep_replay.page(
+            runtime_id,
+            workspace_id,
+            session_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+        if cached is not None:
+            return cached
+        return validated_oaep_page(
+            await runtime_call(
+                runtime_id, "oaep_events_for_subject", x_subject, workspace_id, session_id,
+                after_sequence=after_sequence, limit=limit,
+            ),
+            session_id=session_id,
+        )
+
+    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream")
+    async def session_event_stream(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        x_subject: str = Depends(oidc_subject),
+        after_sequence: int = Query(0, ge=0),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        page = await runtime_call(
+            runtime_id, "session_events_for_subject", x_subject, workspace_id, session_id,
+            after_sequence=after_sequence, limit=500,
+        )
+
+        def encoded_session_events():
+            for item in page.get("items", []):
+                data = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+                yield (
+                    f"id: {item['session_sequence']}\nevent: {item['kind']}\n"
+                    f"data: {data}\n\n"
+                ).encode()
+            yield b": keep-alive\n\n"
+
+        return StreamingResponse(
+            encoded_session_events(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events/stream",
+        responses={
+            200: {
+                "description": "OAEP Event stream",
+                "content": {
+                    "text/event-stream": {
+                        "schema": {"$ref": "#/components/schemas/OaepEvent"}
+                    }
+                },
+            }
+        },
+    )
+    async def oaep_event_stream(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        raw_request: Request,
+        x_subject: str = Depends(oidc_subject),
+        after_sequence: int = Query(0, ge=0),
+    ):
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        queue = await oaep_replay.subscribe(runtime_id, session_id)
+        try:
+            cached = await oaep_replay.page(
+                runtime_id,
+                workspace_id,
+                session_id,
+                after_sequence=after_sequence,
+                limit=500,
+            )
+            if cached is None:
+                cached = validated_oaep_page(
+                    await runtime_call(
+                        runtime_id,
+                        "oaep_events_for_subject",
+                        x_subject,
+                        workspace_id,
+                        session_id,
+                        after_sequence=after_sequence,
+                        limit=500,
+                    ),
+                    session_id=session_id,
+                )
+        except Exception:
+            await oaep_replay.unsubscribe(runtime_id, session_id, queue)
+            raise
+
+        async def encoded_oaep_events():
+            cursor = after_sequence
+            try:
+                for event in cached["data"]:
+                    cursor = int(event["sequence"])
+                    data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+                    yield f"id: {cursor}\nevent: oaep.event\ndata: {data}\n\n".encode()
+                while not await raw_request.is_disconnected():
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=15)
+                    except TimeoutError:
+                        yield b": heartbeat\n\n"
+                        continue
+                    sequence = int(event["sequence"])
+                    if sequence <= cursor:
+                        continue
+                    if sequence != cursor + 1:
+                        return
+                    cursor = sequence
+                    data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+                    yield f"id: {cursor}\nevent: oaep.event\ndata: {data}\n\n".encode()
+            finally:
+                await oaep_replay.unsubscribe(runtime_id, session_id, queue)
+
+        return StreamingResponse(
+            encoded_oaep_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @app.get("/v1/runtimes/{runtime_id}/idempotency/{operation}/{idempotency_key}")
     async def idempotency_result(runtime_id: str, operation: str, idempotency_key: str,
                                  x_subject: str = Depends(oidc_subject)):
@@ -525,6 +741,7 @@ def create_relay_app(registry: RelayRegistry | None = None,
             )
             await socket.send_json({"type": "runtime.connected", "runtime": identity.model_dump(mode="json")})
             generation = await channel_hub.attach(hello["runtime_id"], socket)
+            await oaep_replay.attach(hello["runtime_id"], generation)
             while True:
                 message = await socket.receive_json()
                 if message.get("type") == "pong":
@@ -540,10 +757,20 @@ def create_relay_app(registry: RelayRegistry | None = None,
                         continue
                     store.publish_workspaces(hello["runtime_id"], token,
                                              [Workspace.model_validate(row) for row in rows])
+                elif message.get("type") == "event" and message.get("protocol") == "oaep/1":
+                    if not await channel_hub.is_current(hello["runtime_id"], generation):
+                        await socket.close(code=4409, reason="stale_runtime_generation")
+                        return
+                    try:
+                        await oaep_replay.accept(hello["runtime_id"], generation, message)
+                    except RelayRegistryError as exc:
+                        await socket.close(code=4400, reason=exc.code)
+                        return
         except WebSocketDisconnect:
             return
         finally:
             if "generation" in locals() and "hello" in locals():
+                await oaep_replay.detach(hello.get("runtime_id", ""), generation)
                 await channel_hub.detach(hello.get("runtime_id", ""), generation)
 
     return app

@@ -38,9 +38,9 @@ def render_python(data: dict[str, object]) -> str:
         'class GeneratedControlRequest(GeneratedStrictModel):\n    request_id: UUID\n    correlation_id: str\n    idempotency_key: str | None = None\n\n'
         'class GeneratedErrorEnvelope(GeneratedStrictModel):\n    code: str\n    message: str\n    correlation_id: str\n    retryable: bool\n    details: dict[str, Any]\n    source: Literal["relay", "runtime"]\n\n'
         'class GeneratedRelayEvent(GeneratedStrictModel):\n    event_id: str\n    sequence: int\n    runtime_id: str\n    workspace_id: str\n    session_id: str\n    run_id: str\n    timestamp: datetime\n    kind: str\n    payload: dict[str, Any]\n\n'
-        'class GeneratedSessionConversationItem(GeneratedStrictModel):\n    item_id: str\n    session_id: str\n    run_id: str | None\n    kind: Literal["message", "reasoning", "tool", "approval", "artifact", "error"]\n    role: Literal["user", "assistant", "system", "tool"] | None\n    revision: int\n    session_sequence: int\n    source_client: Literal["windows", "android", "runtime"]\n    source_message_id: str | None\n    created_at: datetime\n    updated_at: datetime\n    payload: dict[str, Any]\n\n'
+        'class GeneratedSessionConversationItem(GeneratedStrictModel):\n    item_id: str\n    session_id: str\n    run_id: str | None\n    kind: Literal["message", "reasoning", "tool", "file_change", "approval", "artifact", "error"]\n    role: Literal["user", "assistant", "system", "tool"] | None\n    revision: int\n    session_sequence: int\n    source_client: Literal["windows", "android", "runtime"]\n    source_message_id: str | None\n    created_at: datetime\n    updated_at: datetime\n    payload: dict[str, Any]\n\n'
         'class GeneratedConversationSnapshot(GeneratedStrictModel):\n    session_id: str\n    snapshot_sequence: int\n    items: list[GeneratedSessionConversationItem]\n    next_cursor: str | None\n\n'
-        'class GeneratedSessionEvent(GeneratedStrictModel):\n    event_id: str\n    runtime_id: str\n    workspace_id: str\n    session_id: str\n    run_id: str | None\n    session_sequence: int\n    kind: str\n    timestamp: datetime\n    payload: dict[str, Any]\n\n'
+        'class GeneratedSessionEvent(GeneratedStrictModel):\n    event_id: str\n    runtime_id: str\n    workspace_id: str\n    session_id: str\n    run_id: str | None\n    item_id: str | None = None\n    item_revision: int | None = None\n    session_sequence: int\n    kind: str\n    timestamp: datetime\n    payload: dict[str, Any]\n\n'
         'class GeneratedRuntimeSessionEventFrame(GeneratedStrictModel):\n    type: Literal["event"] = "event"\n    scope: Literal["session"] = "session"\n    session_id: str\n    session_sequence: int\n    event: GeneratedSessionEvent\n'
     )
 
@@ -146,6 +146,8 @@ data class GeneratedSessionEvent(
     val kind: String,
     val timestamp: String,
     val payload: Map<String, Any?>,
+    val itemId: String? = null,
+    val itemRevision: Long? = null,
 )
 
 data class GeneratedRuntimeSessionEventFrame(

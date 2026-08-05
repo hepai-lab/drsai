@@ -6,7 +6,7 @@
  */
 
 import { Box, Text, useInput } from 'ink'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import { theme } from '../theme.js'
@@ -15,6 +15,8 @@ export interface ModelEntry {
   alias: string
   model_name?: string
   reasoning?: string[]
+  provider?: string
+  known_model?: boolean
 }
 
 export interface ModelPickerProps {
@@ -46,15 +48,30 @@ export function ModelPicker({
     }
     return 0
   })
+  const [query, setQuery] = useState('')
+  const [searching, setSearching] = useState(false)
+  const filteredModels = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return needle ? models.filter(model => `${model.alias} ${model.model_name || ''} ${model.provider || ''}`.toLowerCase().includes(needle)) : models
+  }, [models, query])
+  useEffect(() => setCursor(0), [query])
 
   useInput((input, key) => {
     if (isTerminalFocusEvent(input)) return
     if (key.escape) {
+      if (searching) { setSearching(false); setQuery(''); return }
       onCancel()
       return
     }
+    if (searching) {
+      if (key.return) { setSearching(false); return }
+      if (key.backspace || key.delete) { setQuery(value => value.slice(0, -1)); return }
+      if (input && !key.ctrl && !key.meta) setQuery(value => value + input)
+      return
+    }
+    if (input === '/') { setSearching(true); return }
     if (key.return) {
-      const selected = models[cursor]
+      const selected = filteredModels[cursor]
       if (selected) onSelect(selected.alias)
       return
     }
@@ -63,7 +80,7 @@ export function ModelPicker({
       return
     }
     if (key.downArrow || (key.ctrl && input === 'n')) {
-      setCursor(Math.min(models.length - 1, cursor + 1))
+      setCursor(Math.min(filteredModels.length - 1, cursor + 1))
       return
     }
     // Editor shortcuts (only when handlers wired in)
@@ -71,28 +88,28 @@ export function ModelPicker({
       onAdd()
       return
     }
-    if (input === 'e' && onEdit && models[cursor]) {
-      onEdit(models[cursor].alias)
+    if (input === 'e' && onEdit && filteredModels[cursor]) {
+      onEdit(filteredModels[cursor].alias)
       return
     }
-    if (input === 'd' && onDelete && models[cursor]) {
-      onDelete(models[cursor].alias)
+    if (input === 'd' && onDelete && filteredModels[cursor]) {
+      onDelete(filteredModels[cursor].alias)
       return
     }
     if (input >= '1' && input <= '9') {
       const idx = parseInt(input, 10) - 1
-      if (idx < models.length) {
+      if (idx < filteredModels.length) {
         setCursor(idx)
-        onSelect(models[idx].alias)
+        onSelect(filteredModels[idx].alias)
       }
       return
     }
     if (input.length === 1 && input >= 'f' && input <= 'z') {
       // Letter shortcuts start at 'f' (so a/e/d are reserved for actions)
       const idx = 9 + (input.charCodeAt(0) - 'f'.charCodeAt(0))
-      if (idx < models.length) {
+      if (idx < filteredModels.length) {
         setCursor(idx)
-        onSelect(models[idx].alias)
+        onSelect(filteredModels[idx].alias)
       }
     }
   })
@@ -111,8 +128,9 @@ export function ModelPicker({
       <Text color={theme.primary} bold>
         Select model
       </Text>
+      <Text color={searching ? theme.accent : theme.muted}>Search: {query || (searching ? 'type to filter…' : 'press /')}</Text>
       <Box marginTop={1} flexDirection="column">
-        {models.map((m, i) => {
+        {filteredModels.map((m, i) => {
           const isCurrent = m.alias === currentAlias
           const isCursor = i === cursor
           const prefix = isCursor ? '▶ ' : '  '
@@ -125,6 +143,7 @@ export function ModelPicker({
           const reasoning = m.reasoning && m.reasoning.length > 0
             ? ` [reasoning: ${m.reasoning.join(',')}]`
             : ''
+          const calibration = m.known_model === false ? ' [capabilities uncalibrated]' : ''
           return (
             <Box key={m.alias}>
               <Text color={color}>
@@ -132,6 +151,7 @@ export function ModelPicker({
                 {idx} {m.alias.padEnd(20)}
                 {m.model_name && ` — ${m.model_name}`}
                 {reasoning}
+                {calibration}
                 {isCurrent && ' ← current'}
               </Text>
             </Box>
@@ -140,7 +160,7 @@ export function ModelPicker({
       </Box>
       <Box marginTop={1}>
         <Text color={theme.muted} dimColor>
-          ↑/↓ navigate · Enter select · a add · e edit · d delete · Esc cancel · {models.length} total
+          ↑/↓ navigate · / search · Enter select · a add · e edit · d delete · Esc cancel · {filteredModels.length}/{models.length}
         </Text>
       </Box>
     </Box>

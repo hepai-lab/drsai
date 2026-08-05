@@ -10,16 +10,16 @@ $project = Split-Path -Parent $PSScriptRoot
 $repo = Resolve-Path (Join-Path $project "..\..")
 $plan = Join-Path $repo "docs\android\ANDROID_UNIFIED_WORKBENCH_RUNTIME_V2_DEVELOPMENT_PLAN.md"
 if ([string]::IsNullOrWhiteSpace($EvidenceFile)) {
-    $EvidenceFile = Join-Path $repo "docs\android\acceptance\stage5\feature-evidence.json"
+    $EvidenceFile = Join-Path $repo "docs\android\testing\acceptance\stage5\feature-evidence.json"
 }
 if ([string]::IsNullOrWhiteSpace($JvmResults)) {
     $JvmResults = Join-Path $project "app\build\test-results\testDebugUnitTest"
 }
 if ([string]::IsNullOrWhiteSpace($Api30Results)) {
-    $Api30Results = Join-Path $repo "docs\android\acceptance\stage5\emulator-results\api30"
+    $Api30Results = Join-Path $repo "docs\android\testing\acceptance\stage5\emulator-results\api30"
 }
 if ([string]::IsNullOrWhiteSpace($Api35Results)) {
-    $Api35Results = Join-Path $repo "docs\android\acceptance\stage5\emulator-results\api35"
+    $Api35Results = Join-Path $repo "docs\android\testing\acceptance\stage5\emulator-results\api35"
 }
 
 if (-not (Test-Path -LiteralPath $plan -PathType Leaf)) { throw "Stage 5 plan missing: $plan" }
