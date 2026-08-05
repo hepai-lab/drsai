@@ -226,6 +226,11 @@ dmypy.json
 cython_debug/
 
 ########################
+# TypeScript incremental build cache
+########################
+*.tsbuildinfo
+
+########################
 # IDE 配置文件
 ########################
 .vscode/
