@@ -1,6 +1,6 @@
 {
   "name": "opendrsai-windows-desktop",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "private": true,
   "description": "OpenDrSai Windows desktop shell and installer host",
   "main": "./out/main/index.js",

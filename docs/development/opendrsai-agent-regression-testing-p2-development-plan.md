@@ -25,7 +25,7 @@ P2 完成后，OpenDrSai 应当能回答以下问题：
 | 智能体角色 | Provider | 模型 | P2 必验能力 |
 |---|---|---|---|
 | 主模型 | `zhizengzeng` | `deepseek-v4-flash` | 文本生成、推理、结构化工具调用、工具结果续接 |
-| 图片理解模型 | `zhizengzeng` | `gemini-3.6-flash` | 文本生成、图片理解；同时确认函数调用路由是否可用 |
+| 图片理解模型 | `zhizengzeng` | `gpt-5.6-luna` | Responses 文本/图片理解；同时确认结构化函数调用路由是否可用 |
 | 图片生成模型 | `zhizengzeng` | `gemini-3.1-flash-lite-image` | 文生图、混合文本/图片响应，必要时为后续图片编辑预留 |
 | 文字转语音模型 | `zhizengzeng` | `tts-1` | 文字转有效音频 |
 | 语音转文字模型 | `zhizengzeng` | `whisper-1` | 真实音频转写 |
@@ -229,25 +229,25 @@ GET  /v1/config/agents/{agent_id}/model-capability-status
 - 再通过正式 Agent Runtime 执行一次隔离终端命令，确认模型调用、Tool Dispatcher、OAEP Tool Item 和最终答复闭环。
 - 通过标准：不能用纯文本“我要调用工具”冒充结构化调用；逻辑调用一次，工具执行一次，最终答案正确，证据关联完整。
 
-### 5.2 `gemini-3.6-flash`
+### 5.2 `gpt-5.6-luna`
 
 #### 文本和候选协议
 
-- 探测 Responses、OpenAI Chat 和 Gemini `generateContent`，分别记录支持状态，不以一个协议成功推导其他协议成功。
+- 优先探测 Responses，并保留 OpenAI Chat 作为明确的兼容回退；不以一个协议成功推导其他协议成功。
 - 文本能力至少有一个正式协议通过。
 
 #### 图片理解
 
 - 使用仓库内小型、确定性合成图：红色背景、中心蓝色圆形，并记录资产 SHA-256。
 - 要求返回固定 JSON：背景色、中心色、形状。
-- 先测试 OpenAI 兼容多模态格式，再测试 Gemini 原生 `inlineData`/文件输入；按真实结果确定优先路由。
+- 先测试 Responses `input_image` 多模态格式，再测试 Chat `image_url` 兼容格式；按真实结果确定优先路由。
 - 通过标准：三个字段全部正确；图片确实出现在上游请求的规范化证据中；正式 Runtime 使用 `image_understanding_model`，而不是错误复用主模型。
 
 #### 函数调用
 
-- 使用与 Flash 相同的无副作用函数 Schema，通过 Gemini 原生函数声明验证结构化调用。
-- 该结果用于确认 Gemini 能力，不要求 P2 将 Gemini 设置为主 Agent 模型。
-- 能力探针允许在不改变 Agent 配置的前提下探索尚未声明的候选 operation，但仍必须锁定同一 Agent ModelRef、Provider、凭据和协议；正式 Runtime 继续拒绝未声明 operation。探索成功只形成能力证据，不自动修改 Provider 模型声明。
+- 使用与主模型相同的无副作用函数 Schema，通过 Responses tools 验证结构化调用。
+- 该结果用于确认图片理解角色的候选调用能力，不要求 P2 将 Luna 设置为主 Agent 模型。
+- 函数调用必须锁定同一 Agent ModelRef、Provider、凭据和协议。它是 Provider 路由确认项，不是独立产品 Runtime；P2 Gate 要求真实 Provider 断言，但仅对图片理解 `chat` 要求正式 Runtime 图片闭环。
 
 ### 5.3 `gemini-3.1-flash-lite-image`
 
@@ -280,7 +280,7 @@ GET  /v1/config/agents/{agent_id}/model-capability-status
 | P2-F02 | 统一模型与凭据解析 | 从 AgentModelPolicy 的精确 ModelRef 解析 Provider、上游 ID、协议地址和安全凭据；配置测试与 Runtime 共用 | DPAPI/环境引用/无 Key fixture；错误 Provider、缺凭据、revision 冲突；秘密扫描 | 探针、Agent、图像和音频使用同一解析器；公开结果及日志无 Key/Header |
 | P2-F03 | Responses Adapter | 实现非流式/流式文本、推理、function tools、tool result 续接和错误规范化；Responses 优先但可明确回退 | 本地 HTTP fixture 覆盖文本、流、工具、推理、400/401/403/404/429/5xx、超时、畸形事件 | Flash 在智增增 Responses 成功则成为首选；不支持则有可审计 Chat 回退；不得因临时错误永久降级 |
 | P2-F04 | Chat Completions Adapter 收敛 | 保留 Chat 兼容路径，规范化为与 Responses 相同的内部 ModelResult/ToolCall 结构 | Responses/Chat 等价契约测试；流式 tool delta 拼接；`reasoning_content` 脱敏/裁剪 | Agent 上层不依赖具体协议响应结构；Flash Chat 回退闭环可用 |
-| P2-F05 | Gemini 原生 Adapter | 支持 `generateContent` 文本、图片输入、函数调用和混合 TEXT/IMAGE 输出 | Gemini fixture 覆盖 `parts`、inline data、functionCall、安全阻断、无图片、超大图片、错误响应 | `gemini-3.6-flash` 图片理解通过；Lite Image 生成有效 Artifact；不再强制 OpenAI Images |
+| P2-F05 | 多模态 Adapter | Responses/Chat 支持 Luna 图片输入；Gemini `generateContent` 支持图片输入、函数调用和混合 TEXT/IMAGE 输出 | Responses `input_image`、Chat `image_url` 与 Gemini fixture 覆盖；安全阻断、无图片、超大图片、错误响应 | `gpt-5.6-luna` 通过 Responses 图片理解；Lite Image 生成有效 Artifact；不再强制 OpenAI Images |
 | P2-F06 | 图片 Runtime 重构 | `RuntimeImageOperationAdapter` 按路由分派 OpenAI Images 或 Gemini；统一使用 `image_generation_model`，仅兼容读取旧 `image_model` | 两协议契约测试；模型角色错误、取消、超时结果未知、Artifact 解码与限额 | 智增增 Lite Image 通过正式 Runtime；Run/Artifact 中固定模型与 route snapshot |
 | P2-F07 | 音频 Runtime 重构 | TTS/STT 从 AgentModelPolicy 解析模型和凭据；拆出 Audio Adapter；保留 Gateway 产品接口 | multipart、格式、语言、大小、超时、空音频、无效容器、Provider 错误单测 | `tts-1` 与 `whisper-1` 分别通过，并完成闭环；不设置全局 `OPENAI_API_KEY` 也可运行 |
 | P2-F08 | 能力探针服务 | 按 operation 运行最小真实请求；异步状态、超时、取消、费用标记、稳定错误码；不持久化秘密和大响应 | 各协议 fixture；并发、重复请求、取消、部分成功、Provider 限流；API 契约测试 | 单次运行能得到 5 模型完整矩阵；每项有终态且无“空白通过” |
@@ -431,7 +431,7 @@ P2 Gate 必须 fail closed，并满足：
 - 5 个模型都来自 `my-drsai` 的显式模型策略且 Provider 为 `zhizengzeng`；
 - 必验操作均有真实终态，不允许缺失、stale 或仅 declared；
 - `deepseek-v4-flash` 文本、推理、结构化工具调用和 Runtime tool loop 通过；
-- `gemini-3.6-flash` 图片理解和正式 Runtime 路由通过；
+- `gpt-5.6-luna` Responses 图片理解、结构化函数探针和正式 Runtime 路由通过；
 - `gemini-3.1-flash-lite-image` 通过 Gemini 原生协议生成有效 Artifact；
 - `tts-1` 和 `whisper-1` 分别通过并完成闭环；
 - Responses 是否适用于 Flash/Gemini 有真实探测结论；不支持时存在明确、已验证的回退，不允许猜测；

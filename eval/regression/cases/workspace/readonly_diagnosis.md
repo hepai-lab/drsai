@@ -8,7 +8,7 @@
 
 ## 固定仓库与基准
 
-Fixture `readonly_diagnosis_v1` 只有实现和测试两个文件。聚合摘要按相对路径排序，依次哈希 `path + NUL + file_sha256 + NUL`，结果为 `e7153e2573e26208bdf436897f108a96be3aeb8f795f5e13c2640a2156d9d61b`。
+Fixture `readonly_diagnosis_v1` 只有实现和测试两个文件。聚合摘要按相对路径排序，依次哈希 `path + NUL + file_sha256 + NUL`，结果为 `380b85516f42c2b693c561eb90339182502d8d5f83c88b345f80a186f7130ebc`。
 
 `success_rate` 在判断空列表之前执行 `completed / len(events)`，因此 `events=[]` 时先产生 `ZeroDivisionError`，后面的 `if not events` 无法生效。正确建议是将空输入检查移到除法之前，但本案例不得实际应用修改。
 
