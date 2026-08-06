@@ -1,0 +1,79 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 26,
+  "captured_at": "2026-08-05T01:04:44.084Z",
+  "feature": "M05-F05",
+  "strict_progress": {
+    "accepted": 20,
+    "total": 50,
+    "percentage": 40
+  },
+  "focused_tests": "...........................................................              [100%]\r\n59 passed, 35 deselected in 46.51s",
+  "packaged_probe": {
+    "passed_checks": 30,
+    "checks": {
+      "model_cancel_code": true,
+      "model_token_cancelled": true,
+      "model_stopped": true,
+      "model_registry_cleared": true,
+      "tool_cancel_code": true,
+      "tool_token_cancelled": true,
+      "tool_stopped": true,
+      "tool_registry_cleared": true,
+      "subtask_cancel_code": true,
+      "subtask_token_cancelled": true,
+      "subtask_stopped": true,
+      "subtask_registry_cleared": true,
+      "approval_cancel_code": true,
+      "approval_waiter_cleared": true,
+      "disconnect_cancel_code": true,
+      "disconnect_execution_stopped": true,
+      "disconnect_effect_not_rolled_back": true,
+      "restart_first_cancelled": true,
+      "restart_second_cancelled": true,
+      "restart_backend_cancel_once": true,
+      "restart_no_reexecution": true,
+      "restart_effect_preserved": true,
+      "restart_one_effect_event": true,
+      "restart_one_cancel_terminal": true,
+      "restart_terminal_persisted": true,
+      "process_double_cancel_responses": true,
+      "process_restart_terminal_persisted": true,
+      "process_restart_one_cancel_terminal": true,
+      "process_restart_one_effect_event": true,
+      "process_restart_effect_preserved": true
+    },
+    "evidence": "docs/desktop/evidence/opendrsai-windows-phase3-round26-cancellation-probe.json"
+  },
+  "guarantees": {
+    "stages": [
+      "model",
+      "tool",
+      "approval",
+      "subtask"
+    ],
+    "interruption_modes": [
+      "double_cancel",
+      "disconnect",
+      "runtime_restart"
+    ],
+    "one_cancelled_terminal": true,
+    "active_execution_stopped": true,
+    "completed_side_effect_not_rolled_back_or_reexecuted": true,
+    "backend_cancel_failure_cannot_block_runtime_terminal": true
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:1c1642d8e468389d35c2545d718eb94f708a34532ad93b57bdf1b4054b3b4359"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:232c74e5a977cca2530d857790058d52e9f1cfd183671d3d18e4592b38628a16"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:a379ac79f4a26ec409499075424ca979c7b59d673bee885abb939244614dd814"
+    }
+  }
+}

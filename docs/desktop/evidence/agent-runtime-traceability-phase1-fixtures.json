@@ -1,0 +1,12 @@
+{
+  "schema_version": "opendrsai.run-traceability-fixtures/1",
+  "generated_at": "2026-08-04T00:00:00Z",
+  "scenarios": [
+    { "id": "A", "kind": "success", "run_status": "completed", "item_statuses": ["completed"], "reproducibility_level": "exact", "expected": ["tool", "file_change", "artifact", "restart_digest_equal"] },
+    { "id": "B", "kind": "tool_failure", "run_status": "failed", "item_statuses": ["failed"], "reproducibility_level": "exact", "expected": ["safe_error", "trace_preserved", "manifest_finalized"] },
+    { "id": "C", "kind": "approval_denied", "run_status": "cancelled", "item_statuses": ["completed", "cancelled"], "reproducibility_level": "exact", "expected": ["waiting", "decision", "restart_stable"] },
+    { "id": "D", "kind": "cancelled", "run_status": "cancelled", "item_statuses": ["cancelled"], "reproducibility_level": "exact", "expected": ["partial_output_preserved", "late_delta_rejected"] },
+    { "id": "E", "kind": "recovery", "run_status": "completed", "item_statuses": ["completed"], "reproducibility_level": "exact", "expected": ["realtime_replay_snapshot_restart_digest_equal", "no_reexecution"] },
+    { "id": "F", "kind": "historical", "run_status": "failed", "item_statuses": [], "reproducibility_level": "unavailable", "expected": ["missing_evidence_explained", "no_fabricated_configuration"] }
+  ]
+}

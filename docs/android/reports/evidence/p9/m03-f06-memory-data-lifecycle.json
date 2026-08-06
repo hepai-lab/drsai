@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F06",
+  "generated_at": "2026-08-05T01:47:46.590389+00:00",
+  "passed": true,
+  "gates": {
+    "v1_5_5_to_v1_5_6_memory_schema_preserved": true,
+    "migration_identity_is_idempotent": true,
+    "desktop_legacy_file_restart_and_delete_passed": true,
+    "android_persistent_restart_read_passed": true,
+    "android_single_and_subject_delete_passed": true,
+    "deleted_memory_cannot_be_recalled": true,
+    "subject_delete_query_is_scoped": true,
+    "logout_and_account_switch_clear_runtime_identity": true
+  },
+  "instrumentation": {
+    "suite": "ai.drsai.remote.MemoryDataLifecycleInstrumentedTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "cases": [
+      "legacyRowsRemainReadableMigrationIsIdempotentAndDeletionCannotRecall"
+    ],
+    "sha256": "f2247c74fc756a9da096f79b3e7e76568ece16bc1b1476e90737a457656b62df"
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": ".                                                                        [100%]\n1 passed in 3.88s"
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/data/LocalStore.kt": "a41d219bee7a9424da0381f2381122f4af05ac3ce53ad42c0ca7e0809136c51c",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/MemoryDataLifecycleInstrumentedTest.kt": "6f4409ba7b1dd4ac204cbf730675e3db00fa46ac989a312305b8ecadcad5389b",
+    "cores/python/packages/drsai/src/drsai/modules/components/memory/curated_memory.py": "f13f6e9ebd80de453f2b1edb8c2f998fa1f371206f69410b5d052b58bfc59245",
+    "cores/python/packages/drsai/tests/test_desktop_memory_lifecycle.py": "af67a5f1bedc80747c6c542d0f65dd4d7f566676447492fedafeeccb50951347"
+  }
+}

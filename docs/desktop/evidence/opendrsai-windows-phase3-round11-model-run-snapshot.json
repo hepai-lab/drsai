@@ -1,0 +1,48 @@
+{
+  "schema_version": "opendrsai.windows.model-run-snapshot-evidence/1",
+  "captured_at": "2026-08-04T22:37:18.347Z",
+  "package": {
+    "version": "1.5.5",
+    "platform": "windows",
+    "arch": "x64"
+  },
+  "checks": {
+    "atomicSnapshotApi": true,
+    "gatewayUsesSingleSnapshot": true,
+    "manifestUsesCapturedRevision": true,
+    "focusedRuntimeTests": true
+  },
+  "scenarios": {
+    "running_run": {
+      "model": "model-a",
+      "revision_binding": "snapshot-a",
+      "hot_switched": false
+    },
+    "next_run": {
+      "model": "model-b",
+      "revision_binding": "snapshot-b"
+    }
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:9a16c10544424a9013f35702ac6f840270cc364fcf349b34cd4301f232d84dcf"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:663970858253ca98c88fd48ab2cee5bfd397580107a424375f9d1dec36f94b2c"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:a92f8ed38fa8ba154ba2843e71a2b79790b577ad08784f48594e7ff2fb8805be"
+    },
+    "gateway": {
+      "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+      "sha256": "sha256:7f7d44bb4bcaf50646e9c651fa2f8a6528522b7baa35006ea74f5aac87ae9e86"
+    },
+    "config_service": {
+      "path": "cores/python/packages/drsai/src/drsai/config/service.py",
+      "sha256": "sha256:c8d6aa6e804cbb2ea5dc506f6aa8fbeb2aa89c5ac8ad56cbb9e1b46bfb245ea9"
+    }
+  }
+}

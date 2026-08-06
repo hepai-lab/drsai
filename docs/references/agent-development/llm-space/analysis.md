@@ -35,6 +35,21 @@ Thread
 
 因此，“调优”主要是人工参与的 harness optimization，而不是自动训练。
 
+## 源码核对后的关键修正
+
+对 `v4.6.3` 源码进行核对后，需要对产品描述作以下更精确的解释：
+
+- `runHistory` 不是完整事件日志，而是一次成功运行结束时保存的去嵌套 `ThreadSnapshot`；默认最多保留 20 条。
+- 当前实现只有在运行产生事件且未失败时才写入 `runHistory`。模型或执行失败的运行不会进入这套历史，因而它不能替代故障事件日志。
+- “Run from this message” 会截断当前消息数组，再在同一个 Thread 上继续运行。它不是不可变的父子分支，也没有保存明确的 fork point。
+- “Restore run” 会将旧 ThreadSnapshot 恢复成当前 Thread，同时继续携带当前的 run history 和 evaluations；它不是基于事件日志重建新 Run。
+- Tool Call 的参数和返回值可查看，返回值可编辑；可执行工具可以单独运行，自动 ReAct 模式还会并行执行一组待处理 Tool Call。
+- 自动执行对一部分危险 Bash 命令有前置阻断，但没有通用、跨工具的幂等性和副作用分类模型。
+- rubric 评测是 Thread 文件中的本地人工 A/B 记录，不是批量评测服务或 CI 门禁。
+- 项目另有 Langfuse trace 导入能力，但它与本地 `runHistory` 是两条不同的数据链。
+
+这些限制不削弱其交互设计的参考价值，但说明 OpenDrSai 不应直接复制其存储与重放语义。
+
 ## 评测机制
 
 上游文档描述的评测是两个持久化运行之间的比较。一个 rubric 包含 2–6 个有序标准，每个运行在每个标准上获得 1–5 分，系统计算未加权平均分和 `B - A` 差值；最终 verdict 仍由人决定。
@@ -101,3 +116,4 @@ v4.6.3 的公开下载说明主要提供 macOS Apple Silicon 和 Intel 的 DMG�
 - 是否提供适合 CI 使用的无界面执行或评测接口。
 - Windows 源码构建与运行状态。
 
+已完成的源码证据索引见 [source-review.md](./source-review.md)。

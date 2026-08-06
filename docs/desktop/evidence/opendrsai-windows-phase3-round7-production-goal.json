@@ -1,0 +1,49 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 7,
+  "captured_at": "2026-08-05",
+  "scope": "Production OpenDrSai Goal confirmation, immutable correction, and cancellation",
+  "progress": {
+    "accepted": 0,
+    "total": 50,
+    "percent": 0,
+    "implemented_not_accepted": ["M04-F03", "M04-F04"],
+    "in_progress": ["M04-F02", "M04-F05", "M05-F05"]
+  },
+  "implemented": [
+    "Production my-drsai submissions now request Goal confirmation by default.",
+    "Goal proposal and user confirmation occur before attachment staging and Agent execution.",
+    "Goal card exposes objective, materials, outputs, and constraints with separate edit/supplement, cancel, and confirm actions.",
+    "Editing appends a new immutable Runtime Goal version; it does not cancel the task.",
+    "An unconfirmed old version reaches a superseded terminal interaction state while the latest version remains waiting.",
+    "Cancelling from the Goal card cancels the Runtime Run and aborts the Desktop request into a single cancelled terminal path."
+    ,"RuntimeAgentService tracks active execution tasks so double cancel and service shutdown converge uncooperative model calls."
+    ,"Parent cancellation propagates to an active child Run and records one subagent.cancelled event."
+    ,"OWOP process Tools are held by the dispatcher and their process trees are explicitly killed on cancellation."
+    ,"The confirmed Goal is serialized into the actual Agent execution prompt, while the original user request remains separately persisted."
+    ,"Run Manifest evidence records the confirmed Goal version, SHA-256 digest, and explicit language/length/citation/format defaults."
+  ],
+  "verified": [
+    {
+      "command": ".venv\\Scripts\\python.exe -m pytest cores/python/packages/drsai/tests/test_runtime_goals.py cores/python/packages/drsai/tests/test_agent_runtime.py cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py -q",
+      "result": "passed",
+      "summary": "29 passed, 12 subtests passed"
+    },
+    {
+      "command": "npm run typecheck",
+      "cwd": "apps/desktop/windows",
+      "result": "passed"
+    },
+    {
+      "command": "npm run verify:opendrsai-goal-flow",
+      "cwd": "apps/desktop/windows",
+      "result": "passed"
+    }
+  ],
+  "remaining_acceptance_evidence": {
+    "M04-F03": "Packaged Windows UI-E2E must prove confirmation/edit/supplement and zero external side effects before confirmation.",
+    "M04-F04": "Packaged event/OAEP evidence must prove stale cards cannot execute and corrected fields drive the final result.",
+    "M04-F05": "Execution and Manifest are now bound to explicit defaults; final artifact language, length, citation, and format still need real-model conformance assertions.",
+    "M05-F05": "Goal, model, OWOP process Tool, subtask, service disconnect, and double-cancel paths are covered; packaged Runtime restart and non-process Tool cancellation matrices remain incomplete."
+  }
+}

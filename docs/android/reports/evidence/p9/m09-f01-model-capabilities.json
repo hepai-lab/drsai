@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "feature_id": "M09-F01",
+  "generated_at": "2026-08-05T14:15:40.717386+00:00",
+  "passed": true,
+  "gates": {
+    "versioned_capability_contract_has_provenance_and_digest": true,
+    "openai_and_anthropic_fixtures_are_covered": true,
+    "known_no_tools_model_is_blocked_before_provider": true,
+    "unknown_capability_fails_closed_before_run": true,
+    "parallel_tools_require_explicit_positive_capability": true,
+    "reasoning_capability_is_preserved_and_diagnosable": true,
+    "app_preflights_selected_model_before_run_creation": true,
+    "model_adapter_enforces_same_contract": true,
+    "focused_jvm_suites_are_green": true
+  },
+  "jvm_suites": {
+    "tests": 14,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "reports": [
+      {
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.ModelRuntimeCapabilitiesTest",
+        "sha256": "fc5ea945afc4c4803672f358c0dc580a3c5e624172656b98b33306d0ba8a2f86"
+      },
+      {
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.AndroidPythonHostAdaptersTest",
+        "sha256": "8016e5d45bc65c9eeaf10e6d69ce408b8b99811826c6a4e19b74dc76bfaae2c9"
+      }
+    ]
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/ModelRuntimeCapabilities.kt": "1deb8f37712abc17d965b9490fd2e44407fbb443ec9228ceebc3de64c262a9da",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/AndroidPythonHostAdapters.kt": "0755a605cc98bdef694a376e3e55e8ac7a0daabc2bd7163afbe6dbe2128da183",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/data/Models.kt": "129c981b5bb653c61eaadc69b6d1ee18c1070cc1e0eb158a54cfdc1b8045864c",
+    "apps/android/app/src/test/java/ai/drsai/remote/ModelRuntimeCapabilitiesTest.kt": "45cf5ed1a6baa348679254e8b8ef686b68753f0d8b002327acbca67962045a5c",
+    "apps/android/app/src/test/java/ai/drsai/remote/AndroidPythonHostAdaptersTest.kt": "096571479c377768009d269b3c9088b5316c00cb5b7de533d3c30816802e86b7"
+  }
+}

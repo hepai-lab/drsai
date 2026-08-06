@@ -1,5 +1,9 @@
 # LLM Space 集成评估
 
+> 本文件保留集成判断摘要。源码核对后的具体协议、数据表、API、桌面组件、测试门禁和阶段任务见 [implementation-plan.md](./implementation-plan.md)。
+>
+> OpenDrSai 正式实施文档见 [Agent 运行时可追溯、可复现第一阶段开发方案](../../../desktop/agent-runtime-traceability-reproducibility-phase1-development-plan.md)。
+
 ## 集成目标
 
 目标不是嵌入 LLM Space 应用，而是验证其高价值交互能否基于 OpenDrSai 现有 runtime、journal、OAEP、桌面端和 `eval/` 实现。
@@ -85,3 +89,11 @@
 - 暂缓：分支重放和 Tool Result 模拟。
 - 不采用：将 LLM Space runtime 直接作为 OpenDrSai runtime 依赖。
 
+## 源码审阅后的决策更新
+
+- 三项目标全部进入规划：运行轨迹与 Tool Call 检查、不可变分支重放、A/B 评测。
+- 第一项可以直接复用现有 OAEP/journal/desktop projection，优先实施。
+- 第二项不能照搬 LLM Space 的消息截断逻辑；必须新增 run relation、配置快照和 fork provenance，并采用新 Run 执行。
+- 第三项不能把评价只保存在客户端 Thread 文件；应由 Runtime/Eval 层持久化，并允许桌面人工评分与 `eval/` 自动指标共存。
+- `parent_run_id` 当前同时服务子 Agent 关系，不能在没有 `relation_type` 的情况下直接复用为实验分支关系。
+- 实际 Tool Call 重放晚于只读检查和模拟结果分支，并受执行策略、审批和幂等性门禁控制。

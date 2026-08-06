@@ -1,0 +1,111 @@
+{
+  "schema_version": "opendrsai.windows.phase3.model-convergence-evidence/1",
+  "captured_at": "2026-08-05T18:20:00+08:00",
+  "feature_id": "P3-MC05",
+  "status": "accepted_local",
+  "scope": "OpenDrSai local Full Agent Runtime native image understanding through the configured primary HAI model; Codex Adapter and image generation/editing excluded",
+  "checks": {
+    "desktop_image_preflight_precedes_session_and_run": true,
+    "png_jpeg_gif_webp_are_structurally_validated": true,
+    "native_image_limit_is_20_mib": true,
+    "corrupt_and_mismatched_images_fail_before_run": true,
+    "workspace_reference_and_digest_are_revalidated": true,
+    "desktop_staging_records_detected_mime": true,
+    "runtime_decodes_images_with_pillow": true,
+    "runtime_bounds_dimensions_pixels_and_total_bytes": true,
+    "oaep_image_becomes_autogen_native_image": true,
+    "openai_adapter_emits_image_url_content_block": true,
+    "anthropic_adapter_emits_base64_image_content_block": true,
+    "nonvision_model_is_rejected_before_provider_generation": true,
+    "agent_never_silently_removes_images": true,
+    "compatible_primary_model_handles_text_and_image": true,
+    "renderer_preserves_attachment_and_input_for_model_reselection": true,
+    "manifest_evidence_contains_no_path_name_or_base64": true,
+    "packaged_windows_artifact_contains_current_implementation": true
+  },
+  "stable_errors": [
+    "input_resources_invalid",
+    "model_image_input_unsupported",
+    "model_capability_mismatch"
+  ],
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest test_input_resources.py test_model_provider_gateway.py test_gateway_opendrsai_backend.py -q",
+      "result": "59 passed, 1 skipped in 5.17s"
+    },
+    {
+      "command": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-opendrsai-attachments.mts",
+      "result": "20/20 passed; evidence bound to current unpacked Windows package"
+    },
+    {
+      "command": "node --experimental-strip-types scripts/verify-opendrsai-model-convergence-p3.mts",
+      "result": "passed; native multimodal admission, no silent image removal, and privacy-safe evidence contracts present"
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "passed; Electron main and renderer"
+    },
+    {
+      "command": "npm run build:unpack",
+      "result": "passed; production bundles and Windows unpacked package rebuilt"
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest <controlled execute, agent runtime, model catalog, inspection focus> -q",
+      "result": "79 passed and 12 subtests passed before one pre-existing replay approval fixture failure outside MC05"
+    }
+  ],
+  "known_unrelated_baseline_failures": [
+    "test_mobile_context.py expects an obsolete summary prefix without the current version field",
+    "test_mobile_remote_workspace_stability_monitor_v4.py does not provide the newer reexecuted_side_effect_count fixture field",
+    "test_run_inspection_gateway.py replay audit fixture does not complete the now-required sensitive-operation approval"
+  ],
+  "artifacts": {
+    "desktop_chat": {
+      "path": "apps/desktop/shared/main/chat.ts",
+      "sha256": "93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+    },
+    "renderer_recovery": {
+      "path": "apps/desktop/shared/renderer/src/userFacingErrors.ts",
+      "sha256": "74ccf853629e45d1fd6bf4bd2f96ed9824a21e82ce6d232bd300d66cd2d2da72"
+    },
+    "runtime_input_resources": {
+      "path": "cores/python/packages/drsai/src/drsai/backend/runtime/input_resources.py",
+      "sha256": "48ed0f6463fc7d2d7f786f36f59fcf91746986a1235f4c431703ba2e2b77793e"
+    },
+    "gateway": {
+      "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+      "sha256": "48841141f1c2f80a3f489a3637e7c2e87fa7c121620e62b30694b9b955e801fa"
+    },
+    "agent": {
+      "path": "cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py",
+      "sha256": "2ee8ab0a27e3dd031d6aaefb2c3f7a1626ec1b5c7bb50356a932fc1c4ca0e74b"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/resources/backend/backend-source.json",
+      "sha256": "1b38e75c9714a36af509c403872c4c07b7a74c55232194a5f798841766afd313"
+    },
+    "desktop_main_bundle": {
+      "path": "apps/desktop/windows/out/main/index.js",
+      "sha256": "50ec230f720765fd2d3977dfa553860ceb676051f4cb17f41e2f5d3b00fd3710"
+    },
+    "desktop_renderer_bundle": {
+      "path": "apps/desktop/windows/out/renderer/assets/index-CiRiGezm.js",
+      "sha256": "aff3251f1422b2f2273a9182a93cdac455fe20b9072ec4af331a8a5ea2ada7e7"
+    },
+    "unpacked_app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "e862e34e234f721e084de172ef91efa5deee95487fefba4aa3f18118125ee421"
+    }
+  },
+  "release_gates_remaining": [
+    "A real authenticated HAI vision-model smoke is required in the RC environment.",
+    "Image generation and editing remain P3-MC06 and are not claimed by this evidence."
+  ],
+  "progress": {
+    "model_convergence": "5/8 (62.5%) local implementation acceptance",
+    "phase3_product_ledger": "29/50 (58%)",
+    "product_baseline": "82/93 (88.2%)",
+    "note": "The model-convergence sub-ledger is additive detail and does not inflate the fixed P3 or product-baseline ledgers."
+  },
+  "next": "P3-MC06 image generation and editing, enabled only for Provider/model operations that are explicitly discovered and verified"
+}

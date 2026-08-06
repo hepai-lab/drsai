@@ -1,5 +1,164 @@
 # OpenDrSai Windows App 产品验收追踪记录
 
+## 2026-08-05 M07-F04 应用与 Runtime 重启恢复：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 进度 | **M07-F04 / 正式完成**。Phase 3 台账从 `28/50（56%）` 提升为 **`29/50（58%）`**。该项是 Full Agent Runtime 恢复基础设施闭环，不重复增加既有 93 项产品基线，产品严格完成度保持 **`82/93`**。 |
+| 恢复分流 | completed/failed/cancelled 只回放，不执行；当前 Runtime 同一 `instance_id` 的非终态 Run 重接共享 OAEP 实时订阅；旧 `instance_id` 遗留的非终态 Run 确定性封存为中断。 |
+| 完整历史 | 重启恢复不再只读首个 500 Event 页面，改为每页 2,000 条持续读取直到 `has_more=false`，并阻断不前进的异常游标。 |
+| 用户动作 | Runtime 重启中断后明确显示“基于已保留内容继续 / 从头重做 / 放弃本次任务”；继续文案要求先核对已完成步骤且不重复副作用，重做恢复原始输入，放弃移除恢复动作但保留历史。 |
+| 启动竞态修复 | 强杀探针发现旧的 750ms ready 缓存可能把死亡子进程误当可采用的外部 Runtime。现在进程退出立即清缓存，启动预检强制重新验证端口和鉴权健康端点。 |
+| 正式强杀稳定性 | **20/20 轮真实 Runtime 进程强杀与重启**；稳定 `runtime_id`、每轮新 `instance_id`、工作区不丢；既有 completed Run 状态与 Event 数不变，重执行 0，未授权副作用 0。 |
+| 其他门禁 | 恢复策略矩阵 **20/20**、三个用户动作 **3/3**、Runtime/OAEP 持久化测试 **2/2**、M07-F03 回归 **20/20**、TypeScript 和 production build 通过。 |
+| 打包回归 | 最终 `OpenDrSai.exe` 通过 **39/39** 状态与恢复动作回归；制品 SHA-256 已绑定。 |
+| 诊断透明度 | 修复前的两次强杀诊断均稳定复现 `ECONNREFUSED`；修复后单轮和正式 20 轮均通过。正式轮次配置重跑 0、实际重跑 0。 |
+| 自动验收入口 | `npm run verify:m07-runtime-restart-recovery`；`npm run verify:m07-runtime-restart-stability`；`npm run verify:m07-oaep-gap-recovery`；`npm run typecheck:windows`；`npm run build:unpack`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round35-runtime-restart-recovery.json`；packaged result；最终 exe / app.asar / bundled backend SHA-256。 |
+| 下一闭环 | 推进 M07-F05：1,000 会话长历史下只加载轻量目录，打开时按需 hydrate，确保首屏和切换性能不随空闲历史线性恶化。 |
+
+## 2026-08-05 M07-F03 同一 Run 断网与 OAEP gap 恢复：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 进度 | **M07-F03 / 正式完成**。Phase 3 台账从 `27/50（54%）` 提升为 **`28/50（56%）`**。该项是 Full Agent Runtime 恢复基础设施闭环，不重复增加既有 93 项产品基线，产品严格完成度保持 **`82/93`**。 |
+| 修复的根因 | 流中出现 OAEP 序列 gap 时，旧实现直接重取最新快照；聊天投影不消费快照，因此可能跨过缺失事件，漏掉已收内容或 Run 终态。现在从最后连续 Session 游标分页补齐，再从更新后的游标恢复 SSE。 |
+| 同一 Run 语义 | 恢复只调用 OAEP snapshot/list/stream，不创建新 Session、不创建新 Run、不重新调用 Run execute；执行 HTTP 回执若因网络含糊失败，只能由同一 Run 的 OAEP completed 终态消除错误。 |
+| 三分钟窗口 | 自动恢复最短抖动路径为 **184,880 ms**，覆盖 1～3 分钟断网；超过边界后进入明确 degraded/error，不无限重连。 |
+| 20 轮专项验收 | **20/20**。每轮先交付序列 1，再注入序列 3 gap，随后从游标 1 补齐 2、3，并在重连流重复 3 后交付终态 4；最终投影始终严格为 `1,2,3,4`。 |
+| 重复与副作用 | 重复 event ID 0、重复 Item 0、重复 Tool 0、重复终态 0、恢复期间 Run execute 调用 0、未授权副作用 0、可恢复 gap 误触发 resnapshot 0。 |
+| 独立产品命名 | OpenDrSai Runtime 的连接事件来源改为 `opendrsai-runtime`；兼容后端不再错误显示为另一后端产品的 Runtime。 |
+| 制品回归 | `npm run build:unpack` 成功；真实 `OpenDrSai.exe` 单次状态回归 **39/39**，稳定性 **20/20 轮、780/780**，重跑 0。 |
+| 自动验收入口 | `npm run verify:m07-oaep-gap-recovery`；`npm run typecheck:windows`；`npm run verify:m07-operational-state-packaged`；`npm run verify:m07-operational-state-stability`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round34-oaep-gap-recovery.json`；最终 exe / app.asar / bundled backend SHA-256；packaged result 和 stability summary。 |
+| 下一闭环 | 推进 M07-F04：应用强退和 Runtime 重启后恢复会话，确保 completed 不重跑，并为中断任务提供继续、重做、放弃。 |
+
+## 2026-08-05 M07-F02 分层恢复动作：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 进度 | **M07-F02 / 正式完成**。Phase 3 台账从 `26/50（52%）` 提升为 **`27/50（54%）`**。产品严格完成度保持 **`82/93`**。 |
+| 用户可感知结果 | 五层状态条在出现阻断时直接给出匹配操作，不再只报告错误：登录、修复 Runtime、重新配置/测试 HAI 模型、选择/信任工作区、查看待批准操作或失败任务。 |
+| 真实执行路径 | Runtime 动作真实重试 bootstrap 并刷新健康状态；模型动作进入 Provider 设置；工作区动作持久化信任；任务动作进入 Approval Center 或 Task Center；身份动作返回登录页。 |
+| Loading 与错误 | 所有异步动作在 `finally` 清除 busy，成功和失败都有用户可读状态；单次与 20 轮测试均未出现无限 loading。 |
+| 诊断 | 可复制有界脱敏诊断，只包含当前层、阻断层、状态、五层摘要、Runtime 是否就绪和时间戳，不包含凭据、聊天正文或本地路径。 |
+| 单次打包验收 | 真实 `OpenDrSai.exe` 通过 **39/39**；五类故障动作与实际页面/状态变化匹配，工作区信任真实持久化，诊断真实写入剪贴板。 |
+| 稳定性验收 | **20/20 轮、780/780 打包检查**；失败 0、重试 0。 |
+| 自动验收入口 | `npm run verify:m07-recovery-actions`；`npm run verify:m07-operational-state-packaged`；`npm run verify:m07-operational-state-stability`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round33-recovery-actions.json`；packaged result、Windows 可访问树、20 轮 stability summary 和最终制品 SHA-256。 |
+| 下一闭环 | 推进 M07-F03：统一断网和 OAEP gap 后的同一 Run 恢复，保留已收内容且不重复 Item、Tool 或副作用。 |
+
+## 2026-08-05 M07-F01 五层运行状态：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 进度 | **M07-F01 / 正式完成**。Phase 3 台账从 `25/50（50%）` 提升为 **`26/50（52%）`**。产品严格完成度保持 **`82/93`**。 |
+| 用户可感知结果 | 应用顶部常驻一个可展开状态条，按“身份 → 本地运行时 → HAI 模型 → 工作区 → 任务运行”显示五层真实状态；用户无需从单一“未就绪”猜测原因。 |
+| 阻断规则 | 任一时刻只标记一个当前层。较早依赖层优先，后层的 `ready` 不会掩盖登录、运行时、模型或工作区问题；前四层就绪后，显示任务空闲、排队、运行、待批准、恢复、失败、完成或取消。 |
+| 任务映射 | 活跃请求优先显示运行中；待批准优先于其他后台状态；重启恢复的排队任务显示恢复中；没有活跃任务时显示最近终态。 |
+| 性质测试 | **1,152/1,152 状态组合**全部满足依赖优先级、唯一当前层、阻断层和可运行条件；另有 5 个任务映射和 6 个生产 UI 契约通过。 |
+| 单次打包验收 | 真实 `OpenDrSai.exe` 通过 **30/30**：身份、运行时、模型、工作区、待批准、恢复、完成 7 场景；每场景五层完整、当前层唯一、无通用“就绪”掩盖；键盘展开和 Windows 可访问树通过。 |
+| 稳定性验收 | **20/20 轮、600/600 打包检查**；失败 0、重试 0。 |
+| 文案收敛 | 首次设置页不再提及另一后端产品，直接说明 OpenDrSai 自带 Full Agent Runtime，不需要额外智能体后端。 |
+| 自动验收入口 | `npm run verify:m07-operational-state`；`npm run verify:m07-operational-state-packaged`；`npm run verify:m07-operational-state-stability`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round32-operational-state.json`；7 张状态截图、Windows 可访问树、packaged result、20 轮 stability summary 和制品 SHA-256。 |
+| 下一闭环 | 推进 M07-F02：按身份、Runtime、模型、工作区和运行故障提供匹配的真实恢复动作，并验证不会无限 loading。 |
+
+## 2026-08-05 M06-F05 应用内决策对话框：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 进度 | **M06-F05 / 正式完成**。Phase 3 台账从 `24/50（48%）` 提升为 **`25/50（50%）`**。该项是安全交互基础设施，不重复增加既有 93 项产品基线，产品严格完成度保持 **`82/93`**。 |
+| 用户可感知结果 | 核心危险或不可逆操作改用统一应用内对话框，明确显示动作、对象与影响；默认焦点位于安全操作，支持键盘、Esc 和点击遮罩取消，结束后焦点返回原触发控件。 |
+| 移除内容 | 活跃共享 Renderer 中的 `window.confirm/alert` 调用降为 0；Windows 构建使用的共享 Renderer 已全部迁移，平台目录中的非活动历史副本不计入生产调用面。 |
+| 可靠性修复 | 对话框队列改为唯一 `pump` 消费模型，请求在实际展示前始终留在队列，避免 React 提交或 host 生命周期变化造成请求丢失；连续决策严格按顺序各解析一次。 |
+| 可审计性 | 每次确认或取消记录 dialog ID、决定、原因和状态；Esc、遮罩、取消按钮、确认按钮分别可区分，供诊断与回放使用。 |
+| 单次打包验收 | 真实 `OpenDrSai.exe` 通过 **26/26**：可访问名称/描述、Windows 可访问树、焦点环、Tab/Shift+Tab、Esc、真实鼠标遮罩、键盘取消与确认、焦点归还、队列顺序、调用计数和诊断审计。四个取消场景副作用 0，两次确认各执行一次，原生 dialog 调用 0。 |
+| 稳定性验收 | **20/20 轮、520/520 检查**；原生 dialog 调用 0；40 次批准动作均精确执行，重试 0、失败 0。 |
+| 自动验收入口 | `npm run verify:m06-app-dialog-contract`；`npm run verify:m06-app-dialog`；`npm run verify:m06-app-dialog-stability`；`npm run build:unpack`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round31-app-dialog.json`；packaged result、截图、Windows 可访问树、20 轮 stability summary 与最终制品 SHA-256。 |
+| 下一闭环 | 推进 M07-F01：统一展示当前/最近/后台运行及其 `waiting_approval`、`failed`、`recovering` 等状态，并验证实时、重启和断线一致性。 |
+
+## 2026-08-05 M06-F04 主流程业务文案与技术信息分层：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 进度 | **M06-F04 / 正式完成**。Phase 3 台账从 `23/50（46%）` 提升为 **`24/50（48%）`**。该项不重复增加既有 93 项产品基线，产品严格完成度保持 **`82/93`**。 |
+| 用户可感知结果 | 用户在聊天、审批、运行详情、模型配置、工作区、Agent Square 和预览浏览器中看到的是“做什么、涉及什么、范围多大、有什么影响、下一步怎么办”，不再直接看到裸 JSON、异常类、堆栈、协议字段或调用 ID。需要排障时仍可主动展开脱敏技术详情。 |
+| 统一实现 | 新增 Renderer 共用的业务文案净化与错误呈现边界。业务字段拒绝 OAEP、JSON-RPC、异常类、账本表名、审批/幂等/关联字段和 `tool.*` 协议事件；错误统一转为用户标题与恢复动作；执行来源转为 OpenDrSai、本机应用或已连接设备。 |
+| 独立产品边界 | 移除通用用户错误中的 Codex 登录、修复和后端表述，统一改为 OpenDrSai；内部兼容枚举没有作为用户文案显示。 |
+| 聊天与运行详情 | 聊天活动不再显示截断 call ID，改为业务步骤与“执行记录已保存”；Run Inspector 默认显示状态和用户来源，完整记录编号可复制，脱敏对象数据必须主动展开。 |
+| 单元 / 契约 | PASS：主流程静态契约 **23/23**；恶意术语、裸 JSON、异常、堆栈和协议字段反例 **14/14**；F3 业务审批契约与 TypeScript 全通过。 |
+| 正式打包 A11Y | PASS：最终 `OpenDrSai.exe` 五类业务审批场景 **71/71**；动作/对象/范围/影响、纯语言和可访问名称完整；导出完整 Chromium Accessibility Tree 与截图。 |
+| 键盘与副作用 | PASS：拒绝全部通过真实键盘触发且未授权副作用为 0；允许五类操作各执行一次；配置重试 0、实际重试 0。 |
+| 未掩盖的全局阻塞 | 通用 Renderer UI 旧门禁仍报告四项其他产品缺口：变更集接受/拒绝文案、消息快捷复制、新聊天示例契约、右侧标签静态清单。本项不宣称全局发布通过，后续按对应模块闭环。 |
+| 自动验收入口 | `npm run verify:m06-user-facing-language`；`npm run verify:f3-approval-business-info`；`npm run verify:packaged-f3-approvals`；`npm run typecheck`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round30-user-facing-language.json`；packaged-final summary、截图、可访问树与最终制品 SHA-256。 |
+| 下一闭环 | 推进 M06-F05：移除核心 `window.confirm/alert`，统一为应用内 dialog，并验收键盘、焦点返回、Esc/遮罩取消、调用次数和可审计决定。 |
+
+## 2026-08-05 M06-F03 副作用账本与崩溃恢复：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 进度 | **M06-F03 / 正式完成**。Phase 3 台账从 `22/50（44%）` 提升为 **`23/50（46%）`**。该项是 Full Agent Runtime 基础设施闭环，不重复增加既有 93 项产品基线，产品严格完成度保持 **`82/93`**。 |
+| 用户可感知结果 | 用户批准文件写入等关键动作后，即使 OpenDrSai 在“批准已保存、实际写入尚未发生”的瞬间退出，重启后也能安全恢复：不会丢失已批准动作，不会重复写入，也不会把旧批准用于另一种操作。执行结果带可追溯回执。 |
+| 生产实现 | Full Runtime 新增持久化 `runtime_side_effects` 账本，在同一 SQLite 状态库记录请求摘要、审批绑定、稳定幂等键、执行占用、结果摘要、失败码和恢复时间。通用 Agent 后端与 Windows 实际使用的 Gateway Agent 后端均接入；Desktop Runtime Client 提供按 Run 查询账本的接口。 |
+| 安全与恢复策略 | 只有“已批准且尚未开始”的副作用可用原审批和原幂等键恢复一次；已完成、已拒绝、审批与操作不匹配均拒绝执行；进程可能在写入中崩溃而结果未知时，系统 fail closed，不自动重放可能已经发生的副作用。 |
+| 崩溃点专项 | PASS：在 approval commit 后、tool write 前模拟进程退出并重建 Runtime Engine；恢复后恰好写入 1 次，结果摘要和 `recovered_at` 持久化；重复提交、错配审批和未知结果重放全部阻断。 |
+| 单元 / 生产路径 | PASS：M06 合同 **14/14**；Agent / Gateway / 审批生产路径 **71/71**、子测试 **12/12**；Gateway 会话事件 **14/14**。 |
+| 正式封装探针 | PASS：直接从最终 `app.asar.unpacked` 内随 App 分发的 Full Runtime backend zip 执行 **10/10**；未授权副作用 0、重复副作用 0、实际重试 0。 |
+| 正式稳定性 | PASS：最终 bundled Full Runtime 连续 **20/20** 轮、**200/200** 检查；每轮恢复写入恰好 1 次，未授权副作用 0、重复副作用 0、配置重试 0、实际重试 0。 |
+| 附带修复 | 修复篡改 OAEP 会话游标时 Runtime 已拒绝、但 Gateway 泄漏原始 `ValueError` 的 HTTP 边界缺陷；现在稳定返回 HTTP 400，缺失会话仍为 404。 |
+| 自动验收入口 | `npm run verify:m06-side-effect-ledger`；`npm run verify:packaged-m06-side-effect-ledger`；`npm run verify:m06-side-effect-ledger-stability`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round29-side-effect-ledger.json`；packaged result；20 轮 stability summary；最终 exe / app.asar / bundled backend SHA-256。 |
+| 下一闭环 | 推进 M06-F04：向用户提供可理解、可筛选的审批与副作用历史，明确展示状态、动作、对象、决定、执行结果和恢复来源，并补齐键盘、屏幕阅读器与错误恢复验收。 |
+
+## 2026-08-05 F5 全渠道敏感信息保护：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 得分 | **F5 / 正式完成 / 3/3**。严格完成度从 `81/93` 提升为 **`82/93`**；F 类从 5/6 提升为 **6/6（F1～F6）**。Phase 3 台账从 `21/50（42%）` 提升为 **`22/50（44%）`**。 |
+| 用户可感知结果 | 用户在聊天中误贴 API Key、Bearer Token、个人秘密、邮箱或手机号时，内容在本地被拦截且不会进入模型或后续会话；导出本地数据前统一脱敏；分享含敏感信息的成果时必须逐项选择“遮蔽”或“删除”，未处理完整不能发送。通知、日志和诊断不再暴露原值。 |
+| 统一实现 | 新增平台无关的 `sensitiveData` 扫描、脱敏和递归净化核心，聊天、Runtime 事件、调试日志、诊断、网关日志、通知、本地导出与分享共同使用。移除各通道独立维护规则所造成的覆盖差异；分享仍保留稳定 finding ID、逐项决策和主进程禁止绕过。 |
+| 修复的真实缺陷 | 修复本地导出直接序列化线程快照与偏好、嵌套 Runtime/调试事件保留原值、诊断和聊天未一致覆盖邮箱/手机号/用户秘密、多个通道重复正则规则、C8 未显式启动真实 Full Runtime、全新用户目录被首次设置页挡住后产生不透明原生异常，以及 L3 合同读取废弃 Windows re-export 七项问题。 |
+| 单元 / 合同 | PASS：F5 合同 **9/9**；公共扫描、递归对象净化、聊天本地阻断、导出净化、秘密脱敏、通知和分享测试全部通过。L3 为 **8/8** 指标、**8/8** 反例、**39/39** 合同。 |
+| 正式打包单轮 | PASS：正式 `OpenDrSai.exe` 连接真实 OpenDrSai Full Runtime，中文空格路径 D7/D5/CERN 材料、敏感聊天和本地导出共 **25/25**；日志与应用自有数据中四个原始敏感值命中均为 0。 |
+| 外发确认 | PASS：packaged L3 **20/20**。五类敏感信息只显示安全预览；主进程直接绕过被拒绝；用户逐项遮蔽/删除后，接收页、打开、下载和持久存储原值命中为 0；源文件哈希不变；模型请求 0。 |
+| 正式稳定性 | PASS：真实 Full Runtime 隔离实例连续 **20/20** 轮、**500/500** 检查，配置重试 0、实际重试 0；每轮日志和应用自有数据原值命中均为 0，固定 CERN PDF 每轮哈希不变。 |
+| 自动验收入口 | `npm run verify:f5-sensitive-data-pipeline`；`npm run verify:l3-sensitive-share-review`；`npm run verify:packaged-l3-sensitive-share-review`；`npm run verify:c8-chinese-privacy`；`npm run verify:c8-chinese-privacy-stability`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round28-sensitive-data-pipeline.json`；C8 single5 summary；C8 20 轮 stability summary；L3 packaged result。 |
+| 下一闭环 | 推进 M06-F03：side-effect ledger 完整记录请求、审批、幂等键、执行和恢复，并覆盖 approve 与 write 之间崩溃后的不漏不重。 |
+
+## 2026-08-05 F4 异常数据处理决定：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 得分 | **F4 / 正式完成 / 3/3**。严格完成度从 `80/93` 提升为 **`81/93`**；F 类从 4/6 提升为 **5/6（F1、F2、F3、F4、F6）**。 |
+| 用户可感知结果 | 用户发现异常数据后，可在成果中心用互斥选项选择“保留异常”“排除异常”或“两种都做”；每项均显示对分析结论的影响。决定可用纯键盘完成，执行后页面明确显示采用的决定和生成结果数量。 |
+| 生产实现 | 三分支通过工作区受限的异常处理服务生成独立 CSV 和 JSON 决定回执，原 PDF/CSV 不覆盖。Windows 后台任务规范化与克隆路径完整保留 `artifact.anomalyDecision`，因此页面刷新和 App 重启后仍能恢复决定、摘要、来源哈希、回执路径与输出清单。 |
+| 真实缺陷与修复 | 修复四项真实缺陷：验收器未启动真实 Full Runtime；键盘焦点未原生到达应用按钮；主进程规范化器静默裁掉决定记录；相邻稳定性轮次的 PID 端口复用可能让上一轮清理终止新网关。 |
+| 单元/契约层 | PASS：`npm run typecheck`；F4 合同 **12/12**；三分支、CSV 引号、原子替换、源文件保留和非法输入拒绝测试全部通过。 |
+| 正式打包单轮 | PASS：真实 `OpenDrSai.exe` 连接真实 OpenDrSai Full Runtime，keep / exclude / both 三分支 **60/60**；配置重试 0、实际重试 0。 |
+| 正式稳定性 | PASS：20/20 轮、60/60 场景、**1,200/1,200** 检查；每轮隔离 App 数据和工作区；配置重试 0、实际重试 0。 |
+| 数据与副作用 | 三分支行数、异常数与数值和准确；产物互不覆盖；目录新增项与副作用账本完全一致；输出 SHA-256 与回执一致；固定 7,664,262-byte CERN PDF 和源 CSV 哈希不变。 |
+| 自动验收入口 | `npm run verify:f4-anomaly-decision`；`npm run verify:packaged-f4-anomaly-decision`；`npm run verify:f4-anomaly-decision-stability`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round27-anomaly-decision.json`；`docs/desktop/evidence/round27-f4-packaged-final8/summary.json`；`docs/desktop/evidence/round27-f4-stability-final/summary.json`。 |
+| 下一闭环 | 推进 F5 / M06-F02：聊天、日志、通知、导出和分享共用秘密扫描与脱敏，明文秘密命中必须为 0。 |
+
+## 2026-08-05 F6 工作区边界：正式完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 功能 ID / 状态 / 得分 | **F6 / 正式完成 / 3/3**。严格完成度从 `79/93` 提升为 **`80/93`**；F 类从 3/6 提升为 **4/6（F1、F2、F3、F6）**。 |
+| 用户可感知结果 | 用户选择工作区后，OpenDrSai 可正常读取和写入该目录；模型或工具提交 `..`、系统绝对路径、盘符路径、UNC 路径、符号链接或 junction 越界路径时，文件和命令都会被拒绝，不会修改未选择目录。工作区目录在任务运行中被替换时，任务会安全停止并要求重新打开工作区。 |
+| 生产实现 | 文件与命令统一通过 OWOP 相对路径协议和 canonical Workspace guard；Workspace 根目录注册时拒绝 symlink/junction，并记录文件系统身份。每次操作前后重新核对根身份和 reparse point；读取摘要来自同一安全文件句柄，不再按路径二次读取；写入、移动和删除在最终提交点再次检查。 |
+| 攻击矩阵 | PASS：`..`、绝对路径、Windows 盘符、UNC、junction 读取、junction 写入、junction 命令 cwd、大小写边界、相似前缀目录、父目录 TOCTOU 置换、已注册根目录置换全部拒绝。允许的中文空格工作区读写保持可用。 |
+| 正式打包验收 | PASS：真实 `OpenDrSai.exe` 连接真实 OpenDrSai Full Runtime，连续 **20/20** 个隔离 App 数据与工作区实例通过，共 **360/360** 项检查；路径逃逸成功 **0**，未选择目录变化 **0**。 |
+| 后端包验收 | PASS：从 `app.asar.unpacked` 内正式随 App 分发的 `drsai-backend-source.zip` 提取并执行 21/21 专项探针；Focused Runtime/OWOP 为 33 passed、24 subtests passed，Windows 不具备普通 symlink 权限的 1 项跳过由真实 junction 场景覆盖。 |
+| 真实缺陷与修复 | 原实现没有固定已注册 Workspace 根目录身份；攻击者可在注册后把整个根目录换成 junction，使后续解析把外部目录误当成新根。另有读取后按路径重新计算摘要的 TOCTOU 窗口。现已用根目录设备/文件身份校验、reparse root 拒绝和同句柄摘要消除。 |
+| 自动验收入口 | `npm run verify:opendrsai-workspace-guard`；`npm run verify:packaged-f6-workspace-guard`。 |
+| 正式证据 | `docs/desktop/evidence/opendrsai-windows-phase3-round25-workspace-guard.json`、`docs/desktop/evidence/opendrsai-windows-phase3-round25-workspace-guard-probe.json`、`docs/desktop/evidence/round25-f6-packaged-final/summary.json`。 |
+
 ## 2026-07-19 F4 选项清晰且有影响说明：续作复验，仍未完成
 
 | 字段 | 内容 |
@@ -48,7 +207,7 @@
 | C | **9/9** | C1～C9 |
 | D | **6/6** | D1～D6 |
 | E | **8/8** | E1～E8 |
-| F | **3/6** | F1～F3 |
+| F | **6/6** | F1～F6 |
 | G | **11/11** | G1～G11 |
 | H | **7/7** | H1～H7 |
 | I | **6/6** | I1～I6 |
@@ -3098,7 +3257,7 @@
 | C 材料导入、识别与使用 | 9 | 9 | C1-C9 自动验收与回归 | 已完成 |
 | D 自动规划与连续完成任务 | 6 | 0 | D1-D6 证据核查 | 未完成 |
 | E 执行进度、介入与长任务 | 8 | 0 | E1-E8 证据核查 | 未完成 |
-| F 决策、权限与安全感 | 6 | 3 | F1～F3 自动验收与回归；F4-F6 证据核查 | 进行中 |
+| F 决策、权限与安全感 | 6 | 5 | F1～F4、F6 自动验收与回归；F5 证据核查 | 进行中 |
 | G 成果生成、查看与修改 | 7 | 0 | G1-G7 证据核查 | 未完成 |
 | H 依据、可信度与复核 | 7 | 0 | H1-H7 证据核查 | 未完成 |
 | I 版本、撤销与路线比较 | 6 | 0 | I1-I6 证据核查 | 未完成 |
@@ -3147,8 +3306,8 @@
 | F1 | 已完成 | 3 | Windows 11 正式 OpenDrSai.exe；20 个隔离实例 | 固定 CERN 48 页 PDF；G1～G4 读取、分析、综合和草稿任务；高风险工作流控制样本 | PDF 预览→两类材料问答→生成 9 页管理者草稿→内部上下文刷新→持续采样两类审批队列→非法来源动作负测→合法高风险审批卡→拒绝→分享与哈希负测 | 通过 | 63/63 策略合同；32/32 packaged；20/20 稳定性；640/640 检查；100 项低风险操作桌面/浏览器审批峰值 0/0、等待 0 ms；高风险控制恰好 1 张卡 | 通过 | stability summary；20 份 packaged JSON、PPTX、provenance、PNG、摘要与完整性 JSON；F2/G1–G4/UI/mojibake/PDF→PPT 回归 | 首次运行遗漏 F1 E2E 启动标志导致未进入 renderer，补齐测试门控后正式代码连续通过；无人工完成项 | F 类 1/6；推进 F2 关键操作必须确认 |
 | F2 | 已完成 | 3 | Windows 11 正式 OpenDrSai.exe；20 个隔离实例 | 固定 CERN 48 页 PDF；访问新目录、外发数据、大额计算、覆盖、删除、公开分享六类高风险操作 | 六类审批卡逐一排队并键盘拒绝；六类授权控制逐一批准；相同幂等键再次提交 | 通过 | 单轮 60/60；20/20 稳定性、1,200/1,200；120 次拒绝副作用 0；120 次授权控制各执行 1 次；重复执行 0；CERN 哈希不变 | 通过 | F2 security contract；packaged evidence；20 轮 stability summary；F1、审批中心、UI、乱码、CERN PDF→PPT 回归 | 旧测试曾硬编码未授权执行为 0，已改为主进程可观察副作用账本；无人工完成项 | F 类 2/6；推进 F3 审批信息完整易懂 |
 | F3 | 已完成 | 3 | Windows 11 正式 OpenDrSai.exe；20 个隔离实例 | 固定 CERN 48 页 PDF；文件访问、文件修改、数据外发、大额计算、文件删除五类高风险入口 | 五类业务卡同时展示→DOM 七字段与内部术语扫描→完整可访问树→系统键盘逐一拒绝→重新提案并逐一允许→幂等负测 | 通过 | 单轮 71/71；20/20、1,420/1,420；五类卡动作/对象/范围/影响/风险/允许/拒绝完整；主文案内部标识 0；100 次拒绝副作用 0；100 次授权各 1；重复执行 0；CERN 哈希不变 | 通过 | F3 contract；最终 stability summary；20 份结果、业务卡 PNG、完整可访问树、副作用诊断；F1/F2/M5/UI/乱码/CERN PDF→PPT 回归 | 首轮键盘测试窗口未置前；F2 旧卡回退标题缺失；M5 旧夹具未注册工作区且成果越界，均修复后通过；无人工完成项 | F 类 3/6；推进 F4 三种数据处理决定 |
-| F4 | 未完成-已派发/执行中断/证据缺失 | 0 | 未覆盖正式矩阵 | G2/D2 异常数据三分支 | 未发现真实 packaged “保留、排除、两种都做”选择执行记录；2026-07-14 13:11 已向唯一 F 能力任务写入完整任务，13:12 开始定位，13:14 因 120 秒窗口超时停在代码检索阶段，未落盘实现 | 未判定 | 缺互斥影响说明、纯键盘/A11Y、真实数据/数字/成果一致性、分支隔离、副作用账本及 20 轮 60 场景记录 | 未测；任务可从同一 session 继续 | `npm run verify:approval-center` 通过；无 F4 专用脚本、packaged/产品闭环证据 | 缺代码、CONTRACT/GOLDEN、真实 packaged UI-E2E、产品闭环、20 轮和正式矩阵 | 仅续跑任务 `019f5d30-3e59-7c01-882c-8d7ef89558da`；先完成 F4 单轮三分支全绿并保存 SHA256，再跑 20 轮并回填证据 |
-| F5 | 未完成-证据缺失 | 0 | 未覆盖正式矩阵 | D7 | 未发现日志/导出/通知/分享脱敏证据 | 未判定 | 缺明文秘密泄漏测试 | 未测 | 无 | 一票否决未确认 | 补敏感信息安全测试 |
+| F4 | 已完成 | 3 | Windows 11 正式 OpenDrSai.exe；20 个隔离轮次 | 固定 CERN 48 页 PDF；5 行异常容量 CSV；keep / exclude / both 三分支 | 成果中心显示三项影响说明→系统键盘选择并应用→真实 Full Runtime 连接→生成独立 CSV/JSON 回执→页面记录决定→磁盘重读任务记录→核对产物、数值、哈希和副作用账本 | 通过 | 合同 12/12；单轮 60/60；20/20 稳定性、60/60 场景、1,200/1,200；重试 0；决定持久化；分支隔离 100%；原文件变化 0 | 通过 | Round 27 总证据；single packaged summary；20 轮 stability summary；逐分支 result/PNG/AX tree/side-effect ledger | 主进程曾静默裁掉决定记录；验收器曾缺真实 Runtime、键盘原生应用和稳定端口隔离，均修复后从头通过 | F 类 5/6；推进 F5 全渠道秘密扫描与脱敏 |
+| F5 | 已完成 | 3 | Windows 11 正式 OpenDrSai.exe；20 个隔离 Full Runtime 实例 | D7 五类敏感信息；中文空格路径；固定 CERN PDF | 材料导入与预览→敏感聊天本地阻断→本地导出→日志/诊断/通知/应用数据扫描→外发逐项遮蔽/删除→接收、打开、下载与存储扫描 | 通过 | F5 合同 9/9；L3 8/8 指标、8/8 反例、39/39 合同；单轮 25/25；20/20 稳定性、500/500；重试 0；原值命中 0 | 通过 | Round 28 总证据；C8 single/stability；L3 packaged result | C8 首次设置前置已修；Runtime 子进程回收后命令可正常退出，Windows 延迟句柄产生的测试目录在正式汇总后核对并清零 | F 类 6/6；推进 M06-F03 side-effect ledger |
 | F6 | 未完成-已派发待交付 | 0 | 未覆盖正式矩阵 | D8；工作区内/未选目录/系统目录/`..`/绝对路径/符号链接与 junction/UNC/盘符/中文空格路径 | 2026-07-14 16:03 已向唯一 F 能力任务派发真实 packaged 普通用户入口、规范化/TOCTOU、允许范围准确和路径逃逸任务；发送接口约 60 秒无回执，尚无代码或证据交付 | 未判定 | 目标为逃逸阻止率 100%、允许范围准确率 100%、未授权执行 0；当前均无新证据 | 未测 | 无新证据；待 CONTRACT+SECURITY、真实 packaged UI-E2E、产品闭环、20 轮和正式矩阵 summary/hash | 一票否决未确认；F2 旧证据拒绝后 filesHash 变化 | 仅在同一 F 任务核查交付；先单轮全绿再跑 20 轮，矩阵缺格保持红灯 |
 | G1 | 已完成 | 3 | Windows 10.0.26200 x64；正式 OpenDrSai.exe | G1 论文总结、G2 数据分析、G3 研究综合、G4 导师汇报；报告/文件/文件夹/演示文稿各 1 | 从左侧固定“成果”主导航进入，不经过聊天记录；读取全局统一后台任务，按来源任务分组并按类型筛选；逐一点击四项打开动作；等待自动刷新后再次读取稳定 ID | 通过 | 固定路由 1；来源任务 4/4；类型 4/4；稳定 ID 与路径 4/4；打开状态 opened 4/4；刷新后 ID 不变 4/4；聊天临时链接使用 0 | 通过 | `release/product-evidence/g1-results-center/packaged-g1-results-center-result.json`、`packaged-g1-results-center.png`；19 项 CONTRACT + 14 项 packaged 专项断言 | 无；首次发现的跨工作区漏索引已修复并由全局索引断言覆盖 | 推进 G2 结构完整的可交付文件验收 |
 | G2 | 已完成 | 3 | Windows 10.0.26200 x64；正式 OpenDrSai.exe | G4：old-report.md、latest-data.csv、result.png；生成 mentor-report.md | 从可见 Agent 入口执行 G4→读取并解析报告→持久化质量对象→核对完成标准→从固定成果中心展开检查并点击打开 | 通过 | Markdown 可解析；规定章节 6/6；占位符/乱码/空图/断链均 0；黄金事实 5/5、覆盖率 100%；质量状态 passed；打开状态 opened | 通过 | `release/product-evidence/g2-deliverable-report/packaged-g2-deliverable-report-result.json`、`packaged-g2-deliverable-report.png`；17 项 CONTRACT + 14 项 packaged 专项断言 | 无；首次验收因通用 checkpoint 回滚早于成果读取而失败，已把 G2 验收改为在成果保留状态读取，不改变产品运行逻辑 | 推进 G3 多输出版本与跨版本数字一致性验收 |
@@ -3208,7 +3367,7 @@
 | 项 | 当前状态 | 证据 | 下一步 |
 | --- | --- | --- | --- |
 | 未授权文件、网络、计算或分享操作 | 部分确认 | F2 已证明访问新目录、外发数据、大额计算、覆盖、删除和公开分享连续 20 轮共 120 次拒绝副作用为 0，120 次授权控制各执行 1 次且无重复；L1 已证明跨清单与外部账号拒绝；L2 已证明接收账号本地任务隔离、最终成果 manifest 白名单及 12/12 越权拒绝；L4 已证明三种协作权限逐请求重判、改权立即生效。F6 路径逃逸边界仍未完成 | 继续建立 F6 路径边界自动化拒绝测试 |
-| API Key、令牌或敏感数据明文泄漏 | 部分确认 | J2 已证明记忆链路秘密命中 0；L3 已证明分享前识别 API Key/Bearer/用户秘密/邮箱/手机号，主进程禁止绕过，净化后的 manifest、名称、打开、下载和分享持久化原值均为 0，源文件保持不变。F5 聊天、日志、导出、通知全渠道仍未完成 | 继续建立 F5 全渠道敏感信息安全测试 |
+| API Key、令牌或敏感数据明文泄漏 | 已确认清零 | F5 已用统一扫描与脱敏核心覆盖聊天、嵌套 Runtime/调试事件、日志、诊断、通知、本地导出和分享；真实 OpenDrSai Full Runtime 单轮 25/25、连续 20/20 轮 500/500，日志与应用自有数据原值命中均为 0。L3 证明外发前逐项确认、主进程禁止绕过，接收页、打开、下载和持久化原值命中均为 0，源文件不变 | 保持安全回归；后续渠道接入必须复用公共管线 |
 | 用户原始文件被错误删除或覆盖且无法恢复 | 已确认（I2/I6/M10 范围） | I2 已证明明确成果范围连续 40 次恢复不改变用户原文与源 PDF；I6 已证明 3 次外部修改冲突均停止静默覆盖并保留外部版本和用户副本；M10 连续 20/20 轮证明清会话、清全部应用数据和正常卸载后固定 CERN PDF 与用户生成报告均存在且 SHA-256 不变 | 保持清理白名单、冲突保护和哈希矩阵回归 |
 | 关键数字与黄金数据不一致却标记可信 | 未确认 | 未发现 D2/D4 黄金数字核对 | 建立 G6/H3/H5 自动核对 |
 | 虚构引用或引用无法支持结论 | 未确认 | 未发现 D1/D3 引用人工核对 | 建立 H1/H2 双人复核 |

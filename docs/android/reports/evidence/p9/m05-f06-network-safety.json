@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F06",
+  "generated_at": "2026-08-05T13:14:58.654349+00:00",
+  "passed": true,
+  "gates": {
+    "https_only_and_credentials_ports_denied": true,
+    "localhost_and_private_ranges_denied": true,
+    "carrier_nat_multicast_and_zero_denied": true,
+    "ipv6_loopback_ula_linklocal_denied": true,
+    "dns_rebinding_is_checked_at_lookup": true,
+    "every_fetch_redirect_is_revalidated": true,
+    "every_browser_redirect_is_revalidated": true,
+    "browser_active_and_binary_content_denied": true,
+    "unknown_length_response_is_stream_bounded": true,
+    "download_is_stream_bounded": true,
+    "network_policy_suite_green": true,
+    "browser_and_fetch_regression_green": true
+  },
+  "android_suites": {
+    "network": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "sha256": "c9a892944331b1a19158d1c8c77b84c1e6e6f8c1d4f5ad976a62e2dd195475de"
+    },
+    "browser": {
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "sha256": "f4c6699ab272007a1f27204525519572d818bca8a73cc4a181e0afc87171e719"
+    },
+    "fetch": {
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "sha256": "b972dd9c7dcf4612f5ef930346a4940b959f0b6bd3f13093a7d766b0ec35f755"
+    }
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/NetworkSafetyPolicy.kt": "979daea6d3f0ba8808c40bd30769d3f26294fb3b00f0f62bfe444d1e5ddd191d",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ControlledBrowserTool.kt": "1bc4166c12c358d183f423cce43174c01032cda7daf8bf5caeceab0a92db9b40",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/WebFetchTool.kt": "1b59d124f57c810d5e66cd082e48215435a8069e2c3cd6fbc1541ab684a3ede2",
+    "apps/android/app/src/test/java/ai/drsai/remote/NetworkSafetyPolicyTest.kt": "d3eaba834807f024000bf8d1e0d09be8db743738e5ad9092d49ca52e38d97e58",
+    "apps/android/app/src/test/java/ai/drsai/remote/ControlledBrowserToolTest.kt": "527c92de11e5e4fd3167ddee94acdb775633d62e7d811812796838483c5befb2"
+  }
+}

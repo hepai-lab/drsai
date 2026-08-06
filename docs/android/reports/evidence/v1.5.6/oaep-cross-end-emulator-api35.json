@@ -1,0 +1,69 @@
+{
+  "android_to_desktop": {
+    "event_count": 9,
+    "item_types": [
+      "artifact",
+      "interaction",
+      "message",
+      "subtask",
+      "tool_call"
+    ],
+    "items_digest": "1ffc63efb7d6727accb8b8ab8a4f02415d595c923023ef2baf71a694b0fb4517",
+    "p95_ms": 273.44,
+    "runtime_id": "rt_bebf6126749c4165bf135427740529e7",
+    "session_id": "android-e2e-session",
+    "snapshot_sequence": 9
+  },
+  "apk": "OpenDrSai-Android-v1.5.6.apk",
+  "apk_sha256": "6787c01c6f8122bc37608594b10f558cc2cd0c00cefc73aa9cbb88b2fadd5ce6",
+  "cross_end_approval_race": {
+    "android_status": "approved",
+    "approval_event_count": 1,
+    "approval_id": "desktop-e2e-approval",
+    "approval_transition_count": 1,
+    "decision_order": [
+      {
+        "decision": "approve",
+        "idempotency_key": "desktop-race-decision",
+        "order": 1
+      },
+      {
+        "decision": "approve",
+        "idempotency_key": "approval:desktop-e2e-approval:approve",
+        "order": 2
+      },
+      {
+        "decision": "approve",
+        "idempotency_key": "desktop-race-decision",
+        "order": 3
+      },
+      {
+        "decision": "approve",
+        "idempotency_key": "desktop-race-late-replay",
+        "order": 4
+      }
+    ],
+    "desktop_status": "approved",
+    "receipt_replay_count": 1,
+    "side_effect_execution_count": 1,
+    "side_effect_receipt_count": 1,
+    "status": "approved"
+  },
+  "desktop_to_android": {
+    "disconnect_after": 4,
+    "event_count": 9,
+    "items_digest": "322900111989b1f339dd1a8fb888870f1be06dcbbaf0c76d453fd01dc9c402e6",
+    "realtime_events": 5,
+    "reconnect_cursor": 4,
+    "runtime_id": "rt_6d087e3bf06a4388a54bc9c899a8f6bc",
+    "session_id": "desktop-e2e-session",
+    "snapshot_sequence": 9
+  },
+  "device": "sdk_gphone64_x86_64",
+  "finished_at": "2026-08-04T17:36:27.274349+00:00",
+  "passed": true,
+  "schema_version": 1,
+  "serial": "emulator-5560",
+  "started_at": "2026-08-04T17:36:21.314356+00:00",
+  "test_apk_sha256": "32be85c948f7a8ecc0ab05151c689a4fa9e92400748ca90bf947a9e4a05f6c4c"
+}

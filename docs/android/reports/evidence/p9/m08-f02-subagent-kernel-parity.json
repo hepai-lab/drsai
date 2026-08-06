@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F02",
+  "generated_at": "2026-08-05T12:21:15.313497+00:00",
+  "passed": true,
+  "gates": {
+    "subagent_uses_the_only_agent_kernel_factory": true,
+    "child_has_independent_run_state_and_checkpoint": true,
+    "kernel_identity_is_published_and_verified": true,
+    "context_inheritance_is_controlled_and_content_is_not_copied": true,
+    "tool_whitelist_can_only_shrink_to_safe_read_tools": true,
+    "explore_and_general_are_the_only_declared_types": true,
+    "android_and_desktop_child_kernel_digest_match": true,
+    "python_subagent_and_mobile_regression_green": true,
+    "android_delegate_schema_suite_green": true,
+    "api35_real_runtime_subagent_identity_and_whitelist_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": "...............................................                          [100%]\n47 passed in 4.00s"
+  },
+  "android_schema_suite": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.ToolSchemaContractTest",
+    "sha256": "4af9899969b1721781695a96b10017dbbb1afd1a9bd08d923683dcafe8d0208f"
+  },
+  "connected_suite": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+    "sha256": "4c7057969fd3a4e11a7ead17d593bc780095f172a0c89caa33abcc3747eee172"
+  },
+  "connected_report": "docs/android/reports/evidence/p9/m08-f02-subagent-kernel-parity-instrumentation.xml",
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel_factory.py": "483e9d79dd3c4cb543a5a570b2cd179b4072d0d15b303ea7f9434762c54165a0",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/FullRuntimeToolCatalog.kt": "49ff6fe299a9a38d26be47dce4aa92f6587e430dccf34705ea391c00339d1085",
+    "cores/python/packages/drsai/tests/test_subagent_kernel_parity.py": "a2ff52de5742f8c2df11c8cb8e68560cd80ebc339b2786c4340dc42ae01204e0",
+    "cores/python/packages/drsai/tests/test_mobile_agent_core.py": "e28a759781773bed242010c218e01ef8e2040f0a56459dfa3f9a6de5f35a0b68",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/PythonRuntimeCriticalJourneyTest.kt": "0f440d91cfde36f9e00d53533ff273dcf54fe176a89f026f621b9dd099a976e5",
+    "apps/android/app/src/test/java/ai/drsai/remote/ToolSchemaContractTest.kt": "2105fee0a4a252af877f9ba7f5d34022f3c8a14b6559d552752ea18549faa3f5"
+  }
+}

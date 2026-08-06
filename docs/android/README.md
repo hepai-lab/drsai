@@ -19,10 +19,16 @@
 
 1. [Android 产品概览](overview/ANDROID_PRODUCT_OVERVIEW.md)
 2. [Android 技术架构报告](architecture/ANDROID_TECHNICAL_ARCHITECTURE_REPORT.md)
+   - [Android Agent Runtime → OAEP 映射基线](architecture/ANDROID_AGENT_RUNTIME_OAEP_MAPPING.md)
 3. [Android 完整开发计划](plans/master/ANDROID_COMPLETE_DEVELOPMENT_PLAN.md)
 4. [主界面设计](design/MAIN_INTERFACE_DESIGN.md)
 5. [远程工作区开发方案](plans/remote-workspace/ANDROID_REMOTE_WORKSPACE_DEVELOPMENT_PLAN_V1.md)
-6. [测试与验收报告](testing/reports/)
+6. [v1.5.6：移除 Kotlin Lite、默认绑定 Full Runtime 开发测试方案](plans/runtime/ANDROID_V1_5_6_FULL_RUNTIME_DEFAULT_DEVELOPMENT_TEST_PLAN.md)
+7. [第 8 阶段：Android Agent Runtime 完全 OAEP 化开发计划](plans/runtime/ANDROID_STAGE8_AGENT_RUNTIME_OAEP_DEVELOPMENT_PLAN.md)
+8. [第 9 阶段：Desktop Full Agent Runtime 能力对等开发与测试方案](plans/runtime/ANDROID_P9_DESKTOP_FULL_AGENT_RUNTIME_PARITY_DEVELOPMENT_PLAN.md)
+9. [测试与验收报告](testing/reports/)
+10. [第 8 阶段实施进度](reports/progress/ANDROID_STAGE8_AGENT_RUNTIME_OAEP_PROGRESS.md)
+11. [第 9 阶段实施进度](reports/progress/ANDROID_P9_DESKTOP_FULL_AGENT_RUNTIME_PARITY_PROGRESS.md)
 
 ## 维护约定
 

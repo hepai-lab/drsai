@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "feature_id": "M01-F06",
+  "generated_at": "2026-08-05T14:37:10.639804+00:00",
+  "passed": true,
+  "gates": {
+    "runner_uses_both_production_agent_entries": true,
+    "same_model_prompt_and_capability_fixture_is_bound": true,
+    "kernel_prompt_tool_and_skill_digests_match": true,
+    "plan_tool_intent_terminal_and_semantic_events_are_equivalent": true,
+    "user_visible_result_is_equivalent": true,
+    "desktop_production_suite_is_green": true,
+    "api35_and_real_arm64_runner_are_green": true,
+    "runner_evidence_is_bound_to_fixture_hash": true
+  },
+  "devices": [
+    "emulator-5554",
+    "adb-R5GYB3S8ACH-VgdHyH._adb-tls-connect._tcp"
+  ],
+  "source_sha256": {
+    "docs/android/reports/evidence/p9/m12-f02-production-behavior-parity.json": "b9ae2490a7ea3a2eb4039be5b6c74b3fd2c031ec080ef15c65c716c0b7497798",
+    "cores/protocol/android-runtime/fixtures/p9-production-behavior-parity-v1.json": "a8759e73473238401991c2efde763137141af822676428d322bcfef85ea7b0c9",
+    "cores/python/packages/drsai/tests/test_p9_production_behavior_parity.py": "fc2017a73659fc98b3c69103138c67049cbbb7a31200e0985fe6a34804312f07",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/P9ProductionBehaviorParityInstrumentedTest.kt": "4fb5a6b7bd61f28109963e180eb5ab50561dd0a0fc3954cc241fbce5d834aa31"
+  }
+}

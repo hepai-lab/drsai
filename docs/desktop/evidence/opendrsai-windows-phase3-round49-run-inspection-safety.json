@@ -1,0 +1,72 @@
+{
+  "round": 49,
+  "gate": "M08-F04",
+  "status": "accepted",
+  "schema": "opendrsai.run-inspection/1",
+  "summary": "Run Inspection exposes only explicit public reasoning summaries and bounded redacted evidence across Runtime, Gateway, Electron IPC, Renderer, export, and packaged application boundaries.",
+  "contract": {
+    "defense_layers": ["python_runtime", "electron_main_ipc", "renderer", "manifest_export"],
+    "unit_canaries": 11,
+    "cross_layer_canaries": 7,
+    "public_reasoning_summaries": 1,
+    "raw_reasoning_segments": 0,
+    "raw_chain_of_thought_matches": 0,
+    "secret_matches": 0,
+    "private_path_matches": 0,
+    "manifest_prompt_body_fields": 0,
+    "manifest_input_body_fields": 0,
+    "unknown_run_fields_preserved": 0,
+    "bounded_recursion": true,
+    "bounded_fields_arrays_and_strings": true
+  },
+  "real_windows_e2e": {
+    "passed": true,
+    "real_gateway": true,
+    "real_electron": true,
+    "layers": ["gateway", "electron", "desktop_ipc", "oaep", "manifest", "renderer"],
+    "bridge": true,
+    "login": true,
+    "secret_corpus": true,
+    "raw_chain_of_thought_hidden": true,
+    "private_paths_hidden": true,
+    "evidence": "docs/desktop/evidence/run-inspection-safety-windows-e2e-result.json",
+    "screenshot": "docs/desktop/evidence/run-inspection-safety-windows-e2e.png"
+  },
+  "production_renderer": {
+    "passed": true,
+    "public_reasoning_summary_visible": true,
+    "raw_chain_of_thought_matches": 0,
+    "secret_matches": 0,
+    "private_path_matches": 0,
+    "technical_evidence_redacted": true,
+    "configuration_evidence_redacted": true,
+    "screenshot": "apps/desktop/windows/release/product-evidence/run-inspection-safety/production-renderer-run-inspection-safety.png"
+  },
+  "regression": {
+    "python_run_inspection_tests": "31/31",
+    "typescript_contract": true,
+    "run_inspector_static_contract": true,
+    "typecheck": true,
+    "build_unpack": true,
+    "packaged_main_preload_ipc_smoke": true,
+    "structured_renderer": true,
+    "structured_visual_screenshots": 20
+  },
+  "release_scope": {
+    "experiment_release_gate_bypassed": false,
+    "focused_read_only_e2e": true,
+    "real_backend_account_proven": false,
+    "reason": "M08-F04 is a local public-evidence security boundary; live HAI account acceptance remains a separate fail-closed release gate."
+  },
+  "sha256": {
+    "safety_contract": "d47a83202445c46109a015c6062a9b166689957ba5a3684da5386b4504ca8165",
+    "electron_main": "d8c1c53f2ea472599e5fd14c0a3e750cb36eb2a267625f7f6a73a3f02b3cd606",
+    "run_inspector_renderer": "71110b3e886b964a16bbbe97b3f501e54621d962cb986891c4bc094589268b08",
+    "python_runtime": "b191eb9eb95103177f508b18c82934bc06f3ab29d8f3c0ede97d04678576a1f7",
+    "typescript_verifier": "b4078acb4b7b7241d68d29a6185b77d4c4bd203ba94f3796f82f3141abfe58dd",
+    "production_renderer_verifier": "800e7527484c1379fa638dcb49d4f8addf5166bc21451484ab2af40d5c38aece",
+    "real_windows_e2e_result": "8945b2bf25c0830ae423a7b169fae554521f38eedfe383f8f1a2975a97578826",
+    "real_windows_e2e_screenshot": "a733db36d05c5499c460ccf97e7f189f7926c9a6f7ea0433b08a5aad076ddaea",
+    "app_asar": "c841bb1f5eda9f41f943eee88375bc9b3e40c7a8b68f4d5359a139ed3db9d1ae"
+  }
+}

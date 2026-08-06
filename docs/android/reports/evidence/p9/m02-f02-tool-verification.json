@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "feature_id": "M02-F02",
+  "generated_at": "2026-08-05T12:10:27.940111+00:00",
+  "passed": true,
+  "fixture_count": 10,
+  "results": [
+    {
+      "case_id": "latest_event",
+      "expected_required_domains": [
+        "retrieval"
+      ],
+      "actual_required_domains": [
+        "retrieval"
+      ],
+      "available_domains": [
+        "retrieval"
+      ],
+      "requirement_sha256": "0ba69ccb653a7439b0cff22bd6770140c355945d97e328b01949f94ccf958802",
+      "passed": true
+    },
+    {
+      "case_id": "unknown_entity_year",
+      "expected_required_domains": [
+        "retrieval"
+      ],
+      "actual_required_domains": [
+        "retrieval"
+      ],
+      "available_domains": [
+        "retrieval"
+      ],
+      "requirement_sha256": "0ba69ccb653a7439b0cff22bd6770140c355945d97e328b01949f94ccf958802",
+      "passed": true
+    },
+    {
+      "case_id": "unknown_entity_mixed_case",
+      "expected_required_domains": [
+        "retrieval"
+      ],
+      "actual_required_domains": [
+        "retrieval"
+      ],
+      "available_domains": [
+        "retrieval"
+      ],
+      "requirement_sha256": "0ba69ccb653a7439b0cff22bd6770140c355945d97e328b01949f94ccf958802",
+      "passed": true
+    },
+    {
+      "case_id": "arithmetic",
+      "expected_required_domains": [],
+      "actual_required_domains": [],
+      "available_domains": [
+        "retrieval"
+      ],
+      "requirement_sha256": "522912a78bc81237906ab15a42db30d3bd017a0414b53fbb626bc34dc574d59e",
+      "passed": true
+    },
+    {
+      "case_id": "known_fact",
+      "expected_required_domains": [],
+      "actual_required_domains": [],
+      "available_domains": [
+        "retrieval"
+      ],
+      "requirement_sha256": "522912a78bc81237906ab15a42db30d3bd017a0414b53fbb626bc34dc574d59e",
+      "passed": true
+    },
+    {
+      "case_id": "subjective",
+      "expected_required_domains": [],
+      "actual_required_domains": [],
+      "available_domains": [
+        "retrieval"
+      ],
+      "requirement_sha256": "522912a78bc81237906ab15a42db30d3bd017a0414b53fbb626bc34dc574d59e",
+      "passed": true
+    },
+    {
+      "case_id": "matching_retrieval",
+      "expected_category": "required_tool_selected",
+      "actual_category": "required_tool_selected",
+      "requirement_sha256": "0ba69ccb653a7439b0cff22bd6770140c355945d97e328b01949f94ccf958802",
+      "passed": true
+    },
+    {
+      "case_id": "omitted_retrieval",
+      "expected_category": "required_tool_omitted",
+      "actual_category": "required_tool_omitted",
+      "requirement_sha256": "0ba69ccb653a7439b0cff22bd6770140c355945d97e328b01949f94ccf958802",
+      "passed": true
+    },
+    {
+      "case_id": "wrong_time_tool",
+      "expected_category": "wrong_tool_selected",
+      "actual_category": "wrong_tool_selected",
+      "requirement_sha256": "0ba69ccb653a7439b0cff22bd6770140c355945d97e328b01949f94ccf958802",
+      "passed": true
+    },
+    {
+      "case_id": "required_retrieval_unavailable",
+      "expected_category": "required_tool_unavailable",
+      "actual_category": "required_tool_unavailable",
+      "requirement_sha256": "e5e571f63ce55348d49f8759233f27ba6a2db8dba44c748a71097122f2a754a1",
+      "passed": true
+    }
+  ],
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "cores/python/packages/drsai/tests/test_tool_verification_policy.py": "19e9af07267dbc9b2a9ab4fdd69ae02311a81988ab8b5e85c2e78b340ff53c19",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeEventMapper.kt": "bcb730b9f05285290225f8f95969432c31a97517ff0ba3f154a95a257a5c7f93",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonRuntimeEventMapperTest.kt": "5c3822ae42302be6a581ace5d23f0511ffb2df8750da313bb6be48a9095de830"
+  },
+  "automated_regression": {
+    "python": {
+      "tests": 106,
+      "failures": 0
+    },
+    "android_jvm": {
+      "tests": 434,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2
+    }
+  }
+}

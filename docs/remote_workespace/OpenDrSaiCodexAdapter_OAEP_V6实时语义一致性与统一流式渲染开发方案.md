@@ -1,7 +1,8 @@
 # OpenDrSai Codex Adapter OAEP V6：实时语义一致性与统一流式渲染开发方案
 
-状态：方案已冻结，待实施  
+状态：实施完成，80/80 功能点通过验收
 制定日期：2026-08-04  
+完成日期：2026-08-04
 上游方案：
 
 - `OpenDrSaiCodexAdapter_OAEP重构开发方案V2.md`
@@ -917,3 +918,82 @@ V6 只有同时满足以下条件才算完成：
 7. 新增 delta/completed same item_id 测试；
 8. 输出 P0 当前通过项、失败项和下一轮百分比。
 
+## 17. 实施完成记录
+
+### 17.1 模块完成度
+
+| 模块 | 功能点 | 状态 | 主要完成结果 |
+|---|---:|---|---|
+| M01 输入边界与 User 身份 | 7 | 7/7 | Desktop 只发送最新用户输入，Runtime User Item 具有稳定幂等身份，Codex 用户回显不再重复 |
+| M02 Codex Native Decoder 与 Mapper | 10 | 10/10 | role、phase、parts、十类 Item、生命周期、40ms/批大小 Coalescer、脱敏与未知事件诊断完成 |
+| M03 Canonical OAEP Writer | 10 | 10/10 | Normalized Event 直接事务化写入 Canonical Item/Event，Backend Binding 持久化，legacy 仅为下游兼容投影 |
+| M04 OAEP 一致性约束 | 8 | 8/8 | Item 状态机、七类 Delta、terminal 权威覆盖、对象字符串化防护和协议违规诊断完成 |
+| M05 Session Stream Controller | 9 | 9/9 | Snapshot → Replay → SSE 统一，Session cursor、自动续接、过期恢复和单一 OAEP Run 终态完成 |
+| M06 Presentation Projector | 10 | 10/10 | 十类 Item、七类 Delta、四路径相同 Reducer、稳定 Item ID 和安全未知事件投影完成 |
+| M07 Desktop 四层流式渲染 | 9 | 9/9 | 单行状态、处理过程、用户交互、最终结果四层结构，约 16ms 合批和终态清理完成 |
+| M08 迁移、版本与可观测性 | 7 | 7/7 | `oaep-codex/2.0`、历史 dry-run/重投影、幂等纠正和脱敏指标完成 |
+| M09 测试与发布门禁 | 10 | 10/10 | 80 项机器账本、10k Event、长会话、视觉、真实宿主 Codex 和 fail-closed 发布门禁完成 |
+| 合计 | 80 | 80/80 | 完成 |
+
+### 17.2 最终数据链路
+
+```text
+当前用户输入
+  → Codex app-server 原生通知
+  → Native Decoder
+  → Codex Mapper / Delta Coalescer
+  → Normalized Agent Event SPI
+  → Canonical OAEP Writer（同一事务）
+  → OAEP Snapshot / Replay / SSE
+  → 唯一 Presentation Projector
+  → Desktop 四层 Structured Turn Renderer
+```
+
+实时、历史加载、SSE Replay 和 Gateway 重启恢复不再使用各自的 Backend 私有渲染分支。Codex 与
+OpenDrSai 自身 Backend 均通过 Normalized Agent Event SPI 进入同一 OAEP 与 UI 链路。
+
+### 17.3 关键收口项
+
+1. Runtime 执行成功、失败和取消只接受 OAEP `event.run.*` 终态，禁止再补发 legacy `done/error/aborted`；
+2. 终态到达后立即释放 Renderer 的 streaming、delta、sequence 和请求映射，避免长会话内存增长；
+3. Session 归档、取消归档和删除与公开 OAEP Event 在同一事务完成，一个 Backend 通知只产生一个公开事件；
+4. `message/reasoning/plan/command/tool/subtask` Delta 使用 OAEP Stable 1.0 正式名称，未知 Delta 只进入诊断；
+5. Codex `thread/start` 与 `thread/resume` 显式使用用户审批审阅者，使 OAEP Approval Bridge 保持最终审批权；
+6. Desktop 订阅在创建 Run、诊断、附件暂存、执行、Outbox 完成和异常路径均能释放；
+7. 打包 Backend 源归档已重新生成，并从空临时目录成功构建、安装 `drsai-1.5.3` wheel。
+
+### 17.4 自动验收结果
+
+| 验收项 | 结果 |
+|---|---|
+| Python 全量回归 | `1021 passed, 4 skipped, 81 subtests passed` |
+| Codex Mapper/Backend 定向回归 | `30 passed` |
+| Desktop TypeScript | Node 与 Web typecheck 通过 |
+| OAEP Projector | 10 类 Item、7 类 Delta、实时/历史 parity、未知事件安全诊断通过 |
+| 结构化视觉 | 20 张截图通过；100%/125%/150% 与窄窗口状态层保持单行 |
+| 长会话性能 | 60 Run/120 消息与 500 Run/1000 消息通过；右栏切换分别约 12.8ms、22ms |
+| Backend 打包 | source 校验、wheel 构建及空目录安装通过 |
+| V6 Full Release Gate | 8 个合同门禁和真实证据 fail-closed 校验通过 |
+
+全量 Python 回归仅保留一个来自现有 FastAPI TestClient 的 `httpx2` 迁移警告，不影响本方案功能与验收。
+
+### 17.5 真实宿主机 Codex 验收
+
+最终验收使用 Windows 本机 Codex 和一次全新的 OpenDrSai Runtime 状态目录，完成：
+
+- 同一 Codex Thread 连续 3 轮，3 个 Turn ID 唯一且上下文保持；
+- 首轮和第二轮均在终态前产生 OAEP Delta；
+- Session 归档与取消归档往返；
+- 1 次真实 Approval Bridge 审批；
+- 1 次运行中取消并收敛为 `cancelled`；
+- Gateway 关闭后重新启动，继续原 Thread，恢复轮仍产生 OAEP Delta；
+- 最终状态为 4 个 `completed` 和 1 个 `cancelled`。
+
+本次证据 Thread：`019fc8d2-f88f-7840-8c21-8fab38e422ff`。机器可读摘要保存在
+`docs/remote_workespace/evidence/codex-adapter-oaep-v6-release-evidence.json`；详细临时运行数据位于
+`.artifacts/v6-live-exact-20260804/`，该目录不进入版本库。
+
+### 17.6 完成结论
+
+V6 的 9 个模块、80 个功能点和完成定义均已实现。发布门禁在缺少真实恢复、连续多轮、流式 Delta、
+审批、取消或归档证据时会失败关闭；当前无 V6 遗留功能点。

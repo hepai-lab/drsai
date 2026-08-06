@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "feature_id": "M01-F04",
+  "generated_at": "2026-08-05T11:03:40.285886+00:00",
+  "passed": true,
+  "gates": {
+    "focused_production_regression_passed": true,
+    "production_entry_calls_shared_adapter": true,
+    "all_non_command_task_shapes_use_kernel": true,
+    "shared_kernel_is_factory_default": true,
+    "legacy_environment_cannot_select_second_loop": true,
+    "multimodal_task_has_opaque_artifact_binding": true,
+    "default_subagent_policy_enters_kernel_profile": true,
+    "terminal_checkpoint_is_proven": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": ".................................................                        [100%]\n49 passed in 4.65s"
+  },
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py": "4a444fd271e7c31e39ca841516fdd7f32789ca7a7969d2c8ec17fabc77b15c55",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/desktop_agent_kernel_adapter.py": "26053211f2f2e87b3747d70dbbf3fa24d046ec630f3913beebd5e35b25a9968b",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/desktop_autogen_ports.py": "744cfa4539bf454255f21742422d10c222e30980d678d3999730fc10e808864e",
+    "cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/drsai_assistant.py": "246fc0ddcea3cbb6f65a1a7b828afd738418e505ccdb9311816fd9cbe93ebb89",
+    "cores/python/packages/drsai/tests/test_agent_kernel_factory.py": "66d03791ac72b16128da7933bca16f9d172380d38e7de6788a6757121a775631",
+    "cores/python/packages/drsai/tests/test_desktop_agent_kernel_adapter.py": "08b92ee2c834796c03d712c6364e5483e6b15d047a703c8d4ad25120fdd869da",
+    "cores/python/packages/drsai/tests/test_desktop_autogen_ports.py": "1ba7b321ec55a700fd94a10e36c2f2e778b1ffb12e8ec3f37cb02d81bd8fd8a5",
+    "cores/python/packages/drsai/tests/test_desktop_kernel_coordinator.py": "f315906944982d6281d938c9e7808cd1c583ff22fc94cf3a50cf2dc5c651dd6b",
+    "cores/python/packages/drsai/tests/test_desktop_kernel_run_stream.py": "17e8fcd24bc41e0bc49082443a32aae523bfee7a6ab83a493e91c9b2baab198d",
+    "cores/python/packages/drsai/tests/test_desktop_manager_ports.py": "1ed6b5234f807182953cb8c3247752f8fdd53e4b91e35f2b2b64534f71fce95a",
+    "cores/python/packages/drsai/tests/test_memory_policy.py": "278c40924f773bf049121d8ef950f5aed8f7b0bb097eec8b617d9f2a30e2563a"
+  }
+}

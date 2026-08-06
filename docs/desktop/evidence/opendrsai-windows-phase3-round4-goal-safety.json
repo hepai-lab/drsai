@@ -1,0 +1,40 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 4,
+  "captured_at": "2026-08-05",
+  "progress": {
+    "accepted": 0,
+    "total": 50,
+    "percent": 0,
+    "implemented_not_accepted": ["M03-F04", "M05-F04"],
+    "in_progress": ["M04-F02", "M04-F03", "M04-F04", "M04-F05", "M05-F05"]
+  },
+  "verified": [
+    {
+      "command": ".venv\\Scripts\\python.exe -m pytest cores/python/packages/drsai/tests/test_runtime_goals.py cores/python/packages/drsai/tests/test_agent_runtime.py cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py cores/python/packages/drsai/tests/test_agent_backend_contract.py cores/python/packages/drsai/tests/test_runtime_engine.py -q",
+      "result": "passed",
+      "summary": "62 passed, 19 subtests passed",
+      "coverage": "immutable Goal revisions, latest-version confirmation, OAEP confirmation item, model Provider/revision manifest, Tool identities, approval and cancellation"
+    },
+    {
+      "command": ".venv\\Scripts\\python.exe -m pytest cores/python/packages/drsai/tests/test_runtime_security.py cores/python/packages/drsai/tests/test_owop_local_workspace.py -q",
+      "result": "passed",
+      "summary": "16 passed, 1 skipped",
+      "coverage": "traversal, symlink, Windows junction, case boundary and TOCTOU-safe workspace operations"
+    },
+    {
+      "command": "npm run typecheck",
+      "cwd": "apps/desktop/windows",
+      "result": "passed"
+    }
+  ],
+  "remaining_acceptance_evidence": {
+    "M03-F04": "Two-model packaged E2E and concurrent configuration-change evidence must prove each Run retains its original Provider/model/revision.",
+    "M04-F02": "The Runtime protocol caps blocker questions, but production model-driven 20-case semantic evidence and repeat-question prevention are not complete.",
+    "M04-F03": "Goal confirmation is wired behind explicit request metadata; the production renderer has not enabled the flow for applicable tasks and has no packaged zero-side-effect UI evidence.",
+    "M04-F04": "Immutable revision invalidation is implemented, but the Desktop edit/supplement UI is not wired.",
+    "M04-F05": "Defaults are explicit, but terminal artifact/result conformance to the confirmed Goal is not yet asserted.",
+    "M05-F04": "The Windows suite skipped one environment-dependent link scenario; packaged canonical guard evidence remains required.",
+    "M05-F05": "Approval cancellation now wakes immediately and leaves no pending request, but model/tool/subtask/disconnect double-cancel and restart matrices remain."
+  }
+}

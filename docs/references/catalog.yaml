@@ -1,5 +1,5 @@
 schema_version: 1
-updated_at: 2026-08-03
+updated_at: 2026-08-04
 
 projects:
   - id: llm-space
@@ -12,9 +12,9 @@ projects:
       - user-interfaces
     repository: https://github.com/deer-flow/llm-space
     license: MIT
-    reviewed_at: 2026-08-03
+    reviewed_at: 2026-08-04
     reviewed_revision: v4.6.3
-    reviewed_commit: 839b632
+    reviewed_commit: 839b632c1562a60bcb19f43b75af2c8b5f77cae6
     status: candidate
     relevance: Agent 原型、轨迹调试、运行重放和人工评测工作台
     integration_level: inspiration
@@ -23,4 +23,3 @@ projects:
       - eval
       - cores/python
     path: agent-development/llm-space
-

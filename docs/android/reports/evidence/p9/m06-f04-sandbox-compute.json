@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F04",
+  "generated_at": "2026-08-05T12:16:31.395061+00:00",
+  "passed": true,
+  "gates": {
+    "model_receives_only_declarative_whitelisted_operations": true,
+    "no_dynamic_code_import_file_process_or_network_surface": true,
+    "cpu_memory_input_and_output_are_bounded": true,
+    "invalid_nonfinite_and_escape_arguments_fail_closed": true,
+    "shared_kernel_executes_compute_without_host_port": true,
+    "android_model_catalog_has_bounded_schema": true,
+    "python_escape_resource_and_kernel_regression_green": true,
+    "android_schema_regression_green": true,
+    "api35_bundled_chaquopy_compute_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": "...............................................                          [100%]\n47 passed in 4.15s"
+  },
+  "android_schema_suite": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "sha256": "4af9899969b1721781695a96b10017dbbb1afd1a9bd08d923683dcafe8d0208f"
+  },
+  "connected_suite": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.SandboxComputeInstrumentedTest",
+    "sha256": "0edce03134f94b7354e9f73a96e977992ca9c249adefc6432e72df570f0de12b"
+  },
+  "connected_report": "apps/android/app/build/outputs/androidTest-results/connected/debug/TEST-zz-p9-safe-latest.xml",
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/sandbox_compute.py": "683dbe025d0a623513edaef9aad088e0f9e029db9b18d6200a0c5f24f3bb15a4",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/FullRuntimeToolCatalog.kt": "49ff6fe299a9a38d26be47dce4aa92f6587e430dccf34705ea391c00339d1085",
+    "cores/python/packages/drsai/tests/test_sandbox_compute.py": "c5ff7b41199401bb5c761dcb4f267f2ae3ebba704a0bfbf6d7b4bc99fff50c19",
+    "cores/python/packages/drsai/tests/test_mobile_agent_core.py": "e28a759781773bed242010c218e01ef8e2040f0a56459dfa3f9a6de5f35a0b68",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/SandboxComputeInstrumentedTest.kt": "92d90ef2729bee38fb89e5410673ac1b2aaeca5d0e055d9b5950211a8e4437fc",
+    "apps/android/app/src/test/java/ai/drsai/remote/ToolSchemaContractTest.kt": "2105fee0a4a252af877f9ba7f5d34022f3c8a14b6559d552752ea18549faa3f5"
+  }
+}

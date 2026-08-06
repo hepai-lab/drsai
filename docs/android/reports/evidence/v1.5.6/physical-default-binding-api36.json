@@ -1,0 +1,30 @@
+{
+  "apk": "OpenDrSai-Android-v1.5.6.apk",
+  "apk_sha256": "6787c01c6f8122bc37608594b10f558cc2cd0c00cefc73aa9cbb88b2fadd5ce6",
+  "device_kind": "physical",
+  "gates": {
+    "binds_positive": true,
+    "full_runtime_enabled": true,
+    "kotlin_lite_disabled": true,
+    "runtime_ready": true,
+    "separate_runtime_process": true,
+    "starts_positive": true,
+    "zero_kotlin_fallbacks": true
+  },
+  "generated_at": "2026-08-04T17:29:27.805000+00:00",
+  "observed": {
+    "bind_attempts_delta": 1,
+    "bind_successes_delta": 1,
+    "binding_state": "READY",
+    "full_runtime_enabled": true,
+    "kotlin_lite_enabled": false,
+    "main_pid": 27651,
+    "python_status": "python_runtime_ready",
+    "runtime_pid": 27715,
+    "safe_fallbacks_delta": 0,
+    "starts_delta": 1
+  },
+  "passed": true,
+  "schema_version": 1,
+  "serial": "adb-R5GYB3S8ACH-VgdHyH._adb-tls-connect._tcp"
+}

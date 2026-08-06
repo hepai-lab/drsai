@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-04T04:17:43.467255+00:00",
+  "environment": "not_executed",
+  "reason": "no_adb_device",
+  "metrics": {
+    "cold_start_p95_ms": null,
+    "foreground_pss_p95_mb": null,
+    "peak_pss_mb": null,
+    "storage_mb": null,
+    "cpu": null,
+    "battery": null,
+    "thermal": null,
+    "anr": null,
+    "runtime_release_verified": false
+  },
+  "result": "incomplete"
+}

@@ -1,0 +1,49 @@
+{
+  "round": 48,
+  "gate": "M08-F03",
+  "status": "accepted",
+  "schema": "opendrsai.result-provenance/1",
+  "summary": "Results retain a verifiable task/session/run/input/target-version provenance chain and can navigate back to the source task and Run.",
+  "contract": {
+    "verified_fields": ["task", "session", "run", "input", "targetVersion"],
+    "tamper_cases": 5,
+    "legacy_backfill": true,
+    "public_absolute_paths": 0,
+    "version_increment_verified": true
+  },
+  "production_renderer": {
+    "task_navigation": true,
+    "run_navigation": true,
+    "digest_verified": true,
+    "target_version": 3,
+    "public_absolute_paths": 0
+  },
+  "packaged_e2e": {
+    "passed": true,
+    "results_indexed": 4,
+    "results_with_provenance": 4,
+    "source_digests_verified": 4,
+    "artifacts_opened": 4,
+    "stable_ids_after_refresh": true,
+    "source_run_opened": true,
+    "source_task_opened": true,
+    "evidence": "apps/desktop/windows/release/product-evidence/g1-results-center/packaged-g1-results-center-result.json"
+  },
+  "regression": {
+    "typecheck": true,
+    "build_unpack": true,
+    "packaged_main_preload_ipc_smoke": true,
+    "g1_static_checks": "27/27",
+    "structured_renderer": true,
+    "structured_visual_screenshots": 20
+  },
+  "sha256": {
+    "shared_api_verifier": "d04c341a492b491180412b485ab549c31be3364377bda8f426c70925415d4faf",
+    "shared_main_builder": "97ecf976052ac4ada868555603772bbf85089567c1481b281657156e4258583b",
+    "desktop_api": "41f631681de3d87b7a9214e6700c61178bff25c6237b5f315723ab9949882927",
+    "background_tasks": "5aa75b826eac0b873f44bff6da023766343c108c8cd3412b717a21d90361f428",
+    "renderer_app": "0efe93ef971214947729b628d25cb0c1d10b0dae869cbc7afd5c8824cdb1100d",
+    "packaged_g1_result": "ac0ff2104bcdedb2baf45fac437e3a2a8208b38ddeefa9b72a791bc73178e9b3",
+    "app_asar": "2eca5fe3a72ef985aa83f2fbcfb735567b696b585a6315dc6fbc9b029fd45233"
+  }
+}

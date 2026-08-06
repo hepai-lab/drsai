@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F01",
+  "generated_at": "2026-08-05T12:59:21.323830+00:00",
+  "passed": true,
+  "gates": {
+    "messages_identical_after_restart": true,
+    "semantic_digest_identical_after_restart": true,
+    "assistant_tool_result_pair_complete": true,
+    "checkpoint_binds_context_digest": true,
+    "android_process_restart_instrumentation_passed": true
+  },
+  "conversation_context": {
+    "schema_version": 1,
+    "message_count": 4,
+    "tool_call_count": 1,
+    "tool_result_count": 1,
+    "pending_tool_call_count": 0,
+    "sha256": "39e17430361f18685c5575add490bf82599c1467bb89608718cd18ab9f669cc8"
+  },
+  "instrumentation": {
+    "suite": "ai.drsai.remote.PythonRuntimeServiceTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "cases": [
+      "checkpointRestoresIdenticalConversationAfterRuntimeProcessRestart"
+    ],
+    "result_sha256": "1e3dbe5b438bf69b04fdd504cb8427294788e9725ef415f5c4017353371fe15c"
+  },
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "cores/python/packages/drsai/tests/test_mobile_agent_core.py": "e28a759781773bed242010c218e01ef8e2040f0a56459dfa3f9a6de5f35a0b68",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/PythonRuntimeServiceTest.kt": "69702c03976cd4c6cba1412b032a6120a237c1c1a76da5bf034f8e86f78afb28"
+  }
+}

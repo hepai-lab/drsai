@@ -5,9 +5,9 @@
 - 上游仓库：[deer-flow/llm-space](https://github.com/deer-flow/llm-space)
 - 官方网站：[LLM Space](https://deer-flow.github.io/llm-space/)
 - 许可证：[MIT](https://github.com/deer-flow/llm-space/blob/main/LICENSE)
-- 调研日期：2026-08-03
+- 调研日期：2026-08-04
 - 调研版本：`v4.6.3`
-- 对应提交：`839b632`
+- 对应提交：`839b632c1562a60bcb19f43b75af2c8b5f77cae6`
 - 研究状态：`candidate`
 - OpenDrSai 相关模块：`apps/desktop`、`eval`、Agent runtime 与事件协议
 
@@ -40,6 +40,11 @@ LLM Space 将一次 Agent 实验保存为 Thread。Thread 包含模型及参数�
 
 OpenDrSai 已拥有自己的 BAMS 架构、AutoGen runtime、OAEP/relay 协议、桌面端和评测目录。更合适的方向，是让 OpenDrSai 原生运行事件支持类似 LLM Space 的轨迹检查、分支重放和对比评测，而不是增加另一套 Agent runtime。
 
+源码级结论和具体落地方案见：
+
+- [v4.6.3 源码审阅](./source-review.md)
+- [OpenDrSai 集成实施方案](./implementation-plan.md)
+
 ## 来源
 
 - [项目 README](https://github.com/deer-flow/llm-space/blob/v4.6.3/README.md)
@@ -48,4 +53,3 @@ OpenDrSai 已拥有自己的 BAMS 架构、AutoGen runtime、OAEP/relay 协议�
 - [用户手册索引](https://github.com/deer-flow/llm-space/blob/v4.6.3/docs/index.md)
 - [Telemetry 说明](https://github.com/deer-flow/llm-space/blob/v4.6.3/TELEMETRY.md)
 - [v4.6.3 Release](https://github.com/deer-flow/llm-space/releases/tag/v4.6.3)
-

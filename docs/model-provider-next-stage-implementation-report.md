@@ -196,3 +196,50 @@
 - 工作区存在持续并行写入，无法形成同一源码指纹下的全量测试收据或干净提交；
 - signed macOS/Keychain设备证据尚未由Apple Silicon发布Runner生成；
 - 六类真实Provider矩阵尚未由受保护Secret环境生成。
+
+### 第9轮：真实 Provider 非 macOS 验收入口与安全预检
+
+- 用户确认 macOS 签名产物验证不在本机执行；审计状态明确标记为外部发布门禁，不以 Windows 结果替代；
+- 真实 Provider 矩阵证据改为平台无关的 `build/acceptance/model-provider-real-opt-in.json`，Windows/Linux 受保护环境均可执行；
+- 新增 `--real-env --preflight`，只报告六类服务的 Base URL、模型和 Key 是否存在，不输出值且不发送网络请求；
+- 发布就绪审计不接受预检文件冒充真实证据，只有六类服务齐全、无缺失且每个真实探测均通过的 `real-opt-in` 报告才有效；
+- 专项测试 `5 passed`；当前环境预检按预期失败，表明六类真实服务变量尚未注入，证据位于 `build/acceptance/model-provider-real-preflight.json`。
+
+### 第10轮：稳定快速门禁与全量回归审计
+
+- 在短暂稳定的源码快照上，六个快速门禁全部通过：Provider 专项 `104 passed`、本地矩阵15项、Desktop契约、Electron真实UI E2E、Windows双类型检查和macOS契约检查；
+- 随后执行全量门禁，得到 `1187 passed, 4 skipped, 81 subtests passed, 7 failed`；运行期间源码再次变化；
+- 7个失败在当前静态快照逐项重跑仍全部失败，确认是持续回归而非单次flaky：涉及OAEP schema/事件映射/运行检查5项和Android Stage7合同2项；
+- 这些文件属于同时进行的OAEP和Android功能开发，没有在模型Provider任务中覆盖或回退用户改动；
+- 将全量失败收据和快速门禁收据拆分保存为 `model-provider-release-readiness-full.json` 与 `model-provider-release-readiness-quick.json`，避免不同范围的运行相互覆盖；
+- 当前模型Provider本身的本地门禁仍全绿，但“整个Python仓库无失败”要求不能签发完成状态。
+
+### 第11轮：外部条件复查与阻塞确认
+
+- 再次执行零网络真实 Provider 预检，六类 `DRSAI_MATRIX_*` 服务仍全部未配置；
+- 重跑第10轮的7项并行回归：运行检查100k时间线测试已恢复通过，其余6项仍失败；
+- 剩余失败为OAEP schema/事件映射/运行链路4项及Android Stage7合同2项，不属于模型Provider交付文件；
+- 恢复目标后已连续三轮确认相同条件：真实服务凭据缺失、共享工作区并行修改和全仓非Provider回归；
+- 模型Provider范围内的实现、专项测试、本地协议矩阵、Desktop E2E和类型门禁均已完成，目标按严格审计规则进入阻塞状态，待外部条件变化后恢复最终验收。
+
+### 第12轮：真实 Provider 分阶段接入
+
+- 为真实环境预检和实测新增可重复的 `--service-type` 参数，支持六类服务逐个或分组接入；
+- `--require-all` 在分阶段模式下要求所有已选择类型配置完整，便于单类凭据就绪后立即验证；
+- 分阶段证据使用 `real-opt-in-partial`/所选 `requiredServiceTypes`，发布就绪审计仍严格要求六类完整 `real-opt-in` 报告，不能降级门禁；
+- 分阶段预检继续保持零网络、只报告存在性且不泄漏地址、模型或Key。
+
+### 第13轮：真实环境零网络结构校验
+
+- 预检从“仅判断存在性”升级为结构校验，提前拒绝非绝对HTTP(S)地址、URL内嵌凭据、查询参数和片段；
+- `REQUIRES_KEY` 采用严格布尔解析，仅接受 `true/false`、`1/0`、`yes/no`，非法值不再静默按false处理；
+- 报告只记录 `base_url_invalid`、`requires_key_invalid`、`model_missing`、`api_key_missing` 等稳定错误码，不记录任何配置值；
+- 配置结构不合法时，严格模式在执行任何Provider请求前退出。
+
+### 第14轮：阻塞条件再次复核
+
+- 六类真实 Provider 零网络预检仍无任何已配置服务；
+- 第11轮剩余6项共享回归中又有2项恢复，当前为 `2 passed, 4 failed`；
+- 4项持续失败分别是relay OAEP Android最低版本合同、运行检查精确可复现性，以及Android Stage7特性名称和安全边界合同；
+- Model Provider专项和门禁没有新增失败，未修改上述并行功能文件；
+- 恢复后的连续三轮仍满足相同阻塞条件，目标重新保持阻塞，等待真实凭据和共享回归收敛。

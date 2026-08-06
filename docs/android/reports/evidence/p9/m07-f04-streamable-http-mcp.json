@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F04",
+  "generated_at": "2026-08-05T14:15:29.362536+00:00",
+  "passed": true,
+  "gates": {
+    "official_protocol_initialize_and_notification": true,
+    "streamable_http_accepts_json_and_sse": true,
+    "session_headers_expiry_and_cursor_resume": true,
+    "tools_are_discovered_namespaced_and_called": true,
+    "network_auth_version_and_bounds_fail_closed": true,
+    "token_is_account_scoped_encrypted_and_kotlin_only": true,
+    "registry_exposes_real_mcp_source_capability_and_approval": true,
+    "production_ui_connects_mcp_without_exposing_token": true,
+    "shared_kernel_classifies_http_mcp_local_equivalent": true,
+    "mcp_result_uses_existing_oaep_tool_projection": true,
+    "deterministic_protocol_suite_green": true,
+    "api35_encrypted_transport_and_oaep_suite_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": "..............................................................           [100%]\n62 passed in 4.47s"
+  },
+  "android_unit_suite": {
+    "tests": 7,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.AndroidMcpClientTest",
+    "sha256": "f461dc7eb3d1c8ed4951adadd7ad5bd8f9164377b5ff7d7be40f3b96c84b4bd0"
+  },
+  "connected_suite": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.AndroidMcpInstrumentedTest",
+    "sha256": "8d2a20eac7f90635dbcb136147550da77fecc2e52535940bff70e9bdbb5604b4"
+  },
+  "connected_report": "docs/android/reports/evidence/p9/m07-f04-streamable-http-mcp-instrumentation.xml",
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/AndroidMcpClient.kt": "dbea54b40a3c58da6752b3cae3d2aec76cb4cb7e7a49ab3cb50e21ee11f638d3",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/McpSecureConfigStore.kt": "0a78cb9a35b3e30874eddf991d19cc89935e29fd331a5b4be5b868acf8a5a11e",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt": "d6a045f9eb61a7a91704d1e288b33bddf2945d9f63c675ec53153d710d5e5b43",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt": "5e78c7262c9456967e5f440ecfa593499ffb0e8b2ba90f1292bd6e8716d91baa",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeEventMapper.kt": "bcb730b9f05285290225f8f95969432c31a97517ff0ba3f154a95a257a5c7f93",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "apps/android/app/src/test/java/ai/drsai/remote/AndroidMcpClientTest.kt": "2cbca31519a816da5ea6bb28dfdff05e281b57c4834ad7545743de59d3f77784",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/AndroidMcpInstrumentedTest.kt": "2ceece11ffac42f5bf2958820286e6af94753f27ab26988573c5765c5f77f2eb",
+    "cores/python/packages/drsai/tests/test_agent_kernel_context.py": "1b16a1d4a045a1225b1b7832f358a01414623c62b93255dbaf3f8dc417d9625c"
+  }
+}

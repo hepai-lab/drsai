@@ -1,0 +1,41 @@
+{
+  "schema_version": "opendrsai.windows.unified-runtime-evidence/1",
+  "captured_at": "2026-08-04T22:57:40.530Z",
+  "package": {
+    "version": "1.5.5",
+    "platform": "windows",
+    "arch": "x64"
+  },
+  "checks": {
+    "login": true,
+    "workspaceRegistered": true,
+    "chatReachedTerminal": true,
+    "agentStartReturned": true,
+    "agentReachedTerminal": true,
+    "chatUsesStructuredOaep": true,
+    "agentBridgeHasStart": true,
+    "agentBridgeHasChunk": true,
+    "agentBridgeHasDone": true,
+    "noSurfaceErrors": true
+  },
+  "calls": {
+    "sessions": 2,
+    "runs": 2,
+    "executes": 2,
+    "legacyChatCompletions": 0
+  },
+  "surfaces": [
+    "chat",
+    "agent_run"
+  ],
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:71dd221687673ba556a4262c0a3f01d04f68cf5ab12345b2ad803dc7c4dbca60"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:ccab2f660c3f4530bdfd75caa2d75265a0cc1f549bb86d52ac3db4f9262ee70a"
+    }
+  }
+}

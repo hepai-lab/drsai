@@ -1,0 +1,24 @@
+{
+  "schema_version": "opendrsai.windows.goal-confirmation-ui-evidence/1",
+  "captured_at": "2026-08-04T23:55:11.534Z",
+  "renderer": "production-build",
+  "fields_visible": [
+    "objective",
+    "materials",
+    "outputs",
+    "constraints"
+  ],
+  "interactions": {
+    "edit": true,
+    "supplement": true,
+    "confirm": true
+  },
+  "bridge_calls": 2,
+  "bridge_decisions": [
+    "revise",
+    "accept"
+  ],
+  "chat_turn_identity_routing": true,
+  "confirm_disabled_after_response": true,
+  "defaults_attributed": true
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F02",
+  "generated_at": "2026-08-05T14:13:40.925764+00:00",
+  "passed": true,
+  "gates": {
+    "android_manifest_declares_local_equivalent": true,
+    "host_registry_exposes_versioned_web_fetch": true,
+    "html_is_bounded_decoded_and_script_free": true,
+    "redirects_are_bounded_and_https_only": true,
+    "pdf_text_extraction_is_bounded": true,
+    "robots_and_access_refusal_are_enforced": true,
+    "timeouts_sizes_and_content_types_are_structured": true,
+    "network_capability_is_run_scoped": true,
+    "fixture_suite_passed": true
+  },
+  "unit": {
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "sha256": "b3acc9990ed2410fad6239c184d3c653b929eac59e998b0a7af7d62c9c9ae63d",
+    "cases": [
+      "htmlExtractionRemovesScriptsSupportsEncodingAndFollowsHttpsRedirects",
+      "robotsAccessResponseSizeAndDowngradeAreRejectedStructurally",
+      "pdfTextIsExtractedWithoutExecutingOrRenderingContent",
+      "hostToolIsOnlyVisibleWithFetchCapability",
+      "timeoutAndUnsupportedContentTypeAreStructured"
+    ]
+  },
+  "capability_manifest_sha256": "9f1edfcab345643355b603bd8012ee4aca40ab2b50c941e2e8e8f92de81a0fe9",
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/WebFetchTool.kt": "1b59d124f57c810d5e66cd082e48215435a8069e2c3cd6fbc1541ab684a3ede2",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt": "d6a045f9eb61a7a91704d1e288b33bddf2945d9f63c675ec53153d710d5e5b43",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/RunCapabilityDiagnostics.kt": "f71d54f45fb7f9fcb6af241ca74762ec4a347303c578b61bd387f418573fae45",
+    "apps/android/app/src/test/java/ai/drsai/remote/WebFetchToolTest.kt": "ee7bcef7fcbe384f6bfa11e94f175d993ab16aa8867a5ecac10da5a199d031fb"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-04T17:30:39.430083+00:00",
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "dirty": true,
+  "apk": {
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+    "sha256": "6787c01c6f8122bc37608594b10f558cc2cd0c00cefc73aa9cbb88b2fadd5ce6"
+  },
+  "package": "ai.drsai.remote.debug",
+  "version": "1.5.6",
+  "device": {
+    "serial": "emulator-5560",
+    "model": "sdk_gphone64_x86_64",
+    "api": 35
+  },
+  "tests": {
+    "jvm": {
+      "tests": 411,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2
+    },
+    "instrumentation": {
+      "tests": 173,
+      "failures": 0
+    }
+  },
+  "checks": {
+    "physical_device_matrix_green": true,
+    "only_full_local_engine": true,
+    "all_host_ports_injected": true,
+    "normalized_oaep_sink": true,
+    "pre_event_failure_reuses_run": true,
+    "side_effect_reconciliation": true,
+    "terminal_write_guard": true,
+    "baseline_v155_schema_11": true,
+    "migration_11_13_present": true,
+    "migration_preserves_legacy_rows": true,
+    "interrupted_runs_not_left_running": true,
+    "legacy_lite_checkpoint_explicit_terminal": true,
+    "receipt_and_checkpoint_watermark": true,
+    "rollback_digest_matrix": true,
+    "jvm_green": true
+  },
+  "features": {
+    "M04-F01": true,
+    "M04-F02": true,
+    "M04-F03": true,
+    "M04-F04": true,
+    "M04-F05": true,
+    "M04-F06": true,
+    "M07-F01": true,
+    "M07-F02": true,
+    "M07-F03": true,
+    "M07-F04": true,
+    "M07-F05": true,
+    "M07-F06": true
+  },
+  "passed": true
+}

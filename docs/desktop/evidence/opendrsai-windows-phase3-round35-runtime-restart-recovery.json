@@ -1,0 +1,91 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 35,
+  "captured_at": "2026-08-05T04:39:14.705Z",
+  "feature": "M07-F04",
+  "result": "accepted",
+  "scope": "OpenDrSai Windows App with HAI configuration and OpenDrSai Full Agent Runtime",
+  "implementation": {
+    "restart_policy": "apps/desktop/shared/api/runtimeRestartRecovery.ts",
+    "chat_recovery": "apps/desktop/shared/main/chat.ts",
+    "runtime_lifecycle": "apps/desktop/shared/main/gateway.ts",
+    "user_actions": ["continue", "redo", "abandon"],
+    "completed_policy": "Terminal Runs are replayed from OAEP and are never executed again.",
+    "same_instance_policy": "A live non-terminal Run reconnects one shared OAEP subscription and continues receiving future Events.",
+    "changed_instance_policy": "A non-terminal Run owned by an older Runtime instance is sealed as interrupted; received content and files remain visible and the user chooses the next action.",
+    "history_policy": "Recovery pages the complete OAEP journal in blocks of 2,000 instead of reading only the first page.",
+    "startup_race_fix": "Runtime ownership loss invalidates the health cache and startup performs a fresh authenticated preflight before adopting an external process."
+  },
+  "formal_restart_stability": {
+    "runtime_crash_rounds": 20,
+    "passed_rounds": 20,
+    "failed_rounds": 0,
+    "runtime_id_changes": 0,
+    "instance_id_rotation_failures": 0,
+    "workspace_loss_failures": 0,
+    "completed_status_changes": 0,
+    "completed_event_count_changes": 0,
+    "completed_run_reexecutions": 0,
+    "configured_formal_reruns": 0,
+    "actual_formal_reruns": 0,
+    "command": "npm run verify:m07-runtime-restart-stability"
+  },
+  "focused_tests": {
+    "decision_matrix_rounds": 20,
+    "passed_decision_matrix_rounds": 20,
+    "user_actions": 3,
+    "passed_user_actions": 3,
+    "runtime_persistence_tests": 2,
+    "runtime_persistence_passed": 2,
+    "oaep_gap_regression_rounds": 20,
+    "oaep_gap_regression_passed": 20,
+    "typescript": true,
+    "production_build": true,
+    "commands": [
+      "npm run verify:m07-runtime-restart-recovery",
+      "venv/Scripts/python.exe -m pytest cores/python/packages/drsai/tests/test_run_inspection_scenarios.py::test_scenario_e_replay_snapshot_and_restart_do_not_reexecute cores/python/packages/drsai/tests/test_oaep_runtime_four_path.py -q",
+      "npm run verify:m07-oaep-gap-recovery",
+      "npm run typecheck:windows",
+      "npm run build:unpack"
+    ]
+  },
+  "packaged_regression": {
+    "real_executable": true,
+    "passed_checks": 39,
+    "total_checks": 39,
+    "command": "npm run verify:m07-operational-state-packaged"
+  },
+  "diagnostic_history": {
+    "pre_fix_attempts": 2,
+    "pre_fix_failures": 2,
+    "failure": "A dead child Runtime could be adopted from a stale 750 ms ready probe, causing ECONNREFUSED.",
+    "post_fix_single_probe": "passed",
+    "post_fix_formal_20_round_probe": "passed"
+  },
+  "acceptance": {
+    "completed_never_reexecuted": true,
+    "active_same_instance_run_resubscribed": true,
+    "old_instance_run_fail_closed": true,
+    "received_content_preserved": true,
+    "continue_action_available": true,
+    "redo_action_available": true,
+    "abandon_action_available": true,
+    "full_oaep_history_paged": true,
+    "dead_runtime_cache_race_fixed": true,
+    "unauthorized_side_effects": 0
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:2d9730d991f3026f21d98b134b81891d72582c13af450abe7924e4e696d062e0"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:bd0b80ec0571bb624a2db90cfbe5847252df9db14f2108ed03b983b131771724"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:9358c923bfa39576a84d375b8f33b918312eb1d746dd41a27b598ffc6b5b8456"
+    }
+  }
+}

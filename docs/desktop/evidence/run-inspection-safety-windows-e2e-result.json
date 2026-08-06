@@ -1,0 +1,94 @@
+{
+  "schema_version": "opendrsai.run-inspection-safety-windows-e2e-result/1",
+  "generated_at": "2026-08-05T14:29:38.001Z",
+  "started_at": "2026-08-05T14:29:12.122Z",
+  "command": "npm run verify:run-inspection-safety-windows-e2e",
+  "exit_code": 0,
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "source_files": [
+    "apps/desktop/windows/package.json",
+    "apps/desktop/windows/electron.vite.config.ts",
+    "apps/desktop/windows/scripts/verify-run-editable-phase2-windows-e2e.mjs",
+    "apps/desktop/windows/scripts/fixtures/run_editable_phase2_fixture.py",
+    "apps/desktop/windows/src/main/e2eSmoke.ts",
+    "apps/desktop/windows/src/main/index.ts",
+    "apps/desktop/shared/api/runExperiment.ts",
+    "apps/desktop/shared/main/runtimeClient.ts",
+    "apps/desktop/shared/renderer/src/components/RunExperimentPanel.tsx",
+    "apps/desktop/shared/renderer/src/components/RunInspectorPanel.tsx",
+    "apps/desktop/shared/renderer/src/components/SessionRunHistory.tsx",
+    "apps/desktop/shared/renderer/src/components/RunComparisonView.tsx",
+    "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/replay_execution.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/replay_planner.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/adoptions.py",
+    "cores/python/packages/drsai/src/drsai/backend/workspace/git_worktree_service.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/experiment_export.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/oaep.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/security.py",
+    "eval/regression/suites/phase3-release-smoke.yaml",
+    "eval/regression/policies/phase3-release-gate.yaml",
+    "eval/regression/src/opendrsai_regression/evidence.py",
+    "eval/regression/src/opendrsai_regression/assertions.py",
+    "eval/regression/cases/question_answering/p3_hello.yaml",
+    "eval/regression/cases/tool_use/p3_web.yaml",
+    "eval/regression/cases/knowledge/p3_runtime.yaml",
+    "eval/regression/cases/skill_use/p3_presentation.yaml",
+    "eval/regression/cases/image_input/p3_screenshot.yaml",
+    "eval/regression/cases/image_output/p3_image.yaml"
+  ],
+  "source_digest": "d265da40b1d67d5fe962352d4a0f708d220654aecb11c047642efbc3948df577",
+  "application_build_digest": "d6f3d7f1a93e9e22cc2df256481b7cebdf9dfaaec4df03c444a723a6ea89243c",
+  "desktop_result_digest": "13e90711ebea9edc509037e38a4c0d2396708e29ec011b7d4ab00cfd40e32f35",
+  "platform": "win32",
+  "architecture": "x64",
+  "scenarios": [
+    "run_inspection_secret_corpus"
+  ],
+  "checks": {
+    "bridge": true,
+    "login": true,
+    "secretCorpus": true,
+    "rawChainOfThoughtHidden": true,
+    "privatePathsHidden": true
+  },
+  "details": {
+    "stage": "complete",
+    "scenarios": [],
+    "secretCorpus": {
+      "runId": "run-7b6ca6f2-6135-4370-837d-c337bfe3cd53",
+      "layers": [
+        "api",
+        "oaep",
+        "manifest",
+        "renderer"
+      ],
+      "canaryCount": 7,
+      "rawChainOfThoughtMatches": 0,
+      "secretMatches": 0,
+      "privatePathMatches": 0
+    },
+    "screenshot": "C:\\Users\\win11\\VSProjects\\drsai\\docs\\desktop\\evidence\\run-inspection-safety-windows-e2e.png",
+    "screenshotSha256": "a733db36d05c5499c460ccf97e7f189f7926c9a6f7ea0433b08a5aad076ddaea"
+  },
+  "regression": null,
+  "screenshot_digest": "a733db36d05c5499c460ccf97e7f189f7926c9a6f7ea0433b08a5aad076ddaea",
+  "real_gateway": true,
+  "real_electron": true,
+  "offline_database_verification": false,
+  "controlled_model": true,
+  "model_execution": "deterministic_runtime_acceptance",
+  "proof_scope": [
+    "gateway",
+    "electron",
+    "desktop_ipc",
+    "oaep",
+    "manifest",
+    "renderer"
+  ],
+  "not_proven": [
+    "real_backend_account"
+  ]
+}

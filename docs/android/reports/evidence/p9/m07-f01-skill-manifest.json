@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F01",
+  "generated_at": "2026-08-05T14:15:13.938611+00:00",
+  "passed": true,
+  "gates": {
+    "shared_versioned_manifest_digest_contract": true,
+    "id_version_source_instructions_tools_and_digest_are_bound": true,
+    "missing_and_malformed_fields_fail_closed": true,
+    "tampering_is_rejected": true,
+    "duplicate_skills_and_tools_are_rejected": true,
+    "capability_and_allowed_tool_insufficiency_fail_closed": true,
+    "android_and_python_digest_fixture_matches": true,
+    "production_android_envelope_carries_manifest_fields": true,
+    "python_validation_suite_green": true,
+    "android_catalog_suite_green": true,
+    "api35_bundled_kernel_load_and_tamper_test_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": ".......                                                                  [100%]\n7 passed in 4.16s"
+  },
+  "android_suite": {
+    "tests": 9,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.SkillCatalogTest",
+    "sha256": "6043704714f184e5128439c363b870819a3f63038d762722fbbaf138b68574b6"
+  },
+  "connected_suite": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.SkillManifestInstrumentedTest",
+    "sha256": "ed2a65fc828647b9cdbe7a63c9bbf1a22f1ad289c4ed9648f459d9dcf047cd93"
+  },
+  "connected_report": "docs/android/reports/evidence/p9/m07-f01-skill-manifest-instrumentation.xml",
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt": "526fa5e68f353119db38024d9232f44da11b996ab26be61e641adc75f64b7676",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "cores/python/packages/drsai/tests/test_skill_manifest.py": "2b792a929093949d383fb4eba2c2420326cfaa9670c34d183aecafcf0a64b7c3",
+    "apps/android/app/src/test/java/ai/drsai/remote/SkillCatalogTest.kt": "f11fe77f622586271e4cbdb07ea5aacb29c1db85827315902b2c2841479929e0",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/SkillManifestInstrumentedTest.kt": "98c94590de109182960222f6fd5245f6ce0fdb43f75b058b29791e332fbb6c0e"
+  }
+}

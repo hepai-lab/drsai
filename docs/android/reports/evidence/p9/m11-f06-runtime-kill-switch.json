@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "feature_id": "M11-F06",
+  "generated_at": "2026-08-05T14:16:06.427297+00:00",
+  "passed": true,
+  "gates": {
+    "five_named_switches_are_versioned_and_fail_closed_on_unknown_values": true,
+    "web_switch_removes_search_fetch_and_browser_capabilities_and_tools": true,
+    "mcp_switch_removes_android_and_stdio_mcp_capabilities_and_tools": true,
+    "sandbox_switch_removes_shared_core_compute_from_new_and_resumed_runs": true,
+    "kernel_switch_fails_the_full_runtime_explicitly_without_an_alternate_engine": true,
+    "remote_handoff_switch_returns_an_explicit_failure_without_silent_chat": true,
+    "signed_policy_is_the_production_source_and_fetch_failure_disables_kernel": true,
+    "capabilities_tools_skills_and_diagnostics_use_the_same_snapshot_policy": true,
+    "kill_switch_unit_matrix_is_green": true,
+    "oaep_snapshot_is_unchanged_on_both_android_devices": true
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/AndroidRuntimeKillSwitchPolicy.kt": "a5f10dca0c9f55d2129de4e5c3b87498b2ab706b13292d4c109127b48e2e0a1d",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeRolloutPolicy.kt": "88ae567bfc84b370ffb4b64c78206e2456b314e1b0554350027e32663c17d316",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/RuntimeRolloutPolicyClient.kt": "30e1409956c8dff93dafad77cf874d0f201a4f5beba0b2d656a16595ecb03d75",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRunRecovery.kt": "106d380ec0016f0da80c78a4ed0d7dcfa892d85db3f7c89f1ae0e1e70e2aec43",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonSharedCoreChatEngine.kt": "b2c98cc10566a79c4f505392131a6249ed1c3755576098622b754380f314ecfe",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/test/java/ai/drsai/remote/AndroidRuntimeKillSwitchPolicyTest.kt": "aaba2d324f89a3f9936d7c2aed65265bf57dcb9bc806eb961e898b1843dba26a",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/P9RuntimeKillSwitchInstrumentedTest.kt": "b240a1ac7b5836844743a8090de056e8b9d1fbdc4ca11da27f0bd863ffdc34c0"
+  }
+}

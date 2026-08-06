@@ -1,0 +1,72 @@
+{
+  "schema_version": "opendrsai.windows.phase3.model-convergence-evidence/1",
+  "captured_at": "2026-08-05T16:21:09.1732354+08:00",
+  "feature_id": "P3-MC02",
+  "status": "accepted_local",
+  "scope": "OpenDrSai local Full Agent Runtime Provider authority and exact model routing; Codex Adapter excluded",
+  "checks": {
+    "configured_providers_are_only_selectable_source": true,
+    "desktop_legacy_catalog_reads_removed": true,
+    "dynamic_discovery_merged_by_exact_provider": true,
+    "fixed_models_configured_unverified": true,
+    "fresh_and_stale_states_preserved": true,
+    "hepai_request_scoped_oidc_fake": true,
+    "provider_membership_fail_closed": true,
+    "display_alias_never_sent_upstream": true,
+    "upstream_model_id_exact": true,
+    "same_model_cross_provider_routes_exactly": true,
+    "runtime_structured_model_selection": true,
+    "provider_delete_reference_preflight": true,
+    "provider_delete_cancel_zero_mutation": true,
+    "provider_delete_explicit_default_migration": true,
+    "production_build": true,
+    "live_hai_discovery_smoke": false
+  },
+  "release_gate_notes": [
+    "Live HAI discovery remains a gated RC check requiring an available signed-in HAI identity; no token or prompt content may enter evidence.",
+    "P3-MC03 will extend the same Provider reference preflight with persisted explicit AgentModelPolicy records."
+  ],
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest test_runtime_model_catalog.py test_model_provider_*.py test_gateway_model_catalog.py test_agent_runtime.py test_platform_auth.py -q",
+      "result": "184 passed, 12 subtests passed"
+    },
+    {
+      "command": ".venv/Scripts/python.exe scripts/verify_model_provider_compatibility.py --local --require-all",
+      "result": "15 probes passed"
+    },
+    {
+      "command": "npm run verify:opendrsai-model-convergence-p3 && npm run verify:model-provider-config && npm run verify:opendrsai-backend-neutral",
+      "result": "passed"
+    },
+    {
+      "command": "npm run build",
+      "result": "passed"
+    }
+  ],
+  "artifacts": {
+    "resolver": {
+      "path": "cores/python/packages/drsai/src/drsai/config/resolver.py",
+      "sha256": "0f70f32a416fdce53fef7a51a584da0fc177f00066020ee7907cfc9c6f01c9d0"
+    },
+    "gateway": {
+      "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+      "sha256": "de0f3e8afa5ff9096ad37881c93ae8294e425e5120c8abb60c53f20fd3c64bc5"
+    },
+    "desktop_main_bundle": {
+      "path": "apps/desktop/windows/out/main/index.js",
+      "sha256": "0a318cefa927c33020c86a4df6f458dde02505a9f355031868bdc96e55e777d2"
+    },
+    "desktop_renderer_bundle": {
+      "path": "apps/desktop/windows/out/renderer/assets/index-CZxvU4Mq.js",
+      "sha256": "d114db3410b0b34b823218429edf011cebafd25ea44ef599fca3614d03643956"
+    }
+  },
+  "progress": {
+    "model_convergence": "2/8 (25%) local implementation acceptance; live RC gate outstanding",
+    "phase3_product_ledger": "29/50 (58%)",
+    "product_baseline": "82/93 (88.2%)",
+    "note": "The model-convergence sub-ledger is additive detail and does not inflate the existing 50-feature P3 product ledger."
+  },
+  "next": "P3-MC03 persisted local OpenDrSai AgentModelPolicy and migration"
+}

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F01",
+  "generated_at": "2026-08-05T03:42:52.207590+00:00",
+  "passed": true,
+  "gates": {
+    "fixture_is_versioned": true,
+    "desktop_and_android_mapping_is_complete": true,
+    "desktop_implements_every_source_tool": true,
+    "android_implements_every_mapped_tool": true,
+    "android_paths_are_relative_and_traversal_safe": true,
+    "android_access_is_persisted_grant_bound": true,
+    "glob_grep_and_read_are_bounded": true,
+    "writes_and_edits_require_approval": true,
+    "python_cross_surface_fixture_green": true,
+    "android_cross_surface_fixture_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": "..                                                                       [100%]\n2 passed in 0.15s"
+  },
+  "android_suite": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "sha256": "23a71682d70592d17bcb08a8c1884a290d2373074ca9eee369f635c2e66d1321"
+  },
+  "source_sha256": {
+    "cores/protocol/android-runtime/fixtures/workspace-tool-parity-v1.json": "9d7662bb7c3ef2ff2d954f4de17757a0e82ae8e5d23c6358f6e1259b606139e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt": "892ef07104e715db15cfb8345a1c601db2370ddb4175b44e7f5758a68a49d462",
+    "apps/android/app/src/test/java/ai/drsai/remote/WorkspaceToolSemanticParityTest.kt": "302f33c43d465ce4d6a8605ab913086ec5cec77274823585f14448c62baf09cd",
+    "cores/python/packages/drsai/tests/test_workspace_tool_semantic_parity.py": "38ff0be5d900015b0c0dcb5f34b774028cedf99dc66fbfd64c78ef60cacd14c7",
+    "cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py": "c9eb8093b553b5c33c27cd8019c0abe7ab07a70ef6e21ae452a7c23559d0de5f"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 25,
+  "captured_at": "2026-08-05T00:52:10.323Z",
+  "feature": "M05-F04",
+  "focused_tests": ".s................................               [100%]\r\n33 passed, 1 skipped, 1 deselected, 24 subtests passed in 17.52s",
+  "packaged_probe": {
+    "passed_checks": 21,
+    "checks": {
+      "normal_file_write": true,
+      "normal_file_read": true,
+      "file_traversal_rejected": true,
+      "file_absolute_rejected": true,
+      "file_drive_rejected": true,
+      "file_unc_rejected": true,
+      "junction_read_rejected": true,
+      "junction_write_rejected": true,
+      "case_insensitive_root_allowed": true,
+      "case_prefix_escape_rejected": true,
+      "command_traversal_rejected": true,
+      "command_absolute_rejected": true,
+      "command_drive_rejected": true,
+      "command_unc_rejected": true,
+      "command_junction_rejected": true,
+      "parent_toctou_rejected": true,
+      "parent_toctou_no_outside_write": true,
+      "registered_root_swap_rejected": true,
+      "command_root_swap_rejected": true,
+      "root_swap_no_outside_write": true,
+      "outside_tree_unchanged": true
+    },
+    "outside_tree_unchanged": true,
+    "evidence": "docs/desktop/evidence/opendrsai-windows-phase3-round25-workspace-guard-probe.json"
+  },
+  "formal_packaged_f6": {
+    "completed_rounds": 20,
+    "total_checks": 360,
+    "path_escape_successes": 0,
+    "outside_mutations": 0,
+    "evidence": "docs/desktop/evidence/round25-f6-packaged-final/summary.json"
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:1c1642d8e468389d35c2545d718eb94f708a34532ad93b57bdf1b4054b3b4359"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:232c74e5a977cca2530d857790058d52e9f1cfd183671d3d18e4592b38628a16"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:2269f5fbd9dd6719e361e0511db4c1282ab93c1d01c1d0795ceaf502e7003719"
+    }
+  }
+}

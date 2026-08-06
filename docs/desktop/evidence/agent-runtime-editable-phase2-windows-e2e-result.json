@@ -1,0 +1,93 @@
+{
+  "schema_version": "opendrsai.run-editable-phase2-windows-e2e-result/1",
+  "generated_at": "2026-08-04T19:47:28.487Z",
+  "started_at": "2026-08-04T19:47:01.410Z",
+  "command": "npm run verify:run-editable-phase2-windows-e2e",
+  "exit_code": 0,
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "source_digest": "4fae3b23d6c7c8e852eef4b6602a2da0edcd4ac63f83e50ce38ac3035fc36d3a",
+  "application_build_digest": "bd633e98575b22b36d6ccefe19be557f4149abf154defc5875b943c9082f4711",
+  "desktop_result_digest": "5277f396762cc13ea6a09f266fb2fa8f0ebf295f366293e2f9823872862a91be",
+  "platform": "win32",
+  "architecture": "x64",
+  "scenarios": [
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N"
+  ],
+  "checks": {
+    "bridge": true,
+    "login": true,
+    "gateway": true,
+    "G": true,
+    "experimentExport": true,
+    "H": true,
+    "I": true,
+    "J": true,
+    "K": true,
+    "L": true,
+    "M": true,
+    "N": true,
+    "ui": true
+  },
+  "details": {
+    "stage": "complete",
+    "scenarios": [
+      {
+        "id": "G",
+        "experimentId": "experiment-08967fef-7582-4693-9065-3ff57b96ed5d",
+        "planId": "replay-plan-8779d9df-65e6-4749-80c7-f0d32511c7a8",
+        "runId": "run-911cb95a-e4e0-48a2-bae7-0fa200d86f57",
+        "comparisonId": "comparison-c3f9cdfc-0b41-4e90-9d27-2ce14049120f"
+      },
+      {
+        "id": "H",
+        "planId": "replay-plan-76019f35-33f9-43b0-8b1e-82592260b9d6",
+        "runId": "run-28a8fba0-ad93-4c6f-8e6e-85ad1d236c1b",
+        "checkpointId": "checkpoint-160a9d5a-f751-4746-8899-94ef93dbc5a2"
+      },
+      {
+        "id": "J",
+        "planId": "replay-plan-286917ff-a2fe-4d5a-a446-6d763b555545",
+        "runId": "run-a2275ebc-aedc-4dc1-b0ac-c92d62fbca64",
+        "replayEvidenceVisible": false,
+        "approvalPlanId": "replay-plan-bbc7509c-7c74-4edb-a264-9c97a2a7b66a",
+        "approvalRunId": "run-8ca58bde-1ad2-4670-9eaf-ed8945e39410"
+      },
+      {
+        "id": "N",
+        "recoveryRunId": "run-6d08316c-30ab-4e13-a293-37929d2c45ab",
+        "recoveryPlanId": "replay-plan-faf92e22-d1d5-4509-ba75-f9f71be603a6",
+        "recoveredStatus": "failed",
+        "recoveredAdoptionId": "adoption-483da9fe-920a-4f4b-ad55-53324be65657"
+      }
+    ],
+    "ui": {
+      "inspector": true,
+      "experimentPanel": true
+    }
+  },
+  "real_gateway": true,
+  "real_electron": true,
+  "offline_database_verification": true,
+  "controlled_model": true,
+  "model_execution": "deterministic_runtime_acceptance",
+  "proof_scope": [
+    "gateway",
+    "electron",
+    "desktop_ipc",
+    "oaep",
+    "database",
+    "git_worktree",
+    "approval",
+    "renderer"
+  ],
+  "not_proven": [
+    "real_backend_account"
+  ]
+}

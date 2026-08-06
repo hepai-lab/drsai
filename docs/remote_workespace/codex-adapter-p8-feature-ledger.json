@@ -1,0 +1,366 @@
+{
+  "schema": "opendrsai.codex-adapter-p8.ledger.v1",
+  "total": 60,
+  "features": {
+    "M01-F01": {
+      "status": "accepted",
+      "source": "cores/protocol/codex-app-server-stable-contract.json",
+      "suite": "p8-contract",
+      "artifact": ".artifacts/codex-p8/results/p8-contract.json"
+    },
+    "M01-F02": {
+      "status": "accepted",
+      "source": "cores/protocol/codex-app-server-stable-contract.json",
+      "suite": "p8-contract",
+      "artifact": ".artifacts/codex-p8/results/p8-contract.json"
+    },
+    "M01-F03": {
+      "status": "accepted",
+      "source": "cores/protocol/codex-app-server-stable-contract.json",
+      "suite": "p8-contract",
+      "artifact": ".artifacts/codex-p8/results/p8-contract.json"
+    },
+    "M01-F04": {
+      "status": "accepted",
+      "source": "cores/protocol/codex-app-server-stable-contract.json",
+      "suite": "p8-contract",
+      "artifact": ".artifacts/codex-p8/results/p8-contract.json"
+    },
+    "M01-F05": {
+      "status": "accepted",
+      "source": "cores/protocol/codex-app-server-stable-contract.json",
+      "suite": "p8-contract",
+      "artifact": ".artifacts/codex-p8/results/p8-contract.json"
+    },
+    "M01-F06": {
+      "status": "accepted",
+      "source": "cores/protocol/codex-app-server-stable-contract.json",
+      "suite": "p8-contract",
+      "artifact": ".artifacts/codex-p8/results/p8-contract.json"
+    },
+    "M02-F01": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/diagnostics.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M02-F02": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/diagnostics.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M02-F03": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/diagnostics.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M02-F04": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/diagnostics.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M02-F05": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/diagnostics.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M02-F06": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/diagnostics.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M03-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p8-patch",
+      "artifact": ".artifacts/codex-p8/results/p8-patch.json"
+    },
+    "M03-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p8-patch",
+      "artifact": ".artifacts/codex-p8/results/p8-patch.json"
+    },
+    "M03-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p8-patch",
+      "artifact": ".artifacts/codex-p8/results/p8-patch.json"
+    },
+    "M03-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p8-patch",
+      "artifact": ".artifacts/codex-p8/results/p8-patch.json"
+    },
+    "M03-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p8-patch",
+      "artifact": ".artifacts/codex-p8/results/p8-patch.json"
+    },
+    "M03-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p8-patch",
+      "artifact": ".artifacts/codex-p8/results/p8-patch.json"
+    },
+    "M04-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p8-release.mjs",
+      "suite": "p8-evidence",
+      "artifact": ".artifacts/codex-p8/results/p8-evidence.json"
+    },
+    "M04-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p8-release.mjs",
+      "suite": "p8-evidence",
+      "artifact": ".artifacts/codex-p8/results/p8-evidence.json"
+    },
+    "M04-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/run-codex-p8-live.mjs",
+      "suite": "p8-live",
+      "artifact": ".artifacts/codex-p8/results/p8-live.json"
+    },
+    "M04-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/src/main/e2eSmoke.ts",
+      "suite": "p8-electron",
+      "artifact": ".artifacts/codex-p8/results/p8-electron.json"
+    },
+    "M04-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p8-release.mjs",
+      "suite": "p8-evidence",
+      "artifact": ".artifacts/codex-p8/results/p8-evidence.json"
+    },
+    "M04-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p8-release.mjs",
+      "suite": "p8-evidence",
+      "artifact": ".artifacts/codex-p8/results/p8-evidence.json"
+    },
+    "M05-F01": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/delta_coalescer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M05-F02": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/delta_coalescer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M05-F03": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/delta_coalescer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M05-F04": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/delta_coalescer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M05-F05": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/delta_coalescer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M05-F06": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/delta_coalescer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M06-F01": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/run_finalizer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M06-F02": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/run_finalizer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M06-F03": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/run_finalizer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M06-F04": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/run_finalizer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M06-F05": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/run_finalizer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M06-F06": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/run_finalizer.py",
+      "suite": "p8-python",
+      "artifact": ".artifacts/codex-p8/results/p8-python.json"
+    },
+    "M07-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/oaepSessionStream.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M07-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/oaepSessionStream.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M07-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/oaepSessionStream.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M07-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/oaepSessionStream.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M07-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/oaepSessionStream.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M07-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/oaepSessionStream.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M08-F01": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p8-models",
+      "artifact": ".artifacts/codex-p8/results/p8-models.json"
+    },
+    "M08-F02": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p8-models",
+      "artifact": ".artifacts/codex-p8/results/p8-models.json"
+    },
+    "M08-F03": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p8-models",
+      "artifact": ".artifacts/codex-p8/results/p8-models.json"
+    },
+    "M08-F04": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p8-models",
+      "artifact": ".artifacts/codex-p8/results/p8-models.json"
+    },
+    "M08-F05": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p8-models",
+      "artifact": ".artifacts/codex-p8/results/p8-models.json"
+    },
+    "M08-F06": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p8-models",
+      "artifact": ".artifacts/codex-p8/results/p8-models.json"
+    },
+    "M09-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/runtimeClient.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M09-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/runtimeClient.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M09-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/runtimeClient.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M09-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/runtimeClient.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M09-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/runtimeClient.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M09-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/runtimeClient.ts",
+      "suite": "p8-stream",
+      "artifact": ".artifacts/codex-p8/results/p8-stream.json"
+    },
+    "M10-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/legacyProtocolTelemetry.ts",
+      "suite": "p8-governance",
+      "artifact": ".artifacts/codex-p8/results/p8-governance.json"
+    },
+    "M10-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/legacyProtocolTelemetry.ts",
+      "suite": "p8-governance",
+      "artifact": ".artifacts/codex-p8/results/p8-governance.json"
+    },
+    "M10-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/legacyProtocolTelemetry.ts",
+      "suite": "p8-governance",
+      "artifact": ".artifacts/codex-p8/results/p8-governance.json"
+    },
+    "M10-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/legacyProtocolTelemetry.ts",
+      "suite": "p8-governance",
+      "artifact": ".artifacts/codex-p8/results/p8-governance.json"
+    },
+    "M10-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/legacyProtocolTelemetry.ts",
+      "suite": "p8-governance",
+      "artifact": ".artifacts/codex-p8/results/p8-governance.json"
+    },
+    "M10-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/legacyProtocolTelemetry.ts",
+      "suite": "p8-governance",
+      "artifact": ".artifacts/codex-p8/results/p8-governance.json"
+    }
+  }
+}

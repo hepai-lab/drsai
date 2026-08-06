@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F02",
+  "generated_at": "2026-08-05T13:14:51.390342+00:00",
+  "passed": true,
+  "gates": {
+    "mutation_requires_explicit_user_intent": true,
+    "explicit_save_is_authorized_without_content_in_receipt": true,
+    "delete_intent_is_separate_from_save": true,
+    "sensitive_secret_is_never_persisted": true,
+    "sensitive_health_data_is_never_persisted": true,
+    "disabled_memory_fails_closed": true,
+    "policy_tampering_fails_closed": true,
+    "desktop_legacy_agent_entry_is_closed": true,
+    "android_subject_capability_and_host_policy_pass": true
+  },
+  "android": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "cases": [
+      "sensitiveMemoryContentIsDeniedByHostDefenseInDepth",
+      "memoryToolsRequireCapabilityAndUseOnlyCallingSubject"
+    ],
+    "sha256": "cde4f98d6049009f22701581e7a2285aefc9bf14d71eab8d2251d4e7802e5c79"
+  },
+  "memory_policy": {
+    "policy_version": "p9-memory-policy-v1",
+    "enabled": true,
+    "allowed_mutations": [
+      "add",
+      "replace"
+    ],
+    "sha256": "5d9fe03359a29d3393e7370cabc8ecdf3ecebcabdd7ef73d1f3969316bc99f34"
+  },
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/desktop_agent_kernel_adapter.py": "26053211f2f2e87b3747d70dbbf3fa24d046ec630f3913beebd5e35b25a9968b",
+    "cores/python/packages/drsai/tests/test_memory_policy.py": "278c40924f773bf049121d8ef950f5aed8f7b0bb097eec8b617d9f2a30e2563a",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt": "d6a045f9eb61a7a91704d1e288b33bddf2945d9f63c675ec53153d710d5e5b43",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt": "8877db30ccdfda934aafd95850b158fdaeeaabd4eb5686b2132fce98faae7a4c",
+    "apps/android/app/src/test/java/ai/drsai/remote/MemoryPolicyTest.kt": "f704f62f81cb5e6a6ff8852ddf02fa4960c7e5998b97f7650bbd525cc2db3841"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-04T04:17:43.467255+00:00",
+  "scans": [
+    {
+      "source": "apk",
+      "status": "passed",
+      "sha256": "2b2433c9b3a6187c78777d841cbbb45c625148a29d8e3af58b772a7bf651e431"
+    },
+    {
+      "source": "device_log",
+      "status": "not_executed",
+      "reason": "no_adb_device"
+    },
+    {
+      "source": "device_app_data",
+      "status": "not_executed",
+      "reason": "no_adb_device"
+    }
+  ],
+  "findings": [],
+  "result": "incomplete"
+}

@@ -1,0 +1,77 @@
+{
+  "schema_version": "opendrsai.windows.phase3.model-convergence-evidence/1",
+  "captured_at": "2026-08-05T17:25:00+08:00",
+  "feature_id": "P3-MC03",
+  "status": "accepted_local",
+  "scope": "OpenDrSai local Full Agent Runtime AgentModelPolicy, reasoning effort, migration, and revision isolation; Codex Adapter excluded",
+  "checks": {
+    "gateway_policy_is_authoritative": true,
+    "inherit_and_explicit_model_ref": true,
+    "atomic_policy_revision": true,
+    "optimistic_concurrency": true,
+    "two_window_stale_write_rejected": true,
+    "structured_conflict_recovery": true,
+    "legacy_localstorage_migrated_once": true,
+    "legacy_model_write_removed_after_migration": true,
+    "codex_and_platform_policy_boundary_fail_closed": true,
+    "provider_delete_policy_reference_preflight": true,
+    "agent_square_uses_effective_policy": true,
+    "reasoning_ui_filtered_by_exact_model": true,
+    "reasoning_effort_validated_by_gateway": true,
+    "reasoning_effort_request_scoped": true,
+    "reasoning_effort_reaches_upstream_request": true,
+    "renderer_e2e": true,
+    "production_build": true
+  },
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest <model-and-agent-runtime-related-tests> -q",
+      "result": "196 passed, 12 subtests passed"
+    },
+    {
+      "command": "npm run verify:model-provider-ui-e2e",
+      "result": "passed; includes one-time upgrade migration and two-window stale revision recovery"
+    },
+    {
+      "command": "npm run verify:opendrsai-model-convergence-p3 && npm run verify:model-provider-config",
+      "result": "passed"
+    },
+    {
+      "command": "npm run build",
+      "result": "passed"
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest cores/python/packages/drsai/tests -q",
+      "result": "no failures through 32%; harness stopped at the 120 second command limit, so this is not claimed as a complete full-suite pass"
+    }
+  ],
+  "artifacts": {
+    "policy_store": {
+      "path": "cores/python/packages/drsai/src/drsai/config/agent_model_policy.py",
+      "sha256": "fbedcf84d53ff5733f55bd6c7eb0f693097250d02adcb62936194cf3efde4cf5"
+    },
+    "gateway": {
+      "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+      "sha256": "1ded39ce33582c342594662bc7abfc4453a586cd50940460f36d9d6e4ff780ec"
+    },
+    "agent_model_request": {
+      "path": "cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py",
+      "sha256": "d5001d835eafafb2f06be013c2d2c125c1e36299807328ac3b5477bef230622f"
+    },
+    "desktop_main_bundle": {
+      "path": "apps/desktop/windows/out/main/index.js",
+      "sha256": "9728066a0704a475bda01b1dee2a71273d634ed621d77da930f956697b158b99"
+    },
+    "desktop_renderer_bundle": {
+      "path": "apps/desktop/windows/out/renderer/assets/index-CZBbhl2n.js",
+      "sha256": "0750c19acc9db6bcec2a6e6a6a3b60d763f2c57327be599684b7997cd765efdc"
+    }
+  },
+  "progress": {
+    "model_convergence": "3/8 (37.5%) local implementation acceptance",
+    "phase3_product_ledger": "29/50 (58%)",
+    "product_baseline": "82/93 (88.2%)",
+    "note": "The model-convergence sub-ledger is additive detail and does not inflate the existing 50-feature P3 product ledger."
+  },
+  "next": "P3-MC04 exact Runtime resolution, request-scoped Provider binding, Manifest evidence, and replay revision consistency"
+}

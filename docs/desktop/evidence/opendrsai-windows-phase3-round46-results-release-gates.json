@@ -1,0 +1,76 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-evidence/1",
+  "captured_at": "2026-08-05T21:00:00+08:00",
+  "round": 46,
+  "status": "accepted_local",
+  "features": {
+    "M08-F01": {
+      "passed": true,
+      "state_machine": {
+        "historical_completion_suppressed": true,
+        "running_task_not_disclosed": true,
+        "active_session_prioritized": true,
+        "completion_disclosed_once": true,
+        "fast_initial_completion_disclosed": true
+      },
+      "production_renderer": {
+        "transition": "running_to_completed",
+        "automatic_delivery_card": true,
+        "result_visible": true,
+        "next_action_visible": true,
+        "incomplete_item_visible": true,
+        "debug_or_run_inspector_open": false
+      },
+      "k3_structured_summary_passed": true,
+      "g7_completion_card_passed": true,
+      "g1_results_center_passed": true,
+      "build_unpack_passed": true,
+      "packaged_real_main_preload_ipc_passed": true
+    },
+    "M08-F05": {
+      "passed": true,
+      "required_features": ["M31-02", "M31-03", "M31-04", "M31-05"],
+      "current_passed": ["M31-03"],
+      "current_blocking": ["M31-02", "M31-04", "M31-05"],
+      "current_enabled": false,
+      "missing_invalid_or_unbound_evidence_fails_closed": true,
+      "forged_enabled_bit_rejected": true,
+      "all_four_passed_opens_gate": true,
+      "production_renderer_incomplete_hidden": true,
+      "production_renderer_complete_visible": true,
+      "guarded_main_ipc_operations": 17,
+      "packaged_mutation_rejected_before_runtime": true
+    }
+  },
+  "tests": [
+    "npm run verify:opendrsai-result-first-completion",
+    "npm run verify:k3-structured-summary",
+    "npm run verify:g7-completion-summary",
+    "npm run verify:g1-results-center",
+    "npm run verify:opendrsai-experiment-release-gate",
+    "npm run verify:opendrsai-experiment-release-gate-visual",
+    "npm run typecheck",
+    "npm run build:unpack",
+    "node scripts/verify-packaged-app-smoke.mjs"
+  ],
+  "known_test_asset_gap": {
+    "test": "npm run verify:packaged-k3-structured-summary",
+    "status": "not_used_for_acceptance",
+    "reason": "The legacy presentation fixture times out before its scenario because its fake Gateway and first-run/file-panel protocol are stale. The focused production Renderer transition test and the current packaged main/preload/IPC smoke are the authoritative evidence for this round."
+  },
+  "artifacts": {
+    "completion_tracker": { "path": "apps/desktop/shared/renderer/src/completionDeliveryTracker.ts", "sha256": "149e416966b5ad698997fd482b4662a63629c057fe8f0fc7dfd46b2ef1bc29b7" },
+    "renderer_app": { "path": "apps/desktop/shared/renderer/src/App.tsx", "sha256": "2c4ce5f9c8d495ab7812a2117f8f819198207bbbc376de47c98d488018bc865a" },
+    "completion_unit_verifier": { "path": "apps/desktop/windows/scripts/verify-opendrsai-result-first-completion.mts", "sha256": "a94908d8a1d03dc7a2c25ef1810495b7480bc496f526249a302b8252281d669f" },
+    "completion_visual_verifier": { "path": "apps/desktop/windows/scripts/verify-opendrsai-result-first-completion-visual.mjs", "sha256": "1c8ded2bb0b1d4260158a4fa382f1fec1e2f9ac52968bfed1b4a461c64c60540" },
+    "experiment_gate": { "path": "apps/desktop/shared/main/experimentReleaseGate.ts", "sha256": "9f0246af9878e6f1c025ebbd8f3f2bd86e81b0cb389a5f6563cb9c61c5641281" },
+    "experiment_gate_resource": { "path": "apps/desktop/windows/resources/release/experiment-release-gate.json", "sha256": "1fe9e435f6c5e3a53037c6260c5d94b8aa38845691683479445e9d663bcc2515" },
+    "app_asar": { "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar", "sha256": "981da2ad38cc8014084a887092a32c00069be4943ac2a4fd6276125039d23bdd" },
+    "executable": { "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe", "sha256": "5a1aa388aee749417bca68d75a152cc8d558be0288a02f99655786c63c3a776f" }
+  },
+  "progress_after_acceptance": {
+    "accepted": 35,
+    "total": 50,
+    "percent": 70
+  }
+}

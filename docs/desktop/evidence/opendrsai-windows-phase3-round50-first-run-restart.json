@@ -1,0 +1,63 @@
+{
+  "schema_version": "opendrsai.windows.first-run-restart-evidence/1",
+  "captured_at": "2026-08-05T15:30:45.827Z",
+  "package": {
+    "version": "1.5.5",
+    "platform": "windows",
+    "arch": "x64"
+  },
+  "checks": {
+    "prepare": {
+      "login": true,
+      "firstInteractiveScreenWithinThreeSeconds": true,
+      "setupVisible": true,
+      "taskEntryVisible": true,
+      "defaultWorkspaceOptionVisible": true,
+      "defaultWorkspaceSelected": true,
+      "textPreserved": true,
+      "attachmentPreserved": true,
+      "workspacePreserved": true,
+      "readyActionAvailable": true,
+      "notSentBeforeConfirmation": true,
+      "noApprovalSideEffect": true
+    },
+    "verify": {
+      "login": true,
+      "firstInteractiveScreenWithinThreeSeconds": true,
+      "setupVisible": true,
+      "taskEntryVisible": true,
+      "textPreserved": true,
+      "attachmentPreserved": true,
+      "workspacePreserved": true,
+      "readyActionAvailable": true,
+      "notSentBeforeConfirmation": true,
+      "noApprovalSideEffect": true,
+      "handoffToComposer": true,
+      "draftClearedAfterHandoff": true,
+      "stillNotSentAfterHandoff": true
+    }
+  },
+  "timings_ms": {
+    "prepare_first_interactive": 747,
+    "verify_first_interactive": 706
+  },
+  "restored": {
+    "textLength": 60,
+    "attachmentCount": 1,
+    "workspaceId": "restart-QzpcVXNlcnNcd2luMTFcQXBwRGF0YVxMb2NhbFxUZW1wXG9w"
+  },
+  "side_effects": {
+    "sent_before_confirmation": false,
+    "approvals_created": false
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:ebafa50e32fd37b426427f2a1f7876312d648871446a2c7f0f8f6f92e1cd34b5"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:979f7de63978da801af5d6a7a835cca2cd342fbeb8ee332e6036c5b747acd24a"
+    }
+  }
+}

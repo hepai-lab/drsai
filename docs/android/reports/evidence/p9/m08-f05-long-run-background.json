@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F05",
+  "generated_at": "2026-08-05T14:15:40.632579+00:00",
+  "passed": true,
+  "gates": {
+    "foreground_service_obeys_android_data_sync_contract": true,
+    "lockscreen_notification_always_has_continue_and_cancel": true,
+    "background_execution_uses_redelivered_foreground_ownership": true,
+    "task_removal_and_android15_timeout_schedule_recovery": true,
+    "reclaim_keeps_visible_control_before_worker_runs": true,
+    "recovery_is_unique_per_account_and_run": true,
+    "continue_recovers_the_identical_run_and_checkpoint": true,
+    "cancel_is_scoped_to_the_notified_run": true,
+    "notification_actions_are_routed_and_fail_closed": true,
+    "api35_notification_service_and_recovery_suite_is_green": true,
+    "api35_forced_doze_keeps_run_notification_visible": true
+  },
+  "python_recovery_suite": {
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.PythonRunRecoveryTest",
+    "sha256": "f4bb2e7e6e8b13e3393fec5d044571c9573065c82473cce9cce711ccaf71fbd5"
+  },
+  "connected_suite": {
+    "tests": 8,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "names": [
+      "ai.drsai.remote.runtime.device.OaepRunNotificationIntentTest,ai.drsai.remote.AndroidLocalCapabilitiesInstrumentedTest,ai.drsai.remote.runtime.device.LongRunDozeInstrumentedTest"
+    ]
+  },
+  "connected_report": "docs/android/reports/evidence/p9/m08-f05-long-run-background-instrumentation.xml",
+  "doze_system_check": {
+    "schema_version": 1,
+    "feature_id": "M08-F05",
+    "generated_at": "2026-08-05T17:10:00+08:00",
+    "serial": "emulator-5554",
+    "api_level": 35,
+    "package": "ai.drsai.remote.debug",
+    "test_class": "ai.drsai.remote.runtime.device.LongRunDozeInstrumentedTest",
+    "test_method": "foreground_long_run_keeps_user_controls_visible_during_forced_doze",
+    "instrumentation_test_passed": true,
+    "notification_visible_before_doze": true,
+    "device_entered_idle": true,
+    "notification_visible_during_doze": true,
+    "cleanup": {
+      "deviceidle_unforced": true,
+      "battery_state_reset": true,
+      "foreground_service_stopped": true
+    }
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/LocalRunNotifications.kt": "244f54549a1c91542eb321ecea2fe8b294a967fd6a7507bf801a2cdf1affce11",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt": "8f6d163c1984effed82c76cbea582ab716df505ac1a04c66f2f1ea7b6270c0d7",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRunRecovery.kt": "106d380ec0016f0da80c78a4ed0d7dcfa892d85db3f7c89f1ae0e1e70e2aec43",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/MainActivity.kt": "3946afe62bab1024637ef8a4586e1321bcb96d818bed629149c4d99c832f868a",
+    "apps/android/app/src/main/AndroidManifest.xml": "b5174ebe9b622a4d888f561047b9459fee22c02c0d674d1392917b69edea83ad",
+    "apps/android/app/src/main/res/values/strings.xml": "10170fe213c44c16938044476a00c6260fa6582951b022874352a615ba39bd96",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonRunRecoveryTest.kt": "b8bf78624df9f468f305d79f739e9b51e895535bb2ee5ce63a0aaabd5db89390",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/runtime/device/OaepRunNotificationIntentTest.kt": "9e1f106b2294ba2cd91261ad0d083a8a5273ab95b25f44dba7003eb5193340f3",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/AndroidLocalCapabilitiesInstrumentedTest.kt": "e0cda5e12368cf8a27394214ba98a5c8d1e636612c9d37c9962ffd0a1b69dc95",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/runtime/device/LongRunDozeInstrumentedTest.kt": "ee863735182e22c482ab886374beab5d974f702c7acb6ae02da4ec098a947b88"
+  }
+}

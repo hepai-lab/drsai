@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-04T17:30:39.430083+00:00",
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "dirty": true,
+  "apk": {
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+    "sha256": "6787c01c6f8122bc37608594b10f558cc2cd0c00cefc73aa9cbb88b2fadd5ce6"
+  },
+  "package": "ai.drsai.remote.debug",
+  "version": "1.5.6",
+  "device": {
+    "serial": "emulator-5560",
+    "model": "sdk_gphone64_x86_64",
+    "api": 35
+  },
+  "tests": {
+    "jvm": {
+      "tests": 411,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2
+    },
+    "instrumentation": {
+      "tests": 173,
+      "failures": 0
+    }
+  },
+  "checks": {
+    "physical_device_matrix_green": true,
+    "only_full_local_engine": true,
+    "all_host_ports_injected": true,
+    "normalized_oaep_sink": true,
+    "pre_event_failure_reuses_run": true,
+    "side_effect_reconciliation": true,
+    "terminal_write_guard": true,
+    "baseline_v155_schema_11": true,
+    "migration_11_13_present": true,
+    "migration_preserves_legacy_rows": true,
+    "interrupted_runs_not_left_running": true,
+    "legacy_lite_checkpoint_explicit_terminal": true,
+    "receipt_and_checkpoint_watermark": true,
+    "rollback_digest_matrix": true,
+    "jvm_green": true
+  },
+  "features": {
+    "M04-F01": true,
+    "M04-F02": true,
+    "M04-F03": true,
+    "M04-F04": true,
+    "M04-F05": true,
+    "M04-F06": true,
+    "M07-F01": true,
+    "M07-F02": true,
+    "M07-F03": true,
+    "M07-F04": true,
+    "M07-F05": true,
+    "M07-F06": true
+  },
+  "passed": true,
+  "baseline": {
+    "schema_version": 1,
+    "captured_at": "2026-08-04T17:30:35.808573+00:00",
+    "release": "v1.5.5",
+    "artifact": "C:\\tmp\\drsai-release-v1.5.5\\apps\\android\\app\\build\\outputs\\apk\\mvp\\OpenDrSai-Android-v1.5.5.apk",
+    "sha256": "d52b7df0cee4fab11fa817e0ba25be4db7e67a2ca3e3a4596c205e1a641321a6",
+    "size_bytes": 26370437,
+    "source_snapshot": "f739df4f",
+    "database": {
+      "name": "opendrsai.db",
+      "room_schema_version": 11,
+      "source_sha256": "e84aec11d114e83e1f62bc524c9e66e300b46fde9ab452ec5dd54be09863ffbc"
+    },
+    "purpose": "immutable upgrade input; never overwritten by v1.5.6 Debug builds"
+  },
+  "transition": [
+    "1.5.5",
+    "1.5.6",
+    "1.5.5-compatible-digest"
+  ]
+}

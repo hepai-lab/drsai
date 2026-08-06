@@ -1,0 +1,71 @@
+{
+  "schema_version": "opendrsai.windows.oaep-item-parity-evidence/1",
+  "captured_at": "2026-08-04T23:08:01.535Z",
+  "package": {
+    "version": "1.5.5",
+    "platform": "windows",
+    "arch": "x64"
+  },
+  "checks": {
+    "login": true,
+    "workspaceRegistered": true,
+    "chatReachedTerminal": true,
+    "agentStartReturned": true,
+    "agentReachedTerminal": true,
+    "chatUsesStructuredOaep": true,
+    "agentBridgeHasStart": true,
+    "agentBridgeHasChunk": true,
+    "agentBridgeHasPlan": true,
+    "agentBridgeHasProgress": true,
+    "agentBridgeHasTool": true,
+    "agentBridgeHasFile": true,
+    "agentBridgeHasSubtask": true,
+    "agentBridgeHasArtifact": true,
+    "agentBridgeOrderStable": true,
+    "agentBridgeSingleFinalTerminal": true,
+    "agentBridgeHasDone": true,
+    "noSurfaceErrors": true
+  },
+  "oaep_item_parity": {
+    "backend": "opendrsai",
+    "paths": [
+      "snapshot",
+      "replay",
+      "live",
+      "agent_ui_bridge"
+    ],
+    "item_types": [
+      "plan",
+      "progress",
+      "tool_call",
+      "file_change",
+      "subtask",
+      "artifact",
+      "message"
+    ],
+    "golden_digest": "sha256:20611fc6ddf52c02c9d86e2d6dcc9173c0527e7d187b04c076615404fe97e7a3",
+    "item_identity_retained": true,
+    "sequence_order_retained": true,
+    "single_terminal": true
+  },
+  "calls": {
+    "sessions": 2,
+    "runs": 2,
+    "executes": 2,
+    "legacyChatCompletions": 0
+  },
+  "surfaces": [
+    "chat",
+    "agent_run"
+  ],
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:e8599637a1f96f9d37e222f001b7068f2e0c0f3cf2072ce2cbec63bec0bb94a0"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:4ad055487443a395f3c8bcc3f55f19fca0a1d44c887ce2410405cce5bfc7382d"
+    }
+  }
+}

@@ -37,7 +37,11 @@
   ],
   "generatedEvidence": [
     "build/acceptance/model-provider-release-readiness.json",
+    "build/acceptance/model-provider-release-readiness-quick.json",
+    "build/acceptance/model-provider-release-readiness-full.json",
     "build/acceptance/model-provider-local-deterministic.json",
+    "build/acceptance/model-provider-real-preflight.json",
+    "build/acceptance/model-provider-real-opt-in.json",
     "apps/desktop/macos/build/acceptance/model-provider-release-gate.json",
     "apps/desktop/macos/build/acceptance/model-provider-real-opt-in.json"
   ],

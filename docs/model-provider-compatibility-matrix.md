@@ -12,12 +12,31 @@
 
 ## 发布前真实矩阵
 
-真实矩阵只在受保护的signed RC Runner运行：
+真实矩阵在具备专用 Secret 的受保护 Runner 运行，不依赖 macOS；macOS 签名产物门禁是独立发布步骤。本机执行时应使用临时环境变量和低额度测试账号：
 
 ```text
-python3 scripts/verify_model_provider_compatibility.py --real-env --require-all \
-  --output apps/desktop/macos/build/acceptance/model-provider-real-opt-in.json
+python scripts/verify_model_provider_compatibility.py --real-env --require-all \
+  --output build/acceptance/model-provider-real-opt-in.json
 ```
+
+发送任何网络请求前可先做安全预检。预检只报告字段是否存在，不读取到报告、不显示具体值，也不连接服务：
+
+```text
+python scripts/verify_model_provider_compatibility.py --real-env --preflight --require-all \
+  --output build/acceptance/model-provider-real-preflight.json
+```
+
+预检还会拒绝以下结构错误，并只输出稳定错误码：Base URL 不是绝对 `http(s)` 地址、URL 内嵌用户名/密码、查询参数或片段，以及 `REQUIRES_KEY` 不是 `true/false`、`1/0` 或 `yes/no`。结构错误不会进入网络探测。
+
+六类凭据不必一次性接入。可重复使用 `--service-type` 做分阶段预检或实测，例如只验证 OpenAI 和 Ollama：
+
+```text
+python scripts/verify_model_provider_compatibility.py --real-env --preflight --require-all \
+  --service-type openai --service-type ollama \
+  --output build/acceptance/model-provider-real-preflight-partial.json
+```
+
+分阶段报告的 `requiredServiceTypes` 只包含所选类型，发布审计会拒绝把它当成六类完整证据。最终发布仍必须去掉全部 `--service-type` 参数，以六类完整矩阵生成 `model-provider-real-opt-in.json`。
 
 每类服务使用以下变量，其中 `TYPE` 为 `OPENAI`、`ANTHROPIC`、`DEEPSEEK`、`OLLAMA`、`CHAT_ONLY` 或 `CUSTOM_PROXY`：
 
