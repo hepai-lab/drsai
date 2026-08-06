@@ -1,7 +1,7 @@
 {
   "cases": [
     {
-      "name": "runtime-1.6-relay-2-client-1.6",
+      "name": "runtime-1.6-relay-2-android-client-1.5.6",
       "runtime_version": "1.6.0",
       "relay_version": "2.0.0",
       "capabilities": ["oaep.v1", "oaep.session.snapshot", "oaep.session.events", "oaep.session.events.stream", "event.cursor_expired", "conversation.snapshot", "session.event.resume", "session.event.stream", "session.event.cursor_expired"],
@@ -17,7 +17,7 @@
       "expected": "reject"
     },
     {
-      "name": "runtime-1.5-relay-2-client-1.6",
+      "name": "runtime-1.5-relay-2-legacy-client",
       "runtime_version": "1.5.3",
       "relay_version": "2.0.0",
       "capabilities": ["conversation.snapshot", "session.event.resume", "session.event.stream", "session.event.cursor_expired"],

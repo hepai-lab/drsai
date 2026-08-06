@@ -1,6 +1,36 @@
 {
   "components": {
     "schemas": {
+      "AccessGrantCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Permissions",
+            "type": "array"
+          },
+          "workspace_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "title": "Workspace Ids",
+            "type": "array"
+          },
+          "workspace_scope": {
+            "default": "all",
+            "pattern": "^(all|selected)$",
+            "title": "Workspace Scope",
+            "type": "string"
+          }
+        },
+        "title": "AccessGrantCreateRequest",
+        "type": "object"
+      },
       "AccessGrantResult": {
         "additionalProperties": false,
         "properties": {
@@ -70,6 +100,73 @@
         "title": "AccessGrantStatusResult",
         "type": "object"
       },
+      "AssociationAuthorizationShrinkRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "permissions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permissions"
+          },
+          "workspace_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 1000,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Ids"
+          },
+          "workspace_scope": {
+            "anyOf": [
+              {
+                "pattern": "^(all|selected)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Scope"
+          }
+        },
+        "title": "AssociationAuthorizationShrinkRequest",
+        "type": "object"
+      },
+      "AssociationDeviceKeyRotationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "new_device_public_key": {
+            "maxLength": 43,
+            "minLength": 43,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "New Device Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_device_public_key"
+        ],
+        "title": "AssociationDeviceKeyRotationRequest",
+        "type": "object"
+      },
       "AssociationPresenceRequest": {
         "additionalProperties": false,
         "properties": {
@@ -129,9 +226,32 @@
             ],
             "title": "Idempotency Key"
           },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Permissions",
+            "type": "array"
+          },
           "request_id": {
             "format": "uuid",
             "title": "Request Id",
+            "type": "string"
+          },
+          "workspace_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "title": "Workspace Ids",
+            "type": "array"
+          },
+          "workspace_scope": {
+            "default": "all",
+            "pattern": "^(all|selected)$",
+            "title": "Workspace Scope",
             "type": "string"
           }
         },
@@ -187,6 +307,15 @@
             ],
             "title": "Last Seen At"
           },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Permissions",
+            "type": "array"
+          },
           "revoked_at": {
             "anyOf": [
               {
@@ -211,6 +340,20 @@
           "subject_summary": {
             "pattern": "^sub_[0-9a-f]{12}$",
             "title": "Subject Summary",
+            "type": "string"
+          },
+          "workspace_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "title": "Workspace Ids",
+            "type": "array"
+          },
+          "workspace_scope": {
+            "default": "all",
+            "pattern": "^(all|selected)$",
+            "title": "Workspace Scope",
             "type": "string"
           }
         },
@@ -447,6 +590,9 @@
             "title": "Output",
             "type": "string"
           },
+          "replay_policy": {
+            "$ref": "#/components/schemas/OaepReplayPolicy"
+          },
           "resource_refs": {
             "items": {
               "$ref": "#/components/schemas/OaepResourceRef"
@@ -478,6 +624,24 @@
             "title": "Kind",
             "type": "string"
           },
+          "reasoning_kind": {
+            "enum": [
+              "summary",
+              "commentary",
+              "analysis"
+            ],
+            "title": "Reasoning Kind",
+            "type": "string"
+          },
+          "reasoning_source": {
+            "enum": [
+              "backend",
+              "adapter",
+              "runtime"
+            ],
+            "title": "Reasoning Source",
+            "type": "string"
+          },
           "segment_id": {
             "title": "Segment Id",
             "type": "string"
@@ -493,6 +657,15 @@
           },
           "text": {
             "title": "Text",
+            "type": "string"
+          },
+          "visibility": {
+            "enum": [
+              "user",
+              "diagnostic",
+              "hidden"
+            ],
+            "title": "Visibility",
             "type": "string"
           }
         },
@@ -1088,6 +1261,55 @@
         "title": "OaepReasoningContent",
         "type": "object"
       },
+      "OaepReplayPolicy": {
+        "properties": {
+          "classification": {
+            "enum": [
+              "pure",
+              "read_only_versioned",
+              "read_only_mutable",
+              "workspace_write",
+              "external_write",
+              "unknown"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "current": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Current",
+            "type": "object"
+          },
+          "implementation_digest": {
+            "title": "Implementation Digest",
+            "type": "string"
+          },
+          "input_digest": {
+            "title": "Input Digest",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "schema_digest": {
+            "title": "Schema Digest",
+            "type": "string"
+          },
+          "source_event_id": {
+            "title": "Source Event Id",
+            "type": "string"
+          },
+          "tool_reference": {
+            "title": "Tool Reference",
+            "type": "string"
+          }
+        },
+        "title": "OaepReplayPolicy",
+        "type": "object"
+      },
       "OaepResourceRef": {
         "properties": {
           "digest": {
@@ -1257,6 +1479,9 @@
       },
       "OaepSnapshot": {
         "properties": {
+          "checkpoint": {
+            "$ref": "#/components/schemas/OaepSnapshotCheckpoint"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/OaepItem"
@@ -1282,6 +1507,9 @@
             "const": "1.0",
             "title": "Version",
             "type": "string"
+          },
+          "window": {
+            "$ref": "#/components/schemas/OaepSnapshotWindow"
           }
         },
         "required": [
@@ -1292,6 +1520,59 @@
           "snapshot_sequence"
         ],
         "title": "OaepSnapshot",
+        "type": "object"
+      },
+      "OaepSnapshotCheckpoint": {
+        "properties": {
+          "item_count": {
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "snapshot_hash": {
+            "title": "Snapshot Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sequence",
+          "snapshot_hash",
+          "item_count"
+        ],
+        "title": "OaepSnapshotCheckpoint",
+        "type": "object"
+      },
+      "OaepSnapshotWindow": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "limit",
+          "has_more",
+          "next_cursor"
+        ],
+        "title": "OaepSnapshotWindow",
         "type": "object"
       },
       "OaepSource": {
@@ -1429,6 +1710,9 @@
           "operation_ref": {
             "$ref": "#/components/schemas/OaepOperationRef"
           },
+          "replay_policy": {
+            "$ref": "#/components/schemas/OaepReplayPolicy"
+          },
           "resource_refs": {
             "items": {
               "$ref": "#/components/schemas/OaepResourceRef"
@@ -1467,6 +1751,242 @@
           "result"
         ],
         "title": "OaepToolCallContent",
+        "type": "object"
+      },
+      "ProtocolDeletionDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "data_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data End"
+          },
+          "data_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Start"
+          },
+          "eligible": {
+            "title": "Eligible",
+            "type": "boolean"
+          },
+          "fallback_error_ratio": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Fallback Error Ratio",
+            "type": "number"
+          },
+          "gap_days": {
+            "minimum": 0.0,
+            "title": "Gap Days",
+            "type": "integer"
+          },
+          "legacy_ratio": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Legacy Ratio",
+            "type": "number"
+          },
+          "migration_ratio": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Migration Ratio"
+          },
+          "oaep_ratio": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Oaep Ratio",
+            "type": "number"
+          },
+          "observation_days": {
+            "minimum": 0.0,
+            "title": "Observation Days",
+            "type": "integer"
+          },
+          "release_cycles": {
+            "minimum": 0.0,
+            "title": "Release Cycles",
+            "type": "integer"
+          },
+          "requirements": {
+            "$ref": "#/components/schemas/ProtocolDeletionRequirements"
+          },
+          "schema_version": {
+            "const": "p5-protocol-deletion-decision/1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "no_data",
+              "history_gap",
+              "insufficient_window",
+              "threshold_failed",
+              "eligible"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "status",
+          "data_start",
+          "data_end",
+          "observation_days",
+          "release_cycles",
+          "oaep_ratio",
+          "legacy_ratio",
+          "fallback_error_ratio",
+          "gap_days",
+          "requirements",
+          "eligible"
+        ],
+        "title": "ProtocolDeletionDecision",
+        "type": "object"
+      },
+      "ProtocolDeletionRequirements": {
+        "additionalProperties": false,
+        "properties": {
+          "fallback_error_ratio": {
+            "const": 0.001,
+            "title": "Fallback Error Ratio",
+            "type": "number"
+          },
+          "legacy_ratio": {
+            "const": 0.001,
+            "title": "Legacy Ratio",
+            "type": "number"
+          },
+          "migration_ratio": {
+            "const": 1.0,
+            "title": "Migration Ratio",
+            "type": "number"
+          },
+          "oaep_ratio": {
+            "const": 0.999,
+            "title": "Oaep Ratio",
+            "type": "number"
+          },
+          "observation_days": {
+            "const": 0,
+            "title": "Observation Days",
+            "type": "integer"
+          },
+          "release_cycles": {
+            "const": 0,
+            "title": "Release Cycles",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "observation_days",
+          "release_cycles",
+          "oaep_ratio",
+          "legacy_ratio",
+          "migration_ratio",
+          "fallback_error_ratio"
+        ],
+        "title": "ProtocolDeletionRequirements",
+        "type": "object"
+      },
+      "PushRegistrationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "provider": {
+            "maxLength": 32,
+            "minLength": 2,
+            "pattern": "^[a-z][a-z0-9_-]+$",
+            "title": "Provider",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 4096,
+            "minLength": 32,
+            "pattern": ".*\\S.*",
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "token",
+          "generation"
+        ],
+        "title": "PushRegistrationRequest",
+        "type": "object"
+      },
+      "PushRegistrationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "device_summary": {
+            "pattern": "^dev_[0-9a-f]{12}$",
+            "title": "Device Summary",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "provider": {
+            "maxLength": 32,
+            "minLength": 2,
+            "pattern": "^[a-z][a-z0-9_-]+$",
+            "title": "Provider",
+            "type": "string"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "status": {
+            "pattern": "^(active|revoked)$",
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "device_summary",
+          "provider",
+          "generation",
+          "status",
+          "updated_at"
+        ],
+        "title": "PushRegistrationResult",
         "type": "object"
       },
       "RegistrationRequest": {
@@ -1743,6 +2263,35 @@
         "title": "_ApprovalDecision",
         "type": "object"
       },
+      "_ConversationLatencyClientObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "number"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "correlation_id",
+          "operation_id",
+          "stage",
+          "duration_ms"
+        ],
+        "title": "_ConversationLatencyClientObservation",
+        "type": "object"
+      },
       "_OwopRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1877,6 +2426,46 @@
           "agent_definition_version"
         ],
         "title": "_SessionCreate",
+        "type": "object"
+      },
+      "_SessionUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "lifecycle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceLifecycle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id"
+        ],
+        "title": "_SessionUpdate",
         "type": "object"
       }
     }
@@ -2031,6 +2620,55 @@
         "summary": "Revoke User Association"
       }
     },
+    "/v1/associations/{runtime_id}/device-key/rotate": {
+      "post": {
+        "operationId": "rotate_user_association_device_key_v1_associations__runtime_id__device_key_rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssociationDeviceKeyRotationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssociationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate User Association Device Key"
+      }
+    },
     "/v1/associations/{runtime_id}/presence": {
       "post": {
         "operationId": "record_user_association_presence_v1_associations__runtime_id__presence_post",
@@ -2089,6 +2727,112 @@
         "summary": "Record User Association Presence"
       }
     },
+    "/v1/associations/{runtime_id}/push-registration": {
+      "delete": {
+        "operationId": "revoke_user_push_registration_v1_associations__runtime_id__push_registration_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushRegistrationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke User Push Registration"
+      },
+      "put": {
+        "operationId": "upsert_user_push_registration_v1_associations__runtime_id__push_registration_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushRegistrationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert User Push Registration"
+      }
+    },
+    "/v1/metrics/conversation-latency": {
+      "get": {
+        "operationId": "conversation_latency_metrics_v1_metrics_conversation_latency_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Conversation Latency Metrics V1 Metrics Conversation Latency Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Conversation Latency Metrics"
+      }
+    },
     "/v1/metrics/oaep": {
       "get": {
         "operationId": "oaep_metrics_v1_metrics_oaep_get",
@@ -2103,6 +2847,45 @@
           }
         },
         "summary": "Oaep Metrics"
+      }
+    },
+    "/v1/metrics/protocol-usage": {
+      "get": {
+        "operationId": "protocol_usage_metrics_v1_metrics_protocol_usage_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Protocol Usage Metrics V1 Metrics Protocol Usage Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Protocol Usage Metrics"
+      }
+    },
+    "/v1/metrics/protocol-usage/deletion-decision": {
+      "get": {
+        "operationId": "protocol_usage_deletion_decision_v1_metrics_protocol_usage_deletion_decision_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtocolDeletionDecision"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Protocol Usage Deletion Decision",
+        "x-p5-platform-contract-sha256": "f29e5ed662e51eb61afcf31b1f2d21f56c8e5f1ed262928e648e15026d17be62"
       }
     },
     "/v1/runtime-connections/{runtime_id}/heartbeat": {
@@ -2409,6 +3192,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AccessGrantCreateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -2746,6 +3546,71 @@
           }
         },
         "summary": "Revoke Runtime Association"
+      },
+      "patch": {
+        "operationId": "shrink_runtime_association_authorization_v1_runtimes__runtime_id__associations__association_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "association_id",
+            "required": true,
+            "schema": {
+              "title": "Association Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssociationAuthorizationShrinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssociationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shrink Runtime Association Authorization"
       }
     },
     "/v1/runtimes/{runtime_id}/capabilities": {
@@ -2842,6 +3707,124 @@
           }
         },
         "summary": "Revoke Runtime Enrollment"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/enrollment/pause": {
+      "post": {
+        "operationId": "pause_runtime_enrollment_v1_runtimes__runtime_id__enrollment_pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "title": "Response Pause Runtime Enrollment V1 Runtimes  Runtime Id  Enrollment Pause Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pause Runtime Enrollment"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/enrollment/resume": {
+      "post": {
+        "operationId": "resume_runtime_enrollment_v1_runtimes__runtime_id__enrollment_resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-runtime-token",
+            "required": true,
+            "schema": {
+              "title": "X-Runtime-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "title": "Response Resume Runtime Enrollment V1 Runtimes  Runtime Id  Enrollment Resume Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Runtime Enrollment"
       }
     },
     "/v1/runtimes/{runtime_id}/idempotency/{operation}/{idempotency_key}": {
@@ -3474,6 +4457,52 @@
         "summary": "Cancel Run"
       }
     },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/session-catalog-events/stream": {
+      "get": {
+        "operationId": "session_catalog_event_stream_v1_runtimes__runtime_id__workspaces__workspace_id__session_catalog_events_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Session Catalog Event Stream"
+      }
+    },
     "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions": {
       "get": {
         "operationId": "sessions_v1_runtimes__runtime_id__workspaces__workspace_id__sessions_get",
@@ -3538,6 +4567,15 @@
                 }
               ],
               "title": "Query"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceLifecycle",
+              "default": "active"
             }
           }
         ],
@@ -3671,6 +4709,69 @@
           }
         },
         "summary": "Session"
+      },
+      "patch": {
+        "operationId": "update_session_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_SessionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Session"
       }
     },
     "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation": {
@@ -3754,6 +4855,66 @@
           }
         },
         "summary": "Conversation"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-latency": {
+      "post": {
+        "operationId": "record_client_conversation_latency_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__conversation_latency_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ConversationLatencyClientObservation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Client Conversation Latency"
       }
     },
     "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot": {
@@ -4135,6 +5296,34 @@
             "schema": {
               "title": "Session Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
             }
           }
         ],

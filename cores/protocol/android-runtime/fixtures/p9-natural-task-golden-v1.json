@@ -1,0 +1,46 @@
+{
+  "schema_version": "opendrsai.p9-natural-task-golden/1",
+  "minimum_cases": 6,
+  "cases": [
+    {
+      "id": "fresh-hepix-research",
+      "prompt": "HEPiX 2026 是什么？请核实最新公开资料并给出可点击来源。",
+      "domains": ["fresh_information", "citation"],
+      "required_observations": ["tool.completed", "citation.verified", "message.completed", "run.completed"]
+    },
+    {
+      "id": "workspace-edit-review",
+      "prompt": "阅读项目说明，把版本说明中的占位内容改成明确结论，先展示改动并等我确认。",
+      "domains": ["workspace", "approval"],
+      "required_observations": ["file_change.completed", "approval.requested", "message.completed", "run.completed"]
+    },
+    {
+      "id": "skill-guided-summary",
+      "prompt": "按照我已安装的研究总结规范整理当前材料，并说明采用了哪个规范版本。",
+      "domains": ["skill"],
+      "required_observations": ["skill.selected", "message.completed", "run.completed"]
+    },
+    {
+      "id": "connected-service-read",
+      "prompt": "从我已连接的服务中读取项目概况，保持只读，并把来源身份写进结果。",
+      "domains": ["mcp", "connector_scope"],
+      "required_observations": ["tool.completed", "message.completed", "run.completed"]
+    },
+    {
+      "id": "delegated-comparison",
+      "prompt": "把资料检索和本地方案核对拆成两个并行研究方向，最后合并差异与风险。",
+      "domains": ["subagent", "artifact"],
+      "required_observations": ["subagent.started", "subagent.completed", "artifact.created", "message.completed", "run.completed"]
+    },
+    {
+      "id": "full-agent-report",
+      "prompt": "核实 HEPiX 2026 的最新信息，与本地 Android Runtime 方案比较，必要时并行研究，生成带来源的报告。",
+      "domains": ["fresh_information", "workspace", "subagent", "artifact", "citation"],
+      "required_observations": ["plan.started", "subagent.completed", "artifact.created", "citation.verified", "message.completed", "run.completed"]
+    }
+  ],
+  "forbidden_prompt_tokens": [
+    "web.search", "web.fetch", "workspace.read", "workspace.write", "workspace.edit",
+    "core.update_plan", "delegate", "mcp.call", "tool_choice", "function_call"
+  ]
+}

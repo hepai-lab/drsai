@@ -35,7 +35,7 @@
           "payload": {"content": "hello"}
         }
       ],
-      "expected_events": ["run.started", "message.delta", "run.completed"]
+      "expected_events": ["run.started", "message.delta", "tool.decision", "run.completed"]
     },
     {
       "id": "pure-core-tool",
@@ -48,7 +48,27 @@
           "session_id": "parity-session-tool",
           "sequence": 0,
           "idempotency_key": "tool-start",
-          "payload": {"input": "count words", "model_id": "model-1"}
+          "payload": {
+            "input": "count words",
+            "model_id": "model-1",
+            "tools": [
+              {
+                "name": "core.text_stats",
+                "version": 1,
+                "source": "shared-core",
+                "classification": "shared",
+                "description": "Count characters, words, and lines in text.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {"text": {"type": "string"}},
+                  "required": ["text"]
+                },
+                "requires_approval": false,
+                "risk": "read_only",
+                "required_capabilities": []
+              }
+            ]
+          }
         },
         {
           "protocol_version": 1,
@@ -75,7 +95,7 @@
           "payload": {"content": "There are two words."}
         }
       ],
-      "expected_events": ["run.started", "tool.started", "tool.result", "run.completed"]
+      "expected_events": ["run.started", "tool.decision", "tool.started", "tool.result", "tool.decision", "run.completed"]
     }
   ]
 }
