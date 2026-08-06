@@ -100,7 +100,7 @@ import type {
 import { desktopApi } from "./desktopApi";
 import { copyTextSafely } from "./clipboard";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
-import { userFacingFailureMessage } from "./userFacingLanguage";
+import { userFacingBusinessText, userFacingFailureMessage } from "./userFacingLanguage";
 import { isSelectableModelAvailability, modelCatalogRecoveryCopy } from "./modelCatalogRecovery";
 import { normalizeRuntimeErrorEnvelope } from "../../api/errorEnvelope";
 import { LoginScreen } from "./auth/LoginScreen";
@@ -417,6 +417,7 @@ function AuthenticatedApp({
   }, [activeThreadId]);
   const [hydratingThreadId, setHydratingThreadId] = useState<string | null>(null);
   const [threadHydrationError, setThreadHydrationError] = useState<{ threadId: string; message: string } | null>(null);
+  const [messageFocus, setMessageFocus] = useState<{ messageId: string; nonce: number } | null>(null);
   const [workspaceSortMode, setWorkspaceSortMode] = useState<WorkspaceSortMode>(
     () => loadWorkspaceSortMode(),
   );
@@ -1216,7 +1217,16 @@ function AuthenticatedApp({
           setMyDrSaiConfig(myDrSaiConfig);
         }
         setMyDrSaiConfigLoaded(true);
-        if (!myDrSaiConfig.ready) scheduleRetry();
+        // ready:true with a missing modelConnection used to stop retries forever
+        // after a transient /v1/config/model-state failure during gateway startup.
+        if (!myDrSaiConfig.ready) {
+          scheduleRetry();
+        } else if (
+          (!myDrSaiConfig.modelConnection?.model || !myDrSaiConfig.modelConnection.model_provider)
+          && (!agentModelPolicy.valid || !agentModelPolicy.effective_ref)
+        ) {
+          scheduleRetry();
+        }
         if (cancelled || agents.length === 0) return;
         const defaultAgent =
           agents.find((agent) => agent.isDefault) ??
@@ -1565,7 +1575,7 @@ function AuthenticatedApp({
     navigateTo(MENU_IDS.currentSession);
   }
 
-  function handleThreadSelect(threadId: string): void {
+  function handleThreadSelect(threadId: string, messageId?: string): void {
     const thread = threads.find((item) => item.id === threadId);
     if (thread?.boundAgentId) {
       const boundAgent = availableChatAgents.find((agent) => agent.id === thread.boundAgentId);
@@ -1591,6 +1601,9 @@ function AuthenticatedApp({
     setRightPanelCollapsed(true);
     if ((thread?.messageCount ?? 0) > 0 || thread?.runtimeSessionId) {
       void hydrateThreadSnapshot(threadId);
+    }
+    if (messageId) {
+      setMessageFocus({ messageId, nonce: Date.now() });
     }
     if (thread?.unread) {
       void handleThreadUpdate(threadId, { unread: false });
@@ -1973,8 +1986,19 @@ function AuthenticatedApp({
   }
 
   async function handleDeleteThread(threadId: string): Promise<void> {
+    const thread = threads.find((item) => item.id === threadId);
+    if (activeThreadId === threadId) await chat.abort();
+    else if (thread?.status === "running" && thread.lastRunId) {
+      const abort = thread.kind === "agent_run" ? desktopApi.abortAgentRun : desktopApi.abortChat;
+      await abort(thread.lastRunId).catch(() => undefined);
+    }
     await desktopApi.deleteThread(threadId);
-    setThreads((current) => current.filter((thread) => thread.id !== threadId));
+    setThreadSnapshots((current) => {
+      if (!(threadId in current)) return current;
+      const { [threadId]: _removed, ...rest } = current;
+      return rest;
+    });
+    setThreads((current) => current.filter((item) => item.id !== threadId));
     if (activeThreadId === threadId) {
       void handleNewChat();
     }
@@ -2022,11 +2046,30 @@ function AuthenticatedApp({
 
   async function handleThreadUpdated(
     snapshot: ChatThreadSnapshot,
+    options?: { preserveSidebarOrder?: boolean },
   ): Promise<void> {
     threadSnapshotStore.set(snapshot.threadId, snapshot);
     void desktopApi.updateThreadSnapshot(snapshot).catch(() => {
       // The local snapshot is still kept in renderer state and localStorage if disk persistence fails.
     });
+    const nextStatus = snapshot.messages.some((message) => message.streaming)
+      ? "running"
+      : "idle";
+    // Handoff/settle while switching must not bump updatedAt — that jumps the
+    // previous thread to the top of the sidebar under the newly selected one.
+    if (options?.preserveSidebarOrder) {
+      setThreads((current) => current.map((item) =>
+        item.id === snapshot.threadId
+          ? {
+              ...item,
+              title: snapshot.title || item.title,
+              status: nextStatus,
+              messageCount: snapshot.messageCount,
+            }
+          : item,
+      ));
+      return;
+    }
     const existingThread = threads.find((item) => item.id === snapshot.threadId);
     const thread = await desktopApi.updateThread({
       id: snapshot.threadId,
@@ -2035,9 +2078,7 @@ function AuthenticatedApp({
       workspacePath: effectiveWorkspacePath,
       boundAgentId: existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined,
       boundAgentName: existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined,
-      status: snapshot.messages.some((message) => message.streaming)
-        ? "running"
-        : "idle",
+      status: nextStatus,
       messageCount: snapshot.messageCount,
     });
     setThreads((current) =>
@@ -2268,6 +2309,10 @@ function AuthenticatedApp({
       : configuredModelConnection?.model_provider === operationalSelectedModelRef.provider_id
         && configuredModelConnection.model === operationalSelectedModelRef.model_id),
   );
+  const modelConfigured = Boolean(
+    (myDrSaiAgentModelPolicy?.valid && myDrSaiAgentModelPolicy.effective_ref)
+    || (configuredModelConnection?.model && configuredModelConnection.model_provider),
+  );
   const actualOperationalFacts = {
     identity: auth.loading ? "loading" : user ? "authenticated" : "anonymous",
     runtime: auth.serviceBlocker && !auth.serviceBusy
@@ -2279,7 +2324,7 @@ function AuthenticatedApp({
           : "unknown",
     model: !myDrSaiConfigLoaded
       ? "unknown"
-      : !myDrSaiConfig?.modelConnection?.model || !myDrSaiConfig.modelConnection.model_provider
+      : !modelConfigured
         ? "unconfigured"
         : selectedModelIsVerified
           ? "ready"
@@ -2376,7 +2421,16 @@ function AuthenticatedApp({
                 : undefined}
               decision={operationalDecision}
               language={language}
-              formatError={(error) => userFacingFailureMessage(error, language)}
+              formatError={(error) => {
+                // Prefer explicit recovery guidance (e.g. model auth failure) over the generic backend fallback.
+                const detail = error instanceof Error
+                  ? userFacingBusinessText(error.message, "")
+                  : "";
+                if (detail) {
+                  return language === "zh" ? `操作未完成：${detail}` : `Operation did not complete: ${detail}`;
+                }
+                return userFacingFailureMessage(error, language);
+              }}
               onRecover={performOperationalRecovery}
               report={() => ({
                 product: "OpenDrSai Windows App",
@@ -2414,6 +2468,7 @@ function AuthenticatedApp({
           agentOptions={availableChatAgents}
           modelOptions={chatModelOptions}
           samplePrompts={selectedChatAgent?.examples ?? selectedChatExamples}
+          messageFocus={messageFocus}
           structuredTurnFocus={structuredTurnFocus}
           externalAttachments={externalChatAttachments}
           ideContext={ideContext}
@@ -3084,20 +3139,35 @@ function AuthenticatedApp({
             if (!config?.modelConnection) {
               try {
                 config = await desktopApi.getMyDrSaiConfig(effectiveWorkspacePath || undefined);
+                if (config) {
+                  myDrSaiConfigRef.current = config;
+                  setMyDrSaiConfig(config);
+                  setMyDrSaiConfigLoaded(true);
+                  setAvailableChatModels(config.models ?? []);
+                }
               } catch {
                 config = null;
               }
             }
-            if (!config?.modelConnection?.model || !config.modelConnection.model_provider) {
+            const selectedRef = myDrSaiAgentModelPolicy?.effective_ref
+              ?? agentConfigurations["my-drsai"]?.modelRef;
+            const provider = selectedRef?.provider_id || config?.modelConnection?.model_provider;
+            const model = selectedRef?.model_id || config?.modelConnection?.model;
+            if (!provider || !model) {
               setRequestedSettingsPane("model-providers");
               navigateTo(MENU_IDS.profile);
               return;
             }
+            if (!config?.modelConnection) {
+              // Policy already names a primary model; open settings only when we
+              // still cannot read provider connection details for verification.
+              setRequestedSettingsPane("model-providers");
+              navigateTo(MENU_IDS.profile);
+              return language === "zh"
+                ? "已检测到 Agent 模型策略；请在模型提供方中确认并验证连接。"
+                : "An Agent model policy was found; confirm and verify it in Model providers.";
+            }
 
-            const selectedRef = myDrSaiAgentModelPolicy?.effective_ref
-              ?? agentConfigurations["my-drsai"]?.modelRef;
-            const provider = selectedRef?.provider_id || config.modelConnection.model_provider;
-            const model = selectedRef?.model_id || config.modelConnection.model;
             const result = await desktopApi.testMyDrSaiModelProvider(provider, model);
             if (!result.ok) {
               const localizedGuidance = result.guidance?.localizations?.[language];

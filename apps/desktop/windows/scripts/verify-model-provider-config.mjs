@@ -109,6 +109,15 @@ if (!desktopConfig.includes('"X-OpenDrSai-Auth-Mode": "oidc"') || !desktopConfig
   console.error("HepAI draft tests must use request-scoped OIDC credentials and preserve structured Gateway errors.");
   process.exit(1);
 }
+const persistedProviderTestFn = desktopConfig.match(/export async function testMyDrSaiModelProvider[\s\S]*?\n}/)?.[0] || "";
+if (!persistedProviderTestFn.includes('provider === "hepai" ? await oidcGatewayHeaders()')) {
+  console.error("Persisted HepAI Provider tests must send request-scoped OIDC credentials.");
+  process.exit(1);
+}
+if (!pythonGateway.includes("auth = get_platform_auth() if name == \"hepai\" else None")) {
+  console.error("Persisted HepAI Provider test endpoint must inject request-scoped OIDC credentials.");
+  process.exit(1);
+}
 if (!renderer.includes('data-testid="model-provider-api-host"') || !renderer.includes('{zh ? "API 主机：" : "API host: "}{myDrSaiConfig.modelConnection.provider.base_url}')) {
   console.error("Every Provider, including HepAI, must display its effective API host.");
   process.exit(1);

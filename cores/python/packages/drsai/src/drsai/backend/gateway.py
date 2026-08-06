@@ -9671,6 +9671,38 @@ async def test_model_provider_config(name: str, req: ModelProviderTestRequest):
     """Perform a bounded, authenticated protocol check against a Provider."""
     try:
         config = await asyncio.to_thread(load_model_provider_config)
+        # HepAI authenticates with the caller's request-scoped OIDC token, not a
+        # persisted API key. Mirror model discovery so Verify Connection works.
+        auth = get_platform_auth() if name == "hepai" else None
+        if auth is not None:
+            existing_provider = config.providers.get(name)
+            if existing_provider is not None:
+                config = DrSaiConfig(
+                    model=req.model or config.model,
+                    model_provider=name,
+                    config_version=config.config_version,
+                    providers={
+                        **config.providers,
+                        name: ProviderInput(
+                            name=name,
+                            base_url=auth.model_base_url or existing_provider.base_url,
+                            anthropic_base_url=existing_provider.anthropic_base_url,
+                            google_base_url=existing_provider.google_base_url,
+                            wire_api=existing_provider.wire_api,
+                            requires_api_key=existing_provider.requires_api_key,
+                            api_key=auth.access_token,
+                            api_key_env=None,
+                            api_key_credential=None,
+                            models_file=existing_provider.models_file,
+                            models=existing_provider.models,
+                            model_aliases=existing_provider.model_aliases,
+                            model_upstream_ids=existing_provider.model_upstream_ids,
+                            model_operations=existing_provider.model_operations,
+                            model_configs=existing_provider.model_configs,
+                        ),
+                    },
+                    source_path=config.source_path,
+                )
         resolved = resolve_model_config(
             config,
             environ=os.environ,

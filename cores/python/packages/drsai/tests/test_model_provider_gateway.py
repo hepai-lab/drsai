@@ -897,6 +897,52 @@ def test_connection_test_classifies_authentication_without_leaking_key(monkeypat
     assert "gateway-secret" not in repr(payload)
 
 
+def test_hepai_connection_test_uses_request_scoped_oidc(monkeypatch) -> None:
+    class CapturingClient(_FakeHttpClient):
+        last: "CapturingClient | None" = None
+
+        def __init__(self, *, timeout: float):
+            super().__init__(timeout=timeout)
+            CapturingClient.last = self
+
+    def hepai_config():
+        return parse_user_config(
+            {
+                "model": "deepseek-v4-pro",
+                "model_provider": "hepai",
+                "model_providers": {
+                    "hepai": {
+                        "base_url": "https://aiapi.example/v1",
+                        "wire_api": "openai",
+                        "requires_api_key": False,
+                    }
+                },
+            },
+            source_path="/test/config.toml",
+        )
+
+    monkeypatch.setattr(gateway, "load_model_provider_config", hepai_config)
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", CapturingClient)
+    auth = PlatformAuthContext(
+        access_token="oidc-access-token",
+        subject="user-1",
+        issuer="https://issuer.example",
+        expires_at=2**31 - 1,
+        model_base_url="https://hepai.example/v1",
+    )
+    with platform_auth_scope(auth):
+        payload = asyncio.run(
+            gateway.test_model_provider_config(
+                "hepai", gateway.ModelProviderTestRequest(model="deepseek-v4-pro")
+            )
+        )
+
+    assert CapturingClient.last is not None
+    assert CapturingClient.last.seen_headers["Authorization"] == "Bearer oidc-access-token"
+    assert payload["error"] == "authentication_failed"
+    assert "oidc-access-token" not in repr(payload)
+
+
 def test_marking_model_config_stale_does_not_interrupt_active_agent() -> None:
     class ActiveAgent:
         closed = False
