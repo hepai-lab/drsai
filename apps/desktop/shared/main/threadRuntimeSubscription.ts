@@ -230,6 +230,25 @@ export async function getRuntimeThreadSnapshotEnvelope(
   signal?: AbortSignal,
   options: DesktopThreadSnapshotRequest = {},
 ): Promise<DesktopThreadSnapshotEnvelope | null> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    signal?.throwIfAborted();
+    try {
+      return await getRuntimeThreadSnapshotEnvelopeOnce(thread, signal, options);
+    } catch (error) {
+      lastError = error;
+      if (signal?.aborted || !isRuntimeGenerationInvalidated(error) || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, runtimeGenerationRetryDelayMs(attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function getRuntimeThreadSnapshotEnvelopeOnce(
+  thread: DesktopThread,
+  signal?: AbortSignal,
+  options: DesktopThreadSnapshotRequest = {},
+): Promise<DesktopThreadSnapshotEnvelope | null> {
   signal?.throwIfAborted();
   const runtime = await runtimeForThread(thread);
   signal?.throwIfAborted();

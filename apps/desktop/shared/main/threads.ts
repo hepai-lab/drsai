@@ -45,6 +45,8 @@ const atomicJsonWriteQueues = new Map<string, Promise<void>>();
 const jsonMutationQueues = new Map<string, Promise<void>>();
 let staleThreadFilesCleaned = false;
 const threadSnapshotIoMetrics = { shardReads: 0, shardWrites: 0, legacyCatalogReads: 0, shardDirectoryScans: 0 };
+/** In-process tombstones so late abort/handoff upserts cannot recreate a deleted thread. */
+const deletedThreadIds = new Set<string>();
 
 export function getThreadSnapshotIoMetrics(): Readonly<typeof threadSnapshotIoMetrics> {
   return { ...threadSnapshotIoMetrics };
@@ -109,6 +111,12 @@ export async function createThread(rawRequest: unknown): Promise<DesktopThread> 
 
 export async function updateThread(rawRequest: unknown): Promise<DesktopThread> {
   const request = validateUpdateThreadRequest(rawRequest);
+  if (deletedThreadIds.has(request.id)) {
+    throw Object.assign(new Error("Thread was deleted."), {
+      code: "thread_deleted",
+      retryable: false,
+    });
+  }
   return serializeJsonMutation(THREADS_FILE, async () => {
     const threads = await readThreads();
     const now = new Date().toISOString();
@@ -143,6 +151,7 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
 
 export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
   const threadId = sanitizeThreadId(rawThreadId);
+  deletedThreadIds.add(threadId);
   const deleted = await serializeJsonMutation(THREADS_FILE, async () => {
     const threads = await readThreads();
     if (!threads.some((thread) => thread.id === threadId)) return false;

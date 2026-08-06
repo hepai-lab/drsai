@@ -393,6 +393,8 @@ function AuthenticatedApp({
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState(() => loadRestoredThreadId());
   const activeThreadIdRef = useRef(activeThreadId);
+  // Deleted ids must ignore late abort/handoff/catalog upserts that would recreate the row.
+  const deletedThreadIdsRef = useRef(new Set<string>());
   useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
   const threadSnapshotStoreRef = useRef<ThreadSnapshotStore | null>(null);
   if (!threadSnapshotStoreRef.current) threadSnapshotStoreRef.current = new ThreadSnapshotStore();
@@ -872,11 +874,13 @@ function AuthenticatedApp({
       }
     });
     const removeSnapshot = desktopApi.onThreadSnapshot((event) => {
+      if (deletedThreadIdsRef.current.has(event.threadId)) return;
       const snapshot = mergeThreadSnapshotForDisplay(event.snapshot, threadSnapshotStore.get(event.threadId) ?? undefined);
       if (!threadSnapshotCoordinatorRef.current.commitEnvelope(event, () => threadSnapshotStore.set(event.threadId, snapshot))) return;
       batcher.clearThread(event.threadId);
     });
     const removePatch = desktopApi.onThreadSnapshotPatch((event) => {
+      if (deletedThreadIdsRef.current.has(event.threadId)) return;
       threadSyncMetrics.observe("transport", Math.max(0, Date.now() - event.patch.updatedAt));
       const waterline = threadSnapshotCoordinatorRef.current.get(event.threadId);
       if (!threadSnapshotCoordinatorRef.current.acceptPatch(event)) {
@@ -900,6 +904,7 @@ function AuthenticatedApp({
     };
   }, []);
   useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
+    if (deletedThreadIdsRef.current.has(event.thread.id)) return;
     setThreads((current) => sortThreadsForSidebar([
       event.thread,
       ...current.filter((item) => item.id !== event.thread.id),
@@ -1659,6 +1664,17 @@ function AuthenticatedApp({
       if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, snapshot))) return;
     } catch (error) {
       if ((error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && /abort|cancel/i.test(error.name))) return;
+      // Runtime generation races during sidebar switches are recovered by the
+      // main-process reconnect path; do not surface them as a hard history banner.
+      const errorCode = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+      if (errorCode === "runtime_client_generation_invalidated" || errorCode === "runtime_generation_invalidated") {
+        if (activeThreadIdRef.current === threadId) {
+          window.setTimeout(() => {
+            if (activeThreadIdRef.current === threadId) void hydrateThreadSnapshot(threadId, { forceFresh: true });
+          }, 250);
+        }
+        return;
+      }
       const state = threadSnapshotCoordinatorRef.current.noteResyncFailure(threadId);
       const friendly = describeUserFacingError(error, language);
       setThreadHydrationError({
@@ -1986,21 +2002,41 @@ function AuthenticatedApp({
   }
 
   async function handleDeleteThread(threadId: string): Promise<void> {
+    deletedThreadIdsRef.current.add(threadId);
     const thread = threads.find((item) => item.id === threadId);
-    if (activeThreadId === threadId) await chat.abort();
-    else if (thread?.status === "running" && thread.lastRunId) {
-      const abort = thread.kind === "agent_run" ? desktopApi.abortAgentRun : desktopApi.abortChat;
-      await abort(thread.lastRunId).catch(() => undefined);
-    }
-    await desktopApi.deleteThread(threadId);
+    const wasActive = activeThreadId === threadId;
+    // Optimistic sidebar removal so the row disappears before persistence finishes.
+    setThreads((current) => current.filter((item) => item.id !== threadId));
+    threadSnapshotStore.delete(threadId);
     setThreadSnapshots((current) => {
       if (!(threadId in current)) return current;
       const { [threadId]: _removed, ...rest } = current;
       return rest;
     });
-    setThreads((current) => current.filter((item) => item.id !== threadId));
-    if (activeThreadId === threadId) {
-      void handleNewChat();
+    setThreadHydrationError((current) => (current?.threadId === threadId ? null : current));
+    try {
+      if (wasActive) {
+        await chat.abort().catch(() => undefined);
+        // Leave the deleted thread before persistence so adapter handoff cannot
+        // race an upsert back into threads.json / the sidebar.
+        setRightPanelCollapsed(true);
+        setActiveThreadId(createLocalThreadId());
+        navigateTo(MENU_IDS.currentSession);
+      } else if (thread?.status === "running" && thread.lastRunId) {
+        const abort = thread.kind === "agent_run" ? desktopApi.abortAgentRun : desktopApi.abortChat;
+        await abort(thread.lastRunId).catch(() => undefined);
+      }
+      const hydration = threadHydrationsRef.current.get(threadId);
+      if (hydration) {
+        void desktopApi.cancelThreadSnapshotHydration(hydration.requestId).catch(() => false);
+        threadHydrationsRef.current.delete(threadId);
+      }
+      void desktopApi.unsubscribeThreadSnapshot(threadId).catch(() => undefined);
+      await desktopApi.deleteThread(threadId);
+    } catch (error) {
+      deletedThreadIdsRef.current.delete(threadId);
+      await refreshThreads().catch(() => undefined);
+      throw error;
     }
   }
 
@@ -2008,10 +2044,12 @@ function AuthenticatedApp({
     threadId: string,
     updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThread["fork"] },
   ): Promise<void> {
+    if (deletedThreadIdsRef.current.has(threadId)) return;
     const thread = updates.archived === undefined ? await desktopApi.updateThread({
       id: threadId,
       ...updates,
     }) : await desktopApi.setThreadArchived({ threadId, archived: updates.archived });
+    if (deletedThreadIdsRef.current.has(threadId)) return;
     setThreads((current) =>
       sortThreadsForSidebar([
         thread,
@@ -2048,6 +2086,7 @@ function AuthenticatedApp({
     snapshot: ChatThreadSnapshot,
     options?: { preserveSidebarOrder?: boolean },
   ): Promise<void> {
+    if (deletedThreadIdsRef.current.has(snapshot.threadId)) return;
     threadSnapshotStore.set(snapshot.threadId, snapshot);
     void desktopApi.updateThreadSnapshot(snapshot).catch(() => {
       // The local snapshot is still kept in renderer state and localStorage if disk persistence fails.
@@ -2071,16 +2110,24 @@ function AuthenticatedApp({
       return;
     }
     const existingThread = threads.find((item) => item.id === snapshot.threadId);
-    const thread = await desktopApi.updateThread({
-      id: snapshot.threadId,
-      kind: existingThread?.kind ?? "chat",
-      title: snapshot.title,
-      workspacePath: effectiveWorkspacePath,
-      boundAgentId: existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined,
-      boundAgentName: existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined,
-      status: nextStatus,
-      messageCount: snapshot.messageCount,
-    });
+    let thread: DesktopThread;
+    try {
+      thread = await desktopApi.updateThread({
+        id: snapshot.threadId,
+        kind: existingThread?.kind ?? "chat",
+        title: snapshot.title,
+        workspacePath: effectiveWorkspacePath,
+        boundAgentId: existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined,
+        boundAgentName: existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined,
+        status: nextStatus,
+        messageCount: snapshot.messageCount,
+      });
+    } catch (error) {
+      const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+      if (code === "thread_deleted" || deletedThreadIdsRef.current.has(snapshot.threadId)) return;
+      throw error;
+    }
+    if (deletedThreadIdsRef.current.has(snapshot.threadId)) return;
     setThreads((current) =>
       sortThreadsForSidebar([
         thread,
@@ -2091,7 +2138,8 @@ function AuthenticatedApp({
 
   async function refreshThreads(): Promise<void> {
     try {
-      setThreads(await desktopApi.listThreads());
+      const listed = await desktopApi.listThreads();
+      setThreads(listed.filter((thread) => !deletedThreadIdsRef.current.has(thread.id)));
     } finally {
       setThreadsLoaded(true);
     }

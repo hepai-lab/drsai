@@ -17,6 +17,7 @@ import {
   dialog,
   ipcMain,
   protocol,
+  screen,
   session as electronSession,
   shell,
   type IpcMainInvokeEvent,
@@ -205,6 +206,7 @@ import {
 import {
   getRuntimeThreadSnapshot,
   getRuntimeThreadSnapshotEnvelope,
+  isRuntimeGenerationInvalidated,
   subscribeRuntimeThreadSnapshot,
 } from "../../../shared/main/threadRuntimeSubscription";
 import { setThreadArchived } from "./threadArchive";
@@ -329,7 +331,7 @@ import {
   getRemoteWorkspaceGitFileAtRef,
   getRemoteWorkspaceRootForPath,
   getRemoteThreadSnapshot,
-  searchRemoteThreadMessages,
+  searchThreadMessagesWithRemoteFallback,
   commitRemoteWorkspace,
   getRemoteWorkspaceContextOverview,
   getRemoteSshDiagnosticReport,
@@ -2793,12 +2795,26 @@ if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
 function createWindow(): void {
   recordE2eStartupTrace("createWindow:start", { appPath: app.getAppPath() });
   const windowIcon = getWindowIconPath();
+  // Size relative to the current display work area so large/small resolutions
+  // and DPI scaling do not open a window that overflows or clips chrome.
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const minWidth = Math.min(1100, workArea.width);
+  const minHeight = Math.min(720, workArea.height);
+  const width = Math.min(
+    workArea.width,
+    Math.max(minWidth, Math.min(1280, Math.floor(workArea.width * 0.82))),
+  );
+  const height = Math.min(
+    workArea.height,
+    Math.max(minHeight, Math.min(820, Math.floor(workArea.height * 0.84))),
+  );
 
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 1100,
-    minHeight: 720,
+    width,
+    height,
+    minWidth,
+    minHeight,
+    center: true,
     title: "OpenDrSai",
     titleBarStyle: "hidden",
     titleBarOverlay: {
@@ -4263,8 +4279,8 @@ function registerIpc(): void {
     "desktop:cancel-desktop-sso-login",
     (_event, deviceCode: string) => cancelDesktopSsoLogin(deviceCode),
   );
-  secureHandle("desktop:logout", (_event, options) => {
-    stopGateway();
+  secureHandle("desktop:logout", async (_event, options) => {
+    await stopGateway();
     return logout(options);
   });
   secureHandle("desktop:refresh-auth-session", () => refreshAuthSession());
@@ -4476,7 +4492,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:local-data-cleanup", async (_event, request) => {
     if (hasActiveChats() || hasActiveAgentRuns()) throw new Error("Stop active tasks before clearing local data.");
-    stopGateway();
+    await stopGateway();
     const result = await clearLocalData(request);
     if (result.scope === "all_local_data") {
       await desktopDiagnostics.clear();
@@ -5124,8 +5140,14 @@ function registerIpc(): void {
     try {
     const thread = (await listThreads()).find((item) => item.id === threadId);
     if (thread?.runtimeSessionId) {
-      const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
-      if (envelope) return envelope;
+      try {
+        const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
+        if (envelope) return envelope;
+      } catch (error) {
+        // Generation races during rapid thread switching must not blank the
+        // conversation body; fall through to the last persisted snapshot.
+        if (!isRuntimeGenerationInvalidated(error)) throw error;
+      }
     }
     controller.signal.throwIfAborted();
     const remote = await getRemoteThreadSnapshot(threadId);
@@ -5173,7 +5195,7 @@ function registerIpc(): void {
     return runtimeThreadSubscriptions.delete(key);
   });
   secureHandle("desktop:search-thread-messages", async (_event, request: DesktopThreadContentSearchRequest) =>
-    (await searchRemoteThreadMessages(request)) || searchThreadMessages(request),
+    searchThreadMessagesWithRemoteFallback(request, searchThreadMessages),
   );
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),

@@ -3,7 +3,7 @@ import { getAgentCatalogSnapshot, getPlatformAgentStatus, listAgents, recordAgen
 import type { MobilePairingController } from "../../../../shared/main/mobilePairingController";
 import { deleteMyDrSaiModelProvider, discoverMyDrSaiProviderModels, getMyDrSaiAgentModelPolicy, getMyDrSaiConfig, listMyDrSaiModelProviderPresets, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, testMyDrSaiModelDraft, testMyDrSaiModelProvider, updateMyDrSaiAgentModelPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection } from "../../../../shared/main/myDrSaiConfig";
 import { createThread, deleteThread, getThreadSnapshot, listThreads, searchThreadMessages, updateThread, updateThreadSnapshot } from "../../../../shared/main/threads";
-import { getRuntimeThreadSnapshot, getRuntimeThreadSnapshotEnvelope } from "../../../../shared/main/threadRuntimeSubscription";
+import { getRuntimeThreadSnapshot, getRuntimeThreadSnapshotEnvelope, isRuntimeGenerationInvalidated } from "../../../../shared/main/threadRuntimeSubscription";
 import { createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../../../../shared/main/workspaces";
 import { remoteWorkspaceController } from "../../../../shared/main/remoteWorkspaceController";
 import type { MacosServiceContainer } from "../serviceContainer";
@@ -75,8 +75,12 @@ export function registerMacosCatalogIpc(
     try {
     const thread = (await listThreads()).find((item) => item.id === threadId);
     if (thread?.runtimeSessionId) {
-      const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
-      if (envelope) return envelope;
+      try {
+        const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
+        if (envelope) return envelope;
+      } catch (error) {
+        if (!isRuntimeGenerationInvalidated(error)) throw error;
+      }
     }
     controller.signal.throwIfAborted();
     const remote = await remoteWorkspaceController.getThreadSnapshot(threadId);
