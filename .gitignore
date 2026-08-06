@@ -228,6 +228,11 @@ dmypy.json
 cython_debug/
 
 ########################
+# TypeScript incremental build cache
+########################
+*.tsbuildinfo
+
+########################
 # IDE 配置文件
 ########################
 .vscode/
@@ -339,3 +344,6 @@ docs/android/reports/evidence/samsung-model-provider-*/
 docs/desktop/evidence/**/*.png
 docs/desktop/evidence/**/accessibility-tree.json
 docs/desktop/evidence/round*/
+
+# Desktop renderer bundles are reproducible build output.
+apps/desktop/shared/renderer/out/

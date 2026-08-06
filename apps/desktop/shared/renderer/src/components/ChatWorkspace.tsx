@@ -2294,7 +2294,7 @@ function ChatWorkspaceImpl({
         ref={messageListRef}
         onScroll={handleMessageListScroll}
       >
-        {visibleMessages.map((message, messageIndex) => {
+        {visibleMessages.filter((message) => !isEmptyAssistantShell(message)).map((message, messageIndex) => {
           const assistantContent = message.role === "assistant"
             ? getAssistantDisplayContent(message)
             : message.content;
@@ -3730,12 +3730,13 @@ function StreamingStatus({
   message: UiMessage;
   now: number;
   zh: boolean;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   if (!message.streaming) {
+    // Empty completed shells are filtered elsewhere; never show the literal placeholder.
     if (message.error) {
       return <p>{zh ? "回复失败。请查看调试信息。" : "Reply failed. View debug details."}</p>;
     }
-    return <p>{zh ? "暂无可显示的回复内容。" : "No response content yet."}</p>;
+    return null;
   }
 
   const startedAt = message.startedAt ?? now;
@@ -4573,6 +4574,17 @@ function getSlashCommandDescription(command: ChatCommandName): string {
     fork: "Prepare isolated follow-up work.",
     status: "Summarize chat, context, and runtime status.",
   }[command];
+}
+
+function isEmptyAssistantShell(message: UiMessage): boolean {
+  if (message.role !== "assistant") return false;
+  if (message.streaming || message.error || message.replyFailed) return false;
+  if (message.structuredTurn?.parts?.length) return false;
+  const body = [message.content, message.reasoningContent, message.statusContent]
+    .map((value) => value?.trim() ?? "")
+    .filter(Boolean)
+    .join("");
+  return !body;
 }
 
 function getAssistantDisplayContent(message: UiMessage): string {

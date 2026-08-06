@@ -344,9 +344,15 @@ _DB_URI = f"sqlite:///{_DATASET}/drsai.db"
 
 
 
-# Default desktop user â can be overridden via API
+# Default desktop user — API override and cli_config take precedence at runtime.
 
-_DEFAULT_USER_ID = os.environ.get("DRSAI_DESKTOP_USER", os.environ.get("USER", os.environ.get("USERNAME", "desktop")))
+_DEFAULT_USER_ID = os.environ.get(
+    "DRSAI_DESKTOP_USER",
+    os.environ.get(
+        "DRSAI_USER_ID",
+        os.environ.get("USER", os.environ.get("USERNAME", "desktop")),
+    ),
+)
 
 
 
@@ -510,6 +516,19 @@ class ChatRequest(BaseModel):
 class UserNameRequest(BaseModel):
 
     user_name: str = Field(..., description="Custom user name for the desktop session.")
+
+
+class CanonicalizeIdentityRequest(BaseModel):
+    canonical_user_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Stable Desktop/OIDC user id that should own local history.",
+    )
+    aliases: list[str] = Field(
+        default_factory=list,
+        description="Additional historical user_id values to remap onto the canonical id.",
+    )
 
 
 class ContentRequest(BaseModel):
@@ -5351,9 +5370,16 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                 resource for resource in input_resources
                 if not (resource.get("kind") == "file" and str(resource.get("mime") or "").startswith("image/"))
             )
+        # Persist display text only. The agent still receives the full prompt
+        # (which may include desktop-injected attachment contents).
+        display_prompt = metadata.get("user_display_text")
+        if not isinstance(display_prompt, str) or not display_prompt.strip():
+            display_prompt = _strip_local_attachment_context(request.prompt)
+        else:
+            display_prompt = display_prompt.strip()
         _runtime_engine().set_run_input(
             run_id,
-            request.prompt,
+            display_prompt,
             attachment_refs=attachment_refs,
             input_resources=input_resources,
             correlation_id=correlation_id,
@@ -6995,32 +7021,99 @@ def _task_with_runtime_mode(task: str, metadata: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _strip_local_attachment_context(task: str) -> str:
+    marker = "The user attached the following local context."
+    index = task.find(marker)
+    if index < 0:
+        return task
+    return task[:index].rstrip()
+
+
 def _task_with_remote_attachments(task: str, metadata: dict[str, Any] | None, workspace_id: str | None) -> str:
-    if not workspace_id or not isinstance(metadata, dict): return task
+    if not isinstance(metadata, dict):
+        return task
+
+    # Desktop may pre-read local attachments into attachment_context. Prefer that
+    # so uploaded files outside the workspace are still visible to the agent.
+    # Skip when desktop already embedded the same block into the last user message.
+    prebuilt = metadata.get("attachment_context")
+    if (
+        isinstance(prebuilt, list)
+        and prebuilt
+        and "The user attached the following local context." not in task
+    ):
+        blocks: list[str] = []
+        total = 0
+        for item in prebuilt[:20]:
+            if not isinstance(item, dict):
+                continue
+            if not item.get("included"):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            name = str(item.get("name") or "attachment")[:200]
+            kind = str(item.get("kind") or "file")[:40]
+            path = str(item.get("path") or "")[:2048]
+            remaining = 50000 - total
+            if remaining <= 0:
+                break
+            content = content[:remaining]
+            total += len(content)
+            blocks.append(
+                f"Attachment: {name} ({kind})\nPath: {path}\nContent:\n{content}"
+            )
+        if blocks:
+            return (
+                f"{task}\n\nThe user attached the following local context. "
+                "Answer using these attachments directly when the user asks about "
+                "\"the file\", \"this file\", or similar.\n\n"
+                + "\n\n".join(blocks)
+            )
+
+    if not workspace_id:
+        return task
     attachments = metadata.get("attachments")
-    if not isinstance(attachments, list): return task
-    blocks: list[str] = []
+    if not isinstance(attachments, list):
+        return task
+    blocks = []
     total = 0
     for item in attachments[:20]:
-        if not isinstance(item, dict): continue
-        kind = str(item.get("kind") or ""); name = str(item.get("name") or "attachment")[:200]
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        name = str(item.get("name") or "attachment")[:200]
         if kind in {"browser", "terminal", "selection"}:
             content = str(item.get("visibleText") or item.get("note") or "")[:12000]
         elif kind == "file":
             try:
                 target = _workspace_child(workspace_id, str(item.get("path") or ""))
                 raw = target.read_bytes()[:262144]
-                content = raw.decode("utf-8", errors="replace") if b"\x00" not in raw[:8192] else "[binary file omitted]"
-            except (HTTPException, OSError): content = "[file unavailable]"
+                content = (
+                    raw.decode("utf-8", errors="replace")
+                    if b"\x00" not in raw[:8192]
+                    else "[binary file omitted]"
+                )
+            except (HTTPException, OSError):
+                content = "[file unavailable]"
         elif kind == "folder":
             try:
                 directory = _workspace_child(workspace_id, str(item.get("path") or ""))
-                content = "\n".join(str(path.relative_to(directory)) for path in directory.rglob("*") if path.is_file())[:24000]
-            except (HTTPException, OSError): content = "[folder unavailable]"
-        else: continue
+                content = "\n".join(
+                    str(path.relative_to(directory))
+                    for path in directory.rglob("*")
+                    if path.is_file()
+                )[:24000]
+            except (HTTPException, OSError):
+                content = "[folder unavailable]"
+        else:
+            continue
         remaining = 50000 - total
-        if remaining <= 0: break
-        content = content[:remaining]; total += len(content); blocks.append(f"Attachment: {name} ({kind})\n{content}")
+        if remaining <= 0:
+            break
+        content = content[:remaining]
+        total += len(content)
+        blocks.append(f"Attachment: {name} ({kind})\n{content}")
     return task if not blocks else f"{task}\n\nRemote workspace attachment context:\n" + "\n\n".join(blocks)
 
 
@@ -8351,6 +8444,174 @@ async def set_user_name(req: UserNameRequest):
     logger.info(f"Desktop user name set to: {name}")
 
     return {"user_name": name}
+
+
+_UNSTABLE_EXACT_USER_IDS = frozenset(
+    {
+        "anonymous",
+        "desktop",
+        "desktop-debug",
+        "developer-local",
+        "test",
+        "u1",
+        "opendrsai-smoke",
+        "gateway-smoke",
+    }
+)
+
+
+def _is_unstable_user_id(value: str, canonical: str, aliases: set[str]) -> bool:
+    trimmed = value.strip()
+    if not trimmed or trimmed == canonical:
+        return False
+    lower = trimmed.lower()
+    if lower in _UNSTABLE_EXACT_USER_IDS:
+        return True
+    if lower.startswith("local-api-"):
+        return True
+    if trimmed in aliases:
+        return True
+    return False
+
+
+@app.post("/v1/identity/canonicalize")
+async def canonicalize_identity(req: CanonicalizeIdentityRequest):
+    """Remap historical/unstable user_id rows onto the Desktop canonical identity.
+
+    Used after OIDC login so thread/sessionmessage ownership converges on one
+    stable id (BUG-5). Only rewrites known-unstable or explicitly aliased values.
+    """
+    import sqlite3
+    from pathlib import Path
+
+    canonical = req.canonical_user_id.strip()
+    if not canonical or len(canonical) > 200 or any(ch in canonical for ch in "\r\n\0"):
+        raise HTTPException(status_code=400, detail="canonical_user_id is invalid")
+
+    aliases = {
+        item.strip()
+        for item in req.aliases
+        if isinstance(item, str) and item.strip() and item.strip() != canonical
+    }
+    for env_key in ("USERNAME", "USER"):
+        env_user = (os.environ.get(env_key) or "").strip()
+        if env_user and env_user != canonical:
+            aliases.add(env_user)
+
+    # Use the live SQLite file directly. Going through DatabaseManager here can
+    # re-enter schema migration while the Desktop gateway already holds the DB.
+    db_path = Path(_DATASET) / "drsai.db"
+    if not db_path.exists():
+        return {
+            "ok": True,
+            "canonical_user_id": canonical,
+            "aliases": [],
+            "migrated": {},
+            "total_migrated": 0,
+        }
+
+    tables = ("thread", "sessionmessage", "sessionsummary")
+    migrated: dict[str, int] = {}
+    discovered: list[str] = []
+    errors: dict[str, str] = {}
+
+    conn = sqlite3.connect(str(db_path), timeout=5.0)
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        existing_tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+            ).fetchall()
+        }
+
+        for table in tables:
+            if table not in existing_tables:
+                continue
+            columns = {
+                str(row[1])
+                for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if "user_id" not in columns:
+                continue
+            try:
+                distinct = [
+                    str(row[0])
+                    for row in conn.execute(f"SELECT DISTINCT user_id FROM {table}").fetchall()
+                    if row[0] is not None
+                ]
+                rewrite = [
+                    value
+                    for value in distinct
+                    if _is_unstable_user_id(value, canonical, aliases)
+                ]
+                for value in rewrite:
+                    if value not in discovered:
+                        discovered.append(value)
+                if not rewrite:
+                    migrated[table] = 0
+                    continue
+                # Content FTS triggers fire on any UPDATE and can fail if the
+                # FTS index is unhealthy. user_id rewrites do not need them.
+                saved_triggers = conn.execute(
+                    "SELECT name, sql FROM sqlite_master "
+                    "WHERE type='trigger' AND tbl_name=? AND name LIKE '%_update'",
+                    (table,),
+                ).fetchall()
+                for trigger_name, _sql in saved_triggers:
+                    conn.execute(f'DROP TRIGGER IF EXISTS "{trigger_name}"')
+                try:
+                    placeholders = ", ".join("?" for _ in rewrite)
+                    cursor = conn.execute(
+                        f"UPDATE {table} SET user_id = ? WHERE user_id IN ({placeholders})",
+                        [canonical, *rewrite],
+                    )
+                    migrated[table] = int(cursor.rowcount or 0)
+                finally:
+                    for trigger_name, trigger_sql in saved_triggers:
+                        if trigger_sql:
+                            conn.execute(trigger_sql)
+            except Exception as exc:
+                errors[table] = str(exc)[:300]
+                logger.warning("user_id migration failed for %s: %s", table, exc)
+
+        if "session_search_fts" in existing_tables and discovered:
+            try:
+                fts_cols = {
+                    str(row[1])
+                    for row in conn.execute("PRAGMA table_info(session_search_fts)").fetchall()
+                }
+                if "user_id" in fts_cols:
+                    placeholders = ", ".join("?" for _ in discovered)
+                    cursor = conn.execute(
+                        f"UPDATE session_search_fts SET user_id = ? WHERE user_id IN ({placeholders})",
+                        [canonical, *discovered],
+                    )
+                    migrated["session_search_fts"] = int(cursor.rowcount or 0)
+            except Exception as exc:
+                errors["session_search_fts"] = str(exc)[:300]
+                logger.debug("session_search_fts user_id migration skipped: %s", exc)
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    total = sum(migrated.values())
+    if total:
+        logger.info(
+            "Canonicalized %s historical user_id rows onto %s (aliases=%s)",
+            total,
+            canonical,
+            discovered,
+        )
+    return {
+        "ok": True,
+        "canonical_user_id": canonical,
+        "aliases": discovered,
+        "migrated": migrated,
+        "total_migrated": total,
+        **({"errors": errors} if errors else {}),
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -475,7 +475,16 @@ function StructuredReasoning({
     <div className="structured-reasoning" data-segment-count={visibleSegments.length}>
       <div className="chat-reasoning-content">
         {part.summary ? <p className="structured-reasoning-summary">{part.summary}</p> : null}
-        {content ? <ChatMessageContent content={content} streaming={running} language={language} onOpenLink={onOpenLink} /> : null}
+        {/* plainMarkdown avoids nesting a second "Thinking…" block via think-tag parsing. */}
+        {content ? (
+          <ChatMessageContent
+            content={content}
+            plainMarkdown
+            streaming={false}
+            language={language}
+            onOpenLink={onOpenLink}
+          />
+        ) : null}
       </div>
     </div>
   );

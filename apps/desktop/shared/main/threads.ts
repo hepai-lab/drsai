@@ -9,6 +9,7 @@ import type {
   DesktopThreadContentSearchResult,
   DesktopThreadMessageSnapshot,
   DesktopThreadSnapshot,
+  ChatAttachment,
   ChatToolTimelineEvent,
   ChatMessagePart,
   UpdateThreadRequest,
@@ -17,6 +18,7 @@ import { LOCAL_OPENDRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/des
 import { DRSAI_HOME } from "./paths";
 import { sanitizeStructuredTurnState } from "../api/structuredConversation";
 import { replaceFileSafely } from "./atomicFileReplace";
+import { stripAttachmentContextFromUserContent } from "../api/attachmentContextDisplay";
 
 const THREADS_FILE = join(DRSAI_HOME, "desktop", "threads.json");
 const THREAD_SNAPSHOTS_FILE = join(DRSAI_HOME, "desktop", "thread-snapshots.json");
@@ -514,10 +516,15 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
       : `message-${index + 1}`;
   const structuredTurn = sanitizeStructuredTurnState(message.structuredTurn);
   const inputRequest = sanitizeSnapshotInputRequest(message.inputRequest);
+  const rawContent = message.content.slice(0, MAX_MESSAGE_CHARS);
+  const content = message.role === "user"
+    ? stripAttachmentContextFromUserContent(rawContent)
+    : rawContent;
+  const attachments = sanitizeSnapshotAttachments(message.attachments);
   return {
     id,
     role: message.role,
-    content: message.content.slice(0, MAX_MESSAGE_CHARS),
+    content,
     ...(message.streaming ? { streaming: true } : {}),
     ...(message.error ? { error: true } : {}),
     ...(typeof message.statusContent === "string"
@@ -534,6 +541,7 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
       : {}),
     ...(structuredTurn ? { structuredTurn } : {}),
     ...(inputRequest ? { inputRequest } : {}),
+    ...(attachments ? { attachments } : {}),
     ...(typeof message.startedAt === "number" && Number.isFinite(message.startedAt)
       ? { startedAt: message.startedAt }
       : {}),
@@ -541,6 +549,35 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
       ? { lastEventAt: message.lastEventAt }
       : {}),
   };
+}
+
+function sanitizeSnapshotAttachments(raw: unknown): ChatAttachment[] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const attachments = raw.slice(0, 40).flatMap((item): ChatAttachment[] => {
+    if (!item || typeof item !== "object") return [];
+    const attachment = item as Partial<ChatAttachment>;
+    const kind = attachment.kind;
+    if (
+      kind !== "file"
+      && kind !== "folder"
+      && kind !== "browser"
+      && kind !== "terminal"
+      && kind !== "selection"
+    ) {
+      return [];
+    }
+    if (typeof attachment.path !== "string" || !attachment.path.trim()) return [];
+    if (typeof attachment.name !== "string" || !attachment.name.trim()) return [];
+    return [{
+      kind,
+      path: attachment.path.trim().slice(0, 2048),
+      name: attachment.name.trim().slice(0, 300),
+      ...(typeof attachment.url === "string" ? { url: attachment.url.slice(0, 2048) } : {}),
+      ...(typeof attachment.title === "string" ? { title: attachment.title.slice(0, 300) } : {}),
+      ...(typeof attachment.note === "string" ? { note: attachment.note.slice(0, 1000) } : {}),
+    }];
+  });
+  return attachments.length ? attachments : undefined;
 }
 
 function sanitizeSnapshotInputRequest(

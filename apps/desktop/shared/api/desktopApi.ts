@@ -3436,6 +3436,8 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   /** Canonical structured display representation; legacy fields remain during migration. */
   parts?: ChatMessagePart[];
   structuredTurn?: StructuredTurnState;
+  /** User-visible attachment chips; not part of the model prompt text. */
+  attachments?: ChatAttachment[];
   inputRequest?: {
     requestId: string;
     prompt: string;
@@ -3447,8 +3449,6 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   };
   startedAt?: number;
   lastEventAt?: number;
-  /** Files/folders attached when the user sent this message. */
-  attachments?: ChatAttachment[];
 }
 
 export interface DesktopThreadSnapshot {

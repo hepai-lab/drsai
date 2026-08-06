@@ -3923,6 +3923,9 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
 }
 
 .agent-run-composer textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   min-height: 88px;
   max-height: 180px;
   resize: vertical;
@@ -3933,6 +3936,8 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   color: var(--app-text-primary);
   padding: 12px;
   line-height: 1.45;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
 }
 
 .agent-run-composer textarea:focus {
@@ -5024,6 +5029,7 @@ button.structured-activity-detail:hover {
   padding: 0 28px 10px 18px;
   border-top: 0;
   background: transparent;
+  isolation: isolate;
 }
 
 .chat-primary-pane:not(.empty-chat) .composer {
@@ -5031,8 +5037,16 @@ button.structured-activity-detail:hover {
   right: 0;
   bottom: 0;
   left: 0;
+  padding-top: 16px;
   padding-right: 0;
   padding-left: 0;
+  /* Opaque dock so scrolled message text cannot show through attachment/material panels. */
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--app-surface-bg) 0%, transparent) 0,
+    var(--app-surface-bg) 14px,
+    var(--app-surface-bg) 100%
+  );
 }
 
 .chat-primary-pane:not(.empty-chat) .composer-shell {
@@ -5112,6 +5126,8 @@ button.structured-activity-detail:hover {
   flex-wrap: wrap;
   gap: 6px;
   min-height: 0;
+  max-height: min(160px, 28vh);
+  overflow: auto;
   padding: 0 4px 6px;
 }
 
@@ -5148,9 +5164,11 @@ button.structured-activity-detail:hover {
 .material-role-panel {
   margin: 8px 8px 0;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--app-accent)) 28%, var(--border, var(--app-panel-border)));
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  background: color-mix(in srgb, var(--accent, var(--app-accent)) 5%, var(--surface, var(--app-panel-soft)));
+  max-height: min(220px, 36vh);
+  overflow: auto;
 }
 
 .material-role-panel-header {
@@ -5359,7 +5377,7 @@ button.structured-activity-detail:hover {
 
 .material-role-groups {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 7px;
   margin-top: 8px;
 }
@@ -5649,6 +5667,13 @@ button.structured-activity-detail:hover {
   min-height: 40px;
 }
 
+.composer-editor {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .message-actions {
   display: flex;
   gap: 4px;
@@ -5688,15 +5713,20 @@ button.structured-activity-detail:hover {
 }
 
 .composer textarea {
-  min-height: 40px;
-  max-height: 116px;
-  padding: 10px 4px 7px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  max-height: 120px;
+  padding: 12px 4px 9px;
   border: 0;
   background: transparent;
   resize: none;
   line-height: 1.35;
   outline: none;
   overflow: auto;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
 }
 
 .composer-voice-capture {
@@ -8069,6 +8099,8 @@ button.structured-activity-detail:hover {
 .interactive-debug-evaluate pre { margin:0; max-height:100px; overflow:auto; color:#b8e0c8; font:9px/1.4 ui-monospace,monospace; white-space:pre-wrap; }
 .debug-panel footer { padding:5px 9px; border-top:1px solid #29313d; color:#687587; font-size:10px; }
 .message.structured-turn-focus { box-shadow:inset 3px 0 0 #4f9cf9; }
+/* Avoid content-visibility size estimates: they under-count tall markdown
+   (tables / meeting notes) and let message paint bleed under the composer dock. */
 .message-list > .message.virtual-message-placeholder {
   min-height: 1px;
   contain: strict;

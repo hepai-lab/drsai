@@ -25,6 +25,7 @@ import { isDesktopDevelopment } from "./desktopRuntimeMode";
 import { getActivePlatformConfig } from "./platformConfig";
 import { saveApiKeyAndSync } from "./settings";
 import { sanitizeDiagnosticUrl } from "./secretRedaction";
+import { getOrCreateStableLocalUserId, rememberUserIdAlias } from "./userIdentity";
 
 const IS_DESKTOP_DEV = isDesktopDevelopment();
 let credentialService: DesktopCredentialService | null = null;
@@ -520,6 +521,12 @@ function normalizeLogoutOptions(rawOptions: unknown): LogoutOptions {
 
 function createApiKeySession(apiKey: string, rememberMe = true): StoredAuthSession {
   const fingerprint = createHash("sha256").update(apiKey).digest("hex").slice(0, 12);
+  const legacyId = `local-api-${fingerprint}`;
+  // Reuse one machine-local UUID so API-key sessions stop inventing a new
+  // ownership namespace on every key, while still remembering the legacy id
+  // for historical DB remapping after OIDC login.
+  const stableId = getOrCreateStableLocalUserId();
+  rememberUserIdAlias(legacyId, stableId);
   const now = new Date().toISOString();
   return {
     authenticated: true,
@@ -528,7 +535,7 @@ function createApiKeySession(apiKey: string, rememberMe = true): StoredAuthSessi
     expiresAt: getExpiryDate(rememberMe ? SESSION_DAYS : 1),
     authMode: "api_key",
     user: {
-      id: `local-api-${fingerprint}`,
+      id: stableId,
       email: "local@opendrsai.desktop",
       name: "Local API Key User",
       role: "user",
@@ -584,6 +591,8 @@ async function createOidcSession(
   if (!userId) {
     throw new Error("OIDC token response is missing a user subject.");
   }
+  const email = idClaims?.email || userId;
+  if (email && email !== userId) rememberUserIdAlias(email, userId);
   const now = new Date().toISOString();
   const accessTokenExpiresAt = getJwtExpiry(token.access_token);
   return {
@@ -604,7 +613,7 @@ async function createOidcSession(
     authProvider: "hai",
     user: {
       id: userId,
-      email: idClaims?.email || userId,
+      email,
       name: idClaims?.name || idClaims?.email || userId,
       avatarUrl: idClaims?.picture || undefined,
       role: Array.isArray(accessClaims?.roles) && accessClaims.roles.includes("admin") ? "admin" : "user",
@@ -618,6 +627,7 @@ function createDeveloperSession(rememberMe = true): StoredAuthSession {
   const now = new Date().toISOString();
   const e2eUserId = process.env.OPENDRSAI_E2E_AUTH_USER_ID?.trim() || "developer-local";
   const e2eGroups = process.env.OPENDRSAI_E2E_AUTH_GROUPS?.split(",").map((group) => group.trim()).filter(Boolean);
+  if (e2eUserId !== "developer-local") rememberUserIdAlias("developer-local", e2eUserId);
   const e2eSigningSecret = process.env.OPENDRSAI_E2E_OIDC_HS256_SECRET?.trim();
   if (e2eSigningSecret) {
     const sessionId = randomUUID();
@@ -753,6 +763,25 @@ function writeStoredSession(session: StoredAuthSession): void {
   } finally {
     rmSync(temporaryFile, { force: true });
   }
+  const userId = session.user?.id || session.user?.email;
+  if (userId) void propagateAuthIdentityToGateway(userId);
+}
+
+let lastPropagatedAuthUserId: string | null = null;
+
+async function propagateAuthIdentityToGateway(userId: string): Promise<void> {
+  const trimmed = userId.trim();
+  if (!trimmed) return;
+  // Token refresh rewrites the session file with the same user. Skip those
+  // so we do not thrash Gateway identity APIs during chat.
+  if (lastPropagatedAuthUserId === trimmed) return;
+  try {
+    const { syncAuthIdentityToGateway } = await import("./gateway");
+    await syncAuthIdentityToGateway(trimmed);
+    lastPropagatedAuthUserId = trimmed;
+  } catch {
+    // Login must succeed even if Gateway is offline; bootstrap/startGateway retries.
+  }
 }
 
 function serializeStoredSession(session: StoredAuthSession): SerializedStoredAuthSession {
@@ -797,6 +826,7 @@ function clearStoredSession(clearLocalData: boolean): void {
     rmSync(LEGACY_AUTH_SESSION_FILE, { force: true });
     for (const reference of references) credentialService?.remove?.(reference);
     if (clearLocalData) oidcMetadataCache = null;
+    lastPropagatedAuthUserId = null;
   } catch {
     // Best-effort cleanup; logout should still clear renderer state.
   }

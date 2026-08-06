@@ -3,7 +3,7 @@ import type {
   DesktopBootstrapResult,
 } from "../shared/desktopApi";
 import { refreshAuthContextAfterUnauthorized, requireAuthContext } from "./auth";
-import { discoverGatewayModels, startGateway, type GatewayModelDiscoveryResult } from "./gateway";
+import { discoverGatewayModels, startGateway, syncAuthIdentityToGateway, type GatewayModelDiscoveryResult } from "./gateway";
 import { getInstallStatus } from "./status";
 
 export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
@@ -11,6 +11,7 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   if (auth.authMode !== "oidc" || !auth.accessToken) {
     throw new Error("HepAI OIDC sign-in is required before preparing OpenDrSai.");
   }
+  await syncAuthIdentityToGateway(auth.userId);
 
   const install = await getInstallStatus();
   if (!install.installed) {

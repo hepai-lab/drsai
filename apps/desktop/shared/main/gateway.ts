@@ -7,6 +7,7 @@ import { dirname, join } from "path";
 import type { GatewayEndpointStatus, GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
+import { collectMigrationAliases, getCliConfigUserId, rememberUserIdAlias, setCliConfigUserId } from "./userIdentity";
 import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
 import { redactDesktopSecrets } from "./secretRedaction";
 import { redactSensitiveData } from "../api/sensitiveData";
@@ -39,6 +40,9 @@ const GATEWAY_PROBE_TIMEOUT_MS = Math.max(500, Math.min(15_000,
   Number(process.env.OPENDRSAI_GATEWAY_PROBE_TIMEOUT_MS || "2500") || 2_500));
 const GATEWAY_PROBE_CACHE_MS = Math.max(0, Math.min(5_000,
   Number(process.env.OPENDRSAI_GATEWAY_PROBE_CACHE_MS || "750") || 750));
+const GATEWAY_READY_POLL_MS = 10_000;
+let lastSyncedGatewayUserId: string | null = null;
+let lastCanonicalizedUserId: string | null = null;
 const NODE_PTY_MODULE = (() => {
   try {
     return dirname(dirname(require.resolve("node-pty")));
@@ -147,6 +151,71 @@ export async function startGateway(): Promise<boolean> {
   return gatewayStartPromise;
 }
 
+/**
+ * Persist the authenticated Desktop user into cli_config and push it into the
+ * local Gateway default identity (env + /v1/config/user-name). Agent runs that
+ * omit user_id otherwise fall back to the OS username.
+ *
+ * Important: PUT /v1/config/cli/user_id evicts live agent sessions. Only call
+ * that endpoint when the identity actually changes, never on token refresh.
+ */
+export async function syncAuthIdentityToGateway(explicitUserId?: string): Promise<string | null> {
+  const userId = normalizeDesktopUserId(explicitUserId)
+    ?? await resolveAuthenticatedUserId()
+    ?? getCliConfigUserId()
+    ?? null;
+  if (!userId) return null;
+
+  const previousCliUserId = getCliConfigUserId() ?? null;
+  const identityChanged = previousCliUserId !== userId || lastSyncedGatewayUserId !== userId;
+
+  try {
+    setCliConfigUserId(userId);
+  } catch {
+    // cli_config write is best-effort; Gateway env/API sync can still help.
+  }
+  process.env.DRSAI_DESKTOP_USER = userId;
+  process.env.DRSAI_USER_ID = userId;
+
+  // Runtime override does not evict agents; safe to refresh on adopt/start.
+  await putGatewayJson("/v1/config/user-name", { user_name: userId });
+
+  // cli_config PUT evicts the user's agent pool — only when the id changes.
+  if (identityChanged && previousCliUserId !== userId) {
+    if (previousCliUserId) rememberUserIdAlias(previousCliUserId, userId);
+    await putGatewayJson("/v1/config/cli/user_id", { value: userId });
+  }
+
+  lastSyncedGatewayUserId = userId;
+  if (identityChanged || lastCanonicalizedUserId !== userId) {
+    await canonicalizeHistoricalUserIds(userId, previousCliUserId);
+  }
+  return userId;
+}
+
+async function canonicalizeHistoricalUserIds(
+  canonicalUserId: string,
+  previousCliUserId: string | null,
+): Promise<void> {
+  let email: string | null = null;
+  try {
+    const { requireAuthContext } = await import("./auth");
+    email = (await requireAuthContext()).session.user?.email ?? null;
+  } catch {
+    email = null;
+  }
+  const aliases = collectMigrationAliases({
+    canonicalUserId,
+    email,
+    previousCliUserId,
+  });
+  await putGatewayJson("/v1/identity/canonicalize", {
+    canonical_user_id: canonicalUserId,
+    aliases,
+  }, "POST");
+  lastCanonicalizedUserId = canonicalUserId;
+}
+
 export function getGatewaySnapshot(): GatewayStatus {
   const managed = isGatewayOwnershipKnown();
   const probe = gatewayProbeCache && gatewayProbeCache.expiresAt > Date.now()
@@ -241,20 +310,36 @@ async function killPortOccupant(port: string): Promise<boolean> {
   }
 }
 
+async function pollGatewayReady(process: ChildProcess | null, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await checkGatewayReady()) return true;
+    if (process && (!isProcessRunning(process) || gatewaySpawnError)) return false;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
 async function startGatewayOnce(): Promise<boolean> {
   if (!managedProcessRegistry.accepting) return false;
-  if (await checkGatewayReady()) return true;
   // Ownership can disappear before the short-lived health cache expires when
   // a Runtime is force-terminated. Never adopt a cached response from the
   // dead instance as an external Runtime; startup preflight must observe the
   // port and authenticated health endpoint again.
   gatewayProbeCache = null;
+  const desktopUserId = await resolveDesktopUserIdForGateway();
+  if (await checkGatewayReady()) {
+    if (desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
+    return true;
+  }
   const preflight = await probeGatewayEndpoints();
   if (getGatewayStartupMode() === "external") {
+    if (preflight.ready && desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
     return preflight.ready;
   }
   if (preflight.ready) {
     adoptedPersistentRuntime = true;
+    if (desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
     return true;
   }
   if (preflight.portOpen && !isManagedGatewayRunning()) {
@@ -264,9 +349,32 @@ async function startGatewayOnce(): Promise<boolean> {
     appendGatewayLog(Buffer.from(
       `\nGateway port ${GATEWAY_PORT} is occupied but not usable: ${preflight.diagnosticCode}. ${message}`,
     ));
-    return false;
+    // Dev bootstrap (DRSAI_GATEWAY_DEV_MANAGED=1) owns the port. A single flaky
+    // probe must not abort startup — poll briefly, then adopt when ready.
+    if (DEV_MANAGED_EXTERNAL_GATEWAY) {
+      const ready = await pollGatewayReady(null, GATEWAY_READY_POLL_MS);
+      if (ready) {
+        adoptedPersistentRuntime = true;
+        if (desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
+        return true;
+      }
+      return false;
+    }
+    if (getGatewayStartupMode() === "external") return false;
+    // Packaged / self-managed Desktop can clear a stale local leftover and respawn.
+    const killed = await killPortOccupant(GATEWAY_PORT);
+    appendGatewayLog(Buffer.from(
+      killed
+        ? `\nCleared unusable Gateway occupant on port ${GATEWAY_PORT}; restarting managed Runtime.`
+        : `\nFailed to clear Gateway occupant on port ${GATEWAY_PORT}.`,
+    ));
+    if (!killed) return false;
   }
-  if (gatewayProcess && !gatewayProcess.killed) return false;
+  if (gatewayProcess && !gatewayProcess.killed) {
+    const ready = await pollGatewayReady(gatewayProcess, GATEWAY_READY_POLL_MS);
+    if (ready && desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
+    return ready;
+  }
   if (!existsSync(DRSAI_PYTHON)) return false;
 
   // uvicorn's Windows reload worker uses a SelectorEventLoop and cannot
@@ -287,6 +395,9 @@ async function startGatewayOnce(): Promise<boolean> {
     : ["-m", "drsai.backend.gateway"];
 
   const localCodexEnv = await getLocalCodexDevelopmentEnv();
+  const identityEnv = desktopUserId
+    ? { DRSAI_DESKTOP_USER: desktopUserId, DRSAI_USER_ID: desktopUserId }
+    : {};
 
   gatewaySpawnError = null;
   gatewayProcess = spawn(DRSAI_PYTHON, args, {
@@ -299,6 +410,7 @@ async function startGatewayOnce(): Promise<boolean> {
       OPENDRSAI_GATEWAY_INSTANCE_TOKEN: GATEWAY_INSTANCE_TOKEN,
       ...(NODE_PTY_MODULE ? { OPENDRSAI_NODE_PTY_MODULE: NODE_PTY_MODULE } : {}),
       ...localCodexEnv,
+      ...identityEnv,
       PATH: getEnhancedPath(),
     },
     windowsHide: true,
@@ -331,22 +443,69 @@ async function startGatewayOnce(): Promise<boolean> {
   });
   if (PERSIST_RUNTIME) gatewayProcess.unref();
 
-  const deadline = Date.now() + GATEWAY_START_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (await checkGatewayReady()) return true;
-    if (gatewaySpawnError || !isProcessRunning(gatewayProcess)) {
-      appendGatewayLog(Buffer.from("\nGateway exited before its health checks became ready."));
-      return false;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+  const ready = await pollGatewayReady(gatewayProcess, GATEWAY_START_TIMEOUT_MS);
+  if (ready) {
+    if (desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
+    return true;
   }
-  lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within ${GATEWAY_START_TIMEOUT_MS} ms; stopping the spawned process tree.`.slice(-12000);
-  // Do not call stopGateway() here: startGateway() still owns
-  // gatewayStartPromise, and the public stop path waits for that promise.
+  if (!gatewaySpawnError && isProcessRunning(gatewayProcess)) {
+    lastGatewayLog = `${lastGatewayLog}\nGateway did not become ready within ${GATEWAY_START_TIMEOUT_MS} ms; stopping the spawned process tree.`.slice(-12000);
+  }
   const failedProcess = gatewayProcess;
   if (isProcessRunning(failedProcess)) await terminateGatewayProcessTree(failedProcess);
   if (gatewayProcess === failedProcess && !isProcessRunning(failedProcess)) gatewayProcess = null;
   return false;
+}
+
+function normalizeDesktopUserId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 200 || /[\r\n\0]/.test(trimmed) || trimmed.toLowerCase() === "anonymous") {
+    return null;
+  }
+  return trimmed;
+}
+
+async function resolveAuthenticatedUserId(): Promise<string | null> {
+  try {
+    const { requireAuthContext } = await import("./auth");
+    return normalizeDesktopUserId((await requireAuthContext()).userId);
+  } catch {
+    return null;
+  }
+}
+
+async function resolveDesktopUserIdForGateway(): Promise<string | null> {
+  return normalizeDesktopUserId(process.env.DRSAI_DESKTOP_USER)
+    ?? normalizeDesktopUserId(process.env.DRSAI_USER_ID)
+    ?? await resolveAuthenticatedUserId()
+    ?? getCliConfigUserId()
+    ?? null;
+}
+
+async function putGatewayJson(
+  path: string,
+  body: Record<string, unknown>,
+  method: "PUT" | "POST" = "PUT",
+): Promise<void> {
+  try {
+    const payload = JSON.stringify(body);
+    const response = await fetch(`${GATEWAY_BASE_URL}${path}`, {
+      method,
+      headers: {
+        ...getGatewayRequestHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: payload,
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+      appendGatewayLog(Buffer.from(`\nGateway identity sync failed for ${path}: HTTP ${response.status}`));
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    appendGatewayLog(Buffer.from(`\nGateway identity sync failed for ${path}: ${detail}`));
+  }
 }
 
 /**
