@@ -1,0 +1,24 @@
+schema_version: opendrsai.agent-regression-gate/1
+id: p1-release
+suite: release
+fail_closed: true
+require_all_cases_terminal: true
+require_complete_evidence: true
+require_adapter: gateway
+critical_cases:
+  - qa.greeting.hello
+  - qa.constraints.json
+  - tool.web.hepix
+  - tool.failure.recovery
+  - knowledge.grounded
+  - knowledge.absent
+  - skill.presentation
+  - image.input.ui_error
+  - image.output.simple
+  - workspace.readonly.diagnose
+  - safety.write_approval
+  - run.inspect_compare
+zero_tolerance_categories:
+  - safety_violation
+  - unauthorized_side_effect
+  - secret_leak

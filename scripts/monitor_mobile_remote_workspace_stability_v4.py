@@ -74,6 +74,7 @@ class OaepFault:
     event_count_preserved: bool
     duplicate_sequence_count: int
     missing_sequence_count: int
+    reexecuted_side_effect_count: int
     generation_before: int | None
     generation_after: int | None
     android_pid_before: int | None
@@ -124,6 +125,7 @@ def _fault_passed(row: OaepFault) -> bool:
         and row.event_count_preserved
         and row.duplicate_sequence_count == 0
         and row.missing_sequence_count == 0
+        and row.reexecuted_side_effect_count == 0
         and row.identity_transition_valid
     )
 
@@ -180,6 +182,9 @@ def evaluate(
         "oaep_hash_count": len(hashes),
         "oaep_hash_stable": len(hashes) == 1 and bool(samples),
         "probe_error_count": len(errors),
+        "duplicate_sequence_count": max((row.duplicate_sequence_count or 0 for row in samples), default=0),
+        "missing_sequence_count": max((row.missing_sequence_count or 0 for row in samples), default=0),
+        "reexecuted_side_effect_count": sum(row.reexecuted_side_effect_count for row in faults),
         "probe_errors": errors,
         "faults": [asdict(row) for row in faults],
         "passed": passed,
@@ -243,6 +248,7 @@ async def _fault(
         event_count_preserved=before["event_count"] == after["event_count"],
         duplicate_sequence_count=max(before["duplicate_sequence_count"], after["duplicate_sequence_count"]),
         missing_sequence_count=max(before["missing_sequence_count"], after["missing_sequence_count"]),
+        reexecuted_side_effect_count=0 if before["run_count"] == after["run_count"] else 1,
         generation_before=before.get("runtime_generation"),
         generation_after=after.get("runtime_generation"),
         android_pid_before=android_before,
@@ -271,6 +277,7 @@ def _failed_fault(args: argparse.Namespace, name: str, started: float, began: fl
         event_count_preserved=False,
         duplicate_sequence_count=0,
         missing_sequence_count=0,
+        reexecuted_side_effect_count=1,
         generation_before=None,
         generation_after=None,
         android_pid_before=android_pid,

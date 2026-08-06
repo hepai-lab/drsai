@@ -1,0 +1,114 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: tool.web.hepix
+revision: 1
+title: 搜索并解释 HEPiX 2026
+description: 验证时效性问题的网络搜索、官方来源核验和 OpenDrSai 可交互引用能力。
+owner: agent-runtime
+tags: [smoke, release, tool_use, web, citation]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: 帮我搜索一下 HEPiX 2026 是什么，并告诉我相关活动的时间和地点。请提供信息来源。
+
+environment:
+  network: required
+  required_capabilities: [web_search]
+  session:
+    type: new
+    history: empty
+
+baseline:
+  verified_at: 2026-08-05
+  facts:
+    organization:
+      semantic_requirements:
+        - HEPiX 是面向高能物理和核物理机构 IT 人员的国际交流社区
+        - HEPiX 关注科学计算、数据和 IT 基础设施经验交流
+    events:
+      - id: spring_2026
+        name:
+          semantic_match: HEPiX Spring 2026 Workshop
+        start_date: 2026-04-20
+        end_date: 2026-04-24
+        city:
+          any_of: [Lisbon, 里斯本]
+        country:
+          any_of: [Portugal, 葡萄牙]
+        venue:
+          semantic_match: ISCTE Instituto Universitário de Lisboa
+        supporting_sources:
+          - https://indico.cern.ch/event/1598655/
+          - https://www.hepix.org/
+      - id: fall_2026
+        name:
+          semantic_match: HEPiX Fall 2026 Workshop
+        start_date: 2026-10-19
+        end_date: 2026-10-23
+        city:
+          any_of: [Lincoln, 林肯]
+        region:
+          any_of: [Nebraska, 内布拉斯加州]
+        country:
+          any_of: [USA, United States, 美国]
+        venue:
+          semantic_match: University of Nebraska - Lincoln
+        supporting_sources:
+          - https://indico.cern.ch/event/1679145/overview
+          - https://www.hepix.org/
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    required_capabilities: [web_search]
+    tool_calls:
+      min: 1
+      max: 8
+    require_successful_tool_result: true
+    source_access:
+      require_primary_source: true
+      required_domains:
+        any_of: [hepix.org, indico.cern.ch]
+    external_writes:
+      max: 0
+
+  output:
+    type: text
+    semantic_requirements:
+      - 正确解释 HEPiX
+      - 准确说明 HEPiX Spring 2026 Workshop 的日期和地点
+      - 准确说明 HEPiX Fall 2026 Workshop 的日期和地点
+    forbidden_claims:
+      - 未经来源支持的活动时间
+      - 未经来源支持的活动地点
+
+  citations:
+    min: 2
+    presentation: interactive
+    required_urls:
+      - https://indico.cern.ch/event/1598655/
+      - https://indico.cern.ch/event/1679145/overview
+    require_claim_support: true
+    oaep:
+      require_citation_parts: true
+      require_stable_citation_id: true
+      require_markdown_relation: true
+      require_openable_target: true
+      require_bidirectional_navigation: true
+
+  artifacts:
+    max: 0
+
+execution:
+  timeout_seconds: 120
+  attempts: 2
+  isolation: required

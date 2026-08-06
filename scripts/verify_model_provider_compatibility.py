@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -43,8 +44,22 @@ def main() -> int:
     source.add_argument("--local", action="store_true", help="run deterministic loopback services")
     source.add_argument("--real-env", action="store_true", help="read real Provider settings from DRSAI_MATRIX_* environment variables")
     parser.add_argument("--require-all", action="store_true", help="fail unless all required real service types are configured and pass")
+    parser.add_argument("--preflight", action="store_true", help="validate real Provider environment variables without sending network requests")
+    parser.add_argument(
+        "--service-type",
+        action="append",
+        choices=SERVICE_TYPES,
+        help="limit a real-environment preflight or run to one or more service types; repeat the option",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+
+    if args.preflight and not args.real_env:
+        parser.error("--preflight requires --real-env")
+    if args.service_type and not args.real_env:
+        parser.error("--service-type requires --real-env")
+
+    required_service_types = tuple(dict.fromkeys(args.service_type or SERVICE_TYPES))
 
     server: ThreadingHTTPServer | None = None
     if args.local:
@@ -53,23 +68,46 @@ def main() -> int:
         cases = local_cases(server.server_address[1])
         matrix_kind = "local-deterministic"
     else:
-        cases = real_env_cases()
-        matrix_kind = "real-opt-in"
+        configuration_status = real_env_configuration_status(required_service_types)
+        configured_status_types = {row["serviceType"] for row in configuration_status if row["configured"]}
+        cases = [
+            case for case in real_env_cases()
+            if case.service_type in required_service_types and case.service_type in configured_status_types
+        ]
+        matrix_kind = "real-opt-in" if required_service_types == SERVICE_TYPES else "real-opt-in-partial"
 
     try:
         configured = {case.service_type for case in cases}
-        missing = sorted(set(SERVICE_TYPES) - configured)
+        missing = sorted(set(required_service_types) - configured)
+        if args.preflight:
+            evidence = {
+                "schemaVersion": 1,
+                "testId": "model-provider-compatibility-preflight",
+                "kind": "real-environment-preflight",
+                "passed": not missing,
+                "networkRequestsSent": False,
+                "requiredServiceTypes": list(required_service_types),
+                "configuredServiceTypes": sorted(configured),
+                "missingServiceTypes": missing,
+                "configuration": configuration_status,
+                "generatedAt": datetime.now(timezone.utc).isoformat(),
+            }
+            output = args.output or REPO_ROOT / "build" / "acceptance" / "model-provider-real-preflight.json"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            print(f"Model Provider real environment preflight: {'passed' if not missing else 'failed'}; no network requests sent; evidence: {output}")
+            return 0 if not missing else 2
         if args.require_all and missing:
             print(f"Missing required real Provider matrix configuration: {', '.join(missing)}", file=sys.stderr)
             return 2
         results = asyncio.run(run_cases(cases))
-        passed = all(row["passed"] for row in results) and (not args.require_all or not missing)
+        passed = bool(results) and all(row["passed"] for row in results) and (not args.require_all or not missing)
         evidence = {
             "schemaVersion": 1,
             "testId": "model-provider-compatibility-matrix",
             "kind": matrix_kind,
             "passed": passed,
-            "requiredServiceTypes": list(SERVICE_TYPES),
+            "requiredServiceTypes": list(required_service_types),
             "configuredServiceTypes": sorted(configured),
             "missingServiceTypes": missing,
             "results": results,
@@ -163,6 +201,76 @@ def real_env_cases() -> list[MatrixCase]:
     return cases
 
 
+def real_env_configuration_status(service_types: tuple[str, ...] = SERVICE_TYPES) -> list[dict[str, object]]:
+    """Return presence-only diagnostics; never expose environment values."""
+    defaults = {
+        "openai": True,
+        "anthropic": True,
+        "deepseek": True,
+        "ollama": False,
+        "chat_only": False,
+        "custom_proxy": True,
+    }
+    rows: list[dict[str, object]] = []
+    for service_type in service_types:
+        default_requires_key = defaults[service_type]
+        prefix = f"DRSAI_MATRIX_{service_type.upper()}"
+        raw_requires_key = os.environ.get(f"{prefix}_REQUIRES_KEY")
+        requires_key, boolean_valid = parse_optional_bool(raw_requires_key, default_requires_key)
+        base_url = os.environ.get(f"{prefix}_BASE_URL", "").strip()
+        model = os.environ.get(f"{prefix}_MODEL", "").strip()
+        present = {
+            "baseUrl": bool(base_url),
+            "model": bool(model),
+            "apiKey": bool(os.environ.get(f"{prefix}_API_KEY")) if requires_key else True,
+        }
+        issues: list[str] = []
+        if not present["baseUrl"]:
+            issues.append("base_url_missing")
+        elif not valid_provider_base_url(base_url):
+            issues.append("base_url_invalid")
+        if not present["model"]:
+            issues.append("model_missing")
+        if not boolean_valid:
+            issues.append("requires_key_invalid")
+        if requires_key and not present["apiKey"]:
+            issues.append("api_key_missing")
+        rows.append({
+            "serviceType": service_type,
+            "configured": not issues,
+            "requiresApiKey": requires_key,
+            "present": present,
+            "issues": issues,
+        })
+    return rows
+
+
+def parse_optional_bool(value: str | None, default: bool) -> tuple[bool, bool]:
+    if value is None or not value.strip():
+        return default, True
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes"}:
+        return True, True
+    if normalized in {"0", "false", "no"}:
+        return False, True
+    return default, False
+
+
+def valid_provider_base_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme in {"http", "https"}
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        return False
+
+
 class _LocalMatrixHandler(BaseHTTPRequestHandler):
     server_version = "OpenDrSaiMatrix/1"
 
@@ -199,14 +307,19 @@ class _LocalMatrixHandler(BaseHTTPRequestHandler):
         segment = self.path.split("/")[1] if self.path.count("/") >= 2 else ""
         length = min(int(self.headers.get("Content-Length", "0")), 16_384)
         body = json.loads(self.rfile.read(length) or b"{}")
+        if segment == "model-missing":
+            self._json(404, {"error": {"message": "model not found"}})
+            return
         if segment == "anthropic":
             if self.headers.get("x-api-key") != "local-anthropic-secret" or self.headers.get("anthropic-version") != "2023-06-01":
                 self._json(401, {"error": "unauthorized"})
                 return
-            assert body.get("max_tokens") == 1
+            assert body.get("max_tokens") == 256
+            self._json(200, {"id": "minimal-completion", "content": [{"type": "text", "text": "pong"}], "stop_reason": "end_turn"})
+            return
         elif segment == "chat-only":
-            assert body.get("max_tokens") == 1
-        self._json(200, {"id": "minimal-completion"})
+            assert body.get("max_tokens") == 256
+        self._json(200, {"id": "minimal-completion", "choices": [{"message": {"content": "pong"}, "finish_reason": "stop"}]})
 
     def log_message(self, _format: str, *_args: object) -> None:
         return

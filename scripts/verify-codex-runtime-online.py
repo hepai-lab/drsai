@@ -216,6 +216,40 @@ def verify_oaep_convergence(
     }
 
 
+def verify_processing_precedes_final(client: Client, session_id: str, run_id: str) -> dict[str, Any]:
+    """Prove that public processing items are visible before the final answer."""
+    replay = client.call("GET", f"/v1/sessions/{session_id}/oaep-events?after_sequence=0&limit=2000")
+    events = [event for event in replay["data"] if event.get("run_id") == run_id]
+    processing_types = {"reasoning", "command_execution", "file_change", "tool_call", "subtask"}
+    processing_sequences = []
+    final_sequences = []
+    for event in events:
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        item = data.get("item") if isinstance(data.get("item"), dict) else {}
+        item_type = item.get("type") or data.get("item_type")
+        if item_type in processing_types and event.get("type") in {
+            "event.item.started", "event.item.delta", "event.item.updated", "event.item.completed",
+        }:
+            processing_sequences.append(int(event["sequence"]))
+        if (
+            event.get("type") == "event.item.completed"
+            and item_type == "message"
+            and item.get("content", {}).get("role") == "assistant"
+            and item.get("phase", item.get("content", {}).get("phase", "final")) == "final"
+        ):
+            final_sequences.append(int(event["sequence"]))
+    if not processing_sequences or not final_sequences or min(processing_sequences) >= min(final_sequences):
+        raise RuntimeError(
+            f"OAEP processing did not precede the final answer for {run_id}: "
+            f"processing={processing_sequences}, final={final_sequences}"
+        )
+    return {
+        "processing_first_sequence": min(processing_sequences),
+        "final_sequence": min(final_sequences),
+        "ordered": True,
+    }
+
+
 def phase_execute(
     client: Client,
     workspace: Path,
@@ -316,6 +350,50 @@ def phase_execute(
     oaep_second = verify_oaep_convergence(
         client, completion_session_id, continuation["run_id"], require_streaming_delta=True,
     )
+
+    # Exercise all five backend-neutral OAEP InputResource kinds against the
+    # real Codex App Server. The fixture is confined to the disposable Live
+    # workspace and contains synthetic markers only.
+    input_root = workspace / "p10-input-resources"
+    input_folder = input_root / "folder"
+    input_folder.mkdir(parents=True, exist_ok=True)
+    (input_root / "file.txt").write_text("P10_FILE_RESOURCE_7319\n", encoding="utf-8")
+    (input_folder / "folder.txt").write_text("P10_FOLDER_RESOURCE_7319\n", encoding="utf-8")
+    captured_at = "2026-08-05T00:00:00Z"
+    input_resources = [
+        {"protocol": "oaep.input/1", "resource_id": "p10-file", "kind": "file",
+         "name": "file.txt", "reference": "p10-input-resources/file.txt", "permission": "read", "status": "encoded"},
+        {"protocol": "oaep.input/1", "resource_id": "p10-folder", "kind": "folder",
+         "name": "folder", "reference": "p10-input-resources/folder", "permission": "read", "status": "encoded"},
+        {"protocol": "oaep.input/1", "resource_id": "p10-selection", "kind": "selection",
+         "name": "synthetic selection", "content": "P10_SELECTION_RESOURCE_7319", "captured_at": captured_at,
+         "permission": "read", "status": "encoded"},
+        {"protocol": "oaep.input/1", "resource_id": "p10-terminal", "kind": "terminal",
+         "name": "synthetic terminal", "content": "P10_TERMINAL_RESOURCE_7319", "captured_at": captured_at,
+         "permission": "read", "status": "encoded"},
+        {"protocol": "oaep.input/1", "resource_id": "p10-browser", "kind": "browser",
+         "name": "synthetic browser", "title": "P10 synthetic page", "url": "https://example.invalid/p10",
+         "content": "P10_BROWSER_RESOURCE_7319", "captured_at": captured_at,
+         "permission": "read", "status": "encoded"},
+    ]
+    expected_resource_markers = [
+        "P10_FILE_RESOURCE_7319", "P10_FOLDER_RESOURCE_7319", "P10_SELECTION_RESOURCE_7319",
+        "P10_TERMINAL_RESOURCE_7319", "P10_BROWSER_RESOURCE_7319",
+    ]
+    resource_run = create_run(client, workspace_id, "Codex five input resources acceptance")
+    resource_result = client.call(
+        "POST", f"/v1/runs/{resource_run['run_id']}/execute",
+        {"prompt": "Inspect every attached resource, including both mentioned paths. Reply with the five P10_*_RESOURCE_7319 markers exactly once each.",
+         "metadata": {"input_resources": input_resources}}, timeout=600,
+    )
+    resource_events = client.call("GET", f"/v1/runs/{resource_run['run_id']}/events?after_sequence=0&limit=2000")["data"]
+    resource_output = json.dumps(resource_events, ensure_ascii=False)
+    missing_markers = [marker for marker in expected_resource_markers if marker not in resource_output]
+    if missing_markers:
+        raise RuntimeError(f"Real Codex did not receive all five OAEP input resource kinds: {missing_markers}; result={resource_result}")
+    resource_oaep = verify_oaep_convergence(
+        client, resource_run["session_id"], resource_run["run_id"], require_streaming_delta=True,
+    )
     archived_session = client.call("PATCH", f"/v1/sessions/{completion_session_id}", {"archived": True})
     if archived_session.get("archived") is not True:
         raise RuntimeError("Codex Session archive did not converge")
@@ -335,6 +413,10 @@ def phase_execute(
         raise RuntimeError("Approval Run completed without exercising the approval bridge")
     if not (workspace / "approval-proof.txt").is_file():
         raise RuntimeError("Approved Codex file change was not materialized")
+    approval_oaep = verify_oaep_convergence(
+        client, approval["session_id"], approval["run_id"], require_streaming_delta=True,
+    )
+    processing_order = verify_processing_precedes_final(client, approval["session_id"], approval["run_id"])
 
     cancelled = create_run(client, workspace_id, "Codex cancel acceptance", "codex-approval@1")
     cancel_thread, cancel_result = execute_async(
@@ -355,13 +437,16 @@ def phase_execute(
 
     state = {
         "workspace_id": workspace_id,
-        "runs": [*continuous_runs, approval["run_id"], cancelled["run_id"]],
-        "expected_statuses": [*(["completed"] * len(continuous_runs)), "completed", "cancelled"],
+        "runs": [*continuous_runs, resource_run["run_id"], approval["run_id"], cancelled["run_id"]],
+        "expected_statuses": [*(["completed"] * len(continuous_runs)), "completed", "completed", "cancelled"],
         "auth_mode": account.get("auth_mode"),
         "context_token": context_token,
         "archive_roundtrip": True,
         "approval_count": approval_count,
-        "oaep": {"first": oaep_first, "second": oaep_second},
+        "oaep": {"first": oaep_first, "second": oaep_second, "resources": resource_oaep, "approval": approval_oaep},
+        "input_resources": {"kinds": [item["kind"] for item in input_resources], "markers": expected_resource_markers,
+                            "all_markers_observed": not missing_markers},
+        "processing_order": processing_order,
         "multi_turn": {
             "session_id": completion_session_id,
             "thread_id": first_backend.get("thread_id"),
@@ -419,6 +504,8 @@ def phase_recover(client: Client, state_path: Path) -> dict[str, Any]:
         "archive_roundtrip": state.get("archive_roundtrip") is True,
         "approval_count": int(state.get("approval_count") or 0),
         "cancellation_verified": "cancelled" in statuses,
+        "input_resources": state.get("input_resources", {}),
+        "processing_order": state.get("processing_order", {}),
         "multi_turn": {
             **multi_turn,
             "restart_turn_id": third_backend["turn_id"],

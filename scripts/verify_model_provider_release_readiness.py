@@ -130,17 +130,45 @@ def dirty_manifest_paths(paths: list[str]) -> list[str]:
 
 def external_release_evidence() -> dict[str, bool]:
     checks = {
-        "signed-macos-model-provider-gate": ROOT / "apps/desktop/macos/build/acceptance/model-provider-release-gate.json",
-        "real-provider-compatibility-matrix": ROOT / "apps/desktop/macos/build/acceptance/model-provider-real-opt-in.json",
+        "signed-macos-model-provider-gate": [ROOT / "apps/desktop/macos/build/acceptance/model-provider-release-gate.json"],
+        "real-provider-compatibility-matrix": [
+            ROOT / "build/acceptance/model-provider-real-opt-in.json",
+            ROOT / "apps/desktop/macos/build/acceptance/model-provider-real-opt-in.json",
+        ],
     }
     result: dict[str, bool] = {}
-    for name, path in checks.items():
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            result[name] = payload.get("passed") is True
-        except (OSError, ValueError, TypeError):
-            result[name] = False
+    for name, paths in checks.items():
+        result[name] = False
+        for path in paths:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if name == "real-provider-compatibility-matrix":
+                    available = valid_real_provider_evidence(payload)
+                else:
+                    available = payload.get("passed") is True
+                if available:
+                    result[name] = True
+                    break
+            except (OSError, ValueError, TypeError):
+                continue
     return result
+
+
+def valid_real_provider_evidence(payload: object) -> bool:
+    if not isinstance(payload, dict) or payload.get("passed") is not True or payload.get("kind") != "real-opt-in":
+        return False
+    required = set(SERVICE_TYPES_FOR_EVIDENCE)
+    if set(payload.get("requiredServiceTypes", [])) != required:
+        return False
+    if set(payload.get("configuredServiceTypes", [])) != required or payload.get("missingServiceTypes") != []:
+        return False
+    results = payload.get("results")
+    return isinstance(results, list) and bool(results) and all(
+        isinstance(row, dict) and row.get("passed") is True for row in results
+    ) and {row.get("serviceType") for row in results if isinstance(row, dict)} == required
+
+
+SERVICE_TYPES_FOR_EVIDENCE = ("openai", "anthropic", "deepseek", "ollama", "chat_only", "custom_proxy")
 
 
 def git(*args: str) -> str:

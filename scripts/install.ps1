@@ -10,7 +10,7 @@
 
 #   .\scripts\install.ps1                           # Full install (clone from GitHub)
 
-#   .\scripts\install.ps1 -DevSource D:\work\DrSai\drsai   # Dev install (symlink)
+#   .\scripts\install.ps1 -DevSource D:\work\DrSai\drsai   # Dev install (independent Runtime)
 
 #   .\scripts\install.ps1 -SkipSetup               # Skip final reminder
 
@@ -479,13 +479,13 @@ if ($SourceArchiveCheckOnly) {
 
 }
 
-#  Clone or symlink repo
+#  Prepare repository or independent developer Runtime root
 
 Write-Host "[2/6] Setting up repository..." -ForegroundColor Yellow
 
-if ($DevSource) {
+$RepositorySource = $InstallDir
 
-    # Dev mode: symlink to local source
+if ($DevSource) {
 
     if (-not (Test-Path $DevSource)) {
 
@@ -493,41 +493,26 @@ if ($DevSource) {
 
     }
 
+    $RepositorySource = (Resolve-Path -LiteralPath $DevSource).Path
+
     $parentDir = Split-Path -Parent $InstallDir
 
     New-Item -ItemType Directory -Force -Path $parentDir | Out-Null
 
     if (Test-Path $InstallDir) {
-
-        Write-Host "  Using existing directory: $InstallDir" -ForegroundColor Yellow
-
-    } else {
-
-        # Try symlink, fallback to junction
-
-        try {
-
-            New-Item -ItemType SymbolicLink -Path $InstallDir -Target $DevSource -ErrorAction Stop | Out-Null
-
-            Write-Host "  Symlink created: $InstallDir -> $DevSource" -ForegroundColor Green
-
-        } catch {
-
-            cmd /c "mklink /J `"$InstallDir`" `"$DevSource`"" 2>$null
-
-            if ($LASTEXITCODE -eq 0) {
-
-                Write-Host "  Junction created: $InstallDir -> $DevSource" -ForegroundColor Green
-
-            } else {
-
-                throw "Cannot create symlink or junction. Run as Administrator or use --InstallDir to an existing path."
-
-            }
-
+        $installItem = Get-Item -LiteralPath $InstallDir -Force
+        if (($installItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            # Migrate legacy developer installs without ever traversing or
+            # deleting the linked source checkout.
+            [System.IO.Directory]::Delete($installItem.FullName)
+            Write-Host "  Removed legacy developer link: $InstallDir" -ForegroundColor Yellow
         }
-
     }
+
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $InstallDir ".dev-source") -Value $RepositorySource -Encoding UTF8 -NoNewline
+    Write-Host "  Independent Runtime root: $InstallDir" -ForegroundColor Green
+    Write-Host "  Editable source:          $RepositorySource" -ForegroundColor Green
 
 } elseif ($SourceArchive) {
 
@@ -655,11 +640,11 @@ if ($LASTEXITCODE -ne 0) {
 
 }
 
-$PackageDir = Join-Path $InstallDir "cores\python\packages\drsai"
+$PackageDir = Join-Path $RepositorySource "cores\python\packages\drsai"
 
 if (-not (Test-Path (Join-Path $PackageDir "pyproject.toml"))) {
 
-    $PackageDir = Join-Path $InstallDir "python\packages\drsai"
+    $PackageDir = Join-Path $RepositorySource "python\packages\drsai"
 
 }
 

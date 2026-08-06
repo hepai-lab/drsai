@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from remote_workspace import main
+
+raise SystemExit(main())

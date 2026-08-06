@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import hashlib
 import json
 import os
 import subprocess
@@ -211,6 +212,18 @@ def collect(args: argparse.Namespace) -> dict:
         private.mkdir()
         _safe_extract(archive, private)
 
+        room = private / "databases"
+        backup = temporary / "backup-surfaces"
+        backup.mkdir()
+        for name in ("shared_prefs", "files", "no_backup"):
+            source = private / name
+            if source.exists():
+                __import__("shutil").copytree(source, backup / name)
+        if not room.is_dir() or not any(item.is_file() for item in room.rglob("*")):
+            raise RuntimeError("android_secret_room_missing")
+        if not any(item.is_file() for item in backup.rglob("*")):
+            raise RuntimeError("android_secret_backup_surfaces_missing")
+
         manifest = temporary / "manifest.json"
         manifest.write_text(
             json.dumps(
@@ -219,13 +232,24 @@ def collect(args: argparse.Namespace) -> dict:
                     "artifacts": [
                         {"label": "android_apk", "path": str(apk)},
                         {"label": "android_logs", "path": str(logs)},
-                        {"label": "android_room", "path": str(private)},
+                        {"label": "android_room", "path": str(room)},
+                        {"label": "android_backup", "path": str(backup)},
                     ],
                 }
             ),
             encoding="utf-8",
         )
         result = scan(manifest, args.canary_env)
+        result.update({
+            "schema_version": "p5-secret/1",
+            "boundary": "android",
+            "environment_id": args.environment_id,
+            "canary_run_id": args.canary_run_id,
+            "raw_artifacts_exported": False,
+            # Bind this scan to the exact installed APK. P5 compares it with
+            # release build evidence so a debug probe cannot stand in for it.
+            "artifact_sha256": hashlib.sha256(apk.read_bytes()).hexdigest(),
+        })
 
     cleanup()
     atexit.unregister(cleanup)
@@ -248,6 +272,8 @@ def main() -> int:
         ),
     )
     parser.add_argument("--canary-env", default="DRSAI_SECRET_CANARIES")
+    parser.add_argument("--environment-id", required=True)
+    parser.add_argument("--canary-run-id", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     result = collect(args)

@@ -1,0 +1,31 @@
+schema_version: opendrsai.agent-regression-case/1
+id: p3.tool.web
+revision: 1
+title: P3 formal Tool call
+owner: agent-runtime
+tags: [p3, release, smoke, tool_use]
+agent: {definition: regression-smoke@1, model_profile: default}
+input:
+  messages:
+    - role: user
+      parts: [{type: text, text: Search for HEPiX 2026.}]
+environment:
+  network: required
+  required_capabilities: [web_search]
+  tool_fixtures:
+    web_search:
+      successful_result:
+        summary: HEPiX 2026 primary-source fixture
+        url: https://www.hepix.org/
+  session: {type: new, history: empty}
+expect:
+  run: {status: completed}
+  behavior:
+    required_capabilities: [web_search]
+    tool_calls: {min: 1}
+    require_successful_tool_result: true
+  output:
+    type: text
+    required_literals: [HEPiX 2026, controlled, primary-source]
+  artifacts: {max: 0}
+execution: {timeout_seconds: 30, attempts: 1, isolation: required}

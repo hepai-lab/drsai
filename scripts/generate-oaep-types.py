@@ -13,6 +13,8 @@ PYTHON = ROOT / "cores/python/packages/drsai/src/drsai/oaep/generated.py"
 PYTHON_SCHEMA = ROOT / "cores/python/packages/drsai/src/drsai/oaep/oaep.schema.json"
 TYPESCRIPT = ROOT / "apps/desktop/shared/api/oaep.generated.ts"
 KOTLIN = ROOT / "apps/android/app/src/main/java/ai/drsai/remote/remote/generated/OaepGenerated.kt"
+RELAY_SCHEMA = ROOT / "cores/protocol/relay/runtime-relay.schema.json"
+DESKTOP_SELECTION = ROOT / "apps/desktop/shared/main/runtimeProtocolSelection.ts"
 
 
 def _quoted(values: list[str], separator: str) -> str:
@@ -109,6 +111,17 @@ class OaepPlanContent(TypedDict, total=False):
     resource_refs: list[OaepResourceRef]
 
 
+class OaepReplayPolicy(TypedDict, total=False):
+    classification: Literal["pure", "read_only_versioned", "read_only_mutable", "workspace_write", "external_write", "unknown"]
+    tool_reference: str
+    source_event_id: str
+    input_digest: str
+    implementation_digest: str
+    schema_digest: str
+    result_digest: str
+    current: dict[str, str]
+
+
 class OaepCommandExecutionContent(TypedDict, total=False):
     command: Required[list[str]]
     display_command: Required[str]
@@ -118,6 +131,7 @@ class OaepCommandExecutionContent(TypedDict, total=False):
     stderr_tail: str
     exit_code: int | None
     duration_ms: float | None
+    replay_policy: OaepReplayPolicy
     operation_ref: OaepOperationRef
     resource_refs: list[OaepResourceRef]
 
@@ -130,6 +144,7 @@ class OaepToolCallContent(TypedDict, total=False):
     result: Required[Any]
     server: str | None
     duration_ms: float | None
+    replay_policy: OaepReplayPolicy
     operation_ref: OaepOperationRef
     resource_refs: list[OaepResourceRef]
 
@@ -233,6 +248,9 @@ class OaepDelta(TypedDict, total=False):
     text: str
     segment_id: str
     stream: Literal["stdout", "stderr", "combined"]
+    reasoning_kind: Literal["summary", "commentary", "analysis"]
+    visibility: Literal["user", "diagnostic", "hidden"]
+    reasoning_source: Literal["backend", "adapter", "runtime"]
 
 
 class OaepEventData(TypedDict, total=False):
@@ -255,12 +273,26 @@ class OaepEvent(TypedDict, total=False):
     data: Required[OaepEventData]
 
 
-class OaepSnapshot(TypedDict):
-    version: Literal[{version!r}]
-    session: OaepSession
-    runs: list[OaepRun]
-    items: list[OaepItem]
-    snapshot_sequence: int
+class OaepSnapshotCheckpoint(TypedDict):
+    sequence: int
+    snapshot_hash: str
+    item_count: int
+
+
+class OaepSnapshotWindow(TypedDict):
+    limit: int
+    has_more: bool
+    next_cursor: str | None
+
+
+class OaepSnapshot(TypedDict, total=False):
+    version: Required[Literal[{version!r}]]
+    session: Required[OaepSession]
+    runs: Required[list[OaepRun]]
+    items: Required[list[OaepItem]]
+    snapshot_sequence: Required[int]
+    checkpoint: OaepSnapshotCheckpoint
+    window: OaepSnapshotWindow
 
 
 class OaepEventPage(TypedDict):
@@ -288,10 +320,11 @@ export interface OaepResourceRef {{ protocol: "owop/1"; workspace_id: string; re
 export interface OaepContentReferences {{ operation_ref?: OaepOperationRef; resource_refs?: OaepResourceRef[]; }}
 export interface OaepMessagePart {{ type: "text" | "image" | "audio" | "file" | "resource_ref"; text?: string; url?: string; name?: string; mime_type?: string; resource_ref?: OaepResourceRef; }}
 export interface OaepMessageContent extends OaepContentReferences {{ role: "user" | "assistant" | "system"; text: string; phase?: "commentary" | "final"; citations?: Record<string, unknown>[]; parts?: OaepMessagePart[]; }}
-export interface OaepReasoningContent extends OaepContentReferences {{ segments: Array<{{id: string; text: string}}>; }}
+export interface OaepReasoningContent extends OaepContentReferences {{ segments: Array<{{id: string; text: string; kind?: "summary" | "commentary" | "analysis"; visibility?: "user" | "diagnostic" | "hidden"; source?: "backend" | "adapter" | "runtime"}}>; }}
 export interface OaepPlanContent extends OaepContentReferences {{ text: string; steps: Array<{{id: string; title: string; status: string}}>; explanation?: string; }}
-export interface OaepCommandExecutionContent extends OaepContentReferences {{ command: string[]; display_command: string; cwd: string; output: string; stdout_tail?: string; stderr_tail?: string; exit_code?: number | null; duration_ms?: number | null; }}
-export interface OaepToolCallContent extends OaepContentReferences {{ tool_kind: string; tool_name: string; call_id: string; arguments: Record<string, unknown>; result: unknown; server?: string | null; duration_ms?: number | null; }}
+export interface OaepReplayPolicy {{ classification?: "pure" | "read_only_versioned" | "read_only_mutable" | "workspace_write" | "external_write" | "unknown"; tool_reference?: string; source_event_id?: string; input_digest?: string; implementation_digest?: string; schema_digest?: string; result_digest?: string; current?: Record<string, string>; }}
+export interface OaepCommandExecutionContent extends OaepContentReferences {{ command: string[]; display_command: string; cwd: string; output: string; stdout_tail?: string; stderr_tail?: string; exit_code?: number | null; duration_ms?: number | null; replay_policy?: OaepReplayPolicy; }}
+export interface OaepToolCallContent extends OaepContentReferences {{ tool_kind: string; tool_name: string; call_id: string; arguments: Record<string, unknown>; result: unknown; server?: string | null; duration_ms?: number | null; replay_policy?: OaepReplayPolicy; }}
 export interface OaepFileChangeContent extends OaepContentReferences {{ changes: Array<Record<string, unknown>>; summary: string; }}
 export interface OaepArtifactContent extends OaepContentReferences {{ artifact_id: string; artifact_type: string; name: string; summary: string; path?: string | null; mime_type?: string | null; size?: number | null; sha256?: string | null; previewable?: boolean; downloadable?: boolean; }}
 export interface OaepInteractionContent extends OaepContentReferences {{ interaction_type: string; prompt: string; options: Array<Record<string, unknown>>; approval_id?: string | null; operation?: string; request_summary?: Record<string, unknown>; related_item_id?: string | null; response?: unknown; deadline_at?: string | null; }}
@@ -312,10 +345,12 @@ export type OaepItem =
   | (OaepItemBase & {{ type: "interaction"; content: OaepInteractionContent }})
   | (OaepItemBase & {{ type: "subtask"; content: OaepSubtaskContent }})
   | (OaepItemBase & {{ type: "notice"; content: OaepNoticeContent }});
-export interface OaepDelta {{ kind: string; text?: string; segment_id?: string; stream?: "stdout" | "stderr" | "combined"; }}
+export interface OaepDelta {{ kind: string; text?: string; segment_id?: string; stream?: "stdout" | "stderr" | "combined"; reasoning_kind?: "summary" | "commentary" | "analysis"; visibility?: "user" | "diagnostic" | "hidden"; reasoning_source?: "backend" | "adapter" | "runtime"; }}
 export interface OaepEventData {{ item?: OaepItem; delta?: OaepDelta; error?: OaepError; [key: string]: unknown; }}
 export interface OaepEvent {{ version: typeof OAEP_VERSION; event_id: string; session_id: string; run_id?: string; item_id?: string; sequence: number; type: OaepEventType; timestamp: string; dedupe_key: string; source: OaepSource; data: OaepEventData; }}
-export interface OaepSnapshot {{ version: typeof OAEP_VERSION; session: OaepSession; runs: OaepRun[]; items: OaepItem[]; snapshot_sequence: number; }}
+export interface OaepSnapshotCheckpoint {{ sequence: number; snapshot_hash: string; item_count: number; }}
+export interface OaepSnapshotWindow {{ limit: number; has_more: boolean; next_cursor: string | null; }}
+export interface OaepSnapshot {{ version: typeof OAEP_VERSION; session: OaepSession; runs: OaepRun[]; items: OaepItem[]; snapshot_sequence: number; checkpoint?: OaepSnapshotCheckpoint; window?: OaepSnapshotWindow; }}
 export interface OaepEventPage {{ version: typeof OAEP_VERSION; object: "list"; data: OaepEvent[]; next_sequence: number; has_more: boolean; }}
 '''
 
@@ -342,8 +377,8 @@ sealed interface OaepItemContent {{ val operationRef: OaepOperationRef?; val res
 data class OaepMessageContent(val role: String, val text: String, val phase: String? = null, val citations: List<Map<String, Any?>> = emptyList(), val parts: List<Map<String, Any?>> = emptyList(), override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
 data class OaepReasoningContent(val segments: List<Map<String, String>>, override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
 data class OaepPlanContent(val text: String, val steps: List<Map<String, Any?>>, val explanation: String? = null, override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
-data class OaepCommandExecutionContent(val command: List<String>, val displayCommand: String, val cwd: String, val output: String, val stdoutTail: String? = null, val stderrTail: String? = null, val exitCode: Int? = null, val durationMs: Double? = null, override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
-data class OaepToolCallContent(val toolKind: String, val toolName: String, val callId: String, val arguments: Map<String, Any?>, val result: Any?, val server: String? = null, val durationMs: Double? = null, override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
+data class OaepCommandExecutionContent(val command: List<String>, val displayCommand: String, val cwd: String, val output: String, val stdoutTail: String? = null, val stderrTail: String? = null, val exitCode: Int? = null, val durationMs: Double? = null, val replayPolicy: Map<String, Any?> = emptyMap(), override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
+data class OaepToolCallContent(val toolKind: String, val toolName: String, val callId: String, val arguments: Map<String, Any?>, val result: Any?, val server: String? = null, val durationMs: Double? = null, val replayPolicy: Map<String, Any?> = emptyMap(), override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
 data class OaepFileChangeContent(val changes: List<Map<String, Any?>>, val summary: String, override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
 data class OaepArtifactContent(val artifactId: String, val artifactType: String, val name: String, val summary: String, val path: String? = null, val mimeType: String? = null, val size: Long? = null, val sha256: String? = null, val previewable: Boolean = false, val downloadable: Boolean = false, override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
 data class OaepInteractionContent(val interactionType: String, val prompt: String, val options: List<Map<String, Any?>>, val approvalId: String? = null, val operation: String? = null, val requestSummary: Map<String, Any?> = emptyMap(), val relatedItemId: String? = null, val response: Any? = null, val deadlineAt: String? = null, override val operationRef: OaepOperationRef? = null, override val resourceRefs: List<OaepResourceRef> = emptyList()) : OaepItemContent
@@ -352,10 +387,12 @@ data class OaepNoticeContent(val level: String, val code: String, val message: S
 data class OaepSession(val id: String, val workspaceId: String, val title: String?, val status: String, val backend: String?, val createdAt: String, val updatedAt: String)
 data class OaepRun(val id: String, val sessionId: String, val parentRunId: String?, val sequence: Long? = null, val source: OaepSource? = null, val status: String, val createdAt: String, val updatedAt: String, val completedAt: String?)
 data class OaepItem(val id: String, val sessionId: String, val runId: String, val type: String, val status: String, val sequence: Long, val createdAt: String, val updatedAt: String, val source: OaepSource, val content: OaepItemContent)
-data class OaepDelta(val kind: String, val text: String? = null, val segmentId: String? = null, val stream: String? = null)
+data class OaepDelta(val kind: String, val text: String? = null, val segmentId: String? = null, val stream: String? = null, val reasoningKind: String? = null, val visibility: String? = null, val reasoningSource: String? = null)
 data class OaepEventData(val item: OaepItem? = null, val delta: OaepDelta? = null, val error: OaepError? = null, val extra: Map<String, Any?> = emptyMap())
 data class OaepEvent(val version: String, val eventId: String, val sessionId: String, val runId: String?, val itemId: String?, val sequence: Long, val type: String, val timestamp: String, val dedupeKey: String, val source: OaepSource, val data: OaepEventData)
-data class OaepSnapshot(val version: String, val session: OaepSession, val runs: List<OaepRun>, val items: List<OaepItem>, val snapshotSequence: Long)
+data class OaepSnapshotCheckpoint(val sequence: Long, val snapshotHash: String, val itemCount: Long)
+data class OaepSnapshotWindow(val limit: Int, val hasMore: Boolean, val nextCursor: String?)
+data class OaepSnapshot(val version: String, val session: OaepSession, val runs: List<OaepRun>, val items: List<OaepItem>, val snapshotSequence: Long, val checkpoint: OaepSnapshotCheckpoint? = null, val window: OaepSnapshotWindow? = null)
 data class OaepEventPage(val version: String, val objectType: String, val data: List<OaepEvent>, val nextSequence: Long, val hasMore: Boolean)
 '''
 
@@ -372,11 +409,41 @@ def _update(path: Path, content: str, check: bool) -> bool:
     return True
 
 
+def _update_relay_schema_hash(digest: str, check: bool) -> bool:
+    relay = json.loads(RELAY_SCHEMA.read_text(encoding="utf-8"))
+    if relay.get("x-oaep-schema-sha256") == digest:
+        return True
+    if check:
+        print(f"OAEP Relay schema hash drift: {RELAY_SCHEMA.relative_to(ROOT)}")
+        return False
+    relay["x-oaep-schema-sha256"] = digest
+    RELAY_SCHEMA.write_text(
+        json.dumps(relay, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
+def _check_desktop_runtime_mirror(digest: str, version: str) -> bool:
+    source = DESKTOP_SELECTION.read_text(encoding="utf-8")
+    expected = (
+        f'const OAEP_VERSION = "{version}";',
+        'const OAEP_PROFILE = "oaep.session-stream/1";',
+        f'const OAEP_SCHEMA_SHA256 = "{digest}";',
+    )
+    missing = [value for value in expected if value not in source]
+    if missing:
+        print(f"OAEP Desktop runtime mirror drift: {DESKTOP_SELECTION.relative_to(ROOT)}")
+        return False
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    digest = hashlib.sha256(SCHEMA.read_bytes()).hexdigest()
     results = (
         _update(PYTHON, render_python(schema), args.check),
         _update(
@@ -386,6 +453,8 @@ def main() -> int:
         ),
         _update(TYPESCRIPT, render_typescript(schema), args.check),
         _update(KOTLIN, render_kotlin(schema), args.check),
+        _update_relay_schema_hash(digest, args.check),
+        _check_desktop_runtime_mirror(digest, str(schema["version"])),
     )
     return 0 if all(results) else 1
 

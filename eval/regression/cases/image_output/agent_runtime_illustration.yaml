@@ -1,0 +1,127 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: image.output.simple
+revision: 1
+title: 生成 OpenDrSai Agent Runtime 科技插图
+description: 验证图片生成能力、16:9 PNG、视觉约束和可交互 Artifact；不使用图片文件基准。
+owner: agent-runtime
+tags: [smoke, release, image_output, image_generation, artifact, visual]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: |
+            请生成一张 16:9 横版科技插图，主题是“OpenDrSai Agent Runtime”。
+
+            画面要求：
+            - 深蓝色背景；
+            - 画面中央是一个发光的智能体核心；
+            - 核心连接五类能力：消息、工具、知识、图片和安全；
+            - 使用蓝色和青色作为主要强调色；
+            - 整体简洁、现代，有科技感；
+            - 不要出现人物；
+            - 不要包含任何文字、字母、数字、Logo 或水印；
+            - 输出 PNG 图片。
+
+environment:
+  network: disabled
+  session:
+    type: new
+    history: empty
+  required_capabilities: [image_generation]
+  workspace:
+    isolation: required
+    allowed_write_paths:
+      - artifacts/
+      - tmp/image-generation/
+  forbidden_capabilities:
+    - web_search
+    - knowledge_search
+    - presentations
+
+baseline:
+  kind: specification_only
+  reference_image: null
+  comparison: structural_semantic_and_visual_thresholds
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    required_capabilities: [image_generation]
+    image_generation_calls:
+      min: 1
+      max: 2
+    web_search_calls:
+      max: 0
+    knowledge_queries:
+      max: 0
+    unrelated_skill_activations:
+      max: 0
+    approvals:
+      max: 0
+    external_writes:
+      max: 0
+
+  image:
+    format: png
+    orientation: landscape
+    color_mode:
+      any_of: [RGB, RGBA]
+    dimensions:
+      min_width: 1280
+      min_height: 720
+    aspect_ratio:
+      width: 16
+      height: 9
+      tolerance: 0.02
+    visual_requirements:
+      - 画面为横版构图
+      - 背景以深蓝色为主
+      - 中央存在一个明显的发光智能体核心
+      - 核心与外围能力节点存在可见连接
+      - 外围包含五类不同能力的视觉表达
+      - 蓝色和青色是主要强调色
+      - 整体风格简洁、现代、有科技感
+    visual_forbidden:
+      - 人物
+      - 人脸
+      - 可识别文字
+      - 字母
+      - 数字
+      - Logo
+      - 水印
+      - 大面积暖色背景
+    ocr:
+      max_recognized_characters: 0
+      ignore_confidence_below: 0.75
+
+  output:
+    type: text
+    require_artifact_link: true
+    artifact_link_interactive: true
+
+  artifacts:
+    exact: 1
+    required:
+      type: image
+      mime_type: image/png
+      extension: .png
+      relative_path: artifacts/opendrsai-agent-runtime.png
+      min_size_bytes: 20000
+      sha256_required: true
+      openable: true
+      require_run_relation: true
+      require_generation_call_relation: true
+
+execution:
+  timeout_seconds: 180
+  attempts: 1
+  isolation: required

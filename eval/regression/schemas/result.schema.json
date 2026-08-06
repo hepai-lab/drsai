@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.dev/schemas/agent-regression-result-1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "execution_id", "case_id", "case_revision", "attempt", "status", "assertions"],
+  "properties": {
+    "schema_version": {"const": "opendrsai.agent-regression-result/1"},
+    "execution_id": {"type": "string", "minLength": 1},
+    "case_id": {"type": "string", "minLength": 1},
+    "case_revision": {"type": "integer", "minimum": 1},
+    "attempt": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["passed", "failed", "error", "inconclusive"]},
+    "run_id": {"type": ["string", "null"]},
+    "session_id": {"type": ["string", "null"]},
+    "error_category": {"type": ["string", "null"]},
+    "error": {"type": ["string", "null"]},
+    "output": {},
+    "evidence": {"type": "object"},
+    "assertions": {"type": "array", "items": {"type": "object"}},
+    "started_at": {"type": ["string", "null"]},
+    "completed_at": {"type": ["string", "null"]},
+    "duration_seconds": {"type": ["number", "null"], "minimum": 0},
+    "case_snapshot_sha256": {"type": ["string", "null"]}
+  }
+}

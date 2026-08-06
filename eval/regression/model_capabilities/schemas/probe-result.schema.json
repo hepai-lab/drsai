@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "opendrsai.model-capability-probe-result/1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "probe_id", "agent_id", "provider_id", "model_id", "operation", "protocol", "status", "started_at", "duration_ms", "revisions", "assertions", "may_incur_cost", "evidence_kind"],
+  "properties": {
+    "schema_version": {"const": "opendrsai.model-capability-probe-result/1"},
+    "probe_id": {"type": "string", "minLength": 1, "maxLength": 240},
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 240},
+    "provider_id": {"type": "string", "minLength": 1, "maxLength": 240},
+    "model_id": {"type": "string", "minLength": 1, "maxLength": 240},
+    "upstream_model_id": {"type": ["string", "null"], "maxLength": 240},
+    "operation": {"enum": ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "text_to_speech", "speech_to_text"]},
+    "protocol": {"enum": ["openai_responses", "openai_chat_completions", "gemini_generate_content", "openai_images_generation", "openai_images_edits", "openai_audio_speech", "openai_audio_transcriptions"]},
+    "status": {"enum": ["verified", "runtime_verified", "unsupported", "unavailable", "inconclusive", "stale", "error"]},
+    "error_code": {"type": ["string", "null"], "maxLength": 120},
+    "http_status": {"type": ["integer", "null"], "minimum": 100, "maximum": 599},
+    "retryable": {"type": "boolean"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "request_bytes": {"type": "integer", "minimum": 0},
+    "output_bytes": {"type": "integer", "minimum": 0},
+    "may_incur_cost": {"type": "boolean"},
+    "evidence_kind": {"enum": ["real_provider", "fixture"]},
+    "assertions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "passed"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 120},
+          "passed": {"type": "boolean"},
+          "detail": {"type": "string", "maxLength": 500}
+        }
+      }
+    },
+    "revisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_config", "agent_policy", "model_catalog", "route_rules", "probe_definition"],
+      "properties": {
+        "provider_config": {"type": "string"},
+        "agent_policy": {"type": "string"},
+        "model_catalog": {"type": "string"},
+        "route_rules": {"type": "string"},
+        "probe_definition": {"type": "string"}
+      }
+    },
+    "runtime_evidence": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {"type": "string"},
+        "manifest_digest": {"type": "string"}
+      }
+    }
+  }
+}

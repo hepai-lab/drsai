@@ -26,6 +26,14 @@ def diagnose_model_config(
     target = Path(path) if path is not None else default_config_path()
     env = os.environ if environ is None else environ
     checks: list[dict[str, object]] = []
+    try:
+        config = load_user_config(target)
+        checks.append(_check("toml", "ok", "Configuration file is valid"))
+        checks.append(_check("revision", "ok", f"Content revision is {config_revision(target)[:12]}"))
+    except ConfigError as exc:
+        checks.append(_check("toml", "error", str(exc), "invalid_config"))
+        return _result(target, checks, None)
+
     provider_only = not config.model and not config.model_provider
     diagnostic_provider = next(iter(config.providers), None) if provider_only else None
     if provider_only and diagnostic_provider is None:
@@ -34,14 +42,6 @@ def diagnose_model_config(
             "No Provider is configured here; models must be selected by an Agent model policy",
         ))
         return _result(target, checks, {"agent_policy_required": True, "diagnostic_provider": None})
-
-    try:
-        config = load_user_config(target)
-        checks.append(_check("toml", "ok", "Configuration file is valid"))
-        checks.append(_check("revision", "ok", f"Content revision is {config_revision(target)[:12]}"))
-    except ConfigError as exc:
-        checks.append(_check("toml", "error", str(exc), "invalid_config"))
-        return _result(target, checks, None)
 
     try:
         # Validate provider structure independently so a broken secure-store entry

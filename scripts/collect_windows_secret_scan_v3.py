@@ -54,6 +54,8 @@ def collect(
     evidence_root: Path,
     output: Path,
     canary_environment: str,
+    environment_id: str,
+    canary_run_id: str,
 ) -> dict:
     raw = os.getenv(canary_environment)
     try:
@@ -77,18 +79,20 @@ def collect(
     with tempfile.TemporaryDirectory(prefix="opendrsai-v3-windows-secret-") as raw_temp:
         temporary = Path(raw_temp)
         database = temporary / "database"
+        dpapi = temporary / "dpapi"
         logs = temporary / "logs"
         dumps = temporary / "dumps"
-        diagnostics = temporary / "diagnostics"
+        diagnostics = logs / "diagnostics"
 
         database_files = _files(
             (state_root / "runtime",),
-            ("*.sqlite3", "*.sqlite3-wal", "*.sqlite3-shm", "*.dpapi"),
+            ("*.sqlite3", "*.sqlite3-wal", "*.sqlite3-shm"),
         )
         if not database_files:
             raise RuntimeError("windows_secret_scan_database_missing")
         _link(database_files, database)
-        RuntimeCredentialStore(database / "canary-credential.dpapi").save(
+        _link(_files((state_root,), ("*.dpapi",)), dpapi)
+        RuntimeCredentialStore(dpapi / "canary-credential.dpapi").save(
             RuntimeCredential(
                 "runtime-secret-scan",
                 canary_values[0],
@@ -140,15 +144,22 @@ def collect(
                     "profile": "mobile-remote-workspace-v3-windows",
                     "artifacts": [
                         {"label": "windows_database", "path": str(database)},
+                        {"label": "windows_dpapi", "path": str(dpapi)},
                         {"label": "windows_logs", "path": str(logs)},
                         {"label": "windows_dump", "path": str(dumps)},
-                        {"label": "diagnostics", "path": str(diagnostics)},
                     ],
                 }
             ),
             encoding="utf-8",
         )
         result = scan(manifest, canary_environment)
+        result.update({
+            "schema_version": "p5-secret/1",
+            "boundary": "windows",
+            "environment_id": environment_id,
+            "canary_run_id": canary_run_id,
+            "raw_artifacts_exported": False,
+        })
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary_output = output.with_suffix(output.suffix + ".tmp")
     temporary_output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
@@ -170,12 +181,16 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--canary-env", default="DRSAI_SECRET_CANARIES")
+    parser.add_argument("--environment-id", required=True)
+    parser.add_argument("--canary-run-id", required=True)
     args = parser.parse_args()
     result = collect(
         state_root=args.state_root,
         evidence_root=args.evidence_root,
         output=args.output,
         canary_environment=args.canary_env,
+        environment_id=args.environment_id,
+        canary_run_id=args.canary_run_id,
     )
     print(
         json.dumps(

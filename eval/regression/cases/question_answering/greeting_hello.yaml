@@ -1,0 +1,58 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: qa.greeting.hello
+revision: 1
+title: 基础英文问候
+description: 验证简单问候能够直接回答，且不滥用 Tool、Skill、知识库或其他能力。
+owner: agent-runtime
+tags: [smoke, release, question_answering]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: hello
+
+environment:
+  network: disabled
+  session:
+    type: new
+    history: empty
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    tool_calls:
+      max: 0
+    skill_activations:
+      max: 0
+    knowledge_queries:
+      max: 0
+    approvals:
+      max: 0
+
+  output:
+    type: text
+    min_length: 2
+    max_length: 300
+    semantic_requirements:
+      - 对用户做出自然、友好的问候
+    forbidden_claims:
+      - 已经搜索网络
+      - 已经查询知识库
+      - 已经创建文件或其他产物
+
+  artifacts:
+    max: 0
+
+execution:
+  timeout_seconds: 30
+  attempts: 1
+  isolation: required

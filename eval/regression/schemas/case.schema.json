@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.dev/schemas/agent-regression-case-1.json",
+  "title": "OpenDrSai Agent regression case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "revision", "title", "agent", "input", "expect", "execution"],
+  "properties": {
+    "schema_version": {"const": "opendrsai.agent-regression-case/1"},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,127}$"},
+    "revision": {"type": "integer", "minimum": 1},
+    "title": {"type": "string", "minLength": 1, "maxLength": 240},
+    "description": {"type": "string"},
+    "owner": {"type": "string", "minLength": 1},
+    "tags": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "agent": {
+      "type": "object", "additionalProperties": false, "required": ["definition"],
+      "properties": {"definition": {"type": "string", "minLength": 1}, "model_profile": {"type": "string", "minLength": 1}}
+    },
+    "input": {
+      "type": "object", "additionalProperties": false, "required": ["messages"],
+      "properties": {
+        "messages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/message"}}
+      }
+    },
+    "environment": {"type": "object"},
+    "baseline": {"type": "object"},
+    "expect": {"type": "object", "minProperties": 1},
+    "execution": {
+      "type": "object", "additionalProperties": false, "required": ["timeout_seconds", "attempts"],
+      "properties": {
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+        "attempts": {"type": "integer", "minimum": 1, "maximum": 20},
+        "isolation": {"enum": ["required", "preferred", "none"]},
+        "tool_retry_policy": {"type": "object"}
+      }
+    }
+  },
+  "$defs": {
+    "message": {
+      "type": "object", "additionalProperties": false, "required": ["role", "parts"],
+      "properties": {
+        "role": {"enum": ["system", "user", "assistant"]},
+        "parts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/part"}}
+      }
+    },
+    "part": {
+      "type": "object", "additionalProperties": false, "required": ["type"],
+      "properties": {
+        "type": {"enum": ["text", "image", "file", "audio", "resource_ref"]},
+        "text": {"type": "string"}, "path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mime_type": {"type": "string"}, "resource_ref": {"type": "string"}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "text"}}}, "then": {"required": ["text"]}},
+        {"if": {"properties": {"type": {"enum": ["image", "file", "audio"]}}}, "then": {"required": ["path", "sha256"]}}
+      ]
+    }
+  }
+}
