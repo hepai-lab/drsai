@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+import hashlib
+import time
+from urllib.parse import urlencode
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -80,6 +83,183 @@ def test_access_grant_only_associates_existing_runtime_and_is_single_use() -> No
     assert [x.runtime.runtime_id for x in registry.list_runtimes("alice")[0]] == [runtime_id]
     assert registry.list_runtimes("bob")[0] == []
 
+
+def test_device_proof_rotation_rejects_replay_and_old_key(tmp_path) -> None:
+    registry = RelayRegistry()
+    _, runtime_id, token = registered(registry)
+    _, code, _ = registry.issue_access_grant(runtime_id, token)
+    old_private = Ed25519PrivateKey.generate()
+    old_public = b64(old_private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+    ))
+    registry.associate(
+        "alice", code, "android-device-0001", "Android Test Device", old_public,
+    )
+    access_token = "opaque-access-token"
+    timestamp = str(int(time.time()))
+    nonce = "nonce-device-proof-0001"
+    path = f"/v1/runtimes/{runtime_id}/workspaces"
+    query = urlencode([("cursor", "a b"), ("limit", "100")])
+
+    def sign(private: Ed25519PrivateKey, request_nonce: str) -> str:
+        canonical = "\n".join((
+            "hai-runtime-relay-device-v1", "GET", path, query,
+            hashlib.sha256(b"").hexdigest(), timestamp, request_nonce,
+            hashlib.sha256(access_token.encode()).hexdigest(),
+        )).encode()
+        return b64(private.sign(canonical))
+
+    signature = sign(old_private, nonce)
+    assert registry.verify_device_request(
+        "alice", "android-device-0001", runtime_id=runtime_id,
+        method="GET", path=path, query=query, body=b"", timestamp=timestamp,
+        nonce=nonce, signature=signature, access_token=access_token,
+    ) == "android-device-0001"
+    with pytest.raises(RelayRegistryError) as replay:
+        registry.verify_device_request(
+            "alice", "android-device-0001", runtime_id=runtime_id,
+            method="GET", path=path, query=query, body=b"", timestamp=timestamp,
+            nonce=nonce, signature=signature, access_token=access_token,
+        )
+    assert replay.value.code == "device_proof_replay"
+
+    new_private = Ed25519PrivateKey.generate()
+    new_public = b64(new_private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+    ))
+    rotated = registry.rotate_association_device_key(
+        "alice", runtime_id, "android-device-0001", new_public,
+    )
+    assert rotated["status"] == "active"
+    old_nonce = "nonce-device-proof-old-0002"
+    with pytest.raises(RelayRegistryError) as old_key:
+        registry.verify_device_request(
+            "alice", "android-device-0001", runtime_id=runtime_id,
+            method="GET", path=path, query=query, body=b"", timestamp=timestamp,
+            nonce=old_nonce, signature=sign(old_private, old_nonce), access_token=access_token,
+        )
+    assert old_key.value.code == "device_proof_invalid"
+    new_nonce = "nonce-device-proof-new-0003"
+    assert registry.verify_device_request(
+        "alice", "android-device-0001", runtime_id=runtime_id,
+        method="GET", path=path, query=query, body=b"", timestamp=timestamp,
+        nonce=new_nonce, signature=sign(new_private, new_nonce), access_token=access_token,
+    ) == "android-device-0001"
+
+
+def test_runtime_pause_denies_access_but_resume_preserves_association() -> None:
+    registry = RelayRegistry()
+    _, runtime_id, token = registered(registry)
+    _, code, _ = registry.issue_access_grant(runtime_id, token)
+    associate(registry, "alice", code)
+
+    paused = registry.set_enrollment_paused(runtime_id, token, paused=True)
+    assert paused["status"] == "paused"
+    assert registry.list_runtimes("alice")[0][0].runtime.status == RuntimeStatus.PAUSED
+    with pytest.raises(RelayRegistryError) as denied:
+        registry.identity("alice", runtime_id)
+    assert denied.value.code == "runtime_paused"
+    with pytest.raises(RelayRegistryError) as pairing_denied:
+        registry.issue_access_grant(runtime_id, token)
+    assert pairing_denied.value.code == "runtime_paused"
+    assert registry.list_associations(runtime_id, token)[0]["status"] == "active"
+    resumed = registry.set_enrollment_paused(runtime_id, token, paused=False)
+    assert resumed["status"] == "active"
+    assert registry.identity("alice", runtime_id).runtime_id == runtime_id
+    assert registry.list_associations(runtime_id, token)[0]["status"] == "active"
+
+
+def test_historical_unsafe_runtime_name_uses_safe_fallback() -> None:
+    registry = RelayRegistry()
+    _, runtime_id, token = registered(registry)
+    _, code, _ = registry.issue_access_grant(runtime_id, token)
+    associate(registry, "alice", code)
+    registry._runtimes[runtime_id].display_name = r"C:\Users\owner"
+    result, _ = registry.list_runtimes("alice")
+    assert result[0].display_name == "Windows Runtime"
+    assert "owner" not in result[0].display_name
+
+
+def test_push_registration_is_device_scoped_rotatable_and_never_stores_raw_token() -> None:
+    registry = RelayRegistry(supported_push_providers=frozenset({"fcm"}))
+    _, runtime_id, runtime_token = registered(registry)
+    _, code, _ = registry.issue_access_grant(runtime_id, runtime_token)
+    device_id = "android-push-device-0001"
+    associate(registry, "alice", code, device_id)
+    token_v1 = "push-token-v1-" + "a" * 48
+    token_v2 = "push-token-v2-" + "b" * 48
+
+    first = registry.upsert_push_registration(
+        "alice", runtime_id, device_id, "fcm", token_v1, 1,
+    )
+    replay = registry.upsert_push_registration(
+        "alice", runtime_id, device_id, "fcm", token_v1, 1,
+    )
+    assert first["status"] == "active"
+    assert replay["generation"] == 1
+    assert first["device_summary"].startswith("dev_")
+
+    with pytest.raises(RelayRegistryError) as conflict:
+        registry.upsert_push_registration(
+            "alice", runtime_id, device_id, "fcm", token_v2, 1,
+        )
+    assert conflict.value.code == "push_registration_conflict"
+
+    rotated = registry.upsert_push_registration(
+        "alice", runtime_id, device_id, "fcm", token_v2, 2,
+    )
+    assert rotated["generation"] == 2
+    with pytest.raises(RelayRegistryError) as stale:
+        registry.upsert_push_registration(
+            "alice", runtime_id, device_id, "fcm", token_v1, 1,
+        )
+    assert stale.value.code == "push_registration_stale"
+
+    association = registry._runtimes[runtime_id].associations[("alice", device_id)]
+    assert association.push_token_digest == hashlib.sha256(token_v2.encode()).hexdigest()
+    assert token_v1 not in repr(registry._runtimes)
+    assert token_v2 not in repr(registry._runtimes)
+    assert token_v1 not in repr(registry.audit)
+    assert token_v2 not in repr(registry.audit)
+
+    revoked = registry.revoke_push_registration("alice", runtime_id, device_id)
+    assert revoked["status"] == "revoked"
+    assert revoked["generation"] == 2
+    assert association.push_provider is None
+    assert association.push_token_digest is None
+    with pytest.raises(RelayRegistryError) as missing:
+        registry.revoke_push_registration("alice", runtime_id, device_id)
+    assert missing.value.code == "push_registration_not_found"
+
+
+def test_push_registration_fails_closed_without_provider_and_on_association_revoke() -> None:
+    registry = RelayRegistry()
+    _, runtime_id, runtime_token = registered(registry)
+    _, code, _ = registry.issue_access_grant(runtime_id, runtime_token)
+    device_id = "android-push-device-0002"
+    associate(registry, "alice", code, device_id)
+    raw_token = "push-token-unconfigured-" + "x" * 48
+
+    with pytest.raises(RelayRegistryError) as unavailable:
+        registry.upsert_push_registration(
+            "alice", runtime_id, device_id, "fcm", raw_token, 1,
+        )
+    assert unavailable.value.code == "push_provider_unavailable"
+    assert unavailable.value.retryable is True
+    assert raw_token not in repr(registry._runtimes)
+    assert raw_token not in repr(registry.audit)
+
+    configured = RelayRegistry(supported_push_providers=frozenset({"fcm"}))
+    _, configured_runtime, configured_token = registered(configured)
+    _, configured_code, _ = configured.issue_access_grant(configured_runtime, configured_token)
+    associate(configured, "alice", configured_code, device_id)
+    configured.upsert_push_registration(
+        "alice", configured_runtime, device_id, "fcm", raw_token, 1,
+    )
+    configured.revoke_association("alice", configured_runtime, device_id)
+    association = configured._runtimes[configured_runtime].associations[("alice", device_id)]
+    assert association.push_provider is None
+    assert association.push_token_digest is None
 
 def test_access_grant_has_exactly_one_winner_under_concurrent_consumption() -> None:
     registry = RelayRegistry()

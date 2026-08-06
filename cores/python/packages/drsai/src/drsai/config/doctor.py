@@ -26,6 +26,15 @@ def diagnose_model_config(
     target = Path(path) if path is not None else default_config_path()
     env = os.environ if environ is None else environ
     checks: list[dict[str, object]] = []
+    provider_only = not config.model and not config.model_provider
+    diagnostic_provider = next(iter(config.providers), None) if provider_only else None
+    if provider_only and diagnostic_provider is None:
+        checks.append(_check(
+            "provider", "warning",
+            "No Provider is configured here; models must be selected by an Agent model policy",
+        ))
+        return _result(target, checks, {"agent_policy_required": True, "diagnostic_provider": None})
+
     try:
         config = load_user_config(target)
         checks.append(_check("toml", "ok", "Configuration file is valid"))
@@ -40,6 +49,7 @@ def diagnose_model_config(
         resolved = resolve_model_config(
             config,
             environ=env,
+            provider=diagnostic_provider,
             credential_resolver=lambda _reference: None,
             require_credentials=False,
         )
@@ -102,7 +112,11 @@ def diagnose_model_config(
     if snapshot.is_file():
         try:
             snapshot_config = load_user_config(snapshot)
-            resolve_model_config(snapshot_config, environ=env, credential_resolver=lambda _reference: None, require_credentials=False)
+            snapshot_provider = next(iter(snapshot_config.providers), None) if not snapshot_config.model and not snapshot_config.model_provider else None
+            resolve_model_config(
+                snapshot_config, environ=env, provider=snapshot_provider,
+                credential_resolver=lambda _reference: None, require_credentials=False,
+            )
             checks.append(_check("last_known_good", "ok", "Last-known-good configuration is valid and restorable"))
         except ConfigError as exc:
             checks.append(_check("last_known_good", "error", f"Last-known-good configuration is invalid: {exc}", "invalid_config"))
@@ -110,7 +124,9 @@ def diagnose_model_config(
         checks.append(_check("last_known_good", "warning", "No last-known-good configuration is available yet"))
     if online:
         try:
-            online_resolved = resolve_model_config(config, environ=env, require_credentials=True)
+            online_resolved = resolve_model_config(
+                config, environ=env, provider=diagnostic_provider, require_credentials=True,
+            )
             probe = asyncio.run(test_provider_connection(online_resolved, mode="model"))
             checks.append(_check(
                 "online_model",
@@ -120,7 +136,11 @@ def diagnose_model_config(
             ))
         except ConfigError as exc:
             checks.append(_check("online_model", "error", str(exc), "credential_unavailable"))
-    return _result(target, checks, resolved.public_dict())
+    effective = (
+        {"agent_policy_required": True, "diagnostic_provider": resolved.provider.public_dict()}
+        if provider_only else resolved.public_dict()
+    )
+    return _result(target, checks, effective)
 
 
 def _check(check_id: str, status: str, message: str, code: str | None = None) -> dict[str, object]:

@@ -110,3 +110,72 @@ def test_migration_rolls_back_when_second_write_fails(tmp_path: Path, monkeypatc
         )
 
     assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("environment", "cli_value", "yaml_value", "catalog_value", "expected"),
+    [
+        ({"LLM_DEFAULT_ALIAS": "environment-model"}, "cli-model", "yaml-model", "catalog-model", "environment-model"),
+        ({}, "cli-model", "yaml-model", "catalog-model", "cli-model"),
+        ({}, None, "yaml-model", "catalog-model", "yaml-model"),
+        ({}, None, None, "catalog-model", "catalog-model"),
+    ],
+)
+def test_legacy_source_precedence_is_deterministic_and_sources_remain_unchanged(
+    tmp_path: Path,
+    environment: dict[str, str],
+    cli_value: str | None,
+    yaml_value: str | None,
+    catalog_value: str,
+    expected: str,
+) -> None:
+    target = tmp_path / "config.toml"
+    yaml_path = tmp_path / "config.yaml"
+    cli_path = tmp_path / "cli_config.json"
+    catalog_path = tmp_path / "llm_mode_config.yaml"
+    yaml_path.write_text(f"model:\n  default: {yaml_value}\n" if yaml_value else "model: {}\n", encoding="utf-8")
+    cli_path.write_text(json.dumps({"defult_config_name": cli_value} if cli_value else {}), encoding="utf-8")
+    catalog_path.write_text(f"_default_alias: {catalog_value}\n", encoding="utf-8")
+    originals = {path: path.read_bytes() for path in (yaml_path, cli_path, catalog_path)}
+
+    result = migrate_legacy_model_config(
+        config_path=target,
+        legacy_yaml_path=yaml_path,
+        cli_config_path=cli_path,
+        llm_catalog_path=catalog_path,
+        environ=environment,
+    )
+
+    assert result.migrated is True
+    assert result.model == expected
+    assert tomllib.loads(target.read_text(encoding="utf-8"))["model"] == expected
+    assert set(result.sources) == {str(yaml_path), str(cli_path), str(catalog_path)}
+    assert {path: path.read_bytes() for path in originals} == originals
+
+
+def test_migration_backup_supports_old_version_rollback_and_repeat_upgrade(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    original = b'[desktop]\ntheme = "dark"\n'
+    target.write_bytes(original)
+    legacy = tmp_path / "config.yaml"
+    legacy.write_text("model:\n  default: rollback-model\n", encoding="utf-8")
+    arguments = {
+        "config_path": target,
+        "legacy_yaml_path": legacy,
+        "cli_config_path": tmp_path / "missing.json",
+        "llm_catalog_path": tmp_path / "missing.yaml",
+        "environ": {},
+    }
+
+    first = migrate_legacy_model_config(**arguments)
+    assert first.migrated is True
+    backup = target.with_suffix(".toml.bak")
+    assert backup.read_bytes() == original
+    target.write_bytes(backup.read_bytes())
+    assert "model" not in tomllib.loads(target.read_text(encoding="utf-8"))
+    assert legacy.exists()
+
+    second = migrate_legacy_model_config(**arguments)
+    assert second.migrated is True
+    assert second.model == first.model == "rollback-model"
+    assert second.provider == first.provider == "hepai"

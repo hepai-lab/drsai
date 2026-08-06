@@ -6,6 +6,8 @@ import hmac
 import json
 import time
 import asyncio
+from urllib.parse import parse_qsl, urlencode, urlsplit
+from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,7 +19,8 @@ from fastapi.testclient import TestClient
 from drsai.relay.api import create_relay_app
 from drsai.relay.generated_contract import CAPABILITIES, PROTOCOL_VERSION
 from drsai.relay.models import ResourceLifecycle, Workspace
-from drsai.relay.registry import RelayRegistryError
+from drsai.relay.registry import RelayRegistry, RelayRegistryError
+from drsai.relay.runtime_domain import AgentDefinition, RuntimeAuthority
 
 
 def _testing_app():
@@ -108,6 +111,33 @@ def test_native_oaep_replay_is_authorized_before_cache_read() -> None:
         "sequence": event["sequence"],
         "event": event,
     }
+
+
+def device_proof_headers(
+    private: Ed25519PrivateKey,
+    device_id: str,
+    method: str,
+    url: str,
+    access_token: str,
+    *,
+    body: bytes = b"",
+) -> dict[str, str]:
+    parsed = urlsplit(url)
+    timestamp = str(int(time.time()))
+    nonce = f"proof-{uuid4().hex}"
+    query = urlencode(sorted(parse_qsl(parsed.query, keep_blank_values=True)))
+    canonical = "\n".join((
+        "hai-runtime-relay-device-v1", method.upper(), parsed.path, query,
+        hashlib.sha256(body).hexdigest(), timestamp, nonce,
+        hashlib.sha256(access_token.encode()).hexdigest(),
+    )).encode()
+    return {
+        "authorization": f"Bearer {access_token}",
+        "x-relay-device-id": device_id,
+        "x-relay-device-timestamp": timestamp,
+        "x-relay-device-nonce": nonce,
+        "x-relay-device-signature": encoded(private.sign(canonical)),
+    }
     asyncio.run(app.state.oaep_replay.attach(runtime_id, "generation-one"))
     asyncio.run(app.state.oaep_replay.accept(runtime_id, "generation-one", frame))
     url = (
@@ -133,6 +163,71 @@ def test_oaep_metrics_are_content_free_and_expose_schema_identity() -> None:
     assert len(payload["schema_hash"]) == 64
     assert payload["counters"] == {}
     assert not ({"event", "payload", "body", "token"} & payload.keys())
+
+
+def test_device_bound_push_registration_route_rotates_and_revokes_without_token_echo() -> None:
+    registry = RelayRegistry(supported_push_providers=frozenset({"fcm"}))
+    app = create_relay_app(
+        registry=registry,
+        principal_resolver=lambda request: request.headers.get("x-subject", ""),
+    )
+    client = TestClient(app)
+    _, runtime_id, runtime_token = register(client)
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": runtime_token},
+    ).json()["code"]
+    private = Ed25519PrivateKey.generate()
+    device_id = "android-push-route-0001"
+    associated = client.post("/v1/associations", headers={"x-subject": "alice"}, json={
+        **control(),
+        "code": grant,
+        "device_id": device_id,
+        "device_name": "Android Push Test",
+        "device_public_key": encoded(private.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )),
+    })
+    assert associated.status_code == 200
+
+    url = f"/v1/associations/{runtime_id}/push-registration"
+    access_token = "test-access-token"
+    raw_token = "provider-token-" + "z" * 64
+    body = json.dumps(
+        {"provider": "fcm", "token": raw_token, "generation": 1},
+        separators=(",", ":"),
+    ).encode()
+    registered_push = client.put(url, headers={
+        "x-subject": "alice",
+        "content-type": "application/json",
+        **device_proof_headers(
+            private, device_id, "PUT", url, access_token, body=body,
+        ),
+    }, content=body)
+    assert registered_push.status_code == 200
+    assert registered_push.json()["status"] == "active"
+    assert registered_push.json()["generation"] == 1
+    assert raw_token not in registered_push.text
+    assert raw_token not in repr(registry.audit)
+
+    revoked = client.delete(url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(private, device_id, "DELETE", url, access_token),
+    })
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+    assert raw_token not in revoked.text
+
+
+def test_workspace_catalog_stream_authorizes_before_allocating_subscriber() -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    response = client.get(
+        "/v1/runtimes/missing/workspaces/workspace-one/session-catalog-events/stream",
+        headers={"x-subject": "alice"},
+    )
+    assert response.status_code in {403, 404}
+    assert app.state.oaep_replay.metrics()["workspace_subscribers"] == 0
 
 
 def test_registration_association_heartbeat_and_discovery_flow() -> None:
@@ -337,11 +432,351 @@ def test_production_relay_derives_principal_from_verified_oidc_and_ignores_clien
     subject = str(uuid4())
     assert client.get("/v1/runtimes").status_code == 401
     assert client.get("/v1/runtimes", headers={"x-subject": subject}).status_code == 401
-    headers = {"authorization": f"Bearer {oidc_token(subject, secret)}", "x-subject": str(uuid4())}
-    associated = client.post("/v1/associations", headers=headers, json=association_body(grant))
+    access_token = oidc_token(subject, secret)
+    headers = {"authorization": f"Bearer {access_token}", "x-subject": str(uuid4())}
+    device_private = Ed25519PrivateKey.generate()
+    device_id = "android-device-0001"
+    body = {
+        **control(), "code": grant, "device_id": device_id,
+        "device_name": "Android Test Device",
+        "device_public_key": encoded(device_private.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )),
+    }
+    associated = client.post("/v1/associations", headers=headers, json=body)
     assert associated.status_code == 200 and associated.json()["runtime_id"] == runtime_id
-    listed = client.get("/v1/runtimes", headers=headers)
+    listed = client.get("/v1/runtimes", headers={
+        **headers,
+        **device_proof_headers(device_private, device_id, "GET", "/v1/runtimes", access_token),
+    })
     assert listed.status_code == 200 and listed.json()["items"][0]["runtime"]["runtime_id"] == runtime_id
+
+
+def test_device_key_rotation_is_old_key_authorized_and_immediately_fenced() -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    _, runtime_id, runtime_token = register(client)
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": runtime_token},
+    ).json()["code"]
+    old_private = Ed25519PrivateKey.generate()
+    device_id = "android-device-rotation"
+    associated = client.post("/v1/associations", headers={"x-subject": "alice"}, json={
+        **control(), "code": grant, "device_id": device_id,
+        "device_name": "Android Rotation Device",
+        "device_public_key": encoded(old_private.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )),
+    })
+    assert associated.status_code == 200
+
+    access_token = "test-access-token"
+    new_private = Ed25519PrivateKey.generate()
+    rotation = {"new_device_public_key": encoded(new_private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+    ))}
+    rotation_bytes = json.dumps(rotation, separators=(",", ":")).encode()
+    rotation_url = f"/v1/associations/{runtime_id}/device-key/rotate"
+    rotated = client.post(
+        rotation_url,
+        headers={
+            "x-subject": "alice", "content-type": "application/json",
+            **device_proof_headers(
+                old_private, device_id, "POST", rotation_url, access_token,
+                body=rotation_bytes,
+            ),
+        },
+        content=rotation_bytes,
+    )
+    assert rotated.status_code == 200
+    assert rotated.json()["status"] == "active"
+
+    catalog_url = "/v1/runtimes"
+    rejected = client.get(catalog_url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(old_private, device_id, "GET", catalog_url, access_token),
+    })
+    assert rejected.status_code == 401
+    assert rejected.json()["code"] == "device_proof_invalid"
+    new_headers = {
+        "x-subject": "alice",
+        **device_proof_headers(new_private, device_id, "GET", catalog_url, access_token),
+    }
+    assert client.get(catalog_url, headers=new_headers).status_code == 200
+    replay = client.get(catalog_url, headers=new_headers)
+    assert replay.status_code == 401
+    assert replay.json()["code"] == "device_proof_replay"
+
+
+def test_device_key_rotation_is_atomic_across_all_runtime_associations() -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    registrations = [register(client), register(client)]
+    subject = "multi-runtime-owner"
+    access_token = "test-access-token"
+    device_id = "android-device-multi-runtime"
+    old_private = Ed25519PrivateKey.generate()
+
+    for _, runtime_id, runtime_token in registrations:
+        grant = client.post(
+            f"/v1/runtimes/{runtime_id}/access-grants",
+            headers={"x-runtime-token": runtime_token},
+        ).json()["code"]
+        associated = client.post("/v1/associations", headers={"x-subject": subject}, json={
+            **control(), "code": grant, "device_id": device_id,
+            "device_name": "Android Multi Runtime Device",
+            "device_public_key": encoded(old_private.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+            )),
+        })
+        assert associated.status_code == 200
+
+    new_private = Ed25519PrivateKey.generate()
+    first_runtime_id = registrations[0][1]
+    rotation_url = f"/v1/associations/{first_runtime_id}/device-key/rotate"
+    rotation = {"new_device_public_key": encoded(new_private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+    ))}
+    rotation_bytes = json.dumps(rotation, separators=(",", ":")).encode()
+    rotated = client.post(
+        rotation_url,
+        headers={
+            "x-subject": subject,
+            "content-type": "application/json",
+            **device_proof_headers(
+                old_private, device_id, "POST", rotation_url, access_token,
+                body=rotation_bytes,
+            ),
+        },
+        content=rotation_bytes,
+    )
+    assert rotated.status_code == 200
+
+    catalog_url = "/v1/runtimes"
+    old_key_response = client.get(catalog_url, headers={
+        "x-subject": subject,
+        **device_proof_headers(old_private, device_id, "GET", catalog_url, access_token),
+    })
+    assert old_key_response.status_code == 401
+
+    new_key_response = client.get(catalog_url, headers={
+        "x-subject": subject,
+        **device_proof_headers(new_private, device_id, "GET", catalog_url, access_token),
+    })
+    assert new_key_response.status_code == 200
+    assert {item["runtime"]["runtime_id"] for item in new_key_response.json()["items"]} == {
+        registration[1] for registration in registrations
+    }
+
+    # Simulate Android dying after Relay committed but before it promoted the
+    # persisted pending key. The same body, authenticated by the new key, is a
+    # no-op success and lets the restarted client complete local promotion.
+    recovery_bytes = json.dumps(rotation, separators=(",", ":")).encode()
+    recovered = client.post(
+        rotation_url,
+        headers={
+            "x-subject": subject,
+            "content-type": "application/json",
+            **device_proof_headers(
+                new_private, device_id, "POST", rotation_url, access_token,
+                body=recovery_bytes,
+            ),
+        },
+        content=recovery_bytes,
+    )
+    assert recovered.status_code == 200
+
+
+def test_device_bound_workspace_allowlist_filters_catalog_and_denies_before_proxy() -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    _, runtime_id, runtime_token = register(client)
+    app.state.registry.publish_workspaces(runtime_id, runtime_token, [
+        Workspace.model_validate({
+            "runtime_id": runtime_id, "workspace_id": "workspace-one", "display_name": "One",
+        }),
+        Workspace.model_validate({
+            "runtime_id": runtime_id, "workspace_id": "workspace-two", "display_name": "Two",
+        }),
+    ])
+
+    def pair(device_id: str, private: Ed25519PrivateKey, scope: str, ids: list[str]) -> None:
+        code = client.post(
+            f"/v1/runtimes/{runtime_id}/access-grants",
+            headers={"x-runtime-token": runtime_token},
+            json={"workspace_scope": scope, "workspace_ids": ids},
+        ).json()["code"]
+        response = client.post("/v1/associations", headers={"x-subject": "alice"}, json={
+            **control(), "code": code, "device_id": device_id,
+            "device_name": device_id,
+            "device_public_key": encoded(private.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+            )),
+            "workspace_scope": scope,
+            "workspace_ids": ids,
+        })
+        assert response.status_code == 200
+
+    selected_private = Ed25519PrivateKey.generate()
+    all_private = Ed25519PrivateKey.generate()
+    pair("android-selected-0001", selected_private, "selected", ["workspace-one"])
+    pair("android-all-workspaces", all_private, "all", [])
+    access_token = "test-access-token"
+    catalog_url = f"/v1/runtimes/{runtime_id}/workspaces"
+
+    selected = client.get(catalog_url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(
+            selected_private, "android-selected-0001", "GET", catalog_url, access_token,
+        ),
+    })
+    assert selected.status_code == 200
+    assert [item["workspace_id"] for item in selected.json()["items"]] == ["workspace-one"]
+
+    forbidden_url = f"/v1/runtimes/{runtime_id}/workspaces/workspace-two/sessions"
+    forbidden = client.get(forbidden_url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(
+            selected_private, "android-selected-0001", "GET", forbidden_url, access_token,
+        ),
+    })
+    assert forbidden.status_code == 403
+    assert forbidden.json()["code"] == "workspace_forbidden"
+
+    all_workspaces = client.get(catalog_url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(
+            all_private, "android-all-workspaces", "GET", catalog_url, access_token,
+        ),
+    })
+    assert all_workspaces.status_code == 200
+    assert [item["workspace_id"] for item in all_workspaces.json()["items"]] == [
+        "workspace-one", "workspace-two",
+    ]
+
+
+def test_authorization_shrink_closes_stream_and_new_requests_use_reduced_permissions() -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    _, runtime_id, runtime_token = register(client)
+    app.state.registry.publish_workspaces(runtime_id, runtime_token, [
+        Workspace.model_validate({
+            "runtime_id": runtime_id, "workspace_id": "workspace-one", "display_name": "One",
+        }),
+    ])
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": runtime_token},
+    ).json()["code"]
+    private = Ed25519PrivateKey.generate()
+    device_id = "android-shrink-0001"
+    assert client.post("/v1/associations", headers={"x-subject": "alice"}, json={
+        **control(), "code": grant, "device_id": device_id, "device_name": "Android",
+        "device_public_key": encoded(private.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )),
+    }).status_code == 200
+    association_id = app.state.registry.list_associations(runtime_id, runtime_token)[0]["association_id"]
+    queue = asyncio.run(app.state.oaep_replay.subscribe(runtime_id, "session-one"))
+
+    shrunk = client.patch(
+        f"/v1/runtimes/{runtime_id}/associations/{association_id}",
+        headers={"x-runtime-token": runtime_token},
+        json={
+            "workspace_scope": "selected", "workspace_ids": ["workspace-one"],
+            "permissions": ["read"],
+        },
+    )
+    assert shrunk.status_code == 200
+    assert shrunk.json()["permissions"] == ["read"]
+    assert asyncio.run(queue.get()) == {"_control": "authorization_changed"}
+
+    create_url = f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions"
+    create_body = {
+        **control(True), "title": "Denied", "agent_definition_id": "agent",
+        "agent_definition_version": "1",
+    }
+    create_bytes = json.dumps(create_body, separators=(",", ":")).encode()
+    denied = client.post(create_url, headers={
+        "x-subject": "alice", "content-type": "application/json",
+        **device_proof_headers(private, device_id, "POST", create_url, "token", body=create_bytes),
+    }, content=create_bytes)
+    assert denied.status_code == 403
+    assert denied.json()["code"] == "permission_forbidden"
+
+    catalog_url = f"/v1/runtimes/{runtime_id}/workspaces"
+    readable = client.get(catalog_url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(private, device_id, "GET", catalog_url, "token"),
+    })
+    assert readable.status_code == 200
+    assert [item["workspace_id"] for item in readable.json()["items"]] == ["workspace-one"]
+
+    expansion = client.patch(
+        f"/v1/runtimes/{runtime_id}/associations/{association_id}",
+        headers={"x-runtime-token": runtime_token},
+        json={
+            "workspace_scope": "all", "workspace_ids": [],
+            "permissions": ["read", "send"],
+        },
+    )
+    assert expansion.status_code == 403
+    assert expansion.json()["code"] == "authorization_expansion_forbidden"
+
+
+def test_device_disconnect_closes_stream_and_preserves_other_account_access() -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    _, runtime_id, runtime_token = register(client)
+    app.state.registry.publish_workspaces(runtime_id, runtime_token, [
+        Workspace.model_validate({
+            "runtime_id": runtime_id, "workspace_id": "workspace-one", "display_name": "One",
+        }),
+    ])
+
+    devices: dict[str, tuple[str, Ed25519PrivateKey]] = {}
+    for subject in ("alice", "bob"):
+        device_id = f"android-{subject}-0001"
+        private = Ed25519PrivateKey.generate()
+        grant = client.post(
+            f"/v1/runtimes/{runtime_id}/access-grants",
+            headers={"x-runtime-token": runtime_token},
+        ).json()["code"]
+        associated = client.post("/v1/associations", headers={"x-subject": subject}, json={
+            **control(), "code": grant, "device_id": device_id, "device_name": f"{subject} phone",
+            "device_public_key": encoded(private.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+            )),
+        })
+        assert associated.status_code == 200
+        devices[subject] = (device_id, private)
+
+    queue = asyncio.run(app.state.oaep_replay.subscribe(runtime_id, "session-one"))
+    alice_device, alice_private = devices["alice"]
+    revoke_url = f"/v1/associations/{runtime_id}"
+    revoked = client.delete(revoke_url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(alice_private, alice_device, "DELETE", revoke_url, "token"),
+    })
+    assert revoked.status_code == 200
+    assert asyncio.run(queue.get()) == {"_control": "authorization_changed"}
+
+    catalog_url = f"/v1/runtimes/{runtime_id}/workspaces"
+    alice_denied = client.get(catalog_url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(alice_private, alice_device, "GET", catalog_url, "token"),
+    })
+    assert alice_denied.status_code == 403
+    assert alice_denied.json()["code"] == "association_required"
+
+    bob_device, bob_private = devices["bob"]
+    bob_allowed = client.get(catalog_url, headers={
+        "x-subject": "bob",
+        **device_proof_headers(bob_private, bob_device, "GET", catalog_url, "token"),
+    })
+    assert bob_allowed.status_code == 200
+    assert [item["workspace_id"] for item in bob_allowed.json()["items"]] == ["workspace-one"]
 
 
 def test_error_envelope_distinguishes_relay_and_has_correlation_id() -> None:
@@ -377,6 +812,54 @@ def test_generated_openapi_contains_runtime_handshake_and_pagination() -> None:
     assert "/v1/runtimes/{runtime_id}/associations/{association_id}" in schema["paths"]
     assert "/v1/runtimes/{runtime_id}/enrollment" in schema["paths"]
     assert "patch" in schema["paths"]["/v1/runtimes/{runtime_id}"]
+    session_path = "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}"
+    assert "patch" in schema["paths"][session_path]
+
+
+def test_session_rename_archive_and_unarchive_preserve_history_and_default_visibility() -> None:
+    authorities: dict[str, RuntimeAuthority] = {"placeholder": RuntimeAuthority("placeholder")}
+    app = create_relay_app(runtimes=authorities, principal_resolver=lambda request: request.headers.get("x-subject", ""))
+    client = TestClient(app)
+    _, runtime_id, token = register(client)
+    authority = RuntimeAuthority(runtime_id)
+    authority.add_agent_definition(AgentDefinition(
+        "opendrsai", "1.0.0", "OpenDrSai", "opendrsai", "healthy", frozenset({"chat"}),
+    ))
+    authorities[runtime_id] = authority
+    authorities.pop("placeholder")
+    app.state.registry.publish_workspaces(runtime_id, token, [Workspace.model_validate({
+        "runtime_id": runtime_id, "workspace_id": "workspace-one", "display_name": "Project",
+    })])
+    grant = client.post(f"/v1/runtimes/{runtime_id}/access-grants", headers={"x-runtime-token": token}).json()["code"]
+    assert client.post("/v1/associations", headers={"x-subject": "alice"}, json=association_body(grant)).status_code == 200
+    created_response = client.post(
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions",
+        headers={"x-subject": "alice"},
+        json={**control(True), "title": "Original", "agent_definition_id": "opendrsai",
+              "agent_definition_version": "1.0.0"},
+    )
+    assert created_response.status_code == 200, created_response.text
+    created = created_response.json()
+    path = f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/{created['session_id']}"
+    renamed = client.patch(path, headers={"x-subject": "alice"},
+                           json={**control(), "title": "Renamed"})
+    assert renamed.status_code == 200 and renamed.json()["title"] == "Renamed"
+    archived = client.patch(path, headers={"x-subject": "alice"},
+                            json={**control(), "lifecycle": "archived"})
+    assert archived.status_code == 200 and archived.json()["lifecycle"] == "archived"
+    active_page = client.get(
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions",
+        headers={"x-subject": "alice"},
+    ).json()
+    assert active_page["items"] == []
+    archived_page = client.get(
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions?lifecycle=archived",
+        headers={"x-subject": "alice"},
+    ).json()
+    assert [item["session_id"] for item in archived_page["items"]] == [created["session_id"]]
+    restored = client.patch(path, headers={"x-subject": "alice"},
+                            json={**control(), "lifecycle": "active"})
+    assert restored.status_code == 200 and restored.json()["title"] == "Renamed"
 
 
 def test_generated_openapi_contains_native_oaep_response_contracts() -> None:
@@ -419,6 +902,96 @@ def test_runtime_establishes_authenticated_outbound_websocket() -> None:
     )
     workspaces, _ = client.app.state.registry.list_workspaces("alice", runtime_id)
     assert [item.workspace_id for item in workspaces] == ["workspace-one"]
+
+
+def test_runtime_oaep_event_cursor_advances_only_after_relay_ack() -> None:
+    client = TestClient(_testing_app())
+    private, runtime_id, token = register(client)
+    nonce, instance = "oaep-ack-nonce", "oaep-ack-instance"
+    signature = encoded(private.sign(f"{runtime_id}\n{instance}\n{nonce}".encode()))
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[5] / "cores/protocol/oaep/examples.json")
+        .read_text(encoding="utf-8")
+    )
+    event = deepcopy(fixture["events"][0])
+    event["source"] = {**event["source"], "runtime_id": runtime_id}
+    frame = {
+        "type": "event", "protocol": "oaep/1", "scope": "session",
+        "runtime_id": runtime_id, "workspace_id": "workspace-one",
+        "session_id": event["session_id"], "sequence": event["sequence"],
+        "event": event,
+    }
+    with client.websocket_connect(
+        "/v1/runtime-connect", headers={"authorization": f"Runtime {token}"}
+    ) as socket:
+        socket.send_json({
+            "type": "runtime.hello", "runtime_id": runtime_id,
+            "instance_id": instance, "version": "1.6.0",
+            "protocol_version": PROTOCOL_VERSION, "capabilities": sorted(CAPABILITIES),
+            "backend_health": {"android-agent": "healthy"},
+            "nonce": nonce, "signature": signature,
+        })
+        assert socket.receive_json()["type"] == "runtime.connected"
+        socket.send_json(frame)
+        ack = socket.receive_json()
+        assert ack == {
+            "type": "oaep.event.ack", "protocol": "oaep/1",
+            "runtime_id": runtime_id, "session_id": event["session_id"],
+            "sequence": event["sequence"],
+        }
+        # Exact retransmission is acknowledged again, so a reconnect can safely
+        # retry everything after its last durably committed local cursor.
+        socket.send_json(frame)
+        assert socket.receive_json() == ack
+        for stage, duration_ms in (("journal_append", 2.0), ("runtime_wss_send", 3.0)):
+            socket.send_json({
+                "type": "telemetry.conversation_latency",
+                "runtime_id": runtime_id,
+                "workspace_id": "workspace-one",
+                "session_id": event["session_id"],
+                "run_id": str(event.get("run_id") or ""),
+                "correlation_id": event["event_id"],
+                "operation_id": event["event_id"],
+                "stage": stage,
+                "duration_ms": duration_ms,
+            })
+
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": token},
+    ).json()["code"]
+    assert client.post(
+        "/v1/associations", headers={"x-subject": "alice"}, json=association_body(grant)
+    ).status_code == 200
+    client.app.state.registry.publish_workspaces(runtime_id, token, [
+        Workspace.model_validate({
+            "runtime_id": runtime_id,
+            "workspace_id": "workspace-one",
+            "display_name": "One",
+        })
+    ])
+    latency_url = (
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/"
+        f"{event['session_id']}/conversation-latency"
+    )
+    for stage, duration_ms in (("client_receive", 4.0), ("client_render", 5.0)):
+        response = client.post(latency_url, headers={"x-subject": "alice"}, json={
+            "correlation_id": event["event_id"],
+            "operation_id": event["event_id"],
+            "stage": stage,
+            "duration_ms": duration_ms,
+        })
+        assert response.status_code == 204
+    report = client.get("/v1/metrics/conversation-latency").json()
+    assert report["complete_sample_count"] == 1
+    assert {stage: values["sample_count"] for stage, values in report["stages"].items()} == {
+        "journal_append": 1,
+        "runtime_wss_send": 1,
+        "relay_fanout": 1,
+        "client_receive": 1,
+        "client_render": 1,
+    }
+    assert event["event_id"] not in json.dumps(report)
 
 
 def test_runtime_workspace_catalog_from_old_generation_is_ignored() -> None:

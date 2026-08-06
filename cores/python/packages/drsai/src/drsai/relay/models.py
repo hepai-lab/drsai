@@ -1,55 +1,27 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
+
+from drsai.compatibility.relay_legacy_models import (
+    ConversationSnapshot,
+    RuntimeSessionEventFrame,
+    SessionConversationItem,
+    SessionEvent,
+    SessionEventKind,
+    session_conversation_digest,
+)
 
 from .generated_contract import (
     PROTOCOL_VERSION,
     GeneratedControlRequest,
-    GeneratedConversationSnapshot,
     GeneratedErrorEnvelope,
     GeneratedRelayEvent,
-    GeneratedRuntimeSessionEventFrame,
-    GeneratedSessionConversationItem,
-    GeneratedSessionEvent,
 )
-
-
-def session_conversation_digest(items: list[dict[str, Any]]) -> str:
-    """Hash the converged, user-visible Session transcript across clients."""
-    fields = (
-        "item_id",
-        "session_id",
-        "run_id",
-        "kind",
-        "role",
-        "revision",
-        "session_sequence",
-        "source_client",
-        "source_message_id",
-        "payload",
-    )
-    canonical = [
-        {field: item.get(field) for field in fields}
-        for item in sorted(
-            items,
-            key=lambda item: (int(item["session_sequence"]), str(item["item_id"])),
-        )
-    ]
-    encoded = json.dumps(
-        canonical,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 class StrictModel(BaseModel):
@@ -60,6 +32,7 @@ class RuntimeStatus(StrEnum):
     ONLINE = "online"
     DEGRADED = "degraded"
     OFFLINE = "offline"
+    PAUSED = "paused"
     REVOKED = "revoked"
 
 
@@ -67,21 +40,6 @@ class ResourceLifecycle(StrEnum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     REMOVED = "removed"
-
-
-class SessionEventKind(StrEnum):
-    SESSION_UPDATED = "session.updated"
-    RUN_CREATED = "run.created"
-    RUN_STATE_CHANGED = "run.state.changed"
-    CONVERSATION_ITEM_CREATED = "conversation.item.created"
-    CONVERSATION_ITEM_DELTA = "conversation.item.delta"
-    CONVERSATION_ITEM_UPSERT = "conversation.item.upsert"
-    TOOL_STATE_CHANGED = "tool.state.changed"
-    APPROVAL_CREATED = "approval.created"
-    APPROVAL_DECIDED = "approval.decided"
-    ARTIFACT_CREATED = "artifact.created"
-    SESSION_ARCHIVED = "session.archived"
-    SESSION_REMOVED = "session.removed"
 
 
 class ControlRequest(GeneratedControlRequest):
@@ -144,38 +102,6 @@ class RelayEvent(GeneratedRelayEvent):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class SessionConversationItem(GeneratedSessionConversationItem):
-    revision: int = Field(ge=1)
-    session_sequence: int = Field(ge=1)
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class ConversationSnapshot(GeneratedConversationSnapshot):
-    snapshot_sequence: int = Field(ge=0)
-    items: list[SessionConversationItem]
-
-
-class SessionEvent(GeneratedSessionEvent):
-    session_sequence: int = Field(ge=1)
-    kind: SessionEventKind
-    item_id: str | None = None
-    item_revision: int | None = Field(default=None, ge=1)
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class RuntimeSessionEventFrame(GeneratedRuntimeSessionEventFrame):
-    session_sequence: int = Field(ge=1)
-    event: SessionEvent
-
-    @model_validator(mode="after")
-    def validate_event_scope(self) -> Self:
-        if self.session_id != self.event.session_id:
-            raise ValueError("frame session_id must match event session_id")
-        if self.session_sequence != self.event.session_sequence:
-            raise ValueError("frame session_sequence must match event session_sequence")
-        return self
-
-
 class RegistrationRequest(ControlRequest):
     display_name: str
     version: str
@@ -192,6 +118,12 @@ class AccessGrantResult(StrictModel):
     code: str
     expires_at: datetime
     status: str = Field(pattern="^(pending|consumed|expired|revoked)$")
+
+
+class AccessGrantCreateRequest(StrictModel):
+    workspace_scope: str = Field(default="all", pattern="^(all|selected)$")
+    workspace_ids: list[str] = Field(default_factory=list, max_length=1000)
+    permissions: list[str] = Field(default_factory=lambda: ["read", "send", "approve", "files"], min_length=1, max_length=4)
 
 
 class AccessGrantStatusResult(StrictModel):
@@ -216,10 +148,42 @@ class AssociationResult(StrictModel):
     created_at: datetime
     last_seen_at: datetime | None = None
     revoked_at: datetime | None = None
+    workspace_scope: str = Field(default="all", pattern="^(all|selected)$")
+    workspace_ids: list[str] = Field(default_factory=list, max_length=1000)
+    permissions: list[str] = Field(default_factory=list, min_length=1, max_length=4)
 
 
 class AssociationPresenceRequest(StrictModel):
     accessing: bool = False
+
+
+class PushRegistrationRequest(StrictModel):
+    provider: str = Field(min_length=2, max_length=32, pattern=r"^[a-z][a-z0-9_-]+$")
+    token: str = Field(min_length=32, max_length=4096, pattern=r".*\S.*")
+    generation: int = Field(ge=1)
+
+
+class PushRegistrationResult(StrictModel):
+    runtime_id: str
+    device_summary: str = Field(pattern=r"^dev_[0-9a-f]{12}$")
+    provider: str = Field(min_length=2, max_length=32, pattern=r"^[a-z][a-z0-9_-]+$")
+    generation: int = Field(ge=1)
+    status: str = Field(pattern="^(active|revoked)$")
+    updated_at: datetime
+
+
+class AssociationDeviceKeyRotationRequest(StrictModel):
+    new_device_public_key: str = Field(
+        min_length=43,
+        max_length=43,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
+class AssociationAuthorizationShrinkRequest(StrictModel):
+    workspace_scope: str | None = Field(default=None, pattern="^(all|selected)$")
+    workspace_ids: list[str] | None = Field(default=None, max_length=1000)
+    permissions: list[str] | None = Field(default=None, min_length=1, max_length=4)
 
 
 class AssociationRequest(ControlRequest):
@@ -239,6 +203,9 @@ class AssociationRequest(ControlRequest):
         max_length=43,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
+    workspace_scope: str = Field(default="all", pattern="^(all|selected)$")
+    workspace_ids: list[str] = Field(default_factory=list, max_length=1000)
+    permissions: list[str] = Field(default_factory=lambda: ["read", "send", "approve", "files"], min_length=1, max_length=4)
 
 
 class HeartbeatRequest(ControlRequest):

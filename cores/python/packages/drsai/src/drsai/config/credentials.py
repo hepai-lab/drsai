@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from cryptography.fernet import Fernet, InvalidToken
 
 from drsai.relay.device_identity import WindowsDpapiProtector
+from drsai.configs.constant import FS_DIR
 
 from .loader import ConfigError
 
@@ -20,7 +21,7 @@ _KEYCHAIN_SERVICE = "ai.drsai.model-provider"
 
 
 def default_credentials_dir() -> Path:
-    return Path.home() / ".drsai" / "credentials"
+    return Path(os.environ.get("DRSAI_HOME", FS_DIR)).expanduser() / "credentials"
 
 
 def store_credential(secret: str, *, root: Path | None = None) -> str:

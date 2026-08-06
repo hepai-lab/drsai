@@ -26,12 +26,7 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|cookie|authorization[_-]?code)\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"),
 )
-
-# App Server uses newline-delimited JSON. A thread/list response can contain
-# hundreds of historical threads in a single frame, so asyncio's 64 KiB
-# default StreamReader limit is not sufficient for a real Codex profile.
-CODEX_JSONL_FRAME_LIMIT = 16 * 1024 * 1024
-
+from drsai.backend.codex_adapter.jsonl_frames import CODEX_JSONL_FRAME_LIMIT
 
 def redact_secrets(value: str, explicit_secrets: Sequence[str] = ()) -> str:
     result = value

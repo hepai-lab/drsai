@@ -525,6 +525,10 @@ def config_cmd(
     if provider:
         if not base_url:
             raise typer.BadParameter("--base-url is required with --provider")
+        if model is not None or model_provider is not None:
+            raise typer.BadParameter(
+                "Global model selection has been removed; configure the selected Agent model policy instead"
+            )
         values: dict[str, object] = {
             "base_url": base_url,
             "wire_api": wire_api,
@@ -533,38 +537,21 @@ def config_cmd(
         try:
             if api_key_env is not None:
                 values["api_key_env"] = api_key_env
-            current = load_user_config()
-            selected_model = model or current.model if (model is not None or model_provider is not None) else None
-            selected_provider = model_provider or provider if selected_model is not None else None
             request = ConfigUpdateRequest(
                 provider_name=provider,
                 provider_values=values,
                 provider_secret=api_key,
-                model=selected_model,
-                model_provider=selected_provider,
             )
             preview = preview_update(request, environ=os.environ)
             commit_update(request, expected_revision=None if force else preview.base_revision)
         except ModelProviderConfigError as exc:
             raise typer.BadParameter(str(exc)) from exc
         typer.echo(f"Provider '{provider}' saved to {default_config_path()}")
-        if model is not None or model_provider is not None:
-            typer.echo(f"Model '{selected_model}' via '{selected_provider}' saved to {default_config_path()}")
         return
     if model is not None or model_provider is not None:
-        current = load_user_config()
-        selected_model = model or current.model
-        selected_provider = model_provider or provider or current.model_provider or "hepai"
-        if not selected_model:
-            raise typer.BadParameter("--model is required when no model is currently configured")
-        try:
-            request = ConfigUpdateRequest(model=selected_model, model_provider=selected_provider)
-            preview = preview_update(request, environ=os.environ)
-            commit_update(request, expected_revision=None if force else preview.base_revision)
-        except ModelProviderConfigError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-        typer.echo(f"Model '{selected_model}' via '{selected_provider}' saved to {default_config_path()}")
-        return
+        raise typer.BadParameter(
+            "Global model selection has been removed; configure the selected Agent model policy instead"
+        )
     if check:
         try:
             compact = load_user_config()
@@ -704,20 +691,18 @@ def config_migrate_cmd() -> None:
 
 @config_app.command("set-model")
 def config_set_model_cmd(model: str, force: bool = typer.Option(False, "--force")) -> None:
-    """Select the default model ID."""
-    revision = config_revision()
-    current = load_user_config()
-    commit_update(ConfigUpdateRequest(model=model, model_provider=current.model_provider or "hepai"), expected_revision=None if force else revision)
-    typer.echo(f"Model '{model}' saved")
+    """Reject the retired global model selection command."""
+    raise typer.BadParameter(
+        "Global model selection has been removed; configure the selected Agent model policy instead"
+    )
 
 
 @config_app.command("set-provider")
 def config_set_provider_cmd(provider: str, force: bool = typer.Option(False, "--force")) -> None:
-    """Select the default Provider."""
-    revision = config_revision()
-    current = load_user_config()
-    commit_update(ConfigUpdateRequest(model=current.model or "deepseek-v4-pro", model_provider=provider), expected_revision=None if force else revision)
-    typer.echo(f"Provider '{provider}' saved")
+    """Reject the retired global Provider selection command."""
+    raise typer.BadParameter(
+        "Global model selection has been removed; configure the selected Agent model policy instead"
+    )
 
 
 @provider_app.command("list")
@@ -888,18 +873,15 @@ def provider_setup_cmd() -> None:
         provider_name=provider,
         provider_values=values,
         provider_secret=api_key,
-        model=model,
-        model_provider=provider,
     )
     preview = preview_update(request, environ=os.environ)
     typer.echo(
-        f"Preview: model={preview.resolved.model} provider={preview.resolved.provider.name} "
-        f"base_url={preview.resolved.provider.base_url}"
+        f"Preview: Provider={provider} probe_model={model} base_url={base_url}"
     )
-    if not typer.confirm("Save and use this configuration?", default=True):
+    if not typer.confirm("Save this Provider configuration?", default=True):
         raise typer.Abort()
-    result = commit_update(request, expected_revision=preview.base_revision)
-    typer.echo(f"Saved model={result.resolved.model} provider={result.resolved.provider.name}")
+    commit_update(request, expected_revision=preview.base_revision)
+    typer.echo(f"Saved Provider={provider}; select models in the Agent model policy")
 
 
 @provider_app.command("remove")
@@ -910,13 +892,9 @@ def provider_remove_cmd(
 ) -> None:
     """Remove a custom Provider."""
     revision = config_revision()
-    config = load_user_config()
-    active = (config.model_provider or "hepai") == name
     commit_update(ConfigUpdateRequest(
         delete_provider_name=name,
         delete_provider_credential=not keep_credential,
-        model=config.model or "deepseek-v4-pro" if active else None,
-        model_provider="hepai" if active else None,
     ), expected_revision=None if force else revision)
     typer.echo(f"Provider '{name}' removed")
 

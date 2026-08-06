@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
+import hashlib
+import json
 from typing import Awaitable, Callable, Sequence
 
 from .ports import LifecycleState
@@ -14,6 +16,37 @@ class SubagentStatus(StrEnum):
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     FAILED = "failed"
+
+
+SUBAGENT_SCHEDULING_POLICY_VERSION = "p9-subagent-scheduling-v1"
+SUBAGENT_MAX_ACTIVE = 3
+SUBAGENT_FOREGROUND_MAX_PARALLEL = 2
+
+
+def build_subagent_scheduling_policy(
+    lifecycle: LifecycleState | str,
+    *,
+    advertised_max_active: int | None = None,
+    advertised_max_parallel: int | None = None,
+) -> dict[str, object]:
+    """Return the canonical, host-verifiable mobile scheduling decision."""
+
+    state = lifecycle if isinstance(lifecycle, LifecycleState) else LifecycleState(str(lifecycle))
+    expected_parallel = SUBAGENT_FOREGROUND_MAX_PARALLEL if state is LifecycleState.FOREGROUND else 1
+    if advertised_max_active is not None and advertised_max_active != SUBAGENT_MAX_ACTIVE:
+        raise ValueError("subagent_max_active_mismatch")
+    if advertised_max_parallel is not None and advertised_max_parallel != expected_parallel:
+        raise ValueError("subagent_max_parallel_mismatch")
+    value: dict[str, object] = {
+        "policy_version": SUBAGENT_SCHEDULING_POLICY_VERSION,
+        "lifecycle_state": state.value,
+        "max_active": SUBAGENT_MAX_ACTIVE,
+        "max_parallel": expected_parallel,
+        "mode": "parallel" if expected_parallel == 2 else "serial",
+    }
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    value["sha256"] = hashlib.sha256(encoded).hexdigest()
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +102,8 @@ class LogicalSubagentScheduler:
             raise ValueError("subagent_active_limit")
         if len({task.task_id for task in tasks}) != len(tasks):
             raise ValueError("subagent_task_duplicate")
-        parallel = self._max_parallel if lifecycle is LifecycleState.FOREGROUND else 1
+        policy = build_subagent_scheduling_policy(lifecycle)
+        parallel = int(policy["max_parallel"])
         semaphore = asyncio.Semaphore(parallel)
 
         async def execute(task: LogicalSubagentTask) -> LogicalSubagentResult:

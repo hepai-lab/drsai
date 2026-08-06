@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from drsai.backend.runtime.agent_bindings import AgentBackendBindingStore
 from drsai.backend.runtime.agent import RuntimeExecutionError, RuntimeRunContext
+from drsai.backend.runtime.error_contract import error_category
 from drsai.backend.codex_adapter.jsonrpc_client import CodexJSONRPCClient
 
 
@@ -33,14 +36,17 @@ class CodexAccountManager:
         try:
             result = await self.rpc.request("account/read", {"refreshToken": bool(refresh)})
         except RuntimeExecutionError as exc:
+            category = error_category(exc.code)
+            state = "unavailable" if category in {"transport", "runtime", "backend"} else "unknown"
             return {
-                "logged_in": False, "auth_mode": None, "email": None, "plan_type": None,
+                "state": state, "logged_in": False, "auth_mode": None, "email": None, "plan_type": None,
                 "credential_source": None, "requires_openai_auth": True,
                 "reason": exc.code, "retryable": exc.retryable,
             }
         account = result.get("account") if isinstance(result, Mapping) and isinstance(result.get("account"), Mapping) else None
         auth_type = str(account.get("type")) if account and account.get("type") else None
         return {
+            "state": "signed_in" if account is not None else "signed_out",
             "logged_in": account is not None,
             "auth_mode": auth_type,
             "email": str(account.get("email")) if account and account.get("email") else None,
@@ -72,6 +78,7 @@ class _PendingApproval:
     run_id: str
     backend_key: str
     future: asyncio.Future
+    waiters: int = 0
     response_decision: str | None = None
 
 
@@ -92,6 +99,9 @@ class CodexApprovalBridge:
         self.audit_context = audit_context or (lambda _run_id: {"principal": "runtime-user"})
         self.contexts: dict[str, RuntimeRunContext] = {}
         self.pending: dict[str, _PendingApproval] = {}
+        self.pending_by_backend_key: dict[str, _PendingApproval] = {}
+        self.resolved_by_backend_key: OrderedDict[str, tuple[str, str, float]] = OrderedDict()
+        self._singleflight_lock = asyncio.Lock()
         for method in _APPROVAL_METHODS:
             rpc.handle_server_request(method, self._handler(method))
 
@@ -123,33 +133,66 @@ class CodexApprovalBridge:
                 "operation": operation, "required_any": sorted(required), "approval_created": False,
             })
             return {"decision": "decline"} if operation != "permissions" else {"permissions": []}
-        backend_key = f"{method}:{thread_id}:{turn_id}:{params.get('itemId') or message.get('id')}"
-        existing = self._find_pending(run_id, backend_key)
-        if existing is None:
-            approval = self.runtime_state.request_approval(run_id, {
-                "backend": "codex", "backend_approval_key": backend_key, "method": method,
-                "operation": operation, "params": self._safe(params),
-            })
-            approval_id = approval["approval_id"]
-        else:
-            approval_id = existing["approval_id"]
-        future = asyncio.get_running_loop().create_future()
-        pending = _PendingApproval(approval_id, run_id, backend_key, future)
-        self.pending[approval_id] = pending
-        self._audit(run_id, "audit.codex.approval.requested", method, params, {
-            "approval_id": approval_id, "operation": operation, "approval_created": existing is None,
-        })
-        try:
-            decision = await asyncio.wait_for(asyncio.shield(future), timeout=self.timeout_seconds)
-        except asyncio.TimeoutError:
-            if self.runtime_state.get_approval(approval_id)["status"] == "pending":
-                self.runtime_state.resolve_approval(
-                    approval_id, "timeout", {"reason": "codex_approval_timeout"}, resume_on_denied=True,
+        generation = int(getattr(self.rpc, "generation", 0) or 0)
+        backend_key = f"g{generation}:{method}:{thread_id}:{turn_id}:{params.get('itemId') or message.get('id')}"
+        async with self._singleflight_lock:
+            now = time.monotonic()
+            while self.resolved_by_backend_key:
+                oldest_key, oldest = next(iter(self.resolved_by_backend_key.items()))
+                if now - oldest[2] <= 60:
+                    break
+                self.resolved_by_backend_key.pop(oldest_key, None)
+            cached = self.resolved_by_backend_key.get(backend_key)
+            if cached is not None and cached[0] == run_id and now - cached[2] <= 60:
+                self.resolved_by_backend_key.move_to_end(backend_key)
+                return self._native_response(operation, cached[1], params)
+            pending = self.pending_by_backend_key.get(backend_key)
+            if pending is None:
+                approval = self.runtime_state.request_approval(run_id, {
+                    "backend": "codex", "backend_approval_key": backend_key, "method": method,
+                    "operation": operation, "params": self._safe(params), "transport_generation": generation,
+                })
+                approval_id = approval["approval_id"]
+                pending = _PendingApproval(
+                    approval_id, run_id, backend_key, asyncio.get_running_loop().create_future(),
                 )
+                self.pending[approval_id] = pending
+                self.pending_by_backend_key[backend_key] = pending
+                self._audit(run_id, "audit.codex.approval.requested", method, params, {
+                    "approval_id": approval_id, "operation": operation, "approval_created": True,
+                    "transport_generation": generation,
+                })
+            elif pending.run_id != run_id:
+                raise RuntimeExecutionError(
+                    "codex_approval_identity_conflict",
+                    "Approval identity was reused by another Run.",
+                )
+            pending.waiters += 1
+            approval_id = pending.approval_id
+        try:
+            decision = await asyncio.wait_for(asyncio.shield(pending.future), timeout=self.timeout_seconds)
+        except asyncio.TimeoutError:
+            await self._resolve_once(
+                pending, "cancel", "expired", "audit.codex.approval.expired", method, params,
+                {"reason": "codex_approval_timeout"},
+            )
             decision = "cancel"
-            self._audit(run_id, "audit.codex.approval.timeout", method, params, {"approval_id": approval_id})
         finally:
-            self.pending.pop(approval_id, None)
+            async with self._singleflight_lock:
+                pending.waiters = max(0, pending.waiters - 1)
+                if pending.waiters == 0 and pending.future.done():
+                    self.resolved_by_backend_key[backend_key] = (
+                        pending.run_id, str(pending.response_decision or decision), time.monotonic(),
+                    )
+                    self.resolved_by_backend_key.move_to_end(backend_key)
+                    while len(self.resolved_by_backend_key) > 256:
+                        self.resolved_by_backend_key.popitem(last=False)
+                    self.pending.pop(approval_id, None)
+                    self.pending_by_backend_key.pop(backend_key, None)
+        return self._native_response(operation, decision, params)
+
+    @staticmethod
+    def _native_response(operation: str, decision: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
         if operation == "permissions":
             requested = params.get("permissions") if isinstance(params.get("permissions"), list) else []
             return {"permissions": requested if decision in {"accept", "acceptForSession"} else [],
@@ -162,20 +205,37 @@ class CodexApprovalBridge:
         approval = self.runtime_state.get_approval(approval_id)
         if approval["run_id"] != run_id:
             raise RuntimeExecutionError("approval_run_mismatch", "Approval does not belong to this Run.")
-        pending = self.pending.get(approval_id)
-        if approval["status"] != "pending":
-            return
-        engine_decision = "approved" if decision in {"accept", "acceptForSession"} else "denied"
-        self.runtime_state.resolve_approval(
-            approval_id, engine_decision, {"codex_decision": decision}, resume_on_denied=True,
+        engine_decision = "approved" if decision in {"accept", "acceptForSession"} else (
+            "cancelled" if decision == "cancel" else "denied"
         )
-        if pending and not pending.future.done():
-            pending.response_decision = decision
-            pending.future.set_result(decision)
+        pending = self.pending.get(approval_id)
+        if pending is None or approval["status"] != "pending":
+            return
         request = approval["request"]
-        self._audit(run_id, f"audit.codex.approval.{engine_decision}", str(request.get("method") or "approval"),
-                    request.get("params") if isinstance(request.get("params"), Mapping) else {},
-                    {"approval_id": approval_id, "decision": decision})
+        await self._resolve_once(
+            pending, decision, engine_decision, f"audit.codex.approval.{engine_decision}",
+            str(request.get("method") or "approval"),
+            request.get("params") if isinstance(request.get("params"), Mapping) else {},
+            {"codex_decision": decision},
+        )
+
+    async def _resolve_once(
+        self, pending: _PendingApproval, native_decision: str, engine_decision: str,
+        audit_event: str, method: str, params: Mapping[str, Any], detail: Mapping[str, Any],
+    ) -> None:
+        async with self._singleflight_lock:
+            if pending.future.done():
+                return
+            approval = self.runtime_state.get_approval(pending.approval_id)
+            if approval["status"] == "pending":
+                self.runtime_state.resolve_approval(
+                    pending.approval_id, engine_decision, dict(detail), resume_on_denied=True,
+                )
+            pending.response_decision = native_decision
+            pending.future.set_result(native_decision)
+            self._audit(pending.run_id, audit_event, method, params, {
+                "approval_id": pending.approval_id, "decision": native_decision,
+            })
 
     def recover_orphaned_pending(self) -> int:
         recovered = 0
@@ -183,7 +243,7 @@ class CodexApprovalBridge:
             if approval.get("request", {}).get("backend") != "codex":
                 continue
             self.runtime_state.resolve_approval(
-                approval["approval_id"], "timeout", {"reason": "runtime_restarted_with_pending_codex_approval"},
+                approval["approval_id"], "expired", {"reason": "runtime_restarted_with_pending_codex_approval"},
                 resume_on_denied=True,
             )
             self.runtime_state.append_event(approval["run_id"], "approval.recovered", {
@@ -193,15 +253,31 @@ class CodexApprovalBridge:
         return recovered
 
     async def cancel_run(self, run_id: str) -> None:
-        for pending in list(self.pending.values()):
+        for pending in list({value.approval_id: value for value in self.pending.values()}.values()):
             if pending.run_id == run_id:
                 await self.respond(run_id, pending.approval_id, "cancel")
 
-    def _find_pending(self, run_id: str, backend_key: str) -> Mapping[str, Any] | None:
-        for approval in self.runtime_state.list_pending_approvals(run_id):
-            if approval["request"].get("backend_approval_key") == backend_key:
-                return approval
-        return None
+    async def disconnect_run(self, run_id: str) -> None:
+        """Fail closed when the transport generation owning an approval is lost."""
+        for pending in list({value.approval_id: value for value in self.pending.values()}.values()):
+            if pending.run_id != run_id:
+                continue
+            approval = self.runtime_state.get_approval(pending.approval_id)
+            request = approval.get("request") if isinstance(approval.get("request"), Mapping) else {}
+            await self._resolve_once(
+                pending, "cancel", "disconnected", "audit.codex.approval.disconnected",
+                str(request.get("method") or "approval"),
+                request.get("params") if isinstance(request.get("params"), Mapping) else {},
+                {"reason": "codex_transport_generation_lost"},
+            )
+
+    def diagnostics(self) -> dict[str, int]:
+        return {
+            "contexts": len(self.contexts), "pending": len(self.pending),
+            "pending_backend_keys": len(self.pending_by_backend_key),
+            "resolved_decisions": len(self.resolved_by_backend_key),
+            "maximum_resolved_decisions": 256, "resolved_decision_ttl_seconds": 60,
+        }
 
     def _audit(
         self, run_id: str, event_type: str, method: str, params: Mapping[str, Any], extra: Mapping[str, Any],

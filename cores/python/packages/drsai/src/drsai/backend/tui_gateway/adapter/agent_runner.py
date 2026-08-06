@@ -185,6 +185,7 @@ class AgentSession:
             db_manager=self.db_manager,
             defult_config_name=defult_config_name or self.cli_cfg.get("defult_config_name"),
             cli_cfg=self.cli_cfg,
+            kernel_surface="tui",
         )
 
         if hasattr(agent, "lazy_init"):

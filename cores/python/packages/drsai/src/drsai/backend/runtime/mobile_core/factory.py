@@ -1,16 +1,11 @@
-"""The single construction boundary for the shared mobile Agent Core."""
+"""Compatibility import for the former mobile-only construction name."""
 
 from __future__ import annotations
 
-from .engine import MobileAgentCore
+from .engine import DrSaiAgentKernel
 
 
-SUPPORTED_SURFACES = {"android", "desktop", "tui", "test"}
+def create_shared_mobile_core(*, surface: str) -> DrSaiAgentKernel:
+    from ..agent_kernel_factory import create_agent_kernel
 
-
-def create_shared_mobile_core(*, surface: str) -> MobileAgentCore:
-    if surface not in SUPPORTED_SURFACES:
-        raise ValueError("mobile_core_surface_invalid")
-    # Surface is deliberately not stored in Core state: decisions and emitted
-    # events must remain identical across adapters.
-    return MobileAgentCore()
+    return create_agent_kernel(surface=surface)

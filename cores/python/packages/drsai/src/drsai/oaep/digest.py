@@ -22,6 +22,11 @@ def _semantic_item(item: Mapping[str, Any]) -> dict[str, Any]:
     }
     for key, default in defaults.get(str(value["type"]), {}).items():
         content.setdefault(key, default)
+    # Kotlin's generated Message model has an empty-list default and therefore
+    # emits ``parts: []`` on the wire. Absence and an empty optional parts list
+    # are the same OAEP semantic value (matching Android canonicalization).
+    if content.get("parts") == []:
+        content.pop("parts")
     value["content"] = content
     return value
 

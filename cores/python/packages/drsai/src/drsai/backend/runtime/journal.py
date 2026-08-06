@@ -20,6 +20,7 @@ from drsai.backend.runtime.oaep import (
     project_run,
     project_session,
 )
+from drsai.backend.runtime.observability import ResourceCorrelation, RuntimeObservability
 from drsai.relay.security import redact_secrets
 
 
@@ -123,9 +124,15 @@ class _ClosingConnection(sqlite3.Connection):
 class RuntimeConversationJournal:
     """Append-first Session events plus a deterministic current-item projection."""
 
-    def __init__(self, database: Path, runtime_id: str):
+    def __init__(
+        self,
+        database: Path,
+        runtime_id: str,
+        observability: RuntimeObservability | None = None,
+    ):
         self.database = Path(database)
         self.runtime_id = runtime_id
+        self.observability = observability
         self.database.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._changed = threading.Condition(self._lock)
@@ -202,11 +209,90 @@ class RuntimeConversationJournal:
                   run_sequence INTEGER NOT NULL,
                   revision INTEGER NOT NULL,
                   latest_sequence INTEGER NOT NULL,
+                  item_type TEXT NOT NULL DEFAULT 'notice',
+                  item_status TEXT NOT NULL DEFAULT 'pending',
+                  warning_count INTEGER NOT NULL DEFAULT 0,
+                  input_tokens INTEGER NOT NULL DEFAULT 0,
+                  output_tokens INTEGER NOT NULL DEFAULT 0,
+                  total_tokens INTEGER NOT NULL DEFAULT 0,
                   envelope_json TEXT NOT NULL,
                   UNIQUE(run_id, run_sequence)
                 );
                 CREATE INDEX IF NOT EXISTS idx_runtime_oaep_items_snapshot
                   ON runtime_oaep_items(session_id, latest_sequence, item_id);
+                CREATE INDEX IF NOT EXISTS idx_runtime_oaep_items_run_inspection
+                  ON runtime_oaep_items(run_id, run_sequence, item_id);
+                CREATE INDEX IF NOT EXISTS idx_runtime_oaep_items_run_status
+                  ON runtime_oaep_items(run_id, item_status, run_sequence, item_id);
+                CREATE TABLE IF NOT EXISTS runtime_oaep_snapshot_checkpoints (
+                  session_id TEXT PRIMARY KEY REFERENCES runtime_sessions(session_id),
+                  checkpoint_sequence INTEGER NOT NULL,
+                  snapshot_hash TEXT NOT NULL,
+                  item_count INTEGER NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS runtime_oaep_run_summary (
+                  run_id TEXT NOT NULL,
+                  item_type TEXT NOT NULL,
+                  item_status TEXT NOT NULL,
+                  item_count INTEGER NOT NULL,
+                  warning_count INTEGER NOT NULL,
+                  input_tokens INTEGER NOT NULL,
+                  output_tokens INTEGER NOT NULL,
+                  total_tokens INTEGER NOT NULL,
+                  PRIMARY KEY(run_id,item_type,item_status)
+                );
+                CREATE TRIGGER IF NOT EXISTS runtime_oaep_summary_insert
+                  AFTER INSERT ON runtime_oaep_items
+                  BEGIN
+                    INSERT INTO runtime_oaep_run_summary VALUES(
+                      NEW.run_id,NEW.item_type,NEW.item_status,1,NEW.warning_count,
+                      NEW.input_tokens,NEW.output_tokens,NEW.total_tokens
+                    ) ON CONFLICT(run_id,item_type,item_status) DO UPDATE SET
+                      item_count=item_count+1,
+                      warning_count=warning_count+NEW.warning_count,
+                      input_tokens=input_tokens+NEW.input_tokens,
+                      output_tokens=output_tokens+NEW.output_tokens,
+                      total_tokens=total_tokens+NEW.total_tokens;
+                  END;
+                CREATE TRIGGER IF NOT EXISTS runtime_oaep_summary_update
+                  AFTER UPDATE OF run_id,item_type,item_status,warning_count,input_tokens,output_tokens,total_tokens
+                  ON runtime_oaep_items
+                  BEGIN
+                    UPDATE runtime_oaep_run_summary SET
+                      item_count=item_count-1,
+                      warning_count=warning_count-OLD.warning_count,
+                      input_tokens=input_tokens-OLD.input_tokens,
+                      output_tokens=output_tokens-OLD.output_tokens,
+                      total_tokens=total_tokens-OLD.total_tokens
+                    WHERE run_id=OLD.run_id AND item_type=OLD.item_type AND item_status=OLD.item_status;
+                    DELETE FROM runtime_oaep_run_summary
+                    WHERE run_id=OLD.run_id AND item_type=OLD.item_type AND item_status=OLD.item_status
+                      AND item_count<=0;
+                    INSERT INTO runtime_oaep_run_summary VALUES(
+                      NEW.run_id,NEW.item_type,NEW.item_status,1,NEW.warning_count,
+                      NEW.input_tokens,NEW.output_tokens,NEW.total_tokens
+                    ) ON CONFLICT(run_id,item_type,item_status) DO UPDATE SET
+                      item_count=item_count+1,
+                      warning_count=warning_count+NEW.warning_count,
+                      input_tokens=input_tokens+NEW.input_tokens,
+                      output_tokens=output_tokens+NEW.output_tokens,
+                      total_tokens=total_tokens+NEW.total_tokens;
+                  END;
+                CREATE TRIGGER IF NOT EXISTS runtime_oaep_summary_delete
+                  AFTER DELETE ON runtime_oaep_items
+                  BEGIN
+                    UPDATE runtime_oaep_run_summary SET
+                      item_count=item_count-1,
+                      warning_count=warning_count-OLD.warning_count,
+                      input_tokens=input_tokens-OLD.input_tokens,
+                      output_tokens=output_tokens-OLD.output_tokens,
+                      total_tokens=total_tokens-OLD.total_tokens
+                    WHERE run_id=OLD.run_id AND item_type=OLD.item_type AND item_status=OLD.item_status;
+                    DELETE FROM runtime_oaep_run_summary
+                    WHERE run_id=OLD.run_id AND item_type=OLD.item_type AND item_status=OLD.item_status
+                      AND item_count<=0;
+                  END;
                 CREATE TABLE IF NOT EXISTS runtime_oaep_events (
                   event_id TEXT PRIMARY KEY REFERENCES runtime_session_journal(event_id)
                     ON DELETE CASCADE,
@@ -217,6 +303,16 @@ class RuntimeConversationJournal:
                 );
                 CREATE INDEX IF NOT EXISTS idx_runtime_oaep_events_replay
                   ON runtime_oaep_events(session_id, session_sequence);
+                CREATE TABLE IF NOT EXISTS runtime_oaep_item_event_refs (
+                  event_id TEXT PRIMARY KEY REFERENCES runtime_oaep_events(event_id)
+                    ON DELETE CASCADE,
+                  session_id TEXT NOT NULL,
+                  run_id TEXT NOT NULL,
+                  item_id TEXT NOT NULL,
+                  session_sequence INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_oaep_item_event_refs_item
+                  ON runtime_oaep_item_event_refs(run_id, item_id, session_sequence);
                 CREATE TABLE IF NOT EXISTS runtime_oaep_migration_state (
                   singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                   schema_version INTEGER NOT NULL,
@@ -239,6 +335,13 @@ class RuntimeConversationJournal:
                   created_at TEXT NOT NULL,
                   PRIMARY KEY(session_id, checkpoint_sequence)
                 );
+                CREATE TABLE IF NOT EXISTS runtime_session_journal_compacted_runtime_events (
+                  runtime_event_id TEXT PRIMARY KEY,
+                  session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
+                  compacted_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_session_journal_compacted_events_session
+                  ON runtime_session_journal_compacted_runtime_events(session_id);
                 CREATE TABLE IF NOT EXISTS runtime_session_journal_maintenance (
                   singleton INTEGER PRIMARY KEY CHECK(singleton=1)
                 );
@@ -253,9 +356,35 @@ class RuntimeConversationJournal:
                   BEGIN SELECT RAISE(ABORT, 'Runtime Session Journal is append-only'); END;
                 """
             )
+            inspection_columns_added = self._ensure_oaep_inspection_columns(db)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runtime_oaep_items_run_summary "
+                "ON runtime_oaep_items(run_id,item_type,item_status,run_sequence,item_id)"
+            )
+            if inspection_columns_added:
+                self._backfill_oaep_inspection_columns(db)
+            db.execute("DELETE FROM runtime_oaep_run_summary")
+            db.execute(
+                "INSERT INTO runtime_oaep_run_summary "
+                "SELECT run_id,item_type,item_status,COUNT(*),COALESCE(SUM(warning_count),0),"
+                "COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),"
+                "COALESCE(SUM(total_tokens),0) FROM runtime_oaep_items "
+                "GROUP BY run_id,item_type,item_status"
+            )
             try:
                 if not self._oaep_projection_is_current(db):
                     self._migrate_legacy_oaep(db)
+                # Added after the OAEP projection itself: backfill stable
+                # Item -> Event identities without rewriting append-only events.
+                db.execute(
+                    "INSERT OR IGNORE INTO runtime_oaep_item_event_refs("
+                    "event_id,session_id,run_id,item_id,session_sequence) "
+                    "SELECT event_id,session_id,json_extract(envelope_json,'$.run_id'),"
+                    "json_extract(envelope_json,'$.item_id'),session_sequence "
+                    "FROM runtime_oaep_events "
+                    "WHERE json_extract(envelope_json,'$.run_id') IS NOT NULL "
+                    "AND json_extract(envelope_json,'$.item_id') IS NOT NULL"
+                )
             except Exception as error:
                 db.execute(
                     "UPDATE runtime_oaep_migration_state SET status='failed',"
@@ -263,6 +392,42 @@ class RuntimeConversationJournal:
                     (_now(), type(error).__name__),
                 )
                 raise
+
+    @staticmethod
+    def _ensure_oaep_inspection_columns(db: sqlite3.Connection) -> bool:
+        existing = {
+            str(row["name"])
+            for row in db.execute("PRAGMA table_info(runtime_oaep_items)").fetchall()
+        }
+        definitions = {
+            "item_type": "TEXT NOT NULL DEFAULT 'notice'",
+            "item_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "warning_count": "INTEGER NOT NULL DEFAULT 0",
+            "input_tokens": "INTEGER NOT NULL DEFAULT 0",
+            "output_tokens": "INTEGER NOT NULL DEFAULT 0",
+            "total_tokens": "INTEGER NOT NULL DEFAULT 0",
+        }
+        added = False
+        for name, definition in definitions.items():
+            if name not in existing:
+                db.execute(f"ALTER TABLE runtime_oaep_items ADD COLUMN {name} {definition}")
+                added = True
+        return added
+
+    @staticmethod
+    def _backfill_oaep_inspection_columns(db: sqlite3.Connection) -> None:
+        db.execute(
+            "UPDATE runtime_oaep_items SET "
+            "item_type=COALESCE(json_extract(envelope_json,'$.type'),'notice'),"
+            "item_status=COALESCE(json_extract(envelope_json,'$.status'),'pending'),"
+            "warning_count=CASE WHEN lower(COALESCE(json_extract(envelope_json,'$.content.level'),'')) "
+            "IN ('warning','warn') THEN 1 ELSE 0 END,"
+            "input_tokens=max(0,CAST(COALESCE(json_extract(envelope_json,'$.content.usage.input_tokens'),"
+            "json_extract(envelope_json,'$.content.usage.prompt_tokens'),0) AS INTEGER)),"
+            "output_tokens=max(0,CAST(COALESCE(json_extract(envelope_json,'$.content.usage.output_tokens'),"
+            "json_extract(envelope_json,'$.content.usage.completion_tokens'),0) AS INTEGER)),"
+            "total_tokens=max(0,CAST(COALESCE(json_extract(envelope_json,'$.content.usage.total_tokens'),0) AS INTEGER))"
+        )
 
     @staticmethod
     def _oaep_projection_is_current(db: sqlite3.Connection) -> bool:
@@ -365,6 +530,7 @@ class RuntimeConversationJournal:
         event: dict[str, Any],
         *,
         run_sequence: int | None = None,
+        canonical_item: dict[str, Any] | None = None,
         omit_legacy_item: bool = False,
     ) -> dict[str, Any]:
         envelope = self._canonical_oaep_event(
@@ -372,6 +538,46 @@ class RuntimeConversationJournal:
             run_sequence=run_sequence,
             omit_legacy_item=omit_legacy_item,
         )
+        if canonical_item is not None and envelope["type"].startswith("event.item."):
+            event_item = canonical_item
+            if envelope["type"] == "event.item.delta":
+                # Persist the exact pre-delta state. The canonical Item is the
+                # post-delta Snapshot state, so reverse only the append carried
+                # by this Event; replay then applies it exactly once.
+                event_item = json.loads(_oaep_json(canonical_item))
+                delta = (envelope.get("data") or {}).get("delta")
+                content = event_item.get("content") if isinstance(event_item.get("content"), dict) else {}
+                if isinstance(delta, dict):
+                    kind = str(delta.get("kind") or "")
+                    text = str(delta.get("text") or "")
+                    field = {
+                        "message.text.append": "text",
+                        "plan.text.append": "text",
+                        "command.output.append": "output",
+                        "tool.output.append": "result",
+                        "subtask.summary.append": "summary",
+                    }.get(kind)
+                    if field is not None and isinstance(content.get(field), str):
+                        current = str(content[field])
+                        content[field] = current[:-len(text)] if text and current.endswith(text) else current
+                    elif kind in {"reasoning.text.append", "reasoning.segment.added"}:
+                        segments = content.get("segments") if isinstance(content.get("segments"), list) else []
+                        segment_id = str(delta.get("segment_id") or f"{event_item.get('id')}:text")
+                        for index in range(len(segments) - 1, -1, -1):
+                            segment = segments[index]
+                            if not isinstance(segment, dict) or str(segment.get("id")) != segment_id:
+                                continue
+                            current = str(segment.get("text") or "")
+                            if kind == "reasoning.segment.added" and current == text:
+                                segments.pop(index)
+                            elif text and current.endswith(text):
+                                segment["text"] = current[:-len(text)]
+                            break
+                event_item["content"] = content
+            envelope["data"] = {
+                **dict(envelope.get("data") or {}),
+                "item": event_item,
+            }
         row = db.execute(
             "SELECT * FROM runtime_sessions WHERE session_id=?",
             (event["session_id"],),
@@ -400,8 +606,9 @@ class RuntimeConversationJournal:
                 }
         envelope = self._normalize_oaep_event_shape(envelope)
         db.execute(
-            "INSERT OR IGNORE INTO runtime_oaep_events("
-            "event_id,session_id,session_sequence,envelope_json) VALUES(?,?,?,?)",
+            "INSERT INTO runtime_oaep_events("
+            "event_id,session_id,session_sequence,envelope_json) VALUES(?,?,?,?) "
+            "ON CONFLICT(event_id) DO UPDATE SET envelope_json=excluded.envelope_json",
             (
                 event["event_id"],
                 event["session_id"],
@@ -409,6 +616,19 @@ class RuntimeConversationJournal:
                 _oaep_json(envelope),
             ),
         )
+        db.execute("DELETE FROM runtime_oaep_item_event_refs WHERE event_id=?", (event["event_id"],))
+        if envelope.get("run_id") and envelope.get("item_id"):
+            db.execute(
+                "INSERT INTO runtime_oaep_item_event_refs("
+                "event_id,session_id,run_id,item_id,session_sequence) VALUES(?,?,?,?,?)",
+                (
+                    event["event_id"],
+                    event["session_id"],
+                    str(envelope["run_id"]),
+                    str(envelope["item_id"]),
+                    int(envelope["sequence"]),
+                ),
+            )
         return envelope
 
     def _store_oaep_item(
@@ -442,6 +662,13 @@ class RuntimeConversationJournal:
             if not isinstance(resource_ref, dict) or resource_ref.get("workspace_id") != workspace_id:
                 raise ValueError("OAEP resource_ref belongs to another Workspace")
         envelope["content"] = content
+        usage = content.get("usage") if isinstance(content.get("usage"), dict) else {}
+        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+        output_tokens = usage.get("output_tokens", usage.get("completion_tokens", 0))
+        total_tokens = usage.get("total_tokens", 0)
+        input_tokens = int(input_tokens) if isinstance(input_tokens, (int, float)) and input_tokens >= 0 else 0
+        output_tokens = int(output_tokens) if isinstance(output_tokens, (int, float)) and output_tokens >= 0 else 0
+        total_tokens = int(total_tokens) if isinstance(total_tokens, (int, float)) and total_tokens >= 0 else 0
         previous_row = db.execute(
             "SELECT revision,envelope_json FROM runtime_oaep_items WHERE item_id=?",
             (item["item_id"],),
@@ -484,9 +711,13 @@ class RuntimeConversationJournal:
                 raise ValueError("OAEP Item cannot change after reaching a terminal status")
         db.execute(
             "INSERT INTO runtime_oaep_items("
-            "item_id,session_id,run_id,run_sequence,revision,latest_sequence,envelope_json"
-            ") VALUES(?,?,?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET "
+            "item_id,session_id,run_id,run_sequence,revision,latest_sequence,"
+            "item_type,item_status,warning_count,input_tokens,output_tokens,total_tokens,envelope_json"
+            ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET "
             "revision=excluded.revision,latest_sequence=excluded.latest_sequence,"
+            "item_type=excluded.item_type,item_status=excluded.item_status,"
+            "warning_count=excluded.warning_count,input_tokens=excluded.input_tokens,"
+            "output_tokens=excluded.output_tokens,total_tokens=excluded.total_tokens,"
             "envelope_json=excluded.envelope_json",
             (
                 item["item_id"],
@@ -495,6 +726,12 @@ class RuntimeConversationJournal:
                 run_sequence,
                 item["revision"],
                 item["session_sequence"],
+                str(envelope.get("type") or "notice"),
+                str(envelope.get("status") or "pending"),
+                1 if str(content.get("level") or "").lower() in {"warning", "warn"} else 0,
+                input_tokens,
+                output_tokens,
+                total_tokens,
                 _oaep_json(envelope),
             ),
         )
@@ -514,6 +751,7 @@ class RuntimeConversationJournal:
             "SELECT * FROM runtime_conversation_items ORDER BY latest_sequence,item_id"
         ).fetchall()
         item_sequences: dict[str, int] = {}
+        canonical_items: dict[str, dict[str, Any]] = {}
         migratable_items = 0
         degraded_items = 0
         for row in items:
@@ -522,7 +760,8 @@ class RuntimeConversationJournal:
                 degraded_items += 1
                 continue
             migratable_items += 1
-            _, item_sequences[str(item["item_id"])] = self._store_oaep_item(db, item)
+            canonical, item_sequences[str(item["item_id"])] = self._store_oaep_item(db, item)
+            canonical_items[str(item["item_id"])] = canonical
         events = db.execute(
             "SELECT * FROM runtime_session_journal ORDER BY session_id,session_sequence"
         ).fetchall()
@@ -532,6 +771,7 @@ class RuntimeConversationJournal:
                 db,
                 event,
                 run_sequence=item_sequences.get(str(event.get("item_id") or "")),
+                canonical_item=canonical_items.get(str(event.get("item_id") or "")),
                 omit_legacy_item=bool(event.get("item_id") and not event.get("run_id")),
             )
         projected_items = int(db.execute(
@@ -725,6 +965,7 @@ class RuntimeConversationJournal:
         created_at: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         """Append using the caller's open write transaction."""
+        started = time.perf_counter()
         if kind not in SESSION_EVENT_KINDS:
             raise ValueError(f"Unknown Session Event kind: {kind}")
         if dedupe_key is not None and (not dedupe_key or len(dedupe_key) > 500):
@@ -777,6 +1018,21 @@ class RuntimeConversationJournal:
         ).fetchone()
         event = self._event(row)
         self._store_oaep_event(db, event)
+        if self.observability is not None:
+            self.observability.record_conversation_latency_in_transaction(
+                db,
+                "journal_append",
+                (time.perf_counter() - started) * 1000,
+                ResourceCorrelation(
+                    event_id,
+                    event_id,
+                    runtime_id=self.runtime_id,
+                    workspace_id=str(session["workspace_id"]),
+                    session_id=session_id,
+                    run_id=run_id or "",
+                ),
+                {"protocol": "oaep/1"},
+            )
         return event, True
 
     def notify_committed(self) -> None:
@@ -988,8 +1244,13 @@ class RuntimeConversationJournal:
         item = self._item(item_row)
         event = self._event(event_row)
         if item.get("run_id"):
-            _, run_sequence = self._store_oaep_item(db, item)
-            self._store_oaep_event(db, event, run_sequence=run_sequence)
+            canonical_item, run_sequence = self._store_oaep_item(db, item)
+            self._store_oaep_event(
+                db,
+                event,
+                run_sequence=run_sequence,
+                canonical_item=canonical_item,
+            )
         else:
             # V3 allowed Session-level Conversation Items. They remain visible
             # through the legacy projection, but OAEP Items always belong to a
@@ -1078,6 +1339,272 @@ class RuntimeConversationJournal:
                 (session_id, through_sequence),
             ).fetchall()
         return [json.loads(str(row["envelope_json"])) for row in rows]
+
+    def oaep_items_window(
+        self,
+        session_id: str,
+        *,
+        through_sequence: int,
+        before_sequence: int | None = None,
+        before_item_id: str = "",
+        limit: int = 100,
+    ) -> tuple[list[dict[str, Any]], tuple[int, str] | None]:
+        """Return a bounded newest-first window without materializing history.
+
+        The returned page is ordered chronologically for presentation.  The
+        continuation key points strictly before the oldest returned Item and is
+        bound to the caller's immutable Snapshot waterline.
+        """
+        self.ensure_oaep_projection(session_id)
+        bounded = max(1, min(int(limit), 500))
+        clauses = ["session_id=?", "latest_sequence<=?"]
+        parameters: list[Any] = [session_id, through_sequence]
+        if before_sequence is not None:
+            clauses.append("(latest_sequence<? OR (latest_sequence=? AND item_id<?))")
+            parameters.extend([before_sequence, before_sequence, before_item_id])
+        parameters.append(bounded + 1)
+        with self._connect() as db:
+            self._session(db, session_id)
+            rows = db.execute(
+                "SELECT latest_sequence,item_id,envelope_json FROM runtime_oaep_items WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY latest_sequence DESC,item_id DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+        selected = rows[:bounded]
+        continuation = (
+            (int(selected[-1]["latest_sequence"]), str(selected[-1]["item_id"]))
+            if len(rows) > bounded and selected else None
+        )
+        return (
+            [json.loads(str(row["envelope_json"])) for row in reversed(selected)],
+            continuation,
+        )
+
+    def snapshot_waterline(self, session_id: str) -> int:
+        with self._connect() as db:
+            self._session(db, session_id)
+            state = db.execute(
+                "SELECT last_sequence FROM runtime_session_sequences WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        return int(state["last_sequence"]) if state is not None else 0
+
+    def oaep_checkpoint(self, session_id: str, *, through_sequence: int) -> dict[str, Any]:
+        """Persist a bounded-memory digest of the canonical OAEP Item projection."""
+        self.ensure_oaep_projection(session_id)
+        created = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._session(db, session_id)
+            rows = db.execute(
+                "SELECT envelope_json FROM runtime_oaep_items "
+                "WHERE session_id=? AND latest_sequence<=? "
+                "ORDER BY run_id,run_sequence,item_id",
+                (session_id, through_sequence),
+            )
+            digest_state = hashlib.sha256()
+            digest_state.update(b"[")
+            item_count = 0
+            for row in rows:
+                if item_count:
+                    digest_state.update(b",")
+                item = json.loads(str(row["envelope_json"]))
+                digest_state.update(_canonical_json(item).encode())
+                item_count += 1
+            digest_state.update(b"]")
+            digest = digest_state.hexdigest()
+            db.execute(
+                "INSERT OR REPLACE INTO runtime_oaep_snapshot_checkpoints("
+                "session_id,checkpoint_sequence,snapshot_hash,item_count,created_at"
+                ") VALUES(?,?,?,?,?)",
+                (session_id, through_sequence, digest, item_count, created),
+            )
+            db.commit()
+        return {
+            "session_id": session_id,
+            "checkpoint_sequence": through_sequence,
+            "snapshot_hash": digest,
+            "item_count": item_count,
+            "created_at": created,
+        }
+
+    def oaep_run_items(self, session_id: str, run_id: str) -> list[dict[str, Any]]:
+        """Return one Run's canonical items using the Run inspection index."""
+        self.ensure_oaep_projection(session_id)
+        with self._connect() as db:
+            self._session(db, session_id)
+            rows = db.execute(
+                "SELECT envelope_json FROM runtime_oaep_items "
+                "WHERE run_id=? ORDER BY run_sequence,item_id",
+                (run_id,),
+            ).fetchall()
+        return [json.loads(str(row["envelope_json"])) for row in rows]
+
+    def oaep_run_items_page(
+        self,
+        session_id: str,
+        run_id: str,
+        *,
+        after_sequence: int = 0,
+        after_item_id: str = "",
+        limit: int = 100,
+        item_type: str | None = None,
+        status: str | None = None,
+        ensure_projection: bool = True,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read a bounded Run timeline page with a database keyset cursor."""
+        if ensure_projection:
+            self.ensure_oaep_projection(session_id)
+        bounded = max(1, min(int(limit), 500))
+        clauses = [
+            "run_id=?",
+            "(run_sequence>? OR (run_sequence=? AND item_id>?))",
+        ]
+        parameters: list[Any] = [run_id, after_sequence, after_sequence, after_item_id]
+        if item_type:
+            clauses.append("item_type=?")
+            parameters.append(item_type)
+        if status:
+            clauses.append("item_status=?")
+            parameters.append(status)
+        parameters.append(bounded + 1)
+        with self._connect() as db:
+            self._session(db, session_id)
+            rows = db.execute(
+                "SELECT envelope_json FROM runtime_oaep_items WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY run_sequence,item_id LIMIT ?",
+                parameters,
+            ).fetchall()
+        return (
+            [json.loads(str(row["envelope_json"])) for row in rows[:bounded]],
+            len(rows) > bounded,
+        )
+
+    def oaep_run_inspection_summary(
+        self, session_id: str, run_id: str, *, ensure_projection: bool = True,
+    ) -> dict[str, Any]:
+        """Aggregate a Run without materializing its complete timeline."""
+        if ensure_projection:
+            self.ensure_oaep_projection(session_id)
+        with self._connect() as db:
+            self._session(db, session_id)
+            grouped = db.execute(
+                "SELECT item_type,item_status,item_count,warning_count,input_tokens,"
+                "output_tokens,total_tokens FROM runtime_oaep_run_summary WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+            failed_row = db.execute(
+                "SELECT run_sequence,item_id,envelope_json FROM runtime_oaep_items "
+                "WHERE run_id=? AND item_status='failed' ORDER BY run_sequence,item_id LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            notice_row = db.execute(
+                "SELECT run_sequence,item_id,envelope_json FROM runtime_oaep_items "
+                "WHERE run_id=? AND item_type='notice' ORDER BY run_sequence,item_id LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        candidates = [row for row in (failed_row, notice_row) if row is not None]
+        error_row = min(candidates, key=lambda row: (int(row["run_sequence"]), str(row["item_id"]))) if candidates else None
+        counts: dict[str, int] = {}
+        statuses: dict[str, int] = {}
+        warning_count = input_tokens = output_tokens = total_tokens = 0
+        for row in grouped:
+            item_kind = str(row["item_type"] or "notice")
+            item_status = str(row["item_status"] or "pending")
+            count = int(row["item_count"])
+            counts[item_kind] = counts.get(item_kind, 0) + count
+            statuses[item_status] = statuses.get(item_status, 0) + count
+            warning_count += int(row["warning_count"] or 0)
+            input_tokens += int(row["input_tokens"] or 0)
+            output_tokens += int(row["output_tokens"] or 0)
+            total_tokens += int(row["total_tokens"] or 0)
+        if total_tokens == 0:
+            total_tokens = input_tokens + output_tokens
+        return {
+            "counts_by_item_type": counts,
+            "counts_by_status": statuses,
+            "warning_count": warning_count,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+            },
+            "error_item": json.loads(str(error_row["envelope_json"])) if error_row else None,
+        }
+
+    def oaep_run_item_predecessor(
+        self,
+        session_id: str,
+        run_id: str,
+        item_id: str,
+        *,
+        item_type: str | None = None,
+        status: str | None = None,
+    ) -> tuple[dict[str, Any], tuple[int, str] | None]:
+        """Locate an Item and the key immediately before it for deep linking."""
+        self.ensure_oaep_projection(session_id)
+        with self._connect() as db:
+            self._session(db, session_id)
+            target = db.execute(
+                "SELECT run_sequence,item_id,envelope_json FROM runtime_oaep_items "
+                "WHERE run_id=? AND item_id=?",
+                (run_id, item_id),
+            ).fetchone()
+            if target is None:
+                raise KeyError(item_id)
+            target_envelope = json.loads(str(target["envelope_json"]))
+            if item_type and target_envelope.get("type") != item_type:
+                raise KeyError(item_id)
+            if status and target_envelope.get("status") != status:
+                raise KeyError(item_id)
+            clauses = [
+                "run_id=?",
+                "(run_sequence<? OR (run_sequence=? AND item_id<?))",
+            ]
+            parameters: list[Any] = [
+                run_id, int(target["run_sequence"]), int(target["run_sequence"]), str(target["item_id"]),
+            ]
+            if item_type:
+                clauses.append("item_type=?")
+                parameters.append(item_type)
+            if status:
+                clauses.append("item_status=?")
+                parameters.append(status)
+            predecessor = db.execute(
+                "SELECT run_sequence,item_id FROM runtime_oaep_items WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY run_sequence DESC,item_id DESC LIMIT 1",
+                parameters,
+            ).fetchone()
+        return target_envelope, (
+            (int(predecessor["run_sequence"]), str(predecessor["item_id"]))
+            if predecessor else None
+        )
+
+    def oaep_item_event_refs(
+        self, session_id: str, run_id: str, item_ids: list[str],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return stable OAEP Event identities for a bounded page of Items."""
+        if not item_ids:
+            return {}
+        placeholders = ",".join("?" for _ in item_ids)
+        with self._connect() as db:
+            self._session(db, session_id)
+            rows = db.execute(
+                "SELECT item_id,event_id,session_sequence FROM runtime_oaep_item_event_refs "
+                f"WHERE session_id=? AND run_id=? AND item_id IN ({placeholders}) "
+                "ORDER BY item_id,session_sequence,event_id",
+                (session_id, run_id, *item_ids),
+            ).fetchall()
+        result: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            result.setdefault(str(row["item_id"]), []).append({
+                "event_id": str(row["event_id"]),
+                "sequence": int(row["session_sequence"]),
+            })
+        return result
 
     def replay_oaep(
         self,
@@ -1170,22 +1697,40 @@ class RuntimeConversationJournal:
                 self._changed.wait(remaining)
 
     def checkpoint(self, session_id: str) -> dict[str, Any]:
-        snapshot = self.snapshot(session_id)
-        canonical = _canonical_json(snapshot["items"])
-        digest = hashlib.sha256(canonical.encode()).hexdigest()
         created = _now()
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             self._session(db, session_id)
+            state = db.execute(
+                "SELECT last_sequence FROM runtime_session_sequences WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            watermark = int(state["last_sequence"]) if state is not None else 0
+            rows = db.execute(
+                "SELECT * FROM runtime_conversation_items "
+                "WHERE session_id=? AND latest_sequence<=? "
+                "ORDER BY latest_sequence,item_id",
+                (session_id, watermark),
+            )
+            digest_state = hashlib.sha256()
+            digest_state.update(b"[")
+            item_count = 0
+            for row in rows:
+                if item_count:
+                    digest_state.update(b",")
+                digest_state.update(_canonical_json(self._item(row)).encode())
+                item_count += 1
+            digest_state.update(b"]")
+            digest = digest_state.hexdigest()
             db.execute(
                 "INSERT OR REPLACE INTO runtime_session_journal_checkpoints("
                 "session_id,checkpoint_sequence,snapshot_hash,item_count,created_at"
                 ") VALUES(?,?,?,?,?)",
                 (
                     session_id,
-                    snapshot["snapshot_sequence"],
+                    watermark,
                     digest,
-                    len(snapshot["items"]),
+                    item_count,
                     created,
                 ),
             )
@@ -1196,14 +1741,14 @@ class RuntimeConversationJournal:
             db.execute(
                 "UPDATE runtime_session_sequences SET checkpoint_sequence="
                 "MAX(checkpoint_sequence,?) WHERE session_id=?",
-                (snapshot["snapshot_sequence"], session_id),
+                (watermark, session_id),
             )
             db.commit()
         return {
             "session_id": session_id,
-            "checkpoint_sequence": snapshot["snapshot_sequence"],
+            "checkpoint_sequence": watermark,
             "snapshot_hash": digest,
-            "item_count": len(snapshot["items"]),
+            "item_count": item_count,
             "created_at": created,
         }
 
@@ -1267,6 +1812,20 @@ class RuntimeConversationJournal:
                 raise ValueError("Compaction requires a checkpoint at or after the boundary")
             db.execute(
                 "INSERT OR IGNORE INTO runtime_session_journal_maintenance VALUES(1)"
+            )
+            # RuntimeEngine's upgrade reconciler projects legacy runtime_events into
+            # the Journal.  Remember the exact source identities removed here so a
+            # later restart cannot mistake intentional compaction for missing data.
+            # This is deliberately an exact tombstone set instead of a rowid/high
+            # water mark: old events can be imported out of order.
+            db.execute(
+                "INSERT OR IGNORE INTO runtime_session_journal_compacted_runtime_events("
+                "runtime_event_id,session_id,compacted_at) "
+                "SELECT substr(dedupe_key,length('runtime-event:')+1),session_id,? "
+                "FROM runtime_session_journal "
+                "WHERE session_id=? AND session_sequence<=? "
+                "AND dedupe_key LIKE 'runtime-event:%'",
+                (_now(), session_id, through_sequence),
             )
             removed = db.execute(
                 "DELETE FROM runtime_session_journal "

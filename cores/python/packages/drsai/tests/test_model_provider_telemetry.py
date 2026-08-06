@@ -46,21 +46,28 @@ def test_write_kill_switch_preserves_existing_config(tmp_path, monkeypatch) -> N
 def test_rollout_rehearsal_records_preview_restore_and_recovery_without_values(tmp_path, monkeypatch) -> None:
     clear_telemetry()
     path = tmp_path / "config.toml"
-    preview = preview_update(ConfigUpdateRequest(model="baseline", model_provider="hepai"), path=path, environ={})
+    baseline_request = ConfigUpdateRequest(
+        provider_name="baseline",
+        provider_values={"base_url": "http://127.0.0.1:11434/v1", "requires_api_key": False},
+    )
+    preview = preview_update(baseline_request, path=path, environ={})
     assert preview.base_revision == config_revision(path)
-    committed = commit_update(ConfigUpdateRequest(model="baseline", model_provider="hepai"), path=path, environ={})
+    commit_update(baseline_request, path=path, environ={})
     baseline = path.read_bytes()
 
     monkeypatch.setenv("DRSAI_MODEL_CONFIG_WRITES", "disabled")
     with pytest.raises(ConfigError, match="writes are disabled"):
-        commit_update(ConfigUpdateRequest(model="must-not-apply", model_provider="hepai"), path=path, environ={})
+        commit_update(ConfigUpdateRequest(
+            provider_name="must-not-apply",
+            provider_values={"base_url": "http://127.0.0.1:11435/v1", "requires_api_key": False},
+        ), path=path, environ={})
     assert path.read_bytes() == baseline
 
     monkeypatch.delenv("DRSAI_MODEL_CONFIG_WRITES")
-    path.write_text('model = "broken"\nmodel_provider = "missing"\n', encoding="utf-8")
+    path.write_text('broken = [\n', encoding="utf-8")
     corrupted_revision = config_revision(path)
     restored = restore_last_known_good(path=path, environ={}, expected_revision=corrupted_revision)
-    assert restored.config.model == "baseline"
+    assert "baseline" in restored.config.providers
     assert restored.previous_revision == corrupted_revision
     assert path.read_bytes() == baseline
 

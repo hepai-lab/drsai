@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 from .engine import RuntimeEngine
 from .registry import RuntimeRegistry
+from .sqlite_connection import ClosingConnection
 
 
 class LegacySessionMigrator:
@@ -25,7 +26,7 @@ class LegacySessionMigrator:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database, timeout=30)
+        connection = sqlite3.connect(self.database, timeout=30, factory=ClosingConnection)
         connection.row_factory = sqlite3.Row
         return connection
 

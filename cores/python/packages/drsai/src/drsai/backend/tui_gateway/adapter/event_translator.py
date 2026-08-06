@@ -240,7 +240,7 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         for index, file_info in enumerate(files):
             name = getattr(file_info, "name", None) or f"artifact-{index + 1}"
             out.append(("artifact.created", {
-                "artifact_id": f"file:{name}:{index}",
+                "artifact_id": getattr(file_info, "artifact_id", None) or f"file:{name}:{index}",
                 "artifact_type": _artifact_type(name, getattr(file_info, "mime_type", None)),
                 "name": name,
                 "title": title,
@@ -248,6 +248,10 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 "url": getattr(file_info, "url", None),
                 "mime": getattr(file_info, "mime_type", None),
                 "size": getattr(file_info, "size", None),
+                "sha256": getattr(file_info, "sha256", None),
+                "previewable": getattr(file_info, "previewable", None),
+                "downloadable": getattr(file_info, "downloadable", None),
+                "source_call_id": getattr(file_info, "source_call_id", None),
                 "source": getattr(message, "source", "") or "agent",
             }))
         return out
@@ -386,6 +390,7 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 "name": name,
                 "args": args,
                 "result": result_str,
+                "is_error": bool(getattr(r, "is_error", False)),
                 "duration_ms": duration_ms,
             }
             if is_sub:

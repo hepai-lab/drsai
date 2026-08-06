@@ -1,23 +1,50 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+import sqlite3
+import tempfile
+import time
+from datetime import date
+from pathlib import Path
+from typing import Callable, Literal
 from uuid import uuid4
 from dataclasses import asdict
 
 from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 import json
-from typing import Callable
 
 from drsai.platform_auth import context_from_bearer
+from drsai.compatibility.relay_legacy_conversation import create_relay_legacy_conversation_router
+from drsai.oaep.usage import ProtocolUsageTelemetry
 from drsai.oaep.generated import OaepEvent, OaepEventPage, OaepSnapshot
 from drsai.oaep.protocol import OAEPValidationError
+from drsai.backend.runtime.observability import ResourceCorrelation, RuntimeObservability
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def record_protocol_usage_safely(telemetry: ProtocolUsageTelemetry, protocol: str,
+                                 runtime_version: object, reason: str) -> bool:
+    try:
+        telemetry.record(protocol, runtime_version, reason)
+        return True
+    except (OSError, sqlite3.Error):
+        return False
 
 from .models import (
     AccessGrantResult,
+    AccessGrantCreateRequest,
     AccessGrantStatusResult,
     AssociationResult,
     AssociationPresenceRequest,
+    PushRegistrationRequest,
+    PushRegistrationResult,
+    AssociationDeviceKeyRotationRequest,
+    AssociationAuthorizationShrinkRequest,
     AssociationRequest,
     ErrorEnvelope,
     HeartbeatRequest,
@@ -33,7 +60,12 @@ from .registry import RelayRegistry, RelayRegistryError
 from .runtime_domain import RuntimeAuthority
 from .runtime_channel import RuntimeChannelHub
 from .oaep_replay import OAEPReplayHub
-from pydantic import BaseModel, ConfigDict, ValidationError
+from .notifications import NotificationDeliveryQueue, NotificationFanoutSink, NotificationOutbox
+from .device_audit import DeviceActionAudit, DeviceActionKey
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+
+P5_PLATFORM_CONTRACT_SHA256 = "f29e5ed662e51eb61afcf31b1f2d21f56c8e5f1ed262928e648e15026d17be62"
 
 
 class _StrictBody(BaseModel):
@@ -47,6 +79,13 @@ class _SessionCreate(_StrictBody):
     title: str
     agent_definition_id: str
     agent_definition_version: str
+
+
+class _SessionUpdate(_StrictBody):
+    request_id: str
+    correlation_id: str
+    title: str | None = None
+    lifecycle: ResourceLifecycle | None = None
 
 
 class _RunCreate(_StrictBody):
@@ -77,18 +116,132 @@ class _RuntimeRename(_StrictBody):
     display_name: str
 
 
+class _DeviceBoundSubject(str):
+    device_id: str
+
+    def __new__(cls, subject: str, device_id: str):
+        value = str.__new__(cls, subject)
+        value.device_id = device_id
+        return value
+
+
+class _ConversationLatencyClientObservation(_StrictBody):
+    correlation_id: str
+    operation_id: str
+    stage: str
+    duration_ms: float
+
+
+class ProtocolDeletionRequirements(_StrictBody):
+    observation_days: Literal[0]
+    release_cycles: Literal[0]
+    oaep_ratio: Literal[0.999]
+    legacy_ratio: Literal[0.001]
+    migration_ratio: Literal[1.0]
+    fallback_error_ratio: Literal[0.001]
+
+
+class ProtocolDeletionDecision(_StrictBody):
+    schema_version: Literal["p5-protocol-deletion-decision/1"]
+    status: Literal[
+        "no_data", "history_gap", "insufficient_window", "threshold_failed", "eligible"
+    ]
+    data_start: date | None
+    data_end: date | None
+    observation_days: int = Field(ge=0)
+    release_cycles: int = Field(ge=0)
+    oaep_ratio: float = Field(ge=0, le=1)
+    legacy_ratio: float = Field(ge=0, le=1)
+    migration_ratio: float | None = Field(default=None, ge=0, le=1)
+    fallback_error_ratio: float = Field(ge=0, le=1)
+    gap_days: int = Field(ge=0)
+    requirements: ProtocolDeletionRequirements
+    eligible: bool
+
+    @model_validator(mode="after")
+    def validate_state(self) -> "ProtocolDeletionDecision":
+        if self.eligible:
+            if not (
+                self.status == "eligible"
+                and self.oaep_ratio >= 0.999
+                and self.legacy_ratio < 0.001
+                and self.migration_ratio == 1.0
+                and self.fallback_error_ratio <= 0.001
+            ):
+                raise ValueError("protocol_deletion_decision_eligible_invalid")
+        elif self.status == "eligible":
+            raise ValueError("protocol_deletion_decision_status_invalid")
+        if self.status in {"no_data", "history_gap", "insufficient_window"} and self.eligible:
+            raise ValueError("protocol_deletion_decision_ineligible_state_invalid")
+        if self.status == "no_data" and not (
+            self.data_start is None
+            and self.data_end is None
+            and self.observation_days == 0
+            and self.migration_ratio is None
+            and self.gap_days == 0
+        ):
+            raise ValueError("protocol_deletion_decision_no_data_invalid")
+        if self.status == "history_gap" and self.gap_days < 1:
+            raise ValueError("protocol_deletion_decision_history_gap_invalid")
+        return self
+
+
 def create_relay_app(registry: RelayRegistry | None = None,
                      runtimes: dict[str, RuntimeAuthority] | None = None,
                      channels: RuntimeChannelHub | None = None,
-                     principal_resolver: Callable[[Request], str] | None = None) -> FastAPI:
+                     principal_resolver: Callable[[Request], str] | None = None,
+                     release_id: str | None = None) -> FastAPI:
     store = registry or RelayRegistry()
     app = FastAPI(title="OpenDrSai Runtime Relay", version="2.0.0")
     app.state.registry = store
     authorities = runtimes or {}
     channel_hub = channels or RuntimeChannelHub()
     app.state.runtime_channels = channel_hub
+    notification_outbox = NotificationOutbox()
+    app.state.notification_outbox = notification_outbox
     oaep_replay = OAEPReplayHub()
     app.state.oaep_replay = oaep_replay
+    telemetry_directory = tempfile.TemporaryDirectory(prefix="drsai-relay-telemetry-")
+    app.state._telemetry_directory = telemetry_directory
+    device_action_audit = DeviceActionAudit(
+        path=Path(telemetry_directory.name) / "device-action-audit.sqlite3"
+    )
+    app.state.device_action_audit = device_action_audit
+    conversation_latency = RuntimeObservability(
+        Path(telemetry_directory.name) / "conversation-latency.sqlite3"
+    )
+    app.state.conversation_latency = conversation_latency
+    protocol_usage = ProtocolUsageTelemetry(Path(telemetry_directory.name) / "protocol-usage.sqlite3")
+    app.state.protocol_usage = protocol_usage
+    app.state.protocol_usage_write_failures = 0
+    try:
+        protocol_usage.record_observation_day()
+    except (OSError, sqlite3.Error):
+        app.state.protocol_usage_write_failures += 1
+        LOGGER.warning("protocol_observation_day_write_failed")
+    effective_release_id = release_id or os.environ.get("OPENDRSAI_RELEASE_ID")
+    if effective_release_id:
+        try:
+            protocol_usage.record_release_cycle(effective_release_id)
+        except (OSError, sqlite3.Error, ValueError):
+            app.state.protocol_usage_write_failures += 1
+            LOGGER.warning("protocol_release_cycle_write_failed")
+
+    def observe_protocol(runtime_id: str, protocol: str, reason: str) -> None:
+        if not record_protocol_usage_safely(
+            protocol_usage, protocol, store.runtime_version(runtime_id), reason
+        ):
+            app.state.protocol_usage_write_failures += 1
+            LOGGER.warning("protocol_usage_write_failed", extra={"protocol": protocol})
+    notification_deliveries = NotificationDeliveryQueue(
+        Path(telemetry_directory.name) / "notification-deliveries.sqlite3"
+    )
+    notification_fanout = NotificationFanoutSink(notification_deliveries, store.active_device_ids)
+    app.state.notification_deliveries = notification_deliveries
+    oaep_replay.notification_sink = lambda runtime_id, workspace_id, session_id, event: (
+        notification_outbox.accept(runtime_id, workspace_id, session_id, event),
+        notification_fanout.accept(runtime_id, workspace_id, session_id, event),
+    )
 
     def validated_oaep_snapshot(
         value: object, *, workspace_id: str, session_id: str
@@ -118,9 +271,26 @@ def create_relay_app(registry: RelayRegistry | None = None,
     @app.get("/v1/metrics/oaep")
     async def oaep_metrics():
         return oaep_replay.metrics()
+
+    @app.get("/v1/metrics/conversation-latency")
+    async def conversation_latency_metrics() -> dict:
+        return conversation_latency.conversation_latency_report()
+
+    @app.get("/v1/metrics/protocol-usage")
+    async def protocol_usage_metrics() -> dict:
+        return protocol_usage.report()
+
+    @app.get(
+        "/v1/metrics/protocol-usage/deletion-decision",
+        response_model=ProtocolDeletionDecision,
+        openapi_extra={"x-p5-platform-contract-sha256": P5_PLATFORM_CONTRACT_SHA256},
+    )
+    async def protocol_usage_deletion_decision() -> ProtocolDeletionDecision:
+        return ProtocolDeletionDecision.model_validate(protocol_usage.deletion_decision())
+
     workspace_sync_tasks: dict[str, asyncio.Task[WorkspaceCatalogSyncResult]] = {}
 
-    def oidc_subject(request: Request) -> str:
+    def oidc_subject_base(request: Request) -> str:
         if principal_resolver is not None:
             subject = principal_resolver(request)
             if not subject:
@@ -133,13 +303,52 @@ def create_relay_app(registry: RelayRegistry | None = None,
             raise RelayRegistryError("oidc_auth_invalid", f"OIDC Principal is invalid: {code}",
                                      retryable=code in {"token_expired", "oidc_verification_unavailable"}) from exc
 
+    async def device_subject(request: Request, subject: str = Depends(oidc_subject_base)) -> str:
+        # A custom principal resolver is the explicit unit/service-test seam.
+        # Production bearer traffic additionally proves possession of the
+        # Android key enrolled with its association.
+        if principal_resolver is not None and not request.headers.get("x-relay-device-signature"):
+            return subject
+        authorization = request.headers.get("authorization", "")
+        if not authorization.lower().startswith("bearer "):
+            raise RelayRegistryError("oidc_auth_invalid", "OIDC bearer token is missing")
+        headers = {
+            "device_id": request.headers.get("x-relay-device-id"),
+            "timestamp": request.headers.get("x-relay-device-timestamp"),
+            "nonce": request.headers.get("x-relay-device-nonce"),
+            "signature": request.headers.get("x-relay-device-signature"),
+        }
+        if any(not value for value in headers.values()):
+            raise RelayRegistryError("device_proof_required", "Device-bound request proof is required")
+        device_id = store.verify_device_request(
+            subject,
+            str(headers["device_id"]),
+            runtime_id=request.path_params.get("runtime_id"),
+            method=request.method,
+            path=request.url.path,
+            query=request.url.query,
+            body=await request.body(),
+            timestamp=str(headers["timestamp"]),
+            nonce=str(headers["nonce"]),
+            signature=str(headers["signature"]),
+            access_token=authorization.split(" ", 1)[1],
+        )
+        return _DeviceBoundSubject(subject, device_id)
+
+    # Keep the established dependency name for all protected catalog/proxy
+    # routes while allowing first-time association to use OIDC + grant + the
+    # public key carried by its body.
+    oidc_subject = device_subject
+
     def authority(runtime_id: str) -> RuntimeAuthority:
         if runtime_id not in authorities:
             raise RelayRegistryError("runtime_unavailable", "Runtime control channel is unavailable", retryable=True)
         return authorities[runtime_id]
 
-    def authorize_workspace(subject: str, runtime_id: str, workspace_id: str) -> None:
-        store.authorize_workspace(subject, runtime_id, workspace_id)
+    def authorize_workspace(
+        subject: str, runtime_id: str, workspace_id: str, permission: str = "read"
+    ) -> None:
+        store.authorize_workspace(subject, runtime_id, workspace_id, permission)
 
     async def runtime_call(runtime_id: str, operation: str, *args, **kwargs):
         local = authorities.get(runtime_id)
@@ -147,6 +356,49 @@ def create_relay_app(registry: RelayRegistry | None = None,
             kwargs.pop("_authorization", None)
             return getattr(local, operation)(*args, **kwargs)
         return await channel_hub.request(runtime_id, operation, {"args": list(args), "kwargs": kwargs})
+
+    app.include_router(create_relay_legacy_conversation_router(
+        oidc_subject=device_subject,
+        authorize_workspace=authorize_workspace,
+        runtime_call=runtime_call,
+        protocol_observer=observe_protocol,
+    ))
+
+    @app.post(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/"
+        "conversation-latency",
+        status_code=204,
+    )
+    async def record_client_conversation_latency(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        body: _ConversationLatencyClientObservation,
+        x_subject: str = Depends(oidc_subject),
+    ) -> None:
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        if body.stage not in {"client_receive", "client_render"}:
+            raise RelayRegistryError(
+                "latency_stage_forbidden", "Client cannot report this latency stage"
+            )
+        if body.correlation_id != body.operation_id or not await oaep_replay.contains_event(
+            runtime_id, session_id, body.correlation_id
+        ):
+            raise RelayRegistryError(
+                "latency_event_not_found", "Latency Event was not accepted by Relay"
+            )
+        conversation_latency.record_conversation_latency(
+            body.stage,
+            body.duration_ms,
+            ResourceCorrelation(
+                body.correlation_id,
+                body.operation_id,
+                runtime_id=runtime_id,
+                workspace_id=workspace_id,
+                session_id=session_id,
+            ),
+            {"protocol": "oaep/1", "client": "android"},
+        )
 
     def json_dataclass(value):
         if isinstance(value, dict):
@@ -166,13 +418,17 @@ def create_relay_app(registry: RelayRegistry | None = None,
         correlation_id = request.headers.get("x-correlation-id", str(uuid4()))
         error = ErrorEnvelope(code=exc.code, message=exc.message, correlation_id=correlation_id,
                               retryable=exc.retryable, details=exc.details, source=exc.source)
-        status = 503 if exc.code in {"host_offline", "catalog_sync_timeout"} else 409 if (
-            exc.code in {"stale_runtime_generation", "cursor_expired"}
-        ) else 401 if exc.code in {"oidc_auth_invalid", "runtime_auth_invalid"} else 403 if (
+        status = 503 if exc.code in {"host_offline", "catalog_sync_timeout", "push_provider_unavailable"} else 409 if (
+            exc.code in {"stale_runtime_generation", "cursor_expired", "push_registration_stale",
+                         "push_registration_conflict"}
+        ) else 401 if exc.code in {
+            "oidc_auth_invalid", "runtime_auth_invalid", "device_proof_required",
+            "device_proof_invalid", "device_proof_expired", "device_proof_replay",
+        } else 403 if (
             exc.code.endswith("forbidden") or exc.code == "association_required"
         ) else 404 if exc.code in {
             "runtime_not_found", "access_grant_not_found", "association_not_found",
-            "session_not_found", "run_not_found", "approval_not_found",
+            "session_not_found", "run_not_found", "approval_not_found", "push_registration_not_found",
         } else 400
         return JSONResponse(status_code=status, content=error.model_dump(mode="json"))
 
@@ -189,8 +445,19 @@ def create_relay_app(registry: RelayRegistry | None = None,
         return RegistrationResult(runtime_id=runtime_id, registration_token=token)
 
     @app.post("/v1/runtimes/{runtime_id}/access-grants", response_model=AccessGrantResult)
-    async def access_grant(runtime_id: str, x_runtime_token: str = Header()) -> AccessGrantResult:
-        grant_id, code, expires_at = store.issue_access_grant(runtime_id, x_runtime_token)
+    async def access_grant(
+        runtime_id: str,
+        body: AccessGrantCreateRequest | None = None,
+        x_runtime_token: str = Header(),
+    ) -> AccessGrantResult:
+        request = body or AccessGrantCreateRequest()
+        grant_id, code, expires_at = store.issue_access_grant(
+            runtime_id,
+            x_runtime_token,
+            workspace_scope=request.workspace_scope,
+            workspace_ids=request.workspace_ids,
+            permissions=request.permissions,
+        )
         return AccessGrantResult(grant_id=grant_id, code=code, expires_at=expires_at, status="pending")
 
     @app.get("/v1/runtimes/{runtime_id}/access-grants/{grant_id}", response_model=AccessGrantStatusResult)
@@ -220,7 +487,7 @@ def create_relay_app(registry: RelayRegistry | None = None,
         )
 
     @app.post("/v1/associations")
-    async def associate(body: AssociationRequest, x_subject: str = Depends(oidc_subject)) -> dict[str, str]:
+    async def associate(body: AssociationRequest, x_subject: str = Depends(oidc_subject_base)) -> dict[str, str]:
         return {
             "runtime_id": store.associate(
                 x_subject,
@@ -228,6 +495,9 @@ def create_relay_app(registry: RelayRegistry | None = None,
                 body.device_id,
                 body.device_name,
                 body.device_public_key,
+                body.workspace_scope,
+                body.workspace_ids,
+                body.permissions,
             )
         }
 
@@ -237,13 +507,13 @@ def create_relay_app(registry: RelayRegistry | None = None,
         x_subject: str = Depends(oidc_subject),
         x_relay_device_id: str = Header(),
     ) -> AssociationResult:
-        return AssociationResult.model_validate(
-            store.revoke_association(
-                x_subject,
-                runtime_id,
-                x_relay_device_id,
-            )
+        result = store.revoke_association(
+            x_subject,
+            runtime_id,
+            x_relay_device_id,
         )
+        await oaep_replay.invalidate_runtime(runtime_id)
+        return AssociationResult.model_validate(result)
 
     @app.post("/v1/associations/{runtime_id}/presence", response_model=AssociationResult)
     async def record_user_association_presence(
@@ -283,18 +553,57 @@ def create_relay_app(registry: RelayRegistry | None = None,
         association_id: str,
         x_runtime_token: str = Header(),
     ) -> AssociationResult:
-        return AssociationResult.model_validate(
-            store.revoke_runtime_association(
-                runtime_id, x_runtime_token, association_id
-            )
+        result = store.revoke_runtime_association(
+            runtime_id, x_runtime_token, association_id
         )
+        await oaep_replay.invalidate_runtime(runtime_id)
+        return AssociationResult.model_validate(result)
+
+    @app.patch(
+        "/v1/runtimes/{runtime_id}/associations/{association_id}",
+        response_model=AssociationResult,
+    )
+    async def shrink_runtime_association_authorization(
+        runtime_id: str,
+        association_id: str,
+        body: AssociationAuthorizationShrinkRequest,
+        x_runtime_token: str = Header(),
+    ) -> AssociationResult:
+        result = store.shrink_association_authorization(
+            runtime_id,
+            x_runtime_token,
+            association_id,
+            workspace_scope=body.workspace_scope,
+            workspace_ids=body.workspace_ids,
+            permissions=body.permissions,
+        )
+        await oaep_replay.invalidate_runtime(runtime_id)
+        return AssociationResult.model_validate(result)
 
     @app.delete("/v1/runtimes/{runtime_id}/enrollment")
     async def revoke_runtime_enrollment(
         runtime_id: str,
         x_runtime_token: str = Header(),
     ) -> dict[str, str | None]:
-        return store.revoke_enrollment(runtime_id, x_runtime_token)
+        result = store.revoke_enrollment(runtime_id, x_runtime_token)
+        await oaep_replay.invalidate_runtime(runtime_id)
+        return result
+
+    @app.post("/v1/runtimes/{runtime_id}/enrollment/pause")
+    async def pause_runtime_enrollment(
+        runtime_id: str,
+        x_runtime_token: str = Header(),
+    ) -> dict[str, str | None]:
+        result = store.set_enrollment_paused(runtime_id, x_runtime_token, paused=True)
+        await oaep_replay.invalidate_runtime(runtime_id)
+        return result
+
+    @app.post("/v1/runtimes/{runtime_id}/enrollment/resume")
+    async def resume_runtime_enrollment(
+        runtime_id: str,
+        x_runtime_token: str = Header(),
+    ) -> dict[str, str | None]:
+        return store.set_enrollment_paused(runtime_id, x_runtime_token, paused=False)
 
     @app.post("/v1/runtime-connections/{runtime_id}/heartbeat")
     async def heartbeat(runtime_id: str, body: HeartbeatRequest, x_runtime_token: str = Header()):
@@ -409,15 +718,16 @@ def create_relay_app(registry: RelayRegistry | None = None,
 
     @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions")
     async def sessions(runtime_id: str, workspace_id: str, x_subject: str = Depends(oidc_subject), cursor: str | None = None,
-                       limit: int = Query(20, ge=1, le=100), query: str | None = None):
+                       limit: int = Query(20, ge=1, le=100), query: str | None = None,
+                       lifecycle: ResourceLifecycle = ResourceLifecycle.ACTIVE):
         authorize_workspace(x_subject, runtime_id, workspace_id)
         rows, next_cursor = await runtime_call(runtime_id, "list_sessions_for_subject", x_subject, workspace_id,
-                                               cursor=cursor, limit=limit, query=query)
+                                               cursor=cursor, limit=limit, query=query, lifecycle=lifecycle)
         return {"items": [json_dataclass(item) for item in rows], "next_cursor": next_cursor}
 
     @app.post("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions")
     async def create_session(runtime_id: str, workspace_id: str, body: _SessionCreate, x_subject: str = Depends(oidc_subject)):
-        authorize_workspace(x_subject, runtime_id, workspace_id)
+        authorize_workspace(x_subject, runtime_id, workspace_id, "send")
         item = await runtime_call(runtime_id, "create_session", x_subject, workspace_id, title=body.title,
             definition_id=body.agent_definition_id, definition_version=body.agent_definition_version,
             idempotency_key=body.idempotency_key)
@@ -429,6 +739,15 @@ def create_relay_app(registry: RelayRegistry | None = None,
         await runtime_call(runtime_id, "authorize_session", x_subject, workspace_id, session_id)
         return json_dataclass(await runtime_call(runtime_id, "get_session", workspace_id, session_id))
 
+    @app.patch("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}")
+    async def update_session(runtime_id: str, workspace_id: str, session_id: str, body: _SessionUpdate,
+                             x_subject: str = Depends(oidc_subject)):
+        authorize_workspace(x_subject, runtime_id, workspace_id, "send")
+        if body.title is None and body.lifecycle is None:
+            raise RelayRegistryError("session_update_empty", "Session update requires title or lifecycle")
+        return json_dataclass(await runtime_call(runtime_id, "update_session", x_subject, workspace_id, session_id,
+            title=body.title, lifecycle=body.lifecycle))
+
     @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs")
     async def runs(runtime_id: str, workspace_id: str, session_id: str, x_subject: str = Depends(oidc_subject),
                    cursor: str | None = None, limit: int = Query(20, ge=1, le=100)):
@@ -436,33 +755,6 @@ def create_relay_app(registry: RelayRegistry | None = None,
         rows, next_cursor = await runtime_call(runtime_id, "list_runs_for_subject", x_subject, workspace_id,
                                                session_id, cursor=cursor, limit=limit)
         return {"items": [json_dataclass(item) for item in rows], "next_cursor": next_cursor}
-
-    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation")
-    async def conversation(
-        runtime_id: str,
-        workspace_id: str,
-        session_id: str,
-        x_subject: str = Depends(oidc_subject),
-        cursor: str | None = None,
-        limit: int = Query(100, ge=1, le=500),
-    ):
-        authorize_workspace(x_subject, runtime_id, workspace_id)
-        rows, next_cursor = await runtime_call(
-            runtime_id, "conversation_for_subject", x_subject, workspace_id, session_id,
-            cursor=cursor, limit=limit)
-        return {"items": rows, "next_cursor": next_cursor}
-
-    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot")
-    async def conversation_snapshot(
-        runtime_id: str,
-        workspace_id: str,
-        session_id: str,
-        x_subject: str = Depends(oidc_subject),
-    ):
-        authorize_workspace(x_subject, runtime_id, workspace_id)
-        return await runtime_call(
-            runtime_id, "conversation_snapshot_for_subject", x_subject, workspace_id, session_id,
-        )
 
     @app.get(
         "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-snapshot",
@@ -473,29 +765,68 @@ def create_relay_app(registry: RelayRegistry | None = None,
         workspace_id: str,
         session_id: str,
         x_subject: str = Depends(oidc_subject),
+        cursor: str | None = None,
+        limit: int = Query(100, ge=1, le=500),
     ):
         authorize_workspace(x_subject, runtime_id, workspace_id)
+        observe_protocol(runtime_id, "oaep", "selected")
         return validated_oaep_snapshot(
             await runtime_call(
                 runtime_id, "oaep_snapshot_for_subject", x_subject, workspace_id, session_id,
+                cursor=cursor, limit=limit,
             ),
             workspace_id=workspace_id,
             session_id=session_id,
         )
 
-    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events")
-    async def session_events(
+    @app.post(
+        "/v1/associations/{runtime_id}/device-key/rotate",
+        response_model=AssociationResult,
+    )
+    async def rotate_user_association_device_key(
         runtime_id: str,
-        workspace_id: str,
-        session_id: str,
+        body: AssociationDeviceKeyRotationRequest,
+        request: Request,
+        x_subject: str = Depends(device_subject),
+    ) -> AssociationResult:
+        return AssociationResult.model_validate(
+            store.rotate_association_device_key(
+                x_subject,
+                runtime_id,
+                request.headers.get("x-relay-device-id", ""),
+                body.new_device_public_key,
+            )
+        )
+
+    @app.put(
+        "/v1/associations/{runtime_id}/push-registration",
+        response_model=PushRegistrationResult,
+    )
+    async def upsert_user_push_registration(
+        runtime_id: str,
+        body: PushRegistrationRequest,
         x_subject: str = Depends(oidc_subject),
-        after_sequence: int = Query(0, ge=0),
-        limit: int = Query(500, ge=1, le=500),
-    ):
-        authorize_workspace(x_subject, runtime_id, workspace_id)
-        return await runtime_call(
-            runtime_id, "session_events_for_subject", x_subject, workspace_id, session_id,
-            after_sequence=after_sequence, limit=limit,
+    ) -> PushRegistrationResult:
+        device_id = getattr(x_subject, "device_id", None)
+        if not device_id:
+            raise RelayRegistryError("device_proof_required", "Device-bound request proof is required")
+        return PushRegistrationResult.model_validate(store.upsert_push_registration(
+            str(x_subject), runtime_id, str(device_id), body.provider, body.token, body.generation,
+        ))
+
+    @app.delete(
+        "/v1/associations/{runtime_id}/push-registration",
+        response_model=PushRegistrationResult,
+    )
+    async def revoke_user_push_registration(
+        runtime_id: str,
+        x_subject: str = Depends(oidc_subject),
+    ) -> PushRegistrationResult:
+        device_id = getattr(x_subject, "device_id", None)
+        if not device_id:
+            raise RelayRegistryError("device_proof_required", "Device-bound request proof is required")
+        return PushRegistrationResult.model_validate(
+            store.revoke_push_registration(str(x_subject), runtime_id, str(device_id))
         )
 
     @app.get(
@@ -528,31 +859,36 @@ def create_relay_app(registry: RelayRegistry | None = None,
             session_id=session_id,
         )
 
-    @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream")
-    async def session_event_stream(
+    @app.get(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/session-catalog-events/stream"
+    )
+    async def session_catalog_event_stream(
         runtime_id: str,
         workspace_id: str,
-        session_id: str,
+        raw_request: Request,
         x_subject: str = Depends(oidc_subject),
-        after_sequence: int = Query(0, ge=0),
     ):
         authorize_workspace(x_subject, runtime_id, workspace_id)
-        page = await runtime_call(
-            runtime_id, "session_events_for_subject", x_subject, workspace_id, session_id,
-            after_sequence=after_sequence, limit=500,
-        )
+        queue = await oaep_replay.subscribe_workspace(runtime_id, workspace_id)
 
-        def encoded_session_events():
-            for item in page.get("items", []):
-                data = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
-                yield (
-                    f"id: {item['session_sequence']}\nevent: {item['kind']}\n"
-                    f"data: {data}\n\n"
-                ).encode()
-            yield b": keep-alive\n\n"
+        async def encoded_catalog_events():
+            try:
+                yield b": connected\n\n"
+                while not await raw_request.is_disconnected():
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=15)
+                    except TimeoutError:
+                        yield b": heartbeat\n\n"
+                        continue
+                    if event.get("_control") == "authorization_changed":
+                        return
+                    data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+                    yield f"id: {event['event_id']}\nevent: session.catalog.changed\ndata: {data}\n\n".encode()
+            finally:
+                await oaep_replay.unsubscribe_workspace(runtime_id, workspace_id, queue)
 
         return StreamingResponse(
-            encoded_session_events(), media_type="text/event-stream",
+            encoded_catalog_events(), media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
@@ -617,6 +953,8 @@ def create_relay_app(registry: RelayRegistry | None = None,
                     except TimeoutError:
                         yield b": heartbeat\n\n"
                         continue
+                    if event.get("_control") == "authorization_changed":
+                        return
                     sequence = int(event["sequence"])
                     if sequence <= cursor:
                         continue
@@ -644,13 +982,18 @@ def create_relay_app(registry: RelayRegistry | None = None,
     @app.post("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs")
     async def create_run(runtime_id: str, workspace_id: str, session_id: str, body: _RunCreate, request: Request,
                          x_subject: str = Depends(oidc_subject)):
-        authorize_workspace(x_subject, runtime_id, workspace_id)
+        authorize_workspace(x_subject, runtime_id, workspace_id, "send")
         await runtime_call(runtime_id, "authorize_session", x_subject, workspace_id, session_id)
         item = await runtime_call(runtime_id, "create_run", x_subject, workspace_id, session_id, message=body.message,
             attachment_refs=body.attachment_refs, idempotency_key=body.idempotency_key,
             correlation_id=body.correlation_id, retry_of=body.retry_of,
             _authorization=request.headers.get("authorization"))
-        return json_dataclass(item)
+        value = json_dataclass(item)
+        device_action_audit.record(
+            DeviceActionKey(runtime_id, workspace_id, str(value["run_id"]), "run.created"),
+            getattr(x_subject, "device_id", None),
+        )
+        return value
 
     @app.get("/v1/runtimes/{runtime_id}/runs/{run_id}")
     async def get_run(runtime_id: str, run_id: str, x_subject: str = Depends(oidc_subject)):
@@ -685,9 +1028,14 @@ def create_relay_app(registry: RelayRegistry | None = None,
 
     @app.post("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/runs/{run_id}/cancel")
     async def cancel_run(runtime_id: str, workspace_id: str, run_id: str, x_subject: str = Depends(oidc_subject)):
-        authorize_workspace(x_subject, runtime_id, workspace_id)
+        authorize_workspace(x_subject, runtime_id, workspace_id, "send")
         await runtime_call(runtime_id, "authorize_run", x_subject, run_id)
-        return json_dataclass(await runtime_call(runtime_id, "cancel_run", workspace_id, run_id))
+        value = json_dataclass(await runtime_call(runtime_id, "cancel_run", workspace_id, run_id))
+        device_action_audit.record(
+            DeviceActionKey(runtime_id, workspace_id, run_id, "run.cancelled"),
+            getattr(x_subject, "device_id", None),
+        )
+        return value
 
     @app.get("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/approvals")
     async def approvals(runtime_id: str, workspace_id: str, x_subject: str = Depends(oidc_subject)):
@@ -699,11 +1047,17 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def audit(runtime_id: str, workspace_id: str, x_subject: str = Depends(oidc_subject), run_id: str | None = None):
         authorize_workspace(x_subject, runtime_id, workspace_id)
         rows = await runtime_call(runtime_id, "audit_entries_for_subject", x_subject, workspace_id, run_id)
-        return {"items": [json_dataclass(item) for item in rows]}
+        items = [json_dataclass(item) for item in rows]
+        for item in items:
+            item["actor_label"] = device_action_audit.label(
+                DeviceActionKey(runtime_id, workspace_id, str(item["run_id"]), str(item["action"])),
+                getattr(x_subject, "device_id", None),
+            )
+        return {"items": items}
 
     @app.post("/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/owop")
     async def owop(runtime_id: str, workspace_id: str, body: _OwopRequest, x_subject: str = Depends(oidc_subject)):
-        authorize_workspace(x_subject, runtime_id, workspace_id)
+        authorize_workspace(x_subject, runtime_id, workspace_id, "files")
         if body.version != "1.0":
             raise RelayRegistryError("owop_version_incompatible", "OWOP version is incompatible")
         result = await runtime_call(runtime_id, "execute_owop", workspace_id, body.operation, body.params)
@@ -712,10 +1066,19 @@ def create_relay_app(registry: RelayRegistry | None = None,
 
     @app.post("/v1/runtimes/{runtime_id}/approvals/{approval_id}/decision")
     async def decide(runtime_id: str, approval_id: str, body: _ApprovalDecision, x_subject: str = Depends(oidc_subject)):
-        store.identity(x_subject, runtime_id)
-        return json_dataclass(await runtime_call(
+        store.authorize_runtime_permission(x_subject, runtime_id, "approve")
+        value = json_dataclass(await runtime_call(
             runtime_id, "decide_approval", x_subject, approval_id, body.decision, body.idempotency_key
         ))
+        status = str(value.get("status") or "")
+        action = {"approved": "approval.approved", "denied": "approval.denied",
+                  "cancelled": "approval.denied"}.get(status)
+        if action and value.get("workspace_id") and value.get("run_id"):
+            device_action_audit.record(
+                DeviceActionKey(runtime_id, str(value["workspace_id"]), str(value["run_id"]), action),
+                getattr(x_subject, "device_id", None),
+            )
+        return value
 
     @app.delete("/v1/admin/runtimes/{runtime_id}", status_code=204)
     async def revoke(runtime_id: str):
@@ -762,10 +1125,65 @@ def create_relay_app(registry: RelayRegistry | None = None,
                         await socket.close(code=4409, reason="stale_runtime_generation")
                         return
                     try:
+                        fanout_started = time.perf_counter()
                         await oaep_replay.accept(hello["runtime_id"], generation, message)
+                        event = message.get("event") or {}
+                        event_id = str(event.get("event_id") or "")
+                        if event_id:
+                            conversation_latency.record_conversation_latency(
+                                "relay_fanout",
+                                (time.perf_counter() - fanout_started) * 1000,
+                                ResourceCorrelation(
+                                    event_id,
+                                    event_id,
+                                    runtime_id=hello["runtime_id"],
+                                    workspace_id=str(message.get("workspace_id") or ""),
+                                    session_id=str(message.get("session_id") or ""),
+                                    run_id=str(event.get("run_id") or ""),
+                                ),
+                                {"protocol": "oaep/1"},
+                            )
+                        await socket.send_json({
+                            "type": "oaep.event.ack",
+                            "protocol": "oaep/1",
+                            "runtime_id": hello["runtime_id"],
+                            "session_id": message.get("session_id"),
+                            "sequence": message.get("sequence"),
+                        })
                     except RelayRegistryError as exc:
                         await socket.close(code=4400, reason=exc.code)
                         return
+                elif message.get("type") == "telemetry.conversation_latency":
+                    expected = {
+                        "type", "runtime_id", "workspace_id", "session_id", "run_id",
+                        "correlation_id", "operation_id", "stage", "duration_ms",
+                    }
+                    if set(message) != expected or message.get("runtime_id") != hello["runtime_id"]:
+                        await socket.close(code=4400, reason="latency_observation_invalid")
+                        return
+                    event_id = str(message.get("correlation_id") or "")
+                    if (
+                        message.get("operation_id") != event_id
+                        or message.get("stage") not in {"journal_append", "runtime_wss_send"}
+                        or not await oaep_replay.contains_event(
+                            hello["runtime_id"], str(message.get("session_id") or ""), event_id
+                        )
+                    ):
+                        await socket.close(code=4400, reason="latency_observation_invalid")
+                        return
+                    conversation_latency.record_conversation_latency(
+                        str(message["stage"]),
+                        float(message["duration_ms"]),
+                        ResourceCorrelation(
+                            event_id,
+                            event_id,
+                            runtime_id=hello["runtime_id"],
+                            workspace_id=str(message.get("workspace_id") or ""),
+                            session_id=str(message.get("session_id") or ""),
+                            run_id=str(message.get("run_id") or ""),
+                        ),
+                        {"protocol": "oaep/1"},
+                    )
         except WebSocketDisconnect:
             return
         finally:

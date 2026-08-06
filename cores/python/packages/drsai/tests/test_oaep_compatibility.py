@@ -6,17 +6,21 @@ from drsai.oaep.compatibility import LegacyRemovalMetrics, legacy_removal_decisi
 
 
 READY = {
-    "release_cycles": 2,
-    "observation_days": 14,
-    "oaep_client_ratio": 0.99,
+    "release_cycles": 0,
+    "observation_days": 0,
+    "oaep_client_ratio": 0.999,
     "migration_ratio": 1.0,
-    "legacy_request_ratio": 0.01,
+    "legacy_request_ratio": 0.0009,
     "fallback_error_rate": 0.001,
     "rollback_artifact_verified": True,
+    "rollback_artifact_sha256": "a" * 64,
+    "migration_transcript_before_sha256": "b" * 64,
+    "migration_transcript_after_sha256": "b" * 64,
+    "database_migration_verified": True,
 }
 
 
-def test_legacy_removal_requires_every_release_metric() -> None:
+def test_legacy_removal_requires_threshold_migration_and_rollback_evidence() -> None:
     decision = legacy_removal_decision(LegacyRemovalMetrics.from_mapping(READY))
     assert decision == {
         "allowed": True,
@@ -28,13 +32,13 @@ def test_legacy_removal_requires_every_release_metric() -> None:
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("release_cycles", 1),
-        ("observation_days", 13),
-        ("oaep_client_ratio", 0.989),
+        ("oaep_client_ratio", 0.9989),
         ("migration_ratio", 0.999),
-        ("legacy_request_ratio", 0.011),
+        ("legacy_request_ratio", 0.001),
         ("fallback_error_rate", 0.0011),
         ("rollback_artifact_verified", False),
+        ("database_migration_verified", False),
+        ("migration_transcript_after_sha256", "c" * 64),
     ],
 )
 def test_legacy_removal_fails_closed_for_each_missing_threshold(
@@ -52,3 +56,5 @@ def test_legacy_removal_rejects_missing_and_out_of_range_metrics() -> None:
         LegacyRemovalMetrics.from_mapping({})
     with pytest.raises(ValueError, match="metric_invalid"):
         LegacyRemovalMetrics.from_mapping({**READY, "oaep_client_ratio": 1.1})
+    with pytest.raises(ValueError, match="digest_invalid"):
+        LegacyRemovalMetrics.from_mapping({**READY, "rollback_artifact_sha256": "bad"})

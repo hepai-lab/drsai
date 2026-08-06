@@ -18,6 +18,7 @@ from .generated_contract import CAPABILITIES, PROTOCOL_VERSION
 from .device_identity import SecretProtector, WindowsDpapiProtector
 
 _RUNTIME_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+_OPTIONAL_EXECUTION_CAPABILITIES = frozenset({"mcp.stdio"})
 
 
 def resolve_runtime_version(override: str | None = None) -> str:
@@ -109,8 +110,11 @@ class RuntimeOutboundConnector:
                  session_event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
                  oaep_event_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
                  oaep_event_ack: Callable[[str, int], Any] | None = None,
+                 oaep_events_ack: Callable[[dict[str, int]], Any] | None = None,
                  workspace_provider: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
+                 conversation_latency_observability: Any | None = None,
                  backend_health: dict[str, str] | None = None,
+                 execution_capabilities: frozenset[str] | None = None,
                  wire_protocol: str = "legacy-operation") -> None:
         parsed = urlparse(relay_wss_url)
         if parsed.scheme != "wss" or not parsed.hostname:
@@ -123,14 +127,24 @@ class RuntimeOutboundConnector:
         self.session_event_provider = session_event_provider
         self.oaep_event_provider = oaep_event_provider
         self.oaep_event_ack = oaep_event_ack
+        self.oaep_events_ack = oaep_events_ack
         self.workspace_provider = workspace_provider
+        self.conversation_latency_observability = conversation_latency_observability
         self._workspace_dirty = asyncio.Event()
         self._workspace_sync_lock = asyncio.Lock()
         self._workspace_sync_task: asyncio.Task[list[dict[str, Any]]] | None = None
         self._workspace_revision = 0
         self._workspace_published_revision = -1
         self._socket_send_lock = asyncio.Lock()
+        # The three event projections share the same Runtime database and, for
+        # compatibility paths, the same loopback Gateway. Serialize provider
+        # polling so a reconnect cannot launch three competing catalog scans.
+        self._event_provider_lock = asyncio.Lock()
         self.backend_health = dict(backend_health or {})
+        requested_execution = frozenset(execution_capabilities or ())
+        if not requested_execution.issubset(_OPTIONAL_EXECUTION_CAPABILITIES):
+            raise ValueError("runtime_execution_capability_invalid")
+        self.capabilities = (CAPABILITIES - _OPTIONAL_EXECUTION_CAPABILITIES) | requested_execution
         if wire_protocol not in {"legacy-operation", "hai-http"}:
             raise ValueError("runtime_wire_protocol_invalid")
         self.wire_protocol = wire_protocol
@@ -144,6 +158,7 @@ class RuntimeOutboundConnector:
                 "runtime_id": self.credential.runtime_id,
                 "instance_id": self.instance_id,
                 "version": self.version,
+                "capabilities": ",".join(sorted(self.capabilities)),
             })
             connection_url = urlunparse(parsed._replace(query=urlencode(query)))
         else:
@@ -153,7 +168,10 @@ class RuntimeOutboundConnector:
             async with session.ws_connect(connection_url, heartbeat=20) as socket:
                 background_tasks: list[asyncio.Task[Any]] = []
                 if self.wire_protocol == "hai-http":
-                    await self._send_json(socket, {"type": "heartbeat", "timestamp": time.time()})
+                    await self._send_json(socket, {
+                        "type": "heartbeat", "timestamp": time.time(),
+                        "capabilities": sorted(self.capabilities),
+                    })
                     background_tasks.append(asyncio.create_task(self._send_heartbeats(socket)))
                     if self.workspace_provider is not None:
                         background_tasks.append(asyncio.create_task(self._forward_workspaces(socket)))
@@ -175,7 +193,7 @@ class RuntimeOutboundConnector:
                     await self._send_json(socket, {
                         "type": "runtime.hello", "runtime_id": self.credential.runtime_id,
                         "instance_id": self.instance_id, "version": self.version,
-                        "protocol_version": PROTOCOL_VERSION, "capabilities": sorted(CAPABILITIES),
+                        "protocol_version": PROTOCOL_VERSION, "capabilities": sorted(self.capabilities),
                         "backend_health": self.backend_health,
                         "nonce": nonce, "signature": self.identity.sign(proof),
                     })
@@ -298,22 +316,29 @@ class RuntimeOutboundConnector:
                 retry_delay = min(retry_delay * 2, 10.0)
 
     async def _forward_events(self, socket: Any) -> None:
+        poll_delay = 1.0
         while True:
             try:
-                for event in await self.event_provider():
+                async with self._event_provider_lock:
+                    events = await self.event_provider()
+                for event in events:
                     run_id = str(event.get("run_id") or "")
                     if run_id:
                         await self._send_json(socket, {"type": "event", "run_id": run_id, "event": event})
+                poll_delay = 1.0 if events else min(4.0, poll_delay * 2)
             except Exception:
                 # A failed poll must not tear down the control channel. The
                 # next iteration resumes from the Runtime-owned sequence.
-                pass
-            await asyncio.sleep(1)
+                poll_delay = min(4.0, poll_delay * 2)
+            await asyncio.sleep(poll_delay)
 
     async def _forward_session_events(self, socket: Any) -> None:
+        poll_delay = 1.0
         while True:
             try:
-                for event in await self.session_event_provider():
+                async with self._event_provider_lock:
+                    events = await self.session_event_provider()
+                for event in events:
                     session_id = str(event.get("session_id") or "")
                     sequence = int(event.get("session_sequence") or 0)
                     if session_id and sequence > 0:
@@ -324,10 +349,11 @@ class RuntimeOutboundConnector:
                             "session_sequence": sequence,
                             "event": event,
                         })
+                poll_delay = 1.0 if events else min(4.0, poll_delay * 2)
             except Exception:
                 # The next poll resumes from the Runtime-owned Session cursor.
-                pass
-            await asyncio.sleep(1)
+                poll_delay = min(4.0, poll_delay * 2)
+            await asyncio.sleep(poll_delay)
 
     async def _forward_oaep_events(self, socket: Any) -> None:
         """Forward canonical OAEP independently from the legacy Session stream.
@@ -336,9 +362,13 @@ class RuntimeOutboundConnector:
         not translate legacy Journal rows: a frame labelled ``oaep/1`` must
         already contain an authoritative OAEP Event.
         """
+        poll_delay = 1.0
         while True:
             try:
-                for item in await self.oaep_event_provider():
+                async with self._event_provider_lock:
+                    items = await self.oaep_event_provider()
+                acknowledged_cursors: dict[str, int] = {}
+                for item in items:
                     event = item.get("event")
                     runtime_id = str(item.get("runtime_id") or "")
                     workspace_id = str(item.get("workspace_id") or "")
@@ -360,6 +390,7 @@ class RuntimeOutboundConnector:
                         # Provider/identity drift is fail-closed.  A malformed
                         # frame must never enter Relay replay under a false key.
                         continue
+                    started = time.perf_counter()
                     await self._send_json(socket, {
                         "type": "event",
                         "protocol": "oaep/1",
@@ -370,14 +401,48 @@ class RuntimeOutboundConnector:
                         "sequence": sequence,
                         "event": event,
                     })
-                    if self.oaep_event_ack is not None:
+                    observer = self.conversation_latency_observability
+                    event_id = str(event.get("event_id") or "")
+                    if observer is not None and event_id:
+                        observer.record_oaep_stage(
+                            "runtime_wss_send",
+                            (time.perf_counter() - started) * 1000,
+                            event_id=event_id,
+                            runtime_id=runtime_id,
+                            workspace_id=workspace_id,
+                            session_id=session_id,
+                            run_id=str(event.get("run_id") or ""),
+                        )
+                        for observation in observer.conversation_latency_observations(event_id):
+                            if observation["stage"] not in {"journal_append", "runtime_wss_send"}:
+                                continue
+                            await self._send_json(socket, {
+                                "type": "telemetry.conversation_latency",
+                                "runtime_id": runtime_id,
+                                "workspace_id": workspace_id,
+                                "session_id": session_id,
+                                "run_id": str(event.get("run_id") or ""),
+                                **observation,
+                            })
+                    acknowledged_cursors[session_id] = max(
+                        sequence, acknowledged_cursors.get(session_id, 0)
+                    )
+                if acknowledged_cursors and self.oaep_events_ack is not None:
+                    acknowledged = self.oaep_events_ack(acknowledged_cursors)
+                    if inspect.isawaitable(acknowledged):
+                        await acknowledged
+                elif acknowledged_cursors and self.oaep_event_ack is not None:
+                    # Compatibility callbacks still commit only once per
+                    # Session and provider batch, never once per event.
+                    for session_id, sequence in acknowledged_cursors.items():
                         acknowledged = self.oaep_event_ack(session_id, sequence)
                         if inspect.isawaitable(acknowledged):
                             await acknowledged
+                poll_delay = 1.0 if items else min(4.0, poll_delay * 2)
             except Exception:
                 # The Runtime-owned cursor makes the next poll/reconnect safe.
-                pass
-            await asyncio.sleep(1)
+                poll_delay = min(4.0, poll_delay * 2)
+            await asyncio.sleep(poll_delay)
 
     async def _handle_request(self, socket: Any, payload: dict[str, Any]) -> None:
         request_id = str(payload.get("request_id") or "")

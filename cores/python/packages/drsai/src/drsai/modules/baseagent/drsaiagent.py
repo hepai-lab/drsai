@@ -77,7 +77,6 @@ from autogen_agentchat.messages import (
     # MultiModalMessage,
     Image,
 )
-from autogen_agentchat.utils import remove_images
 from drsai import HepAIChatCompletionClient
 from drsai.modules.managers.database import DatabaseManager, DatabaseManagerConfig
 from drsai import DrSaiStaticWorkbench
@@ -118,6 +117,7 @@ class DrSaiAgentState(BaseState):
     """State for an assistant agent."""
 
     llm_context: Mapping[str, Any] = Field(default_factory=lambda: dict([("messages", [])]))
+    agent_kernel_checkpoint: Mapping[str, Any] | None = None
     type: str = Field(default="AssistantAgentState")
 
 
@@ -1384,21 +1384,28 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
     async def save_state(self) -> Mapping[str, Any]:
         """Save the current state of the assistant agent."""
         model_context_state = await self._model_context.save_state()
-        return DrSaiAgentState(llm_context=model_context_state).model_dump()
+        return DrSaiAgentState(
+            llm_context=model_context_state,
+            agent_kernel_checkpoint=getattr(self, "_agent_kernel_checkpoint", None),
+        ).model_dump()
 
     async def load_state(self, state: Mapping[str, Any]) -> None:
         """Load the state of the assistant agent"""
         assistant_agent_state = DrSaiAgentState.model_validate(state)
+        self._agent_kernel_checkpoint = assistant_agent_state.agent_kernel_checkpoint
         # Load the model context state.
         await self._model_context.load_state(assistant_agent_state.llm_context)
 
     @staticmethod
     def _get_compatible_context(model_client: ChatCompletionClient, messages: List[LLMMessage]) -> Sequence[LLMMessage]:
-        """Ensure that the messages are compatible with the underlying client, by removing images if needed."""
+        """Reject unsupported image input instead of silently deleting user content."""
         if model_client.model_info["vision"]:
             return messages
-        else:
-            return remove_images(messages)
+        for message in messages:
+            content = getattr(message, "content", None)
+            if isinstance(content, list) and any(isinstance(item, Image) for item in content):
+                raise ValueError("Model does not support vision and image was provided")
+        return messages
         
     def _to_config(self) -> AssistantAgentConfig:
         """Convert the assistant agent to a declarative config."""
@@ -1675,9 +1682,8 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 raise RuntimeError(f"Invalid response type: {type(response)}")
         yield model_result
 
-    @classmethod
     async def call_llm(
-        cls,
+        self,
         agent_name: str,
         model_client: ChatCompletionClient,
         llm_messages: List[LLMMessage], 
@@ -1689,6 +1695,28 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
     
         model_result: Optional[CreateResult] = None
 
+        extra_create_args: dict[str, Any] = {"stream_options": {"include_usage": True}}
+        effort = getattr(self, "_reasoning_effort", None)
+        model_info = getattr(model_client, "model_info", None) or getattr(model_client, "_model_info", {})
+        reasoning = model_info.get("reasoning_config") if isinstance(model_info, Mapping) else None
+        supported = bool(getattr(reasoning, "supported", False))
+        levels = tuple(getattr(reasoning, "effort_levels", ()) or ())
+        param_type = str(getattr(reasoning, "param_type", "none") or "none")
+        if effort and supported and (not levels or effort in levels):
+            if param_type == "deepseek_reasoning_effort":
+                if effort == "none":
+                    extra_create_args["thinking"] = {"type": "disabled"}
+                else:
+                    extra_create_args["thinking"] = {"type": "enabled"}
+                    extra_create_args["reasoning_effort"] = effort
+            elif param_type == "adaptive":
+                extra_create_args["thinking"] = {"type": "adaptive"}
+                extra_create_args["output_config"] = {
+                    "effort": "max" if effort == "xhigh" else effort,
+                }
+            elif param_type in {"reasoning_effort", "is_r1_model", "zhipu_format", "minimax_format"}:
+                extra_create_args["reasoning_effort"] = effort
+
         if model_client_stream:
             # Pass stream_options to include usage in the final chunk
             async for chunk in model_client.create_stream(
@@ -1696,7 +1724,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 tools=tools,
                 json_output=output_content_type,
                 cancellation_token=cancellation_token,
-                extra_create_args={"stream_options": {"include_usage": True}}
+                extra_create_args=extra_create_args,
             ):
                 if isinstance(chunk, CreateResult):
                     model_result = chunk
@@ -1709,6 +1737,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             yield model_result
         else:
             model_result = await model_client.create(
-                llm_messages, tools=tools, cancellation_token=cancellation_token
+                llm_messages,
+                tools=tools,
+                cancellation_token=cancellation_token,
+                extra_create_args={key: value for key, value in extra_create_args.items() if key != "stream_options"},
             )
             yield model_result

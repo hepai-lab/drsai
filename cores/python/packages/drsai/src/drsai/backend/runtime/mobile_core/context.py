@@ -1,54 +1,38 @@
-"""Deterministic, dependency-free context assembly for mobile runtimes."""
+"""Compatibility wrapper for the shared production Agent Kernel context."""
 
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+try:  # Regular Python package layout.
+    from drsai.backend.runtime.agent_kernel import AgentRunConfig, assemble_agent_context, build_citation_evidence, build_context_observability, build_execution_tool_registry, build_memory_policy, build_run_capability_snapshot, build_tool_choice_policy, build_tool_decision_requirement, classify_tool_error, execution_tool_record, freeze_model_tool_snapshot, normalize_citation_evidence, normalize_context_budget, normalize_kernel_host_port, normalize_memory_policy, normalize_memory_selection, normalize_model_route_snapshot, normalize_tool_loop_policy, normalize_tool_output, resolve_tool_decision, select_relevant_memories, validate_context_within_budget, validate_conversation_context, validate_memory_tool_call, validate_tool_call_batch, verify_model_tool_calls, verify_run_capability_snapshot
+except ImportError:  # Android Chaquopy adds backend/runtime as a source root.
+    from agent_kernel import AgentRunConfig, assemble_agent_context, build_citation_evidence, build_context_observability, build_execution_tool_registry, build_memory_policy, build_run_capability_snapshot, build_tool_choice_policy, build_tool_decision_requirement, classify_tool_error, execution_tool_record, freeze_model_tool_snapshot, normalize_citation_evidence, normalize_context_budget, normalize_kernel_host_port, normalize_memory_policy, normalize_memory_selection, normalize_model_route_snapshot, normalize_tool_loop_policy, normalize_tool_output, resolve_tool_decision, select_relevant_memories, validate_context_within_budget, validate_conversation_context, validate_memory_tool_call, validate_tool_call_batch, verify_model_tool_calls, verify_run_capability_snapshot
 
-ALLOWED_ROLES = {"system", "user", "assistant", "tool"}
+
+def build_prompt_layer_diagnostics(
+    agent: Mapping[str, Any] | None,
+    skills: Sequence[Mapping[str, Any]] = (),
+) -> list[dict[str, Any]]:
+    return AgentRunConfig.from_mapping(agent).prompt_layer_diagnostics(skills)
 
 
 def assemble_mobile_context(
     history: Sequence[Mapping[str, Any]],
     input_text: str,
     *,
-    max_messages: int = 20,
-    max_chars: int = 32_000,
+    agent: Mapping[str, Any] | None = None,
+    skills: Sequence[Mapping[str, Any]] = (),
+    context_budget: Mapping[str, Any] | None = None,
+    max_messages: int | None = None,
+    max_chars: int | None = None,
 ) -> list[dict[str, Any]]:
-    if not 1 <= max_messages <= 100 or max_chars < 1_024:
-        raise ValueError("context_budget_invalid")
-    if not input_text or len(input_text) > max_chars:
-        raise ValueError("context_input_invalid")
-    normalized: list[dict[str, Any]] = []
-    for raw in history:
-        if not isinstance(raw, Mapping):
-            raise ValueError("context_message_invalid")
-        role = raw.get("role")
-        content = raw.get("content", "")
-        if role not in ALLOWED_ROLES or not isinstance(content, str):
-            raise ValueError("context_message_invalid")
-        message: dict[str, Any] = {"role": role, "content": content}
-        for key in ("tool_call_id", "tool_calls"):
-            if key in raw:
-                message[key] = raw[key]
-        normalized.append(message)
-
-    current = {"role": "user", "content": input_text}
-    remaining_chars = max_chars - len(input_text)
-    selected: list[dict[str, Any]] = []
-    omitted: list[dict[str, Any]] = []
-    for message in reversed(normalized):
-        cost = len(message["content"])
-        if len(selected) < max_messages - 1 and cost <= remaining_chars:
-            selected.append(message)
-            remaining_chars -= cost
-        else:
-            omitted.append(message)
-    selected.reverse()
-    omitted.reverse()
-    if omitted and len(selected) < max_messages - 1 and remaining_chars > 64:
-        lines = [f"{item['role']}: {' '.join(item['content'].split())[:240]}" for item in omitted]
-        summary = "Earlier context summary:\n" + "\n".join(lines)
-        summary = summary[:remaining_chars]
-        selected.insert(0, {"role": "system", "content": summary})
-    return [*selected, current]
+    return assemble_agent_context(
+        history,
+        input_text,
+        agent=agent,
+        skills=skills,
+        context_budget=context_budget,
+        max_messages=max_messages,
+        max_chars=max_chars,
+    )

@@ -63,6 +63,24 @@ class NormalizedTerminalStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class NormalizedReasoningKind(str, Enum):
+    SUMMARY = "summary"
+    COMMENTARY = "commentary"
+    ANALYSIS = "analysis"
+
+
+class NormalizedReasoningVisibility(str, Enum):
+    USER = "user"
+    DIAGNOSTIC = "diagnostic"
+    HIDDEN = "hidden"
+
+
+class NormalizedReasoningSource(str, Enum):
+    BACKEND = "backend"
+    ADAPTER = "adapter"
+    RUNTIME = "runtime"
+
+
 @runtime_checkable
 class AgentEventAdapter(Protocol):
     """Backend-private decoder boundary; clients only consume OAEP."""
@@ -113,7 +131,11 @@ class NormalizedAgentEvent:
     delta_kind: NormalizedDeltaKind | None = None
     phase: str | None = None
     stream: str | None = None
+    segment_id: str | None = None
     terminal_status: NormalizedTerminalStatus | None = None
+    reasoning_kind: NormalizedReasoningKind | None = None
+    reasoning_visibility: NormalizedReasoningVisibility | None = None
+    reasoning_source: NormalizedReasoningSource | None = None
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -129,6 +151,11 @@ class NormalizedAgentEvent:
                 raise ValueError("item.delta requires delta_kind")
         elif self.delta_kind is not None:
             raise ValueError("delta_kind is only valid for item.delta")
+        if self.segment_id is not None and (
+            self.kind != NormalizedEventKind.ITEM_DELTA
+            or self.item_type != NormalizedItemType.REASONING
+        ):
+            raise ValueError("segment_id is only valid for reasoning item.delta")
         if self.kind in _RUN_KINDS and not self.binding.run_id:
             raise ValueError("run events require a run binding")
         expected_terminal = {
@@ -144,4 +171,18 @@ class NormalizedAgentEvent:
             raise ValueError("phase must be commentary or final")
         if self.stream is not None and self.stream not in {"stdout", "stderr", "combined"}:
             raise ValueError("stream must be stdout, stderr or combined")
+        if self.item_type is NormalizedItemType.REASONING:
+            object.__setattr__(self, "reasoning_kind", self.reasoning_kind or NormalizedReasoningKind.SUMMARY)
+            object.__setattr__(
+                self,
+                "reasoning_visibility",
+                self.reasoning_visibility or NormalizedReasoningVisibility.USER,
+            )
+            object.__setattr__(self, "reasoning_source", self.reasoning_source or NormalizedReasoningSource.BACKEND)
+        elif any(value is not None for value in (
+            self.reasoning_kind,
+            self.reasoning_visibility,
+            self.reasoning_source,
+        )):
+            raise ValueError("reasoning semantics are only valid for reasoning item events")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))

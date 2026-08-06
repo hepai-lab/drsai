@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from drsai.owop.process_pty import LocalProcessPtyOperations, _WINDOWS_BACKGROUND_PROCESS_FLAGS
+from drsai.owop.protocol import OWOPError
 
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="C05-F07 validates Windows Process and ConPTY")
@@ -18,6 +19,32 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="C05-F07 validates Windo
 def test_windows_background_processes_never_allocate_a_console() -> None:
     assert _WINDOWS_BACKGROUND_PROCESS_FLAGS & subprocess.CREATE_NEW_PROCESS_GROUP
     assert _WINDOWS_BACKGROUND_PROCESS_FLAGS & subprocess.CREATE_NO_WINDOW
+
+
+def test_windows_process_cwd_rejects_traversal_unc_drive_and_junction(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    junction = workspace / "junction"
+    created = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(outside)],
+        capture_output=True,
+        text=True,
+    )
+    assert created.returncode == 0, created.stderr or created.stdout
+    operations = LocalProcessPtyOperations(workspace)
+    try:
+        for value in ("../outside", str(outside), r"C:\\Windows", r"\\server\share", "junction"):
+            with pytest.raises(OWOPError) as caught:
+                operations._cwd(value)
+            assert caught.value.code in {
+                "workspace_absolute_path_rejected",
+                "workspace_escape_rejected",
+            }
+    finally:
+        operations.close()
+        junction.rmdir()
 
 
 def _bytes(result: dict, stream: str | None = None) -> bytes:

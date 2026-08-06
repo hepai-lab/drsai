@@ -56,9 +56,9 @@ def _resolved(*, wire_api="openai", requires_key=True):
     }))
 
 
-def test_openai_probe_checks_model_catalog_without_leaking_secret(monkeypatch) -> None:
+def test_openai_model_probe_returns_bounded_output_without_leaking_secret(monkeypatch) -> None:
     clear_probe_history()
-    _Client.response = _Response(200, {"data": [{"id": "custom-model"}]})
+    _Client.response = _Response(200, {"choices": [{"message": {"content": "pong"}}]})
     monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
 
     result = asyncio.run(connectivity.test_provider_connection(_resolved()))
@@ -68,18 +68,34 @@ def test_openai_probe_checks_model_catalog_without_leaking_secret(monkeypatch) -
     assert result["wire_api"] == "openai"
     assert result["mode"] == "model"
     assert isinstance(result["duration_ms"], int)
-    assert _Client.request[0:2] == ("GET", "https://provider.example/v1/models")
+    assert result["output"] == "pong"
+    assert _Client.request[0:2] == ("POST", "https://provider.example/v1/chat/completions")
     assert _Client.request[2]["Authorization"] == "Bearer probe-secret"
+    assert _Client.request[3]["messages"][-1] == {"role": "user", "content": "ping"}
+    assert _Client.request[3]["max_tokens"] == 256
     assert "probe-secret" not in repr(result)
     latest = latest_probe_result("custom")
     assert latest["ok"] is True
+    assert latest["model"] == "custom-model"
     assert latest["mode"] == "model"
+    assert "output" not in latest
     assert "probe-secret" not in repr(latest)
+
+
+def test_gemini_native_model_probe_uses_generate_content(monkeypatch) -> None:
+    _Client.response = _Response(200, {"candidates": [{"content": {"parts": [{"text": "pong"}]}, "finishReason": "STOP"}]})
+    monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
+    result = asyncio.run(connectivity.test_provider_connection(_resolved(wire_api="gemini")))
+    assert result["ok"] is True
+    assert result["wire_api"] == "gemini"
+    assert _Client.request[0:2] == ("POST", "https://provider.example/v1/models/custom-model:generateContent")
+    assert _Client.request[2]["x-goog-api-key"] == "probe-secret"
+    assert _Client.request[3]["contents"][0]["parts"][0]["text"] == "ping"
 
 
 def test_openai_probe_reports_missing_model_and_invalid_payload(monkeypatch) -> None:
     monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
-    _Client.response = _Response(200, {"data": [{"id": "other-model"}]})
+    _Client.response = _Response(404, {"error": {"message": "model not found"}})
     assert asyncio.run(connectivity.test_provider_connection(_resolved()))["error"] == "model_not_found"
 
     _Client.response = _Response(200, ValueError("not json"))
@@ -98,17 +114,20 @@ def test_basic_probe_does_not_require_model_in_catalog(monkeypatch) -> None:
 
 def test_anthropic_and_no_key_probes_use_correct_protocol(monkeypatch) -> None:
     monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
-    _Client.response = _Response(200, {})
+    _Client.response = _Response(200, {"content": [{"type": "text", "text": "pong"}]})
     result = asyncio.run(connectivity.test_provider_connection(_resolved(wire_api="anthropic")))
     assert result["ok"] is True
+    assert result["output"] == "pong"
     assert _Client.request[0:2] == ("POST", "https://provider.example/v1/messages")
     assert _Client.request[2]["x-api-key"] == "probe-secret"
     assert _Client.request[3]["model"] == "custom-model"
+    assert _Client.request[3]["messages"] == [{"role": "user", "content": "ping"}]
+    assert _Client.request[3]["max_tokens"] == 256
 
-    _Client.response = _Response(200, {"data": [{"id": "custom-model"}]})
+    _Client.response = _Response(200, {"choices": [{"message": {"content": "pong"}}]})
     result = asyncio.run(connectivity.test_provider_connection(_resolved(requires_key=False)))
     assert result["ok"] is True
-    assert _Client.request[2] == {}
+    assert _Client.request[2] == {"content-type": "application/json"}
 
 
 def test_error_response_distinguishes_model_from_endpoint(monkeypatch) -> None:
@@ -120,7 +139,7 @@ def test_error_response_distinguishes_model_from_endpoint(monkeypatch) -> None:
     assert asyncio.run(connectivity.test_provider_connection(_resolved()))["error"] == "endpoint_not_found"
 
 
-def test_openai_model_probe_falls_back_to_minimal_chat_when_catalog_missing(monkeypatch) -> None:
+def test_openai_model_probe_calls_chat_completion_directly(monkeypatch) -> None:
     class ChatOnlyClient(_Client):
         async def get(self, url, *, headers):
             type(self).request = ("GET", url, headers, None)
@@ -128,13 +147,45 @@ def test_openai_model_probe_falls_back_to_minimal_chat_when_catalog_missing(monk
 
         async def post(self, url, *, headers, json):
             type(self).request = ("POST", url, headers, json)
-            return _Response(200, {"id": "completion"})
+            return _Response(200, {"choices": [{"message": {"content": "pong"}}]})
 
     monkeypatch.setattr(connectivity.httpx, "AsyncClient", ChatOnlyClient)
     result = asyncio.run(connectivity.test_provider_connection(_resolved(), mode="model"))
     assert result["ok"] is True
     assert result["may_incur_cost"] is True
+    assert result["output"] == "pong"
     assert ChatOnlyClient.request[0:2] == ("POST", "https://provider.example/v1/chat/completions")
+
+
+def test_model_probe_fails_when_output_is_empty_or_not_pong(monkeypatch) -> None:
+    monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
+    _Client.response = _Response(200, {"choices": [{"message": {"content": ""}}]})
+    empty = asyncio.run(connectivity.test_provider_connection(_resolved(), mode="model"))
+    assert empty["ok"] is False
+    assert empty["error"] == "model_output_empty"
+
+    _Client.response = _Response(200, {"choices": [{"message": {"content": "hello"}}]})
+    mismatch = asyncio.run(connectivity.test_provider_connection(_resolved(), mode="model"))
+    assert mismatch["ok"] is False
+    assert mismatch["error"] == "model_output_mismatch"
+    assert mismatch["output"] == "hello"
+    assert "output" not in latest_probe_result("custom")
+
+
+def test_reasoning_model_reports_exhausted_output_budget(monkeypatch) -> None:
+    monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
+    _Client.response = _Response(200, {
+        "choices": [{
+            "finish_reason": "length",
+            "message": {"content": "", "reasoning_content": "The model is still reasoning."},
+        }],
+    })
+
+    result = asyncio.run(connectivity.test_provider_connection(_resolved(), mode="model"))
+
+    assert result["ok"] is False
+    assert result["error"] == "model_output_budget_exhausted"
+    assert "reasoning_content" not in repr(result)
 
 
 def test_rate_limit_has_stable_guidance(monkeypatch) -> None:

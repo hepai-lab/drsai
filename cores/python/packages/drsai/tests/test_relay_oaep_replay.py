@@ -141,3 +141,40 @@ def test_oaep_metrics_expose_drift_backpressure_and_recovery_without_payloads() 
         assert queue.qsize() == 1
 
     asyncio.run(scenario())
+
+
+def test_workspace_catalog_fanout_only_emits_session_lifecycle_and_is_revocable() -> None:
+    async def scenario() -> None:
+        hub = OAEPReplayHub()
+        await hub.attach("runtime-one", "generation-one")
+        queue = await hub.subscribe_workspace("runtime-one", "workspace-one")
+        assert await hub.accept("runtime-one", "generation-one", _frame(1))
+        assert queue.empty()
+        lifecycle = _frame(2)
+        lifecycle["event"]["type"] = "event.session.updated"
+        assert await hub.accept("runtime-one", "generation-one", lifecycle)
+        row = await asyncio.wait_for(queue.get(), timeout=1)
+        assert row == {"event_id": "event-2", "session_id": lifecycle["session_id"],
+                       "type": "event.session.updated", "sequence": 2}
+        assert not ({"payload", "body", "message"} & row.keys())
+        assert await hub.invalidate_runtime("runtime-one") == 1
+        assert (await queue.get()) == {"_control": "authorization_changed"}
+
+    asyncio.run(scenario())
+
+
+def test_workspace_catalog_slow_consumer_is_bounded_and_unsubscribes_cleanly() -> None:
+    async def scenario() -> None:
+        hub = OAEPReplayHub()
+        await hub.attach("runtime-one", "generation-one")
+        queue = await hub.subscribe_workspace("runtime-one", "workspace-one", queue_size=1)
+        for sequence in (1, 2):
+            frame = _frame(sequence)
+            frame["event"]["type"] = "event.session.updated"
+            assert await hub.accept("runtime-one", "generation-one", frame)
+        assert queue.qsize() == 1
+        assert hub.metrics()["counters"]["workspace_subscriber_overflow"] == 1
+        await hub.unsubscribe_workspace("runtime-one", "workspace-one", queue)
+        assert hub.metrics()["workspace_subscribers"] == 0
+
+    asyncio.run(scenario())

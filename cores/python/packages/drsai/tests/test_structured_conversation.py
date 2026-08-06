@@ -119,6 +119,62 @@ def test_projector_covers_all_eight_assistant_part_kinds() -> None:
     }
 
 
+def test_artifact_projection_preserves_oaep_integrity_and_capabilities() -> None:
+    projector = _projector()
+    projector.project("artifact.created", {
+        "artifact_id": "artifact-1",
+        "artifact_type": "file",
+        "name": "output.bin",
+        "mime": "application/octet-stream",
+        "size": 9,
+        "sha256": "a" * 64,
+        "previewable": False,
+        "downloadable": True,
+        "source_call_id": "call-1",
+    })
+    artifact = next(part for part in projector.parts.values() if part["kind"] == "artifact")
+    assert artifact["mime"] == "application/octet-stream"
+    assert artifact["size"] == 9
+    assert artifact["sha256"] == "a" * 64
+    assert artifact["previewable"] is False
+    assert artifact["downloadable"] is True
+    assert artifact["sourceCallId"] == "call-1"
+
+
+def test_files_event_translation_preserves_opaque_artifact_descriptor() -> None:
+    from drsai.modules.managers.messages import FileInfo, FilesContent, FilesEvent
+
+    translated = TRANSLATOR.translate(FilesEvent(
+        source="OpenDrSai",
+        content=FilesContent(files=[FileInfo(
+            artifact_id="artifact-binary",
+            name="output.bin",
+            mime_type="application/octet-stream",
+            size=7,
+            sha256="b" * 64,
+            previewable=False,
+            downloadable=True,
+            source_call_id="call-binary",
+            download_method="none",
+        )]),
+    ), TRANSLATOR.TurnState())
+    assert translated == [("artifact.created", {
+        "artifact_id": "artifact-binary",
+        "artifact_type": "file",
+        "name": "output.bin",
+        "title": "Agent files",
+        "summary": "",
+        "url": None,
+        "mime": "application/octet-stream",
+        "size": 7,
+        "sha256": "b" * 64,
+        "previewable": False,
+        "downloadable": True,
+        "source_call_id": "call-binary",
+        "source": "OpenDrSai",
+    })]
+
+
 def test_citation_adds_stable_bidirectional_relations() -> None:
     projector = _projector()
     projector.project("message.delta", {"text": "answer"})

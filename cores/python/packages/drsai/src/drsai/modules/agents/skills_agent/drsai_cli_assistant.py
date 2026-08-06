@@ -112,7 +112,7 @@ class DrSaiCLIAssistant(DrSaiAssistant):
 
     @reasoning_effort.setter
     def reasoning_effort(self, value: str) -> None:
-        allowed = {"off", "low", "medium", "high", "xhigh"}
+        allowed = {"off", "none", "low", "medium", "high", "xhigh", "max"}
         if value not in allowed:
             raise ValueError(f"reasoning_effort must be one of {sorted(allowed)}")
         self._reasoning_effort = value

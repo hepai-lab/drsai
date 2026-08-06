@@ -2215,7 +2215,7 @@ def _complete_path(rid, params: dict) -> dict:
 _VALID_CLIENT_TYPES = frozenset({"auto", "openai", "anthropic"})
 _VALID_PARAM_TYPES = frozenset({
     "none", "adaptive", "enabled", "is_r1_model",
-    "reasoning_effort", "minimax_format", "zhipu_format",
+    "reasoning_effort", "deepseek_reasoning_effort", "minimax_format", "zhipu_format",
 })
 
 

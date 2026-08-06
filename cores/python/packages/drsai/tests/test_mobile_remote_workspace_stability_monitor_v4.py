@@ -72,6 +72,7 @@ def fault(
         event_count_preserved=True,
         duplicate_sequence_count=0,
         missing_sequence_count=0,
+        reexecuted_side_effect_count=0,
         generation_before=generation_before,
         generation_after=generation_after,
         android_pid_before=android_before,

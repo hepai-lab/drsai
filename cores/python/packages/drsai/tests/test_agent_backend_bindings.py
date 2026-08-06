@@ -105,6 +105,26 @@ class AgentBackendBindingStoreTests(unittest.TestCase):
             self.store.bind_session(**{**self.session_args, "workspace_runtime_id": "runtime-remote"})
         self.assertEqual(caught.exception.code, "distributed_backend_not_supported")
 
+    def test_legacy_session_context_is_adopted_once_and_then_immutable(self) -> None:
+        legacy = self.store.bind_session(**self.session_args)
+        self.assertIsNone(legacy.backend_model_id)
+        adopted = self.store.adopt_session_context(
+            "session-1", backend_model_id="gpt-current", workspace_fingerprint="workspace-sha256",
+        )
+        self.assertEqual((adopted.backend_model_id, adopted.workspace_fingerprint),
+                         ("gpt-current", "workspace-sha256"))
+        self.assertEqual(
+            self.store.adopt_session_context(
+                "session-1", backend_model_id="gpt-current", workspace_fingerprint="workspace-sha256",
+            ),
+            adopted,
+        )
+        with self.assertRaises(bindings.AgentBackendBindingError) as caught:
+            self.store.adopt_session_context(
+                "session-1", backend_model_id="another-model", workspace_fingerprint="workspace-sha256",
+            )
+        self.assertEqual(caught.exception.code, "agent_backend_session_context_conflict")
+
     def test_confirmed_session_and_run_responses_complete_atomically(self) -> None:
         session_operation = self.store.prepare_operation("session", "session-1", "thread/start", "sha256:session")
         self.assertEqual(session_operation.state, "pending")

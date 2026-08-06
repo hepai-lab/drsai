@@ -77,6 +77,48 @@ def test_create_records_dirty_source_without_copying_dirty_files(tmp_path: Path)
     assert (Path(created.canonical_path) / "README.md").read_text(encoding="utf-8") == "base\n"
 
 
+def test_finalize_candidate_snapshot_commits_real_dirty_state_idempotently(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    source = registry.open_workspace(str(repo))
+    service = GitWorktreeService(registry, tmp_path / "managed-worktrees")
+    created = service.create(source_workspace_id=source.workspace_id, idempotency_key="snapshot", intent="snapshot")
+    derived = Path(created.canonical_path)
+    (derived / "README.md").write_text("candidate\n", encoding="utf-8")
+    (derived / "new.txt").write_text("new\n", encoding="utf-8")
+    git(derived, "config", "--unset", "user.email")
+    git(derived, "config", "--unset", "user.name")
+
+    snapshot = service.finalize_candidate_snapshot(
+        source.workspace_id, created.worktree_id,
+        experiment_id="experiment-one", run_id="run-candidate",
+    )
+    assert snapshot["snapshot_created"] is True
+    assert snapshot["previous_head"] != snapshot["candidate_head"]
+    assert snapshot["change_count"] == 2
+    assert git(derived, "status", "--porcelain=v1") == ""
+    assert "Experiment: experiment-one" in git(derived, "show", "-s", "--format=%B", "HEAD")
+    assert (repo / "README.md").read_text(encoding="utf-8") == "base\n"
+    assert not (repo / "new.txt").exists()
+
+    repeated = service.finalize_candidate_snapshot(
+        source.workspace_id, created.worktree_id,
+        experiment_id="experiment-one", run_id="run-candidate",
+    )
+    assert repeated == {
+        "worktree_id": created.worktree_id,
+        "experiment_id": "experiment-one",
+        "run_id": "run-candidate",
+        "snapshot_created": False,
+        "candidate_head": snapshot["candidate_head"],
+        "change_count": 0,
+    }
+    preview = service.adoption_preview(source.workspace_id, created.worktree_id)
+    assert preview["candidate_clean"] is True
+    assert preview["can_apply"] is True
+    assert {item.get("path") for item in preview["changes"]} >= {"README.md", "new.txt"}
+
+
 def test_concurrent_create_returns_one_worktree(tmp_path: Path) -> None:
     repo = repository(tmp_path)
     registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
@@ -155,6 +197,110 @@ def test_merge_and_remove_merged_worktree_are_safe(tmp_path: Path) -> None:
     assert registry.get_workspace(created.workspace_id) is None
     branches = git(repo, "branch", "--format=%(refname:short)").splitlines()
     assert created.branch not in branches
+
+
+def test_adoption_preview_is_digest_bound_and_selective_apply_only_changes_selected_files(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    (repo / "keep.txt").write_text("base keep\n", encoding="utf-8")
+    git(repo, "add", "keep.txt")
+    git(repo, "commit", "-m", "second base")
+    registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    source = registry.open_workspace(str(repo))
+    service = GitWorktreeService(registry, tmp_path / "managed-worktrees")
+    created = service.create(source_workspace_id=source.workspace_id, idempotency_key="selective", intent="selective")
+    derived = Path(created.canonical_path)
+    (derived / "README.md").write_text("selected\n", encoding="utf-8")
+    (derived / "keep.txt").write_text("not selected\n", encoding="utf-8")
+    (derived / "new.bin").write_bytes(b"\x00\x01experiment")
+    git(derived, "add", "README.md", "keep.txt", "new.bin")
+    git(derived, "commit", "-m", "experiment changes")
+
+    preview = service.adoption_preview(source.workspace_id, created.worktree_id)
+    assert preview["can_apply"] is True
+    assert {item.get("path") for item in preview["changes"]} >= {"README.md", "keep.txt", "new.bin"}
+    adopted = service.adopt_selection(
+        source.workspace_id, created.worktree_id,
+        preview_digest=preview["preview_digest"], selected_paths=["README.md"],
+    )
+    assert adopted.status == "merged"
+    assert (repo / "README.md").read_text(encoding="utf-8") == "selected\n"
+    assert (repo / "keep.txt").read_text(encoding="utf-8") == "base keep\n"
+    assert not (repo / "new.bin").exists()
+
+
+def test_adoption_rejects_stale_preview_dirty_source_and_partial_rename(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    source = registry.open_workspace(str(repo))
+    service = GitWorktreeService(registry, tmp_path / "managed-worktrees")
+    created = service.create(source_workspace_id=source.workspace_id, idempotency_key="stale", intent="stale")
+    derived = Path(created.canonical_path)
+    git(derived, "mv", "README.md", "RENAMED.md")
+    git(derived, "commit", "-m", "rename")
+    preview = service.adoption_preview(source.workspace_id, created.worktree_id)
+    with pytest.raises(service_module.GitWorktreeError) as partial:
+        service.adopt_selection(
+            source.workspace_id, created.worktree_id,
+            preview_digest=preview["preview_digest"], selected_paths=["RENAMED.md"],
+        )
+    assert partial.value.code == "adoption_selection_invalid"
+    (repo / "local.txt").write_text("dirty", encoding="utf-8")
+    dirty = service.adoption_preview(source.workspace_id, created.worktree_id)
+    assert dirty["source_clean"] is False and dirty["can_apply"] is False
+    with pytest.raises(service_module.GitWorktreeError) as stale:
+        service.adopt_selection(
+            source.workspace_id, created.worktree_id,
+            preview_digest=preview["preview_digest"], selected_paths=["README.md", "RENAMED.md"],
+        )
+    assert stale.value.code == "adoption_preview_stale"
+
+
+@pytest.mark.parametrize("crash_stage", ["after_restore", "after_commit", "after_registry_transition"])
+def test_adoption_retry_recovers_each_durable_crash_window_without_duplicate_commit(
+    tmp_path: Path, crash_stage: str,
+) -> None:
+    class SimulatedCrash(BaseException):
+        pass
+
+    repo = repository(tmp_path)
+    registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    source = registry.open_workspace(str(repo))
+    root = tmp_path / "managed-worktrees"
+    operation_id = "adoption-00000000-0000-4000-8000-000000000001"
+
+    def fail(stage: str) -> None:
+        if stage == crash_stage:
+            raise SimulatedCrash(stage)
+
+    service = GitWorktreeService(registry, root, fault_injector=fail)
+    created = service.create(source_workspace_id=source.workspace_id, idempotency_key=crash_stage, intent=crash_stage)
+    derived = Path(created.canonical_path)
+    (derived / "README.md").write_text(f"recovered {crash_stage}\n", encoding="utf-8")
+    git(derived, "add", "README.md")
+    git(derived, "commit", "-m", f"candidate {crash_stage}")
+    preview = service.adoption_preview(source.workspace_id, created.worktree_id)
+    with pytest.raises(SimulatedCrash, match=crash_stage):
+        service.adopt_selection(
+            source.workspace_id, created.worktree_id,
+            preview_digest=preview["preview_digest"], selected_paths=["README.md"],
+            operation_id=operation_id,
+        )
+    if crash_stage == "after_commit":
+        (repo / "later.txt").write_text("later user commit\n", encoding="utf-8")
+        git(repo, "add", "later.txt")
+        git(repo, "commit", "-m", "later source commit")
+
+    restarted = GitWorktreeService(registry, root)
+    recovered = restarted.adopt_selection(
+        source.workspace_id, created.worktree_id,
+        preview_digest=preview["preview_digest"], selected_paths=["README.md"],
+        operation_id=operation_id,
+    )
+    assert recovered.status == "merged"
+    assert (repo / "README.md").read_text(encoding="utf-8") == f"recovered {crash_stage}\n"
+    assert git(repo, "status", "--porcelain=v1") == ""
+    messages = git(repo, "log", "--format=%B", "-10")
+    assert messages.count(f"OpenDrSai-Adoption: {operation_id}") == 1
 
 
 def test_archive_preserves_unmerged_branch_after_worktree_removal(tmp_path: Path) -> None:

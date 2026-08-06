@@ -49,6 +49,25 @@ def _safe_value(value: Any, *, key: str = "") -> Any:
     return redact_sensitive(value, key)
 
 
+def safe_error(value: Any) -> dict[str, Any]:
+    """Project a backend error without exposing credential-bearing prose.
+
+    Error messages are diagnostic rather than conversation content.  If a
+    backend embeds a credential marker in free-form prose (for example
+    ``failed with token <value>``), redact the complete message instead of
+    attempting to preserve a potentially incomplete fragment.
+    """
+    result = _safe_mapping(value)
+    raw_message = value.get("message") if isinstance(value, dict) else None
+    if isinstance(raw_message, str) and re.search(
+        r"\b(?:token|password|secret|private.?key|authorization|api.?key|credential|cookie)\b",
+        raw_message,
+        re.I,
+    ):
+        result["message"] = "[REDACTED]"
+    return result
+
+
 def _is_sensitive_public_key(key: str) -> bool:
     return bool(re.search(
         r"(?:token|password|secret|private.?key|authorization|api.?key|credential|cookie|idempotency.?key|"
@@ -139,6 +158,20 @@ def _safe_resource_refs(value: Any) -> list[dict[str, Any]]:
                 ref[key] = _safe_text(raw[key], limit=512)
         result.append(ref)
     return result
+
+
+def _safe_interaction_options(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    options: list[dict[str, Any]] = []
+    for index, option in enumerate(value[:100]):
+        if isinstance(option, dict):
+            options.append(_safe_mapping(option))
+            continue
+        label = _safe_text(option, limit=512)
+        if label:
+            options.append({"id": label[:256] or f"option-{index + 1}", "label": label})
+    return options
 
 
 def _status(value: str | None) -> str:
@@ -355,10 +388,11 @@ def project_item(item: dict[str, Any]) -> dict[str, Any]:
             "stderr_tail": _safe_text(payload.get("stderr_tail") or ""),
             "exit_code": payload.get("exit_code"),
             "duration_ms": payload.get("duration_ms"),
+            "replay_policy": _safe_mapping(payload.get("replay_policy")),
         }
     elif item_type == "tool_call":
         content = {
-            "tool_kind": str(payload.get("tool_kind") or "tool"),
+            "tool_kind": str(payload.get("tool_kind") or payload.get("kind") or "tool"),
             "tool_name": str(payload.get("tool_name") or payload.get("name") or "tool"),
             "server": payload.get("server"),
             "call_id": str(payload.get("call_id") or payload.get("tool_id") or item["item_id"]),
@@ -368,6 +402,7 @@ def project_item(item: dict[str, Any]) -> dict[str, Any]:
             "arguments": _safe_mapping(payload.get("arguments")),
             "result": _safe_value(payload.get("result", payload.get("output", payload.get("summary")))),
             "duration_ms": payload.get("duration_ms"),
+            "replay_policy": _safe_mapping(payload.get("replay_policy")),
         }
     elif item_type == "interaction":
         request = payload.get("request") if isinstance(payload.get("request"), dict) else payload
@@ -384,7 +419,7 @@ def project_item(item: dict[str, Any]) -> dict[str, Any]:
                 or payload.get("message")
                 or "Approval requested"
             ),
-            "options": _safe_value(payload.get("options") or request.get("options") or []),
+            "options": _safe_interaction_options(payload.get("options") or request.get("options") or []),
             "request_summary": _safe_mapping(request),
             "related_item_id": payload.get("related_item_id"),
             "response": _safe_value(decision),
@@ -489,6 +524,7 @@ def _delta_kind(item_type: str) -> str:
     return {
         "message": "message.text.append",
         "reasoning": "reasoning.text.append",
+        "plan": "plan.text.append",
         "command_execution": "command.output.append",
         "tool_call": "tool.output.append",
         "subtask": "subtask.summary.append",
@@ -570,10 +606,17 @@ def project_event(event: dict[str, Any]) -> dict[str, Any]:
         item = project_item(pseudo_item)
         if event_type == "event.item.delta":
             stream = pseudo_item["payload"].get("stream")
+            reasoning_kind = pseudo_item["payload"].get("reasoning_kind")
+            visibility = pseudo_item["payload"].get("visibility")
+            reasoning_source = pseudo_item["payload"].get("reasoning_source")
             data["delta"] = {
-                "kind": _delta_kind(item["type"]),
+                "kind": str(pseudo_item["payload"].get("delta_kind") or _delta_kind(item["type"])),
                 "text": _delta_text(pseudo_item["payload"]),
+                **({"segment_id": str(pseudo_item["payload"]["segment_id"])} if pseudo_item["payload"].get("segment_id") else {}),
                 **({"stream": str(stream)} if stream in {"stdout", "stderr", "combined"} else {}),
+                **({"reasoning_kind": str(reasoning_kind)} if reasoning_kind in {"summary", "commentary", "analysis"} else {}),
+                **({"visibility": str(visibility)} if visibility in {"user", "diagnostic", "hidden"} else {}),
+                **({"reasoning_source": str(reasoning_source)} if reasoning_source in {"backend", "adapter", "runtime"} else {}),
             }
         else:
             data["item"] = item
@@ -602,7 +645,7 @@ def project_event(event: dict[str, Any]) -> dict[str, Any]:
         data = {
             "status": payload.get("status"),
             **({"reason": _safe_text(payload.get("reason"), limit=200)} if payload.get("reason") else {}),
-            **({"error": _safe_value(payload.get("error"))} if isinstance(payload.get("error"), dict) else {}),
+            **({"error": safe_error(payload.get("error"))} if isinstance(payload.get("error"), dict) else {}),
         }
     elif event_type.startswith("event.session."):
         data = payload
@@ -685,6 +728,7 @@ def reduce_oaep_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     session: dict[str, Any] | None = None
     runs: dict[str, dict[str, Any]] = {}
     items: dict[str, dict[str, Any]] = {}
+    terminal_runs: set[str] = set()
     last_sequence = 0
     for event in events:
         sequence = int(event["sequence"])
@@ -692,6 +736,12 @@ def reduce_oaep_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError("OAEP Event sequence must be strictly increasing")
         last_sequence = sequence
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        event_type = str(event.get("type") or "")
+        event_run_id = str(event.get("run_id") or "")
+        if event_type in {"event.run.completed", "event.run.failed", "event.run.cancelled"}:
+            if event_run_id in terminal_runs:
+                raise ValueError("OAEP Run has more than one terminal Event")
+            terminal_runs.add(event_run_id)
         if isinstance(data.get("session"), dict):
             session = copy.deepcopy(data["session"])
         if isinstance(data.get("run"), dict):
@@ -699,22 +749,71 @@ def reduce_oaep_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             runs[str(run["id"])] = run
         if isinstance(data.get("item"), dict):
             item = copy.deepcopy(data["item"])
+            existing = items.get(str(item["id"]))
+            if existing is not None and existing.get("type") != item.get("type"):
+                raise ValueError("OAEP Item type is immutable")
             items[str(item["id"])] = item
         delta = data.get("delta")
         item_id = event.get("item_id")
+        if isinstance(delta, dict) and item_id and str(item_id) not in items:
+            kind = str(delta.get("kind") or "")
+            item_type = {
+                "message.text.append": "message",
+                "reasoning.segment.added": "reasoning",
+                "reasoning.text.append": "reasoning",
+                "plan.text.append": "plan",
+                "command.output.append": "command_execution",
+                "tool.output.append": "tool_call",
+                "subtask.summary.append": "subtask",
+            }.get(kind)
+            if item_type:
+                content = {
+                    "message": {"role": "assistant", "phase": "final", "text": "", "parts": [], "citations": []},
+                    "reasoning": {"segments": []},
+                    "plan": {"text": "", "steps": []},
+                    "command_execution": {"command": [], "display_command": "", "cwd": ".", "output": "", "stdout_tail": "", "stderr_tail": "", "exit_code": None, "duration_ms": None},
+                    "tool_call": {"tool_kind": "tool", "tool_name": "tool", "call_id": str(item_id), "arguments": {}, "result": ""},
+                    "subtask": {"title": "Subtask", "summary": ""},
+                }[item_type]
+                items[str(item_id)] = {
+                    "id": str(item_id), "session_id": str(event.get("session_id") or ""),
+                    "run_id": event_run_id, "type": item_type, "status": "running",
+                    "sequence": sequence, "created_at": str(event["timestamp"]),
+                    "updated_at": str(event["timestamp"]), "source": copy.deepcopy(event.get("source") or {}),
+                    "content": content,
+                }
         if isinstance(delta, dict) and item_id and str(item_id) in items:
             item = items[str(item_id)]
+            if item.get("status") in {"completed", "failed", "cancelled"}:
+                raise ValueError("OAEP Item Delta cannot follow terminal state")
             content = item.get("content") if isinstance(item.get("content"), dict) else {}
             text = str(delta.get("text") or "")
             kind = str(delta.get("kind") or "")
             if kind == "message.text.append":
                 content["text"] = str(content.get("text") or "") + text
+            elif kind == "reasoning.segment.added":
+                segments = content.setdefault("segments", [])
+                segment_id = str(delta.get("segment_id") or f"{item_id}:segment:{len(segments) + 1}")
+                if not any(isinstance(segment, dict) and str(segment.get("id")) == segment_id for segment in segments):
+                    segments.append({
+                        "id": segment_id, "text": text,
+                        "kind": str(delta.get("reasoning_kind") or "summary"),
+                        "visibility": str(delta.get("visibility") or "user"),
+                        "source": str(delta.get("reasoning_source") or "backend"),
+                    })
             elif kind == "reasoning.text.append":
                 segments = content.setdefault("segments", [])
-                if segments and isinstance(segments[-1], dict):
-                    segments[-1]["text"] = str(segments[-1].get("text") or "") + text
-                else:
-                    segments.append({"id": f"{item_id}:text", "text": text})
+                segment_id = str(delta.get("segment_id") or f"{item_id}:text")
+                target = next((segment for segment in segments if isinstance(segment, dict) and str(segment.get("id")) == segment_id), None)
+                if target is None:
+                    target = {
+                        "id": segment_id, "text": "",
+                        "kind": str(delta.get("reasoning_kind") or "summary"),
+                        "visibility": str(delta.get("visibility") or "user"),
+                        "source": str(delta.get("reasoning_source") or "backend"),
+                    }
+                    segments.append(target)
+                target["text"] = str(target.get("text") or "") + text
             elif kind in {
                 "plan.text.append",
                 "command.output.append",
@@ -725,9 +824,14 @@ def reduce_oaep_events(events: list[dict[str, Any]]) -> dict[str, Any]:
                     field = "summary"
                 elif kind == "plan.text.append":
                     field = "text"
+                elif kind == "tool.output.append":
+                    field = "result"
                 else:
                     field = "output"
                 content[field] = str(content.get(field) or "") + text
+                if kind == "command.output.append":
+                    content.setdefault("stdout_tail", "")
+                    content.setdefault("stderr_tail", "")
             item["content"] = content
             item["status"] = "running"
             item["updated_at"] = str(event["timestamp"])

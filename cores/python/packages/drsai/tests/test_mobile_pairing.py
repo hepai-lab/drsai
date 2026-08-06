@@ -90,6 +90,14 @@ class FakeTransport:
             "revoked_at": datetime.now(UTC).isoformat(),
         }
 
+    async def pause_enrollment(self, credential: RuntimeCredential) -> dict:
+        self.calls.append(("pause_enrollment", credential.runtime_id))
+        return {"runtime_id": credential.runtime_id, "status": "paused"}
+
+    async def resume_enrollment(self, credential: RuntimeCredential) -> dict:
+        self.calls.append(("resume_enrollment", credential.runtime_id))
+        return {"runtime_id": credential.runtime_id, "status": "active"}
+
     async def inject_connection_owner_restart(
         self, credential: RuntimeCredential, ttl_seconds: int,
     ) -> dict:
@@ -175,6 +183,21 @@ def test_service_lists_redacted_associations_and_revokes_selected_device(tmp_pat
     assert revoked.status == "revoked"
     assert [item[0] for item in transport.calls] == [
         "associations", "revoke_association",
+    ]
+
+
+def test_pause_is_reversible_and_preserves_associations(tmp_path: Path) -> None:
+    service, transport = configured_service(tmp_path)
+    assert asyncio.run(service.pause_enrollment())["status"] == "paused"
+    assert service.readiness()["state"] == "paused"
+    assert len(asyncio.run(service.associations())) == 1
+    with pytest.raises(MobilePairingError) as paused:
+        asyncio.run(service.create())
+    assert paused.value.code == "runtime_paused"
+    assert asyncio.run(service.resume_enrollment())["status"] == "active"
+    assert service.readiness()["state"] == "ready"
+    assert [item[0] for item in transport.calls] == [
+        "pause_enrollment", "associations", "resume_enrollment",
     ]
 
 

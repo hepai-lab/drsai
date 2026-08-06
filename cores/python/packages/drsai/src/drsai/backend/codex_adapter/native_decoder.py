@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import ast
 import json
 import re
 from collections import defaultdict
@@ -16,8 +15,13 @@ from drsai.backend.runtime.normalized_events import (
     NormalizedDeltaKind,
     NormalizedEventKind,
     NormalizedItemType,
+    NormalizedReasoningKind,
+    NormalizedReasoningSource,
+    NormalizedReasoningVisibility,
     NormalizedTerminalStatus,
 )
+from drsai.backend.codex_adapter.stable_contract import NotificationClass, classify_notification
+from drsai.backend.codex_adapter.history_migration import decode_legacy_message_parts
 
 
 _SECRET = re.compile(r"(?:token|secret|password|cookie|authorization|api.?key|credential)", re.I)
@@ -50,15 +54,68 @@ class CodexNativeEventDecoder:
 
     backend_id = "codex"
 
-    def __init__(self, *, max_field_chars: int = 8000) -> None:
+    def __init__(self, *, max_field_chars: int = 8000, history_mode: bool = False) -> None:
         self.max_field_chars = max(256, max_field_chars)
+        self.history_mode = history_mode
         self._ordinals: dict[tuple[str, str, str], int] = defaultdict(int)
+        self._message_phases: dict[tuple[str, str], str] = {}
 
     def decode(self, message: Mapping[str, Any]) -> NormalizedAgentEvent | None:
         method = str(message.get("method") or "")
         params = message.get("params") if isinstance(message.get("params"), Mapping) else {}
         thread_id, turn_id, item_id = self.identities(params)
+        if not item_id and turn_id:
+            item_id = {
+                "item/agentMessage/delta": f"agent-message:{turn_id}",
+                "item/plan/delta": f"plan:{turn_id}",
+                "item/reasoning/summaryPartAdded": f"reasoning:{turn_id}",
+                "item/reasoning/summaryTextDelta": f"reasoning:{turn_id}",
+                "item/reasoning/textDelta": f"reasoning:{turn_id}",
+                "item/commandExecution/outputDelta": f"command:{turn_id}",
+                "item/commandExecution/terminalInteraction": f"command:{turn_id}",
+                "item/fileChange/patchUpdated": f"file-change:{turn_id}",
+                "item/mcpToolCall/progress": f"mcp-tool:{turn_id}",
+                "turn/diff/updated": f"turn-diff:{turn_id}",
+            }.get(method, "")
         binding = BackendBinding(thread_id, turn_id or None, item_id or None)
+        classification = classify_notification(method)
+        if classification in {
+            NotificationClass.KNOWN_IGNORED,
+            NotificationClass.SERVER_REQUEST,
+            NotificationClass.DIAGNOSTIC,
+            NotificationClass.UNKNOWN,
+        }:
+            return None
+        if classification is NotificationClass.USER_NOTICE:
+            safe_params = self.safe(params)
+            digest = self._digest(safe_params)
+            message = str(safe_params.get("message") or safe_params.get("reason") or self._notice_message(method))
+            details = self._notice_details(method, safe_params)
+            return self._event(
+                NormalizedEventKind.ITEM_COMPLETED,
+                BackendBinding(
+                    thread_id,
+                    turn_id or f"notice:{thread_id}",
+                    item_id or f"notice:{method}:{digest}",
+                ),
+                method,
+                item_type=NormalizedItemType.NOTICE,
+                payload={
+                    "code": self._notice_code(method),
+                    "level": "info" if method in {"model/verification", "thread/compacted"} else "warning",
+                    "message": message[:1000],
+                    "details": details,
+                },
+            )
+        if classification is NotificationClass.FATAL:
+            safe_params = self.safe(params)
+            if turn_id:
+                return self._event(
+                    NormalizedEventKind.RUN_FAILED, BackendBinding(thread_id, turn_id), method,
+                    terminal_status=NormalizedTerminalStatus.FAILED,
+                    payload={"code": "codex_app_server_fatal", "digest": self._digest(safe_params)},
+                )
+            return None
 
         if method == "turn/started":
             # A replayed turn begins the same deterministic ordinal space as
@@ -67,6 +124,8 @@ class CodexNativeEventDecoder:
             # chunks inside one delivery.
             for key in [key for key in self._ordinals if key[0] == turn_id]:
                 del self._ordinals[key]
+            for key in [key for key in self._message_phases if key[0] == turn_id]:
+                del self._message_phases[key]
             return self._event(NormalizedEventKind.RUN_STARTED, binding, method)
         if method == "turn/completed":
             turn = params.get("turn") if isinstance(params.get("turn"), Mapping) else params
@@ -76,16 +135,97 @@ class CodexNativeEventDecoder:
                 "interrupted": (NormalizedEventKind.RUN_CANCELLED, NormalizedTerminalStatus.CANCELLED),
                 "failed": (NormalizedEventKind.RUN_FAILED, NormalizedTerminalStatus.FAILED),
             }.get(status, (NormalizedEventKind.RUN_FAILED, NormalizedTerminalStatus.FAILED))
-            return self._event(kind, binding, method, terminal_status=terminal, payload=self.safe(turn))
-        if method in {"thread/started", "thread/archived", "thread/unarchived", "thread/deleted"}:
+            event = self._event(kind, binding, method, terminal_status=terminal, payload=self.safe(turn))
+            self._clear_turn_state(turn_id)
+            return event
+        if method in {"thread/started", "thread/archived", "thread/unarchived", "thread/deleted", "thread/closed"}:
             kind = {
                 "thread/started": NormalizedEventKind.SESSION_CREATED,
                 "thread/archived": NormalizedEventKind.SESSION_ARCHIVED,
                 "thread/unarchived": NormalizedEventKind.SESSION_UNARCHIVED,
                 "thread/deleted": NormalizedEventKind.SESSION_DELETED,
+                "thread/closed": NormalizedEventKind.SESSION_UPDATED,
             }[method]
-            return self._event(kind, BackendBinding(thread_id), method, payload=self.safe(params))
-
+            payload = self.safe(params)
+            if method == "thread/closed":
+                payload = {**payload, "status": "closed"}
+            return self._event(kind, BackendBinding(thread_id), method, payload=payload)
+        if method in {"hook/started", "hook/completed"}:
+            run = params.get("run") if isinstance(params.get("run"), Mapping) else {}
+            hook_id = str(run.get("id") or self._digest(self.safe(run)))
+            hook_turn_id = turn_id or f"thread-hook:{thread_id}"
+            hook_binding = BackendBinding(thread_id, hook_turn_id, f"hook:{hook_id}")
+            status = str(run.get("status") or ("running" if method.endswith("started") else "completed"))
+            event_kind = NormalizedEventKind.ITEM_STARTED
+            if method == "hook/completed":
+                event_kind = {
+                    "failed": NormalizedEventKind.ITEM_FAILED,
+                    "blocked": NormalizedEventKind.ITEM_FAILED,
+                    "stopped": NormalizedEventKind.ITEM_CANCELLED,
+                }.get(status, NormalizedEventKind.ITEM_COMPLETED)
+            source_path = str(run.get("sourcePath") or "").replace("\\", "/")
+            source_name = PurePosixPath(source_path).name if source_path else ""
+            return self._event(
+                event_kind,
+                hook_binding,
+                method,
+                item_type=NormalizedItemType.INTERACTION,
+                payload={
+                    "id": f"hook:{hook_id}",
+                    "interaction_type": "hook",
+                    "event_name": self.safe(run.get("eventName") or "hook"),
+                    "handler_type": self.safe(run.get("handlerType") or "unknown"),
+                    "execution_mode": self.safe(run.get("executionMode") or "unknown"),
+                    "scope": self.safe(run.get("scope") or "turn"),
+                    "source": self.safe(run.get("source") or "unknown"),
+                    "source_name": self.safe(source_name),
+                    "entries": self.safe(run.get("entries") if isinstance(run.get("entries"), list) else []),
+                    "duration_ms": run.get("durationMs"),
+                    "status": status,
+                    "status_message": self.safe(run.get("statusMessage") or ""),
+                },
+            )
+        if method == "item/commandExecution/terminalInteraction":
+            stdin = params.get("stdin") if isinstance(params.get("stdin"), str) else ""
+            return self._event(
+                NormalizedEventKind.ITEM_UPDATED,
+                binding,
+                method,
+                item_type=NormalizedItemType.COMMAND_EXECUTION,
+                payload={
+                    "id": item_id,
+                    "status": "running",
+                    "terminal_interaction": "stdin",
+                    "process_id": self.safe(params.get("processId") or ""),
+                    "input_bytes": len(stdin.encode("utf-8")),
+                    "input_redacted": True,
+                },
+            )
+        if method == "item/fileChange/patchUpdated":
+            return self._event(
+                NormalizedEventKind.ITEM_UPDATED,
+                binding,
+                method,
+                item_type=NormalizedItemType.FILE_CHANGE,
+                payload={
+                    "id": item_id,
+                    "status": "running",
+                    "changes": self.safe(params.get("changes") if isinstance(params.get("changes"), list) else []),
+                },
+            )
+        if method == "turn/diff/updated":
+            return self._event(
+                NormalizedEventKind.ITEM_UPDATED,
+                binding,
+                method,
+                item_type=NormalizedItemType.FILE_CHANGE,
+                payload={
+                    "id": item_id,
+                    "status": "running",
+                    "aggregate": True,
+                    "diff": self.safe(params.get("diff") or ""),
+                },
+            )
         if method == "turn/plan/updated":
             plan_item_id = item_id or f"plan:{turn_id}"
             plan_binding = BackendBinding(thread_id, turn_id, plan_item_id)
@@ -104,16 +244,22 @@ class CodexNativeEventDecoder:
 
         delta = self._delta(method, params)
         if delta is not None:
-            item_type, delta_kind, text, stream = delta
+            item_type, delta_kind, text, stream, segment_id, reasoning_kind, reasoning_visibility = delta
             ordinal = self._next_ordinal(turn_id, item_id, method)
+            phase = self._message_phases.get((turn_id, item_id)) if item_type is NormalizedItemType.MESSAGE else None
             return self._event(
                 NormalizedEventKind.ITEM_DELTA,
                 binding,
                 method,
                 item_type=item_type,
                 delta_kind=delta_kind,
+                phase=phase,
                 stream=stream,
-                payload={"text": text, "ordinal": ordinal},
+                segment_id=segment_id,
+                reasoning_kind=reasoning_kind,
+                reasoning_visibility=reasoning_visibility,
+                reasoning_source=NormalizedReasoningSource.BACKEND if item_type is NormalizedItemType.REASONING else None,
+                payload={"text": text, "ordinal": ordinal, **({"segment_id": segment_id} if segment_id else {})},
                 ordinal=ordinal,
             )
 
@@ -122,14 +268,11 @@ class CodexNativeEventDecoder:
             native_type = str(item.get("type") or "unknown")
             item_type = _ITEM_TYPES.get(native_type, NormalizedItemType.NOTICE)
             phase = self._phase(item) if item_type is NormalizedItemType.MESSAGE else None
+            if phase and turn_id and item_id:
+                self._message_phases[(turn_id, item_id)] = phase
             payload = self._item_payload(native_type, item)
             if native_type not in _ITEM_TYPES:
-                payload = {
-                    "level": "warning",
-                    "code": "codex_item_unknown",
-                    "message": native_type,
-                    "native_summary": payload,
-                }
+                return None
             event_kind = NormalizedEventKind.ITEM_STARTED
             if method == "item/completed":
                 event_kind = {
@@ -143,36 +286,88 @@ class CodexNativeEventDecoder:
                 method,
                 item_type=item_type,
                 phase=phase,
+                reasoning_kind=NormalizedReasoningKind.SUMMARY if item_type is NormalizedItemType.REASONING else None,
+                reasoning_visibility=(
+                    NormalizedReasoningVisibility.USER
+                    if item_type is NormalizedItemType.REASONING and payload.get("segments")
+                    else NormalizedReasoningVisibility.DIAGNOSTIC
+                    if item_type is NormalizedItemType.REASONING
+                    else None
+                ),
+                reasoning_source=NormalizedReasoningSource.BACKEND if item_type is NormalizedItemType.REASONING else None,
                 payload=payload,
             )
-        if not method or method in {
-            "thread/status/changed",
-            "thread/tokenUsage/updated",
-            "account/rateLimits/updated",
-        }:
+        if not method:
             return None
-        safe_params = self.safe(params)
-        digest = self._digest(safe_params)
+        return None
+
+    def state_diagnostics(self) -> dict[str, int]:
+        return {"ordinals": len(self._ordinals), "message_phases": len(self._message_phases)}
+
+    def discard_turn(self, turn_id: str) -> None:
         if turn_id:
-            notice_id = item_id or f"notice:{digest}"
-            return self._event(
-                NormalizedEventKind.ITEM_COMPLETED,
-                BackendBinding(thread_id, turn_id, notice_id),
-                method,
-                item_type=NormalizedItemType.NOTICE,
-                payload={
-                    "level": "info",
-                    "code": "codex_notification_unknown",
-                    "message": method,
-                    "details": {"method": method, "digest": digest},
-                },
-            )
-        return self._event(
-            NormalizedEventKind.SESSION_UPDATED,
-            BackendBinding(thread_id),
-            method,
-            payload={"code": "codex_notification_unknown", "method": method, "digest": digest},
-        )
+            self._clear_turn_state(turn_id)
+
+    def terminal_agent_messages(self, message: Mapping[str, Any]) -> list[NormalizedAgentEvent]:
+        """Decode terminal fallback messages without exposing Codex fields to the Mapper."""
+        params = message.get("params") if isinstance(message.get("params"), Mapping) else {}
+        thread_id, turn_id, _item_id = self.identities(params)
+        turn = params.get("turn") if isinstance(params.get("turn"), Mapping) else {}
+        items = turn.get("items") if isinstance(turn.get("items"), list) else []
+        events: list[NormalizedAgentEvent] = []
+        for item in items:
+            if not isinstance(item, Mapping) or str(item.get("type") or "") != "agentMessage":
+                continue
+            decoded = self.decode({
+                "method": "item/completed",
+                "params": {"threadId": thread_id, "turnId": turn_id, "item": item},
+            })
+            if decoded is not None:
+                events.append(decoded)
+        return events
+
+    @staticmethod
+    def unmapped_identity(message: Mapping[str, Any]) -> str:
+        params = message.get("params") if isinstance(message.get("params"), Mapping) else {}
+        method = str(message.get("method") or "unknown")
+        if method in {"item/started", "item/completed"}:
+            item = params.get("item") if isinstance(params.get("item"), Mapping) else {}
+            return f"{method}:{str(item.get('type') or 'unknown')[:120]}"
+        return method[:160]
+
+    @staticmethod
+    def _notice_code(method: str) -> str:
+        return {
+            "deprecationNotice": "codex_deprecation",
+            "model/rerouted": "model_rerouted",
+            "thread/compacted": "codex_context_compacted",
+        }.get(method, f"codex_{method.replace('/', '_')}")
+
+    @staticmethod
+    def _notice_message(method: str) -> str:
+        return {
+            "deprecationNotice": "Codex reported a deprecated capability.",
+            "model/rerouted": "Codex adjusted the model used for this task.",
+            "thread/compacted": "Codex compacted the task context.",
+            "model/safetyBuffering/updated": "Codex adjusted model safety buffering.",
+            "model/verification": "Codex model verification was updated.",
+        }.get(method, "Codex reported an operational notice.")
+
+    @staticmethod
+    def _notice_details(method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        if method == "model/rerouted":
+            return {
+                "from_model": params.get("fromModel") or "",
+                "to_model": params.get("toModel") or "",
+                "reason": params.get("reason") or "unspecified",
+            }
+        return {"category": method}
+
+    def _clear_turn_state(self, turn_id: str) -> None:
+        for key in [key for key in self._ordinals if key[0] == turn_id]:
+            del self._ordinals[key]
+        for key in [key for key in self._message_phases if key[0] == turn_id]:
+            del self._message_phases[key]
 
     def _item_payload(self, native_type: str, item: Mapping[str, Any]) -> Mapping[str, Any]:
         safe = self.safe(item)
@@ -277,7 +472,7 @@ class CodexNativeEventDecoder:
         direct = item.get("text")
         content = item.get("content")
         for candidate in (content, direct):
-            parsed = self._legacy_message_parts(candidate)
+            parsed = self._history_message_parts(candidate)
             if parsed is not None:
                 content = parsed
                 direct = None
@@ -294,7 +489,7 @@ class CodexNativeEventDecoder:
                 continue
             kind = str(raw.get("type") or "")
             if kind == "text":
-                nested = self._legacy_message_parts(raw.get("text"))
+                nested = self._history_message_parts(raw.get("text"))
                 if nested is not None:
                     for nested_part in nested:
                         if str(nested_part.get("type") or "") != "text":
@@ -323,39 +518,35 @@ class CodexNativeEventDecoder:
             text = self.safe(direct)
         return str(text or ""), parts
 
-    def _legacy_message_parts(self, value: Any) -> list[Mapping[str, Any]] | None:
-        if not isinstance(value, str) or len(value) > self.max_field_chars * 4:
+    def _history_message_parts(self, value: Any) -> list[Mapping[str, Any]] | None:
+        if not self.history_mode:
             return None
-        stripped = value.strip()
-        if not (stripped.startswith("[") and stripped.endswith("]")):
-            return None
-        parsed: Any = None
-        try:
-            parsed = json.loads(stripped)
-        except json.JSONDecodeError:
-            try:
-                parsed = ast.literal_eval(stripped)
-            except (ValueError, SyntaxError, MemoryError, RecursionError):
-                return None
-        if isinstance(parsed, list) and all(isinstance(part, Mapping) for part in parsed):
-            return parsed
-        return None
+        return decode_legacy_message_parts(value, max_chars=self.max_field_chars * 4)
 
     def _reasoning_segments(self, item: Mapping[str, Any]) -> list[dict[str, str]]:
-        values = item.get("summary") or item.get("summaryParts") or item.get("segments") or item.get("text") or []
-        if not isinstance(values, list):
-            values = [values]
         segments: list[dict[str, str]] = []
-        for index, value in enumerate(values[:100]):
-            if isinstance(value, Mapping):
-                text = value.get("text") or value.get("summary") or ""
-                segment_id = str(value.get("id") or f"summary-{index + 1}")
-            else:
-                text = value
-                segment_id = f"summary-{index + 1}"
-            safe_text = self.safe(text)
-            if isinstance(safe_text, str) and safe_text:
-                segments.append({"id": segment_id, "text": safe_text})
+        summary = item.get("summary") or item.get("summaryParts")
+        sources = [("summary", summary)] if summary is not None else []
+        # Codex `content`/`text` is raw model analysis.  It is deliberately not
+        # projected into OAEP user-visible reasoning; only public summaries are.
+        for prefix, raw_values in sources:
+            values = raw_values if isinstance(raw_values, list) else [raw_values]
+            for index, value in enumerate(values[:100]):
+                if isinstance(value, Mapping):
+                    text = value.get("text") or value.get("summary") or ""
+                    segment_id = str(value.get("id") or f"{prefix}-{index + 1}")
+                else:
+                    text = value
+                    segment_id = f"{prefix}-{index + 1}"
+                safe_text = self.safe(text)
+                if isinstance(safe_text, str) and safe_text:
+                    segments.append({
+                        "id": segment_id,
+                        "text": safe_text,
+                        "kind": "summary",
+                        "visibility": "user",
+                        "source": "backend",
+                    })
         return segments
 
     @staticmethod
@@ -370,24 +561,56 @@ class CodexNativeEventDecoder:
 
     def _delta(
         self, method: str, params: Mapping[str, Any]
-    ) -> tuple[NormalizedItemType, NormalizedDeltaKind, str, str | None] | None:
+    ) -> tuple[
+        NormalizedItemType,
+        NormalizedDeltaKind,
+        str,
+        str | None,
+        str | None,
+        NormalizedReasoningKind | None,
+        NormalizedReasoningVisibility | None,
+    ] | None:
         value = params.get("delta")
         if value is None:
             value = params.get("text") or params.get("output") or params.get("chunk")
         text = str(value) if isinstance(value, str) else ""
         if method == "item/agentMessage/delta" and isinstance(value, str):
-            return NormalizedItemType.MESSAGE, NormalizedDeltaKind.MESSAGE_TEXT_APPEND, text, None
+            return NormalizedItemType.MESSAGE, NormalizedDeltaKind.MESSAGE_TEXT_APPEND, text, None, None, None, None
         if method == "item/plan/delta" and isinstance(value, str):
-            return NormalizedItemType.PLAN, NormalizedDeltaKind.PLAN_TEXT_APPEND, text, None
+            return NormalizedItemType.PLAN, NormalizedDeltaKind.PLAN_TEXT_APPEND, text, None, None, None, None
         if method == "item/reasoning/summaryPartAdded":
-            return NormalizedItemType.REASONING, NormalizedDeltaKind.REASONING_SEGMENT_ADDED, text, None
+            index = params.get("summaryIndex")
+            segment_id = f"summary-{int(index) + 1}" if isinstance(index, int) and index >= 0 else "summary-1"
+            return (
+                NormalizedItemType.REASONING, NormalizedDeltaKind.REASONING_SEGMENT_ADDED,
+                text, None, segment_id, NormalizedReasoningKind.SUMMARY, NormalizedReasoningVisibility.USER,
+            )
         if method in {"item/reasoning/summaryTextDelta", "item/reasoning/textDelta"} and isinstance(value, str):
-            return NormalizedItemType.REASONING, NormalizedDeltaKind.REASONING_TEXT_APPEND, text, None
+            is_summary = method.endswith("summaryTextDelta")
+            index = params.get("summaryIndex") if is_summary else params.get("contentIndex")
+            prefix = "summary" if is_summary else "content"
+            segment_id = f"{prefix}-{int(index) + 1}" if isinstance(index, int) and index >= 0 else f"{prefix}-1"
+            return (
+                NormalizedItemType.REASONING, NormalizedDeltaKind.REASONING_TEXT_APPEND,
+                text, None, segment_id,
+                NormalizedReasoningKind.SUMMARY if is_summary else NormalizedReasoningKind.ANALYSIS,
+                NormalizedReasoningVisibility.USER if is_summary else NormalizedReasoningVisibility.DIAGNOSTIC,
+            )
         if method == "item/commandExecution/outputDelta" and isinstance(value, str):
             stream = str(params.get("stream") or "combined")
             if stream not in {"stdout", "stderr", "combined"}:
                 stream = "combined"
-            return NormalizedItemType.COMMAND_EXECUTION, NormalizedDeltaKind.COMMAND_OUTPUT_APPEND, text, stream
+            return NormalizedItemType.COMMAND_EXECUTION, NormalizedDeltaKind.COMMAND_OUTPUT_APPEND, text, stream, None, None, None
+        if method == "item/mcpToolCall/progress" and isinstance(params.get("message"), str):
+            return (
+                NormalizedItemType.TOOL_CALL,
+                NormalizedDeltaKind.TOOL_OUTPUT_APPEND,
+                str(params["message"]),
+                None,
+                None,
+                None,
+                None,
+            )
         return None
 
     def _event(
@@ -400,7 +623,11 @@ class CodexNativeEventDecoder:
         delta_kind: NormalizedDeltaKind | None = None,
         phase: str | None = None,
         stream: str | None = None,
+        segment_id: str | None = None,
         terminal_status: NormalizedTerminalStatus | None = None,
+        reasoning_kind: NormalizedReasoningKind | None = None,
+        reasoning_visibility: NormalizedReasoningVisibility | None = None,
+        reasoning_source: NormalizedReasoningSource | None = None,
         payload: Mapping[str, Any] | None = None,
         ordinal: int | None = None,
     ) -> NormalizedAgentEvent:
@@ -414,7 +641,11 @@ class CodexNativeEventDecoder:
             delta_kind=delta_kind,
             phase=phase,
             stream=stream,
+            segment_id=segment_id,
             terminal_status=terminal_status,
+            reasoning_kind=reasoning_kind,
+            reasoning_visibility=reasoning_visibility,
+            reasoning_source=reasoning_source,
             dedupe_key=f"codex:{identity}:{method}:{suffix}",
             payload=payload or {},
         )

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import pytest
 
+from drsai.backend.codex_adapter.native_decoder import CodexNativeEventDecoder
 from drsai.backend.runtime.adapter_registry import AgentEventAdapterRegistry
 from drsai.backend.runtime.agent import (
     AgentExecutionServices,
+    OpenDrSaiAgentBackend,
     RuntimeRunContext,
 )
 from drsai.backend.runtime.normalized_events import (
@@ -13,6 +16,9 @@ from drsai.backend.runtime.normalized_events import (
     NormalizedDeltaKind,
     NormalizedEventKind,
     NormalizedItemType,
+    NormalizedReasoningKind,
+    NormalizedReasoningSource,
+    NormalizedReasoningVisibility,
     NormalizedTerminalStatus,
 )
 
@@ -58,6 +64,29 @@ def test_terminal_status_is_explicit_and_exclusive() -> None:
         dedupe_key="codex:turn-1:cancelled",
     )
     assert event.terminal_status is NormalizedTerminalStatus.CANCELLED
+
+
+def test_reasoning_visibility_defaults_are_backend_neutral_and_scoped() -> None:
+    event = NormalizedAgentEvent(
+        kind=NormalizedEventKind.ITEM_COMPLETED,
+        backend="example",
+        binding=BackendBinding("thread", "run", "reasoning"),
+        item_type=NormalizedItemType.REASONING,
+        dedupe_key="reasoning-completed",
+        payload={"segments": []},
+    )
+    assert event.reasoning_kind is NormalizedReasoningKind.SUMMARY
+    assert event.reasoning_visibility is NormalizedReasoningVisibility.USER
+    assert event.reasoning_source is NormalizedReasoningSource.BACKEND
+    with pytest.raises(ValueError, match="only valid for reasoning"):
+        NormalizedAgentEvent(
+            kind=NormalizedEventKind.ITEM_COMPLETED,
+            backend="example",
+            binding=BackendBinding("thread", "run", "message"),
+            item_type=NormalizedItemType.MESSAGE,
+            reasoning_visibility=NormalizedReasoningVisibility.HIDDEN,
+            dedupe_key="invalid-message-reasoning",
+        )
 
 
 class _ExampleFutureBackendAdapter:
@@ -148,3 +177,42 @@ def test_backend_private_ids_cannot_redirect_runtime_persistence(tmp_path) -> No
     services.emit_normalized(context, event)
     assert state.calls[0][0][0] == "run-1"
     assert state.calls[0][0][3] == "foreign-backend-event"
+
+
+def test_opendrsai_and_codex_backends_emit_the_same_normalized_message_semantics(tmp_path) -> None:
+    class _Services:
+        def __init__(self) -> None:
+            self.normalized: list[NormalizedAgentEvent] = []
+
+        def emit(self, *_args, **_kwargs):
+            return {}
+
+        def emit_normalized(self, _context, event: NormalizedAgentEvent):
+            self.normalized.append(event)
+            return {}
+
+    context = RuntimeRunContext(
+        runtime_id="runtime-1", instance_id="instance-1", workspace_id="workspace-1",
+        workspace_path=tmp_path, session_id="session-1", run_id="run-1",
+        agent_definition_id="agent", agent_definition_version="1",
+    )
+    services = _Services()
+    backend = OpenDrSaiAgentBackend(lambda *_: {"content": "Hello.", "done": True})
+    asyncio.run(backend.execute(context, object(), "hello", services))  # type: ignore[arg-type]
+
+    decoder = CodexNativeEventDecoder()
+    codex_events = [decoder.decode(message) for message in [
+        {"method": "item/started", "params": {"threadId": "thread", "turnId": "turn",
+         "item": {"id": "message", "type": "agentMessage", "phase": "final", "text": ""}}},
+        {"method": "item/agentMessage/delta", "params": {"threadId": "thread", "turnId": "turn",
+         "itemId": "message", "delta": "Hello."}},
+        {"method": "item/completed", "params": {"threadId": "thread", "turnId": "turn",
+         "item": {"id": "message", "type": "agentMessage", "phase": "final", "text": "Hello."}}},
+    ]]
+    assert all(event is not None for event in codex_events)
+    assert [(event.kind, event.item_type, event.phase) for event in services.normalized] == [
+        (event.kind, event.item_type, event.phase) for event in codex_events if event is not None
+    ]
+    assert services.normalized[1].delta_kind is NormalizedDeltaKind.MESSAGE_TEXT_APPEND
+    assert services.normalized[1].payload["text"] == codex_events[1].payload["text"]  # type: ignore[union-attr]
+    assert services.normalized[2].payload["role"] == codex_events[2].payload["role"] == "assistant"  # type: ignore[union-attr]

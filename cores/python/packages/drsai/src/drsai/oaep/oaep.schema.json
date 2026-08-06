@@ -467,6 +467,27 @@
                   },
                   "text": {
                     "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "summary",
+                      "commentary",
+                      "analysis"
+                    ]
+                  },
+                  "visibility": {
+                    "enum": [
+                      "user",
+                      "diagnostic",
+                      "hidden"
+                    ]
+                  },
+                  "source": {
+                    "enum": [
+                      "backend",
+                      "adapter",
+                      "runtime"
+                    ]
                   }
                 }
               }
@@ -528,6 +549,68 @@
         }
       ]
     },
+    "replayPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "enum": [
+            "pure",
+            "read_only_versioned",
+            "read_only_mutable",
+            "workspace_write",
+            "external_write",
+            "unknown"
+          ]
+        },
+        "tool_reference": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "source_event_id": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "input_digest": {
+          "type": "string",
+          "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+        },
+        "implementation_digest": {
+          "type": "string",
+          "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+        },
+        "schema_digest": {
+          "type": "string",
+          "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+        },
+        "result_digest": {
+          "type": "string",
+          "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+        },
+        "current": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "input_digest": {
+              "type": "string",
+              "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+            },
+            "implementation_digest": {
+              "type": "string",
+              "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+            },
+            "schema_digest": {
+              "type": "string",
+              "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+            },
+            "result_digest": {
+              "type": "string",
+              "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
     "commandExecutionContent": {
       "type": "object",
       "unevaluatedProperties": false,
@@ -581,6 +664,9 @@
                 "null"
               ],
               "minimum": 0
+            },
+            "replay_policy": {
+              "$ref": "#/$defs/replayPolicy"
             }
           }
         }
@@ -634,6 +720,9 @@
                 "null"
               ],
               "minimum": 0
+            },
+            "replay_policy": {
+              "$ref": "#/$defs/replayPolicy"
             }
           }
         }
@@ -1217,6 +1306,27 @@
             "stderr",
             "combined"
           ]
+        },
+        "reasoning_kind": {
+          "enum": [
+            "summary",
+            "commentary",
+            "analysis"
+          ]
+        },
+        "visibility": {
+          "enum": [
+            "user",
+            "diagnostic",
+            "hidden"
+          ]
+        },
+        "reasoning_source": {
+          "enum": [
+            "backend",
+            "adapter",
+            "runtime"
+          ]
         }
       }
     },
@@ -1394,6 +1504,54 @@
         "snapshot_sequence": {
           "type": "integer",
           "minimum": 0
+        },
+        "checkpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sequence",
+            "snapshot_hash",
+            "item_count"
+          ],
+          "properties": {
+            "sequence": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "snapshot_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "item_count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "window": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "limit",
+            "has_more",
+            "next_cursor"
+          ],
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "has_more": {
+              "type": "boolean"
+            },
+            "next_cursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
         }
       }
     },

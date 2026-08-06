@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal, Mapping
 
+from drsai.platform_auth import get_model_credential_provider
+
 from .connectivity import test_provider_connection
 from .loader import parse_user_config
 from .resolver import resolve_model_config
@@ -20,6 +22,7 @@ class ProviderDraft:
     requires_api_key: bool = True
     api_key: str | None = field(default=None, repr=False)
     api_key_env: str | None = None
+    api_key_credential: str | None = None
 
 
 async def probe_provider_draft(
@@ -38,6 +41,15 @@ async def probe_provider_draft(
         values["api_key"] = draft.api_key
     if draft.api_key_env is not None:
         values["api_key_env"] = draft.api_key_env
+    if draft.api_key_credential is not None:
+        values["api_key_credential"] = draft.api_key_credential
+    if draft.name == "hepai":
+        credential = get_model_credential_provider(draft.api_key, draft.base_url)
+        if credential is not None:
+            # Match real HepAI model calls: an authenticated Desktop request uses
+            # its request-scoped OIDC token and issuer-provided model endpoint.
+            values["base_url"] = credential.openai_base_url
+            values["api_key"] = credential.access_token
     config = parse_user_config({
         "model": draft.model,
         "model_provider": draft.name,

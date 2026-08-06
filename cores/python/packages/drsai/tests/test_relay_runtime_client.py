@@ -4,6 +4,7 @@ import ast
 import asyncio
 import json
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 
@@ -17,6 +18,7 @@ from drsai.relay.runtime_client import (
     resolve_runtime_version,
 )
 from drsai.relay.enroll_cli import parser
+from drsai.backend.runtime.observability import ResourceCorrelation, RuntimeObservability
 
 
 def test_runtime_version_defaults_to_loaded_windows_runtime_and_allows_controlled_override():
@@ -98,8 +100,33 @@ def test_runtime_connector_is_outbound_wss_and_sends_signed_hello(tmp_path: Path
     hello = FakeSession.last.socket.sent[0]
     assert hello["type"] == "runtime.hello" and hello["runtime_id"] == "rt-one"
     assert hello["signature"] and hello["nonce"]
+    assert "mcp.stdio" not in hello["capabilities"]
     with pytest.raises(ValueError, match="wss"):
         RuntimeOutboundConnector("ws://127.0.0.1:8765", RuntimeCredential("rt", "token"), identity, "i", "1")
+
+
+def test_runtime_connector_advertises_stdio_mcp_only_when_configured(tmp_path: Path) -> None:
+    identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+    connector = RuntimeOutboundConnector(
+        "wss://relay.example/v1/runtime-connect", RuntimeCredential("rt-one", "token"),
+        identity, "instance-one", "1.4.6", session_factory=FakeSession,
+        execution_capabilities=frozenset({"mcp.stdio"}),
+    )
+    asyncio.run(connector.run_once())
+    assert "mcp.stdio" in FakeSession.last.socket.sent[0]["capabilities"]
+    hai = RuntimeOutboundConnector(
+        "wss://relay.example/api/runtime-relay/v1/runtime-connect", RuntimeCredential("rt-one", "token"),
+        identity, "instance-one", "1.4.6", session_factory=FakeSession, wire_protocol="hai-http",
+        execution_capabilities=frozenset({"mcp.stdio"}),
+    )
+    asyncio.run(hai.run_once())
+    assert "mcp.stdio" in FakeSession.last.socket.sent[0]["capabilities"]
+    assert "mcp.stdio" in unquote(FakeSession.last.url)
+    with pytest.raises(ValueError, match="runtime_execution_capability_invalid"):
+        RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect", RuntimeCredential("rt-one", "token"),
+            identity, "instance-one", "1.4.6", execution_capabilities=frozenset({"shell"}),
+        )
 
 
 def test_runtime_connector_source_has_no_listener_or_server_socket() -> None:
@@ -172,7 +199,9 @@ def test_runtime_connector_supports_frozen_hai_http_frames(tmp_path: Path) -> No
         assert "runtime_id=rt-one" in FakeSession.last.url
         assert "instance_id=instance-one" in FakeSession.last.url
         assert "version=2.0.0" in FakeSession.last.url
+        assert "capabilities=" in FakeSession.last.url
         assert FakeSession.last.socket.sent[0]["type"] == "heartbeat"
+        assert "mcp.stdio" not in FakeSession.last.socket.sent[0]["capabilities"]
         assert FakeSession.last.socket.sent[-1] == {
             "type": "response",
             "request_id": "request-hai",
@@ -399,6 +428,134 @@ def test_runtime_connector_does_not_ack_oaep_frame_when_socket_write_fails(
         assert acknowledgements == []
 
     asyncio.run(scenario())
+
+
+def test_runtime_connector_batches_oaep_ack_to_highest_sequence_per_session(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        acknowledgements: list[dict[str, int]] = []
+
+        def frame(session_id: str, sequence: int) -> dict:
+            event = {
+                "version": "1.0", "event_id": f"{session_id}-{sequence}",
+                "session_id": session_id, "run_id": None, "sequence": sequence,
+                "type": "event.session.updated", "timestamp": "2026-08-04T00:00:00Z",
+                "dedupe_key": f"{session_id}-{sequence}",
+                "source": {"backend": "runtime", "runtime_id": "rt-one"},
+                "data": {},
+            }
+            return {
+                "runtime_id": "rt-one", "workspace_id": "workspace-one",
+                "session_id": session_id, "sequence": sequence, "event": event,
+            }
+
+        async def events():
+            return [frame("session-one", 1), frame("session-one", 2), frame("session-two", 4)]
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "2.0.0",
+            oaep_event_provider=events,
+            oaep_events_ack=lambda cursors: acknowledgements.append(dict(cursors)),
+            wire_protocol="hai-http",
+        )
+        task = asyncio.create_task(connector._forward_oaep_events(socket))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert len(socket.sent) == 3
+        assert acknowledgements == [{"session-one": 2, "session-two": 4}]
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_forwards_content_free_journal_and_wss_latency(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        observability = RuntimeObservability(tmp_path / "observability.sqlite3")
+        observability.record_conversation_latency(
+            "journal_append",
+            3.0,
+            ResourceCorrelation(
+                "event-one", "event-one", runtime_id="rt-one",
+                workspace_id="workspace-one", session_id="session-one",
+            ),
+        )
+        event = {
+            "version": "1.0", "event_id": "event-one", "session_id": "session-one",
+            "run_id": None, "sequence": 1, "type": "event.session.updated",
+            "timestamp": "2026-08-04T00:00:00Z", "dedupe_key": "event-one",
+            "source": {"backend": "runtime", "runtime_id": "rt-one"}, "data": {},
+        }
+
+        async def events():
+            return [{
+                "runtime_id": "rt-one", "workspace_id": "workspace-one",
+                "session_id": "session-one", "sequence": 1, "event": event,
+            }]
+
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"), identity, "instance-one", "2.0.0",
+            oaep_event_provider=events,
+            conversation_latency_observability=observability,
+            wire_protocol="hai-http",
+        )
+        task = asyncio.create_task(connector._forward_oaep_events(socket))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert socket.sent[0]["type"] == "event"
+        telemetry = [row for row in socket.sent if row["type"] == "telemetry.conversation_latency"]
+        assert {row["stage"] for row in telemetry} == {"journal_append", "runtime_wss_send"}
+        assert all("event" not in row and "body" not in row for row in telemetry)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "forwarder_name",
+    ["_forward_events", "_forward_session_events", "_forward_oaep_events"],
+)
+def test_runtime_connector_backs_off_idle_event_providers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, forwarder_name: str,
+) -> None:
+    observed_delays: list[float] = []
+
+    async def no_events() -> list[dict]:
+        return []
+
+    async def controlled_sleep(delay: float) -> None:
+        observed_delays.append(delay)
+        if len(observed_delays) == 3:
+            raise asyncio.CancelledError
+
+    async def scenario() -> None:
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "2.0.0",
+            event_provider=no_events,
+            session_event_provider=no_events,
+            oaep_event_provider=no_events,
+            wire_protocol="hai-http",
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await getattr(connector, forwarder_name)(FakeSocket())
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+    asyncio.run(scenario())
+    assert observed_delays == [2.0, 4.0, 4.0]
 
 
 def test_runtime_connector_keeps_control_correlation_separate_from_oaep_push(

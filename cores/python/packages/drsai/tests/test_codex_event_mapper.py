@@ -70,8 +70,15 @@ def test_codex_items_authoritative_sequence_dedupe_and_safe_unknown(tmp_path: Pa
                                                             "tool": "spawn", "newThreadId": "child-1"}}},
         {"method": "item/completed", "params": {"threadId": "thread-1", "turnId": "turn-1",
                                                       "item": {"id": "file-1", "type": "fileChange", "path": "a.txt"}}},
+        {"method": "item/started", "params": {"threadId": "thread-1", "turnId": "turn-1",
+                                                     "item": {"id": "tool-1", "type": "mcpToolCall",
+                                                              "name": "workspace.inspect", "arguments": {"path": "a.txt"}}}},
         {"method": "item/completed", "params": {"threadId": "thread-1", "turnId": "turn-1",
-                                                      "item": {"id": "tool-1", "type": "mcpToolCall", "output": "ok"}}},
+                                                      "item": {"id": "tool-1", "type": "mcpToolCall",
+                                                               "name": "workspace.inspect", "output": "ok"}}},
+        {"method": "item/started", "params": {"threadId": "thread-1", "turnId": "turn-1",
+                                                     "item": {"id": "approval-1", "type": "hookPrompt",
+                                                              "prompt": "Allow file change?", "options": ["allow", "deny"]}}},
         {"method": "item/completed", "params": {"threadId": "thread-1", "turnId": "turn-1",
                                                       "item": {"id": "future-1", "type": "futureItem",
                                                                "accessToken": "SECRET-CANARY", "detail": "safe"}}},
@@ -80,15 +87,19 @@ def test_codex_items_authoritative_sequence_dedupe_and_safe_unknown(tmp_path: Pa
         mapper.handle(context, services, message)
     events = engine.list_events(context.run_id)
     mapped = [event for event in events if event.get("backend_event_key")]
-    assert len(mapped) == len(messages) - 1
+    assert len(mapped) == len(messages) - 3
     assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     assert {event["type"] for event in mapped} >= {
-        "agent.item.command", "agent.item.command.delta", "agent.item.reasoning.delta",
+        "agent.item.command", "agent.item.command.delta",
         "agent.item.plan", "agent.item.plan.delta", "agent.item.subtask",
-        "agent.item.file_change", "agent.item.tool", "agent.item.unknown"
+        "agent.item.file_change", "agent.item.tool", "agent.item.interaction",
     }
+    assert "agent.item.unknown" not in {event["type"] for event in mapped}
     serialized = str(mapped)
-    assert "SECRET-CANARY" not in serialized and "[REDACTED]" in serialized
+    assert "SECRET-CANARY" not in serialized
+    diagnostic = mapper.diagnostics_snapshot()["protocol_diagnostics"]
+    assert diagnostic["methods"]["item/completed:futureItem"]["count"] == 2
+    assert "SECRET-CANARY" not in str(diagnostic)
     oaep_items = {
         item["id"]: item for item in engine.oaep_snapshot(context.session_id)["items"]
     }
@@ -103,19 +114,21 @@ def test_codex_items_authoritative_sequence_dedupe_and_safe_unknown(tmp_path: Pa
     file_change = oaep_items[f"codex:{context.run_id}:file-1"]
     assert file_change["type"] == "file_change"
     assert file_change["content"]["changes"] == [{"path": "a.txt", "operation": "modify"}]
-    reasoning = oaep_items[f"codex:{context.run_id}:reasoning-1"]
-    assert reasoning["type"] == "reasoning"
-    assert reasoning["content"]["segments"][0]["text"] == "thinking"
+    assert f"codex:{context.run_id}:reasoning-1" not in oaep_items
+    assert "thinking" not in str(events)
+    assert "thinking" not in str(mapper.diagnostics_snapshot())
     plan = oaep_items[f"codex:{context.run_id}:plan-1"]
     assert plan["type"] == "plan" and plan["content"]["text"] == "inspect"
     subtask = oaep_items[f"codex:{context.run_id}:subtask-1"]
     assert subtask["type"] == "subtask" and subtask["content"]["child_run_id"] == "child-1"
     tool = oaep_items[f"codex:{context.run_id}:tool-1"]
     assert tool["type"] == "tool_call"
+    assert tool["content"]["tool_name"] == "workspace.inspect"
     assert tool["content"]["result"] == "ok"
-    unknown = oaep_items[f"codex:{context.run_id}:future-1"]
-    assert unknown["type"] == "notice"
-    assert unknown["content"]["code"] == "codex_item_unknown"
+    interaction = oaep_items[f"codex:{context.run_id}:approval-1"]
+    assert interaction["type"] == "interaction"
+    assert interaction["content"]["prompt"] == "Allow file change?"
+    assert f"codex:{context.run_id}:future-1" not in oaep_items
     assert "SECRET-CANARY" not in str(oaep_items)
     schema = json.loads(OAEP_SCHEMA.read_text(encoding="utf-8"))
     validator = Draft202012Validator({"$defs": schema["$defs"], "$ref": "#/$defs/item"})
@@ -137,13 +150,9 @@ def test_codex_items_authoritative_sequence_dedupe_and_safe_unknown(tmp_path: Pa
         }
         for event in oaep_events
     )
-    assert any(
+    assert not any(
         event["type"] == "event.item.delta"
         and event.get("item_id") == f"codex:{context.run_id}:reasoning-1"
-        and event["data"]["delta"] == {
-            "kind": "reasoning.text.append",
-            "text": "thinking",
-        }
         for event in oaep_events
     )
     assert any(
@@ -211,6 +220,64 @@ def test_completed_turn_without_delta_emits_full_answer_once(tmp_path: Path):
     assert len(answers) == 1
 
 
+def test_commentary_does_not_suppress_terminal_final_answer_fallback(tmp_path: Path) -> None:
+    engine, context, services = _fixture(tmp_path)
+    mapper = CodexEventMapper(batch_bytes=256)
+    for message in (
+        {"method": "item/started", "params": {
+            "threadId": "thread-1", "turnId": "turn-1",
+            "item": {"id": "commentary-1", "type": "agentMessage", "phase": "commentary"},
+        }},
+        {"method": "item/agentMessage/delta", "params": {
+            "threadId": "thread-1", "turnId": "turn-1", "itemId": "commentary-1", "delta": "Working",
+        }},
+        {"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
+            "id": "turn-1", "status": "completed", "items": [
+                {"id": "commentary-1", "type": "agentMessage", "phase": "commentary", "text": "Working"},
+                {"id": "answer-1", "type": "agentMessage", "phase": "final", "text": "Done"},
+            ],
+        }}},
+    ):
+        mapper.handle(context, services, message)
+
+    messages = [
+        item for item in engine.oaep_snapshot(context.session_id)["items"]
+        if item["type"] == "message" and item["content"].get("role") == "assistant"
+    ]
+    assert [(item["content"].get("phase"), item["content"].get("text")) for item in messages] == [
+        ("commentary", "Working"),
+        ("final", "Done"),
+    ]
+    assert mapper.diagnostics_snapshot()["active_message_items"] == 0
+
+
+def test_terminal_fallback_does_not_duplicate_an_already_streamed_final_item(tmp_path: Path) -> None:
+    engine, context, services = _fixture(tmp_path)
+    mapper = CodexEventMapper(batch_bytes=256)
+    for message in (
+        {"method": "item/started", "params": {
+            "threadId": "thread-1", "turnId": "turn-1",
+            "item": {"id": "answer-1", "type": "agentMessage", "phase": "final"},
+        }},
+        {"method": "item/agentMessage/delta", "params": {
+            "threadId": "thread-1", "turnId": "turn-1", "itemId": "answer-1", "delta": "Done",
+        }},
+        {"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
+            "id": "turn-1", "status": "completed", "items": [
+                {"id": "answer-1", "type": "agentMessage", "phase": "final", "text": "Done"},
+            ],
+        }}},
+    ):
+        mapper.handle(context, services, message)
+
+    message_items = [
+        item for item in engine.oaep_snapshot(context.session_id)["items"]
+        if item["type"] == "message" and item["content"].get("role") == "assistant"
+    ]
+    assert len(message_items) == 1
+    assert message_items[0]["content"]["text"] == "Done"
+
+
 def test_codex_mapper_has_no_legacy_agent_event_write_path() -> None:
     source = inspect.getsource(CodexEventMapper)
     assert ".emit_backend(" not in source
@@ -268,7 +335,11 @@ def test_normalized_session_lifecycle_and_extended_deltas(tmp_path: Path) -> Non
     assert [event["type"] for event in unarchive_events] == ["event.session.updated"]
 
     for item_id, item_type, delta_kind, text in (
+        ("message-delta", NormalizedItemType.MESSAGE, NormalizedDeltaKind.MESSAGE_TEXT_APPEND, "answer"),
+        ("reasoning-delta", NormalizedItemType.REASONING, NormalizedDeltaKind.REASONING_TEXT_APPEND, "reason"),
+        ("reasoning-segment", NormalizedItemType.REASONING, NormalizedDeltaKind.REASONING_SEGMENT_ADDED, "segment"),
         ("plan-delta", NormalizedItemType.PLAN, NormalizedDeltaKind.PLAN_TEXT_APPEND, "plan step"),
+        ("command-delta", NormalizedItemType.COMMAND_EXECUTION, NormalizedDeltaKind.COMMAND_OUTPUT_APPEND, "stdout"),
         ("tool-delta", NormalizedItemType.TOOL_CALL, NormalizedDeltaKind.TOOL_OUTPUT_APPEND, "result"),
         ("subtask-delta", NormalizedItemType.SUBTASK, NormalizedDeltaKind.SUBTASK_SUMMARY_APPEND, "summary"),
     ):
@@ -285,6 +356,12 @@ def test_normalized_session_lifecycle_and_extended_deltas(tmp_path: Path) -> Non
     assert items[f"codex:{context.run_id}:plan-delta"]["content"]["text"] == "plan step"
     assert items[f"codex:{context.run_id}:tool-delta"]["content"]["result"] == "result"
     assert items[f"codex:{context.run_id}:subtask-delta"]["content"]["summary"] == "summary"
+    delta_kinds = {
+        event["data"]["delta"]["kind"]
+        for event in engine.list_oaep_events(context.session_id)
+        if event["type"] == "event.item.delta"
+    }
+    assert delta_kinds == {delta.value for delta in NormalizedDeltaKind}
 
 
 def test_real_hello_fixture_has_one_user_one_final_and_canonical_order(tmp_path: Path) -> None:

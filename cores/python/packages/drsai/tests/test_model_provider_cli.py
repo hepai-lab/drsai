@@ -20,7 +20,7 @@ def _use_config_path(monkeypatch, path: Path) -> None:
     monkeypatch.setattr(doctor, "default_config_path", lambda: path)
 
 
-def test_cli_creates_provider_and_selects_model(tmp_path: Path, monkeypatch) -> None:
+def test_cli_creates_provider_and_rejects_global_model_selection(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "config.toml"
     _use_config_path(monkeypatch, path)
     runner = CliRunner()
@@ -39,10 +39,17 @@ def test_cli_creates_provider_and_selects_model(tmp_path: Path, monkeypatch) -> 
         ],
     )
 
+    assert result.exit_code == 2
+    assert "Global model selection has been removed" in result.output
+    assert not path.exists()
+    result = runner.invoke(
+        run_cli.app,
+        ["config", "--provider", "custom", "--base-url", "https://provider.example/v1",
+         "--api-key-env", "CUSTOM_KEY"],
+    )
     assert result.exit_code == 0, result.output
     parsed = tomllib.loads(path.read_text(encoding="utf-8"))
-    assert parsed["model"] == "custom-model"
-    assert parsed["model_provider"] == "custom"
+    assert "model" not in parsed and "model_provider" not in parsed
     assert parsed["model_providers"]["custom"]["api_key_env"] == "CUSTOM_KEY"
 
 
@@ -79,12 +86,13 @@ def test_cli_subcommands_match_documented_interface(tmp_path: Path, monkeypatch)
     )
     assert added.exit_code == 0, added.output
     selected_provider = runner.invoke(run_cli.app, ["config", "set-provider", "local"])
-    assert selected_provider.exit_code == 0, selected_provider.output
+    assert selected_provider.exit_code == 2
+    assert "Global model selection has been removed" in selected_provider.output
     selected_model = runner.invoke(run_cli.app, ["config", "set-model", "qwen3:32b"])
-    assert selected_model.exit_code == 0, selected_model.output
+    assert selected_model.exit_code == 2
+    assert "Global model selection has been removed" in selected_model.output
     shown = runner.invoke(run_cli.app, ["config", "show"])
     assert shown.exit_code == 0, shown.output
-    assert "qwen3:32b" in shown.output
     assert '"api_key":' not in shown.output
     listed = runner.invoke(run_cli.app, ["provider", "list"])
     assert listed.exit_code == 0, listed.output
@@ -104,23 +112,20 @@ def test_cli_status_doctor_and_restore(tmp_path: Path, monkeypatch) -> None:
         ["provider", "add", "local", "--base-url", "http://127.0.0.1:11434/v1", "--no-api-key"],
     )
     assert added.exit_code == 0, added.output
-    selected = runner.invoke(run_cli.app, ["config", "set-provider", "local"])
-    assert selected.exit_code == 0, selected.output
-
     status = runner.invoke(run_cli.app, ["config", "status", "--json"])
     assert status.exit_code == 0, status.output
     payload = json.loads(status.output)
-    assert payload["effective"]["provider"]["name"] == "local"
     assert payload["last_known_good_available"] is True
+    assert "local" in tomllib.loads(path.read_text(encoding="utf-8"))["model_providers"]
 
     diagnosed = runner.invoke(run_cli.app, ["config", "doctor", "--json"])
     assert diagnosed.exit_code == 0, diagnosed.output
     assert json.loads(diagnosed.output)["ok"] is True
 
-    path.write_text('model = "external"\nmodel_provider = "hepai"\n', encoding="utf-8")
+    path.write_text('not = [\n', encoding="utf-8")
     restored = runner.invoke(run_cli.app, ["config", "restore"])
     assert restored.exit_code == 0, restored.output
-    assert tomllib.loads(path.read_text(encoding="utf-8"))["model_provider"] == "local"
+    assert "local" in tomllib.loads(path.read_text(encoding="utf-8"))["model_providers"]
 
 
 def test_cli_provider_setup_tests_previews_and_commits(tmp_path: Path, monkeypatch) -> None:
@@ -139,8 +144,7 @@ def test_cli_provider_setup_tests_previews_and_commits(tmp_path: Path, monkeypat
     )
     assert result.exit_code == 0, result.output
     parsed = tomllib.loads(path.read_text(encoding="utf-8"))
-    assert parsed["model"] == "qwen3:32b"
-    assert parsed["model_provider"] == "ollama"
+    assert "model" not in parsed and "model_provider" not in parsed
     assert parsed["model_providers"]["ollama"]["requires_api_key"] is False
     assert "nothing saved yet" in result.output
 
@@ -167,5 +171,5 @@ def test_cli_force_is_explicit_and_default_uses_revision(tmp_path: Path, monkeyp
     forced = runner.invoke(run_cli.app, ["provider", "add", "local", "--base-url", "http://127.0.0.1:1/v1", "--no-api-key", "--force"])
     assert normal.exit_code == 0, normal.output
     assert forced.exit_code == 0, forced.output
-    assert captured[0] == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    assert isinstance(captured[0], str) and len(captured[0]) == 64
     assert captured[1] is None

@@ -121,7 +121,21 @@ class GatewayFixture:
             return item
         if method == "POST" and "/approvals/" in path and path.endswith("/decision"):
             approval_id = path.split("/")[-2]
-            return self.approvals[approval_id]
+            item = self.approvals[approval_id]
+            if item["status"] == "pending":
+                item["status"] = body["decision"]
+                run_id = item["run_id"]
+                self.runs[run_id]["status"] = (
+                    "running" if body["decision"] == "approved" else "cancelled"
+                )
+                self.events[run_id].append({
+                    "event_id": "approval-decision-event",
+                    "sequence": len(self.events[run_id]) + 1,
+                    "type": f"approval.{body['decision']}",
+                    "data": {"approval_id": approval_id, **body.get("detail", {})},
+                    "created_at": "2026-07-17T00:00:03+00:00",
+                })
+            return item
         if method == "POST" and path == "/v1/owop":
             return {"ok": True, "result": {"items": [{"relative_path": "README.md"}]}}
         raise AssertionError((method, path, body, headers))
@@ -161,7 +175,7 @@ class SessionJournalGatewayFixture(GatewayFixture):
                     "type": "event.session.updated",
                     "timestamp": row["timestamp"],
                     "dedupe_key": row["event_id"],
-                    "source": {"backend": "runtime", "runtime_id": "runtime-one"},
+                    "source": {"backend": "runtime", "runtime_id": "runtime-local"},
                     "data": row["payload"],
                 }
                 for row in self.session_events
@@ -253,6 +267,313 @@ def test_existing_runtime_waterlines_avoid_idle_loopback_catalog_scans(
     asyncio.run(scenario())
 
 
+def test_local_runtime_delta_forwarding_never_calls_gateway_loopback(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "runtime"
+    state_dir.mkdir(parents=True)
+    with sqlite3.connect(state_dir / "runtime.sqlite3") as registry:
+        registry.execute(
+            "CREATE TABLE workspaces("
+            "workspace_id TEXT PRIMARY KEY,canonical_path TEXT,display_name TEXT,"
+            "lifecycle TEXT,revision INTEGER,updated_at TEXT,last_opened_at TEXT,created_at TEXT)"
+        )
+        registry.execute(
+            "INSERT INTO workspaces VALUES(?,?,?,?,?,?,?,?)",
+            (
+                "workspace-one", str(tmp_path), "Local", "active", 3,
+                "2026-08-04T00:00:00Z", "2026-08-04T00:00:00Z",
+                "2026-08-01T00:00:00Z",
+            ),
+        )
+    with sqlite3.connect(state_dir / "engine.sqlite3") as db:
+        db.executescript(
+            "CREATE TABLE runtime_sessions("
+            "session_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL);"
+            "CREATE TABLE runtime_session_sequences("
+            "session_id TEXT PRIMARY KEY,last_sequence INTEGER NOT NULL,"
+            "earliest_retained_sequence INTEGER NOT NULL DEFAULT 1);"
+            "CREATE TABLE runtime_session_journal("
+            "event_id TEXT PRIMARY KEY,runtime_id TEXT,workspace_id TEXT,session_id TEXT,"
+            "run_id TEXT,session_sequence INTEGER,event_kind TEXT,item_id TEXT,"
+            "item_revision INTEGER,dedupe_key TEXT,payload_json TEXT,created_at TEXT);"
+            "CREATE TABLE runtime_oaep_events("
+            "event_id TEXT PRIMARY KEY,session_id TEXT,session_sequence INTEGER,envelope_json TEXT);"
+            "CREATE TABLE runtime_runs("
+            "run_id TEXT PRIMARY KEY,session_id TEXT,workspace_id TEXT,backend_id TEXT,"
+            "status TEXT,created_at TEXT);"
+            "CREATE TABLE runtime_events("
+            "event_id TEXT PRIMARY KEY,run_id TEXT,sequence INTEGER,event_type TEXT,"
+            "data_json TEXT,created_at TEXT,backend_event_key TEXT);"
+        )
+        db.execute("INSERT INTO runtime_sessions VALUES('session-one','workspace-one')")
+        db.execute("INSERT INTO runtime_session_sequences VALUES('session-one',0,1)")
+        db.execute(
+            "INSERT INTO runtime_runs VALUES("
+            "'run-one','session-one','workspace-one','opendrsai','running','2026-08-04T00:00:00Z')"
+        )
+
+    async def scenario() -> None:
+        gateway = GatewayFixture()
+        handler = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+        with sqlite3.connect(state_dir / "engine.sqlite3") as db:
+            db.execute(
+                "INSERT INTO runtime_events VALUES(?,?,?,?,?,?,?)",
+                (
+                    "run-event-one", "run-one", 1, "message.delta",
+                    json.dumps({"delta": "hello"}), "2026-08-04T00:00:01Z", None,
+                ),
+            )
+            db.execute(
+                "INSERT INTO runtime_session_journal VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "session-event-one", "runtime-one", "workspace-one", "session-one",
+                    "run-one", 1, "conversation.item.delta", "item-one", 1, None,
+                    json.dumps({"delta": "hello"}), "2026-08-04T00:00:01Z",
+                ),
+            )
+            db.execute(
+                "UPDATE runtime_session_sequences SET last_sequence=1 WHERE session_id='session-one'"
+            )
+        gateway.calls.clear()
+        workspaces = await handler.published_workspaces()
+        run_events = await handler.relay_events()
+        session_events = await handler.relay_session_events()
+        assert workspaces[0]["workspace_id"] == "workspace-one"
+        assert [event["sequence"] for event in run_events] == [1]
+        assert [event["session_sequence"] for event in session_events] == [1]
+        assert gateway.calls == []
+
+    asyncio.run(scenario())
+
+
+def test_unpublished_workspace_backlog_is_baselined_without_spin(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "runtime"
+    state_dir.mkdir(parents=True)
+    with sqlite3.connect(state_dir / "engine.sqlite3") as db:
+        db.executescript(
+            "CREATE TABLE runtime_sessions("
+            "session_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL);"
+            "CREATE TABLE runtime_session_sequences("
+            "session_id TEXT PRIMARY KEY,last_sequence INTEGER NOT NULL,"
+            "earliest_retained_sequence INTEGER NOT NULL DEFAULT 1);"
+            "CREATE TABLE runtime_session_journal("
+            "event_id TEXT PRIMARY KEY,session_id TEXT,session_sequence INTEGER);"
+            "CREATE TABLE runtime_oaep_events("
+            "event_id TEXT PRIMARY KEY,session_id TEXT,session_sequence INTEGER,"
+            "envelope_json TEXT NOT NULL);"
+            "CREATE TABLE runtime_runs("
+            "run_id TEXT PRIMARY KEY,status TEXT NOT NULL);"
+            "CREATE TABLE runtime_events("
+            "event_id TEXT PRIMARY KEY,run_id TEXT,sequence INTEGER);"
+        )
+        db.execute("INSERT INTO runtime_sessions VALUES('historical','workspace-closed')")
+        db.execute("INSERT INTO runtime_session_sequences VALUES('historical',31018,1)")
+        db.execute("INSERT INTO runtime_session_journal VALUES('legacy','historical',31018)")
+        db.execute("INSERT INTO runtime_oaep_events VALUES('oaep','historical',31018,'{}')")
+    with sqlite3.connect(state_dir / "relay-control.sqlite3") as db:
+        db.executescript(
+            "CREATE TABLE relay_session_event_cursors("
+            "session_id TEXT PRIMARY KEY,after_sequence INTEGER NOT NULL);"
+            "CREATE TABLE relay_oaep_event_cursors("
+            "session_id TEXT PRIMARY KEY,after_sequence INTEGER NOT NULL);"
+        )
+        db.execute("INSERT INTO relay_session_event_cursors VALUES('historical',100)")
+        db.execute("INSERT INTO relay_oaep_event_cursors VALUES('historical',100)")
+
+    async def scenario() -> None:
+        gateway = GatewayFixture()  # workspace-closed is outside Relay publication
+        handler = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+        assert await handler.relay_session_events() == []
+        assert await handler.relay_oaep_events() == []
+        assert handler._relay_session_event_cursors["historical"] == 31018
+        assert handler._relay_oaep_event_cursors["historical"] == 31018
+        gateway.calls.clear()
+        assert await handler.relay_session_events() == []
+        assert await handler.relay_oaep_events() == []
+        assert not any("/events?" in path for _, path in gateway.calls)
+
+    asyncio.run(scenario())
+
+
+def test_reconstructed_oaep_prefix_is_baselined_but_new_event_is_forwarded(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "runtime"
+    state_dir.mkdir(parents=True)
+    with sqlite3.connect(state_dir / "engine.sqlite3") as db:
+        db.executescript(
+            "CREATE TABLE runtime_sessions("
+            "session_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL);"
+            "CREATE TABLE runtime_session_sequences("
+            "session_id TEXT PRIMARY KEY,last_sequence INTEGER NOT NULL,"
+            "earliest_retained_sequence INTEGER NOT NULL DEFAULT 1);"
+            "CREATE TABLE runtime_session_journal("
+            "event_id TEXT PRIMARY KEY,session_id TEXT,session_sequence INTEGER,"
+            "dedupe_key TEXT,payload_json TEXT);"
+            "CREATE TABLE runtime_oaep_events("
+            "event_id TEXT PRIMARY KEY,session_id TEXT,session_sequence INTEGER,"
+            "envelope_json TEXT NOT NULL);"
+            "CREATE TABLE runtime_runs(run_id TEXT PRIMARY KEY,status TEXT NOT NULL);"
+            "CREATE TABLE runtime_events("
+            "event_id TEXT PRIMARY KEY,run_id TEXT,sequence INTEGER);"
+        )
+        db.execute("INSERT INTO runtime_sessions VALUES('session-one','workspace-one')")
+        db.execute("INSERT INTO runtime_session_sequences VALUES('session-one',3,1)")
+        for sequence in (2, 3):
+            source_id = f"source-{sequence}"
+            db.execute(
+                "INSERT INTO runtime_events VALUES(?,?,?)",
+                (source_id, "legacy-run", sequence),
+            )
+            db.execute(
+                "INSERT INTO runtime_session_journal VALUES(?,?,?,?,?)",
+                (
+                    f"rebuilt-{sequence}", "session-one", sequence,
+                    f"runtime-event:{source_id}", '{"migrated":true}',
+                ),
+            )
+            db.execute(
+                "INSERT INTO runtime_oaep_events VALUES(?,?,?,?)",
+                (f"rebuilt-{sequence}", "session-one", sequence, '{}'),
+            )
+    with sqlite3.connect(state_dir / "relay-control.sqlite3") as db:
+        db.execute(
+            "CREATE TABLE relay_oaep_event_cursors("
+            "session_id TEXT PRIMARY KEY,after_sequence INTEGER NOT NULL)"
+        )
+        db.execute("INSERT INTO relay_oaep_event_cursors VALUES('session-one',1)")
+
+    async def scenario() -> None:
+        handler = GatewayRuntimeControlHandler("runtime-one", GatewayFixture(), state_dir)
+        assert await handler.relay_oaep_events() == []
+        assert handler._relay_oaep_event_cursors["session-one"] == 3
+
+        event = {
+            "version": "1.0", "event_id": "genuine-4", "session_id": "session-one",
+            "sequence": 4, "type": "event.message.delta",
+            "timestamp": "2026-08-04T00:00:00Z", "dedupe_key": "genuine-4",
+            "source": {"backend": "runtime", "runtime_id": "runtime-one"},
+            "data": {"delta": "new"},
+        }
+        with sqlite3.connect(state_dir / "engine.sqlite3") as db:
+            db.execute(
+                "INSERT INTO runtime_session_journal VALUES(?,?,?,?,?)",
+                ("genuine-4", "session-one", 4, "genuine-4", '{}'),
+            )
+            db.execute(
+                "INSERT INTO runtime_oaep_events VALUES(?,?,?,?)",
+                ("genuine-4", "session-one", 4, json.dumps(event)),
+            )
+            db.execute(
+                "UPDATE runtime_session_sequences SET last_sequence=4 "
+                "WHERE session_id='session-one'"
+            )
+        frames = await handler.relay_oaep_events()
+        assert [frame["sequence"] for frame in frames] == [4]
+
+    asyncio.run(scenario())
+
+
+def test_oaep_upgrade_reconciles_zero_cursor_once_and_reads_bounded_local_delta(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "runtime"
+    state_dir.mkdir(parents=True)
+    database = state_dir / "engine.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            "CREATE TABLE runtime_sessions("
+            "session_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL);"
+            "CREATE TABLE runtime_session_sequences("
+            "session_id TEXT PRIMARY KEY,last_sequence INTEGER NOT NULL,"
+            "earliest_retained_sequence INTEGER NOT NULL DEFAULT 1);"
+            "CREATE TABLE runtime_session_journal("
+            "event_id TEXT PRIMARY KEY,session_id TEXT,session_sequence INTEGER);"
+            "CREATE TABLE runtime_oaep_events("
+            "event_id TEXT PRIMARY KEY,session_id TEXT,session_sequence INTEGER,"
+            "envelope_json TEXT NOT NULL);"
+            "CREATE TABLE runtime_runs("
+            "run_id TEXT PRIMARY KEY,session_id TEXT,workspace_id TEXT,backend_id TEXT,"
+            "status TEXT,created_at TEXT);"
+            "CREATE TABLE runtime_events("
+            "event_id TEXT PRIMARY KEY,run_id TEXT,sequence INTEGER);"
+        )
+        db.execute("INSERT INTO runtime_sessions VALUES('session-old','workspace-one')")
+        db.execute("INSERT INTO runtime_session_sequences VALUES('session-old',3,1)")
+        for sequence in range(1, 4):
+            event = {
+                "version": "1.0", "event_id": f"old-{sequence}",
+                "session_id": "session-old", "sequence": sequence,
+                "type": "event.session.updated", "timestamp": "2026-07-20T00:00:00Z",
+                "dedupe_key": f"old-{sequence}",
+                "source": {"backend": "runtime", "runtime_id": "runtime-one"},
+                "data": {"historical": True},
+            }
+            db.execute(
+                "INSERT INTO runtime_oaep_events VALUES(?,?,?,?)",
+                (f"old-{sequence}", "session-old", sequence, json.dumps(event)),
+            )
+    # Reproduce the upgrade state that caused WRRO-001: an earlier release
+    # persisted zero, so ON CONFLICT DO NOTHING could not establish a snapshot.
+    with sqlite3.connect(state_dir / "relay-control.sqlite3") as db:
+        db.execute(
+            "CREATE TABLE relay_oaep_event_cursors("
+            "session_id TEXT PRIMARY KEY,after_sequence INTEGER NOT NULL)"
+        )
+        db.execute("INSERT INTO relay_oaep_event_cursors VALUES('session-old',0)")
+
+    async def scenario() -> None:
+        gateway = GatewayFixture()
+        handler = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+        assert handler._relay_oaep_event_cursors["session-old"] == 3
+        gateway.calls.clear()
+        assert await handler.relay_oaep_events() == []
+        assert gateway.calls == []
+
+        payload = "x" * 8192
+        with sqlite3.connect(database) as db:
+            for sequence in range(4, 154):
+                event = {
+                    "version": "1.0", "event_id": f"new-{sequence}",
+                    "session_id": "session-old", "sequence": sequence,
+                    "type": "event.message.delta", "timestamp": "2026-08-04T00:00:00Z",
+                    "dedupe_key": f"new-{sequence}",
+                    "source": {"backend": "runtime", "runtime_id": "runtime-local"},
+                    "data": {"delta": payload},
+                }
+                db.execute(
+                    "INSERT INTO runtime_oaep_events VALUES(?,?,?,?)",
+                    (f"new-{sequence}", "session-old", sequence, json.dumps(event)),
+                )
+            db.execute(
+                "UPDATE runtime_session_sequences SET last_sequence=153 "
+                "WHERE session_id='session-old'"
+            )
+
+        frames = await handler.relay_oaep_events()
+        assert 1 <= len(frames) <= 100
+        assert sum(len(json.dumps(frame["event"]).encode()) for frame in frames) <= 600_000
+        assert [frame["sequence"] for frame in frames] == list(
+            range(4, 4 + len(frames))
+        )
+        assert all(
+            frame["event"]["source"]["runtime_id"] == "runtime-one"
+            for frame in frames
+        )
+        assert not any("/oaep-events" in path for _, path in gateway.calls)
+        await handler.ack_relay_oaep_events({"session-old": frames[-1]["sequence"]})
+
+        restarted = GatewayRuntimeControlHandler("runtime-one", gateway, state_dir)
+        assert restarted._relay_oaep_event_cursors["session-old"] == frames[-1]["sequence"]
+        replay = await restarted.relay_oaep_events()
+        assert replay and replay[0]["sequence"] == frames[-1]["sequence"] + 1
+
+    asyncio.run(scenario())
+
+
 def test_session_journal_snapshot_replay_and_relay_cursor(tmp_path: Path) -> None:
     async def scenario():
         gateway = SessionJournalGatewayFixture()
@@ -314,6 +635,14 @@ def test_gateway_handler_authorizes_and_proxies_oaep_snapshot_and_events(
         assert gateway.calls[-1] == (
             "GET",
             "/v1/sessions/session-one/oaep-snapshot",
+        )
+        await handler.oaep_snapshot_for_subject(
+            "alice", "workspace-one", "session-one",
+            cursor="enc:v1:page/+", limit=37,
+        )
+        assert gateway.calls[-1] == (
+            "GET",
+            "/v1/sessions/session-one/oaep-snapshot?limit=37&cursor=enc%3Av1%3Apage%2F%2B",
         )
         page = await handler.oaep_events_for_subject(
             "alice", "workspace-one", "session-one", after_sequence=0, limit=9999
@@ -791,8 +1120,11 @@ def test_mobile_approval_resumes_authoritative_run_once_and_keeps_audit_identity
         assert restarted_replay == decision
         assert gateway.runs[run["run_id"]]["status"] == "running"
         assert gateway.calls.count(
-            ("POST", "/v1/approvals/approval-one/decision")
+            ("POST", f"/v1/runs/{run['run_id']}/approvals/approval-one/decision")
         ) == 1
+        assert (
+            "POST", "/v1/approvals/approval-one/decision"
+        ) not in gateway.calls
         decision_events = [
             event for event in gateway.events[run["run_id"]]
             if event["type"] == "approval.approved"
@@ -802,7 +1134,8 @@ def test_mobile_approval_resumes_authoritative_run_once_and_keeps_audit_identity
             "oidc-subject-one", "workspace-one", run["run_id"]
         )
         approved = next(item for item in audit if item["action"] == "approval.approved")
-        assert approved["subject"] == "oidc-subject-one"
+        assert approved["actor_label"] == "已授权设备"
+        assert "subject" not in approved
         assert approved["correlation_id"] == "approval-correlation-one"
         assert approved["approval_id"] == "approval-one"
 

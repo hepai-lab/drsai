@@ -713,7 +713,7 @@ async def run_worker(
             支持的 key（均可选，缺省时从 config/worker_config 或默认值补齐）::
 
                 {
-                    "name": "My Dr.Sai",            # 智能体名称（→ model_args.name）
+                    "name": "OpenDrSai",             # 智能体名称（→ model_args.name）
                     "description": "...",           # 描述（→ worker_args.description）
                     "version": "0.1.0",             # 版本（→ model_args.version）
                     "author": "user@ihep.ac.cn",    # 作者（→ worker_args.author）

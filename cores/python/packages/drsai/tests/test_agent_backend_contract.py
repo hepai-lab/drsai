@@ -43,6 +43,7 @@ class FakeCodexClient:
         self.approvals: list[tuple[str, str, str]] = []
         self.recovered: list[str] = []
         self.account_calls: list[tuple[str, Any]] = []
+        self.history_watermarks: dict[str, dict[str, Any]] = {}
 
     async def execute_turn(self, context, definition, prompt, services):
         await asyncio.sleep(0)
@@ -73,8 +74,14 @@ class FakeCodexClient:
     async def account_login_cancel(self, login_id): self.account_calls.append(("cancel_login", login_id))
     async def account_logout(self): self.account_calls.append(("logout", None))
     async def discover_sessions(self, workspace_path): return []
-    async def bind_imported_session(self, *args, **kwargs): return None
+    async def bind_imported_session(self, session_id, *_args, **kwargs):
+        self.history_watermarks.setdefault(session_id, {})["backend_updated_at"] = kwargs.get("backend_updated_at")
     async def read_imported_session_history(self, backend_session_id): return []
+    async def history_sync_watermark(self, session_id): return self.history_watermarks.get(session_id)
+    async def mark_history_synced(self, session_id, **values):
+        row = self.history_watermarks.setdefault(session_id, {})
+        row.update(values)
+        row.update({"synced_backend_updated_at": row.get("backend_updated_at"), "schema_version": 1})
 
 
 class AgentBackendContractTests(unittest.TestCase):
@@ -140,7 +147,7 @@ class AgentBackendContractTests(unittest.TestCase):
 
         async def exercise():
             await adapter.cancel("run-1")
-            await adapter.respond_approval("run-1", "approval-1", "accept")
+            await adapter.respond_approval("run-1", "approval-1", "approved")
             await adapter.recover("run-1")
             before = await adapter.health()
             await adapter.close()
@@ -152,7 +159,7 @@ class AgentBackendContractTests(unittest.TestCase):
         self.assertTrue(before["available"])
         self.assertEqual(after["reason"], "closed")
         self.assertEqual(client.cancelled, ["run-1"])
-        self.assertEqual(client.approvals, [("run-1", "approval-1", "accept")])
+        self.assertEqual(client.approvals, [("run-1", "approval-1", "approved")])
         self.assertEqual(client.recovered, ["run-1"])
         self.assertEqual(client.close_count, 1)
         with self.assertRaises(RuntimeExecutionError) as caught:
@@ -186,9 +193,13 @@ class AgentBackendContractTests(unittest.TestCase):
         client = FakeCodexClient()
 
         async def discover(_workspace_path):
-            return [{"backend_session_id": "codex-thread-1", "title": "Imported Codex", "archived": False}]
+            return [{"backend_session_id": "codex-thread-1", "title": "Imported Codex", "archived": False,
+                     "updated_at": "2026-08-04T00:00:00Z"}]
 
+        history_calls = 0
         async def history(_backend_session_id):
+            nonlocal history_calls
+            history_calls += 1
             return [{
                 "backend_run_id": "codex-turn-1", "status": "completed",
                 "items": [
@@ -208,7 +219,11 @@ class AgentBackendContractTests(unittest.TestCase):
 
         self.assertEqual(first["sessions"][0]["message_count"], 0)
         self.assertEqual(first_history["total"], 2)
+        self.assertEqual(first_history["migration"]["mode"], "skipped")
+        self.assertEqual(first_history["migration"]["triggers"], [])
         self.assertEqual(second_history["imported"], 0)
+        self.assertTrue(second_history["cached"])
+        self.assertEqual(history_calls, 1)
         self.assertEqual([(item["content"]["role"], item["content"]["text"]) for item in snapshot["items"]], [
             ("user", "hello"), ("assistant", "world"),
         ])
@@ -262,6 +277,50 @@ class AgentBackendContractTests(unittest.TestCase):
         self.assertEqual(snapshot["runs"][0]["created_at"], "2026-08-01T00:00:00+00:00")
         self.assertEqual(snapshot["runs"][0]["completed_at"], "2026-08-01T00:00:28+00:00")
         self.assertEqual(self.engine.list_oaep_events(session_id)[-1]["type"], "event.item.updated")
+
+    def test_history_migration_manual_repair_is_interruptible_and_rerunnable(self) -> None:
+        client = FakeCodexClient()
+
+        async def discover(_workspace_path):
+            return [{"backend_session_id": "codex-thread-repair", "title": "Repair", "archived": False}]
+
+        async def history(_backend_session_id):
+            return [{
+                "backend_run_id": "codex-turn-repair", "status": "completed",
+                "items": [
+                    {"item_id": f"item-{index}", "kind": "message", "role": "assistant",
+                     "payload": {"text": f"answer {index}"}}
+                    for index in range(501)
+                ],
+            }]
+
+        client.discover_sessions = discover
+        client.read_imported_session_history = history
+        service = self.service(OpenDrSaiAgentBackend(lambda *_: {"done": True}), CodexAdapter(client))
+        synced = asyncio.run(service.sync_backend_sessions("codex", self.workspace_record.workspace_id))
+        session_id = synced["sessions"][0]["session_id"]
+        original_record = self.engine.record_conversation_items
+        batches = 0
+
+        def interrupt_after_first_batch(*args, **kwargs):
+            nonlocal batches
+            result = original_record(*args, **kwargs)
+            batches += 1
+            if batches == 1:
+                asyncio.current_task().cancel()
+            return result
+
+        self.engine.record_conversation_items = interrupt_after_first_batch
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(service.sync_backend_session_history(session_id, force_reproject=True))
+        self.engine.record_conversation_items = original_record
+        self.assertLess(len(self.engine.oaep_snapshot(session_id)["items"]), 501)
+
+        repaired = asyncio.run(service.sync_backend_session_history(session_id, force_reproject=True))
+        snapshot = self.engine.oaep_snapshot(session_id)
+        self.assertEqual(repaired["migration"]["triggers"], ["manual_repair"])
+        self.assertEqual(len(snapshot["items"]), 501)
+        self.assertEqual(len({item["id"] for item in snapshot["items"]}), 501)
 
     def test_backend_sync_preserves_newer_local_archive_decision(self) -> None:
         client = FakeCodexClient()

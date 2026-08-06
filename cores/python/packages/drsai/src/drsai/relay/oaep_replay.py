@@ -7,7 +7,7 @@ from collections import deque
 from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from drsai.oaep.protocol import OAEPProtocol, OAEPValidationError
 
@@ -28,15 +28,18 @@ class OAEPReplayHub:
     Redis while retaining these validation and identity semantics.
     """
 
-    def __init__(self, *, max_events_per_session: int = 10_000) -> None:
+    def __init__(self, *, max_events_per_session: int = 10_000,
+                 notification_sink: Callable[[str, str, str, dict[str, Any]], None] | None = None) -> None:
         if max_events_per_session < 1:
             raise ValueError("oaep_replay_limit_invalid")
         self.max_events_per_session = max_events_per_session
         self.protocol = OAEPProtocol()
+        self.notification_sink = notification_sink
         self._generations: dict[str, str] = {}
         self._events: dict[tuple[str, str], deque[_StoredEvent]] = {}
         self._workspaces: dict[tuple[str, str], str] = {}
         self._subscribers: dict[tuple[str, str], set[asyncio.Queue[dict[str, Any]]]] = {}
+        self._workspace_subscribers: dict[tuple[str, str], set[asyncio.Queue[dict[str, Any]]]] = {}
         self._metrics: Counter[str] = Counter()
         self._lock = asyncio.Lock()
 
@@ -48,6 +51,7 @@ class OAEPReplayHub:
             "active_runtimes": len(self._generations),
             "cached_sessions": len(self._events),
             "subscribers": sum(len(value) for value in self._subscribers.values()),
+            "workspace_subscribers": sum(len(value) for value in self._workspace_subscribers.values()),
         }
 
     async def attach(self, runtime_id: str, generation: str) -> None:
@@ -143,6 +147,9 @@ class OAEPReplayHub:
                 rows.popleft()
                 self._metrics["replay_evicted"] += 1
             subscribers = tuple(self._subscribers.get(key, ()))
+            workspace_subscribers = tuple(
+                self._workspace_subscribers.get((runtime_id, workspace_id), ())
+            ) if str(event.get("type", "")).startswith("event.session.") else ()
             self._metrics["accepted"] += 1
         for queue in subscribers:
             try:
@@ -150,6 +157,19 @@ class OAEPReplayHub:
             except asyncio.QueueFull:
                 # The client reconnects from its last committed Session cursor.
                 self._metrics["subscriber_overflow"] += 1
+        catalog_event = {
+            "event_id": str(event["event_id"]),
+            "session_id": session_id,
+            "type": str(event["type"]),
+            "sequence": int(event["sequence"]),
+        }
+        for queue in workspace_subscribers:
+            try:
+                queue.put_nowait(deepcopy(catalog_event))
+            except asyncio.QueueFull:
+                self._metrics["workspace_subscriber_overflow"] += 1
+        if self.notification_sink is not None:
+            self.notification_sink(runtime_id, workspace_id, session_id, deepcopy(event))
         return True
 
     async def page(
@@ -201,6 +221,14 @@ class OAEPReplayHub:
             "has_more": bool(events and int(events[-1]["sequence"]) < latest),
         }
 
+    async def contains_event(
+        self, runtime_id: str, session_id: str, event_id: str
+    ) -> bool:
+        """Authorize telemetry only for an Event accepted on this Runtime generation."""
+        async with self._lock:
+            rows = self._events.get((runtime_id, session_id), ())
+            return any(str(row.event.get("event_id") or "") == event_id for row in rows)
+
     async def subscribe(
         self, runtime_id: str, session_id: str, *, queue_size: int = 256
     ) -> asyncio.Queue[dict[str, Any]]:
@@ -220,3 +248,48 @@ class OAEPReplayHub:
                 subscribers.discard(queue)
                 if not subscribers:
                     self._subscribers.pop(key, None)
+
+    async def subscribe_workspace(
+        self, runtime_id: str, workspace_id: str, *, queue_size: int = 64
+    ) -> asyncio.Queue[dict[str, Any]]:
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=queue_size)
+        async with self._lock:
+            self._workspace_subscribers.setdefault((runtime_id, workspace_id), set()).add(queue)
+        return queue
+
+    async def unsubscribe_workspace(
+        self, runtime_id: str, workspace_id: str, queue: asyncio.Queue[dict[str, Any]]
+    ) -> None:
+        key = (runtime_id, workspace_id)
+        async with self._lock:
+            subscribers = self._workspace_subscribers.get(key)
+            if subscribers is not None:
+                subscribers.discard(queue)
+                if not subscribers:
+                    self._workspace_subscribers.pop(key, None)
+
+    async def invalidate_runtime(self, runtime_id: str) -> int:
+        """Immediately terminate live streams so they re-authorize on reconnect."""
+        marker = {"_control": "authorization_changed"}
+        async with self._lock:
+            queues = tuple(
+                queue for (candidate, _), subscribers in self._subscribers.items()
+                if candidate == runtime_id for queue in subscribers
+            )
+            workspace_queues = tuple(
+                queue for (candidate, _), subscribers in self._workspace_subscribers.items()
+                if candidate == runtime_id for queue in subscribers
+            )
+            queues = queues + workspace_queues
+        for queue in queues:
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            try:
+                queue.put_nowait(marker)
+            except asyncio.QueueFull:
+                pass
+        self._metrics["authorization_invalidations"] += len(queues)
+        return len(queues)

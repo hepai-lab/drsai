@@ -14,7 +14,8 @@ def test_identity_prompt_names_opendrsai_assistant() -> None:
 
 def test_identity_prompt_is_always_injected_without_working_directory() -> None:
     prompt = _build_cwd_prompt({}, work_dir="")
-    assert prompt.startswith("## Identity")
+    assert prompt.startswith("[SYSTEM v=p9-agent-kernel-v1]")
+    assert "[TOOL_POLICY]" in prompt
     assert "OpenDrSai" in prompt
 
 

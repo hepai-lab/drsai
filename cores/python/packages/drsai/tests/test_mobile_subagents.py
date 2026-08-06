@@ -7,6 +7,7 @@ from drsai.backend.runtime.mobile_core import (
     LogicalSubagentScheduler,
     LogicalSubagentTask,
     SubagentStatus,
+    build_subagent_scheduling_policy,
 )
 
 
@@ -88,3 +89,21 @@ def test_mobile_active_limit_is_fixed_at_three() -> None:
                 [LogicalSubagentTask(str(index), "task") for index in range(4)], runner,
             )
         )
+
+
+def test_scheduling_policy_is_canonical_and_rejects_host_limit_drift() -> None:
+    foreground = build_subagent_scheduling_policy(
+        LifecycleState.FOREGROUND, advertised_max_active=3, advertised_max_parallel=2,
+    )
+    constrained = [
+        build_subagent_scheduling_policy(value, advertised_max_active=3, advertised_max_parallel=1)
+        for value in (LifecycleState.BACKGROUND, LifecycleState.LOW_MEMORY, LifecycleState.THERMAL_LIMITED)
+    ]
+
+    assert foreground["max_parallel"] == 2 and foreground["mode"] == "parallel"
+    assert all(value["max_parallel"] == 1 and value["mode"] == "serial" for value in constrained)
+    assert len({str(value["sha256"]) for value in [foreground, *constrained]}) == 4
+    with pytest.raises(ValueError, match="subagent_max_active_mismatch"):
+        build_subagent_scheduling_policy("foreground", advertised_max_active=4)
+    with pytest.raises(ValueError, match="subagent_max_parallel_mismatch"):
+        build_subagent_scheduling_policy("low_memory", advertised_max_parallel=2)

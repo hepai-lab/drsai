@@ -4,16 +4,25 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from .mobile_core import RuntimeEnvelope, create_shared_mobile_core
+from .agent_kernel_factory import create_agent_kernel, kernel_factory_identity
+from .mobile_core import RuntimeEnvelope
 
 
 class SharedMobileCoreAdapter:
     def __init__(self, surface: str) -> None:
         self.surface = surface
-        self._core = create_shared_mobile_core(surface=surface)
+        self._core = create_agent_kernel(surface=surface)
+
+    @property
+    def agent_type(self) -> str:
+        return self._core.agent_type
+
+    @property
+    def kernel_identity(self) -> dict:
+        return kernel_factory_identity(self._core)
 
     def reset(self) -> None:
-        self._core = create_shared_mobile_core(surface=self.surface)
+        self._core = create_agent_kernel(surface=self.surface)
 
     def execute(self, envelope: RuntimeEnvelope) -> tuple[RuntimeEnvelope, ...]:
         return self._core.handle(envelope)

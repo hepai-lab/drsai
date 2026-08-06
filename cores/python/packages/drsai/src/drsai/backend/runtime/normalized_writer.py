@@ -11,6 +11,7 @@ from typing import Any
 
 from drsai.backend.runtime.normalized_events import (
     NormalizedAgentEvent,
+    NormalizedDeltaKind,
     NormalizedEventKind,
     NormalizedItemType,
 )
@@ -26,7 +27,7 @@ _ITEM_EVENT_NAMES = {
     NormalizedItemType.ARTIFACT: "oaep.item.artifact",
     NormalizedItemType.INTERACTION: "oaep.item.interaction",
     NormalizedItemType.SUBTASK: "oaep.item.subtask",
-    NormalizedItemType.NOTICE: "oaep.item.unknown",
+    NormalizedItemType.NOTICE: "oaep.item.notice",
 }
 
 _CANONICAL_ITEM_STORAGE = {
@@ -65,6 +66,12 @@ def normalized_canonical_item(
         payload["phase"] = event.phase
     if event.stream:
         payload["stream"] = event.stream
+    if event.segment_id:
+        payload["segment_id"] = event.segment_id
+    if event.item_type is NormalizedItemType.REASONING:
+        payload["reasoning_kind"] = event.reasoning_kind.value
+        payload["visibility"] = event.reasoning_visibility.value
+        payload["source"] = event.reasoning_source.value
     payload["status"] = {
         NormalizedEventKind.ITEM_STARTED: "running",
         NormalizedEventKind.ITEM_DELTA: "streaming",
@@ -77,10 +84,31 @@ def normalized_canonical_item(
     if event.kind == NormalizedEventKind.ITEM_DELTA:
         delta = str(incoming.get("text") or "")
         payload["delta"] = delta
+        payload["delta_kind"] = event.delta_kind.value if event.delta_kind else None
         if event.item_type == NormalizedItemType.MESSAGE:
             payload["text"] = f"{previous.get('text', previous.get('content', ''))}{delta}"
             payload["content"] = payload["text"]
-        elif event.item_type in {NormalizedItemType.REASONING, NormalizedItemType.PLAN}:
+        elif event.item_type == NormalizedItemType.REASONING:
+            segments = [dict(value) for value in previous.get("segments", []) if isinstance(value, dict)]
+            segment_id = event.segment_id or str(incoming.get("segment_id") or f"{event.binding.item_id}:text")
+            target = next((value for value in segments if value.get("id") == segment_id), None)
+            if target is None:
+                target = {
+                    "id": segment_id,
+                    "text": "",
+                    "kind": event.reasoning_kind.value,
+                    "visibility": event.reasoning_visibility.value,
+                    "source": event.reasoning_source.value,
+                }
+                segments.append(target)
+            if event.delta_kind == NormalizedDeltaKind.REASONING_TEXT_APPEND:
+                target["text"] = f"{target.get('text', '')}{delta}"
+            elif event.delta_kind == NormalizedDeltaKind.REASONING_SEGMENT_ADDED and delta:
+                target["text"] = f"{target.get('text', '')}{delta}"
+            payload["segments"] = segments
+            payload["summary"] = "\n\n".join(str(value.get("text") or "") for value in segments if value.get("text"))
+            payload["text"] = payload["summary"]
+        elif event.item_type == NormalizedItemType.PLAN:
             payload["text"] = f"{previous.get('text', previous.get('summary', ''))}{delta}"
         elif event.item_type == NormalizedItemType.COMMAND_EXECUTION:
             payload["output"] = f"{previous.get('output', '')}{delta}"
@@ -117,10 +145,20 @@ def normalized_runtime_write(event: NormalizedAgentEvent) -> tuple[str, dict[str
         data["oaep_phase"] = event.phase
     if event.stream:
         data["stream"] = event.stream
+    if event.segment_id:
+        data["segment_id"] = event.segment_id
+    if event.item_type is NormalizedItemType.REASONING:
+        data["reasoning_kind"] = event.reasoning_kind.value
+        data["visibility"] = event.reasoning_visibility.value
+        data["reasoning_source"] = event.reasoning_source.value
 
     if event.kind == NormalizedEventKind.ITEM_DELTA:
         data["content"] = str(event.payload.get("text") or "")
         data["delta_kind"] = event.delta_kind.value if event.delta_kind else None
+        if event.item_type is NormalizedItemType.REASONING:
+            data["reasoning_kind"] = event.reasoning_kind.value
+            data["visibility"] = event.reasoning_visibility.value
+            data["reasoning_source"] = event.reasoning_source.value
         if "received_bytes" in event.payload:
             metadata["received_bytes"] = event.payload["received_bytes"]
         for key in ("ordinal", "received_bytes", "truncated", "truncated_prefix_bytes"):

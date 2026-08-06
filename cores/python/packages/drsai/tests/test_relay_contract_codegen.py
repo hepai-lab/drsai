@@ -106,13 +106,13 @@ def test_session_event_profile_is_declared_but_not_advertised_before_runtime_sup
     assert CAPABILITY_PROFILES["oaep/1"].issubset(CAPABILITIES)
     assert MINIMUM_VERSIONS["oaep/1"] == {
         "runtime": "1.6.0",
-        "android": "1.6.0",
+        "android": "1.5.6",
         "desktop": "1.6.0",
     }
     assert schema["x-relay-capability-profiles"]["oaep.session-stream/1"] == oaep_profile
     assert schema["x-relay-minimum-versions"]["oaep.session-stream/1"] == {
         "runtime": "1.6.0",
-        "android": "1.6.0",
+        "android": "1.5.6",
         "desktop": "1.6.0",
     }
 

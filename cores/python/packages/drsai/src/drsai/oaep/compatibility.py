@@ -15,6 +15,10 @@ class LegacyRemovalMetrics:
     legacy_request_ratio: float
     fallback_error_rate: float
     rollback_artifact_verified: bool
+    rollback_artifact_sha256: str
+    migration_transcript_before_sha256: str
+    migration_transcript_after_sha256: str
+    database_migration_verified: bool
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> "LegacyRemovalMetrics":
@@ -22,6 +26,8 @@ class LegacyRemovalMetrics:
             "release_cycles", "observation_days", "oaep_client_ratio",
             "migration_ratio", "legacy_request_ratio", "fallback_error_rate",
             "rollback_artifact_verified",
+            "rollback_artifact_sha256", "migration_transcript_before_sha256",
+            "migration_transcript_after_sha256", "database_migration_verified",
         }
         missing = sorted(required - value.keys())
         if missing:
@@ -34,6 +40,10 @@ class LegacyRemovalMetrics:
             legacy_request_ratio=float(value["legacy_request_ratio"]),
             fallback_error_rate=float(value["fallback_error_rate"]),
             rollback_artifact_verified=value["rollback_artifact_verified"] is True,
+            rollback_artifact_sha256=str(value["rollback_artifact_sha256"]),
+            migration_transcript_before_sha256=str(value["migration_transcript_before_sha256"]),
+            migration_transcript_after_sha256=str(value["migration_transcript_after_sha256"]),
+            database_migration_verified=value["database_migration_verified"] is True,
         )
         for name in (
             "oaep_client_ratio", "migration_ratio", "legacy_request_ratio",
@@ -41,18 +51,29 @@ class LegacyRemovalMetrics:
         ):
             if not 0 <= getattr(metrics, name) <= 1:
                 raise ValueError(f"oaep_legacy_removal_metric_invalid:{name}")
+        for name in (
+            "rollback_artifact_sha256", "migration_transcript_before_sha256",
+            "migration_transcript_after_sha256",
+        ):
+            digest = getattr(metrics, name)
+            if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                raise ValueError(f"oaep_legacy_removal_digest_invalid:{name}")
         return metrics
 
 
 def legacy_removal_decision(metrics: LegacyRemovalMetrics) -> dict[str, Any]:
     checks = {
-        "two_release_cycles": metrics.release_cycles >= 2,
-        "fourteen_observation_days": metrics.observation_days >= 14,
-        "oaep_clients_99_percent": metrics.oaep_client_ratio >= 0.99,
+        "oaep_clients_99_9_percent": metrics.oaep_client_ratio >= 0.999,
         "migration_complete": metrics.migration_ratio == 1.0,
-        "legacy_requests_below_1_percent": metrics.legacy_request_ratio <= 0.01,
+        "legacy_requests_below_0_1_percent": metrics.legacy_request_ratio < 0.001,
         "fallback_errors_below_0_1_percent": metrics.fallback_error_rate <= 0.001,
         "rollback_artifact_verified": metrics.rollback_artifact_verified,
+        "rollback_artifact_digest_present": bool(metrics.rollback_artifact_sha256),
+        "database_migration_verified": metrics.database_migration_verified,
+        "transcript_hash_preserved": (
+            metrics.migration_transcript_before_sha256
+            == metrics.migration_transcript_after_sha256
+        ),
     }
     return {
         "allowed": all(checks.values()),

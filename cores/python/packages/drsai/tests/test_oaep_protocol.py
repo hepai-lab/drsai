@@ -99,6 +99,23 @@ def test_oaep_delta_is_only_valid_inside_item_delta_event() -> None:
     assert errors
 
 
+def test_future_backend_additive_extensions_are_preserved_and_ignored_safely() -> None:
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    raw_fixture = json.loads(EXAMPLES.read_text(encoding="utf-8"))
+    fixture = _expand_refs(raw_fixture, raw_fixture)
+    event = copy.deepcopy(fixture["events"][0])
+    event["source"]["future_backend_capability"] = "example.future/1"
+    event["data"]["future_backend_metadata"] = {"hint": "optional"}
+    event["future_envelope_metadata"] = {"trace_class": "optional"}
+
+    validator = Draft202012Validator({"$defs": schema["$defs"], "$ref": "#/$defs/event"})
+    validator.validate(event)
+    round_tripped = json.loads(json.dumps(event))
+    assert round_tripped["source"]["future_backend_capability"] == "example.future/1"
+    assert round_tripped["data"]["future_backend_metadata"]["hint"] == "optional"
+    assert round_tripped["future_envelope_metadata"]["trace_class"] == "optional"
+
+
 def test_each_oaep_item_content_is_discriminated_by_item_type() -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     validator = Draft202012Validator({"$defs": schema["$defs"], "$ref": "#/$defs/item"})

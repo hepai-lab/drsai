@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from typing_extensions import NotRequired, Required, TypedDict
 
-OAEP_SCHEMA_SHA256 = '92020971b3fb9d549ff08e10221bf34db13213e5206a9aa4b5222461a9f011ae'
+OAEP_SCHEMA_SHA256 = '304304216b4133e6b00dd3d93897d4f84ccc716ee830f2ecca11c77585d0970d'
 OAEP_VERSION = '1.0'
 OAEP_PROFILE = "oaep.session-stream/1"
 OaepItemType = Literal["message", "reasoning", "plan", "command_execution", "file_change", "tool_call", "artifact", "interaction", "subtask", "notice"]
@@ -76,6 +76,17 @@ class OaepPlanContent(TypedDict, total=False):
     resource_refs: list[OaepResourceRef]
 
 
+class OaepReplayPolicy(TypedDict, total=False):
+    classification: Literal["pure", "read_only_versioned", "read_only_mutable", "workspace_write", "external_write", "unknown"]
+    tool_reference: str
+    source_event_id: str
+    input_digest: str
+    implementation_digest: str
+    schema_digest: str
+    result_digest: str
+    current: dict[str, str]
+
+
 class OaepCommandExecutionContent(TypedDict, total=False):
     command: Required[list[str]]
     display_command: Required[str]
@@ -85,6 +96,7 @@ class OaepCommandExecutionContent(TypedDict, total=False):
     stderr_tail: str
     exit_code: int | None
     duration_ms: float | None
+    replay_policy: OaepReplayPolicy
     operation_ref: OaepOperationRef
     resource_refs: list[OaepResourceRef]
 
@@ -97,6 +109,7 @@ class OaepToolCallContent(TypedDict, total=False):
     result: Required[Any]
     server: str | None
     duration_ms: float | None
+    replay_policy: OaepReplayPolicy
     operation_ref: OaepOperationRef
     resource_refs: list[OaepResourceRef]
 
@@ -200,6 +213,9 @@ class OaepDelta(TypedDict, total=False):
     text: str
     segment_id: str
     stream: Literal["stdout", "stderr", "combined"]
+    reasoning_kind: Literal["summary", "commentary", "analysis"]
+    visibility: Literal["user", "diagnostic", "hidden"]
+    reasoning_source: Literal["backend", "adapter", "runtime"]
 
 
 class OaepEventData(TypedDict, total=False):
@@ -222,12 +238,26 @@ class OaepEvent(TypedDict, total=False):
     data: Required[OaepEventData]
 
 
-class OaepSnapshot(TypedDict):
-    version: Literal['1.0']
-    session: OaepSession
-    runs: list[OaepRun]
-    items: list[OaepItem]
-    snapshot_sequence: int
+class OaepSnapshotCheckpoint(TypedDict):
+    sequence: int
+    snapshot_hash: str
+    item_count: int
+
+
+class OaepSnapshotWindow(TypedDict):
+    limit: int
+    has_more: bool
+    next_cursor: str | None
+
+
+class OaepSnapshot(TypedDict, total=False):
+    version: Required[Literal['1.0']]
+    session: Required[OaepSession]
+    runs: Required[list[OaepRun]]
+    items: Required[list[OaepItem]]
+    snapshot_sequence: Required[int]
+    checkpoint: OaepSnapshotCheckpoint
+    window: OaepSnapshotWindow
 
 
 class OaepEventPage(TypedDict):

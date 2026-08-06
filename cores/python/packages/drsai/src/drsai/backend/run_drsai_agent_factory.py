@@ -20,7 +20,15 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from drsai.backend.cli.config import load_config, save_config
-from drsai.config import load_user_config, migrate_legacy_model_config, resolve_model_config
+from drsai.backend.runtime.agent_kernel import (
+    AgentRunConfig,
+    DEFAULT_SYSTEM_PROMPT,
+    agent_kernel_identity,
+    desktop_production_parity_manifest,
+    normalize_kernel_host_port,
+)
+from drsai.backend.runtime.agent_kernel_factory import create_agent_kernel
+from drsai.config import load_user_config, migrate_legacy_model_config, resolve_model_config, resolve_model_ref
 from drsai.config.schema import ResolvedModelConfig
 from drsai.configs.constant import CONFIG_DIR, FS_DIR, WORKSPACE_DIR, WORKSPACE_RUNS_DIR
 from drsai.modules.agents.skills_agent import DrSaiAssistant, DrSaiCLIAssistant
@@ -32,7 +40,9 @@ from drsai.modules.components.model_client.anthropic import (
     HepAIAnthropicChatCompletionClient,
     _MODEL_INFO,
 )
+from drsai.modules.components.model_client.gemini_client import GeminiNativeChatCompletionClient
 from drsai.modules.managers.database import DatabaseManager
+from drsai.platform_auth import get_platform_auth
 
 load_dotenv()
 
@@ -47,11 +57,7 @@ Ask the questions one at a time.
 If a question can be answered by exploring the codebase, explore the codebase instead."""
 
 OPENDRSAI_ASSISTANT_NAME = "OpenDrSai"
-OPENDRSAI_IDENTITY_SYSTEM_PROMPT = f"""## Identity
-You are {OPENDRSAI_ASSISTANT_NAME}, the intelligent programming and data-analysis assistant in OpenDrSai.
-When the user asks who you are, identify yourself as {OPENDRSAI_ASSISTANT_NAME}.
-Use OpenDrSai as the product name in user-facing responses and system messages. Keep technical package names, commands, paths, environment variables, and protocol identifiers unchanged.
-"""
+OPENDRSAI_IDENTITY_SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
 
 # ── Workspace ────────────────────────────────────────────────────────────────
@@ -96,7 +102,7 @@ class ReasoningConfig:
 
     supported: bool = False
     effort_levels: list[str] = field(default_factory=lambda: [])
-    param_type: str = "none"  # adaptive | enabled | is_r1_model | reasoning_effort | minimax_format | zhipu_format | none
+    param_type: str = "none"  # adaptive | enabled | is_r1_model | reasoning_effort | deepseek_reasoning_effort | minimax_format | zhipu_format | none
 
     def supports_effort(self, effort: str) -> bool:
         """Check if the given effort level is supported.
@@ -137,7 +143,7 @@ class ModelEntry:
     max_tokens: int = 0                  # Maximum output tokens per request (0 = use token_limit * 0.25)
     client_type: str = "auto"            # anthropic | openai | auto
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
-    vision: bool = True                  # Whether the model supports image input (vision capability)
+    vision: bool = False                 # Unknown models are never assumed to accept images.
 
     @staticmethod
     def from_dict(alias: str, data: Any) -> "ModelEntry":
@@ -157,16 +163,13 @@ class ModelEntry:
             else:
                 reasoning = ReasoningConfig()
 
-            # Auto-detect vision when not explicitly set:
-            # Default True (most modern models support vision), but common
-            # non-vision model families (deepseek, gpt-3.5, etc.) default False.
+            # Legacy overrides may declare vision explicitly. Missing metadata
+            # stays fail-closed; model-name heuristics are not capability proof.
             vision_raw = data.get("vision")
             if vision_raw is not None:
                 vision = bool(vision_raw)
             else:
-                # Heuristic auto-detect from model name
-                model_lower = str(data.get("model", alias)).lower()
-                vision = not any(tag in model_lower for tag in ["deepseek", "gpt-3.5", "gpt-35", "o1-preview", "o1-mini"])
+                vision = False
 
             return ModelEntry(
                 model=str(data.get("model", alias)),
@@ -193,9 +196,8 @@ class ModelEntry:
         else:
             client_type = "openai"
 
-        # Auto-detect vision for v1 format
-        model_lower = model.lower()
-        vision = not any(tag in model_lower for tag in ["deepseek", "gpt-3.5", "gpt-35", "o1-preview", "o1-mini"])
+        # V1 contains no trustworthy capability metadata.
+        vision = False
 
         return ModelEntry(
             model=model,
@@ -231,7 +233,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
         max_tokens=64000,      # max output per request (DeepSeek supports extended output)
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,           # DeepSeek V4 text models do not support image input
     ),
     
@@ -240,7 +242,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         token_limit=10000000,      # context window: 163,840 (shared input+output)
         max_tokens=64000,       # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,           # DeepSeek V4 text models do not support image input
     ),
     "deepseek-v4-pro": ModelEntry(
@@ -248,7 +250,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
         max_tokens=64000,      # max output per request (DeepSeek supports extended output)
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,
     ),
     "deepseek-v4-flash": ModelEntry(
@@ -256,7 +258,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         token_limit=10000000,      # context window: 163,840 (shared input+output)
         max_tokens=64000,       # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
@@ -587,7 +589,9 @@ def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
             cwd = os.getcwd()
         except Exception:
             cwd = ""
-    lines: list[str] = [OPENDRSAI_IDENTITY_SYSTEM_PROMPT.strip()]
+    # This is the same versioned authoritative base prompt used by Android.
+    # Surface-specific environment/project content is appended afterwards.
+    lines: list[str] = [AgentRunConfig().authoritative_prompt()]
 
     # Plan mode: prepend the plan mode prompt
     if cli_cfg.get("plan_mode"):
@@ -690,6 +694,8 @@ def create_agent(
     user_id: Optional[str] = None,
     db_manager: Optional[DatabaseManager] = None,
     defult_config_name: Optional[str] = None,
+    model_provider: Optional[str] = None,
+    model_id: Optional[str] = None,
     cli_cfg: Optional[dict[str, Any]] = None,
     assistant_cls: type[DrSaiAssistant] = DrSaiCLIAssistant,
     work_dir: Optional[str] = None,
@@ -697,6 +703,7 @@ def create_agent(
     sub_agent_config: Optional[dict] = None,
     extra_tools: Optional[list] = None,
     enable_security: bool = False,
+    kernel_surface: str = "desktop",
 ) -> DrSaiAssistant:
     """Build a local OpenDrSai assistant from CLI config.
 
@@ -766,10 +773,26 @@ def create_agent(
                 "ANTHROPIC_API_KEY",
                 str(cli_cfg.get("anthropic_api_key") or api_key or ""),
             )
-        resolved_user_model = resolve_model_config(
-            user_model_config,
-            environ=compatibility_environ,
-            model=defult_config_name,
+        requested_provider = model_provider or selected_provider
+        require_static_credentials = not (
+            requested_provider in {"hepai", "hepai-anthropic"}
+            and get_platform_auth() is not None
+        )
+        resolved_user_model = (
+            resolve_model_ref(
+                user_model_config,
+                environ=compatibility_environ,
+                provider_id=model_provider,
+                model_id=model_id or defult_config_name or "",
+                require_credentials=require_static_credentials,
+            )
+            if model_provider
+            else resolve_model_config(
+                user_model_config,
+                environ=compatibility_environ,
+                model=defult_config_name,
+                require_credentials=require_static_credentials,
+            )
         )
         capabilities = resolved_user_model.capabilities
         llm_mode_config[resolved_user_model.model] = ModelEntry(
@@ -887,7 +910,7 @@ def create_agent(
 
     def set_model_client(
         name: Optional[str] = resolved_config_name,
-    ) -> HepAIAnthropicChatCompletionClient | HepAIChatCompletionClient:
+    ) -> HepAIAnthropicChatCompletionClient | HepAIChatCompletionClient | GeminiNativeChatCompletionClient:
         alias = name or resolved_config_name
         active_user_model = resolved_user_model
         if unified_model_config_active:
@@ -896,10 +919,21 @@ def create_agent(
             # deliberately tiny, so avoiding a stale provider/base URL is more
             # valuable than caching the parsed TOML here.
             current_user_model_config = load_user_config()
-            active_user_model = resolve_model_config(
-                current_user_model_config,
-                environ=compatibility_environ,
-                model=alias,
+            active_user_model = (
+                resolve_model_ref(
+                    current_user_model_config,
+                    environ=compatibility_environ,
+                    provider_id=model_provider,
+                    model_id=model_id or alias,
+                    require_credentials=require_static_credentials,
+                )
+                if model_provider
+                else resolve_model_config(
+                    current_user_model_config,
+                    environ=compatibility_environ,
+                    model=alias,
+                    require_credentials=require_static_credentials,
+                )
             )
             active_capabilities = active_user_model.capabilities
             entry = ModelEntry(
@@ -937,7 +971,13 @@ def create_agent(
 
         # A configured Provider protocol is authoritative. Legacy catalog
         # entries retain the historical model-name heuristics.
-        if active_user_model is not None:
+        platform_auth = get_platform_auth()
+        if platform_auth is not None:
+            # The OIDC model service is the authoritative transport for this
+            # request. A static Provider selected in config.toml must not force
+            # an Anthropic-prefixed catalog model through the OpenAI wire API.
+            client_type = "anthropic" if llm_model.casefold().startswith("anthropic/") else "openai"
+        elif active_user_model is not None:
             client_type = active_user_model.provider.wire_api
         elif client_type == "auto":
             if "claude" in llm_model or "anthropic" in llm_model or "minimax" in llm_model:
@@ -948,6 +988,16 @@ def create_agent(
         # Handle "minimax" specially - use anthropic client with HepAI endpoint
         if active_user_model is None and "minimax" in llm_model:
             client_type = "anthropic"
+
+        if client_type == "gemini":
+            return GeminiNativeChatCompletionClient(
+                model=llm_model,
+                base_url=active_base_url,
+                api_key=active_api_key,
+                max_tokens=max_tokens,
+                timeout=openai_timeout,
+                vision=entry.vision,
+            )
 
         if client_type == "anthropic":
             model_info = dict(_MODEL_INFO.get("claude-sonnet-4-5", {}))
@@ -1012,6 +1062,7 @@ def create_agent(
     if entry is None:
         entry = next(iter(llm_mode_config.values()))
     token_limit = entry.token_limit
+    reserved_output_tokens = entry.max_tokens if entry.max_tokens > 0 else int(token_limit * 0.25)
 
     cwd_prompt = _build_cwd_prompt(cli_cfg, work_dir=cwd)
 
@@ -1037,7 +1088,21 @@ def create_agent(
     # ── Sub-agent config ──
     final_sub_agent_config = sub_agent_config or {}
 
-    return assistant_cls(
+    kernel_identity = agent_kernel_identity(surface="desktop")
+    desktop_host_capabilities = [
+        "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+    ]
+    kernel_host_port = normalize_kernel_host_port({
+        "schema_version": 1,
+        "protocol_version": "p9-host-port-v1",
+        "surface": "desktop",
+        "capabilities": [
+            {"id": capability, "version": 1, "required": capability == "chat"}
+            for capability in desktop_host_capabilities
+        ],
+    }, surface="desktop")
+    shared_agent_kernel = create_agent_kernel(surface=kernel_surface)
+    assistant = assistant_cls(
         name=OPENDRSAI_ASSISTANT_NAME,
         model_client=set_model_client(resolved_config_name),
         system_message=cwd_prompt,
@@ -1045,6 +1110,19 @@ def create_agent(
         model_client_stream=True,
         thread_id=thread_id,
         db_manager=db_manager,
+        metadata={
+            "agent_kernel_id": str(kernel_identity["kernel_id"]),
+            "agent_kernel_version": str(kernel_identity["kernel_version"]),
+            "agent_prompt_version": str(kernel_identity["prompt_version"]),
+            "agent_base_prompt_sha256": str(kernel_identity["base_prompt_sha256"]),
+            "agent_kernel_sha256": str(kernel_identity["kernel_sha256"]),
+            "agent_capability_manifest_version": str(kernel_identity["capability_manifest_version"]),
+            "agent_capability_manifest_sha256": str(kernel_identity["capability_manifest_sha256"]),
+            "agent_tool_manifest_version": str(kernel_identity["tool_manifest_version"]),
+            "agent_model_tool_snapshot_version": str(kernel_identity["model_tool_snapshot_version"]),
+            "kernel_host_port_protocol_version": str(kernel_host_port["protocol_version"]),
+            "kernel_host_port_sha256": str(kernel_host_port["sha256"]),
+        },
         user_id=user_id,
         set_model_client=set_model_client,
         llm_mode_config=llm_mode_config,
@@ -1068,3 +1146,20 @@ def create_agent(
         memory_dataset_id=memory_dataset_id,
         context_type=context_type,  # "ragflow" or "sqlite", from env DRSAI_CONTEXT_TYPE
     )
+    exporter = getattr(assistant, "export_production_parity_manifest", None)
+    parity_manifest = exporter() if callable(exporter) else desktop_production_parity_manifest(assistant)
+    if isinstance(assistant, dict):
+        assistant["_production_parity_manifest"] = parity_manifest
+        assistant["_shared_agent_kernel"] = shared_agent_kernel
+    else:
+        assistant._kernel_host_port = kernel_host_port
+        assistant._p9_context_budget = {
+            "policy_version": "p9-context-budget-v1",
+            "context_window_tokens": int(token_limit),
+                "reserved_output_tokens": max(1, min(int(reserved_output_tokens), int(token_limit) - 1)),
+            "max_messages": 40,
+                "summary_tokens": min(1_024, max(0, (int(token_limit) - int(reserved_output_tokens)) // 8)),
+        }
+        assistant._production_parity_manifest = parity_manifest
+        assistant._shared_agent_kernel = shared_agent_kernel
+    return assistant

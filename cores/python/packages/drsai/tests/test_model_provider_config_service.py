@@ -14,17 +14,36 @@ from drsai.config import (
     config_revision,
     preview_update,
     last_known_good_path,
+    load_config_snapshot,
     restore_last_known_good,
 )
 from drsai.config import service as service_module
 
 
-def _process_commit(path_text: str, revision: str, model: str, start, results) -> None:
+def test_global_model_selection_update_is_rejected(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[model_providers.hepai]\nbase_url = "https://example.test/v1"\nrequires_api_key = false\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Global model selection has been removed"):
+        preview_update(
+            ConfigUpdateRequest(model="legacy", model_provider="hepai"),
+            path=path,
+            environ={},
+        )
+
+
+def _process_commit(path_text: str, revision: str, provider: str, start, results) -> None:
     from drsai.config import ConfigConflict, ConfigUpdateRequest, commit_update
     start.wait(10)
     try:
         commit_update(
-            ConfigUpdateRequest(model=model, model_provider="hepai"),
+            ConfigUpdateRequest(
+                provider_name=provider,
+                provider_values={"base_url": f"https://{provider}.example/v1", "requires_api_key": False},
+            ),
             path=path_text,
             environ={},
             expected_revision=revision,
@@ -41,8 +60,6 @@ def test_preview_validates_without_writing(tmp_path) -> None:
 
     preview = preview_update(
         ConfigUpdateRequest(
-            model="custom-model",
-            model_provider="custom",
             provider_name="custom",
             provider_values={
                 "base_url": "https://provider.example/v1",
@@ -53,8 +70,7 @@ def test_preview_validates_without_writing(tmp_path) -> None:
         environ={},
     )
 
-    assert preview.resolved.model == "custom-model"
-    assert preview.resolved.provider.name == "custom"
+    assert preview.config.providers["custom"].base_url == "https://provider.example/v1"
     assert path.read_bytes() == before
     assert not path.with_suffix(".toml.bak").exists()
 
@@ -69,8 +85,6 @@ def test_invalid_candidate_never_changes_disk(tmp_path) -> None:
             ConfigUpdateRequest(
                 provider_name="broken",
                 provider_values={"base_url": "not-a-url", "requires_api_key": False},
-                model="model",
-                model_provider="broken",
             ),
             path=path,
             environ={},
@@ -91,8 +105,6 @@ def test_commit_is_atomic_and_revisioned(tmp_path) -> None:
                 "base_url": "http://127.0.0.1:11434/v1",
                 "requires_api_key": False,
             },
-            model="qwen3:32b",
-            model_provider="local",
         ),
         path=path,
         environ={},
@@ -101,7 +113,6 @@ def test_commit_is_atomic_and_revisioned(tmp_path) -> None:
 
     parsed = tomllib.loads(path.read_text(encoding="utf-8"))
     assert parsed["desktop"]["theme"] == "dark"
-    assert parsed["model"] == "qwen3:32b"
     assert parsed["model_providers"]["local"]["requires_api_key"] is False
     assert result.previous_revision == expected
     assert result.revision == config_revision(path)
@@ -109,11 +120,148 @@ def test_commit_is_atomic_and_revisioned(tmp_path) -> None:
     assert last_known_good_path(path).read_bytes() == path.read_bytes()
 
 
+def test_commit_externalizes_provider_models_and_revisions_catalog(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('model = "model-a"\nmodel_provider = "custom"\n', encoding="utf-8")
+    result = commit_update(
+        ConfigUpdateRequest(
+            provider_name="custom",
+            provider_values={
+                "base_url": "https://provider.example/v1",
+                "requires_api_key": False,
+                "models": {
+                    "model-a": {
+                        "input_modalities": ["text"],
+                        "output_modalities": ["text"],
+                        "api_protocol": "openai",
+                        "enabled": True,
+                        "capabilities": ["chat"],
+                    }
+                },
+            },
+        ),
+        path=path,
+        environ={},
+    )
+    provider = tomllib.loads(path.read_text(encoding="utf-8"))["model_providers"]["custom"]
+    assert "models" not in provider
+    assert provider["models_file"] == "configs/models/provider_custom.toml"
+    catalog_path = tmp_path / provider["models_file"]
+    assert tomllib.loads(catalog_path.read_text(encoding="utf-8"))["models"]["model-a"]["enabled"] is True
+    before = result.revision
+    catalog_path.write_text(catalog_path.read_text(encoding="utf-8").replace("enabled = true", "enabled = false"), encoding="utf-8")
+    assert config_revision(path) != before
+
+
+def test_disabling_active_model_switches_to_first_enabled_model_atomically(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('model = "old-model"\nmodel_provider = "custom"\n', encoding="utf-8")
+    result = commit_update(
+        ConfigUpdateRequest(
+            provider_name="custom",
+            provider_values={
+                "base_url": "https://provider.example/v1",
+                "requires_api_key": False,
+                "models": {
+                    "old-model": {"enabled": False},
+                    "new-model": {"enabled": True},
+                },
+            },
+        ),
+        path=path,
+        environ={},
+    )
+    assert result.config.model == "new-model"
+    assert result.resolved.model_id == "new-model"
+    assert tomllib.loads(path.read_text(encoding="utf-8"))["model"] == "new-model"
+
+
+def test_active_provider_cannot_disable_every_model(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('model = "only-model"\nmodel_provider = "custom"\n', encoding="utf-8")
+    before = path.read_bytes()
+    with pytest.raises(ConfigError, match="must remain enabled"):
+        commit_update(
+            ConfigUpdateRequest(
+                provider_name="custom",
+                provider_values={
+                    "base_url": "https://provider.example/v1",
+                    "requires_api_key": False,
+                    "models": {"only-model": {"enabled": False}},
+                },
+            ),
+            path=path,
+            environ={},
+        )
+    assert path.read_bytes() == before
+
+
+def test_disabling_last_active_provider_model_switches_to_another_provider(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'model = "old-model"\nmodel_provider = "old"\n'
+        '[model_providers.old]\nbase_url = "https://old.example/v1"\nrequires_api_key = false\n',
+        encoding="utf-8",
+    )
+    commit_update(
+        ConfigUpdateRequest(
+            provider_name="fallback",
+            provider_values={
+                "base_url": "https://fallback.example/v1",
+                "requires_api_key": False,
+                "models": {"fallback-model": {"enabled": True}},
+            },
+        ),
+        path=path,
+        environ={},
+    )
+    result = commit_update(
+        ConfigUpdateRequest(
+            provider_name="old",
+            provider_values={
+                "base_url": "https://old.example/v1",
+                "requires_api_key": False,
+                "models": {"old-model": {"enabled": False}},
+            },
+        ),
+        path=path,
+        environ={},
+    )
+    assert result.config.model_provider == "fallback"
+    assert result.config.model == "fallback-model"
+
+
+def test_disabled_model_on_inactive_provider_does_not_reuse_global_default(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'model = "shared-model"\nmodel_provider = "active"\n'
+        '[model_providers.active]\nbase_url = "https://active.example/v1"\n',
+        encoding="utf-8",
+    )
+    result = commit_update(
+        ConfigUpdateRequest(
+            provider_name="inactive",
+            provider_values={
+                "base_url": "https://inactive.example/v1",
+                "requires_api_key": False,
+                "models": {"shared-model": {"enabled": False}},
+            },
+        ),
+        path=path,
+        environ={},
+    )
+    assert result.config.model == "shared-model"
+    assert result.config.model_provider == "active"
+
+
 def test_restore_last_known_good_validates_revision_and_restores(tmp_path) -> None:
     path = tmp_path / "config.toml"
     path.write_text('model = "first"\nmodel_provider = "hepai"\n', encoding="utf-8")
     committed = commit_update(
-        ConfigUpdateRequest(model="known-good", model_provider="hepai"),
+        ConfigUpdateRequest(
+            provider_name="custom",
+            provider_values={"base_url": "https://known-good.example/v1", "requires_api_key": False},
+        ),
         path=path,
         environ={},
     )
@@ -124,8 +272,8 @@ def test_restore_last_known_good_validates_revision_and_restores(tmp_path) -> No
 
     current_revision = config_revision(path)
     result = restore_last_known_good(path=path, environ={}, expected_revision=current_revision)
-    assert result.resolved.model == "known-good"
-    assert tomllib.loads(path.read_text(encoding="utf-8"))["model"] == "known-good"
+    restored = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert restored["model_providers"]["custom"]["base_url"] == "https://known-good.example/v1"
 
 
 def test_restore_requires_snapshot(tmp_path) -> None:
@@ -156,10 +304,13 @@ def test_concurrent_expected_revision_has_one_winner(tmp_path) -> None:
     path.write_text('model = "initial"\nmodel_provider = "hepai"\n', encoding="utf-8")
     revision = config_revision(path)
 
-    def update(model: str) -> str:
+    def update(provider: str) -> str:
         try:
             commit_update(
-                ConfigUpdateRequest(model=model, model_provider="hepai"),
+                ConfigUpdateRequest(
+                    provider_name=provider,
+                    provider_values={"base_url": f"https://{provider}.example/v1", "requires_api_key": False},
+                ),
                 path=path,
                 environ={},
                 expected_revision=revision,
@@ -172,7 +323,31 @@ def test_concurrent_expected_revision_has_one_winner(tmp_path) -> None:
         outcomes = list(pool.map(update, ["one", "two"]))
 
     assert sorted(outcomes) == ["committed", "conflict"]
-    assert tomllib.loads(path.read_text(encoding="utf-8"))["model"] in {"one", "two"}
+    providers = tomllib.loads(path.read_text(encoding="utf-8"))["model_providers"]
+    assert ("one" in providers) ^ ("two" in providers)
+
+
+def test_run_config_snapshot_binds_model_and_revision_atomically(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('model = "first"\nmodel_provider = "hepai"\n', encoding="utf-8")
+    first = load_config_snapshot(path=path)
+
+    committed = commit_update(
+        ConfigUpdateRequest(
+            provider_name="custom",
+            provider_values={"base_url": "https://second.example/v1", "requires_api_key": False},
+        ),
+        path=path,
+        environ={},
+        expected_revision=first.revision,
+    )
+    second = load_config_snapshot(path=path)
+
+    assert first.config.model == "first"
+    assert second.config.model == "first"
+    assert second.config.providers["custom"].base_url == "https://second.example/v1"
+    assert first.revision != second.revision
+    assert second.revision == committed.revision
 
 
 def test_cross_process_expected_revision_has_one_winner(tmp_path) -> None:
@@ -194,7 +369,8 @@ def test_cross_process_expected_revision_has_one_winner(tmp_path) -> None:
         process.join(timeout=20)
         assert process.exitcode == 0
     assert sorted(outcomes) == ["committed", "conflict"]
-    assert tomllib.loads(path.read_text(encoding="utf-8"))["model"] in {"process-one", "process-two"}
+    providers = tomllib.loads(path.read_text(encoding="utf-8"))["model_providers"]
+    assert ("process-one" in providers) ^ ("process-two" in providers)
 
 
 def test_credential_is_committed_then_old_reference_is_cleaned(tmp_path, monkeypatch) -> None:
@@ -255,7 +431,7 @@ def test_delete_provider_can_explicitly_retain_secure_credential(tmp_path, monke
     reference = "drsai-credential:00000000-0000-0000-0000-000000000001"
     path = tmp_path / "config.toml"
     path.write_text(
-        'model = "custom"\nmodel_provider = "custom"\n[model_providers.custom]\n'
+        'model = "deepseek-v4-pro"\nmodel_provider = "hepai"\n[model_providers.custom]\n'
         f'base_url = "https://example.test/v1"\napi_key_credential = "{reference}"\n',
         encoding="utf-8",
     )
@@ -265,8 +441,6 @@ def test_delete_provider_can_explicitly_retain_secure_credential(tmp_path, monke
         ConfigUpdateRequest(
             delete_provider_name="custom",
             delete_provider_credential=False,
-            model="deepseek-v4-pro",
-            model_provider="hepai",
         ),
         path=path,
         environ={},

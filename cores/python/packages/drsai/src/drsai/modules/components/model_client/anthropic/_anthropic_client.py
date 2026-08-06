@@ -259,7 +259,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             request_args["tools"] = self._last_used_tools
 
         # Optional parameters
-        for param in ["top_p", "top_k", "stop_sequences", "metadata"]:
+        for param in ["top_p", "top_k", "stop_sequences", "metadata", "thinking", "output_config"]:
             if param in create_args:
                 request_args[param] = create_args[param]
 

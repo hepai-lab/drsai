@@ -1,7 +1,9 @@
 """Content-free dry-run analysis for Codex history reprojection."""
 from __future__ import annotations
 
+import ast
 import hashlib
+import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -11,6 +13,31 @@ from typing import Any
 _SERIALIZED_PARTS = re.compile(
     r"^\s*(?:\[\s*\{|\{)\s*['\"]?(?:text|type)['\"]?\s*:", re.IGNORECASE
 )
+
+
+def decode_legacy_message_parts(value: Any, *, max_chars: int) -> list[Mapping[str, Any]] | None:
+    """Decode the pre-OAEP serialized-parts defect only during history migration.
+
+    Live Codex text is deliberately never passed through this heuristic: a
+    user is allowed to send source text that happens to resemble a Python or
+    JSON list of dictionaries.
+    """
+    if not isinstance(value, str) or len(value) > max_chars:
+        return None
+    stripped = value.strip()
+    if not (stripped.startswith("[") and stripped.endswith("]")):
+        return None
+    parsed: Any = None
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        try:
+            parsed = ast.literal_eval(stripped)
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            return None
+    if isinstance(parsed, list) and all(isinstance(part, Mapping) for part in parsed):
+        return parsed
+    return None
 
 
 def codex_history_migration_dry_run(

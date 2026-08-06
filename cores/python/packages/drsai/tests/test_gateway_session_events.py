@@ -144,6 +144,30 @@ def test_oaep_snapshot_replay_and_sse_share_one_session_waterline(
     assert payload == replay["data"][0]
 
 
+def test_oaep_snapshot_http_adapter_rejects_tampered_window_cursor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gateway, engine, session = _gateway_runtime(tmp_path, monkeypatch)
+    run, _ = engine.create_run(session["session_id"], "agent@1", "cursor-run")
+    for index in range(2):
+        engine.record_conversation_item(
+            session["session_id"], item_id=f"cursor-item-{index}", kind="message",
+            role="user", revision=1, source_client="windows",
+            source_message_id=f"cursor-source-{index}", payload={"text": str(index)},
+            run_id=run["run_id"],
+        )
+    snapshot = asyncio.run(
+        gateway.runtime_session_oaep_snapshot(session["session_id"], limit=1)
+    )
+    cursor = str(snapshot["window"]["next_cursor"])
+    replacement = "A" if cursor[-1] != "A" else "B"
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(gateway.runtime_session_oaep_snapshot(
+            session["session_id"], cursor=cursor[:-1] + replacement, limit=1,
+        ))
+    assert caught.value.status_code == 400
+
+
 def test_legacy_and_oaep_endpoints_keep_distinct_wire_contracts(
     tmp_path: Path, monkeypatch
 ) -> None:

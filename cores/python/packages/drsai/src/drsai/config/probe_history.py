@@ -10,9 +10,10 @@ _LOCK = RLock()
 _LATEST: dict[str, dict[str, object]] = {}
 
 
-def record_probe_result(provider: str, mode: str, result: Mapping[str, object]) -> None:
+def record_probe_result(provider: str, model: str, mode: str, result: Mapping[str, object]) -> None:
     value = {
         "provider": provider,
+        "model": model,
         "mode": mode,
         "ok": bool(result.get("ok")),
         "tested_at": datetime.now(timezone.utc).isoformat(),

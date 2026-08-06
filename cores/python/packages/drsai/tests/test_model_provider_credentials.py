@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from drsai.config.credentials import credential_available, delete_credential, resolve_credential, store_credential
+import pytest
+
+from drsai.config import ConfigError
+from drsai.config.credentials import credential_available, default_credentials_dir, delete_credential, resolve_credential, store_credential
 from drsai.config.credential_lifecycle import cleanup_orphaned_credentials, scan_orphaned_credentials
 from drsai.config.loader import parse_user_config
 from drsai.config.resolver import resolve_model_config
@@ -26,6 +29,11 @@ def test_corrupt_credential_is_reported_unavailable(tmp_path) -> None:
     assert credential_available(reference, root=tmp_path) is False
 
 
+def test_default_credentials_directory_follows_drsai_home(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DRSAI_HOME", str(tmp_path / "isolated-home"))
+    assert default_credentials_dir() == tmp_path / "isolated-home" / "credentials"
+
+
 def test_resolver_supports_credential_reference_without_exposing_it(monkeypatch) -> None:
     reference = "drsai-credential:00000000-0000-0000-0000-000000000001"
     config = parse_user_config({
@@ -47,6 +55,20 @@ def test_resolver_supports_credential_reference_without_exposing_it(monkeypatch)
     assert resolved.provider.api_key.reveal() == "resolved-secret"
     assert resolved.provider.api_key_source == "credential"
     assert "resolved-secret" not in repr(resolved)
+
+
+def test_resolver_explains_unavailable_saved_credential() -> None:
+    reference = "drsai-credential:00000000-0000-0000-0000-000000000001"
+    config = parse_user_config({
+        "model": "custom",
+        "model_provider": "private",
+        "model_providers": {"private": {
+            "base_url": "https://provider.example/v1",
+            "api_key_credential": reference,
+        }},
+    })
+    with pytest.raises(ConfigError, match="enter the API Key again"):
+        resolve_model_config(config, credential_resolver=lambda _value: None)
 
 
 def test_orphan_cleanup_never_deletes_current_or_last_good_references(tmp_path) -> None:
