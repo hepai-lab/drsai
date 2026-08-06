@@ -24,7 +24,7 @@ const decoder = read("../../../cores/python/packages/drsai/src/drsai/backend/cod
 const checks = [
   ["M1-F01 sync lifecycle", api.includes("DesktopThreadHistoryState") && chatUi.includes("conversation-sync-status")],
   ["M1-F02 sync time and counts", api.includes("syncedAt?: string") && api.includes("loadedRuns: number")],
-  ["M1-F03 immediate loading state", chatUi.includes("Loading Codex session") && app.includes("conversationHistoryPending")],
+  ["M1-F03 source-aware immediate loading state", chatUi.includes("Loading Codex session") && chatUi.includes("Loading OpenDrSai session") && app.includes('conversationSource={activeThread?.boundAgentId === "my-codex"') && app.includes("conversationHistoryPending")],
   ["M1-F04 projection correction feedback", api.includes("correctedItems?: number") && chatUi.includes("Partially synced")],
   ["M1-F05 ordering diagnostics", projection.includes("projectionWarnings") && projection.includes("stable fallback ordering")],
 
@@ -36,7 +36,7 @@ const checks = [
   ["M2-F06 reconnect without duplicates", subscription.includes("OaepEventGap") && syncState.includes("advanceCursor")],
 
   ["M3-F01 visible session operations", app.includes("handleNewChat") && app.includes("syncWorkspaceSessions")],
-  ["M3-F02 archived center and search", app.includes("archived-threads-settings") && app.includes("archiveSearch")],
+  ["M3-F02 archived center and search", app.includes('id: "archived-sessions"') && app.includes('activePane === "archived-sessions"') && app.includes("archived-threads-settings") && app.includes("archiveSearch")],
   ["M3-F03 bidirectional archive", agent.includes("archive_session") && codex.includes('"thread/archive" if archived else "thread/unarchive"')],
   ["M3-F04 archive conflict policy", engine.includes('_timestamp(str(existing["updated_at"])) > _timestamp(updated)') && agent.includes('"conflicts": 0')],
   ["M3-F05 session source", api.includes('archiveSource?: "opendrsai" | "codex"') && api.includes("boundAgentName")],

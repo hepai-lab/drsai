@@ -21,7 +21,18 @@ assert.match(
 assert.match(renderer, /function StructuredActivityTimeline/, "structured activity timeline renderer is missing");
 assert.match(renderer, /data-activity-count=\{turn\.activities\.length\}/, "chat must expose only an aggregate tool count");
 assert.match(renderer, /在调试中查看详情/, "chat tool summary must direct detailed inspection to Debug");
-assert.doesNotMatch(renderer, /turn\.activities\.map\(/, "chat must not render one card per raw tool event");
+assert.match(
+  renderer,
+  /function StructuredActivityDetails[\s\S]*turn\.activities\.slice\(window\.start, window\.end\)\.map\([\s\S]*formatActivitySummary/,
+  "completed activity summaries must remain inside a bounded dedicated details surface",
+);
+assert.equal(
+  (renderer.match(/turn\.activities\.map\(/g) ?? []).length,
+  0,
+  "raw activity iteration must never mount an unbounded activity collection",
+);
+assert.match(renderer, /PROCESS_ACTIVITY_WINDOW_SIZE/, "activity details must use the shared bounded window size");
+assert.match(renderer, /ProcessWindowNavigation/, "all activity evidence must remain reachable through pagination");
 assert.doesNotMatch(renderer, /activity\.output/, "raw tool output must not be rendered in the chat body");
 assert.match(adapter, /appendStructuredActivity/, "tool timeline events must be upserted into the structured turn");
 assert.match(

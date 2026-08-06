@@ -10,9 +10,13 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const currentBackendSource = resolve(root, "..", "..", "..", "cores", "python", "packages", "drsai", "src");
 const currentBackendVersionFile = resolve(currentBackendSource, "drsai", "version.py");
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
-const electronCmd = process.platform === "win32"
-  ? join(root, "node_modules", "electron", "dist", "electron.exe")
-  : join(root, "node_modules", ".bin", "electron");
+const electronCandidates = process.platform === "win32"
+  ? [
+      join(root, "node_modules", "electron", "dist", "electron.exe"),
+      join(root, "..", "node_modules", "electron", "dist", "electron.exe"),
+    ]
+  : [join(root, "node_modules", ".bin", "electron"), join(root, "..", "node_modules", ".bin", "electron")];
+const electronCmd = electronCandidates.find((candidate) => existsSync(candidate)) || electronCandidates[0];
 const port = Number(process.env.OPENDRSAI_E2E_OIDC_PORT || "18649");
 const gatewayPort = Number(process.env.OPENDRSAI_E2E_OIDC_GATEWAY_PORT || "18650");
 const modelPort = Number(process.env.OPENDRSAI_E2E_OIDC_MODEL_PORT || "18651");
@@ -99,8 +103,11 @@ function startFakeGateway() {
     models: [],
     chat: [],
     agent: [],
+    notFound: [],
   };
   globalThis.__opendrsaiOidcGatewayHits = hits;
+  const runtimeStreams = new Map();
+  const runtimeSessions = new Map();
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${gatewayPort}`);
     if (url.pathname === "/health") {
@@ -114,6 +121,91 @@ function startFakeGateway() {
         authMode: req.headers["x-opendrsai-auth-mode"] || "",
       });
       writeJson(res, 200, { object: "list", data: [{ id: "drsai", object: "model" }] });
+      return;
+    }
+    if (url.pathname === "/v1/runtime" && req.method === "GET") {
+      writeJson(res, 200, {
+        runtime_id: "oidc-runtime",
+        instance_id: "oidc-runtime-instance",
+        version: "e2e",
+        protocol_version: 1,
+        platform: "win32",
+      });
+      return;
+    }
+    if (url.pathname === "/v1/workspaces" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req));
+      writeJson(res, 200, { workspace_id: "oidc-runtime-workspace", path: body.path, display_name: body.display_name || "OIDC workspace", open: true });
+      return;
+    }
+    if (url.pathname === "/v1/sessions" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req));
+      const sessionId = "oidc-runtime-session";
+      runtimeSessions.set(sessionId, body.workspace_id);
+      writeJson(res, 201, { session_id: sessionId, workspace_id: body.workspace_id, title: body.title || "OIDC chat" });
+      return;
+    }
+    const snapshotMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/oaep-snapshot$/);
+    if (snapshotMatch && req.method === "GET") {
+      const sessionId = decodeURIComponent(snapshotMatch[1]);
+      writeJson(res, 200, { version: "1.0", session: { id: sessionId }, runs: [], items: [], snapshot_sequence: 0 });
+      return;
+    }
+    const eventListMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/oaep-events$/);
+    if (eventListMatch && req.method === "GET") {
+      writeJson(res, 200, { version: "1.0", object: "list", data: [], next_sequence: Number(url.searchParams.get("after_sequence") || 0), has_more: false });
+      return;
+    }
+    const streamMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/oaep-events\/stream$/);
+    if (streamMatch && req.method === "GET") {
+      const sessionId = decodeURIComponent(streamMatch[1]);
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+      res.flushHeaders();
+      runtimeStreams.set(sessionId, res);
+      res.on("close", () => { if (runtimeStreams.get(sessionId) === res) runtimeStreams.delete(sessionId); });
+      return;
+    }
+    const createRunMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/runs$/);
+    if (createRunMatch && req.method === "POST") {
+      const sessionId = decodeURIComponent(createRunMatch[1]);
+      writeJson(res, 201, { run_id: "oidc-runtime-run", session_id: sessionId, workspace_id: runtimeSessions.get(sessionId), backend_id: "opendrsai", status: "queued" });
+      return;
+    }
+    const executeRunMatch = url.pathname.match(/^\/v1\/runs\/([^/]+)\/execute$/);
+    if (executeRunMatch && req.method === "POST") {
+      const runId = decodeURIComponent(executeRunMatch[1]);
+      const body = JSON.parse(await readBody(req));
+      const requestId = body?.metadata?.desktop_request_id || "";
+      const hit = {
+        requestId,
+        model: body?.model || "",
+        hasBearer: String(req.headers.authorization || "").startsWith("Bearer "),
+        authMode: req.headers["x-opendrsai-auth-mode"] || "",
+        user: body?.user_id || "",
+      };
+      hits.chat.push(hit);
+      const upstream = await fetch(`http://127.0.0.1:${modelPort}/apiv2/v1/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: req.headers.authorization || "", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!upstream.ok) {
+        writeJson(res, 502, { error: "fake_model_rejected_runtime" });
+        return;
+      }
+      const sessionId = "oidc-runtime-session";
+      const stream = runtimeStreams.get(sessionId);
+      if (stream) {
+        const now = new Date().toISOString();
+        const source = { backend: "opendrsai", client: "runtime" };
+        const events = [
+          { version: "1.0", event_id: "oidc-oaep-1", dedupe_key: "oidc-oaep-1", session_id: sessionId, run_id: runId, item_id: "oidc-message", sequence: 1, timestamp: now, type: "event.item.delta", source, data: { delta: { kind: "message.text.append", text: "oidc chat bearer ok" } } },
+          { version: "1.0", event_id: "oidc-oaep-2", dedupe_key: "oidc-oaep-2", session_id: sessionId, run_id: runId, sequence: 2, timestamp: now, type: "event.run.completed", source, data: { run: { id: runId, status: "completed", created_at: now, completed_at: now } } },
+        ];
+        for (const event of events) stream.write(`data: ${JSON.stringify(event)}\n\n`);
+        stream.end();
+      }
+      writeJson(res, 200, { run: { run_id: runId, session_id: sessionId, status: "completed" }, result: { content: "oidc chat bearer ok" } });
       return;
     }
     if (url.pathname === "/v1/chat/completions" && req.method === "POST") {
@@ -146,7 +238,8 @@ function startFakeGateway() {
       writeSse(res, String(requestId).includes("agent") ? "oidc agent bearer ok" : "oidc chat bearer ok");
       return;
     }
-    writeJson(res, 404, { error: "fake_gateway_not_found" });
+    hits.notFound.push({ method: req.method, path: url.pathname });
+    writeJson(res, 404, { error: `fake_gateway_not_found:${req.method}:${url.pathname}` });
   });
   globalThis.__opendrsaiOidcFakeGateway = server;
   return new Promise((resolve, reject) => {

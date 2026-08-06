@@ -13,6 +13,7 @@ const gates = [
   ["10k performance", process.execPath, ["../shared/test-kit/run-bundled-test.mjs", "scripts/verify-codex-v6-performance.mts"]],
   ["structured contract", process.execPath, ["scripts/verify-structured-conversation.mjs"]],
   ["four-layer renderer", process.execPath, ["scripts/verify-structured-message-renderer.mjs"]],
+  ["desktop OAEP terminal", process.execPath, ["scripts/verify-codex-desktop-integration.mjs"]],
 ];
 for (const [name, command, args] of gates) {
   const result = spawnSync(command, args, { cwd: windows, encoding: "utf8", windowsHide: true });

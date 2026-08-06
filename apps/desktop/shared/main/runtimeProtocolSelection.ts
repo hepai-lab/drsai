@@ -1,5 +1,12 @@
 import type { RuntimeCapabilities } from "./runtimeClient";
 
+// Kept as a runtime-safe mirror because this module is also executed directly
+// by Node's strip-types test runner. generate-oaep-types.py --check verifies
+// this mirror against the generated TS/Kotlin/Python constants.
+const OAEP_VERSION = "1.0";
+const OAEP_PROFILE = "oaep.session-stream/1";
+const OAEP_SCHEMA_SHA256 = "304304216b4133e6b00dd3d93897d4f84ccc716ee830f2ecca11c77585d0970d";
+
 const OAEP_REQUIRED = [
   "oaep.v1",
   "oaep.session.snapshot",
@@ -15,17 +22,44 @@ const LEGACY_REQUIRED = [
   "session.event.cursor_expired",
 ] as const;
 
-export function selectRuntimeConversationProtocol(
+export interface RuntimeConversationProtocolSelection {
+  selected: "oaep" | "legacy" | "unavailable";
+  version: string | null;
+  schemaHash: string | null;
+  fallbackReason: "operator_rollback" | "oaep_unavailable" | "legacy_unavailable" | null;
+  upgradeAction: "upgrade_runtime" | "disable_operator_rollback" | null;
+}
+
+export function selectRuntimeConversationProtocolResult(
   capabilities: RuntimeCapabilities,
-): "oaep" | "legacy" | "unavailable" {
+  options: { forceLegacy?: boolean } = {},
+): RuntimeConversationProtocolSelection {
   const advertised = new Set(capabilities.capabilities);
   const oaepProtocol = capabilities.protocols?.oaep;
   const oaepSignals = Boolean(oaepProtocol) || [...advertised].some((name) => name.startsWith("oaep."));
-  const oaepComplete = oaepProtocol?.version === "1.0"
-    && oaepProtocol.profiles.includes("oaep.session-stream/1")
+  const oaepComplete = oaepProtocol?.version === OAEP_VERSION
+    && oaepProtocol.profiles.includes(OAEP_PROFILE)
     && OAEP_REQUIRED.every((name) => advertised.has(name));
   if (oaepSignals && !oaepComplete) throw new Error("oaep_capability_partial");
-  if (oaepComplete) return "oaep";
-  if (LEGACY_REQUIRED.every((name) => advertised.has(name))) return "legacy";
-  return "unavailable";
+  if (oaepComplete && !options.forceLegacy) return {
+    selected: "oaep", version: OAEP_VERSION, schemaHash: OAEP_SCHEMA_SHA256,
+    fallbackReason: null, upgradeAction: null,
+  };
+  const legacy = LEGACY_REQUIRED.every((name) => advertised.has(name));
+  if (legacy) return {
+    selected: "legacy", version: "1", schemaHash: null,
+    fallbackReason: options.forceLegacy ? "operator_rollback" : "oaep_unavailable",
+    upgradeAction: options.forceLegacy && oaepComplete ? "disable_operator_rollback" : "upgrade_runtime",
+  };
+  return {
+    selected: "unavailable", version: null, schemaHash: null,
+    fallbackReason: "legacy_unavailable", upgradeAction: "upgrade_runtime",
+  };
+}
+
+export function selectRuntimeConversationProtocol(
+  capabilities: RuntimeCapabilities,
+  options: { forceLegacy?: boolean } = {},
+): "oaep" | "legacy" | "unavailable" {
+  return selectRuntimeConversationProtocolResult(capabilities, options).selected;
 }

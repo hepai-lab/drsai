@@ -19,7 +19,8 @@ for (const kind of ["markdown", "reasoning", "progress", "artifact", "citation",
 assert.equal(renderer.includes('part.kind === "tool"'), false, "Tool activity must not render in the conversation document.");
 assert.ok(
   renderer.includes('part.kind === "progress"')
-    && renderer.includes('processParts.filter((part) => part.kind === "progress")'),
+    && renderer.includes('items={progressParts}')
+    && renderer.includes('items={reasoningParts}'),
   "Progress, including completed backend commentary, must render inside the process layer.",
 );
 assert.ok(
@@ -27,9 +28,25 @@ assert.ok(
     && renderer.includes('part.status === "running" || part.status === "pending"'),
   "Resolved interactions must leave the transcript.",
 );
-assert.ok(renderer.includes("part.segments.map") && renderer.includes("分析摘要"), "Reasoning summaries must render inside the process layer.");
+assert.ok(
+  renderer.includes("part.segments.filter")
+    && renderer.includes("visibleSegments.map")
+    && renderer.includes("分析摘要"),
+  "User-visible reasoning summaries must render inside the process layer.",
+);
 assert.ok(renderer.includes('className="structured-run-status"') && renderer.includes("statusMeta"), "Run identity, status and elapsed time must share one status row.");
 assert.ok(renderer.includes('className="structured-process"') && renderer.includes("processOpen"), "Process details must use one state-aware disclosure.");
+assert.ok(
+  renderer.includes('processOpen ? <div')
+    && renderer.includes('data-testid="structured-process-content"'),
+  "Collapsed completed process details must not mount their evidence body.",
+);
+assert.ok(
+  renderer.includes("BoundedProcessSection")
+    && renderer.includes("ProcessWindowNavigation")
+    && renderer.includes("turn.activities.slice(window.start, window.end)"),
+  "Large process and activity collections must use bounded, navigable windows.",
+);
 assert.ok(
   renderer.includes('<summary className="structured-run-status"')
     && renderer.includes('className="structured-run-actions"')

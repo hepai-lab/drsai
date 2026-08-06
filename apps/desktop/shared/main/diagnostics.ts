@@ -25,6 +25,7 @@ import {
   type DiagnosticStatus,
   type DiagnosticTrace,
 } from "../api/diagnostics";
+import { redactSensitiveData } from "../api/sensitiveData";
 
 const MAX_EVENTS = 5_000;
 const MAX_EVENT_BYTES = 64 * 1024;
@@ -682,7 +683,7 @@ function sanitizeAttributes(input?: Record<string, unknown>): Record<string, Dia
   const result: Record<string, DiagnosticAttributeValue> = {};
   for (const [rawKey, rawValue] of Object.entries(input).slice(0, 50)) {
     const key = safeLabel(rawKey, "attribute");
-    if (/token|secret|password|cookie|authorization|api.?key/i.test(key)) continue;
+    if (/token|secret|password|cookie|authorization|api.?key|prompt|message|command|arguments/i.test(key)) continue;
     if (rawValue === null || typeof rawValue === "number" || typeof rawValue === "boolean") result[key] = rawValue;
     else result[key] = redactText(String(rawValue)).slice(0, 1_000);
   }
@@ -690,9 +691,10 @@ function sanitizeAttributes(input?: Record<string, unknown>): Record<string, Dia
 }
 
 export function redactText(value: string): string {
-  return value
+  return redactSensitiveData(value)
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]+/gi, "$1[REDACTED]")
-    .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|password|secret|cookie|authorization)\s*[:=]\s*([^\s,;]+)/gi, "$1=[REDACTED]")
+    .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|password|secret|cookie|authorization|prompt|message|command|arguments)\s*[:=]\s*([^\s,;]+)/gi, "$1=[REDACTED]")
+    .replace(/([?&](?:code|token|access_token|refresh_token|id_token|client_secret|state)=)[^&#\s]+/gi, "$1[REDACTED]")
     .replace(/\b[A-Za-z]:\\Users\\[^\\\s]+/gi, "%USERPROFILE%")
     .replace(/\/home\/[^/\s]+/g, "$HOME");
 }

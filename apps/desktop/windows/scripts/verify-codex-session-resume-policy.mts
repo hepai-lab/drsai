@@ -1,25 +1,25 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { requiresCodexSessionResume } from "../../shared/main/codexSessionResumePolicy";
+import { codexContinuationAction } from "../../shared/main/codexSessionResumePolicy";
 
-assert.equal(
-  requiresCodexSessionResume({ id: "thread-new", lastRunId: null, archiveSource: null }, "codex@1"),
-  false,
-  "a new local Codex thread must create its first Runtime Session even after optimistic message persistence",
-);
-assert.equal(requiresCodexSessionResume({ id: "session-codex-imported" }, "codex@1"), true);
-assert.equal(requiresCodexSessionResume({ id: "legacy-thread", archiveSource: "codex" }, "codex@1"), true);
-assert.equal(requiresCodexSessionResume({ id: "legacy-thread", lastRunId: "run-1" }, "codex@1"), true);
-assert.equal(requiresCodexSessionResume({ id: "session-codex-imported" }, "opendrsai@1"), false);
+const status = (state: "unbound" | "bound" | "recovery-required" | "conflict" | "backend-missing") =>
+  ({ session_id: "session-1", backend_id: "codex", state });
 
-const chatPath = resolve(process.cwd(), "../shared/main/chat.ts");
-const chat = await readFile(chatPath, "utf8");
-const syncIndex = chat.indexOf('client.syncBackendSessions(resolved.workspaceId, "codex")');
-const failureIndex = chat.indexOf("codex_session_resume_required");
+assert.equal(codexContinuationAction(status("bound")), "continue");
+assert.equal(codexContinuationAction(status("unbound")), "bind");
+assert.equal(codexContinuationAction(status("backend-missing")), "create");
+assert.equal(codexContinuationAction(status("recovery-required")), "recover");
+assert.equal(codexContinuationAction(status("conflict")), "conflict");
+
+const chat = await readFile(resolve(process.cwd(), "../shared/main/chat.ts"), "utf8");
+const statusIndex = chat.indexOf("client.getBackendSessionBinding(existingThread.id)");
+const syncIndex = chat.indexOf('client.syncBackendSessions(resolved.workspaceId, "codex"');
 const createIndex = chat.indexOf("client.createSession(resolved.workspaceId");
-assert(syncIndex >= 0 && failureIndex > syncIndex, "imported Codex tasks must try workspace sync before asking the user to recover");
+assert(statusIndex >= 0 && syncIndex > statusIndex, "Codex continuation must query Runtime binding before discovery sync");
+assert(chat.includes("codexContinuationAction(binding)"), "Desktop must interpret only the authoritative binding state");
 assert(chat.includes("updateThread({ id: existingThread.id, runtimeSessionId })"), "a recovered binding must be persisted");
-assert(createIndex > failureIndex, "new local tasks must fall through to Runtime Session creation");
+assert(createIndex > syncIndex, "an unbound new task must still fall through to Runtime Session creation");
+assert(!chat.includes("requiresCodexSessionResume"), "thread metadata heuristics must be removed");
 
-console.log("Codex session resume policy verification passed.");
+console.log("Codex authoritative Session binding policy verification passed.");

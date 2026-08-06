@@ -142,9 +142,12 @@ export function LoginScreen(): React.JSX.Element {
           </div>
         )}
 
-        {(import.meta.env.DEV || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1") && (
+        {(import.meta.env.DEV
+          || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1"
+          || new URLSearchParams(window.location.search).get("developerBypassFixture") === "1") && (
           <button
             className="developer-bypass"
+            data-testid="developer-workspace-login"
             type="button"
             disabled={auth.loginBusy}
             onClick={() => auth.login({ developerBypass: true, rememberMe })}

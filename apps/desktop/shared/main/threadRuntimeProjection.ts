@@ -182,6 +182,7 @@ export function oaepToMessage(item: OaepItem): DesktopThreadMessageSnapshot | nu
   if (item.type === "reasoning") {
     const segments = Array.isArray(item.content.segments) ? item.content.segments : [];
     const reasoning = segments
+      .filter((segment) => !segment.visibility || segment.visibility === "user")
       .map((segment) => segment && typeof segment === "object" && "text" in segment ? String((segment as { text?: unknown }).text ?? "") : "")
       .filter(Boolean)
       .join("\n");
@@ -237,11 +238,18 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
       : { parts: [{ id: item.id, kind: "markdown", status, markdown }], activities: [] };
   }
   if (item.type === "reasoning") {
+    const visibleSegments = item.content.segments.filter((segment) => !segment.visibility || segment.visibility === "user");
+    if (!visibleSegments.length && !includeEmpty) return { parts: [], activities: [] };
     return { parts: [{
       id: item.id, kind: "reasoning", status,
-      segments: item.content.segments.flatMap((segment, index) => {
+      segments: visibleSegments.flatMap((segment, index) => {
         const text = segment && typeof segment.text === "string" ? segment.text : "";
-        return text ? [{ id: String(segment.id || `${item.id}:${index + 1}`), text, status }] : [];
+        return text ? [{
+          id: String(segment.id || `${item.id}:${index + 1}`), text, status,
+          reasoningKind: segment.kind,
+          visibility: segment.visibility,
+          source: segment.source,
+        }] : [];
       }),
     }], activities: [] };
   }
@@ -283,7 +291,7 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
       const action = ["create", "modify", "delete", "rename", "patch"].includes(candidate)
         ? candidate as "create" | "modify" | "delete" | "rename" | "patch" : "modify";
       return {
-        id: `${item.id}:${index + 1}`, turnId: runId, timestamp: item.updated_at, source: item.source.backend,
+        id: `${item.id}:${index + 1}`, oaepItemId: item.id, turnId: runId, timestamp: item.updated_at, source: item.source.backend,
         status, title: String(change.path || item.content.summary || "File change"), kind: "file_change" as const,
         path: String(change.path || ""), action,
       };
@@ -293,8 +301,13 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
     const toolName = item.type === "command_execution"
       ? String(item.content.display_command || "Command") : String(item.content.tool_name || "Tool");
     return { parts: [], activities: [{
-      id: item.id, turnId: runId, timestamp: item.updated_at, source: item.source.backend,
-      status, title: toolName, kind: "tool", toolName, callId: item.id,
+      id: item.id, oaepItemId: item.id, turnId: runId, timestamp: item.updated_at, source: item.source.backend,
+      status, title: toolName, kind: "tool", toolName, callId: item.type === "tool_call" ? item.content.call_id : item.id,
+      ...(item.content.operation_ref ? {
+        operationId: item.content.operation_ref.operation_id,
+        correlationId: item.content.operation_ref.correlation_id,
+        runtimeRunId: item.run_id,
+      } : {}),
       input: item.type === "command_execution" ? item.content.command : item.content.arguments,
       output: item.type === "command_execution" ? item.content.output : item.content.result,
       durationMs: item.content.duration_ms ?? undefined,

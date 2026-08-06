@@ -22,7 +22,6 @@ import {
   FileText,
   Folder,
   FolderPlus,
-  Gauge,
   Globe2,
   Hammer,
   Info,
@@ -76,6 +75,7 @@ import type {
   GatewaySkill,
 } from "@shared/desktopApi";
 import type { ChatAttachment, InteractionOption } from "@shared/desktopApi";
+import type { RunReproducibilityLevel } from "@shared/runInspection";
 import type { ArtifactPart, CitationPart, InteractionPart, StructuredAssistantPart, StructuredTurnState } from "@shared/structuredConversation";
 import type { AppLanguage } from "../navigation";
 import { getAgentEmptyChatPrompts, parseCatalogAgentExamples } from "../agentExamplePrompts";
@@ -92,7 +92,7 @@ import {
   type ChatRuntimeMode,
 } from "../chatCommands";
 import { ChatMessageContent } from "./ChatMessageContent";
-import { StructuredMessageParts } from "./StructuredMessageParts";
+import { StructuredMessageParts, type InteractionResponse } from "./StructuredMessageParts";
 import { getReasoningChatText, getVisibleChatText } from "../chatOutputModel";
 import { VoiceCaptureBar } from "./voice/VoiceCaptureBar";
 import { VoiceReviewBar } from "./voice/VoiceReviewBar";
@@ -122,9 +122,13 @@ import {
   reduceVoiceTurn,
   type VoiceTurnEvent,
 } from "../voice/voiceTurnReducer";
+import type { UserFacingRecoveryAction } from "../userFacingErrors";
+import { userFacingFailureMessage } from "../userFacingLanguage";
 
 export type UiMessage = ChatMessage & {
   id: string;
+  /** Authoritative Runtime Run id; distinct from the UI/request turn id. */
+  runtimeRunId?: string;
   streaming?: boolean;
   error?: boolean;
   replyFailed?: boolean;
@@ -139,6 +143,7 @@ export type UiMessage = ChatMessage & {
   firstDeltaAt?: number;
   /** Files/folders attached when the user sent this message (shown as chips in the bubble). */
   attachments?: ChatAttachment[];
+  recoveryActions?: UserFacingRecoveryAction[];
   inputRequest?: {
     requestId: string;
     prompt: string;
@@ -180,8 +185,8 @@ interface MaterialTaskSuggestion {
   prompt: string;
 }
 
-export type ThinkingEffort = "low" | "medium" | "high" | "xhigh";
-const THINKING_EFFORTS: ThinkingEffort[] = ["low", "medium", "high", "xhigh"];
+export type ThinkingEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+const THINKING_EFFORTS: ThinkingEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const MAX_CLIPBOARD_IMAGE_BYTES = 1_250_000;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
@@ -201,10 +206,37 @@ export interface ChatSubmitOptions {
   agentId?: string;
   agentName?: string;
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
+  goalConfirmationRequired?: boolean;
   model?: string;
   runtimeMode?: ChatRuntimeMode | null;
   skillName?: string | null;
-  thinkingEffort: ThinkingEffort;
+  thinkingEffort?: ThinkingEffort;
+}
+
+interface GoalConfirmationDraft {
+  objective: string;
+  materials: string;
+  outputs: string;
+  constraints: string;
+}
+
+function parseGoalConfirmationPrompt(prompt: string): GoalConfirmationDraft {
+  const fields = Object.fromEntries(prompt.split(/\r?\n/).flatMap((line) => {
+    const separator = line.indexOf(":");
+    return separator > 0
+      ? [[line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim()]]
+      : [];
+  }));
+  return {
+    objective: fields.goal || "",
+    materials: fields.materials === "None supplied" ? "" : fields.materials || "",
+    outputs: fields.outputs === "Not specified" ? "" : fields.outputs || "",
+    constraints: fields.constraints === "None supplied" ? "" : fields.constraints || "",
+  };
+}
+
+function splitGoalConfirmationList(value: string): string[] {
+  return value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
 }
 
 interface ChatWorkspaceProps {
@@ -213,8 +245,10 @@ interface ChatWorkspaceProps {
   chatUnavailableReason?: string;
   conversationId: string;
   conversationTitle?: string;
+  conversationSource?: "opendrsai" | "codex";
   conversationHistoryPending?: boolean;
   conversationHistory?: DesktopThreadHistoryState;
+  operationalStateControl?: React.ReactNode;
   continuesExistingTask?: boolean;
   health: DesktopHealth | null;
   input: string;
@@ -227,6 +261,7 @@ interface ChatWorkspaceProps {
   selectedAgentId?: string;
   selectedAgentName?: string;
   selectedModelName?: string;
+  selectedModelProviderId?: string;
   agentOptions?: DesktopAgent[];
   modelOptions?: MyDrSaiModelConfig[];
   samplePrompts?: DesktopAgent["examples"];
@@ -238,15 +273,17 @@ interface ChatWorkspaceProps {
   workspaceLocation?: "local" | "remote";
   workspaceOptions?: WorkspaceProject[];
   selectedWorkspaceId?: string;
-  onAbort: () => void;
+  onAbort: () => void | Promise<void>;
   onClearExternalAttachments?: () => void;
   onClearRuntimeMode?: () => void;
   onInputChange: (value: string) => void;
   onSelectAgent?: (agentId: string) => void;
   onSelectWorkspace?: (workspaceId: string) => void;
-  onSelectModel?: (model: string) => void;
+  onSelectModel?: (model: string, providerId?: string) => void;
   onOpenExternal: (url: string) => void;
   onOpenDebug?: () => void;
+  onOpenRun?: (runId: string, itemId?: string) => void;
+  onCreateRunExperiment?: (runId: string, itemId?: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
   onOpenWorkspaceArtifact?: (path: string) => void;
   onPickFiles?: () => Promise<PickDialogResult>;
@@ -259,6 +296,8 @@ interface ChatWorkspaceProps {
   onAttachIdeCurrentSelection?: () => void;
   onRefreshIdeContext?: () => void;
   onRetryMessage?: (assistantMessageId: string, mode: "same_session" | "new_session") => void | Promise<void>;
+  onRecoveryAction?: (assistantMessageId: string, action: UserFacingRecoveryAction["id"]) => void | Promise<void>;
+  onLoadEarlierHistory?: () => void | Promise<void>;
   onSubmit: (
     attachments?: ChatAttachment[],
     options?: ChatSubmitOptions,
@@ -271,8 +310,10 @@ function ChatWorkspaceImpl({
   chatUnavailableReason,
   conversationId,
   conversationTitle,
+  conversationSource = "opendrsai",
   conversationHistoryPending = false,
   conversationHistory,
+  operationalStateControl,
   continuesExistingTask = false,
   input,
   language,
@@ -284,6 +325,7 @@ function ChatWorkspaceImpl({
   selectedAgentId,
   selectedAgentName,
   selectedModelName,
+  selectedModelProviderId,
   agentOptions = [],
   modelOptions = [],
   samplePrompts,
@@ -304,6 +346,8 @@ function ChatWorkspaceImpl({
   onSelectModel,
   onOpenExternal,
   onOpenDebug,
+  onOpenRun,
+  onCreateRunExperiment,
   onOpenPreviewBrowser,
   onOpenWorkspaceArtifact,
   onPickFiles,
@@ -314,9 +358,40 @@ function ChatWorkspaceImpl({
   onAttachIdeCurrentSelection,
   onRefreshIdeContext,
   onRetryMessage,
+  onRecoveryAction,
+  onLoadEarlierHistory,
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [runReproducibility, setRunReproducibility] = useState<Record<string, RunReproducibilityLevel>>({});
+
+  useEffect(() => {
+    if (!workspacePath || typeof desktopApi.getRunReproductionManifest !== "function") return;
+    const runIds = [...new Set(messages
+      .map((message) => message.runtimeRunId)
+      .filter((runId): runId is string => Boolean(runId)))]
+      .slice(-50);
+    if (!runIds.length) return;
+    let active = true;
+    void Promise.all(runIds.map(async (runId) => {
+      try {
+        const manifest = await desktopApi.getRunReproductionManifest({
+          workspacePath,
+          workspaceId: selectedWorkspaceId,
+          runId,
+        });
+        return [runId, manifest.reproducibility_level] as const;
+      } catch {
+        return null;
+      }
+    })).then((entries) => {
+      if (!active) return;
+      setRunReproducibility(Object.fromEntries(
+        entries.filter((entry): entry is readonly [string, RunReproducibilityLevel] => entry !== null),
+      ));
+    });
+    return () => { active = false; };
+  }, [messages, selectedWorkspaceId, workspacePath]);
   const [highlightedTurnId, setHighlightedTurnId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [interactionDraft, setInteractionDraft] = useState("");
@@ -329,8 +404,11 @@ function ChatWorkspaceImpl({
   const materialRoleRequestRef = useRef(0);
   const materialConsistencyRequestRef = useRef(0);
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
+  const [taskInteractionMode, setTaskInteractionMode] = useState<"normal" | "confirm_goal">("normal");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | "skill" | null>(null);
+  const [metaMenuOpen, setMetaMenuOpen] = useState<"configuration" | "skill" | null>(null);
+  const [configurationSection, setConfigurationSection] = useState<"agent" | "model" | "thinking" | "task" | null>(null);
+  const [configurationSubmenuPosition, setConfigurationSubmenuPosition] = useState({ top: 0, left: 0, maxHeight: 220 });
   const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsLoadError, setSkillsLoadError] = useState<string | null>(null);
@@ -606,7 +684,10 @@ function ChatWorkspaceImpl({
   }, [introMenuOpen]);
 
   useEffect(() => {
-    const openModelPicker = (): void => setMetaMenuOpen("model");
+    const openModelPicker = (): void => {
+      setConfigurationSection("model");
+      setMetaMenuOpen("configuration");
+    };
     window.addEventListener("drsai:open-model-picker", openModelPicker);
     return () => window.removeEventListener("drsai:open-model-picker", openModelPicker);
   }, []);
@@ -615,35 +696,42 @@ function ChatWorkspaceImpl({
     setThinkingEffort(defaultThinkingEffort);
   }, [defaultThinkingEffort]);
 
+  useEffect(() => {
+    setTaskInteractionMode("normal");
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (selectedAgentId !== "my-drsai") setTaskInteractionMode("normal");
+  }, [selectedAgentId]);
+
   async function respondToAgentInput(
     request: NonNullable<UiMessage["inputRequest"]>,
     response: string | Record<string, unknown>,
+    transportRequestId = request.requestId,
   ): Promise<void> {
-    const accepted = await desktopApi.respondChatInput(request.requestId, response);
+    const accepted = await desktopApi.respondChatInput(transportRequestId, response);
     if (!accepted) return;
+    if (typeof response === "object" && response.decision === "revise") return;
     setRespondedInputRequests((current) => new Set(current).add(request.requestId));
   }
 
-  function requestTextAgentInput(request: NonNullable<UiMessage["inputRequest"]>): void {
-    const response = window.prompt(request.prompt);
-    if (response?.trim()) void respondToAgentInput(request, response.trim());
-  }
-
-  const respondToStructuredInteraction = useEventCallback((part: InteractionPart, response: { approved?: boolean; decision?: "accept" | "acceptForSession" | "decline" }): void => {
-    void respondToAgentInput({
-      requestId: part.requestId,
-      prompt: part.prompt,
-      inputType: part.interactionType === "approval" ? "approval" : "text_input",
-    }, response);
+  const respondToStructuredInteraction = useEventCallback((turnId: string, part: InteractionPart, response: InteractionResponse): void => {
+    void desktopApi.respondChatInput(turnId, response).then((accepted) => {
+      if (!accepted) return;
+      if (typeof response === "object" && response.decision === "revise") return;
+      setRespondedInputRequests((current) => new Set(current).add(part.requestId));
+    });
   });
 
-  const requestStructuredTextInput = useEventCallback((part: InteractionPart): void => {
-    requestTextAgentInput({ requestId: part.requestId, prompt: part.prompt, inputType: "text_input" });
+  const requestStructuredTextInput = useEventCallback((turnId: string, part: InteractionPart): void => {
+    const response = window.prompt(part.prompt);
+    if (response?.trim()) respondToStructuredInteraction(turnId, part, { response: response.trim() });
   });
 
   function respondToActiveInput(response: string | Record<string, unknown>): void {
-    if (!activeInputRequest) return;
-    void respondToAgentInput(activeInputRequest, response);
+    if (!activeInputRequest || !activeInputMessage) return;
+    const transportRequestId = activeInputMessage.structuredTurn?.turnId ?? activeInputRequest.requestId;
+    void respondToAgentInput(activeInputRequest, response, transportRequestId);
   }
 
   function submitInteractionDraft(): void {
@@ -665,19 +753,30 @@ function ChatWorkspaceImpl({
   const lastAutoReadMessageIdRef = useRef<string | null>(null);
   const zh = language === "zh";
   const [now, setNow] = useState(Date.now());
-  const activeInputRequest = useMemo(
+  const activeInputMessage = useMemo(
     () => [...messages]
       .reverse()
-      .map((message) => message.inputRequest)
-      .find((request): request is NonNullable<UiMessage["inputRequest"]> =>
-        Boolean(request && !respondedInputRequests.has(request.requestId)),
-      ) ?? null,
+      .find((message) => Boolean(message.inputRequest
+        && !respondedInputRequests.has(message.inputRequest.requestId))) ?? null,
     [messages, respondedInputRequests],
   );
+  const activeInputRequest = activeInputMessage?.inputRequest ?? null;
+  const activeGoalConfirmation = activeInputRequest?.inputType === "confirmation"
+    && activeInputRequest.requestId.startsWith("goal:")
+    ? activeInputRequest
+    : null;
+  const [goalConfirmationEditing, setGoalConfirmationEditing] = useState(false);
+  const [goalConfirmationDraft, setGoalConfirmationDraft] = useState<GoalConfirmationDraft>(() =>
+    parseGoalConfirmationPrompt(activeGoalConfirmation?.prompt ?? ""));
 
   useEffect(() => {
     setInteractionDraft(activeInputRequest?.defaultValue ?? "");
   }, [activeInputRequest?.requestId, activeInputRequest?.defaultValue]);
+
+  useEffect(() => {
+    setGoalConfirmationEditing(false);
+    setGoalConfirmationDraft(parseGoalConfirmationPrompt(activeGoalConfirmation?.prompt ?? ""));
+  }, [activeGoalConfirmation?.requestId, activeGoalConfirmation?.prompt]);
   const hasStreamingMessage = messages.some((message) => message.streaming);
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
   const emptyChat = messages.every((message) => message.id === "welcome");
@@ -713,12 +812,46 @@ function ChatWorkspaceImpl({
       : currentRuntimeMode.label
     : "";
   const activeModelName =
-    getModelLabel(modelOptions, selectedModelName) || selectedModelName?.trim() || (zh ? "默认" : "Default");
+    getModelLabel(modelOptions, selectedModelName, selectedModelProviderId) || selectedModelName?.trim() || (zh ? "默认" : "Default");
+  const compactModelName = getCompactComposerModelLabel(activeModelName);
   const activeModelConfig = useMemo(
-    () => findSelectedModelConfig(modelOptions, selectedModelName),
-    [modelOptions, selectedModelName],
+    () => findSelectedModelConfig(modelOptions, selectedModelName, selectedModelProviderId),
+    [modelOptions, selectedModelName, selectedModelProviderId],
   );
-  const thinkingEffortLabel = getThinkingEffortLabel(thinkingEffort, zh);
+  const supportedThinkingEfforts = useMemo<ThinkingEffort[]>(() => {
+    if (selectedAgentId !== "my-drsai") return THINKING_EFFORTS;
+    if (!activeModelConfig?.operations?.includes("reasoning")) return [];
+    const configured = activeModelConfig.reasoning_efforts ?? [];
+    return THINKING_EFFORTS.filter((effort) => configured.includes(effort));
+  }, [activeModelConfig, selectedAgentId]);
+  useEffect(() => {
+    if (supportedThinkingEfforts.length > 0 && !supportedThinkingEfforts.includes(thinkingEffort)) {
+      setThinkingEffort(supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0]);
+    }
+  }, [supportedThinkingEfforts, thinkingEffort]);
+  const showThinkingEffort = supportedThinkingEfforts.length > 0;
+  useEffect(() => {
+    if (!showThinkingEffort && configurationSection === "thinking") {
+      setConfigurationSection(null);
+    }
+  }, [configurationSection, showThinkingEffort]);
+  const thinkingEffortSupported = supportedThinkingEfforts.includes(thinkingEffort);
+  const thinkingEffortLabel = getThinkingEffortLabel(
+    thinkingEffortSupported ? thinkingEffort : supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0] ?? thinkingEffort,
+    zh,
+  );
+  const thinkingEffortMenuLabel = showThinkingEffort
+    ? thinkingEffortLabel
+    : (zh ? "当前模型不支持" : "Not supported by this model");
+  const taskInteractionModeLabel = taskInteractionMode === "confirm_goal"
+    ? (zh ? "目标" : "Goal")
+    : (zh ? "常规" : "Normal");
+  const composerConfigurationSummary = [
+    activeAgentName,
+    compactModelName,
+    ...(showThinkingEffort ? [thinkingEffortLabel] : []),
+    taskInteractionModeLabel,
+  ].join(" · ");
   const hasAgentOptions = agentOptions.length > 0;
   const hasModelOptions = modelOptions.length > 0;
   const parsedSamplePrompts = useMemo(
@@ -1413,10 +1546,11 @@ function ChatWorkspaceImpl({
           forkQueueAgentSelections,
           agentOptions,
         ),
+        goalConfirmationRequired: selectedAgentId === "my-drsai" && taskInteractionMode === "confirm_goal",
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
         skillName: selectedSkillName,
-        thinkingEffort,
+        thinkingEffort: selectedAgentId !== "my-drsai" || thinkingEffortSupported ? thinkingEffort : undefined,
       },
     );
     if (submitted) {
@@ -1709,12 +1843,36 @@ function ChatWorkspaceImpl({
     textareaRef.current?.focus();
   }
 
-  function toggleMetaMenu(menu: "agent" | "model" | "thinking" | "skill"): void {
+  function toggleMetaMenu(menu: "configuration" | "skill"): void {
     setMetaMenuOpen((current) => {
       const next = current === menu ? null : menu;
       if (next === "skill") void loadInstalledSkillsForPicker();
+      setConfigurationSection(null);
       return next;
     });
+  }
+
+  function revealConfigurationSection(
+    section: "agent" | "model" | "thinking" | "task",
+    anchor: HTMLButtonElement,
+  ): void {
+    const menu = anchor.closest<HTMLElement>(".composer-configuration-menu");
+    const anchorRect = anchor.getBoundingClientRect();
+    const menuRect = menu?.getBoundingClientRect() ?? anchorRect;
+    const viewportPadding = 8;
+    const submenuWidth = Math.min(290, window.innerWidth - viewportPadding * 2);
+    const left = Math.max(
+      viewportPadding,
+      Math.min(menuRect.right - 1, window.innerWidth - submenuWidth - viewportPadding),
+    );
+    let top = Math.max(viewportPadding, anchorRect.top);
+    let maxHeight = Math.min(220, window.innerHeight - top - viewportPadding);
+    if (maxHeight < 96) {
+      top = Math.max(viewportPadding, window.innerHeight - 96 - viewportPadding);
+      maxHeight = Math.max(64, window.innerHeight - top - viewportPadding);
+    }
+    setConfigurationSection(section);
+    setConfigurationSubmenuPosition({ top, left, maxHeight });
   }
 
   async function loadInstalledSkillsForPicker(): Promise<void> {
@@ -1730,7 +1888,7 @@ function ChatWorkspaceImpl({
       setInstalledSkills(Array.isArray(skills) ? skills : []);
     } catch (error) {
       setInstalledSkills([]);
-      setSkillsLoadError(error instanceof Error ? error.message : String(error));
+      setSkillsLoadError(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setSkillsLoading(false);
     }
@@ -1782,8 +1940,8 @@ function ChatWorkspaceImpl({
     textareaRef.current?.focus();
   }
 
-  function selectModel(model: string): void {
-    onSelectModel?.(model);
+  function selectModel(model: string, providerId?: string): void {
+    onSelectModel?.(model, providerId);
     setMetaMenuOpen(null);
     textareaRef.current?.focus();
   }
@@ -1791,6 +1949,13 @@ function ChatWorkspaceImpl({
   function selectThinkingEffort(effort: ThinkingEffort): void {
     setThinkingEffort(effort);
     setMetaMenuOpen(null);
+    textareaRef.current?.focus();
+  }
+
+  function selectTaskInteractionMode(mode: "normal" | "confirm_goal"): void {
+    setTaskInteractionMode(mode);
+    setMetaMenuOpen(null);
+    setConfigurationSection(null);
     textareaRef.current?.focus();
   }
 
@@ -1884,7 +2049,7 @@ function ChatWorkspaceImpl({
           },
         } : item));
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = userFacingFailureMessage(error, language, "operation");
         setAttachments((current) => current.map((item) => item.id === id ? {
           ...item,
           blockedReason: message,
@@ -1936,7 +2101,7 @@ function ChatWorkspaceImpl({
         ? (zh ? `无法打开 ${source.name}：${error}` : `Could not open ${source.name}: ${error}`)
         : (zh ? `已打开 ${source.name} · ${source.locator}` : `Opened ${source.name} · ${source.locator}`));
     } catch (error) {
-      setMaterialConsistencySourceStatus(error instanceof Error ? error.message : String(error));
+      setMaterialConsistencySourceStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -2073,6 +2238,12 @@ function ChatWorkspaceImpl({
           </section>
         </div>
       )}
+      {emptyChat && operationalStateControl ? (
+        <header className="conversation-titlebar conversation-titlebar-operational-only" data-testid="conversation-titlebar">
+          <div className="conversation-titlebar-main" />
+          <div className="conversation-titlebar-actions">{operationalStateControl}</div>
+        </header>
+      ) : null}
       {!emptyChat && (
       <header className="conversation-titlebar" data-testid="conversation-titlebar">
         <div className="conversation-titlebar-main">
@@ -2089,6 +2260,12 @@ function ChatWorkspaceImpl({
                 : (zh ? "已就绪" : "Ready")}</small>
         </div>
         <div className="conversation-titlebar-actions">
+          {operationalStateControl}
+          {conversationHistory?.truncated && conversationHistory.nextCursor && onLoadEarlierHistory ? (
+            <button type="button" className="conversation-load-earlier" disabled={conversationHistoryPending} onClick={() => void onLoadEarlierHistory()}>
+              {conversationHistoryPending ? (zh ? "加载中…" : "Loading…") : (zh ? "加载更早内容" : "Load earlier")}
+            </button>
+          ) : null}
           <details className="conversation-titlebar-details">
             <summary title={zh ? "会话详情" : "Chat details"} aria-label={zh ? "会话详情" : "Chat details"}>•••</summary>
             <dl>
@@ -2159,14 +2336,18 @@ function ChatWorkspaceImpl({
                 message.structuredTurn.parts.length || message.structuredTurn.activities.length ? (
                   <StructuredMessageParts
                     turn={message.structuredTurn}
+                    runId={message.runtimeRunId}
                     language={language}
                     respondedRequestIds={respondedInputRequests}
                     onOpenLink={handleMarkdownLink}
                     onOpenArtifact={openStructuredArtifact}
                     onOpenCitation={openStructuredCitation}
-                    onRespondInteraction={respondToStructuredInteraction}
-                    onRequestTextInteraction={requestStructuredTextInput}
-                    onOpenDebug={onOpenDebug}
+                    onRespondInteraction={(part, response) => respondToStructuredInteraction(message.structuredTurn!.turnId, part, response)}
+                    onRequestTextInteraction={(part) => requestStructuredTextInput(message.structuredTurn!.turnId, part)}
+                      onOpenDebug={onOpenDebug}
+                      onOpenRun={onOpenRun}
+                      onCreateRunExperiment={onCreateRunExperiment}
+                      reproducibilityLevel={message.runtimeRunId ? runReproducibility[message.runtimeRunId] : undefined}
                     now={now}
                     startedAt={message.startedAt}
                     completedAt={message.lastEventAt}
@@ -2200,21 +2381,17 @@ function ChatWorkspaceImpl({
                   </div>
                 </details>
               )}
+              {message.role === "assistant" && message.recoveryActions?.length && onRecoveryAction ? (
+                <div className="chat-recovery-actions" role="group" aria-label={zh ? "恢复操作" : "Recovery actions"}>
+                  {message.recoveryActions.map((action) => <button type="button" key={action.id}
+                    onClick={() => void onRecoveryAction(message.id, action.id)}>{action.label}</button>)}
+                </div>
+              ) : null}
               {!message.structuredTurn && message.inputRequest ? (
-                <section className="chat-agent-input-request" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
-                  <strong>{zh ? "智能体需要你的输入" : "Agent needs your input"}</strong>
-                  <p>{message.inputRequest.prompt}</p>
-                  <div>
-                    {message.inputRequest.inputType === "approval" ? (
-                      <>
-                        <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => void respondToAgentInput(message.inputRequest!, { approved: false })}>{zh ? "拒绝" : "Reject"}</button>
-                        <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => void respondToAgentInput(message.inputRequest!, { approved: true })}>{zh ? "批准" : "Approve"}</button>
-                      </>
-                    ) : (
-                      <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => requestTextAgentInput(message.inputRequest!)}>{zh ? "回复" : "Respond"}</button>
-                    )}
-                    {respondedInputRequests.has(message.inputRequest.requestId) && <span>{zh ? "已发送" : "Sent"}</span>}
-                  </div>
+                <section className="chat-agent-input-request structured-interaction-compact" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
+                  <span>{respondedInputRequests.has(message.inputRequest.requestId)
+                    ? (zh ? "操作已处理" : "Action handled")
+                    : (zh ? "等待你的操作，请在输入栏处理" : "Action required in the composer")}</span>
                 </section>
               ) : null}
               {message.role === "assistant" && !message.streaming && !message.error && assistantContent ? (
@@ -2263,7 +2440,9 @@ function ChatWorkspaceImpl({
       {emptyChat && conversationHistoryPending && (
         <div className="empty-chat-history-loading" role="status" aria-live="polite">
           <span className="chat-loading-indicator" aria-hidden />
-          <strong>{zh ? "正在加载 Codex 会话…" : "Loading Codex session…"}</strong>
+          <strong>{conversationSource === "codex"
+            ? (zh ? "正在加载 Codex 会话…" : "Loading Codex session…")
+            : (zh ? "正在加载 OpenDrSai 会话…" : "Loading OpenDrSai session…")}</strong>
           <small>{zh ? "首次打开较长会话可能需要几秒钟。" : "A long conversation can take a few seconds the first time it is opened."}</small>
         </div>
       )}
@@ -2407,6 +2586,7 @@ function ChatWorkspaceImpl({
                     <div>
                       <strong>{attachment.name}</strong>
                       <span>{attachment.title || attachment.path}</span>
+                      {attachmentContextSummary(attachment) ? <small>{attachmentContextSummary(attachment)}</small> : null}
                     </div>
                     <button
                       type="button"
@@ -2493,7 +2673,10 @@ function ChatWorkspaceImpl({
                   title={attachment.path}
                 >
                   <Icon size={14} />
-                  {name}
+                  <span className="composer-attachment-copy">
+                    <strong>{name}</strong>
+                    {attachmentContextSummary(attachment) ? <small>{attachmentContextSummary(attachment)}</small> : null}
+                  </span>
                   <button
                     type="button"
                     aria-label={zh ? `绉婚櫎 ${name}` : `Remove ${name}`}
@@ -2778,20 +2961,66 @@ function ChatWorkspaceImpl({
 
               {activeInputRequest ? (
                 <section className="chat-agent-input-request composer-agent-interaction" data-testid="composer-agent-interaction" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
-                  <strong>{zh ? "智能体需要你的输入" : "Agent needs your input"}</strong>
-                  <p>{activeInputRequest.prompt}</p>
-                  {activeInputRequest.inputType === "approval" ? (
-                    <div>
+                  <div className="composer-agent-interaction-copy">
+                    <strong>{activeGoalConfirmation
+                      ? (zh ? "确认任务目标" : "Confirm task goal")
+                      : (zh ? "智能体需要你的输入" : "Agent needs your input")}</strong>
+                    <span>{activeGoalConfirmation
+                      ? goalConfirmationDraft.objective
+                      : activeInputRequest.prompt}</span>
+                  </div>
+                  {activeGoalConfirmation ? (
+                    goalConfirmationEditing ? (
+                      <div className="structured-goal-editor" data-testid="composer-goal-editor">
+                        <label>{zh ? "目标" : "Goal"}<textarea data-testid="composer-goal-objective" value={goalConfirmationDraft.objective} onChange={(event) => setGoalConfirmationDraft((current) => ({ ...current, objective: event.target.value }))} /></label>
+                        <label>{zh ? "材料（每行一项）" : "Materials (one per line)"}<textarea data-testid="composer-goal-materials" value={goalConfirmationDraft.materials} onChange={(event) => setGoalConfirmationDraft((current) => ({ ...current, materials: event.target.value }))} /></label>
+                        <label>{zh ? "输出（每行一项）" : "Outputs (one per line)"}<textarea data-testid="composer-goal-outputs" value={goalConfirmationDraft.outputs} onChange={(event) => setGoalConfirmationDraft((current) => ({ ...current, outputs: event.target.value }))} /></label>
+                        <label>{zh ? "约束（每行一项）" : "Constraints (one per line)"}<textarea data-testid="composer-goal-constraints" value={goalConfirmationDraft.constraints} onChange={(event) => setGoalConfirmationDraft((current) => ({ ...current, constraints: event.target.value }))} /></label>
+                        <div className="composer-agent-interaction-controls">
+                          <button type="button" onClick={() => setGoalConfirmationEditing(false)}>{zh ? "取消修改" : "Cancel edit"}</button>
+                          <button type="button" className="primary" data-testid="composer-goal-save" disabled={!goalConfirmationDraft.objective.trim() || splitGoalConfirmationList(goalConfirmationDraft.outputs).length === 0} onClick={() => {
+                            respondToActiveInput({
+                              decision: "revise",
+                              goal: {
+                                objective: goalConfirmationDraft.objective.trim(),
+                                materials: splitGoalConfirmationList(goalConfirmationDraft.materials),
+                                outputs: splitGoalConfirmationList(goalConfirmationDraft.outputs),
+                                constraints: splitGoalConfirmationList(goalConfirmationDraft.constraints),
+                              },
+                            });
+                            setGoalConfirmationEditing(false);
+                          }}>{zh ? "保存修改" : "Save changes"}</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <details className="composer-goal-details">
+                          <summary>{zh ? "查看材料、输出和约束" : "Review materials, outputs, and constraints"}</summary>
+                          <dl>
+                            <div><dt>{zh ? "材料" : "Materials"}</dt><dd>{goalConfirmationDraft.materials || (zh ? "未提供" : "None supplied")}</dd></div>
+                            <div><dt>{zh ? "输出" : "Outputs"}</dt><dd>{goalConfirmationDraft.outputs || (zh ? "未指定" : "Not specified")}</dd></div>
+                            <div><dt>{zh ? "约束" : "Constraints"}</dt><dd>{goalConfirmationDraft.constraints || (zh ? "无" : "None supplied")}</dd></div>
+                          </dl>
+                        </details>
+                        <div className="composer-agent-interaction-controls">
+                          <button type="button" data-testid="composer-goal-edit" onClick={() => setGoalConfirmationEditing(true)}>{zh ? "修改或补充" : "Edit or add details"}</button>
+                          <button type="button" data-testid="composer-goal-cancel" onClick={() => respondToActiveInput({ decision: "decline" })}>{zh ? "取消任务" : "Cancel task"}</button>
+                          <button type="button" className="primary" data-testid="composer-goal-confirm" onClick={() => respondToActiveInput({ decision: "accept" })}>{zh ? "确认并开始" : "Confirm and start"}</button>
+                        </div>
+                      </>
+                    )
+                  ) : activeInputRequest.inputType === "approval" ? (
+                    <div className="composer-agent-interaction-controls">
                       <button type="button" onClick={() => respondToActiveInput({ approved: false })}>{zh ? "拒绝" : "Reject"}</button>
-                      <button type="button" onClick={() => respondToActiveInput({ approved: true })}>{zh ? "批准" : "Approve"}</button>
+                      <button type="button" className="primary" onClick={() => respondToActiveInput({ approved: true })}>{zh ? "批准" : "Approve"}</button>
                     </div>
                   ) : activeInputRequest.inputType === "confirmation" ? (
-                    <div>
-                      <button type="button" onClick={() => respondToActiveInput({ confirmed: false })}>{zh ? "取消" : "Cancel"}</button>
-                      <button type="button" onClick={() => respondToActiveInput({ confirmed: true })}>{zh ? "确认" : "Confirm"}</button>
+                    <div className="composer-agent-interaction-controls">
+                      <button type="button" onClick={() => respondToActiveInput({ decision: "decline" })}>{zh ? "取消" : "Cancel"}</button>
+                      <button type="button" className="primary" onClick={() => respondToActiveInput({ decision: "accept" })}>{zh ? "确认" : "Confirm"}</button>
                     </div>
                   ) : activeInputRequest.inputType === "choice" && activeInputRequest.options?.length ? (
-                    <div>
+                    <div className="composer-agent-interaction-controls">
                       {activeInputRequest.options.map((option) => (
                         <button
                           type="button"
@@ -2803,7 +3032,7 @@ function ChatWorkspaceImpl({
                       ))}
                     </div>
                   ) : (
-                    <div className="composer-editor">
+                    <div className="composer-editor composer-agent-interaction-controls">
                       <textarea
                         data-testid="composer-agent-interaction-input"
                         value={interactionDraft}
@@ -2974,61 +3203,55 @@ function ChatWorkspaceImpl({
                   </span>
                 </div>
               )}
-              <div className="composer-meta-item" data-meta-menu="agent">
+              <div className="composer-meta-item composer-configuration" data-meta-menu="configuration">
                 <button
-                  className="composer-meta-chip composer-meta-button"
+                  className="composer-meta-chip composer-meta-button composer-configuration-trigger"
+                  data-testid="composer-configuration-trigger"
                   type="button"
-                  disabled={!hasAgentOptions}
-                  aria-expanded={metaMenuOpen === "agent"}
-                  onClick={() => toggleMetaMenu("agent")}
+                  aria-expanded={metaMenuOpen === "configuration"}
+                  aria-haspopup="dialog"
+                  onClick={() => toggleMetaMenu("configuration")}
+                  title={zh ? "智能体、模型、推理强度和任务模式" : "Agent, model, reasoning effort, and task mode"}
                 >
                   <Bot size={14} />
-                  {zh ? "智能体" : "Agent"}: {activeAgentName}
+                  <span>{composerConfigurationSummary}</span>
                   <ChevronDown size={13} />
                 </button>
-                {metaMenuOpen === "agent" && (
-                  <div className="composer-meta-menu">
-                    {agentOptions.map((agent) => (
-                      <button
-                        key={agent.id}
-                        type="button"
-                        className={agent.id === selectedAgentId ? "active" : ""}
-                        onClick={() => selectAgent(agent.id)}
-                      >
-                        <span>{agent.name}</span>
-                        <small>{getAgentOptionMeta(agent, zh)}</small>
-                      </button>
-                    ))}
+                {metaMenuOpen === "configuration" ? (
+                  <div className="composer-configuration-menu" role="dialog" aria-label={zh ? "任务设置" : "Task settings"} onMouseLeave={() => setConfigurationSection(null)}>
+                    <div className="composer-configuration-rows">
+                      <button type="button" disabled={!hasAgentOptions} aria-expanded={configurationSection === "agent"} onMouseEnter={(event) => revealConfigurationSection("agent", event.currentTarget)} onFocus={(event) => revealConfigurationSection("agent", event.currentTarget)} onClick={(event) => revealConfigurationSection("agent", event.currentTarget)}><span><strong>{zh ? "智能体" : "Agent"}</strong><small>{activeAgentName}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "模型" : "Model"}</strong><small>{activeModelName}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" disabled={!showThinkingEffort} aria-expanded={configurationSection === "thinking"} onMouseEnter={(event) => revealConfigurationSection("thinking", event.currentTarget)} onFocus={(event) => revealConfigurationSection("thinking", event.currentTarget)} onClick={(event) => revealConfigurationSection("thinking", event.currentTarget)}><span><strong>{zh ? "推理强度" : "Reasoning effort"}</strong><small>{thinkingEffortMenuLabel}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-task-mode" disabled={selectedAgentId !== "my-drsai" || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "任务模式" : "Task mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
+                    </div>
+                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "agent" ? (zh ? "选择智能体" : "Choose agent") : configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择任务模式" : "Choose task mode")}>
+                      <div className="composer-configuration-options">
+                        {configurationSection === "agent" ? agentOptions.map((agent) => (
+                          <button key={agent.id} type="button" role="menuitemradio" aria-checked={agent.id === selectedAgentId} className={agent.id === selectedAgentId ? "active" : ""} onClick={() => selectAgent(agent.id)}>
+                            <span><strong>{agent.name}</strong><small>{getAgentOptionMeta(agent, zh)}</small></span>
+                            {agent.id === selectedAgentId ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                        )) : configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => (
+                          <button key={`${model.provider_id || "backend"}:${model.alias || model.model}`} type="button" role="menuitemradio" aria-checked={(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId)} className={(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId) ? "active" : ""} onClick={() => selectModel(model.alias || model.model || "", model.provider_id)}>
+                            <span><strong>{getModelOptionLabel(model)}</strong><small>{getModelProviderLabel(model, zh)}</small></span>
+                            {(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId) ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                        )) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
+                          <button key={effort} type="button" role="menuitemradio" aria-checked={effort === thinkingEffort} className={effort === thinkingEffort ? "active" : ""} onClick={() => selectThinkingEffort(effort)}>
+                            <span><strong>{getThinkingEffortLabel(effort, zh)}</strong></span>
+                            {effort === thinkingEffort ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                        )) : (["normal", "confirm_goal"] as const).map((mode) => (
+                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-task-mode-${mode}`} disabled={selectedAgentId !== "my-drsai" || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
+                            <span><strong>{mode === "normal" ? (zh ? "常规" : "Normal") : (zh ? "目标" : "Goal")}</strong><small>{mode === "normal" ? (zh ? "适合日常问答和简单任务，立即开始" : "Best for everyday questions and simple tasks; starts right away") : (zh ? "适合复杂任务，开始前与你核对需求和预期结果" : "Best for complex tasks; reviews your needs and expected result first")}</small></span>
+                            {mode === taskInteractionMode ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                        ))}
+                      </div>
+                    </div> : null}
                   </div>
-                )}
-              </div>
-              <div className="composer-meta-item" data-meta-menu="model">
-                <button
-                  className="composer-meta-chip composer-meta-button"
-                  type="button"
-                  aria-expanded={metaMenuOpen === "model"}
-                  onClick={() => toggleMetaMenu("model")}
-                >
-                  <Brain size={14} />
-                  {zh ? "模型：" : "Model: "}
-                  {activeModelName}
-                  <ChevronDown size={13} />
-                </button>
-                {metaMenuOpen === "model" && (
-                  <div className="composer-meta-menu wide">
-                    {hasModelOptions ? modelOptions.map((model) => (
-                      <button
-                        key={model.alias || model.model}
-                        type="button"
-                        className={(model.alias || model.model) === selectedModelName ? "active" : ""}
-                        onClick={() => selectModel(model.alias || model.model || "")}
-                      >
-                        <span>{getModelOptionLabel(model)}</span>
-                        <small>{getModelOptionMeta(model)}</small>
-                      </button>
-                    )) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>}
-                  </div>
-                )}
+                ) : null}
               </div>
               {/* Temporarily hide composer Skills picker — keep for later reuse.
               <div className="composer-meta-item" data-meta-menu="skill">
@@ -3073,34 +3296,6 @@ function ChatWorkspaceImpl({
                 )}
               </div>
               */}
-              <div className="composer-meta-item" data-meta-menu="thinking">
-              <button
-                className="composer-meta-chip composer-meta-button"
-                type="button"
-                aria-expanded={metaMenuOpen === "thinking"}
-                onClick={() => toggleMetaMenu("thinking")}
-                title="Switch thinking effort"
-              >
-                <Gauge size={14} />
-                {zh ? "推理：" : "Thinking: "}
-                {thinkingEffortLabel}
-                <ChevronDown size={13} />
-              </button>
-              {metaMenuOpen === "thinking" && (
-                <div className="composer-meta-menu compact">
-                  {THINKING_EFFORTS.map((effort) => (
-                    <button
-                      key={effort}
-                      type="button"
-                      className={effort === thinkingEffort ? "active" : ""}
-                      onClick={() => selectThinkingEffort(effort)}
-                    >
-                      <span>{getThinkingEffortLabel(effort, zh)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              </div>
               <div className="composer-actions composer-actions-meta">
                 <select
                   className="composer-voice-mode"
@@ -3176,10 +3371,21 @@ function ChatWorkspaceImpl({
                   {voiceState === "recording" || streamingVoiceInput.phase === "streaming" ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
                 {showStop ? (
-                  <button className="composer-submit stop" type="button" onClick={onAbort}>
-                    <Square size={16} />
-                    {zh ? "停止" : "Stop"}
-                  </button>
+                  <>
+                    {input.trim() ? <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
+                      <Send size={16} />{zh ? "排队发送" : "Queue"}
+                    </button> : null}
+                    {input.trim() ? <button className="composer-submit" type="button"
+                      onClick={() => void Promise.resolve(onAbort()).then(() => submitWithAttachments())}
+                      title={zh ? "明确停止当前任务并改为执行这条消息" : "Explicitly stop the active task and run this message"}>
+                      {zh ? "停止并替换" : "Stop & replace"}
+                    </button> : null}
+                    <button className="composer-submit stop" type="button" onClick={() => void onAbort()}>
+                      <Square size={16} />
+                      {messages.some((message) => message.structuredTurn?.turnId === activeRequestId && message.structuredTurn.status === "pending")
+                        ? (zh ? "取消排队" : "Cancel queued") : (zh ? "停止" : "Stop")}
+                    </button>
+                  </>
                 ) : (
                   <button className="composer-submit" type="submit" disabled={!input.trim() || (!canChat && !materialSuggestionRuntimeReady && !canSaveLocalPreference && !canAnswerMaterialInventoryLocally && !canAnswerMaterialQuestionLocally)}>
                     <Send size={16} />
@@ -3549,7 +3755,7 @@ function StreamingStatus({
       : zh ? "正在处理" : "Working";
 
   return (
-    <div className="streaming-status" role="status" aria-live="polite">
+    <div className="streaming-status">
       <span className="streaming-dot" aria-hidden />
       <span>{detail}</span>
       <time>{zh ? `已执行 ${elapsedSeconds} 秒` : `Running ${elapsedSeconds}s`}</time>
@@ -3621,7 +3827,7 @@ function MessageActions({
   }
 
   return (
-    <div className={`message-actions ${isActive || isSynthesizing || playback.error ? "active" : ""}`} aria-live="polite">
+    <div className={`message-actions ${isActive || isSynthesizing || playback.error ? "active" : ""}`}>
       <button type="button" onClick={() => void handleCopy()} title={zh ? "复制回答" : "Copy response"}>
         {copied ? "✓" : <ClipboardList size={13} />}
         <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
@@ -4255,10 +4461,12 @@ function getContextKindLabel(kind: ChatAttachment["kind"]): string {
 function getModelLabel(
   models: MyDrSaiModelConfig[],
   selectedModelName?: string,
+  selectedModelProviderId?: string,
 ): string {
   if (!selectedModelName) return "";
   const model = models.find(
-    (item) => item.alias === selectedModelName || item.model === selectedModelName,
+    (item) => (item.alias === selectedModelName || item.model === selectedModelName)
+      && (!selectedModelProviderId || item.provider_id === selectedModelProviderId),
   );
   return model ? getModelOptionLabel(model) : "";
 }
@@ -4266,11 +4474,13 @@ function getModelLabel(
 function findSelectedModelConfig(
   models: MyDrSaiModelConfig[],
   selectedModelName?: string,
+  selectedModelProviderId?: string,
 ): MyDrSaiModelConfig | undefined {
   if (!selectedModelName) return undefined;
   const normalized = selectedModelName.trim().toLowerCase();
   return models.find((model) =>
-    [model.alias, model.model, model.display_name]
+    (!selectedModelProviderId || model.provider_id === selectedModelProviderId)
+    && [model.alias, model.model, model.display_name]
       .filter((item): item is string => Boolean(item))
       .some((item) => item.trim().toLowerCase() === normalized),
   );
@@ -4290,10 +4500,23 @@ function getModelOptionLabel(model: MyDrSaiModelConfig): string {
   return model.display_name || model.alias || model.model || "Model";
 }
 
-function getModelOptionMeta(model: MyDrSaiModelConfig): string {
-  return [model.client_type, model.model]
-    .filter((item): item is string => Boolean(item))
-    .join(" / ");
+function getCompactComposerModelLabel(label: string): string {
+  const compact = label
+    .replace(/^deepseek(?:[-_/\s]+ai)?[-_/\s]*/i, "")
+    .replace(/^deepseek\s*/i, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  return compact
+    .replace(/\bv(\d+(?:\.\d+)?)\s*pro\b/i, "V$1 Pro")
+    .replace(/\bv(\d+(?:\.\d+)?)\b/i, "V$1")
+    || label;
+}
+
+function getModelProviderLabel(model: MyDrSaiModelConfig, zh: boolean): string {
+  const provider = model.provider_id || model.client_type;
+  return provider
+    ? (zh ? `提供方：${provider}` : `Provider: ${provider}`)
+    : (zh ? "提供方：未知" : "Provider: Unknown");
 }
 
 function getAgentOptionMeta(agent: DesktopAgent, zh: boolean): string {
@@ -4310,17 +4533,21 @@ function getAgentOptionMeta(agent: DesktopAgent, zh: boolean): string {
 function getThinkingEffortLabel(effort: ThinkingEffort, zh: boolean): string {
   if (zh) {
     return {
-      low: "Low",
-      medium: "Medium",
-      high: "High",
-      xhigh: "XHigh",
+      none: "不思考",
+      low: "低",
+      medium: "中",
+      high: "高",
+      xhigh: "极高",
+      max: "最大",
     }[effort];
   }
   return {
+    none: "Off",
     low: "Low",
     medium: "Medium",
     high: "High",
     xhigh: "Ultra",
+    max: "Max",
   }[effort];
 }
 
@@ -4356,6 +4583,12 @@ function getWorkspaceDisplayName(workspacePath: string | undefined, zh: boolean)
   const normalized = workspacePath?.trim().replace(/[\\/]+$/, "") ?? "";
   const name = normalized.split(/[\\/]/).filter(Boolean).at(-1);
   return name || (zh ? "当前" : "current workspace");
+}
+
+function attachmentContextSummary(attachment: ChatAttachment): string {
+  const text = attachment.visibleText?.replace(/\s+/g, " ").trim() ?? "";
+  if (!text) return attachment.url?.slice(0, 160) ?? "";
+  return text.length > 160 ? `${text.slice(0, 157)}...` : text;
 }
 
 function isPreviewBrowserUrl(href: string): boolean {

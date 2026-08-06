@@ -43,6 +43,9 @@ try {
   assert(styles.includes(".worktree-warning"), "Worktree degraded status is missing visual styling");
   assert(shell.includes('document.visibilityState !== "visible"'), "Worktree event polling must pause while the app is hidden");
   assert(shell.includes("5_000"), "Worktree event polling interval must remain resource-conscious");
+  assert(shell.includes("consecutiveFailures"), "Degraded Worktree polling must track consecutive failures");
+  assert(shell.includes("Math.min(60_000"), "Degraded Worktree polling must use bounded exponential backoff");
+  assert(shell.includes("Preserve the last successful Runtime projection"), "Transient Runtime failure must retain the last Worktree projection");
   assert(!shell.includes("git worktree list"), "Renderer must not poll Git to infer Worktree state");
   assert(shell.includes('data-testid="worktree-review-panel"'), "unified Worktree Review panel is missing");
   assert(shell.includes("onGetWorktreeDiff"), "Review panel does not use the shared local/remote workspace operation");

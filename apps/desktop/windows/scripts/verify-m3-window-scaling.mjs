@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -31,18 +32,23 @@ copyFileSync(sourcePdf, fixturePath);
 rmSync(resultPath, { force: true });
 
 try {
-  await run();
+  const gateway = await startGateway();
+  try {
+    await run(gateway.address().port);
+  } finally {
+    await new Promise((resolveClose) => gateway.close(resolveClose));
+  }
   const result = JSON.parse(readFileSync(resultPath, "utf8"));
   assert(result.ok === true, `M3 packaged acceptance failed:\n${JSON.stringify(result, null, 2)}`);
   const checks = Object.entries(result.checks || {});
-  assert(checks.length >= 77 && checks.every(([, passed]) => passed === true), `M3 expected at least 77 passing checks, got ${checks.filter(([, passed]) => passed).length}/${checks.length}.`);
-  assert(Array.isArray(result.details?.profiles) && result.details.profiles.length === 4, "M3 did not preserve all four resize/display profiles.");
-  console.log(`M3 packaged window/scaling acceptance passed (${checks.length}/${checks.length} checks; fixed CERN PDF; 4 profiles × chat/results/approvals).`);
+  assert(checks.length >= 97 && checks.every(([, passed]) => passed === true), `M3 expected at least 97 passing checks, got ${checks.filter(([, passed]) => passed).length}/${checks.length}.`);
+  assert(Array.isArray(result.details?.profiles) && result.details.profiles.length === 5, "M3 did not preserve all five resize/display profiles.");
+  console.log(`M3 packaged window/scaling acceptance passed (${checks.length}/${checks.length} checks; fixed CERN PDF; 5 profiles including 200% × chat/results/approvals).`);
 } finally {
   rmSync(testRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
 }
 
-function run() {
+function run(port) {
   return new Promise((resolveRun, reject) => {
     let settled = false;
     const child = spawn(executable, [`--user-data-dir=${userData}`], {
@@ -51,6 +57,7 @@ function run() {
         ...process.env,
         DRSAI_HOME: appHome,
         DRSAI_GATEWAY_DEV_MANAGED: "1",
+        OPENDRSAI_GATEWAY_PORT: String(port),
         OPENDRSAI_DEV_AUTH_BYPASS: "1",
         OPENDRSAI_E2E_M3_WINDOW: "1",
         OPENDRSAI_E2E_RESULT: resultPath,
@@ -77,6 +84,54 @@ function run() {
       if (code === 0) resolveRun();
       else reject(new Error(`M3 packaged app exited ${code}.${existsSync(resultPath) ? `\n${readFileSync(resultPath, "utf8")}` : " No result JSON was written."}`));
     });
+  });
+}
+
+function startGateway() {
+  const server = createServer(async (req, res) => {
+    if (req.url === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+    if (req.url === "/v1/models") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ object: "list", data: [{ id: "drsai", object: "model" }] }));
+      return;
+    }
+    if (req.url === "/v1/runtime") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ runtime_id: "runtime-m3-scaling", instance_id: "instance-m3-scaling", version: "1.5.5", protocol_version: 1, platform: "windows", dev_managed: true }));
+      return;
+    }
+    if (req.url === "/v1/capabilities") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ protocol_version: 1, capabilities: ["chat", "tools", "goals", "approvals"], capability_versions: { chat: 1, tools: 1, goals: 1, approvals: 1 } }));
+      return;
+    }
+    if (req.url === "/v1/workspaces" && req.method === "POST") {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        const path = JSON.parse(body || "{}").path;
+        const now = new Date().toISOString();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ workspace_id: `m3-${Buffer.from(String(path)).toString("base64url").slice(0, 48)}`, path, created_at: now, last_opened_at: now, closed_at: null, open: true }));
+      });
+      return;
+    }
+    if (req.url === "/v1/config/cli" || req.url === "/v1/models/config") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("{}");
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "M3 fake gateway" }));
+  });
+  return new Promise((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolveListen(server));
   });
 }
 

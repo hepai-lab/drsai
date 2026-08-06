@@ -1,102 +1,105 @@
-import os
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 import drsai.backend.gateway as gateway
+from drsai.config.audio_operation_adapter import SpeechSynthesisResult, SpeechTranscriptionResult
+from drsai.config.model_catalog import ModelRef
+from drsai.config.model_operation_adapters import ModelProtocolError
 
 
-class FakeResponse:
-    def __init__(self, status_code=200, payload=None, invalid_json=False, content=b"fixture-audio"):
-        self.status_code = status_code
-        self._payload = payload or {}
-        self._invalid_json = invalid_json
-        self.content = content
+class FakeAudioAdapter:
+    error = None
+    last_call = None
 
-    def json(self):
-        if self._invalid_json:
-            raise ValueError("invalid json")
-        return self._payload
+    def synthesize(self, resolved, **kwargs):
+        type(self).last_call = ("synthesize", resolved, kwargs)
+        if type(self).error:
+            raise type(self).error
+        return SpeechSynthesisResult(b"ID3fixture", "audio/mpeg", "mp3")
+
+    def transcribe(self, resolved, **kwargs):
+        type(self).last_call = ("transcribe", resolved, kwargs)
+        if type(self).error:
+            raise type(self).error
+        return SpeechTranscriptionResult("hello voice", "en", 0.99)
 
 
-class FakeAsyncClient:
-    response = FakeResponse(200, {"text": "hello voice", "language": "en"})
-    last_post_kwargs = None
+resolved = SimpleNamespace(
+    ref=ModelRef("zhizengzeng", "whisper-1"),
+    model=SimpleNamespace(model="whisper-1"),
+)
 
-    def __init__(self, **_kwargs):
-        pass
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args):
-        return None
-
-    async def post(self, *_args, **_kwargs):
-        type(self).last_post_kwargs = _kwargs
-        return self.response
+def fake_resolve(_config, _policy, *, role, operation, require_credentials):
+    assert require_credentials is True
+    model = "tts-1" if role == "text_to_speech_model" else "whisper-1"
+    return SimpleNamespace(ref=ModelRef("zhizengzeng", model), model=SimpleNamespace(model=model))
 
 
 client = TestClient(gateway.app)
-original_client = gateway.httpx.AsyncClient
-original_key = os.environ.get("HEPAI_API_KEY")
+originals = (
+    gateway.load_model_provider_config,
+    gateway.load_agent_model_policy,
+    gateway.resolve_agent_operation,
+    gateway.OpenAIAudioOperationAdapter,
+)
 try:
-    gateway.httpx.AsyncClient = FakeAsyncClient
-    os.environ.pop("HEPAI_API_KEY", None)
-    os.environ.pop("OPENAI_API_KEY", None)
-    response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"RIFFdata", "audio/wav")})
-    assert response.status_code == 401, response.text
+    gateway.load_model_provider_config = lambda: object()
+    gateway.load_agent_model_policy = lambda _agent: SimpleNamespace(policy=object())
+    gateway.resolve_agent_operation = fake_resolve
+    gateway.OpenAIAudioOperationAdapter = FakeAudioAdapter
 
-    os.environ["HEPAI_API_KEY"] = "test-only-key"
     response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"", "audio/wav")})
     assert response.status_code == 400, response.text
-
     response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"x" * (10 * 1024 * 1024 + 1), "audio/wav")})
     assert response.status_code == 413, response.text
 
-    FakeAsyncClient.response = FakeResponse(200, {"text": "hello voice", "language": "en"})
     response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"RIFFdata", "audio/wav")})
-    assert response.status_code == 200, response.text
-    assert response.json()["text"] == "hello voice"
+    assert response.status_code == 200 and response.json()["text"] == "hello voice", response.text
+    assert response.json()["model_ref"] == {"provider_id": "zhizengzeng", "model_id": "whisper-1"}
 
     response = client.post(
-        "/v1/audio/transcriptions",
-        data={"language": "en-US"},
-        files={"file": ("voice.webm", b"\x1a\x45\xdf\xa3data", "audio/webm")},
+        "/v1/audio/transcriptions", data={"language": "en-US"},
+        files={"file": ("voice.webm", b"webm-data", "audio/webm")},
     )
     assert response.status_code == 200, response.text
-    assert FakeAsyncClient.last_post_kwargs["data"]["language"] == "en"
+    assert FakeAudioAdapter.last_call[2]["language"] == "en-US"
 
-    FakeAsyncClient.response = FakeResponse(429, {"error": {"message": "slow down"}})
+    response = client.post(
+        "/v1/audio/transcriptions", data={"model": "other-model"},
+        files={"file": ("voice.wav", b"RIFFdata", "audio/wav")},
+    )
+    assert response.status_code == 409, response.text
+
+    FakeAudioAdapter.error = ModelProtocolError("quota_exceeded", "limited", retryable=True, status_code=429)
     response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"RIFFdata", "audio/wav")})
     assert response.status_code == 429, response.text
-
-    FakeAsyncClient.response = FakeResponse(500, {"error": {"message": "provider down"}})
-    response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"RIFFdata", "audio/wav")})
-    assert response.status_code == 500, response.text
-
-    FakeAsyncClient.response = FakeResponse(200, invalid_json=True)
+    FakeAudioAdapter.error = ModelProtocolError("invalid_provider_response", "bad")
     response = client.post("/v1/audio/transcriptions", files={"file": ("voice.wav", b"RIFFdata", "audio/wav")})
     assert response.status_code == 502, response.text
 
-    FakeAsyncClient.response = FakeResponse(200, content=b"ID3fixture")
+    FakeAudioAdapter.error = None
     response = client.post("/v1/audio/speech", json={"text": "hello", "format": "mp3"})
-    assert response.status_code == 200, response.text
-    assert response.content == b"ID3fixture"
-
+    assert response.status_code == 200 and response.content == b"ID3fixture", response.text
+    assert response.headers["X-OpenDrSai-Model-Id"] == "tts-1"
     response = client.post("/v1/audio/speech", json={"text": "", "format": "mp3"})
     assert response.status_code == 400, response.text
-
     response = client.post("/v1/audio/speech", json={"text": "hello", "speed": 3})
     assert response.status_code == 400, response.text
 
-    FakeAsyncClient.response = FakeResponse(429, {"error": {"message": "slow down"}})
+    FakeAudioAdapter.error = ModelProtocolError("credential_unavailable", "missing")
     response = client.post("/v1/audio/speech", json={"text": "hello"})
-    assert response.status_code == 429, response.text
+    assert response.status_code == 401, response.text
+    FakeAudioAdapter.error = ModelProtocolError("permission_denied", "forbidden", status_code=403)
+    response = client.post("/v1/audio/speech", json={"text": "hello"})
+    assert response.status_code == 403, response.text
 finally:
-    gateway.httpx.AsyncClient = original_client
-    if original_key is None:
-        os.environ.pop("HEPAI_API_KEY", None)
-    else:
-        os.environ["HEPAI_API_KEY"] = original_key
+    (
+        gateway.load_model_provider_config,
+        gateway.load_agent_model_policy,
+        gateway.resolve_agent_operation,
+        gateway.OpenAIAudioOperationAdapter,
+    ) = originals
 
-print("Voice provider behavior tests passed (12 cases).")
+print("Agent-bound voice provider behavior tests passed (12 cases).")

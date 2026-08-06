@@ -2,7 +2,6 @@ import { request as httpRequest } from "http";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import type { SaveApiKeyResult } from "../api/desktopApi";
-import { saveDefaultModelAlias } from "./modelDefaults";
 import { DRSAI_ENV_FILE } from "./paths";
 import { getGatewayRequestHeaders } from "./gateway";
 
@@ -35,18 +34,11 @@ export function saveApiKey(rawApiKey: unknown): SaveApiKeyResult {
   return { ok: true, message: "API key saved." };
 }
 
-export async function saveApiKeyAndDefaultModel(
-  rawApiKey: unknown,
-  rawDefaultModel?: unknown,
-): Promise<SaveApiKeyResult> {
+export async function saveApiKeyAndSync(rawApiKey: unknown): Promise<SaveApiKeyResult> {
   const result = saveApiKey(rawApiKey);
   if (!result.ok) return result;
   const apiKey = typeof rawApiKey === "string" ? rawApiKey.trim() : "";
-  let defaultModel: string | undefined;
-  if (rawDefaultModel !== undefined) {
-    defaultModel = saveDefaultModelAlias(rawDefaultModel);
-  }
-  await syncRunningGatewayConfig(apiKey, defaultModel);
+  await syncRunningGatewayConfig(apiKey);
   return result;
 }
 
@@ -91,18 +83,10 @@ function escapeRegExp(value: string): string {
 
 async function syncRunningGatewayConfig(
   apiKey: string,
-  defaultModel?: string,
 ): Promise<void> {
-  await Promise.all([
-    putGatewayConfig(`/v1/config/env/${encodeURIComponent(API_KEY_NAME)}`, {
-      value: apiKey,
-    }),
-    defaultModel
-      ? putGatewayConfig("/v1/config/cli/defult_config_name", {
-          value: defaultModel,
-        })
-      : Promise.resolve(),
-  ]).catch(() => undefined);
+  await putGatewayConfig(`/v1/config/env/${encodeURIComponent(API_KEY_NAME)}`, {
+    value: apiKey,
+  }).catch(() => undefined);
 }
 
 function readSavedApiKey(): string {

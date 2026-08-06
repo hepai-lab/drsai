@@ -1,12 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { applyThreadSnapshotPatchBatch } from "./threadSnapshotPatch";
+import { ThreadPatchFrameBatcher } from "./threadPatchFrameBatcher";
+import { executeRecoveryActionOnce } from "./recoveryActionCoordinator";
+import { ThreadSnapshotStore } from "./threadSnapshotStore";
+import { ThreadSnapshotCoordinator } from "./threadSnapshotCoordinator";
+import { threadSyncMetrics } from "./threadSyncMetrics";
+import { CompletionDeliveryTracker } from "./completionDeliveryTracker";
+import { verifyResultProvenance } from "../../api/resultProvenance";
 import {
+  Archive,
+  AudioLines,
   Bot,
   Bug,
+  Copy,
   FileText,
   Globe2,
   History,
+  Image as ImageIcon,
   Library,
+  ListTree,
   PackageOpen,
+  Pencil,
   Lightbulb,
   MessageSquare,
   Plug,
@@ -16,6 +30,9 @@ import {
   Smartphone,
   Sparkles,
   Terminal as TerminalIcon,
+  Trash2,
+  Type,
+  Video,
   Volume2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -57,25 +74,38 @@ import type {
   DesktopMcpContextResult,
   DesktopMobileAssociation,
   DesktopMobilePairingReadiness,
-  DesktopMobilePairingTarget,
   DesktopThread,
   DesktopWorktreeSummary,
+  ExperimentReleaseGateState,
   InstallProgress,
+  AgentModelSelection,
+  AgentModelCapabilityStatus,
   MyDrSaiModelConfig,
+  MyDrSaiModelApiProtocol,
+  MyDrSaiModelCapability,
+  MyDrSaiModelModality,
+  MyDrSaiProviderModelConfig,
+  MyDrSaiAgentModelPolicy,
   MyDrSaiModelConnection,
   MyDrSaiProviderPreset,
   MyDrSaiConfig,
   RemoteSshHost,
   RemoteSshHostKey,
   RemoteDirectoryEntry,
+  RunInspectionOpenRequest,
+  RuntimeModelOperation,
   WorkspaceFilePreview,
   WorkspaceProject,
 } from "@shared/desktopApi";
 import { desktopApi } from "./desktopApi";
 import { copyTextSafely } from "./clipboard";
-import { describeUserFacingError } from "./userFacingErrors";
+import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
+import { userFacingFailureMessage } from "./userFacingLanguage";
+import { isSelectableModelAvailability, modelCatalogRecoveryCopy } from "./modelCatalogRecovery";
+import { normalizeRuntimeErrorEnvelope } from "../../api/errorEnvelope";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
+import { deriveOperationalRunState, deriveOperationalState, shouldShowOperationalStateBar, type OperationalStateFacts } from "@shared/operationalState";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
 import { ApprovalCenterView } from "./components/ApprovalCenterView";
@@ -93,20 +123,25 @@ import { TaskCenterView } from "./components/TaskCenterView";
 import { MobilePairingDialog, mobilePairingErrorText } from "./components/MobilePairingDialog";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
+import { RunInspectorPanel } from "./components/RunInspectorPanel";
+import { AppDecisionDialogHost, requestAppDecision, showAppNotice } from "./components/AppDecisionDialog";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
 import {
   createAgentRunContextTraceEvents,
   createTraceEventFromAgentFileEvent,
   type AgentFileTraceEvent,
 } from "./components/files/AgentFileActivityPanel";
-import {
-  WorkspaceShell,
-  type ForkConflictContentPreviewResult,
-  type ForkConflictDraftWriteResult,
-  type ForkConflictFile,
-  type ForkConflictStageResult,
-  type WorkspaceThread,
+import type {
+  ForkConflictContentPreviewResult,
+  ForkConflictDraftWriteResult,
+  ForkConflictFile,
+  ForkConflictStageResult,
+  WorkspaceThread,
 } from "./components/WorkspaceShell";
+import { ModelSettingsContainer, type ModelSettingsDraftController } from "./containers/ModelSettingsContainer";
+import { ResultsContainer, useResultsContainerController } from "./containers/ResultsContainer";
+import { TaskShellContainer } from "./containers/TaskShellContainer";
+import { DiagnosticsContainer } from "./containers/DiagnosticsContainer";
 import {
   type ChatThreadSnapshot,
   useDesktopChatAdapter,
@@ -114,6 +149,8 @@ import {
 // Temporarily hide Skills management entry — keep for later reuse.
 // import type { ChatCommandAction } from "./chatCommands";
 import type { DesktopPlatformDescriptor } from "@shared/platform";
+import { redactSensitiveData } from "../../api/sensitiveData";
+import { buildLocalDesktopDataExport } from "./localDataExport";
 import { useDesktopHealthAdapter } from "./adapters/useDesktopHealthAdapter";
 import {
   deriveThreadActivity,
@@ -156,6 +193,7 @@ interface TerminalCommandProposal {
 }
 
 const rightTabIcons: Record<RightTab, LucideIcon> = {
+  run: ListTree,
   files: FileText,
   templates: Sparkles,
   browser: Globe2,
@@ -163,17 +201,17 @@ const rightTabIcons: Record<RightTab, LucideIcon> = {
   debug: Bug,
 };
 
-const WORKSPACE_STORAGE_KEY = "opendrsai.workspaces";
-const WORKSPACE_MIGRATION_KEY = "opendrsai.workspaces.migrated";
-const THREAD_SNAPSHOT_STORAGE_KEY = "opendrsai.threadSnapshots";
 const WORKSPACE_SORT_STORAGE_KEY = "opendrsai.workspaceSortMode";
 const DEVELOPER_MODE_STORAGE_KEY = "opendrsai.developerMode";
 const LANGUAGE_STORAGE_KEY = "opendrsai.language";
 const SESSION_SCOPE_STORAGE_KEY = "opendrsai.sessionScope";
 const DEFAULT_AGENT_STORAGE_KEY = "opendrsai.defaultAgent";
 const WORKSPACE_AGENT_STORAGE_KEY = "opendrsai.workspaceDefaultAgents";
-const DEFAULT_MODEL_STORAGE_KEY = "opendrsai.defaultModel";
 const THINKING_EFFORT_STORAGE_KEY = "opendrsai.thinkingEffort";
+const AGENT_CONFIGURATIONS_STORAGE_KEY = "opendrsai.agentConfigurations";
+const AGENT_MODEL_POLICY_MIGRATION_KEY = "opendrsai.agentModelPolicyMigration.v1";
+const AGENT_MODEL_POLICY_MIGRATION_BACKUP_KEY = "opendrsai.agentConfigurations.preModelPolicy.v1.backup";
+const DEFAULT_AGENT_TEXT_MODEL = "deepseek-v4-pro";
 const RESTORE_SESSION_STORAGE_KEY = "opendrsai.restoreLastSession";
 const RESTORE_WORKSPACE_STORAGE_KEY = "opendrsai.restoreLastWorkspace";
 const LAST_THREAD_STORAGE_KEY = "opendrsai.lastThread";
@@ -186,12 +224,27 @@ const REMOTE_RECENT_PATHS_STORAGE_KEY = "opendrsai.remoteSsh.recentPaths";
 const AWAY_STARTED_AT_STORAGE_KEY = "opendrsai.awayStartedAt";
 type WorkspaceSortMode = "recent" | "name" | "created";
 type AppearanceMode = "light" | "dark" | "system";
+type AgentConfigurationTab = "opendrsai" | "codex" | "platform";
+type AgentCapabilityModelRole = "image_understanding_model" | "image_generation_model" | "text_to_speech_model" | "speech_to_text_model";
+interface AgentConfigurationPreference {
+  model?: string;
+  modelRef?: { provider_id: string; model_id: string };
+  imageModel?: string;
+  thinkingEffort?: ThinkingEffort;
+}
+
+function getAgentConfigurationTab(agent: DesktopAgent): AgentConfigurationTab {
+  if (agent.id === "my-codex") return "codex";
+  if (agent.source === "remote") return "platform";
+  return "opendrsai";
+}
 interface SidebarComponentVisibility {
   square: boolean;
   agents: boolean;
   skills: boolean;
 }
 interface RightSidebarComponentVisibility {
+  run: boolean;
   files: boolean;
   browser: boolean;
   terminal: boolean;
@@ -250,6 +303,7 @@ function AuthenticatedApp({
   const [mobilePairingRefreshToken, setMobilePairingRefreshToken] = useState(0);
   const [awaySummary, setAwaySummary] = useState<AwaySummary | null>(null);
   const [deliveryTask, setDeliveryTask] = useState<DesktopBackgroundTask | null>(null);
+  const completionDeliveryTrackerRef = useRef(new CompletionDeliveryTracker());
   const [networkConnectivity, setNetworkConnectivity] = useState<NetworkConnectivityState>(() =>
     typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "online",
   );
@@ -298,6 +352,14 @@ function AuthenticatedApp({
     [],
   );
   const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
+  const workspaceRefreshPromiseRef = useRef<Promise<WorkspaceProject[]> | null>(null);
+  const chatChoicesPromiseRef = useRef(new Map<string, Promise<{
+    agents: DesktopAgent[];
+    myDrSaiConfig: MyDrSaiConfig;
+    agentModelPolicy: MyDrSaiAgentModelPolicy;
+  }>>());
+  const chatChoicesGenerationRef = useRef(0);
+  const [chatChoicesRefreshNonce, setChatChoicesRefreshNonce] = useState(0);
   const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
   const [workspaceLocationChoice, setWorkspaceLocationChoice] = useState<"remote" | null>(null);
   const [remoteWorkspaceStep, setRemoteWorkspaceStep] = useState<"computer" | "directory">("computer");
@@ -309,6 +371,16 @@ function AuthenticatedApp({
   const [workspaceSessionSyncMessage, setWorkspaceSessionSyncMessage] = useState<string | null>(null);
   const [workspaceSessionSyncing, setWorkspaceSessionSyncing] = useState(false);
   const workspaceSessionSyncGenerationRef = useRef(0);
+  const workspaceSessionSyncRequestRef = useRef<string | null>(null);
+  const recoveryActionInFlightRef = useRef(new Set<string>());
+  useEffect(() => desktopApi.onCodexWorkspaceSessionSyncProgress((progress) => {
+    if (progress.requestId !== workspaceSessionSyncRequestRef.current) return;
+    const names = language === "zh"
+      ? { discovered: "正在发现会话", read: "已读取会话", projected: "正在整理会话", persisted: "正在保存会话", cancelled: "同步已取消" }
+      : { discovered: "Discovering sessions", read: "Sessions read", projected: "Organizing sessions", persisted: "Saving sessions", cancelled: "Sync cancelled" };
+    const count = progress.total > 0 ? ` ${progress.completed}/${progress.total}` : "";
+    setWorkspaceSessionSyncMessage(`${names[progress.phase]}${count}`);
+  }), [language]);
   const [remoteNeedsHostTrust, setRemoteNeedsHostTrust] = useState(false);
   const [remoteHostKeys, setRemoteHostKeys] = useState<RemoteSshHostKey[]>([]);
   const [remoteDirectories, setRemoteDirectories] = useState<RemoteDirectoryEntry[]>([]);
@@ -316,10 +388,31 @@ function AuthenticatedApp({
   const [remoteRecentPaths, setRemoteRecentPaths] = useState<string[]>(() => loadRemoteRecentPaths());
   const [threads, setThreads] = useState<DesktopThread[]>([]);
   const [threadBackgroundTasks, setThreadBackgroundTasks] = useState<DesktopBackgroundTask[]>([]);
+  const [operationalE2eFacts, setOperationalE2eFacts] = useState<OperationalStateFacts | null>(null);
   const [activeThreadId, setActiveThreadId] = useState(() => loadRestoredThreadId());
-  const [threadSnapshots, setThreadSnapshots] = useState<
-    Record<string, ChatThreadSnapshot>
-  >(() => loadThreadSnapshots());
+  const activeThreadIdRef = useRef(activeThreadId);
+  useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
+  const threadSnapshotStoreRef = useRef<ThreadSnapshotStore | null>(null);
+  if (!threadSnapshotStoreRef.current) threadSnapshotStoreRef.current = new ThreadSnapshotStore();
+  const threadSnapshotStore = threadSnapshotStoreRef.current;
+  const subscribeActiveThreadSnapshot = useCallback(
+    (listener: () => void) => threadSnapshotStore.subscribe(activeThreadId, listener),
+    [activeThreadId, threadSnapshotStore],
+  );
+  const activeThreadSnapshot = useSyncExternalStore(
+    subscribeActiveThreadSnapshot,
+    () => threadSnapshotStore.get(activeThreadId),
+    () => null,
+  );
+  const threadSnapshotCoordinatorRef = useRef(new ThreadSnapshotCoordinator());
+  const threadHydrationsRef = useRef(new Map<string, { generation: number; requestId: string; promise: Promise<void> }>());
+  useEffect(() => {
+    for (const [threadId, hydration] of threadHydrationsRef.current) {
+      if (threadId !== activeThreadId) {
+        void desktopApi.cancelThreadSnapshotHydration(hydration.requestId).catch(() => false);
+      }
+    }
+  }, [activeThreadId]);
   const [hydratingThreadId, setHydratingThreadId] = useState<string | null>(null);
   const [threadHydrationError, setThreadHydrationError] = useState<{ threadId: string; message: string } | null>(null);
   const [workspaceSortMode, setWorkspaceSortMode] = useState<WorkspaceSortMode>(
@@ -327,13 +420,51 @@ function AuthenticatedApp({
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
+  const [runInspectionRequest, setRunInspectionRequest] = useState<(RunInspectionOpenRequest & { focusedItemId?: string }) | null>(null);
+  const [experimentReleaseGate, setExperimentReleaseGate] = useState<ExperimentReleaseGateState>({
+    schema_version: "opendrsai.experiment-release-gate/1",
+    enabled: false,
+    required_features: ["M31-02", "M31-03", "M31-04", "M31-05"],
+    passed_features: [],
+    blocking_features: ["M31-02", "M31-03", "M31-04", "M31-05"],
+    source_ledger_sha256: null,
+    reason: "release_gate_resource_missing",
+  });
+
+  useEffect(() => {
+    let disposed = false;
+    void desktopApi.getExperimentReleaseGate()
+      .then((gate) => { if (!disposed) setExperimentReleaseGate(gate); })
+      .catch(() => undefined);
+    return () => { disposed = true; };
+  }, []);
+
+  useEffect(() => {
+    function openRunInspection(event: Event): void {
+      const detail = (event as CustomEvent<Partial<RunInspectionOpenRequest> & { focusedItemId?: string }>).detail;
+      if (!detail || typeof detail.runId !== "string" || !/^[A-Za-z0-9._:-]{1,200}$/.test(detail.runId)) return;
+      if (typeof detail.workspacePath !== "string" || !detail.workspacePath.trim()) return;
+      setRunInspectionRequest({
+        workspacePath: detail.workspacePath,
+        ...(typeof detail.workspaceId === "string" && detail.workspaceId ? { workspaceId: detail.workspaceId } : {}),
+        runId: detail.runId,
+        ...(detail.createExperiment === true && experimentReleaseGate.enabled ? { createExperiment: true } : {}),
+        ...(typeof detail.focusedItemId === "string" ? { focusedItemId: detail.focusedItemId } : {}),
+      });
+      setActiveRightTab("run");
+      setRightPanelCollapsed(false);
+    }
+    window.addEventListener("opendrsai:open-run-inspection", openRunInspection);
+    return () => window.removeEventListener("opendrsai:open-run-inspection", openRunInspection);
+  }, [experimentReleaseGate.enabled]);
   const [sessionScope, setSessionScope] = useState<"workspace" | "all">(() => loadSessionScope());
   const [availableChatAgents, setAvailableChatAgents] = useState<DesktopAgent[]>([]);
   const [availableChatModels, setAvailableChatModels] = useState<MyDrSaiModelConfig[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(() => loadOptionalSetting(DEFAULT_AGENT_STORAGE_KEY));
   const [selectedChatAgentName, setSelectedChatAgentName] = useState("OpenDrSai");
-  const [selectedChatModel, setSelectedChatModel] = useState<string | null>(() => loadOptionalSetting(DEFAULT_MODEL_STORAGE_KEY));
+  const [selectedChatModel, setSelectedChatModel] = useState<string | null>(null);
   const [defaultThinkingEffort, setDefaultThinkingEffort] = useState<ThinkingEffort>(() => loadThinkingEffort());
+  const [agentConfigurations, setAgentConfigurations] = useState<Record<string, AgentConfigurationPreference>>(() => loadAgentConfigurations());
   const [restoreLastSession, setRestoreLastSession] = useState(() => loadBooleanSetting(RESTORE_SESSION_STORAGE_KEY, true));
   const [restoreLastWorkspace, setRestoreLastWorkspace] = useState(() => loadBooleanSetting(RESTORE_WORKSPACE_STORAGE_KEY, true));
   const [completionNotifications, setCompletionNotifications] = useState(() => loadBooleanSetting(COMPLETION_NOTIFICATION_STORAGE_KEY, false));
@@ -341,6 +472,10 @@ function AuthenticatedApp({
   const [sidebarComponents, setSidebarComponents] = useState<SidebarComponentVisibility>(() => loadSidebarComponents());
   const [rightSidebarComponents, setRightSidebarComponents] = useState<RightSidebarComponentVisibility>(() => loadRightSidebarComponents());
   const [myDrSaiConfig, setMyDrSaiConfig] = useState<MyDrSaiConfig | null>(null);
+  const [myDrSaiAgentModelPolicy, setMyDrSaiAgentModelPolicy] = useState<MyDrSaiAgentModelPolicy | null>(null);
+  const myDrSaiConfigRef = useRef<MyDrSaiConfig | null>(null);
+  const [myDrSaiConfigLoaded, setMyDrSaiConfigLoaded] = useState(false);
+  const [requestedSettingsPane, setRequestedSettingsPane] = useState<SettingsPane | null>(null);
   const [selectedChatExamples, setSelectedChatExamples] = useState<
     DesktopAgent["examples"]
   >();
@@ -354,7 +489,7 @@ function AuthenticatedApp({
     [availableChatModels, selectedChatAgent, selectedChatModel],
   );
   const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
-  const [resultsScopeRequestKey, setResultsScopeRequestKey] = useState(0);
+  const resultsContainer = useResultsContainerController();
   const [terminalAgentTask, setTerminalAgentTask] = useState("");
   const [terminalCommandProposal, setTerminalCommandProposal] =
     useState<TerminalCommandProposal | null>(null);
@@ -415,7 +550,7 @@ function AuthenticatedApp({
   const workspaces: WorkspaceProject[] = [
     currentWorkspace,
     ...storedWorkspaces.filter(
-      (workspace) => workspace.path !== currentWorkspace.path,
+      (workspace) => getComparablePath(workspace.path) !== getComparablePath(currentWorkspace.path),
     ),
   ];
   const sortedWorkspaces = sortWorkspacesForSidebar(workspaces, workspaceSortMode);
@@ -425,7 +560,16 @@ function AuthenticatedApp({
   const activeWorkspacePathKey = getComparablePath(activeWorkspace.path);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const activeThreadWorkspacePath = activeThread?.workspacePath?.trim();
-  const effectiveWorkspacePath = activeThread?.execution?.canonicalPath || activeThreadWorkspacePath || activeWorkspace.path;
+  const matchedThreadWorkspace = activeThreadWorkspacePath
+    ? workspaces.find((workspace) =>
+      getComparablePath(workspace.path) === getComparablePath(activeThreadWorkspacePath))
+    : undefined;
+  // Historical Threads could persist the display label "Local workspace" as
+  // a relative path. Only a Runtime-issued canonical path or a registered
+  // Workspace path may override the active Workspace.
+  const effectiveWorkspacePath = activeThread?.execution?.canonicalPath
+    || matchedThreadWorkspace?.path
+    || activeWorkspace.path;
   const effectiveWorkspace =
     getComparablePath(activeWorkspace.path) === getComparablePath(effectiveWorkspacePath)
       ? activeWorkspace
@@ -501,7 +645,7 @@ function AuthenticatedApp({
     unread: thread.unread,
     activity: deriveThreadActivity({
       thread,
-      snapshot: threadSnapshots[thread.id],
+      snapshot: thread.id === activeThreadId ? activeThreadSnapshot ?? undefined : undefined,
       backgroundTask: backgroundTaskByThreadId.get(thread.id),
     }),
     source: workspaces.find((workspace) => getComparablePath(workspace.path) === getComparablePath(thread.workspacePath || ""))?.location === "remote"
@@ -580,7 +724,7 @@ function AuthenticatedApp({
     onThreadUpdated: handleThreadUpdated,
     language,
     threadId: activeThreadId,
-    threadSnapshot: threadSnapshots[activeThreadId] ?? null,
+    threadSnapshot: activeThreadSnapshot,
     workspaceInstructions: effectiveWorkspaceInstructions,
     workspaceId: effectiveRuntimeWorkspaceId,
     workspaceName: effectiveWorkspace.name,
@@ -659,39 +803,76 @@ function AuthenticatedApp({
     void refreshWorkspaces();
   }, []);
 
-  useEffect(() => {
-    if (!workspacesLoaded || !health?.gatewayReady || !workspacePath) return;
-    if (storedWorkspaces.some((workspace) => getComparablePath(workspace.path) === getComparablePath(workspacePath))) return;
-    let cancelled = false;
-    void desktopApi.createWorkspace({
-      source: "existing",
-      path: workspacePath,
-      name: getWorkspaceName(workspacePath) || (language === "zh" ? "默认" : "Default"),
-      description: language === "zh" ? "当前项目" : "Current project",
-      trusted: true,
-      pinned: true,
-    }).then((workspace) => {
-      if (cancelled) return;
-      setStoredWorkspaces((current) => [
-        workspace,
-        ...current.filter((item) => item.id !== workspace.id && getComparablePath(item.path) !== getComparablePath(workspace.path)),
-      ]);
-    }).catch(() => {
-      // Runtime health and workspace registration can briefly race during startup.
-      // A later health transition or manual workspace refresh will retry safely.
-    });
-    return () => { cancelled = true; };
-  }, [health?.gatewayReady, language, storedWorkspaces, workspacePath, workspacesLoaded]);
-
   useEffect(() => desktopApi.onRemoteWorkspaceStatus((status) => {
     setStoredWorkspaces((current) => current.map((workspace) => workspace.id === status.workspaceId ? { ...workspace, remote: status, updatedAt: new Date().toISOString() } : workspace));
   }), []);
-  useEffect(() => desktopApi.onThreadSnapshot((event) => {
-    setThreadSnapshots((current) => ({
-      ...current,
-      [event.threadId]: event.snapshot,
-    }));
-  }), []);
+  useEffect(() => {
+    const batcher = new ThreadPatchFrameBatcher((events) => {
+      const p9StartedAt = performance.now();
+      const byThread = new Map<string, typeof events>();
+      for (const event of events) byThread.set(event.threadId, [...(byThread.get(event.threadId) ?? []), event]);
+      for (const [threadId, threadEvents] of byThread) {
+        const snapshot = threadSnapshotStore.get(threadId);
+        if (!snapshot) { void scheduleThreadResync(threadId); continue; }
+        try {
+          const result = applyThreadSnapshotPatchBatch(
+            snapshot,
+            threadEvents,
+            threadSnapshotCoordinatorRef.current.get(threadId)?.generation ?? -1,
+          );
+          const estimatedByteDelta = threadEvents.reduce((total, event) => event.patch.kind === "item.delta"
+            ? total + event.patch.delta.text.length * 2 : total, 0);
+          threadSnapshotStore.set(threadId, result.snapshot, estimatedByteDelta);
+          threadSnapshotCoordinatorRef.current.markApplied(threadId, result.appliedSequence);
+        } catch (error) {
+          threadSnapshotCoordinatorRef.current.rejectPending(threadId);
+          console.error("thread_snapshot_patch_batch_failed", { threadId, error });
+          void scheduleThreadResync(threadId);
+        }
+      }
+      threadSyncMetrics.observe("apply", performance.now() - p9StartedAt);
+      requestAnimationFrame(() => threadSyncMetrics.observe("render", performance.now() - p9StartedAt));
+      const p9Metrics = (window as unknown as { __OPENDRSAI_P9_RENDER_METRICS?: {
+        applyMs: number[]; renderMs: number[]; lastThreadId?: string; finalContentLength?: number;
+      } }).__OPENDRSAI_P9_RENDER_METRICS;
+      if (p9Metrics) {
+        p9Metrics.applyMs.push(performance.now() - p9StartedAt);
+        const measuredThreadId = events.at(-1)?.threadId;
+        requestAnimationFrame(() => {
+          p9Metrics.renderMs.push(performance.now() - p9StartedAt);
+          p9Metrics.lastThreadId = measuredThreadId;
+          p9Metrics.finalContentLength = measuredThreadId
+            ? (threadSnapshotStore.get(measuredThreadId)?.messages.at(-1)?.content.length ?? 0) : 0;
+        });
+      }
+    });
+    const removeSnapshot = desktopApi.onThreadSnapshot((event) => {
+      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(event, () => threadSnapshotStore.set(event.threadId, event.snapshot))) return;
+      batcher.clearThread(event.threadId);
+    });
+    const removePatch = desktopApi.onThreadSnapshotPatch((event) => {
+      threadSyncMetrics.observe("transport", Math.max(0, Date.now() - event.patch.updatedAt));
+      const waterline = threadSnapshotCoordinatorRef.current.get(event.threadId);
+      if (!threadSnapshotCoordinatorRef.current.acceptPatch(event)) {
+        batcher.clearThread(event.threadId);
+        console.error("thread_snapshot_patch_rejected", {
+          threadId: event.threadId, generation: event.generation, expectedGeneration: waterline?.generation,
+          baseSequence: event.baseSequence, expectedSequence: waterline?.acceptedSequence,
+        });
+        void scheduleThreadResync(event.threadId, {
+          minimumSequence: event.sessionSequence,
+          expectedGeneration: event.generation,
+        });
+        return;
+      }
+      batcher.enqueue(event);
+    });
+    return () => {
+      removeSnapshot();
+      removePatch();
+      batcher.dispose();
+    };
+  }, []);
   useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
     setThreads((current) => sortThreadsForSidebar([
       event.thread,
@@ -736,6 +917,13 @@ function AuthenticatedApp({
     };
   }, []);
   useEffect(() => {
+    const newlyCompleted = completionDeliveryTrackerRef.current.observe(
+      threadBackgroundTasks,
+      activeThreadId ?? undefined,
+    );
+    if (newlyCompleted) setDeliveryTask((current) => current ?? newlyCompleted);
+  }, [activeThreadId, threadBackgroundTasks]);
+  useEffect(() => {
     if (!activeThreadId) return;
     let subscribed = false;
     let disposed = false;
@@ -750,13 +938,6 @@ function AuthenticatedApp({
       if (subscribed) void desktopApi.unsubscribeThreadSnapshot(activeThreadId);
     };
   }, [activeThreadId]);
-
-  useEffect(() => {
-    window.localStorage.setItem(
-      THREAD_SNAPSHOT_STORAGE_KEY,
-      JSON.stringify(threadSnapshots),
-    );
-  }, [threadSnapshots]);
 
   useEffect(() => {
     window.localStorage.setItem(WORKSPACE_SORT_STORAGE_KEY, workspaceSortMode);
@@ -775,12 +956,19 @@ function AuthenticatedApp({
   }, [selectedChatAgentId]);
 
   useEffect(() => {
-    persistOptionalSetting(DEFAULT_MODEL_STORAGE_KEY, selectedChatModel);
-  }, [selectedChatModel]);
-
-  useEffect(() => {
     window.localStorage.setItem(THINKING_EFFORT_STORAGE_KEY, defaultThinkingEffort);
   }, [defaultThinkingEffort]);
+
+  useEffect(() => {
+    const compatibilityOnly = Object.fromEntries(Object.entries(agentConfigurations).map(([agentId, preference]) => {
+      if (agentId !== "my-drsai") return [agentId, preference];
+      const { modelRef: _modelRef, ...withoutStructuredRef } = preference;
+      if (window.localStorage.getItem(AGENT_MODEL_POLICY_MIGRATION_KEY) !== "complete") return [agentId, withoutStructuredRef];
+      const { model: _model, imageModel: _imageModel, ...legacyCompatibility } = withoutStructuredRef;
+      return [agentId, legacyCompatibility];
+    }));
+    window.localStorage.setItem(AGENT_CONFIGURATIONS_STORAGE_KEY, JSON.stringify(compatibilityOnly));
+  }, [agentConfigurations]);
 
   useEffect(() => {
     window.localStorage.setItem(RESTORE_SESSION_STORAGE_KEY, String(restoreLastSession));
@@ -868,6 +1056,15 @@ function AuthenticatedApp({
   }, []);
 
   useEffect(() => {
+    const thread = threads.find((item) => item.id === activeThreadId);
+    if (!thread || activeThreadSnapshot) return;
+    // Restore/open only the active body. Blank sessions have no body to read;
+    // all other directory entries stay as lightweight DesktopThread metadata.
+    if ((thread.messageCount ?? 0) <= 0 && !thread.runtimeSessionId) return;
+    void hydrateThreadSnapshot(activeThreadId);
+  }, [activeThreadId, activeThreadSnapshot, threads]);
+
+  useEffect(() => {
     function handleThreadsUpdated(): void {
       void refreshThreads();
     }
@@ -879,16 +1076,69 @@ function AuthenticatedApp({
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: number | undefined;
+    const generation = chatChoicesGenerationRef.current;
+    if (!myDrSaiConfigRef.current) setMyDrSaiConfigLoaded(false);
+    const scheduleRetry = (): void => {
+      if (cancelled || retryTimer !== undefined) return;
+      retryTimer = window.setTimeout(() => {
+        if (!cancelled) setChatChoicesRefreshNonce((current) => current + 1);
+      }, 1_000);
+    };
     async function loadChatChoices(): Promise<void> {
       try {
-        const [agents, myDrSaiConfig] = await Promise.all([
-          desktopApi.listAgents(),
-          desktopApi.getMyDrSaiConfig(effectiveWorkspacePath || undefined).catch(() => null),
-        ]);
-        if (cancelled) return;
+        const key = `${user?.id || "signed-out"}::${getComparablePath(effectiveWorkspacePath) || "default"}`;
+        let request = chatChoicesPromiseRef.current.get(key);
+        if (!request) {
+          request = Promise.all([
+            desktopApi.listAgents(),
+            desktopApi.getMyDrSaiConfig(effectiveWorkspacePath || undefined),
+            desktopApi.getMyDrSaiAgentModelPolicy("my-drsai"),
+          ]).then(([agents, myDrSaiConfig, agentModelPolicy]) => ({ agents, myDrSaiConfig, agentModelPolicy }));
+          chatChoicesPromiseRef.current.set(key, request);
+          void request.finally(() => {
+            if (chatChoicesPromiseRef.current.get(key) === request) {
+              chatChoicesPromiseRef.current.delete(key);
+            }
+          }).catch(() => undefined);
+        }
+        let { agents, myDrSaiConfig, agentModelPolicy } = await request;
+        if (cancelled || generation !== chatChoicesGenerationRef.current) return;
+        const legacyModel = loadAgentConfigurations()["my-drsai"]?.model;
+        if (window.localStorage.getItem(AGENT_MODEL_POLICY_MIGRATION_KEY) !== "complete") {
+          if (legacyModel) agentModelPolicy = await desktopApi.migrateMyDrSaiAgentModelPolicy("my-drsai", legacyModel, agentModelPolicy.revision);
+          const legacyConfigurations = window.localStorage.getItem(AGENT_CONFIGURATIONS_STORAGE_KEY);
+          if (legacyConfigurations !== null && window.localStorage.getItem(AGENT_MODEL_POLICY_MIGRATION_BACKUP_KEY) === null) {
+            window.localStorage.setItem(AGENT_MODEL_POLICY_MIGRATION_BACKUP_KEY, legacyConfigurations);
+          }
+          window.localStorage.setItem(AGENT_MODEL_POLICY_MIGRATION_KEY, "complete");
+          setAgentConfigurations((current) => {
+            const preference = current["my-drsai"];
+            if (!preference) return current;
+            const { model: _model, modelRef: _modelRef, imageModel: _imageModel, ...retained } = preference;
+            return { ...current, "my-drsai": retained };
+          });
+        }
+        setMyDrSaiAgentModelPolicy(agentModelPolicy);
+        setAgentConfigurations((current) => ({
+          ...current,
+          "my-drsai": {
+            ...current["my-drsai"],
+            ...(agentModelPolicy.effective_ref
+              ? { model: agentModelPolicy.effective_ref.model_id, modelRef: agentModelPolicy.effective_ref }
+              : { model: undefined, modelRef: undefined }),
+            ...(agentModelPolicy.reasoning_effort ? { thinkingEffort: agentModelPolicy.reasoning_effort } : {}),
+          },
+        }));
+        if (agentModelPolicy.reasoning_effort) setDefaultThinkingEffort(agentModelPolicy.reasoning_effort);
         setAvailableChatAgents(agents);
-        setAvailableChatModels(myDrSaiConfig?.models ?? []);
-        setMyDrSaiConfig(myDrSaiConfig);
+        if (myDrSaiConfig.ready || !myDrSaiConfigRef.current) {
+          setAvailableChatModels(myDrSaiConfig.models ?? []);
+          myDrSaiConfigRef.current = myDrSaiConfig;
+          setMyDrSaiConfig(myDrSaiConfig);
+        }
+        setMyDrSaiConfigLoaded(true);
+        if (!myDrSaiConfig.ready) scheduleRetry();
         if (cancelled || agents.length === 0) return;
         const defaultAgent =
           agents.find((agent) => agent.isDefault) ??
@@ -902,26 +1152,34 @@ function AuthenticatedApp({
         setSelectedChatAgentId(preferredAgent.id);
         setSelectedChatAgentName(preferredAgent.name);
         setSelectedChatModel((current) => {
-          const preferredModel = preferredAgent.model ?? preferredAgent.models?.[0]
-            ?? myDrSaiConfig?.defaultModelAlias ?? null;
-          if (
-            preferredAgent.id === "my-drsai"
-            && (!current || ["deepseek-ai/deepseek-v4-pro", "hepai/deepseek-v4-pro"].includes(current))
-          ) {
-            return preferredModel;
-          }
+          const preferredModel = preferredAgent.id === "my-drsai"
+            ? agentModelPolicy.effective_ref?.model_id ?? null
+            : preferredAgent.model ?? preferredAgent.models?.[0] ?? null;
+          if (preferredAgent.id === "my-drsai") return preferredModel;
           return current ?? preferredModel;
         });
         setSelectedChatExamples(preferredAgent.examples);
       } catch {
-        // The chat composer should remain usable even if the agent catalog is unavailable.
+        // A transient startup/config read failure must not erase the last known-good
+        // model state or turn it into a permanent "unconfigured" result.
+        if (!cancelled) {
+          setMyDrSaiConfigLoaded(myDrSaiConfigRef.current !== null);
+          scheduleRetry();
+        }
       }
     }
     void loadChatChoices();
     return () => {
       cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [activeWorkspaceId, effectiveWorkspacePath, health?.gatewayReady]);
+  }, [activeWorkspaceId, chatChoicesRefreshNonce, effectiveWorkspacePath, health?.gatewayReady, user?.id]);
+
+  useEffect(() => {
+    if (selectedChatAgentId !== "my-drsai" || !myDrSaiAgentModelPolicy?.effective_ref?.model_id) return;
+    const primaryModel = myDrSaiAgentModelPolicy.effective_ref.model_id;
+    setSelectedChatModel((current) => current === primaryModel ? current : primaryModel);
+  }, [myDrSaiAgentModelPolicy?.effective_ref?.model_id, selectedChatAgentId]);
 
   useEffect(() => {
     setWorkspaceContextAttachmentsByThread({});
@@ -1042,7 +1300,7 @@ function AuthenticatedApp({
       navigateTo(MENU_IDS.currentSession);
       setRemoteDialogOpen(false);
     } catch (error) {
-      setRemoteDialogError(error instanceof Error ? error.message : String(error));
+      setRemoteDialogError(userFacingFailureMessage(error, language, "connection"));
     } finally {
       setRemoteConnecting(false);
     }
@@ -1053,7 +1311,7 @@ function AuthenticatedApp({
     try {
       const entries = await desktopApi.listRemoteDirectories(remoteHostAlias, path.trim());
       setRemoteDirectories(entries); setRemotePath(path.trim()); setRemoteDialogError("");
-    } catch (error) { setRemoteDialogError(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { setRemoteDialogError(userFacingFailureMessage(error, language, "connection")); }
   }
 
   async function handleAddLocalWorkspace(): Promise<void> {
@@ -1085,16 +1343,17 @@ function AuthenticatedApp({
     });
     setActiveWorkspaceId(workspace.id);
     navigateTo(MENU_IDS.currentSession);
-    await syncWorkspaceSessions(workspace);
   }
 
   async function syncWorkspaceSessions(workspace: WorkspaceProject): Promise<void> {
     if (workspace.location === "remote") return;
     const generation = ++workspaceSessionSyncGenerationRef.current;
+    const requestId = crypto.randomUUID();
+    workspaceSessionSyncRequestRef.current = requestId;
     setWorkspaceSessionSyncing(true);
     setWorkspaceSessionSyncMessage(language === "zh" ? "正在同步 Codex 会话…" : "Syncing Codex sessions…");
     try {
-      const sync = await desktopApi.syncCodexWorkspaceSessions(workspace.id, workspace.path);
+      const sync = await desktopApi.syncCodexWorkspaceSessions(workspace.id, workspace.path, requestId);
       if (generation !== workspaceSessionSyncGenerationRef.current) return;
       if (sync.threads.length) {
         setThreads((current) => sortThreadsForSidebar([
@@ -1112,11 +1371,15 @@ function AuthenticatedApp({
         ? `工作区已添加；${friendly.title}${friendly.action}`
         : `Workspace added. ${friendly.title} ${friendly.action}`);
     } finally {
+      if (workspaceSessionSyncRequestRef.current === requestId) workspaceSessionSyncRequestRef.current = null;
       if (generation === workspaceSessionSyncGenerationRef.current) setWorkspaceSessionSyncing(false);
     }
   }
 
   function cancelWorkspaceSessionSync(): void {
+    const requestId = workspaceSessionSyncRequestRef.current;
+    if (requestId) void desktopApi.cancelCodexWorkspaceSessionSync(requestId);
+    workspaceSessionSyncRequestRef.current = null;
     workspaceSessionSyncGenerationRef.current += 1;
     setWorkspaceSessionSyncing(false);
     setWorkspaceSessionSyncMessage(language === "zh" ? "已取消本次 Codex 会话同步。" : "Codex session sync cancelled.");
@@ -1187,33 +1450,17 @@ function AuthenticatedApp({
   }
 
   async function refreshWorkspaces(): Promise<void> {
+    let request = workspaceRefreshPromiseRef.current;
+    if (!request) {
+      request = desktopApi.listWorkspaces();
+      workspaceRefreshPromiseRef.current = request;
+    }
     try {
-      const remoteWorkspaces = await desktopApi.listWorkspaces();
-      const migrated =
-        window.localStorage.getItem(WORKSPACE_MIGRATION_KEY) === "true";
-      const legacyWorkspaces = migrated ? [] : loadLegacyWorkspaces();
-      if (legacyWorkspaces.length > 0) {
-        const created: WorkspaceProject[] = [];
-        for (const legacy of legacyWorkspaces) {
-          try {
-            created.push(
-              await desktopApi.createWorkspace({
-                path: legacy.path,
-                name: legacy.name,
-                description: legacy.description,
-                trusted: true,
-              }),
-            );
-          } catch {
-            // Ignore stale legacy folders; the user can add them again from the picker.
-          }
-        }
-        window.localStorage.setItem(WORKSPACE_MIGRATION_KEY, "true");
-        setStoredWorkspaces([...created, ...remoteWorkspaces]);
-        return;
-      }
-      setStoredWorkspaces(remoteWorkspaces);
+      setStoredWorkspaces(await request);
     } finally {
+      if (workspaceRefreshPromiseRef.current === request) {
+        workspaceRefreshPromiseRef.current = null;
+      }
       setWorkspacesLoaded(true);
     }
   }
@@ -1243,7 +1490,9 @@ function AuthenticatedApp({
       if (boundAgent) {
         setSelectedChatAgentId(boundAgent.id);
         setSelectedChatAgentName(boundAgent.name);
-        setSelectedChatModel(boundAgent.model || boundAgent.models?.[0] || null);
+        setSelectedChatModel(boundAgent.id === "my-drsai"
+          ? myDrSaiAgentModelPolicy?.effective_ref?.model_id ?? boundAgent.model ?? boundAgent.models?.[0] ?? null
+          : boundAgent.model || boundAgent.models?.[0] || null);
         setSelectedChatExamples(boundAgent.examples);
       }
     }
@@ -1258,7 +1507,9 @@ function AuthenticatedApp({
     }
     setActiveThreadId(threadId);
     setRightPanelCollapsed(true);
-    void hydrateThreadSnapshot(threadId);
+    if ((thread?.messageCount ?? 0) > 0 || thread?.runtimeSessionId) {
+      void hydrateThreadSnapshot(threadId);
+    }
     if (thread?.unread) {
       void handleThreadUpdate(threadId, { unread: false });
     }
@@ -1282,35 +1533,140 @@ function AuthenticatedApp({
     navigateTo(MENU_IDS.currentSession);
   }
 
-  async function hydrateThreadSnapshot(threadId: string): Promise<void> {
+  async function hydrateThreadSnapshot(
+    threadId: string,
+    options: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string } = {},
+  ): Promise<void> {
+    const generation = threadSnapshotCoordinatorRef.current.get(threadId)?.generation ?? 0;
+    const active = threadHydrationsRef.current.get(threadId);
+    if (active?.generation === generation) return active.promise;
+    if (active) void desktopApi.cancelThreadSnapshotHydration(active.requestId).catch(() => false);
+    const requestId = globalThis.crypto?.randomUUID?.() ?? `hydrate-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const hydrate = hydrateThreadSnapshotOnce(threadId, generation, requestId, options);
+    threadHydrationsRef.current.set(threadId, { generation, requestId, promise: hydrate });
+    try { await hydrate; } finally {
+      if (threadHydrationsRef.current.get(threadId)?.promise === hydrate) threadHydrationsRef.current.delete(threadId);
+    }
+  }
+
+  async function hydrateThreadSnapshotOnce(
+    threadId: string, generation: number, requestId: string,
+    options: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string },
+  ): Promise<void> {
     setHydratingThreadId(threadId);
+    const resyncStartedAt = performance.now();
     setThreadHydrationError((current) => current?.threadId === threadId ? null : current);
     try {
-      const snapshot = await desktopApi.getThreadSnapshot(threadId);
-      if (!snapshot) throw new Error(language === "zh" ? "未能读取该 Codex 会话的历史内容。" : "The Codex session history could not be loaded.");
-      setThreadSnapshots((current) => {
-        const existing = current[threadId];
-        if (existing && existing.updatedAt >= snapshot.updatedAt) return current;
-        return {
-          ...current,
-          [threadId]: snapshot,
-        };
-      });
+      const envelope = await desktopApi.getThreadSnapshotEnvelope(threadId, requestId, options);
+      if ((threadSnapshotCoordinatorRef.current.get(threadId)?.generation ?? 0) !== generation) return;
+      if (!envelope) throw new Error(language === "zh" ? "未能读取该会话的历史内容。" : "The session history could not be loaded.");
+      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, envelope.snapshot))) return;
     } catch (error) {
+      if ((error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && /abort|cancel/i.test(error.name))) return;
+      const state = threadSnapshotCoordinatorRef.current.noteResyncFailure(threadId);
       const friendly = describeUserFacingError(error, language);
       setThreadHydrationError({
         threadId,
-        message: `${friendly.title} ${friendly.action}`,
+        message: state.actionRequired
+          ? (language === "zh" ? "会话连续同步失败 3 次，需要重新连接 Runtime 或手动重试。" : "Session sync failed three times. Reconnect Runtime or retry manually.")
+          : `${friendly.title} ${friendly.action}`,
       });
     } finally {
+      threadSyncMetrics.observe("resync", performance.now() - resyncStartedAt);
       setHydratingThreadId((current) => current === threadId ? null : current);
     }
   }
 
+  async function scheduleThreadResync(
+    threadId: string,
+    options: { minimumSequence?: number; expectedGeneration?: number } = {},
+  ): Promise<void> {
+    if (!threadSnapshotCoordinatorRef.current.canResync(threadId)) {
+      setThreadHydrationError({ threadId, message: language === "zh"
+        ? "会话同步需要处理：请重新连接 Runtime 或手动重试。"
+        : "Session sync needs attention. Reconnect Runtime or retry manually." });
+      return;
+    }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (activeThreadIdRef.current !== threadId) return;
+      await hydrateThreadSnapshot(threadId, { ...options, forceFresh: true });
+      const state = threadSnapshotCoordinatorRef.current.get(threadId);
+      if (!state || state.consecutiveResyncFailures === 0 || state.actionRequired) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 150 * 2 ** attempt));
+    }
+  }
+
+  async function handleChatRecoveryAction(
+    assistantMessageId: string,
+    action: UserFacingRecoveryAction["id"],
+  ): Promise<void> {
+    const key = `${assistantMessageId}:${action}`;
+    await executeRecoveryActionOnce(recoveryActionInFlightRef.current, key, async () => {
+      if (action === "diagnostics") {
+        setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
+        setActiveRightTab("debug"); setRightPanelCollapsed(false); return;
+      }
+      if (action === "abandon") {
+        chat.dismissRecoveryActions(assistantMessageId);
+        return;
+      }
+      if (action === "login_codex") {
+        await desktopApi.startCodexBackendLogin("chatgptDeviceCode");
+        setCodexStatus(await desktopApi.getCodexBackendStatus(true));
+        return;
+      }
+      if (action === "resync_workspace") {
+        await syncWorkspaceSessions(activeWorkspace);
+        if (activeThreadId) await hydrateThreadSnapshot(activeThreadId);
+        return;
+      }
+      if (action === "repair_codex") {
+        await desktopApi.restartCodexBackend();
+        await syncWorkspaceSessions(activeWorkspace);
+        if (activeThreadId) await hydrateThreadSnapshot(activeThreadId);
+        return;
+      }
+      if (action === "reconnect") {
+        setCodexStatus(await desktopApi.restartCodexBackend());
+        if (activeThreadId) await hydrateThreadSnapshot(activeThreadId);
+        return;
+      }
+      if (action === "remove_resource" && activeThreadId) {
+        setWorkspaceContextAttachmentsByThread((current) => ({ ...current, [activeThreadId]: [] }));
+      }
+      const assistantIndex = chat.messages.findIndex((message) => message.id === assistantMessageId);
+      let originalInput = "";
+      for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+        const message = chat.messages[index];
+        if (message?.role === "user" && message.content.trim()) { originalInput = message.content; break; }
+      }
+      if (action === "continue") {
+        chat.dismissRecoveryActions(assistantMessageId);
+        chat.setInput(language === "zh"
+          ? "请基于这个任务已经保留的内容和文件继续完成目标。先核对已完成步骤，不要重复已经发生的副作用。"
+          : "Continue from the content and files preserved by this task. Verify completed steps first and do not repeat side effects that already occurred.");
+        return;
+      }
+      if (action === "redo") {
+        chat.dismissRecoveryActions(assistantMessageId);
+        if (originalInput) chat.setInput(originalInput);
+        return;
+      }
+      if (action === "retry" || action === "select_model" || action === "remove_resource") {
+        if (originalInput) chat.setInput(originalInput);
+        return;
+      }
+      if (action === "new_task") await handleNewChat();
+      if (originalInput) chat.setInput(originalInput);
+    });
+  }
+
   function applyChatAgent(agent: DesktopAgent): void {
+    const configuration = agentConfigurations[agent.id];
     setSelectedChatAgentId(agent.id);
     setSelectedChatAgentName(agent.name);
-    setSelectedChatModel(agent.model || agent.models?.[0] || selectedChatModel);
+    setSelectedChatModel(configuration?.model || agent.model || agent.models?.[0] || selectedChatModel);
+    setDefaultThinkingEffort(configuration?.thinkingEffort || loadThinkingEffort());
     setSelectedChatExamples(agent.examples);
     persistWorkspaceAgentPreference(activeWorkspaceId, agent.id);
   }
@@ -1338,7 +1694,7 @@ function AuthenticatedApp({
 
   function handleOpenWorkspaceResults(workspaceId: string): void {
     setActiveWorkspaceId(workspaceId);
-    setResultsScopeRequestKey((current) => current + 1);
+    resultsContainer.requestWorkspaceScope();
     navigateTo(MENU_IDS.results);
     if (workspaceId === "current") return;
     void desktopApi.updateWorkspace({
@@ -1374,15 +1730,19 @@ function AuthenticatedApp({
       ]);
     }
     const activeThread = threads.find((thread) => thread.id === activeThreadId);
-    const snapshotCount = threadSnapshots[activeThreadId]?.messageCount ?? 0;
+    const snapshotCount = activeThreadSnapshot?.messageCount ?? 0;
     const hasConversation = (activeThread?.messageCount ?? 0) > 0 || snapshotCount > 0;
     const changesBoundAgent = Boolean(activeThread?.boundAgentId && activeThread.boundAgentId !== agent.id);
     if (hasConversation && changesBoundAgent) {
-      const createNew = window.confirm(
-        language === "zh"
-          ? `当前会话已绑定 ${activeThread?.boundAgentName || "其他智能体"}。切换到 ${agent.name} 将新建会话，是否继续？`
-          : `This conversation is bound to ${activeThread?.boundAgentName || "another agent"}. Start a new conversation with ${agent.name}?`,
-      );
+      const createNew = await requestAppDecision({
+        id: "switch-bound-agent",
+        title: language === "zh" ? "新建会话并切换智能体？" : "Start a new conversation?",
+        description: language === "zh"
+          ? `当前会话已绑定 ${activeThread?.boundAgentName || "其他智能体"}。`
+          : `This conversation is bound to ${activeThread?.boundAgentName || "another agent"}.`,
+        impact: language === "zh" ? `将保留当前会话，并新建与 ${agent.name} 的会话。` : `The current conversation will be preserved and a new one will start with ${agent.name}.`,
+        confirmLabel: language === "zh" ? "新建并切换" : "Start and switch",
+      });
       if (!createNew) return false;
       applyChatAgent(agent);
       const thread = await desktopApi.createThread({
@@ -1423,7 +1783,7 @@ function AuthenticatedApp({
     if (!workspace) return;
     setActiveWorkspaceId(workspace.id);
     const thread = threads.find((item) => item.id === activeThreadId);
-    const snapshotCount = threadSnapshots[activeThreadId]?.messageCount ?? 0;
+    const snapshotCount = activeThreadSnapshot?.messageCount ?? 0;
     const hasConversation = (thread?.messageCount ?? 0) > 0 || snapshotCount > 0;
     if (thread && !hasConversation) {
       const updated = await desktopApi.updateThread({ id: thread.id, workspacePath: workspace.path });
@@ -1436,8 +1796,100 @@ function AuthenticatedApp({
     }
   }
 
-  function handleChatModelSelect(model: string): void {
+  function handleChatModelSelect(model: string, providerId?: string): void {
+    if (selectedChatAgentId === "my-drsai") {
+      void configureAgentModel(selectedChatAgentId, model, providerId);
+      return;
+    }
     setSelectedChatModel(model);
+    if (selectedChatAgentId) {
+      setAgentConfigurations((current) => ({
+        ...current,
+        [selectedChatAgentId]: { ...current[selectedChatAgentId], model },
+      }));
+    }
+  }
+
+  async function configureAgentModel(agentId: string, model: string, providerId?: string): Promise<void> {
+    if (agentId === "my-drsai") {
+      const activeProvider = myDrSaiConfig?.modelConnection?.model_provider;
+      const candidates = availableChatModels.filter((item) => item.alias === model && item.provider_id);
+      const selected = candidates.find((item) => item.provider_id === providerId)
+        ?? candidates.find((item) => item.provider_id === activeProvider)
+        ?? candidates[0];
+      if (!selected?.provider_id) throw new Error("The selected OpenDrSai model is not in the Provider catalog.");
+      const currentEffort = myDrSaiAgentModelPolicy?.reasoning_effort;
+      const selectedEfforts = selected.reasoning_efforts ?? [];
+      const reasoningEffort = currentEffort && selectedEfforts.includes(currentEffort)
+        ? currentEffort
+        : selectedEfforts.includes("high") ? "high" : selectedEfforts[0] ?? null;
+      const updated = await desktopApi.updateMyDrSaiAgentModelPolicy(agentId, {
+        agent_id: agentId,
+        primary_model: { mode: "explicit", ref: { provider_id: selected.provider_id, model_id: selected.alias } },
+        image_understanding_model: myDrSaiAgentModelPolicy?.image_understanding_model ?? null,
+        image_generation_model: myDrSaiAgentModelPolicy?.image_generation_model ?? myDrSaiAgentModelPolicy?.image_model ?? null,
+        text_to_speech_model: myDrSaiAgentModelPolicy?.text_to_speech_model ?? null,
+        speech_to_text_model: myDrSaiAgentModelPolicy?.speech_to_text_model ?? null,
+        reasoning_effort: reasoningEffort,
+        expected_revision: myDrSaiAgentModelPolicy?.revision,
+      });
+      if (!updated.valid || !updated.effective_ref) {
+        throw new Error(updated.error || "The Agent primary model configuration is invalid.");
+      }
+      const effectiveRef = updated.effective_ref;
+      setMyDrSaiAgentModelPolicy(updated);
+      setAgentConfigurations((current) => ({
+        ...current,
+        [agentId]: { ...current[agentId], model: effectiveRef.model_id, modelRef: effectiveRef },
+      }));
+      if (agentId === selectedChatAgentId) setSelectedChatModel(effectiveRef.model_id);
+      return;
+    }
+    setAgentConfigurations((current) => ({
+      ...current,
+      [agentId]: { ...current[agentId], model },
+    }));
+    if (agentId === selectedChatAgentId) setSelectedChatModel(model);
+  }
+
+  async function configureAgentCapabilityModel(role: AgentCapabilityModelRole, modelId?: string, providerId?: string): Promise<void> {
+    const policy = myDrSaiAgentModelPolicy ?? await desktopApi.getMyDrSaiAgentModelPolicy("my-drsai");
+    const selection = modelId && providerId
+      ? { mode: "explicit" as const, ref: { provider_id: providerId, model_id: modelId } }
+      : null;
+    const updated = await desktopApi.updateMyDrSaiAgentModelPolicy("my-drsai", {
+      agent_id: "my-drsai",
+      primary_model: policy.primary_model,
+      image_understanding_model: role === "image_understanding_model" ? selection : policy.image_understanding_model ?? null,
+      image_generation_model: role === "image_generation_model" ? selection : policy.image_generation_model ?? policy.image_model ?? null,
+      text_to_speech_model: role === "text_to_speech_model" ? selection : policy.text_to_speech_model ?? null,
+      speech_to_text_model: role === "speech_to_text_model" ? selection : policy.speech_to_text_model ?? null,
+      reasoning_effort: policy.reasoning_effort ?? null,
+      expected_revision: policy.revision,
+    });
+    setMyDrSaiAgentModelPolicy(updated);
+  }
+
+  async function configureAgentThinkingEffort(agentId: string, effort: ThinkingEffort): Promise<void> {
+    if (agentId === "my-drsai") {
+      const policy = myDrSaiAgentModelPolicy ?? await desktopApi.getMyDrSaiAgentModelPolicy(agentId);
+      const updated = await desktopApi.updateMyDrSaiAgentModelPolicy(agentId, {
+        agent_id: agentId,
+        primary_model: policy.primary_model,
+        image_understanding_model: policy.image_understanding_model ?? null,
+        image_generation_model: policy.image_generation_model ?? policy.image_model ?? null,
+        text_to_speech_model: policy.text_to_speech_model ?? null,
+        speech_to_text_model: policy.speech_to_text_model ?? null,
+        reasoning_effort: effort,
+        expected_revision: policy.revision,
+      });
+      setMyDrSaiAgentModelPolicy(updated);
+    }
+    setAgentConfigurations((current) => ({
+      ...current,
+      [agentId]: { ...current[agentId], thinkingEffort: effort },
+    }));
+    if (agentId === selectedChatAgentId) setDefaultThinkingEffort(effort);
   }
 
   async function handleDeleteThread(threadId: string): Promise<void> {
@@ -1491,10 +1943,7 @@ function AuthenticatedApp({
   async function handleThreadUpdated(
     snapshot: ChatThreadSnapshot,
   ): Promise<void> {
-    setThreadSnapshots((current) => ({
-      ...current,
-      [snapshot.threadId]: snapshot,
-    }));
+    threadSnapshotStore.set(snapshot.threadId, snapshot);
     void desktopApi.updateThreadSnapshot(snapshot).catch(() => {
       // The local snapshot is still kept in renderer state and localStorage if disk persistence fails.
     });
@@ -1718,6 +2167,58 @@ function AuthenticatedApp({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [goBack, goForward]);
 
+  const selectedSetupWorkspace = storedWorkspaces.find((workspace) =>
+    workspace.id === activeWorkspaceId
+    && getComparablePath(workspace.path) !== getComparablePath(workspacePath));
+  const configuredModelConnection = myDrSaiConfig?.modelConnection;
+  const operationalSelectedModelRef = myDrSaiAgentModelPolicy?.effective_ref
+    ?? agentConfigurations["my-drsai"]?.modelRef
+    ?? (configuredModelConnection?.model && configuredModelConnection.model_provider
+      ? { provider_id: configuredModelConnection.model_provider, model_id: configuredModelConnection.model }
+      : undefined);
+  const lastModelTest = configuredModelConnection?.last_test;
+  const selectedModelIsVerified = Boolean(
+    operationalSelectedModelRef
+    && lastModelTest?.ok === true
+    && lastModelTest.provider === operationalSelectedModelRef.provider_id
+    && (lastModelTest.model
+      ? lastModelTest.model === operationalSelectedModelRef.model_id
+      : configuredModelConnection?.model_provider === operationalSelectedModelRef.provider_id
+        && configuredModelConnection.model === operationalSelectedModelRef.model_id),
+  );
+  const actualOperationalFacts = {
+    identity: auth.loading ? "loading" : user ? "authenticated" : "anonymous",
+    runtime: auth.serviceBlocker && !auth.serviceBusy
+      ? "blocked"
+      : auth.serviceReady && health?.gatewayReady
+        ? "ready"
+        : auth.serviceBusy || !health
+          ? "preparing"
+          : "unknown",
+    model: !myDrSaiConfigLoaded
+      ? "unknown"
+      : !myDrSaiConfig?.modelConnection?.model || !myDrSaiConfig.modelConnection.model_provider
+        ? "unconfigured"
+        : selectedModelIsVerified
+          ? "ready"
+          : "untested",
+    workspace: !workspacesLoaded || !selectedSetupWorkspace
+      ? "none"
+      : selectedSetupWorkspace.trusted
+        ? "trusted"
+        : "untrusted",
+    run: deriveOperationalRunState(threadBackgroundTasks, chat.activeRequestId),
+  } as const;
+  const operationalFacts = operationalE2eFacts ?? actualOperationalFacts;
+  const operationalDecision = deriveOperationalState(operationalFacts);
+  useEffect(() => {
+    if (!desktopApi.isOperationalStateE2eEnabled()) return;
+    document.documentElement.dataset.operationalE2eDecision = `${operationalDecision.currentLayer}:${operationalDecision.state}:${operationalDecision.blockingLayer ?? "none"}`;
+    return () => {
+      delete document.documentElement.dataset.operationalE2eDecision;
+    };
+  }, [operationalDecision.blockingLayer, operationalDecision.currentLayer, operationalDecision.state]);
+
   const mainContent =
     activeNav === MENU_IDS.currentSession ? (
       activeThread?.kind === "agent_run" ? (
@@ -1760,7 +2261,7 @@ function AuthenticatedApp({
           workspaceTrusted={workspaceTrusted}
         />
       ) : (
-        <section className="conversation-panel">
+        <section className="conversation-panel" data-thread-id={activeThreadId}>
         {threadHydrationError?.threadId === activeThreadId ? (
           <div className="conversation-history-error" role="alert">
             <span>{threadHydrationError.message}</span>
@@ -1773,11 +2274,45 @@ function AuthenticatedApp({
           chatUnavailableReason={chatUnavailableReason}
           conversationId={activeThreadId}
           conversationTitle={activeThread?.title}
+          conversationSource={activeThread?.boundAgentId === "my-codex" || activeThread?.archiveSource === "codex" ? "codex" : "opendrsai"}
           conversationHistoryPending={Boolean(
             hydratingThreadId === activeThreadId
-            || ((activeThread?.messageCount ?? 0) > 0 && !threadSnapshots[activeThreadId]),
+            || ((activeThread?.messageCount ?? 0) > 0 && !activeThreadSnapshot),
           )}
-          conversationHistory={threadSnapshots[activeThreadId]?.history}
+          conversationHistory={activeThreadSnapshot?.history}
+          operationalStateControl={shouldShowOperationalStateBar(operationalDecision) ? (
+            <DiagnosticsContainer
+              autoRecoverKey={operationalDecision.currentLayer === "model"
+                && operationalDecision.state === "untested"
+                && myDrSaiConfig?.modelConnection
+                && operationalSelectedModelRef
+                ? [
+                    myDrSaiConfig.modelConnection.revision || "unversioned",
+                    operationalSelectedModelRef.provider_id,
+                    operationalSelectedModelRef.model_id,
+                  ].join("::")
+                : undefined}
+              decision={operationalDecision}
+              language={language}
+              formatError={(error) => userFacingFailureMessage(error, language)}
+              onRecover={performOperationalRecovery}
+              report={() => ({
+                product: "OpenDrSai Windows App",
+                currentLayer: operationalDecision.currentLayer,
+                blockingLayer: operationalDecision.blockingLayer,
+                state: operationalDecision.state,
+                layers: operationalDecision.layers,
+                runtimeReady: health?.gatewayReady ?? false,
+                generatedAt: new Date().toISOString(),
+              })}
+            />
+          ) : null}
+          onLoadEarlierHistory={activeThreadSnapshot?.history?.nextCursor ? async () => {
+            await hydrateThreadSnapshot(activeThreadId, {
+              forceFresh: true,
+              historyCursor: activeThreadSnapshot.history?.nextCursor ?? undefined,
+            });
+          } : undefined}
           continuesExistingTask={Boolean(
             activeThread?.runtimeSessionId
             && (activeThread.boundAgentId === "my-codex" || activeThread.archiveSource === "codex")
@@ -1791,6 +2326,9 @@ function AuthenticatedApp({
           selectedAgentId={selectedChatAgentId ?? undefined}
           selectedAgentName={selectedChatAgentName}
           selectedModelName={selectedChatModel ?? undefined}
+          selectedModelProviderId={selectedChatAgentId === "my-drsai"
+            ? myDrSaiAgentModelPolicy?.effective_ref?.provider_id
+            : selectedChatAgentId ? agentConfigurations[selectedChatAgentId]?.modelRef?.provider_id : undefined}
           agentOptions={availableChatAgents}
           modelOptions={chatModelOptions}
           samplePrompts={selectedChatAgent?.examples ?? selectedChatExamples}
@@ -1821,6 +2359,27 @@ function AuthenticatedApp({
             setActiveRightTab("debug");
             setRightPanelCollapsed(false);
           }}
+          onOpenRun={platformDescriptor?.capabilities.features.runtime !== true ? undefined : (runId, itemId) => {
+            setRunInspectionRequest({
+              workspacePath: effectiveWorkspacePath,
+              workspaceId: effectiveRuntimeWorkspaceId,
+              runId,
+              ...(itemId ? { focusedItemId: itemId } : {}),
+            });
+            setActiveRightTab("run");
+            setRightPanelCollapsed(false);
+          }}
+          onCreateRunExperiment={platformDescriptor?.capabilities.features.runtime !== true || !experimentReleaseGate.enabled ? undefined : (runId, itemId) => {
+            setRunInspectionRequest({
+              workspacePath: effectiveWorkspacePath,
+              workspaceId: effectiveRuntimeWorkspaceId,
+              runId,
+              createExperiment: true,
+              ...(itemId ? { focusedItemId: itemId } : {}),
+            });
+            setActiveRightTab("run");
+            setRightPanelCollapsed(false);
+          }}
           onRetryMessage={async (assistantMessageId, mode) => {
             const assistantIndex = chat.messages.findIndex((message) => message.id === assistantMessageId);
             let originalInput = "";
@@ -1832,6 +2391,7 @@ function AuthenticatedApp({
             if (mode === "new_session") await handleNewChat();
             chat.setInput(originalInput);
           }}
+          onRecoveryAction={handleChatRecoveryAction}
           onOpenPreviewBrowser={platformDescriptor?.capabilities.features.browser !== true ? undefined : openPreviewBrowser}
           onOpenWorkspaceArtifact={(path) => {
             setFilesPanelFocusPath(path);
@@ -1869,25 +2429,38 @@ function AuthenticatedApp({
         workspacePath={effectiveWorkspacePath}
       />
     ) : activeNav === MENU_IDS.results ? (
-      <ResultsCenterView
-        language={language}
-        scopeRequestKey={resultsScopeRequestKey}
-        workspaceName={activeWorkspace.name}
-        workspacePath={activeWorkspace.path}
-        onContinueQuestion={(question) => {
-          setPendingChatInput(question);
-          navigateTo(MENU_IDS.currentSession);
-        }}
-      />
+      <ResultsContainer>
+        <ResultsCenterView
+          language={language}
+          scopeRequestKey={resultsContainer.scopeRequestKey}
+          workspaceName={activeWorkspace.name}
+          workspacePath={activeWorkspace.path}
+          onOpenSourceTask={(task) => {
+            setDeliveryTask(task);
+          }}
+          onOpenSourceRun={(task, runId) => {
+            const sourceWorkspacePath = task.workspacePath || effectiveWorkspacePath;
+            const sourceWorkspaceId = sortedWorkspaces.find((workspace) =>
+              getComparablePath(workspace.path) === getComparablePath(sourceWorkspacePath),
+            )?.id || effectiveRuntimeWorkspaceId;
+            setRunInspectionRequest({ workspacePath: sourceWorkspacePath, workspaceId: sourceWorkspaceId, runId });
+            setActiveRightTab("run");
+            setRightPanelCollapsed(false);
+          }}
+          onContinueQuestion={(question) => {
+            setPendingChatInput(question);
+            navigateTo(MENU_IDS.currentSession);
+          }}
+        />
+      </ResultsContainer>
     ) : activeNav === MENU_IDS.agentSquare ? (
       <section className="agent-square-panel">
         <AgentSquareView
           language={language}
-          userEmail={user?.email}
+          user={user}
           userGroups={user?.groups ?? []}
           workspacePath={effectiveWorkspacePath}
           selectedAgentId={selectedChatAgentId}
-          onSetDefault={(agent) => void selectChatAgent(agent.id, { agent })}
           onStartChat={(agent) => {
             void selectChatAgent(agent.id, {
               persistInBackground: true,
@@ -1968,7 +2541,11 @@ function AuthenticatedApp({
       // <GfsView language={language} />
       null
     ) : activeNav === MENU_IDS.profile ? (
-      <SettingsPanel
+      <ModelSettingsContainer
+        initialProvider={myDrSaiConfig?.modelConnection?.model_provider}
+        requestedPane={requestedSettingsPane}
+      >{(modelSettings) => <SettingsPanel
+        modelSettings={modelSettings}
         agents={availableChatAgents}
         appearance={appearance}
         approvalCenterPanel={(
@@ -1994,6 +2571,7 @@ function AuthenticatedApp({
         language={language}
         models={availableChatModels}
         myDrSaiConfig={myDrSaiConfig}
+        myDrSaiAgentModelPolicy={myDrSaiAgentModelPolicy}
         onCheckUpdates={() => void desktop.checkUpdates()}
         onAppearanceChange={setAppearance}
         onCompletionNotificationsChange={(enabled) => {
@@ -2017,13 +2595,12 @@ function AuthenticatedApp({
           window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, String(enabled));
           window.location.reload();
         }}
-        onExportLocalData={() => exportLocalDesktopData(threadSnapshots)}
+        onExportLocalData={() => exportLocalDesktopData(threadSnapshotStore.all())}
         onLanguageChange={setLanguage}
         onLogout={onLogout}
         onNewAgentTask={() => void handleNewAgentTask()}
         onOpenMobilePairing={() => setMobilePairingOpen(true)}
         mobilePairingRefreshToken={mobilePairingRefreshToken}
-        mobilePairingTarget={{ workspaceId: effectiveRuntimeWorkspaceId, workspacePath: effectiveWorkspacePath }}
         onOpenBrowserPanel={() => {
           setActiveRightTab("browser");
           setRightPanelCollapsed(false);
@@ -2033,29 +2610,48 @@ function AuthenticatedApp({
         onRestoreLastSessionChange={setRestoreLastSession}
         onRestoreLastWorkspaceChange={setRestoreLastWorkspace}
         onRightSidebarComponentsChange={setRightSidebarComponents}
-        onSelectAgent={handleChatAgentSelect}
-        onSelectModel={handleChatModelSelect}
+        onConfigureAgentModel={configureAgentModel}
+        onConfigureAgentCapabilityModel={(role, modelId, providerId) => void configureAgentCapabilityModel(role, modelId, providerId)}
+        onRefreshAgentModels={() => setChatChoicesRefreshNonce((current) => current + 1)}
         onSessionScopeChange={setSessionScope}
         threads={threads}
         onArchiveThread={(threadId, archived) => handleThreadUpdate(threadId, { archived })}
         workspaces={sortedWorkspaces}
         onSyncWorkspaceSessions={syncWorkspaceSessions}
         onSidebarComponentsChange={setSidebarComponents}
-        onThinkingEffortChange={setDefaultThinkingEffort}
+        onConfigureAgentThinkingEffort={configureAgentThinkingEffort}
         onWorkspaceSortModeChange={setWorkspaceSortMode}
         onUpdateAgentConfig={async (updates) => {
           const next = await desktopApi.updateMyDrSaiConfig(updates);
           setMyDrSaiConfig(next);
         }}
         onModelConnectionUpdated={(connection) => {
-          setMyDrSaiConfig((current) => current ? { ...current, modelConnection: connection, defaultModelAlias: connection.model } : current);
+          chatChoicesGenerationRef.current += 1;
+          chatChoicesPromiseRef.current.clear();
+          setMyDrSaiConfig((current) => {
+            const next: MyDrSaiConfig = current
+              ? { ...current, ready: true, modelConnection: connection, modelCatalog: { state: "stale", message: "Refreshing the model catalog after configuration changed." } }
+              : {
+                  ready: true,
+                  baseUrl: "",
+                  config: {},
+                  models: availableChatModels,
+                  modelConnection: connection,
+                  modelCatalog: { state: "stale", message: "Refreshing the model catalog after configuration changed." },
+                };
+            myDrSaiConfigRef.current = next;
+            return next;
+          });
+          setMyDrSaiConfigLoaded(true);
           setSelectedChatModel(connection.model);
+          setChatChoicesRefreshNonce((current) => current + 1);
         }}
         developerMode={developerMode}
         developerModeAvailable={import.meta.env.DEV}
         restoreLastSession={restoreLastSession}
         restoreLastWorkspace={restoreLastWorkspace}
         rightSidebarComponents={rightSidebarComponents}
+        agentConfigurations={agentConfigurations}
         selectedAgentId={selectedChatAgentId}
         selectedModel={selectedChatModel}
         sessionScope={sessionScope}
@@ -2065,7 +2661,7 @@ function AuthenticatedApp({
         user={user}
         usageAnalyticsPanel={<ProviderAnalyticsView language={language} />}
         workspaceSortMode={workspaceSortMode}
-      />
+      />}</ModelSettingsContainer>
     ) : (
       <div className="placeholder-view">
         <Sparkles size={28} />
@@ -2103,7 +2699,22 @@ function AuthenticatedApp({
   );
 
   const rightPanelContent =
-    activeRightTab === "debug" ? (
+    activeRightTab === "run" ? (
+      <RunInspectorPanel
+        language={language}
+        request={runInspectionRequest}
+        focusedItemId={runInspectionRequest?.focusedItemId}
+        onOpenRun={(runId) => setRunInspectionRequest((current) => current ? {
+          workspacePath: current.workspacePath,
+          ...(current.workspaceId ? { workspaceId: current.workspaceId } : {}),
+          runId,
+        } : current)}
+        onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : () => {
+          setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
+          setActiveRightTab("debug");
+        }}
+      />
+    ) : activeRightTab === "debug" ? (
       <DebugPanel
         language={language}
         requestedView={debugViewRequest}
@@ -2311,6 +2922,49 @@ function AuthenticatedApp({
     };
   }, []);
 
+  useEffect(() => {
+    if (!desktopApi.isAppDialogE2eEnabled()) return;
+    const handleDialogRequest = (event: Event): void => {
+      const detail = (event as CustomEvent<{
+        id?: string;
+        title?: string;
+        description?: string;
+        impact?: string;
+        tone?: "normal" | "danger";
+      }>).detail ?? {};
+      const id = detail.id || `e2e-app-dialog-${Date.now()}`;
+      void requestAppDecision({
+        id,
+        title: detail.title || "Confirm this action",
+        description: detail.description || "Review the action before continuing.",
+        impact: detail.impact || "The action runs only after confirmation.",
+        tone: detail.tone || "danger",
+      }).then((approved) => {
+        const state = window as typeof window & { __opendrsaiDialogE2eEffects?: number };
+        if (approved) state.__opendrsaiDialogE2eEffects = (state.__opendrsaiDialogE2eEffects ?? 0) + 1;
+        window.dispatchEvent(new CustomEvent("drsai:e2e-app-dialog-result", {
+          detail: { id, approved, effects: state.__opendrsaiDialogE2eEffects ?? 0 },
+        }));
+      });
+    };
+    window.addEventListener("drsai:e2e-request-app-dialog", handleDialogRequest);
+    return () => window.removeEventListener("drsai:e2e-request-app-dialog", handleDialogRequest);
+  }, []);
+
+  useEffect(() => {
+    if (!desktopApi.isOperationalStateE2eEnabled()) return;
+    const handleOperationalState = (event: Event): void => {
+      const facts = (event as CustomEvent<OperationalStateFacts>).detail;
+      document.documentElement.dataset.operationalE2eState = `${facts.identity}:${facts.runtime}:${facts.model}:${facts.workspace}:${facts.run}`;
+      setOperationalE2eFacts(facts);
+    };
+    window.addEventListener("drsai:e2e-operational-state", handleOperationalState);
+    return () => {
+      delete document.documentElement.dataset.operationalE2eState;
+      window.removeEventListener("drsai:e2e-operational-state", handleOperationalState);
+    };
+  }, []);
+
   function openAwaySummaryTask(task: DesktopBackgroundTask): void {
     if (task.status === "waiting_approval" || task.approvalId || task.pendingDecisions?.length) {
       navigateTo(MENU_IDS.approvalCenter);
@@ -2331,6 +2985,91 @@ function AuthenticatedApp({
       navigateTo(MENU_IDS.currentSession);
     }
     setAwaySummary(null);
+  }
+
+  async function performOperationalRecovery(): Promise<string | void> {
+    switch (operationalDecision.currentLayer) {
+        case "identity":
+          await onLogout();
+          break;
+        case "runtime":
+          await auth.retryBootstrap();
+          await desktop.refreshHealth();
+          break;
+        case "model":
+          {
+            let config = myDrSaiConfig;
+            if (!config?.modelConnection) {
+              try {
+                config = await desktopApi.getMyDrSaiConfig(effectiveWorkspacePath || undefined);
+              } catch {
+                config = null;
+              }
+            }
+            if (!config?.modelConnection?.model || !config.modelConnection.model_provider) {
+              setRequestedSettingsPane("model-providers");
+              navigateTo(MENU_IDS.profile);
+              return;
+            }
+
+            const selectedRef = myDrSaiAgentModelPolicy?.effective_ref
+              ?? agentConfigurations["my-drsai"]?.modelRef;
+            const provider = selectedRef?.provider_id || config.modelConnection.model_provider;
+            const model = selectedRef?.model_id || config.modelConnection.model;
+            const result = await desktopApi.testMyDrSaiModelProvider(provider, model);
+            if (!result.ok) {
+              const localizedGuidance = result.guidance?.localizations?.[language];
+              throw new Error(
+                localizedGuidance?.message
+                || result.guidance?.message
+                || (language === "zh"
+                  ? `模型 ${model} 验证失败：${result.error || "未知错误"}`
+                  : `Model ${model} verification failed: ${result.error || "unknown error"}`),
+              );
+            }
+
+            const verifiedConfig: MyDrSaiConfig = {
+              ...config,
+              modelConnection: {
+                ...config.modelConnection,
+                last_test: {
+                  provider,
+                  model,
+                  mode: "model",
+                  ok: true,
+                  tested_at: new Date().toISOString(),
+                },
+              },
+            };
+            myDrSaiConfigRef.current = verifiedConfig;
+            setMyDrSaiConfig(verifiedConfig);
+            setMyDrSaiConfigLoaded(true);
+            setAvailableChatModels(verifiedConfig.models ?? []);
+            try {
+              const refreshed = await desktopApi.getMyDrSaiConfig(effectiveWorkspacePath || undefined);
+              myDrSaiConfigRef.current = refreshed;
+              setMyDrSaiConfig(refreshed);
+              setAvailableChatModels(refreshed.models ?? []);
+            } catch {
+              // The bounded model call already succeeded. A transient config
+              // refresh failure must not turn that success into a false error.
+            }
+            await desktop.refreshHealth();
+            return language === "zh"
+              ? `已使用 ${model} 完成最小调用，模型连接正常。`
+              : `The minimal call to ${model} succeeded.`;
+          }
+        case "workspace":
+          if (operationalDecision.state === "untrusted" && selectedSetupWorkspace) {
+            await handleUpdateWorkspace(selectedSetupWorkspace.id, { trusted: true });
+          } else {
+            await handleAddLocalWorkspace();
+          }
+          break;
+        case "run":
+          navigateTo(operationalDecision.state === "waiting_approval" ? MENU_IDS.approvalCenter : MENU_IDS.savedPlan);
+          break;
+    }
   }
 
   return (<>
@@ -2369,7 +3108,7 @@ function AuthenticatedApp({
         }}
       />
     ) : null}
-    <WorkspaceShell
+    <TaskShellContainer
       activeNav={activeNav}
       activeRightTab={activeRightTab}
       activeWorkspaceId={activeWorkspaceId}
@@ -2440,7 +3179,8 @@ function AuthenticatedApp({
       <span>{workspaceSessionSyncMessage}</span>
       <button type="button" aria-label={workspaceSessionSyncing ? (language === "zh" ? "取消同步" : "Cancel sync") : (language === "zh" ? "关闭同步提示" : "Dismiss sync status")} onClick={() => workspaceSessionSyncing ? cancelWorkspaceSessionSync() : setWorkspaceSessionSyncMessage(null)}>{workspaceSessionSyncing ? (language === "zh" ? "取消" : "Cancel") : "×"}</button>
     </div> : null}
-    {mobilePairingOpen ? <MobilePairingDialog language={language} target={{ workspaceId: effectiveRuntimeWorkspaceId, workspacePath: effectiveWorkspacePath }} onClose={() => setMobilePairingOpen(false)} onConnected={() => setMobilePairingRefreshToken((value) => value + 1)} /> : null}
+    <AppDecisionDialogHost language={language} />
+    {mobilePairingOpen ? <MobilePairingDialog language={language} onClose={() => setMobilePairingOpen(false)} onConnected={() => setMobilePairingRefreshToken((value) => value + 1)} /> : null}
     {remoteDialogOpen ? (
       <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(3, 7, 18, .68)" }}>
         <section role="dialog" aria-modal="true" aria-labelledby="remote-workspace-title" style={{ width: 520, maxWidth: "calc(100vw - 40px)", padding: 24, borderRadius: 14, background: "#111827", color: "#f9fafb", boxShadow: "0 24px 80px rgba(0,0,0,.5)" }}>
@@ -2503,46 +3243,12 @@ function AuthenticatedApp({
   );
 }
 
-function loadLegacyWorkspaces(): Array<
-  Pick<WorkspaceProject, "name" | "path" | "description">
-> {
-  try {
-    const raw = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Array<Partial<WorkspaceProject>>;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((workspace) => workspace.name && workspace.path)
-      .map((workspace) => ({
-        name: String(workspace.name),
-        path: String(workspace.path),
-        description: workspace.description
-          ? String(workspace.description)
-          : undefined,
-      }));
-  } catch {
-    return [];
-  }
-}
-
 function loadRemoteRecentPaths(): string[] {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(REMOTE_RECENT_PATHS_STORAGE_KEY) || "[]");
     return Array.isArray(parsed) ? parsed.filter((path): path is string => typeof path === "string" && path.length > 0).slice(0, 8) : [];
   } catch {
     return [];
-  }
-}
-
-function loadThreadSnapshots(): Record<string, ChatThreadSnapshot> {
-  try {
-    const raw = window.localStorage.getItem(THREAD_SNAPSHOT_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, ChatThreadSnapshot>;
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed;
-  } catch {
-    return {};
   }
 }
 
@@ -2565,16 +3271,15 @@ function showCompletionNotification(
   ) {
     return;
   }
-  new Notification("OpenDrSai", {
-    body:
+  const body =
       language === "zh"
         ? agentRun
           ? "智能体任务已完成。"
           : "会话任务已完成。"
         : agentRun
           ? "The Agent task has completed."
-          : "The conversation task has completed.",
-  });
+          : "The conversation task has completed.";
+  new Notification("OpenDrSai", { body: redactSensitiveData(body) });
 }
 
 function loadLanguage(): AppLanguage {
@@ -2609,6 +3314,7 @@ function loadSidebarComponents(): SidebarComponentVisibility {
 
 function loadRightSidebarComponents(): RightSidebarComponentVisibility {
   const defaults: RightSidebarComponentVisibility = {
+    run: true,
     files: true,
     browser: true,
     terminal: true,
@@ -2618,6 +3324,7 @@ function loadRightSidebarComponents(): RightSidebarComponentVisibility {
     const value = JSON.parse(window.localStorage.getItem(RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY) ?? "null") as Partial<RightSidebarComponentVisibility> | null;
     if (!value || typeof value !== "object") return defaults;
     return {
+      run: typeof value.run === "boolean" ? value.run : defaults.run,
       files: typeof value.files === "boolean" ? value.files : defaults.files,
       browser: typeof value.browser === "boolean" ? value.browser : defaults.browser,
       terminal: typeof value.terminal === "boolean" ? value.terminal : defaults.terminal,
@@ -2672,7 +3379,28 @@ function persistWorkspaceAgentPreference(workspaceId: string, agentId: string): 
 
 function loadThinkingEffort(): ThinkingEffort {
   const value = window.localStorage.getItem(THINKING_EFFORT_STORAGE_KEY);
-  return value === "low" || value === "high" || value === "xhigh" ? value : "medium";
+  return value === "none" || value === "low" || value === "high" || value === "xhigh" || value === "max" ? value : "medium";
+}
+
+function loadAgentConfigurations(): Record<string, AgentConfigurationPreference> {
+  try {
+    const localModelCompatibilityEnabled = window.localStorage.getItem(AGENT_MODEL_POLICY_MIGRATION_KEY) !== "complete";
+    const value = JSON.parse(window.localStorage.getItem(AGENT_CONFIGURATIONS_STORAGE_KEY) ?? "null") as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const configurations: Record<string, AgentConfigurationPreference> = {};
+    for (const [agentId, item] of Object.entries(value as Record<string, unknown>).slice(-100)) {
+      if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(agentId) || !item || typeof item !== "object" || Array.isArray(item)) continue;
+      const record = item as Record<string, unknown>;
+      const model = (agentId !== "my-drsai" || localModelCompatibilityEnabled) && typeof record.model === "string" && record.model.trim().length <= 200 ? record.model.trim() : undefined;
+      const imageModel = (agentId !== "my-drsai" || localModelCompatibilityEnabled) && typeof record.imageModel === "string" && record.imageModel.trim().length <= 200 ? record.imageModel.trim() : undefined;
+      const thinkingEffort = record.thinkingEffort === "low" || record.thinkingEffort === "medium" || record.thinkingEffort === "high" || record.thinkingEffort === "xhigh" || record.thinkingEffort === "max"
+        ? record.thinkingEffort : undefined;
+      if (model || imageModel || thinkingEffort) configurations[agentId] = { model, imageModel, thinkingEffort };
+    }
+    return configurations;
+  } catch {
+    return {};
+  }
 }
 
 function loadBooleanSetting(key: string, fallback: boolean): boolean {
@@ -2691,15 +3419,15 @@ function loadRestoredWorkspaceId(): string {
 }
 
 function exportLocalDesktopData(threadSnapshots: Record<string, ChatThreadSnapshot>): void {
-  const payload = JSON.stringify({
-    exportedAt: new Date().toISOString(),
-    preferences: Object.fromEntries(
+  const contentOnlySnapshots = Object.fromEntries(Object.entries(threadSnapshots).map(([threadId, snapshot]) => {
+    const { connectionState: _transientConnectionState, ...content } = snapshot;
+    return [threadId, content];
+  }));
+  const payload = buildLocalDesktopDataExport(contentOnlySnapshots, Object.fromEntries(
       Object.keys(window.localStorage)
-        .filter((key) => key.startsWith("opendrsai.") && key !== THREAD_SNAPSHOT_STORAGE_KEY)
+        .filter((key) => key.startsWith("opendrsai."))
         .map((key) => [key, window.localStorage.getItem(key)]),
-    ),
-    threadSnapshots,
-  }, null, 2);
+    ));
   const url = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -2709,11 +3437,9 @@ function exportLocalDesktopData(threadSnapshots: Record<string, ChatThreadSnapsh
 }
 
 function resetDesktopPreferences(): void {
-  const preservedSnapshots = window.localStorage.getItem(THREAD_SNAPSHOT_STORAGE_KEY);
   for (const key of Object.keys(window.localStorage)) {
     if (key.startsWith("opendrsai.")) window.localStorage.removeItem(key);
   }
-  if (preservedSnapshots) window.localStorage.setItem(THREAD_SNAPSHOT_STORAGE_KEY, preservedSnapshots);
   window.location.reload();
 }
 
@@ -3077,12 +3803,16 @@ function ResultsCenterView({
   scopeRequestKey,
   workspaceName,
   workspacePath,
+  onOpenSourceTask,
+  onOpenSourceRun,
   onContinueQuestion,
 }: {
   language: AppLanguage;
   scopeRequestKey: number;
   workspaceName: string;
   workspacePath: string;
+  onOpenSourceTask: (task: DesktopBackgroundTask) => void;
+  onOpenSourceRun: (task: DesktopBackgroundTask, runId: string) => void;
   onContinueQuestion: (question: string) => void;
 }): React.JSX.Element {
   const zh = language === "zh";
@@ -3097,6 +3827,11 @@ function ResultsCenterView({
   const [error, setError] = useState("");
   const [workspaceScope, setWorkspaceScope] = useState<"workspace" | "all">("workspace");
   const [kindFilter, setKindFilter] = useState<"all" | DesktopTaskArtifactLink["kind"]>("all");
+  const [provenanceState, setProvenanceState] = useState<{
+    artifactId: string;
+    state: "checking" | "verified" | "failed";
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     setWorkspaceScope("workspace");
@@ -3608,6 +4343,26 @@ function ResultsCenterView({
         state: "failed",
         message: zh ? `无法打开：${detail}` : `Could not open: ${detail}`,
       });
+    }
+  }
+
+  async function verifyArtifactSource(artifact: IndexedTaskArtifact): Promise<void> {
+    if (!artifact.provenance) {
+      setProvenanceState({ artifactId: artifact.id, state: "failed", message: zh ? "缺少可验证的来源记录。" : "Verifiable provenance is unavailable." });
+      return;
+    }
+    setProvenanceState({ artifactId: artifact.id, state: "checking", message: zh ? "正在核对来源摘要…" : "Checking provenance digest…" });
+    try {
+      const result = await verifyResultProvenance(artifact.provenance);
+      setProvenanceState({
+        artifactId: artifact.id,
+        state: result.valid ? "verified" : "failed",
+        message: result.valid
+          ? (zh ? "来源摘要已验证：任务、会话、Run、输入和目标版本一致。" : "Provenance verified: task, session, run, input, and target version match.")
+          : (zh ? "来源摘要不一致，请不要依赖此成果并重新执行任务。" : "Provenance mismatch. Do not rely on this result; run the task again."),
+      });
+    } catch (caught) {
+      setProvenanceState({ artifactId: artifact.id, state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
     }
   }
 
@@ -4327,6 +5082,40 @@ function ResultsCenterView({
                             ? (zh ? "一致性检查已通过 · 未发现问题" : "Consistency passed · no issues")
                             : (zh ? `一致性检查发现 ${artifact.consistencyCheck.detectedIssues} 项问题` : `Consistency found ${artifact.consistencyCheck.detectedIssues} issues`)}
                         </span>
+                      ) : null}
+                      {artifact.provenance ? (
+                        <details
+                          className="results-provenance"
+                          data-testid="results-provenance"
+                          data-source-task-id={artifact.provenance.sourceTaskId}
+                          data-source-session-id={artifact.provenance.sourceSessionId}
+                          data-source-run-id={artifact.provenance.sourceRunId}
+                          data-target-version={artifact.provenance.target.version}
+                          data-source-digest={artifact.provenance.sourceDigest}
+                        >
+                          <summary>{zh ? `来源与版本 · v${artifact.provenance.target.version}` : `Source and version · v${artifact.provenance.target.version}`}</summary>
+                          <dl>
+                            <div><dt>{zh ? "原任务" : "Task"}</dt><dd>{artifact.sourceTaskTitle}</dd></div>
+                            <div><dt>{zh ? "会话" : "Session"}</dt><dd>{artifact.provenance.sourceSessionId}</dd></div>
+                            <div><dt>Run</dt><dd>{artifact.provenance.sourceRunId}</dd></div>
+                            <div><dt>{zh ? "原始输入" : "Input"}</dt><dd>{artifact.provenance.input.summary}</dd></div>
+                            {artifact.provenance.input.attachments.length ? <div><dt>{zh ? "输入材料" : "Input files"}</dt><dd>{artifact.provenance.input.attachments.join("、")}</dd></div> : null}
+                            <div><dt>{zh ? "目标版本" : "Target version"}</dt><dd>v{artifact.provenance.target.version} · {artifact.provenance.target.versionId}</dd></div>
+                            <div><dt>{zh ? "来源摘要" : "Source digest"}</dt><dd>{artifact.provenance.sourceDigest}</dd></div>
+                          </dl>
+                          <div className="results-provenance-actions">
+                            <button type="button" data-testid="results-open-source-task" onClick={() => {
+                              const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
+                              if (sourceTask) onOpenSourceTask(sourceTask);
+                            }}>{zh ? "返回原任务" : "Open source task"}</button>
+                            <button type="button" data-testid="results-open-source-run" onClick={() => {
+                              const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
+                              if (sourceTask) onOpenSourceRun(sourceTask, artifact.provenance!.sourceRunId);
+                            }}>{zh ? "查看 Run" : "Open Run"}</button>
+                            <button type="button" data-testid="results-verify-provenance" disabled={provenanceState?.artifactId === artifact.id && provenanceState.state === "checking"} onClick={() => void verifyArtifactSource(artifact)}>{zh ? "验证来源" : "Verify source"}</button>
+                          </div>
+                          {provenanceState?.artifactId === artifact.id ? <output data-testid="results-provenance-status" data-state={provenanceState.state} role="status">{provenanceState.message}</output> : null}
+                        </details>
                       ) : null}
                     </div>
                     <div className="results-artifact-actions">
@@ -5096,6 +5885,7 @@ function DesktopStatusPanel({
     setDiagnosticCopied(true);
     window.setTimeout(() => setDiagnosticCopied(false), 2_000);
   }
+
   // The About card describes the Desktop application, not the independently
   // installed Python Runtime. The updater identity is always sourced from
   // Electron's app.getVersion(), including development builds.
@@ -5408,7 +6198,26 @@ function formatUpdateStatus(
   return zh ? "未检查" : "not checked";
 }
 
-type SettingsPane = "general" | "voice" | "agent-defaults" | "agent-task" | "approvals" | "analytics" | "integrations" | "remote-workspace" | "channels" | "other";
+type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "agent-task" | "approvals" | "analytics" | "integrations" | "remote-workspace" | "channels" | "archived-sessions" | "other";
+
+function modelProviderRuntimeSummary(connection: MyDrSaiModelConnection, zh: boolean): string | undefined {
+  switch (connection.runtime?.runtime_status) {
+    case "applied": return connection.runtime.active_runtime_count > 0 ? (zh ? "运行中" : "Active") : undefined;
+    case "pending_next_turn": return zh ? "下次会话生效" : "Applies next session";
+    case "partially_applied": return zh ? "部分会话待更新" : "Some sessions pending";
+    default: return undefined;
+  }
+}
+
+function modelProviderTestSummary(connection: MyDrSaiModelConnection, zh: boolean): string | undefined {
+  const test = connection.last_test;
+  if (!test) return undefined;
+  const kind = test.mode === "model" ? (zh ? "模型调用" : "Model call") : (zh ? "连接检查" : "Connection check");
+  const outcome = test.ok ? (zh ? "已通过" : " passed") : (zh ? "失败" : " failed");
+  const testedAt = new Date(test.tested_at);
+  const timestamp = Number.isNaN(testedAt.getTime()) ? "" : testedAt.toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return `${kind}${outcome}${timestamp ? ` · ${timestamp}` : ""}`;
+}
 type AndroidDeviceLoadState = "idle" | "loading" | "ready" | "runtime-offline" | "platform-offline" | "management-unavailable" | "failed";
 
 function isPermissionError(reason: unknown): boolean {
@@ -5438,7 +6247,185 @@ function androidRelativeTime(raw: string | null | undefined, language: AppLangua
   return language === "zh" ? `${days}天前` : `${days}d ago`;
 }
 
+const bundledModelProviderLogos: Record<string, string> = {
+  deepseek: new URL("../../../legacy/drsai-desktop/src/renderer/src/assets/logos/deepseek-color.svg", import.meta.url).href,
+  openai: new URL("../../../legacy/drsai-desktop/src/renderer/src/assets/logos/openai.svg", import.meta.url).href,
+  gemini: new URL("../../../legacy/drsai-desktop/src/renderer/src/assets/logos/gemini-color.svg", import.meta.url).href,
+  openrouter: new URL("../../../legacy/drsai-desktop/src/renderer/src/assets/logos/openrouter.svg", import.meta.url).href,
+};
+
+const BUILTIN_MODEL_PROVIDER_PRESETS: MyDrSaiProviderPreset[] = [
+  { id: "hepai", label: "HepAI", base_url: "https://aiapi.ihep.ac.cn/apiv2", default_model: "deepseek-v4-pro", wire_api: "openai", requires_api_key: false, base_url_editable: false, supports_model_discovery: true, auth_mode: "oidc" },
+  { id: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com/v1", default_model: "deepseek-chat", wire_api: "openai", requires_api_key: true, api_key_env: "DEEPSEEK_API_KEY", base_url_editable: false, supports_model_discovery: true, auth_mode: "api_key" },
+  { id: "openai", label: "OpenAI", base_url: "https://api.openai.com/v1", default_model: "gpt-5.4", wire_api: "openai", requires_api_key: true, api_key_env: "OPENAI_API_KEY", base_url_editable: false, supports_model_discovery: true, auth_mode: "api_key" },
+  { id: "anthropic", label: "Anthropic", base_url: "https://api.anthropic.com/v1", anthropic_base_url: "https://api.anthropic.com/v1", default_model: "claude-sonnet-4-6", wire_api: "anthropic", requires_api_key: true, api_key_env: "ANTHROPIC_API_KEY", base_url_editable: false, supports_model_discovery: true, auth_mode: "api_key" },
+  { id: "gemini", label: "Gemini", base_url: "https://generativelanguage.googleapis.com/v1beta", google_base_url: "https://generativelanguage.googleapis.com/v1beta", default_model: "gemini-3.6-flash", wire_api: "gemini", requires_api_key: true, api_key_env: "GEMINI_API_KEY", base_url_editable: false, supports_model_discovery: true, auth_mode: "api_key" },
+  { id: "openrouter", label: "OpenRouter", base_url: "https://openrouter.ai/api/v1", default_model: "openai/gpt-5.4", wire_api: "openai", requires_api_key: true, api_key_env: "OPENROUTER_API_KEY", base_url_editable: false, supports_model_discovery: true, auth_mode: "api_key" },
+  { id: "zhizengzeng", label: "Zhizengzeng", base_url: "https://api.zhizengzeng.com/v1", anthropic_base_url: "https://api.zhizengzeng.com/anthropic", google_base_url: "https://api.zhizengzeng.com/google", default_model: "deepseek-v4-pro", wire_api: "openai", requires_api_key: true, api_key_env: "ZHIZENGZENG_API_KEY", base_url_editable: false, supports_model_discovery: true, auth_mode: "api_key" },
+  { id: "ollama", label: "Ollama", base_url: "http://127.0.0.1:11434/v1", wire_api: "openai", requires_api_key: false, base_url_editable: true, supports_model_discovery: true, auth_mode: "none" },
+];
+
+const MODEL_PROVIDER_TAB_ORDER = BUILTIN_MODEL_PROVIDER_PRESETS.map((preset) => preset.id);
+
+function modelProviderDisplayLabel(provider: { id: string; label: string }, zh: boolean): string {
+  if (provider.id === "hepai") return "HepAI";
+  if (provider.id === "zhizengzeng") return zh ? "智增增" : "Zhizengzeng";
+  if (provider.id === "ollama") return zh ? "Ollama（本地）" : "Ollama (local)";
+  return provider.label;
+}
+
+function ModelProviderLogo({ provider }: { provider: string }) {
+  const normalized = provider.toLowerCase();
+  const kind = normalized === "zhizengzeng" ? "zhizz" : normalized.startsWith("custom") ? "custom" : normalized;
+  const bundledLogo = bundledModelProviderLogos[kind];
+  if (bundledLogo) return <span className={`model-provider-logo model-provider-logo-${kind}`} aria-hidden="true"><img src={bundledLogo} alt="" /></span>;
+  if (kind === "hepai") return <span className="model-provider-logo model-provider-logo-hepai" aria-hidden="true"><svg viewBox="0 0 32 26"><defs><linearGradient id="hepai-provider-gradient" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#7eaad7" /><stop offset=".52" stopColor="#aa91b8" /><stop offset="1" stopColor="#c54d69" /></linearGradient></defs><rect width="32" height="26" rx="4" fill="url(#hepai-provider-gradient)" /><text x="16" y="18.2" textAnchor="middle" fill="#fff" fontFamily="Arial, sans-serif" fontSize="12" fontWeight="800">HAI</text></svg></span>;
+  if (kind === "anthropic") return <span className="model-provider-logo model-provider-logo-anthropic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z" fill="currentColor" /></svg></span>;
+  if (kind === "zhizz") return <span className="model-provider-logo model-provider-logo-zhizz" aria-hidden="true"><svg viewBox="0 0 128 128"><path d="M5 96 27 58l17 28 27-43 18 29 29-48" fill="none" stroke="#91c8ff" strokeWidth="14" strokeLinejoin="miter" /><path d="M5 96 27 66l17 28 27-43 18 29 34-57" fill="none" stroke="#1769f5" strokeWidth="8" strokeLinejoin="miter" /><path d="m99 9 23 2-4 22z" fill="#51a6ff" /></svg></span>;
+  if (kind === "ollama") return <span className="model-provider-logo model-provider-logo-ollama" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16.361 10.26a.894.894 0 0 0-.558.47l-.072.148.001.207c0 .193.004.217.059.353.076.193.152.312.291.448.24.238.51.3.872.205a.86.86 0 0 0 .517-.436.752.752 0 0 0 .08-.498c-.064-.453-.33-.782-.724-.897a1.06 1.06 0 0 0-.466 0zm-9.203.005c-.305.096-.533.32-.65.639a1.187 1.187 0 0 0-.06.52c.057.309.31.59.598.667.362.095.632.033.872-.205.14-.136.215-.255.291-.448.055-.136.059-.16.059-.353l.001-.207-.072-.148a.894.894 0 0 0-.565-.472 1.02 1.02 0 0 0-.474.007Zm4.184 2c-.131.071-.223.25-.195.383.031.143.157.288.353.407.105.063.112.072.117.136.004.038-.01.146-.029.243-.02.094-.036.194-.036.222.002.074.07.195.143.253.064.052.076.054.255.059.164.005.198.001.264-.03.169-.082.212-.234.15-.525-.052-.243-.042-.28.087-.355.137-.08.281-.219.324-.314a.365.365 0 0 0-.175-.48.394.394 0 0 0-.181-.033c-.126 0-.207.03-.355.124l-.085.053-.053-.032c-.219-.13-.259-.145-.391-.143a.396.396 0 0 0-.193.032zm.39-2.195c-.373.036-.475.05-.654.086-.291.06-.68.195-.951.328-.94.46-1.589 1.226-1.787 2.114-.04.176-.045.234-.045.53 0 .294.005.357.043.524.264 1.16 1.332 2.017 2.714 2.173.3.033 1.596.033 1.896 0 1.11-.125 2.064-.727 2.493-1.571.114-.226.169-.372.22-.602.039-.167.044-.23.044-.523 0-.297-.005-.355-.045-.531-.288-1.29-1.539-2.304-3.072-2.497a6.873 6.873 0 0 0-.855-.031zm.645.937a3.283 3.283 0 0 1 1.44.514c.223.148.537.458.671.662.166.251.26.508.303.82.02.143.01.251-.043.482-.08.345-.332.705-.672.957a3.115 3.115 0 0 1-.689.348c-.382.122-.632.144-1.525.138-.582-.006-.686-.01-.853-.042-.57-.107-1.022-.334-1.35-.68-.264-.28-.385-.535-.45-.946-.03-.192.025-.509.137-.776.136-.326.488-.73.836-.963.403-.269.934-.46 1.422-.512.187-.02.586-.02.773-.002zm-5.503-11a1.653 1.653 0 0 0-.683.298C5.617.74 5.173 1.666 4.985 2.819c-.07.436-.119 1.04-.119 1.503 0 .544.064 1.24.155 1.721.02.107.031.202.023.208a8.12 8.12 0 0 1-.187.152 5.324 5.324 0 0 0-.949 1.02 5.49 5.49 0 0 0-.94 2.339 6.625 6.625 0 0 0-.023 1.357c.091.78.325 1.438.727 2.04l.13.195-.037.064c-.269.452-.498 1.105-.605 1.732-.084.496-.095.629-.095 1.294 0 .67.009.803.088 1.266.095.555.288 1.143.503 1.534.071.128.243.393.264.407.007.003-.014.067-.046.141a7.405 7.405 0 0 0-.548 1.873c-.062.417-.071.552-.071.991 0 .56.031.832.148 1.279L3.42 24h1.478l-.05-.091c-.297-.552-.325-1.575-.068-2.597.117-.472.25-.819.498-1.296l.148-.29v-.177c0-.165-.003-.184-.057-.293a.915.915 0 0 0-.194-.25 1.74 1.74 0 0 1-.385-.543c-.424-.92-.506-2.286-.208-3.451.124-.486.329-.918.544-1.154a.787.787 0 0 0 .223-.531c0-.195-.07-.355-.224-.522a3.136 3.136 0 0 1-.817-1.729c-.14-.96.114-2.005.69-2.834.563-.814 1.353-1.336 2.237-1.475.199-.033.57-.028.776.01.226.04.367.028.512-.041.179-.085.268-.19.374-.431.093-.215.165-.333.36-.576.234-.29.46-.489.822-.729.413-.27.884-.467 1.352-.561.17-.035.25-.04.569-.04.319 0 .398.005.569.04a4.07 4.07 0 0 1 1.914.997c.117.109.398.457.488.602.034.057.095.177.132.267.105.241.195.346.374.43.14.068.286.082.503.045.343-.058.607-.053.943.016 1.144.23 2.14 1.173 2.581 2.437.385 1.108.276 2.267-.296 3.153-.097.15-.193.27-.333.419-.301.322-.301.722-.001 1.053.493.539.801 1.866.708 3.036-.062.772-.26 1.463-.533 1.854a2.096 2.096 0 0 1-.224.258.916.916 0 0 0-.194.25c-.054.109-.057.128-.057.293v.178l.148.29c.248.476.38.823.498 1.295.253 1.008.231 2.01-.059 2.581a.845.845 0 0 0-.044.098c0 .006.329.009.732.009h.73l.02-.074.036-.134c.019-.076.057-.3.088-.516.029-.217.029-1.016 0-1.258-.11-.875-.295-1.57-.597-2.226-.032-.074-.053-.138-.046-.141.008-.005.057-.074.108-.152.376-.569.607-1.284.724-2.228.031-.26.031-1.378 0-1.628-.083-.645-.182-1.082-.348-1.525a6.083 6.083 0 0 0-.329-.7l-.038-.064.131-.194c.402-.604.636-1.262.727-2.04a6.625 6.625 0 0 0-.024-1.358 5.512 5.512 0 0 0-.939-2.339 5.325 5.325 0 0 0-.95-1.02 8.097 8.097 0 0 1-.186-.152.692.692 0 0 1 .023-.208c.208-1.087.201-2.443-.017-3.503-.19-.924-.535-1.658-.98-2.082-.354-.338-.716-.482-1.15-.455-.996.059-1.8 1.205-2.116 3.01a6.805 6.805 0 0 0-.097.726c0 .036-.007.066-.015.066a.96.96 0 0 1-.149-.078A4.857 4.857 0 0 0 12 3.03c-.832 0-1.687.243-2.456.698a.958.958 0 0 1-.148.078c-.008 0-.015-.03-.015-.066a6.71 6.71 0 0 0-.097-.725C8.997 1.392 8.337.319 7.46.048a2.096 2.096 0 0 0-.585-.041Zm.293 1.402c.248.197.523.759.682 1.388.03.113.06.244.069.292.007.047.026.152.041.233.067.365.098.76.102 1.24l.002.475-.12.175-.118.178h-.278c-.324 0-.646.041-.954.124l-.238.06c-.033.007-.038-.003-.057-.144a8.438 8.438 0 0 1 .016-2.323c.124-.788.413-1.501.696-1.711.067-.05.079-.049.157.013zm9.825-.012c.17.126.358.46.498.888.28.854.36 2.028.212 3.145-.019.14-.024.151-.057.144l-.238-.06a3.693 3.693 0 0 0-.954-.124h-.278l-.119-.178-.119-.175.002-.474c.004-.669.066-1.19.214-1.772.157-.623.434-1.185.68-1.382.078-.062.09-.063.159-.012z" fill="currentColor" /></svg></span>;
+  return <span className="model-provider-logo model-provider-logo-custom" aria-hidden="true"><PackageOpen size={14} /></span>;
+}
+
+type ProviderModelModality = "text" | "image" | "audio" | "video";
+
+type ProviderModelEditorDraft = {
+  originalId: string;
+  modelId: string;
+  alias: string;
+  inputModalities: MyDrSaiModelModality[];
+  outputModalities: MyDrSaiModelModality[];
+  apiProtocol: MyDrSaiModelApiProtocol;
+  enabled: boolean;
+  capabilities: MyDrSaiModelCapability[];
+};
+
+function knownTextModelCapabilities(modelId: string): MyDrSaiModelCapability[] {
+  const normalized = modelId.trim().toLowerCase().split("/").at(-1);
+  return normalized === "deepseek-v4-pro" || normalized === "deepseek-v4-flash" || normalized?.startsWith("deepseek-v4-flash-")
+    ? ["chat", "tool_calling", "reasoning"]
+    : [];
+}
+
+function defaultTextModelCapabilities(modelId: string): MyDrSaiModelCapability[] {
+  const known = knownTextModelCapabilities(modelId);
+  return known.length ? known : ["chat"];
+}
+
+function providerModelConfigFor(
+  modelId: string,
+  provider: { wire_api: MyDrSaiModelApiProtocol; model_configs?: Record<string, MyDrSaiProviderModelConfig>; model_aliases?: Record<string, string>; model_operations?: Record<string, RuntimeModelOperation[]> } | undefined,
+): MyDrSaiProviderModelConfig {
+  const configured = provider?.model_configs?.[modelId];
+  if (configured) {
+    const legacy = (configured as unknown as { modalities?: MyDrSaiModelModality[] }).modalities;
+    const capabilities = [...new Set([
+      ...(configured.capabilities ?? ["chat"]),
+      ...knownTextModelCapabilities(modelId),
+    ])];
+    const output = legacy ? [
+      ...(["chat", "tool_calling", "reasoning", "speech_to_text"].some((capability) => capabilities.includes(capability as MyDrSaiModelCapability)) ? ["text" as const] : []),
+      ...(["image_generation", "image_edit"].some((capability) => capabilities.includes(capability as MyDrSaiModelCapability)) ? ["image" as const] : []),
+      ...(capabilities.includes("text_to_speech") ? ["audio" as const] : []),
+      ...(capabilities.includes("video_generation") ? ["video" as const] : []),
+    ] : configured.output_modalities;
+    return {
+      ...configured,
+      input_modalities: configured.input_modalities ?? legacy ?? ["text"],
+      output_modalities: output?.length ? [...new Set(output)] : ["text"],
+      api_protocol: (configured.api_protocol as string) === "google" ? "gemini" : configured.api_protocol,
+    };
+  }
+  const operations = provider?.model_operations?.[modelId] ?? [];
+  const normalizedId = modelId.toLowerCase().split("/").at(-1);
+  const speechToText = normalizedId === "whisper-1";
+  const textToSpeech = normalizedId === "tts-1";
+  return {
+    ...(provider?.model_aliases?.[modelId] ? { alias: provider.model_aliases[modelId] } : {}),
+    input_modalities: speechToText ? ["audio"] : operations.includes("image_edit") ? ["text", "image"] : ["text"],
+    output_modalities: speechToText ? ["text"] : textToSpeech ? ["audio"] : operations.some((operation) => operation === "image_generation" || operation === "image_edit") ? ["image"] : ["text"],
+    api_protocol: provider?.wire_api ?? "openai",
+    enabled: true,
+    capabilities: speechToText ? ["speech_to_text"] : textToSpeech ? ["text_to_speech"] : [...new Set([...defaultTextModelCapabilities(modelId), ...operations])],
+  };
+}
+
+function providerModelConfigsFor(
+  modelIds: string[],
+  provider: Parameters<typeof providerModelConfigFor>[1],
+): Record<string, MyDrSaiProviderModelConfig> {
+  return Object.fromEntries(modelIds.map((modelId) => [modelId, providerModelConfigFor(modelId, provider)]));
+}
+
+function providerModelDescriptor(modelId: string, providerId: string, catalogModels: MyDrSaiModelConfig[]): MyDrSaiModelConfig | undefined {
+  const normalizedId = modelId.trim().toLowerCase();
+  return catalogModels.find((candidate) => {
+    if (candidate.provider_id && candidate.provider_id !== providerId) return false;
+    return [candidate.model, candidate.alias, candidate.alias?.split("/").at(-1)]
+      .some((value) => value?.trim().toLowerCase() === normalizedId);
+  });
+}
+
+function providerModelModalities(
+  modelId: string,
+  providerId: string,
+  catalogModels: MyDrSaiModelConfig[],
+  declaredOperations: RuntimeModelOperation[],
+): { input: ProviderModelModality[]; output: ProviderModelModality[] } {
+  const normalizedId = modelId.trim().toLowerCase();
+  const descriptor = providerModelDescriptor(modelId, providerId, catalogModels);
+  const input = new Set<ProviderModelModality>();
+  const output = new Set<ProviderModelModality>();
+  for (const modality of descriptor?.input_modalities ?? []) if (["text", "image", "audio", "video"].includes(modality)) input.add(modality as ProviderModelModality);
+  for (const modality of descriptor?.output_modalities ?? []) if (["text", "image", "audio", "video"].includes(modality)) output.add(modality as ProviderModelModality);
+  if (descriptor?.vision) input.add("image");
+  if (declaredOperations.includes("image_edit")) input.add("image");
+  if (declaredOperations.some((operation) => operation === "image_generation" || operation === "image_edit")) output.add("image");
+  if (normalizedId === "whisper-1" || normalizedId.endsWith("/whisper-1")) {
+    input.add("audio");
+    output.add("text");
+  }
+  if (normalizedId === "tts-1" || normalizedId.endsWith("/tts-1")) {
+    input.add("text");
+    output.add("audio");
+  }
+  if (input.size === 0) input.add("text");
+  if (output.size === 0) output.add("text");
+  const ordered = ["text", "image", "audio", "video"] as const;
+  return { input: ordered.filter((modality) => input.has(modality)), output: ordered.filter((modality) => output.has(modality)) };
+}
+
+function ModelModalityBadges({ modalities, direction, zh = false, onClick }: { modalities: ProviderModelModality[]; direction: "input" | "output"; zh?: boolean; onClick?: () => void }) {
+  const entries: Record<ProviderModelModality, { label: string; icon: LucideIcon }> = {
+    text: { label: "Text", icon: Type },
+    image: { label: "Image", icon: ImageIcon },
+    audio: { label: "Audio", icon: AudioLines },
+    video: { label: "Video", icon: Video },
+  };
+  return <div className={`model-modality-badges ${onClick ? "is-editable" : ""}`} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={onClick ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(); } } : undefined}>{modalities.map((modality) => {
+    const entry = entries[modality];
+    const Icon = entry.icon;
+    const supported = modalities.includes(modality);
+    const stateLabel = zh ? (supported ? "支持" : "不支持") : (supported ? "Supported" : "Not supported");
+    const directionLabel = direction === "input" ? (zh ? "输入" : "Input") : (zh ? "输出" : "Output");
+    const label = `${directionLabel} ${entry.label} · ${stateLabel}`;
+    return <span key={modality} className={`model-modality-badge modality-${modality} ${supported ? "is-supported" : "is-unsupported"}`} title={label} aria-label={label}><Icon size={14} aria-hidden /></span>;
+  })}</div>;
+}
+
+function ModelApiProtocolBadge({ protocol, zh, onClick }: { protocol: string; zh: boolean; onClick?: () => void }) {
+  // Legacy copy marker retained for migration-contract verification: "Google API 兼容".
+  const normalized = protocol.toLowerCase();
+  const kind = normalized === "anthropic" ? "anthropic" : normalized === "google" || normalized === "gemini" ? "google" : "openai";
+  const labels = zh
+    ? { openai: "OpenAI API 兼容", anthropic: "Anthropic API 兼容", google: "Gemini 原生 API" } as const
+    : { openai: "OpenAI API compatible", anthropic: "Anthropic API compatible", google: "Gemini native API" } as const;
+  const marks = { openai: "OA", anthropic: "A", google: "G" } as const;
+  const label = labels[kind];
+  return <div className={`model-api-protocols ${onClick ? "is-editable" : ""}`} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={onClick ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(); } } : undefined}><span className={`model-api-protocol protocol-${kind} is-supported`} title={label} aria-label={label}><i aria-hidden>{marks[kind]}</i></span></div>;
+}
+
 function SettingsPanel({
+  modelSettings,
   agents,
   appearance,
   approvalCenterPanel,
@@ -5453,8 +6440,9 @@ function SettingsPanel({
   language,
   models,
   mobilePairingRefreshToken,
-  mobilePairingTarget,
   myDrSaiConfig,
+  myDrSaiAgentModelPolicy,
+  agentConfigurations,
   onCheckUpdates,
   onAppearanceChange,
   onCompletionNotificationsChange,
@@ -5471,14 +6459,15 @@ function SettingsPanel({
   onRestoreLastSessionChange,
   onRestoreLastWorkspaceChange,
   onRightSidebarComponentsChange,
-  onSelectAgent,
-  onSelectModel,
+  onConfigureAgentModel,
+  onConfigureAgentCapabilityModel,
+  onRefreshAgentModels,
   onSessionScopeChange,
   onArchiveThread,
   workspaces,
   onSyncWorkspaceSessions,
   onSidebarComponentsChange,
-  onThinkingEffortChange,
+  onConfigureAgentThinkingEffort,
   onWorkspaceSortModeChange,
   onUpdateAgentConfig,
   onModelConnectionUpdated,
@@ -5496,6 +6485,7 @@ function SettingsPanel({
   user,
   workspaceSortMode,
 }: {
+  modelSettings: ModelSettingsDraftController;
   agents: DesktopAgent[];
   appearance: AppearanceMode;
   approvalCenterPanel: React.ReactNode;
@@ -5510,8 +6500,9 @@ function SettingsPanel({
   language: AppLanguage;
   models: MyDrSaiModelConfig[];
   mobilePairingRefreshToken: number;
-  mobilePairingTarget: DesktopMobilePairingTarget;
   myDrSaiConfig: MyDrSaiConfig | null;
+  myDrSaiAgentModelPolicy: MyDrSaiAgentModelPolicy | null;
+  agentConfigurations: Record<string, AgentConfigurationPreference>;
   onCheckUpdates: () => void;
   onAppearanceChange: (appearance: AppearanceMode) => void;
   onCompletionNotificationsChange: (enabled: boolean) => void;
@@ -5528,14 +6519,15 @@ function SettingsPanel({
   onRestoreLastSessionChange: (enabled: boolean) => void;
   onRestoreLastWorkspaceChange: (enabled: boolean) => void;
   onRightSidebarComponentsChange: React.Dispatch<React.SetStateAction<RightSidebarComponentVisibility>>;
-  onSelectAgent: (agentId: string) => void;
-  onSelectModel: (model: string) => void;
+  onConfigureAgentModel: (agentId: string, model: string, providerId?: string) => void;
+  onConfigureAgentCapabilityModel: (role: AgentCapabilityModelRole, modelId?: string, providerId?: string) => void;
+  onRefreshAgentModels: () => void;
   onSessionScopeChange: (scope: "workspace" | "all") => void;
   onArchiveThread: (threadId: string, archived: boolean) => void | Promise<void>;
   workspaces: WorkspaceProject[];
   onSyncWorkspaceSessions: (workspace: WorkspaceProject) => void | Promise<void>;
   onSidebarComponentsChange: React.Dispatch<React.SetStateAction<SidebarComponentVisibility>>;
-  onThinkingEffortChange: (effort: ThinkingEffort) => void;
+  onConfigureAgentThinkingEffort: (agentId: string, effort: ThinkingEffort) => void;
   onWorkspaceSortModeChange: (mode: WorkspaceSortMode) => void;
   onUpdateAgentConfig: (updates: { plan_mode?: boolean; workspace_enabled?: boolean }) => Promise<void>;
   onModelConnectionUpdated: (connection: MyDrSaiModelConnection) => void;
@@ -5553,8 +6545,103 @@ function SettingsPanel({
   user: AuthUser | null;
   workspaceSortMode: WorkspaceSortMode;
 }): React.JSX.Element {
+  const {
+    activePane, setActivePane,
+    modelDraft, setModelDraft, providerDraft, setProviderDraft, baseUrlDraft, setBaseUrlDraft,
+    anthropicBaseUrlDraft, setAnthropicBaseUrlDraft, geminiBaseUrlDraft, setGeminiBaseUrlDraft,
+    apiKeyDraft, setApiKeyDraft, apiKeyEnvDraft, setApiKeyEnvDraft,
+    wireApiDraft, setWireApiDraft, keySourceDraft, setKeySourceDraft,
+    modelConfigBusy, setModelConfigBusy, modelConfigMessage, setModelConfigMessage,
+    modelTestOutput, setModelTestOutput, modelConfigConflict, setModelConfigConflict,
+    providerPendingDeletion, setProviderPendingDeletion, providerDeletePreflight, setProviderDeletePreflight,
+    modelTestConfirmationOpen, setModelTestConfirmationOpen,
+    modelDoctorResult, setModelDoctorResult, modelProviderPresets, setModelProviderPresets,
+    activeModelProviderTab, setActiveModelProviderTab,
+    recentOverflowModelProviderTab, setRecentOverflowModelProviderTab,
+    discoveredModels, setDiscoveredModels, providerModelsDraft, setProviderModelsDraft,
+    providerModelAliasesDraft, setProviderModelAliasesDraft,
+    providerModelOperationsDraft, setProviderModelOperationsDraft,
+    providerModelConfigsDraft, setProviderModelConfigsDraft,
+    newProviderModelDraft, setNewProviderModelDraft,
+  } = modelSettings;
   const zh = language === "zh";
-  const [activePane, setActivePane] = useState<SettingsPane>("general");
+  const [providerModelEditor, setProviderModelEditor] = useState<ProviderModelEditorDraft | null>(null);
+  const [providerModelEditorError, setProviderModelEditorError] = useState<string | null>(null);
+  const [addedProviderProtocols, setAddedProviderProtocols] = useState<Set<MyDrSaiModelApiProtocol>>(new Set());
+  const providerTabAfterProviderSaveRef = useRef<string | null>(null);
+  const selectedSettingsAgent = agents.find((agent) => agent.id === selectedAgentId);
+  const [activeAgentConfigurationTab, setActiveAgentConfigurationTab] = useState<AgentConfigurationTab>(() =>
+    selectedSettingsAgent ? getAgentConfigurationTab(selectedSettingsAgent) : "opendrsai");
+  const [platformConfigurationAgentId, setPlatformConfigurationAgentId] = useState(() =>
+    selectedSettingsAgent?.source === "remote" ? selectedSettingsAgent.id : "");
+  const openDrSaiConfigurationAgent = agents.find((agent) => agent.id === "my-drsai")
+    ?? agents.find((agent) => agent.source === "local" && agent.id !== "my-codex");
+  const codexConfigurationAgent = agents.find((agent) => agent.id === "my-codex");
+  const platformConfigurationAgents = agents.filter((agent) => agent.source === "remote");
+  const platformConfigurationAgent = platformConfigurationAgents.find((agent) => agent.id === platformConfigurationAgentId)
+    ?? platformConfigurationAgents[0];
+  const activeConfigurationAgent = activeAgentConfigurationTab === "opendrsai"
+    ? openDrSaiConfigurationAgent
+    : activeAgentConfigurationTab === "codex"
+      ? codexConfigurationAgent
+      : platformConfigurationAgent;
+  const activeAgentPreference = activeConfigurationAgent ? agentConfigurations[activeConfigurationAgent.id] : undefined;
+  const activeAgentModels = getAgentModelOptions(
+    models, activeConfigurationAgent, activeAgentPreference?.model ?? null, activeAgentPreference?.modelRef,
+  );
+  const activeAgentModel = activeAgentConfigurationTab === "opendrsai" && activeAgentPreference?.modelRef
+    ? `${encodeURIComponent(activeAgentPreference.modelRef.provider_id)}::${encodeURIComponent(activeAgentPreference.modelRef.model_id)}`
+    : activeAgentPreference?.model || activeConfigurationAgent?.model || activeConfigurationAgent?.models?.[0]
+      || (activeAgentConfigurationTab === "opendrsai" ? "" : DEFAULT_AGENT_TEXT_MODEL);
+  const activeAgentThinkingEffort = activeAgentPreference?.thinkingEffort
+    ?? (activeConfigurationAgent?.id === selectedAgentId ? defaultThinkingEffort : "medium");
+  const activeAgentModelDescriptor = activeAgentConfigurationTab === "opendrsai"
+    ? activeAgentModels.find((model) => model.provider_id === activeAgentPreference?.modelRef?.provider_id && model.alias === activeAgentPreference?.modelRef?.model_id)
+      ?? activeAgentModels.find((model) => model.alias === activeAgentPreference?.model)
+    : undefined;
+  const activeAgentModelGroups = activeAgentModels.reduce<Record<string, MyDrSaiModelConfig[]>>((groups, model) => {
+    const provider = model.provider_id || (zh ? "其他来源" : "Other sources");
+    (groups[provider] ??= []).push(model);
+    return groups;
+  }, {});
+  const activeAgentModelUnavailable = activeAgentConfigurationTab === "opendrsai"
+    && activeAgentModelDescriptor
+    && !isSelectableModelAvailability(activeAgentModelDescriptor.availability);
+  const activeAgentModelProvider = activeAgentConfigurationTab === "opendrsai"
+    ? activeAgentPreference?.modelRef?.provider_id || activeAgentModelDescriptor?.provider_id
+    : undefined;
+  const modelCatalogState = myDrSaiConfig?.modelCatalog?.state
+    ?? (myDrSaiConfig?.ready ? (models.length ? "fresh" : "empty") : "offline");
+  const activeAgentThinkingEfforts: ThinkingEffort[] = activeAgentConfigurationTab === "opendrsai"
+    ? activeAgentModelDescriptor?.operations?.includes("reasoning")
+      ? (activeAgentModelDescriptor.reasoning_efforts ?? [])
+      : []
+    : ["low", "medium", "high", "xhigh", "max"];
+  const selectableCapabilityModels = (input: MyDrSaiModelModality, output: MyDrSaiModelModality) => models.filter((model) =>
+    model.provider_id
+      && ["available", "configured_unverified"].includes(model.availability ?? "")
+      && model.input_modalities?.includes(input)
+      && model.output_modalities?.includes(output),
+  );
+  const capabilityModelSettings: Array<{
+    role: AgentCapabilityModelRole;
+    testId: string;
+    label: string;
+    description: string;
+    models: MyDrSaiModelConfig[];
+    selection: AgentModelSelection | null | undefined;
+  }> = [
+    { role: "image_understanding_model", testId: "agent-image-understanding-model-setting", label: zh ? "图像理解" : "Image understanding", description: zh ? "接收图片并输出文字理解结果。" : "Accepts images and returns a text understanding.", models: selectableCapabilityModels("image", "text"), selection: myDrSaiAgentModelPolicy?.image_understanding_model },
+    { role: "image_generation_model", testId: "agent-image-generation-model-setting", label: zh ? "图像生成" : "Image generation", description: zh ? "根据文字或图片生成图像。" : "Generates images from text or image input.", models: models.filter((model) => model.provider_id && ["available", "configured_unverified"].includes(model.availability ?? "") && model.output_modalities?.includes("image")), selection: myDrSaiAgentModelPolicy?.image_generation_model ?? myDrSaiAgentModelPolicy?.image_model },
+    { role: "text_to_speech_model", testId: "agent-text-to-speech-model-setting", label: zh ? "文字转语音" : "Text to speech", description: zh ? "将文字合成为语音。" : "Synthesizes speech from text.", models: selectableCapabilityModels("text", "audio"), selection: myDrSaiAgentModelPolicy?.text_to_speech_model },
+    { role: "speech_to_text_model", testId: "agent-speech-to-text-model-setting", label: zh ? "语音转文字" : "Speech to text", description: zh ? "将语音识别为文字。" : "Transcribes speech into text.", models: selectableCapabilityModels("audio", "text"), selection: myDrSaiAgentModelPolicy?.speech_to_text_model },
+  ];
+  useEffect(() => {
+    if (!selectedSettingsAgent) return;
+    const tab = getAgentConfigurationTab(selectedSettingsAgent);
+    setActiveAgentConfigurationTab(tab);
+    if (tab === "platform") setPlatformConfigurationAgentId(selectedSettingsAgent.id);
+  }, [selectedAgentId, selectedSettingsAgent?.id, selectedSettingsAgent?.source]);
   const [voiceIntegrationState, setVoiceIntegrationState] = useState<string | null>(null);
   const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
   const [voiceRuntimeStatus, setVoiceRuntimeStatus] = useState<DesktopVoiceRuntimeStatus | null>(null);
@@ -5568,21 +6655,32 @@ function SettingsPanel({
   const [mobileEnrollmentError, setMobileEnrollmentError] = useState<string | null>(null);
   const [agentConfigSaving, setAgentConfigSaving] = useState(false);
   const [agentConfigMessage, setAgentConfigMessage] = useState<string | null>(null);
-  const [modelDraft, setModelDraft] = useState("");
-  const [providerDraft, setProviderDraft] = useState("");
-  const [baseUrlDraft, setBaseUrlDraft] = useState("");
-  const [apiKeyDraft, setApiKeyDraft] = useState("");
-  const [apiKeyEnvDraft, setApiKeyEnvDraft] = useState("");
-  const [wireApiDraft, setWireApiDraft] = useState<"openai" | "anthropic">("openai");
-  const [keySourceDraft, setKeySourceDraft] = useState<"secure" | "env" | "none">("secure");
-  const [modelAdvancedOpen, setModelAdvancedOpen] = useState(false);
-  const [modelConfigBusy, setModelConfigBusy] = useState(false);
-  const [modelConfigMessage, setModelConfigMessage] = useState<string | null>(null);
-  const [modelConfigConflict, setModelConfigConflict] = useState(false);
-  const [providerPendingDeletion, setProviderPendingDeletion] = useState<string | null>(null);
-  const [modelTestConfirmationOpen, setModelTestConfirmationOpen] = useState(false);
-  const [modelProviderPresets, setModelProviderPresets] = useState<MyDrSaiProviderPreset[]>([]);
-  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [modelCapabilityStatus, setModelCapabilityStatus] = useState<AgentModelCapabilityStatus | null>(null);
+  const [modelCapabilityStatusError, setModelCapabilityStatusError] = useState<string | null>(null);
+  const [modelCapabilityStatusBusy, setModelCapabilityStatusBusy] = useState(false);
+  const refreshModelCapabilityStatus = useCallback(async () => {
+    setModelCapabilityStatusBusy(true);
+    setModelCapabilityStatusError(null);
+    try {
+      setModelCapabilityStatus(await desktopApi.getMyDrSaiAgentModelCapabilityStatus("my-drsai"));
+    } catch (error) {
+      const friendly = describeUserFacingError(error, language);
+      setModelCapabilityStatusError(`${friendly.title} ${friendly.action}`);
+    } finally {
+      setModelCapabilityStatusBusy(false);
+    }
+  }, [language]);
+  useEffect(() => {
+    if (activePane === "agent-defaults" && activeAgentConfigurationTab === "opendrsai") void refreshModelCapabilityStatus();
+  }, [activeAgentConfigurationTab, activePane, refreshModelCapabilityStatus]);
+  const effectiveModelProviderPresets = useMemo(() => {
+    const byId = new Map(BUILTIN_MODEL_PROVIDER_PRESETS.map((preset) => [preset.id, preset]));
+    for (const preset of modelProviderPresets) {
+      const fallback = byId.get(preset.id);
+      byId.set(preset.id, fallback ? { ...fallback, ...preset, label: fallback.label } : preset);
+    }
+    return [...byId.values()];
+  }, [modelProviderPresets]);
   const [cleanupPreview, setCleanupPreview] = useState<DesktopDataCleanupPreview | null>(null);
   const [cleanupConfirmation, setCleanupConfirmation] = useState("");
   const [cleanupBusy, setCleanupBusy] = useState(false);
@@ -5592,27 +6690,83 @@ function SettingsPanel({
     thread.title.toLocaleLowerCase().includes(archiveSearch.trim().toLocaleLowerCase()),
   );
 
+  const modelConnectionRevision = myDrSaiConfig?.modelConnection?.revision;
+  const configuredModelProvider = myDrSaiConfig?.modelConnection?.model_provider;
   useEffect(() => {
     const connection = myDrSaiConfig?.modelConnection;
     if (!connection) return;
+    const providerTabAfterSave = providerTabAfterProviderSaveRef.current;
+    if (providerTabAfterSave) {
+      providerTabAfterProviderSaveRef.current = null;
+      setActiveModelProviderTab(providerTabAfterSave);
+      if (!["hepai", "deepseek", "openai", "anthropic"].includes(providerTabAfterSave)) setRecentOverflowModelProviderTab(providerTabAfterSave);
+      return;
+    }
+    setActiveModelProviderTab(connection.model_provider);
+    if (!["hepai", "deepseek", "openai", "anthropic"].includes(connection.model_provider)) setRecentOverflowModelProviderTab(connection.model_provider);
     setModelDraft(connection.model);
     setProviderDraft(connection.model_provider);
     setBaseUrlDraft(connection.provider.base_url);
+    setAnthropicBaseUrlDraft(connection.provider.anthropic_base_url ?? "");
+    setGeminiBaseUrlDraft(connection.provider.google_base_url ?? "");
+    setAddedProviderProtocols(new Set());
     setApiKeyDraft("");
     setApiKeyEnvDraft(connection.provider.api_key_source?.startsWith("env:") ? connection.provider.api_key_source.slice(4) : "");
     setWireApiDraft(connection.provider.wire_api);
     setKeySourceDraft(connection.provider.requires_api_key ? (connection.provider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
-  }, [myDrSaiConfig?.modelConnection]);
+    const configuredModels = connection.provider.models?.length ? connection.provider.models : [connection.model];
+    setProviderModelsDraft(configuredModels);
+    setProviderModelAliasesDraft(connection.provider.model_aliases ?? {});
+    setProviderModelOperationsDraft(connection.provider.model_operations ?? {});
+    setProviderModelConfigsDraft(providerModelConfigsFor(configuredModels, connection.provider));
+  // Probe refreshes replace the connection object without changing its
+  // configuration revision. Keep unsaved Provider drafts in that case.
+  }, [modelConnectionRevision, configuredModelProvider]);
 
   useEffect(() => {
     void desktopApi.listMyDrSaiModelProviderPresets().then(setModelProviderPresets).catch(() => setModelProviderPresets([]));
   }, []);
 
+  useEffect(() => {
+    if (activePane !== "model-providers") return;
+    const connection = myDrSaiConfig?.modelConnection;
+    if (!connection) return;
+    const provider = (connection.providers ?? []).find((item) => item.name === activeModelProviderTab)
+      ?? (connection.provider.name === activeModelProviderTab ? connection.provider : undefined);
+    if (!provider) return;
+    const configuredModels = provider.models?.length
+      ? provider.models
+      : connection.model_provider === provider.name ? [connection.model] : [];
+    setProviderDraft(provider.name);
+    setBaseUrlDraft(provider.base_url);
+    setAnthropicBaseUrlDraft(provider.anthropic_base_url ?? "");
+    setGeminiBaseUrlDraft(provider.google_base_url ?? "");
+    setAddedProviderProtocols(new Set());
+    setWireApiDraft(provider.wire_api);
+    setKeySourceDraft(provider.requires_api_key ? (provider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
+    setApiKeyDraft("");
+    setApiKeyEnvDraft(provider.api_key_source?.startsWith("env:") ? provider.api_key_source.slice(4) : "");
+    setProviderModelsDraft(configuredModels);
+    setProviderModelAliasesDraft(provider.model_aliases ?? {});
+    setProviderModelOperationsDraft(provider.model_operations ?? {});
+    setProviderModelConfigsDraft(providerModelConfigsFor(configuredModels, provider));
+    setModelDraft((current) => configuredModels.includes(current) ? current : configuredModels[0] ?? "");
+    setNewProviderModelDraft(null);
+  }, [activePane, activeModelProviderTab, modelConnectionRevision]);
+
   function applyModelProviderPreset(presetId: string): void {
-    const preset = modelProviderPresets.find((item) => item.id === presetId);
+    const preset = effectiveModelProviderPresets.find((item) => item.id === presetId);
     if (!preset) return;
+    setModelDraft(preset.default_model || "");
+    setProviderModelsDraft(preset.default_model ? [preset.default_model] : []);
+    setProviderModelAliasesDraft({});
+    setProviderModelOperationsDraft({});
+    setProviderModelConfigsDraft(preset.default_model ? { [preset.default_model]: { input_modalities: ["text"], output_modalities: ["text"], api_protocol: preset.wire_api, enabled: true, capabilities: defaultTextModelCapabilities(preset.default_model) } } : {});
     setProviderDraft(preset.id.startsWith("custom-") ? "custom" : preset.id);
     setBaseUrlDraft(preset.base_url);
+    setAnthropicBaseUrlDraft(preset.anthropic_base_url ?? "");
+    setGeminiBaseUrlDraft(preset.google_base_url ?? "");
+    setAddedProviderProtocols(new Set());
     setWireApiDraft(preset.wire_api);
     setKeySourceDraft(preset.requires_api_key ? "secure" : "none");
     setApiKeyDraft("");
@@ -5620,27 +6774,369 @@ function SettingsPanel({
     setDiscoveredModels([]);
   }
 
+  function selectModelProviderTab(presetId: string): void {
+    setActiveModelProviderTab(presetId);
+    setNewProviderModelDraft(null);
+    if (!["hepai", "deepseek", "openai", "anthropic"].includes(presetId)) setRecentOverflowModelProviderTab(presetId);
+    setModelConfigMessage(null);
+    setModelTestOutput(null);
+    setModelConfigConflict(false);
+    setDiscoveredModels([]);
+    const connection = myDrSaiConfig?.modelConnection;
+    const preset = effectiveModelProviderPresets.find((item) => item.id === presetId);
+    if (connection?.model_provider === presetId) {
+      setModelDraft(connection.model);
+      setProviderDraft(connection.model_provider);
+      setBaseUrlDraft(connection.provider.base_url);
+      setAnthropicBaseUrlDraft(connection.provider.anthropic_base_url ?? "");
+      setGeminiBaseUrlDraft(connection.provider.google_base_url ?? "");
+      setAddedProviderProtocols(new Set());
+      setWireApiDraft(connection.provider.wire_api);
+      setKeySourceDraft(connection.provider.requires_api_key ? (connection.provider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
+      setApiKeyDraft("");
+      setApiKeyEnvDraft(connection.provider.api_key_source?.startsWith("env:") ? connection.provider.api_key_source.slice(4) : "");
+      const configuredModels = connection.provider.models?.length ? connection.provider.models : [connection.model];
+      setProviderModelsDraft(configuredModels);
+      setProviderModelAliasesDraft(connection.provider.model_aliases ?? {});
+      setProviderModelOperationsDraft(connection.provider.model_operations ?? {});
+      setProviderModelConfigsDraft(providerModelConfigsFor(configuredModels, connection.provider));
+      return;
+    }
+    const configuredProvider = connection?.providers?.find((provider) => provider.name === presetId);
+    if (configuredProvider) {
+      const configuredModels = configuredProvider.models?.length ? configuredProvider.models : preset?.default_model ? [preset.default_model] : [];
+      setModelDraft(configuredModels[0] ?? "");
+      setProviderDraft(configuredProvider.name);
+      setBaseUrlDraft(configuredProvider.base_url);
+      setAnthropicBaseUrlDraft(configuredProvider.anthropic_base_url ?? "");
+      setGeminiBaseUrlDraft(configuredProvider.google_base_url ?? "");
+      setAddedProviderProtocols(new Set());
+      setWireApiDraft(configuredProvider.wire_api);
+      setKeySourceDraft(configuredProvider.requires_api_key ? (configuredProvider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
+      setApiKeyDraft("");
+      setApiKeyEnvDraft(configuredProvider.api_key_source?.startsWith("env:") ? configuredProvider.api_key_source.slice(4) : "");
+      setProviderModelsDraft(configuredModels);
+      setProviderModelAliasesDraft(configuredProvider.model_aliases ?? {});
+      setProviderModelOperationsDraft(configuredProvider.model_operations ?? {});
+      setProviderModelConfigsDraft(providerModelConfigsFor(configuredModels, configuredProvider));
+      return;
+    }
+    applyModelProviderPreset(presetId);
+  }
+
+  function addCustomModelProvider(): void {
+    setActiveModelProviderTab("custom");
+    setRecentOverflowModelProviderTab("custom");
+    setProviderDraft("custom");
+    setModelDraft("");
+    setBaseUrlDraft("");
+    setAnthropicBaseUrlDraft("");
+    setGeminiBaseUrlDraft("");
+    setAddedProviderProtocols(new Set());
+    setWireApiDraft("openai");
+    setKeySourceDraft("secure");
+    setApiKeyDraft("");
+    setApiKeyEnvDraft("");
+    setDiscoveredModels([]);
+    setProviderModelsDraft([]);
+    setProviderModelAliasesDraft({});
+    setProviderModelOperationsDraft({});
+    setProviderModelConfigsDraft({});
+    setNewProviderModelDraft(null);
+    setModelConfigMessage(null);
+  }
+
+  function addProviderModel(): void {
+    setNewProviderModelDraft("");
+    setModelConfigMessage(null);
+  }
+
+  function commitProviderModel(): void {
+    const value = newProviderModelDraft?.trim() ?? "";
+    if (!value || value.length > 256 || /[\r\n\0]/.test(value)) {
+      setModelConfigMessage(zh ? "请输入有效的模型 ID。" : "Enter a valid model ID.");
+      return;
+    }
+    const existing = providerModelsDraft.find((model) => model.toLowerCase() === value.toLowerCase());
+    if (existing) {
+      setModelDraft(existing);
+      setNewProviderModelDraft(null);
+      setModelConfigMessage(zh ? `模型“${existing}”已在列表中。` : `Model “${existing}” is already in the list.`);
+      return;
+    }
+    setProviderModelsDraft((current) => [...current, value]);
+    setProviderModelConfigsDraft((current) => ({ ...current, [value]: { input_modalities: ["text"], output_modalities: ["text"], api_protocol: wireApiDraft, enabled: true, capabilities: defaultTextModelCapabilities(value) } }));
+    setModelDraft(value);
+    setNewProviderModelDraft(null);
+    setModelConfigMessage(null);
+  }
+
+  function removeProviderModel(model: string): void {
+    setProviderModelsDraft((current) => {
+      const next = current.filter((item) => item !== model);
+      if (modelDraft === model) setModelDraft(next[0] ?? "");
+      return next;
+    });
+    setProviderModelAliasesDraft((current) => {
+      const next = { ...current };
+      delete next[model];
+      return next;
+    });
+    setProviderModelOperationsDraft((current) => {
+      const next = { ...current };
+      delete next[model];
+      return next;
+    });
+    setProviderModelConfigsDraft((current) => {
+      const next = { ...current };
+      delete next[model];
+      return next;
+    });
+  }
+
+  function openProviderModelEditor(model: string): void {
+    const config = providerModelConfigsDraft[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft, model_aliases: providerModelAliasesDraft, model_operations: providerModelOperationsDraft });
+    setProviderModelEditor({
+      originalId: model,
+      modelId: model,
+      alias: config.alias ?? "",
+      inputModalities: [...config.input_modalities],
+      outputModalities: [...config.output_modalities],
+      apiProtocol: config.api_protocol,
+      enabled: config.enabled,
+      capabilities: [...config.capabilities],
+    });
+    setProviderModelEditorError(null);
+  }
+
+  function duplicateProviderModel(model: string): void {
+    const base = `${model}-copy`;
+    let copyId = base;
+    let suffix = 2;
+    while (providerModelsDraft.some((candidate) => candidate.toLowerCase() === copyId.toLowerCase())) copyId = `${base}-${suffix++}`;
+    const sourceIndex = providerModelsDraft.indexOf(model);
+    const nextModels = [...providerModelsDraft];
+    nextModels.splice(sourceIndex + 1, 0, copyId);
+    setProviderModelsDraft(nextModels);
+    const config = providerModelConfigsDraft[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft, model_aliases: providerModelAliasesDraft, model_operations: providerModelOperationsDraft });
+    const alias = config.alias ?? "";
+    if (alias) setProviderModelAliasesDraft((current) => ({ ...current, [copyId]: alias }));
+    const operations = [...(providerModelOperationsDraft[model] ?? [])];
+    if (operations.length) setProviderModelOperationsDraft((current) => ({ ...current, [copyId]: operations }));
+    const copiedConfig = { ...config, input_modalities: [...config.input_modalities], output_modalities: [...config.output_modalities], capabilities: [...config.capabilities] };
+    setProviderModelConfigsDraft((current) => ({ ...current, [copyId]: copiedConfig }));
+    setProviderModelEditor({ originalId: copyId, modelId: copyId, alias, inputModalities: [...copiedConfig.input_modalities], outputModalities: [...copiedConfig.output_modalities], apiProtocol: copiedConfig.api_protocol, enabled: copiedConfig.enabled, capabilities: [...copiedConfig.capabilities] });
+    setProviderModelEditorError(null);
+  }
+
+  function saveProviderModelEditor(): void {
+    if (!providerModelEditor) return;
+    const nextId = providerModelEditor.modelId.trim();
+    if (!nextId || nextId.length > 256 || /[\r\n\0]/.test(nextId)) {
+      setProviderModelEditorError(zh ? "请输入有效的模型 ID。" : "Enter a valid model ID.");
+      return;
+    }
+    if (providerModelEditor.inputModalities.length === 0 || providerModelEditor.outputModalities.length === 0) {
+      setProviderModelEditorError(zh ? "至少选择一种模态。" : "Select at least one modality.");
+      return;
+    }
+    const protocolHasHost = providerModelEditor.apiProtocol === wireApiDraft
+      || (providerModelEditor.apiProtocol === "anthropic" && Boolean(anthropicBaseUrlDraft.trim()))
+      || (providerModelEditor.apiProtocol === "gemini" && Boolean(geminiBaseUrlDraft.trim()));
+    if (!protocolHasHost) {
+      setProviderModelEditorError(zh ? "请先在“主机与协议”中添加该 API 协议的主机。" : "Add a host for this API protocol under Hosts and protocols first.");
+      return;
+    }
+    const duplicate = providerModelsDraft.find((model) => model !== providerModelEditor.originalId && model.toLowerCase() === nextId.toLowerCase());
+    if (duplicate) {
+      setProviderModelEditorError(zh ? `模型“${duplicate}”已在列表中。` : `Model “${duplicate}” is already in the list.`);
+      return;
+    }
+    setProviderModelsDraft((current) => current.map((model) => model === providerModelEditor.originalId ? nextId : model));
+    setProviderModelAliasesDraft((current) => {
+      const next = { ...current };
+      delete next[providerModelEditor.originalId];
+      const alias = providerModelEditor.alias.trim();
+      if (alias && alias !== nextId) next[nextId] = alias;
+      return next;
+    });
+    setProviderModelOperationsDraft((current) => {
+      const next = { ...current };
+      delete next[providerModelEditor.originalId];
+      const operations: RuntimeModelOperation[] = [];
+      if (providerModelEditor.capabilities.includes("image_generation")) operations.push("image_generation");
+      if (providerModelEditor.capabilities.includes("image_edit")) operations.push("image_edit");
+      if (operations.length) next[nextId] = operations;
+      return next;
+    });
+    setProviderModelConfigsDraft((current) => {
+      const next = { ...current };
+      delete next[providerModelEditor.originalId];
+      next[nextId] = {
+        ...(providerModelEditor.alias.trim() ? { alias: providerModelEditor.alias.trim() } : {}),
+        input_modalities: providerModelEditor.inputModalities,
+        output_modalities: providerModelEditor.outputModalities,
+        api_protocol: providerModelEditor.apiProtocol,
+        enabled: providerModelEditor.enabled,
+        capabilities: providerModelEditor.capabilities,
+      };
+      return next;
+    });
+    if (modelDraft === providerModelEditor.originalId) setModelDraft(nextId);
+    if (!providerModelEditor.enabled && modelDraft === providerModelEditor.originalId) {
+      const fallback = providerModelsDraft.find((model) => model !== providerModelEditor.originalId && (providerModelConfigsDraft[model]?.enabled ?? true));
+      setModelDraft(fallback ?? "");
+    }
+    setProviderModelEditor(null);
+    setProviderModelEditorError(null);
+  }
+
+  function toggleProviderModelEditorModality(direction: "input" | "output", modality: MyDrSaiModelModality, enabled: boolean): void {
+    setProviderModelEditor((current) => {
+      if (!current) return current;
+      const key = direction === "input" ? "inputModalities" : "outputModalities";
+      const nextModalities = enabled ? [...new Set([...current[key], modality])] : current[key].filter((item) => item !== modality);
+      const input = direction === "input" ? nextModalities : current.inputModalities;
+      const output = direction === "output" ? nextModalities : current.outputModalities;
+      const capabilities = current.capabilities.filter((capability) => {
+        if (capability === "image_generation") return output.includes("image");
+        if (capability === "image_edit") return input.includes("image") && output.includes("image");
+        if (capability === "speech_to_text") return input.includes("audio") && output.includes("text");
+        if (capability === "text_to_speech") return input.includes("text") && output.includes("audio");
+        if (capability === "video_generation") return output.includes("video");
+        return true;
+      });
+      return { ...current, [key]: nextModalities, capabilities };
+    });
+  }
+
+  function toggleProviderModelEditorCapability(capability: MyDrSaiModelCapability, enabled: boolean): void {
+    setProviderModelEditor((current) => {
+      if (!current) return current;
+      const capabilities = enabled ? [...new Set([...current.capabilities, capability, ...(["tool_calling", "reasoning"].includes(capability) ? ["chat" as const] : [])])] : current.capabilities.filter((item) => item !== capability);
+      const requiredInput: MyDrSaiModelModality[] = capability === "image_edit" ? ["image"] : capability === "speech_to_text" ? ["audio"] : capability === "text_to_speech" || ["chat", "tool_calling", "reasoning", "image_generation", "video_generation"].includes(capability) ? ["text"] : [];
+      const requiredOutput: MyDrSaiModelModality[] = ["image_generation", "image_edit"].includes(capability) ? ["image"] : capability === "speech_to_text" || ["chat", "tool_calling", "reasoning"].includes(capability) ? ["text"] : capability === "text_to_speech" ? ["audio"] : capability === "video_generation" ? ["video"] : [];
+      return { ...current, capabilities, inputModalities: enabled ? [...new Set([...current.inputModalities, ...requiredInput])] : current.inputModalities, outputModalities: enabled ? [...new Set([...current.outputModalities, ...requiredOutput])] : current.outputModalities };
+    });
+  }
+
+  function resetProviderModels(): void {
+    const preset = effectiveModelProviderPresets.find((item) => item.id === activeModelProviderTab);
+    const next = preset?.default_model ? [preset.default_model] : [];
+    setProviderModelsDraft(next);
+    setProviderModelAliasesDraft({});
+    setProviderModelOperationsDraft({});
+    setProviderModelConfigsDraft(next[0] ? { [next[0]]: { input_modalities: ["text"], output_modalities: ["text"], api_protocol: preset?.wire_api ?? "openai", enabled: true, capabilities: defaultTextModelCapabilities(next[0]) } } : {});
+    setModelDraft(next[0] ?? "");
+    setDiscoveredModels([]);
+    setNewProviderModelDraft(null);
+  }
+
   async function discoverModels(): Promise<void> {
     setModelConfigBusy(true); setModelConfigMessage(null);
     try {
-      const result = await desktopApi.discoverMyDrSaiProviderModels(providerDraft.trim(), true);
+      const usesHepAiAccount = providerDraft.trim() === "hepai";
+      const result = await desktopApi.discoverMyDrSaiProviderModels(providerDraft.trim(), true, {
+        base_url: baseUrlDraft.trim(),
+        ...(anthropicBaseUrlDraft.trim() ? { anthropic_base_url: anthropicBaseUrlDraft.trim() } : {}),
+        ...(geminiBaseUrlDraft.trim() ? { google_base_url: geminiBaseUrlDraft.trim() } : {}),
+        ...(!usesHepAiAccount && apiKeyDraft.trim() ? { api_key: apiKeyDraft.trim() } : {}),
+        wire_api: wireApiDraft,
+        requires_api_key: !usesHepAiAccount && keySourceDraft !== "none",
+      });
       setDiscoveredModels(result.models);
+      if (result.ok && result.models.length) {
+        setProviderModelsDraft(result.models);
+        setProviderModelAliasesDraft((current) => Object.fromEntries(Object.entries(current).filter(([model]) => result.models.includes(model))));
+        setProviderModelOperationsDraft((current) => Object.fromEntries(Object.entries(current).filter(([model]) => result.models.includes(model))));
+        setProviderModelConfigsDraft((current) => Object.fromEntries(result.models.map((model) => [model, current[model] ?? { input_modalities: ["text"], output_modalities: ["text"], api_protocol: wireApiDraft, enabled: true, capabilities: defaultTextModelCapabilities(model) }])));
+        setNewProviderModelDraft(null);
+        if (!result.models.includes(modelDraft.trim())) setModelDraft(result.models[0]);
+      }
       setModelConfigMessage(result.ok ? `${result.models.length} ${zh ? "个模型可用" : "models discovered"}` : `${zh ? "模型发现失败，可继续手工输入" : "Discovery failed; manual model entry remains available"}: ${result.error || "unknown"}`);
-    } catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { setModelConfigMessage(userFacingFailureMessage(error, language, "connection")); }
     finally { setModelConfigBusy(false); }
   }
 
-  async function saveModelConnection(): Promise<void> {
+  function modelAliasesForSave(): Record<string, string> {
+    return Object.fromEntries(providerModelsDraft.flatMap((model) => {
+      const alias = providerModelAliasesDraft[model]?.trim();
+      return alias && alias !== model ? [[model, alias]] : [];
+    }));
+  }
+
+  function modelConfigsForSave(): Record<string, MyDrSaiProviderModelConfig> {
+    return Object.fromEntries(providerModelsDraft.map((model) => {
+      const inferredModalities = providerModelModalities(model, providerDraft, models, providerModelOperationsDraft[model] ?? []);
+      const configured = providerModelConfigsDraft[model] ?? {
+        ...(providerModelAliasesDraft[model]?.trim() ? { alias: providerModelAliasesDraft[model].trim() } : {}),
+        input_modalities: inferredModalities.input,
+        output_modalities: inferredModalities.output,
+        api_protocol: wireApiDraft,
+        enabled: true,
+        capabilities: [...new Set([...defaultTextModelCapabilities(model), ...(providerModelOperationsDraft[model] ?? [])])],
+      };
+      return [model, {
+        ...configured,
+        api_protocol: (configured.api_protocol as string) === "google" ? "gemini" : configured.api_protocol,
+      }];
+    }));
+  }
+
+  async function runModelDoctor(online = false): Promise<void> {
+    setModelConfigBusy(true); setModelConfigMessage(null);
+    try {
+      const result = await desktopApi.diagnoseMyDrSaiModelConnection(online);
+      setModelDoctorResult(result);
+      setModelConfigMessage(result.ok
+        ? (zh ? "模型配置检查完成，未发现阻断问题。" : "Model Doctor completed without blocking issues.")
+        : (zh ? "模型配置需要处理，请查看检查结果。" : "Model configuration needs attention; review the checks below."));
+    } catch (error) { setModelConfigMessage(userFacingFailureMessage(error, language, "connection")); }
+    finally { setModelConfigBusy(false); }
+  }
+
+  async function restoreLastKnownGoodModelConnection(): Promise<void> {
     setModelConfigBusy(true); setModelConfigMessage(null); setModelConfigConflict(false);
     try {
-      const connection = await desktopApi.updateMyDrSaiModelConnection({ model: modelDraft.trim(), model_provider: providerDraft.trim(), ...(baseUrlDraft.trim() ? { base_url: baseUrlDraft.trim() } : {}), ...(keySourceDraft === "secure" && apiKeyDraft.trim() ? { api_key: apiKeyDraft.trim() } : {}), ...(keySourceDraft === "env" && apiKeyEnvDraft.trim() ? { api_key_env: apiKeyEnvDraft.trim() } : {}), wire_api: wireApiDraft, requires_api_key: keySourceDraft !== "none", ...(myDrSaiConfig?.modelConnection?.revision ? { expected_revision: myDrSaiConfig.modelConnection.revision } : {}) });
-      onModelConnectionUpdated(connection); setApiKeyDraft(""); setModelConfigMessage(zh ? "模型服务配置已保存。" : "Model service configuration saved.");
+      const connection = await desktopApi.restoreMyDrSaiModelConnection(myDrSaiConfig?.modelConnection?.revision);
+      onModelConnectionUpdated(connection);
+      setModelDoctorResult(null);
+      setModelConfigMessage(zh ? "已恢复最后一次可用的模型配置。" : "Restored the last-known-good model configuration.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setModelConfigConflict(message.includes("config_conflict") || message.includes("409"));
+      const message = userFacingFailureMessage(error, language, "connection");
+      setModelConfigConflict(normalizeRuntimeErrorEnvelope(error).code === "config_conflict");
       setModelConfigMessage(message);
-    }
-    finally { setModelConfigBusy(false); }
+    } finally { setModelConfigBusy(false); }
+  }
+
+  async function saveModelProvider(): Promise<void> {
+    setModelConfigBusy(true); setModelConfigMessage(null); setModelConfigConflict(false);
+    try {
+      const provider = providerDraft.trim();
+      const usesHepAiAccount = provider === "hepai";
+      const connection = await desktopApi.saveMyDrSaiModelProvider(provider, {
+        base_url: baseUrlDraft.trim(),
+        ...(anthropicBaseUrlDraft.trim() ? { anthropic_base_url: anthropicBaseUrlDraft.trim() } : {}),
+        ...(geminiBaseUrlDraft.trim() ? { google_base_url: geminiBaseUrlDraft.trim() } : {}),
+        ...(!usesHepAiAccount && apiKeyDraft.trim() ? { api_key: apiKeyDraft.trim() } : {}),
+        wire_api: wireApiDraft,
+        requires_api_key: !usesHepAiAccount && keySourceDraft !== "none",
+        models: modelConfigsForSave(),
+        ...(myDrSaiConfig?.modelConnection?.revision ? { expected_revision: myDrSaiConfig.modelConnection.revision } : {}),
+      });
+      providerTabAfterProviderSaveRef.current = provider;
+      onModelConnectionUpdated(connection);
+      setActiveModelProviderTab(provider);
+      if (!["hepai", "deepseek", "openai", "anthropic"].includes(provider)) setRecentOverflowModelProviderTab(provider);
+      setApiKeyDraft("");
+      setModelConfigMessage(apiKeyDraft.trim() || connection.providers?.some((item) => item.name === provider && item.has_api_key)
+        ? (zh ? "模型提供方和 API 密钥已安全保存。" : "Model provider and API key saved securely.")
+        : (zh ? "模型提供方已保存。" : "Model provider saved."));
+    } catch (error) {
+      const message = userFacingFailureMessage(error, language, "connection");
+      setModelConfigConflict(normalizeRuntimeErrorEnvelope(error).code === "config_conflict");
+      setModelConfigMessage(message);
+    } finally { setModelConfigBusy(false); }
   }
 
   async function reloadModelConnectionAfterConflict(): Promise<void> {
@@ -5652,43 +7148,57 @@ function SettingsPanel({
         setModelConfigConflict(false);
         setModelConfigMessage(zh ? "已重新加载最新模型服务配置，请检查后再次保存。" : "Latest model service configuration reloaded. Review it before saving again.");
       }
-    } catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { setModelConfigMessage(userFacingFailureMessage(error, language, "connection")); }
     finally { setModelConfigBusy(false); }
   }
 
   async function testModelConnection(mode: "basic" | "model"): Promise<void> {
-    setModelConfigBusy(true); setModelConfigMessage(null);
+    setModelConfigBusy(true); setModelConfigMessage(null); setModelTestOutput(null);
     try {
-      const result = await desktopApi.testMyDrSaiModelDraft({ model: modelDraft.trim(), model_provider: providerDraft.trim(), ...(baseUrlDraft.trim() ? { base_url: baseUrlDraft.trim() } : {}), ...(keySourceDraft === "secure" && apiKeyDraft.trim() ? { api_key: apiKeyDraft.trim() } : {}), ...(keySourceDraft === "env" && apiKeyEnvDraft.trim() ? { api_key_env: apiKeyEnvDraft.trim() } : {}), wire_api: wireApiDraft, requires_api_key: keySourceDraft !== "none" }, mode);
+      const usesHepAiAccount = providerDraft.trim() === "hepai";
+      const selectedProtocol = providerModelConfigsDraft[modelDraft.trim()]?.api_protocol ?? wireApiDraft;
+      const selectedBaseUrl = selectedProtocol === wireApiDraft ? baseUrlDraft.trim() : selectedProtocol === "anthropic" ? anthropicBaseUrlDraft.trim() : selectedProtocol === "gemini" ? geminiBaseUrlDraft.trim() : "";
+      const result = await desktopApi.testMyDrSaiModelDraft({ model: modelDraft.trim(), model_provider: providerDraft.trim(), ...(selectedBaseUrl ? { base_url: selectedBaseUrl } : {}), ...(!usesHepAiAccount && apiKeyDraft.trim() ? { api_key: apiKeyDraft.trim() } : {}), wire_api: selectedProtocol, requires_api_key: !usesHepAiAccount && keySourceDraft !== "none" }, mode);
       const refreshed = await desktopApi.getMyDrSaiConfig();
       if (refreshed.modelConnection) onModelConnectionUpdated(refreshed.modelConnection);
       const localizedGuidance = result.guidance?.localizations?.[zh ? "zh" : "en"];
+      if (mode === "model" && result.output) setModelTestOutput(result.output);
       setModelConfigMessage(result.ok
         ? mode === "model"
-          ? (zh ? "模型调用成功（草稿尚未保存，可能已产生少量费用）。" : "Model call succeeded (draft not saved; a small charge may have occurred).")
-          : (zh ? "基础连接成功（草稿尚未保存；尚未验证指定模型调用）。" : "Basic connection succeeded (draft not saved; the selected model has not been called).")
+          ? (zh ? "模型调用成功。" : "Model call succeeded.")
+          : (zh ? "连接成功。" : "Connection succeeded.")
         : `${localizedGuidance?.title || result.guidance?.title || (zh ? "连接测试失败" : "Connection test failed")}: ${localizedGuidance?.actions?.join(" / ") || result.guidance?.actions?.join(" / ") || result.error || "unknown"}`);
       if (mode === "model") setModelTestConfirmationOpen(false);
     }
-    catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
+    catch (error) { setModelConfigMessage(userFacingFailureMessage(error, language, "connection")); }
     finally { setModelConfigBusy(false); }
   }
 
-  function requestModelProviderDeletion(): void {
+  async function requestModelProviderDeletion(): Promise<void> {
     const provider = providerDraft.trim();
     if (!provider || provider === "hepai") return;
-    setProviderPendingDeletion(provider);
+    setModelConfigBusy(true); setModelConfigMessage(null);
+    try {
+      const preflight = await desktopApi.preflightMyDrSaiModelProviderDeletion(provider);
+      setProviderDeletePreflight(preflight);
+      setProviderPendingDeletion(provider);
+    } catch (error) {
+      setModelConfigMessage(userFacingFailureMessage(error, language, "connection"));
+    } finally { setModelConfigBusy(false); }
   }
 
   async function deleteModelProvider(deleteCredential: boolean): Promise<void> {
     const provider = providerPendingDeletion;
     if (!provider || provider === "hepai") return;
+    if (!providerDeletePreflight?.can_delete) return;
     setModelConfigBusy(true); setModelConfigMessage(null);
     try {
       const result = await desktopApi.deleteMyDrSaiModelProvider(provider, deleteCredential);
       const next = await desktopApi.getMyDrSaiConfig();
       if (next.modelConnection) onModelConnectionUpdated(next.modelConnection);
+      if (recentOverflowModelProviderTab === provider) setRecentOverflowModelProviderTab(null);
       setProviderPendingDeletion(null);
+      setProviderDeletePreflight(null);
       const active = result.active || next.modelConnection?.model_provider;
       const activeMessage = active === "hepai"
         ? (zh ? "当前连接已切换为 HepAI。" : "HepAI is now active.")
@@ -5697,16 +7207,7 @@ function SettingsPanel({
         ? (zh ? `Provider“${provider}”及其安全凭据已删除。${activeMessage}` : `Provider “${provider}” and its secure credential were deleted. ${activeMessage}`)
         : (zh ? `Provider“${provider}”已删除，安全凭据已保留。${activeMessage}` : `Provider “${provider}” was deleted and its secure credential was retained. ${activeMessage}`));
     }
-    catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
-    finally { setModelConfigBusy(false); }
-  }
-
-  async function restoreHepAiDefault(): Promise<void> {
-    setModelConfigBusy(true); setModelConfigMessage(null);
-    try {
-      const connection = await desktopApi.updateMyDrSaiModelConnection({ model: "deepseek-v4-pro", model_provider: "hepai", ...(myDrSaiConfig?.modelConnection?.revision ? { expected_revision: myDrSaiConfig.modelConnection.revision } : {}) });
-      onModelConnectionUpdated(connection); setModelDraft(connection.model); setProviderDraft("hepai"); setBaseUrlDraft(connection.provider.base_url); setModelConfigMessage(zh ? "已恢复 HepAI 默认模型；自定义 Provider 未被删除。" : "HepAI defaults restored; custom Providers were not deleted.");
-    } catch (error) { setModelConfigMessage(error instanceof Error ? error.message : String(error)); }
+    catch (error) { setModelConfigMessage(userFacingFailureMessage(error, language, "connection")); }
     finally { setModelConfigBusy(false); }
   }
 
@@ -5717,7 +7218,7 @@ function SettingsPanel({
       setCleanupPreview(await desktopApi.previewLocalDataCleanup(scope));
       setCleanupConfirmation("");
     } catch (error) {
-      setCleanupStatus(error instanceof Error ? error.message : String(error));
+      setCleanupStatus(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setCleanupBusy(false);
     }
@@ -5735,7 +7236,7 @@ function SettingsPanel({
         confirmation: scope === "sessions" ? "CLEAR_SESSIONS" : "DELETE_LOCAL_DATA",
       });
       if (scope === "sessions") {
-        for (const key of [THREAD_SNAPSHOT_STORAGE_KEY, LAST_THREAD_STORAGE_KEY, AWAY_STARTED_AT_STORAGE_KEY]) window.localStorage.removeItem(key);
+        for (const key of [LAST_THREAD_STORAGE_KEY, AWAY_STARTED_AT_STORAGE_KEY]) window.localStorage.removeItem(key);
       } else {
         window.localStorage.clear();
         window.sessionStorage.clear();
@@ -5745,7 +7246,7 @@ function SettingsPanel({
       if (scope === "all_local_data") window.setTimeout(() => void onLogout(), 600);
       else window.setTimeout(() => window.location.reload(), 900);
     } catch (error) {
-      setCleanupStatus(error instanceof Error ? error.message : String(error));
+      setCleanupStatus(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setCleanupBusy(false);
     }
@@ -5758,24 +7259,42 @@ function SettingsPanel({
       await onUpdateAgentConfig(updates);
       setAgentConfigMessage(zh ? "智能体配置已保存。" : "Agent configuration saved.");
     } catch (error) {
-      setAgentConfigMessage(error instanceof Error ? error.message : String(error));
+      setAgentConfigMessage(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setAgentConfigSaving(false);
     }
   }
 
   async function revokeMobileEnrollment(): Promise<void> {
-    const confirmed = window.confirm(zh
-      ? "这会断开所有 Android 设备，并禁止它们继续连接此电脑。确定继续吗？"
-      : "This disconnects every Android device and prevents further connections to this computer. Continue?");
+    const confirmed = await requestAppDecision({ id: "revoke-mobile-enrollment", tone: "danger", title: zh ? "关闭所有移动设备访问？" : "Disable all mobile access?", description: zh ? "这会断开所有 Android 设备，并禁止它们继续连接此电脑。" : "This disconnects every Android device and prevents further connections to this computer.", impact: zh ? "需要重新启用和配对后才能恢复。" : "Access requires enabling and pairing again.", confirmLabel: zh ? "关闭访问" : "Disable access" });
     if (!confirmed) return;
     setMobileEnrollmentBusy(true);
     setMobileEnrollmentError(null);
     try {
-      await desktopApi.revokeMobileRuntimeEnrollment(mobilePairingTarget);
+      await desktopApi.revokeMobileRuntimeEnrollment();
       setMobilePairingReadiness({ state: "not_registered", action: "register_runtime" });
       setMobileAssociations([]);
       setMobileAssociationsState("runtime-offline");
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  async function pauseMobileRemoteAccess(): Promise<void> {
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      await desktopApi.pauseMobileRemoteAccess();
+      setMobilePairingReadiness((current) => ({
+        state: "paused",
+        action: "resume",
+        runtime_id: current?.runtime_id,
+        gateway_runtime_id: current?.gateway_runtime_id,
+        environment: current?.environment,
+      }));
+      setMobileAssociationsState("ready");
     } catch (reason) {
       setMobileEnrollmentError(mobilePairingErrorText(reason, language));
     } finally {
@@ -5787,7 +7306,11 @@ function SettingsPanel({
     setMobileEnrollmentBusy(true);
     setMobileEnrollmentError(null);
     try {
-      const readiness = await desktopApi.enableMobileRemoteAccess();
+      const before = await desktopApi.getMobilePairingReadiness().catch(() => null);
+      if (before?.state === "paused") await desktopApi.resumeMobileRemoteAccess();
+      const readiness = before?.state === "paused"
+        ? await desktopApi.getMobilePairingReadiness()
+        : await desktopApi.enableMobileRemoteAccess();
       setMobilePairingReadiness(readiness);
       setMobileAssociationsState(readiness.state === "ready" ? "ready" : "runtime-offline");
       if (readiness.state === "ready") {
@@ -5806,14 +7329,14 @@ function SettingsPanel({
     setMobileEnrollmentError(null);
     let readiness: DesktopMobilePairingReadiness | null = null;
     try {
-      readiness = await desktopApi.getMobilePairingReadiness(mobilePairingTarget);
+      readiness = await desktopApi.getMobilePairingReadiness();
       setMobilePairingReadiness(readiness);
-      if (readiness.state !== "ready") {
+      if (readiness.state !== "ready" && readiness.state !== "paused") {
         setMobileAssociations([]);
         setMobileAssociationsState(readiness.state === "offline" ? "platform-offline" : "runtime-offline");
         return;
       }
-      const rows = await desktopApi.listMobileAssociations(mobilePairingTarget);
+      const rows = await desktopApi.listMobileAssociations();
       setMobileAssociations(rows.filter((item) => item.status === "active"));
       setMobileAssociationsState("ready");
     } catch (reason) {
@@ -5825,15 +7348,85 @@ function SettingsPanel({
   }
 
   async function revokeAndroidDevice(association: DesktopMobileAssociation): Promise<void> {
-    const confirmed = window.confirm(zh
-      ? `撤销 ${association.device_name} 对此电脑的远程访问？`
-      : `Revoke remote access for ${association.device_name}?`);
+    const confirmed = await requestAppDecision({ id: "revoke-mobile-device", tone: "danger", title: zh ? "撤销设备访问？" : "Revoke device access?", description: zh ? `设备：${association.device_name}` : `Device: ${association.device_name}`, impact: zh ? "该设备会立即断开，重新访问需要再次配对。" : "The device will disconnect immediately and must pair again to return.", confirmLabel: zh ? "撤销访问" : "Revoke access" });
     if (!confirmed) return;
     setMobileEnrollmentBusy(true);
     setMobileEnrollmentError(null);
     try {
-      await desktopApi.revokeMobileAssociation(association.association_id, mobilePairingTarget);
+      await desktopApi.revokeMobileAssociation(association.association_id);
       setMobileAssociations((items) => items.filter((item) => item.association_id !== association.association_id));
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  async function makeAndroidDeviceReadOnly(association: DesktopMobileAssociation): Promise<void> {
+    const confirmed = await requestAppDecision({ id: "mobile-device-read-only", title: zh ? "将设备改为只读？" : "Change device to read-only?", description: zh ? `设备：${association.device_name}` : `Device: ${association.device_name}`, impact: zh ? "正在打开的实时流会断开，并按只读权限重新验证。" : "Open live streams will close and re-authorize with read-only access.", confirmLabel: zh ? "改为只读" : "Make read-only" });
+    if (!confirmed) return;
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      const updated = await desktopApi.shrinkMobileAssociation(
+        association.association_id,
+        ["read"],
+      );
+      setMobileAssociations((items) => items.map((item) =>
+        item.association_id === updated.association_id ? updated : item));
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  async function revokeAllAndroidDevices(): Promise<void> {
+    const confirmed = await requestAppDecision({ id: "revoke-all-mobile-devices", tone: "danger", title: zh ? "撤销所有设备访问？" : "Revoke every device?", description: zh ? "所有已配对 Android 设备会立即失去访问权限。" : "Every paired Android device will immediately lose access.", impact: zh ? "此电脑仍可配对；每台设备需要重新配对。" : "This computer remains pairable; each device must pair again.", confirmLabel: zh ? "全部撤销" : "Revoke all" });
+    if (!confirmed) return;
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      for (const association of activeAndroidAssociations) {
+        await desktopApi.revokeMobileAssociation(association.association_id);
+      }
+      setMobileAssociations([]);
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+      await refreshAndroidDevices();
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  async function renameAndroidRuntime(): Promise<void> {
+    const proposed = window.prompt(zh ? "输入此电脑的新显示名称" : "Enter a new display name for this computer");
+    if (proposed === null) return;
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      const result = await desktopApi.renameMobileRuntime(proposed);
+      setMobileEnrollmentError(zh ? `此电脑已重命名为 ${result.display_name}` : `This computer is now named ${result.display_name}`);
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  async function diagnoseAndroidRuntime(): Promise<void> {
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      const result = await desktopApi.diagnoseMobileRemoteAccess();
+      const labels = zh ? {
+        none: "连接正常", start_runtime: "请启动 OpenDrSai Runtime", sign_in: "请重新登录",
+        retry_relay: "请稍后重试平台连接", reconnect_runtime: "请重新连接 Runtime", update_runtime: "请更新 OpenDrSai Runtime",
+      } : {
+        none: "Connection is healthy", start_runtime: "Start OpenDrSai Runtime", sign_in: "Sign in again",
+        retry_relay: "Retry the platform connection", reconnect_runtime: "Reconnect Runtime", update_runtime: "Update OpenDrSai Runtime",
+      };
+      setMobileEnrollmentError(labels[result.action]);
     } catch (reason) {
       setMobileEnrollmentError(mobilePairingErrorText(reason, language));
     } finally {
@@ -5933,7 +7526,8 @@ function SettingsPanel({
     {
       label: zh ? "智能体" : "Agent",
       items: [
-        { id: "agent-defaults", label: zh ? "默认配置" : "Defaults", icon: Settings },
+        { id: "agent-defaults", label: zh ? "智能体配置" : "Agent configuration", icon: Settings },
+        { id: "model-providers", label: zh ? "模型提供方" : "Model providers", icon: PackageOpen },
         { id: "agent-task", label: zh ? "智能体任务" : "Agent tasks", icon: Bot },
         { id: "approvals", label: zh ? "审批中心" : "Approval Center", icon: ShieldCheck },
         { id: "analytics", label: zh ? "使用分析" : "Usage analytics", icon: History },
@@ -5948,15 +7542,18 @@ function SettingsPanel({
       ],
     },
     {
-      label: zh ? "其他" : "Other",
-      items: [{ id: "other", label: zh ? "系统与路径" : "System and paths", icon: FileText }],
+      label: zh ? "更多" : "Misc",
+      items: [
+        { id: "archived-sessions", label: zh ? "已归档会话" : "Archived sessions", icon: Archive },
+        { id: "other", label: zh ? "系统与路径" : "System and paths", icon: FileText },
+      ],
     },
   ];
   const visibleGroups = groups.map((group) => ({
     ...group,
     items: group.items.filter((item) => {
       if (item.id === "voice") return featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true;
-      if (item.id === "agent-defaults" || item.id === "agent-task") return featureCapabilities?.agents === true;
+      if (item.id === "agent-defaults" || item.id === "model-providers" || item.id === "agent-task") return featureCapabilities?.agents === true;
       if (item.id === "approvals") return featureCapabilities?.approvals === true;
       if (item.id === "analytics") return featureCapabilities?.diagnostics === true;
       if (item.id === "remote-workspace") return featureCapabilities?.remoteWorkspace === true;
@@ -5969,6 +7566,71 @@ function SettingsPanel({
     if (visiblePaneIds.includes(activePane)) return;
     setActivePane("general");
   }, [activePane, visiblePaneIds.join("|")]);
+  const presetModelProviderTabs = effectiveModelProviderPresets
+    .filter((preset) => !preset.id.startsWith("custom-"))
+    .sort((left, right) => {
+      const leftIndex = MODEL_PROVIDER_TAB_ORDER.indexOf(left.id);
+      const rightIndex = MODEL_PROVIDER_TAB_ORDER.indexOf(right.id);
+      return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
+    });
+  const presetModelProviderIds = new Set(presetModelProviderTabs.map((preset) => preset.id));
+  const customModelProviderTabs = (myDrSaiConfig?.modelConnection?.providers ?? [])
+    .filter((provider) => !presetModelProviderIds.has(provider.name))
+    .map((provider) => ({ id: provider.name, label: provider.name }));
+  const modelProviderTabs: Array<{ id: string; label: string }> = [...presetModelProviderTabs, ...customModelProviderTabs];
+  const primaryModelProviderIds = new Set(["hepai", "deepseek", "openai", "anthropic"]);
+  const compactModelProviderTabs = modelProviderTabs.map((provider) => ({
+    ...provider,
+    label: modelProviderDisplayLabel(provider, zh),
+  }));
+  const recentOverflowModelProviderTabEntry = compactModelProviderTabs.find((provider) => provider.id === recentOverflowModelProviderTab)
+    ?? (recentOverflowModelProviderTab ? { id: recentOverflowModelProviderTab, label: recentOverflowModelProviderTab === "custom" ? (zh ? "自定义" : "Custom") : recentOverflowModelProviderTab } : null);
+  const activeModelProviderTabEntry = compactModelProviderTabs.find((provider) => provider.id === activeModelProviderTab)
+    ?? { id: activeModelProviderTab, label: activeModelProviderTab === "custom" ? (zh ? "自定义" : "Custom") : activeModelProviderTab };
+  const visibleModelProviderTabs = compactModelProviderTabs.filter((provider) => primaryModelProviderIds.has(provider.id));
+  const recentVisibleEntry = recentOverflowModelProviderTabEntry ?? (!primaryModelProviderIds.has(activeModelProviderTab) ? activeModelProviderTabEntry : null);
+  if (recentVisibleEntry && !visibleModelProviderTabs.some((provider) => provider.id === recentVisibleEntry.id)) visibleModelProviderTabs.push(recentVisibleEntry);
+  const visibleModelProviderIds = new Set(visibleModelProviderTabs.map((provider) => provider.id));
+  const overflowModelProviderTabs = compactModelProviderTabs.filter((provider) => !primaryModelProviderIds.has(provider.id) && !visibleModelProviderIds.has(provider.id));
+  const activeModelProviderPreset = effectiveModelProviderPresets.find((preset) => preset.id === activeModelProviderTab);
+  const providersWithConfiguredKeys = new Set((myDrSaiConfig?.modelConnection?.providers ?? []).filter((provider) => provider.has_api_key).map((provider) => provider.name));
+  if (myDrSaiConfig?.modelConnection?.provider.has_api_key) providersWithConfiguredKeys.add(myDrSaiConfig.modelConnection.provider.name);
+  const selectedProviderConfig = (myDrSaiConfig?.modelConnection?.providers ?? []).find((provider) => provider.name === providerDraft)
+    ?? (myDrSaiConfig?.modelConnection?.provider.name === providerDraft ? myDrSaiConfig.modelConnection.provider : undefined);
+  const selectedProviderConfigured = Boolean(selectedProviderConfig);
+  const selectedProviderHasSavedKey = Boolean(selectedProviderConfig?.has_api_key);
+  const savedProviderModels = selectedProviderConfig?.models?.length
+    ? selectedProviderConfig.models
+    : selectedProviderConfig && myDrSaiConfig?.modelConnection?.model_provider === selectedProviderConfig.name
+      ? [myDrSaiConfig.modelConnection.model]
+      : [];
+  const providerModelsChanged = savedProviderModels.length !== providerModelsDraft.length
+    || savedProviderModels.some((model, index) => model !== providerModelsDraft[index]);
+  const normalizedProviderModelAliases = modelAliasesForSave();
+  const savedProviderModelAliases = selectedProviderConfig?.model_aliases ?? {};
+  const providerAliasesChanged = Object.keys(savedProviderModelAliases).length !== Object.keys(normalizedProviderModelAliases).length
+    || Object.entries(savedProviderModelAliases).some(([model, alias]) => normalizedProviderModelAliases[model] !== alias);
+  const savedProviderModelOperations = selectedProviderConfig?.model_operations ?? {};
+  const providerOperationsChanged = JSON.stringify(savedProviderModelOperations) !== JSON.stringify(providerModelOperationsDraft);
+  const savedProviderModelConfigs = selectedProviderConfig?.model_configs ?? providerModelConfigsFor(savedProviderModels, selectedProviderConfig);
+  const providerModelConfigsChanged = JSON.stringify(savedProviderModelConfigs) !== JSON.stringify(modelConfigsForSave());
+  const modelProviderDirty = !selectedProviderConfig
+    || providerDraft.trim() !== selectedProviderConfig.name
+    || baseUrlDraft.trim() !== selectedProviderConfig.base_url
+    || anthropicBaseUrlDraft.trim() !== (selectedProviderConfig.anthropic_base_url ?? "")
+    || geminiBaseUrlDraft.trim() !== (selectedProviderConfig.google_base_url ?? "")
+    || wireApiDraft !== selectedProviderConfig.wire_api
+    || Boolean(apiKeyDraft.trim())
+    || providerModelsChanged
+    || providerAliasesChanged
+    || providerOperationsChanged
+    || providerModelConfigsChanged;
+  const hepAiAccountName = user?.name?.trim() || user?.email?.trim() || (zh ? "当前账号" : "current account");
+  const usesOidcProviderAuth = activeModelProviderPreset?.auth_mode === "oidc" || providerDraft === "hepai";
+  const providerDiscoveryCredentialReady = usesOidcProviderAuth
+    || keySourceDraft === "none"
+    || Boolean(apiKeyDraft.trim())
+    || selectedProviderHasSavedKey;
   const activeAndroidAssociations = mobileAssociations.filter((item) => item.status === "active");
   const androidOnlineDeviceCount = new Set(
     activeAndroidAssociations
@@ -5990,6 +7652,8 @@ function SettingsPanel({
   };
   const androidPanelMessage = mobileAssociationsState === "loading"
     ? null
+    : mobilePairingReadiness?.state === "paused"
+      ? (zh ? "已暂停远程访问；现有授权会保留，恢复后无需重新扫码。" : "Remote access is paused. Existing authorizations are preserved and resume without pairing again.")
     : mobileAssociationsState === "runtime-offline"
       ? (!androidRemoteEnabled
           ? (zh ? "Android 远程连接已关闭。" : "Android remote connection is disabled.")
@@ -6001,8 +7665,14 @@ function SettingsPanel({
           : mobileAssociationsState === "failed"
             ? (mobileEnrollmentError ?? (zh ? "请求 Android 设备列表失败。" : "Could not load Android devices."))
             : activeAndroidAssociations.length === 0
-              ? (zh ? "暂无已授权 Android 设备。" : "No authorized Android devices yet.")
-              : null;
+               ? (zh ? "暂无已授权 Android 设备。" : "No authorized Android devices yet.")
+               : null;
+  const activeModelProviderStatusSummary = myDrSaiConfig?.modelConnection
+    ? [
+        modelProviderRuntimeSummary(myDrSaiConfig.modelConnection, zh),
+        modelProviderTestSummary(myDrSaiConfig.modelConnection, zh),
+      ].filter((item): item is string => Boolean(item)).join(" · ")
+    : "";
 
   return (
     <div className="settings-view">
@@ -6032,46 +7702,154 @@ function SettingsPanel({
       </aside>
 
       <div className="settings-content">
-        {activePane === "general" && (
+        {(activePane === "general" || activePane === "model-providers") && (
           <>
             <header className="settings-content-header">
-              <h2>{zh ? "常规" : "General"}</h2>
-              <p>{zh ? "管理账户和桌面端的基础偏好。" : "Manage your account and desktop preferences."}</p>
+              <h2>{activePane === "model-providers" ? (zh ? "模型提供方" : "Model providers") : (zh ? "常规" : "General")}</h2>
+              <p>{activePane === "model-providers"
+                ? (zh ? "管理智能体可使用的模型来源、连接凭据和服务协议。" : "Manage the model sources, credentials, and service protocols available to Agents.")
+                : (zh ? "管理账户和桌面端的基础偏好。" : "Manage your account and desktop preferences.")}</p>
             </header>
+            {activePane === "model-providers" && (
+              <>
+            <div className="model-provider-tabs" aria-label={zh ? "模型提供方" : "Model providers"}>
+              <div className="model-provider-tablist" role="tablist">
+                {visibleModelProviderTabs.map((provider) => (
+                  <button key={provider.id} type="button" role="tab" aria-selected={activeModelProviderTab === provider.id} className={activeModelProviderTab === provider.id ? "active" : ""} onClick={() => selectModelProviderTab(provider.id)}><ModelProviderLogo provider={provider.id} /><span>{provider.label}</span>{providersWithConfiguredKeys.has(provider.id) && <i className="model-provider-configured-dot" title={zh ? "API 密钥已配置" : "API key configured"} aria-label={zh ? "API 密钥已配置" : "API key configured"} />}</button>
+                ))}
+              </div>
+              {overflowModelProviderTabs.length > 0 && <details className="model-provider-overflow">
+                <summary>{zh ? "更多" : "More"}<span aria-hidden="true">⌄</span></summary>
+                <div className="model-provider-overflow-menu" role="menu">
+                  {overflowModelProviderTabs.map((provider) => (
+                    <button key={provider.id} type="button" role="menuitemradio" aria-checked={activeModelProviderTab === provider.id} className={activeModelProviderTab === provider.id ? "selected" : ""} onClick={(event) => { selectModelProviderTab(provider.id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><ModelProviderLogo provider={provider.id} /><span>{provider.label}</span>{providersWithConfiguredKeys.has(provider.id) && <i className="model-provider-configured-dot" title={zh ? "API 密钥已配置" : "API key configured"} aria-label={zh ? "API 密钥已配置" : "API key configured"} />}{activeModelProviderTab === provider.id && <b aria-hidden="true">✓</b>}</button>
+                  ))}
+                </div>
+              </details>}
+              <button type="button" className="model-provider-add-tab" aria-label={zh ? "添加模型提供方" : "Add model provider"} title={zh ? "添加模型提供方" : "Add model provider"} onClick={addCustomModelProvider}>＋</button>
+            </div>
             <section className="settings-section model-provider-settings" data-testid="model-provider-settings">
-              <div><h2>{zh ? "模型服务" : "Model service"}</h2><p>{zh ? "保存到 ~/.drsai/config.toml。API Key 不会返回到界面。" : "Saved to ~/.drsai/config.toml. API keys are never returned to the UI."}</p></div>
-              {myDrSaiConfig?.modelConnection && <div className="model-provider-status-card" data-testid="model-provider-status-card">
+              <div><h2>{activeModelProviderPreset ? modelProviderDisplayLabel(activeModelProviderPreset, zh) : (zh ? "自定义提供方" : "Custom provider")}<span className={`model-provider-configuration-indicator ${selectedProviderConfigured ? "configured" : "unconfigured"}`} data-testid="model-provider-configuration-indicator">{selectedProviderConfigured ? (zh ? "已配置" : "Configured") : (zh ? "未配置" : "Not configured")}</span>{selectedProviderConfigured && modelProviderDirty && <span className="model-provider-dirty-indicator" data-testid="model-provider-dirty-indicator">{zh ? "有未保存更改" : "Unsaved changes"}</span>}</h2><p>{usesOidcProviderAuth ? (zh ? "HepAI 使用当前已登录账号的 access token 获取模型并调用服务，不使用 API Key。" : "HepAI uses the current signed-in account access token for model discovery and calls; no API key is used.") : (zh ? "预设信息可编辑；保存后写入 ~/.drsai/config.toml。API Key 不会返回到界面。" : "Preset values are editable and saved to ~/.drsai/config.toml. API keys are never returned to the UI.")}</p></div>
+              {myDrSaiConfig?.modelConnection?.model_provider === activeModelProviderTab && <div className="model-provider-status-card" data-testid="model-provider-status-card">
                 <strong>{myDrSaiConfig.modelConnection.model} · {myDrSaiConfig.modelConnection.model_provider}</strong>
-                <span>{myDrSaiConfig.modelConnection.provider.base_url}</span>
-                <span>{zh ? "凭据" : "Credential"}: {myDrSaiConfig.modelConnection.provider.requires_api_key ? (myDrSaiConfig.modelConnection.provider.api_key_source || (zh ? "未配置" : "not configured")) : (zh ? "无需密钥" : "not required")}</span>
-                <span>{zh ? "运行状态" : "Runtime"}: {myDrSaiConfig.modelConnection.runtime?.runtime_status || "unknown"}</span>
-                <span>{zh ? "配置版本" : "Config revision"}: {myDrSaiConfig.modelConnection.revision?.slice(0, 12) || "unknown"}</span>
-                <span>{zh ? "最近测试" : "Last test"}: {myDrSaiConfig.modelConnection.last_test ? `${myDrSaiConfig.modelConnection.last_test.mode === "model" ? (zh ? "模型调用" : "model call") : (zh ? "基础连接" : "basic connection")} · ${myDrSaiConfig.modelConnection.last_test.ok ? "OK" : myDrSaiConfig.modelConnection.last_test.error || "failed"} · ${new Date(myDrSaiConfig.modelConnection.last_test.tested_at).toLocaleString()}` : (zh ? "尚未测试" : "not tested")}</span>
+                <span>{zh ? "API 主机：" : "API host: "}{myDrSaiConfig.modelConnection.provider.base_url}</span>
+                {activeModelProviderStatusSummary && <span className="model-provider-status-summary">{activeModelProviderStatusSummary}</span>}
               </div>}
               <div className="model-provider-grid">
-                <label><span>{zh ? "服务预设" : "Service preset"}</span><select data-testid="model-provider-preset" defaultValue="" onChange={(event) => applyModelProviderPreset(event.target.value)}><option value="">{zh ? "自定义/当前配置" : "Custom/current"}</option>{modelProviderPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
-                <label><span>{zh ? "模型" : "Model"}</span><input data-testid="model-provider-model" list="discovered-model-options" value={modelDraft} onChange={(event) => setModelDraft(event.target.value)} placeholder="deepseek-chat" /><datalist id="discovered-model-options">{discoveredModels.map((model) => <option key={model} value={model} />)}</datalist></label>
-                <label><span>{zh ? "服务名称" : "Service name"}</span><input data-testid="model-provider-name" value={providerDraft} onChange={(event) => setProviderDraft(event.target.value)} placeholder="custom" /></label>
-                {(modelAdvancedOpen || providerDraft === "ollama" || !["hepai", "openai", "anthropic", "deepseek"].includes(providerDraft)) && <label className="model-provider-wide"><span>Base URL</span><input value={baseUrlDraft} onChange={(event) => setBaseUrlDraft(event.target.value)} placeholder="https://api.example.com/v1" /></label>}
-                <label><span>{zh ? "密钥来源" : "Key source"}</span><select data-testid="model-provider-key-source" value={keySourceDraft} onChange={(event) => { const source = event.target.value as "secure" | "env" | "none"; setKeySourceDraft(source); setApiKeyDraft(""); if (source !== "env") setApiKeyEnvDraft(""); }}><option value="secure">{zh ? "系统安全保存（推荐）" : "Secure storage (recommended)"}</option><option value="env">{zh ? "环境变量" : "Environment variable"}</option><option value="none">{zh ? "无需 Key" : "No key required"}</option></select></label>
-                {keySourceDraft === "secure" && <label><span>API Key</span><input data-testid="model-provider-api-key" type="password" value={apiKeyDraft} onChange={(event) => setApiKeyDraft(event.target.value)} placeholder={myDrSaiConfig?.modelConnection?.provider.has_api_key ? "•••••••• (configured)" : "sk-..."} /></label>}
-                {keySourceDraft === "env" && <label><span>{zh ? "密钥环境变量" : "Key environment variable"}</span><input data-testid="model-provider-api-key-env" value={apiKeyEnvDraft} onChange={(event) => setApiKeyEnvDraft(event.target.value)} placeholder="OPENAI_API_KEY" /></label>}
-                {modelAdvancedOpen && <label><span>{zh ? "协议" : "Protocol"}</span><select value={wireApiDraft} onChange={(event) => setWireApiDraft(event.target.value as "openai" | "anthropic")}><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic compatible</option></select></label>}
+                <label><span>{zh ? "提供方名称" : "Provider name"}</span><input data-testid="model-provider-name" value={providerDraft} readOnly={usesOidcProviderAuth} onChange={(event) => setProviderDraft(event.target.value)} placeholder="custom" /></label>
+                {usesOidcProviderAuth ? <>
+                  <div className="model-provider-account-auth model-provider-wide" data-testid="model-provider-account-auth"><span>{zh ? "身份验证" : "Authentication"}</span><strong>{zh ? `已登录账号（${hepAiAccountName}）` : `Signed-in account (${hepAiAccountName})`}</strong><small>{zh ? "获取模型、检查连接和模型调用均使用当前登录会话的 access token。" : "Model discovery, connection checks, and model calls all use the current session access token."}</small></div>
+                </> : <>
+                  <label><span className="model-provider-field-label"><span>{zh ? "API 密钥" : "API key"}</span>{selectedProviderHasSavedKey && <em data-testid="model-provider-key-configured"><ShieldCheck size={13} />{zh ? "已安全保存" : "Saved securely"}</em>}</span><input data-testid="model-provider-api-key" type="password" disabled={keySourceDraft === "none"} value={apiKeyDraft} onChange={(event) => { setKeySourceDraft("secure"); setApiKeyDraft(event.target.value); }} placeholder={keySourceDraft === "none" ? (zh ? "无需 API Key" : "No API key required") : selectedProviderHasSavedKey ? (zh ? "已配置；留空表示不修改" : "Configured; leave blank to keep") : "sk-..."} /></label>
+                </>}
               </div>
-              {myDrSaiConfig?.modelConnection?.metadata?.known_model === false && <p className="model-provider-hint" data-testid="model-provider-unknown-model-warning">{zh ? "该模型未登记，能力参数尚未校准；将使用安全的通用默认值。" : "This model is not registered; capabilities are uncalibrated and safe generic defaults will be used."}</p>}
-              <button type="button" className="model-provider-advanced-toggle" onClick={() => setModelAdvancedOpen(value => !value)}>{modelAdvancedOpen ? (zh ? "收起高级设置" : "Hide advanced settings") : (zh ? "高级设置" : "Advanced settings")}</button>
-              <div className="model-provider-actions"><button type="button" disabled={modelConfigBusy || !modelDraft.trim() || !providerDraft.trim()} onClick={() => void saveModelConnection()}>{modelConfigBusy ? (zh ? "处理中…" : "Working…") : (zh ? "保存并使用" : "Save and use")}</button><button type="button" disabled={modelConfigBusy || !providerDraft.trim()} data-testid="model-provider-test-basic" onClick={() => void testModelConnection("basic")}>{zh ? "基础连接测试" : "Test basic connection"}</button><button type="button" disabled={modelConfigBusy || !modelDraft.trim() || !providerDraft.trim()} data-testid="model-provider-test-model" onClick={() => setModelTestConfirmationOpen(true)}>{zh ? "测试模型调用" : "Test model call"}</button><button type="button" disabled={modelConfigBusy || !providerDraft.trim()} onClick={() => void discoverModels()}>{zh ? "发现模型" : "Discover models"}</button><button type="button" disabled={modelConfigBusy || providerDraft === "hepai"} onClick={requestModelProviderDeletion}>{zh ? "删除 Provider" : "Delete Provider"}</button><button type="button" disabled={modelConfigBusy || providerDraft === "hepai"} onClick={() => void restoreHepAiDefault()}>{zh ? "恢复 HepAI 默认" : "Restore HepAI defaults"}</button>{myDrSaiConfig?.modelConnection?.path && <button type="button" onClick={() => onOpenPath(myDrSaiConfig.modelConnection!.path!)}>{zh ? "打开配置文件" : "Open config"}</button>}</div>
+              <section className="model-provider-endpoints" data-testid="model-provider-endpoints">
+                <div className="model-provider-endpoints-header"><h3>{zh ? "主机与协议" : "Hosts and protocols"}</h3><button type="button" aria-label={zh ? "添加协议主机" : "Add protocol host"} title={zh ? "添加协议主机" : "Add protocol host"} disabled={(wireApiDraft === "anthropic" || Boolean(anthropicBaseUrlDraft) || addedProviderProtocols.has("anthropic")) && (wireApiDraft === "gemini" || Boolean(geminiBaseUrlDraft) || addedProviderProtocols.has("gemini"))} onClick={() => setAddedProviderProtocols((current) => { const next = new Set(current); if (wireApiDraft !== "anthropic" && !anthropicBaseUrlDraft && !next.has("anthropic")) next.add("anthropic"); else if (wireApiDraft !== "gemini" && !geminiBaseUrlDraft && !next.has("gemini")) next.add("gemini"); return next; })}>＋</button></div>
+                <div className="model-provider-endpoint-row model-provider-endpoint-default">
+                  <label><span>{zh ? "API 协议" : "API protocol"}</span><select value={wireApiDraft} disabled={usesOidcProviderAuth} onChange={(event) => setWireApiDraft(event.target.value as MyDrSaiModelApiProtocol)}><option value="openai">OpenAI API</option><option value="anthropic">Anthropic API</option><option value="gemini">Google API</option></select></label>
+                  <label><span>{zh ? "API 主机" : "API host"}</span><input data-testid="model-provider-api-host" value={baseUrlDraft} readOnly={usesOidcProviderAuth} onChange={(event) => setBaseUrlDraft(event.target.value)} placeholder="https://api.example.com/v1" /></label>
+                  <span className="model-provider-endpoint-action-spacer" aria-hidden="true" />
+                </div>
+                {(Boolean(anthropicBaseUrlDraft) || addedProviderProtocols.has("anthropic")) && wireApiDraft !== "anthropic" && <div className="model-provider-endpoint-row">
+                  <label><span>{zh ? "API 协议" : "API protocol"}</span><select value="anthropic" onChange={(event) => { if (event.target.value !== "gemini") return; const url = anthropicBaseUrlDraft; setAnthropicBaseUrlDraft(""); setGeminiBaseUrlDraft(url); setAddedProviderProtocols((current) => { const next = new Set(current); next.delete("anthropic"); next.add("gemini"); return next; }); }}><option value="anthropic">Anthropic API</option><option value="gemini" disabled={wireApiDraft === "gemini" || Boolean(geminiBaseUrlDraft) || addedProviderProtocols.has("gemini")}>Google API</option></select></label>
+                  <label><span>{zh ? "API 主机" : "API host"}</span><input data-testid="model-provider-anthropic-api-host" value={anthropicBaseUrlDraft} onChange={(event) => setAnthropicBaseUrlDraft(event.target.value)} placeholder="https://api.example.com/anthropic" /></label>
+                  <button type="button" className="model-provider-endpoint-remove" aria-label={zh ? "移除 Anthropic API 主机" : "Remove Anthropic API host"} onClick={() => { setAnthropicBaseUrlDraft(""); setAddedProviderProtocols((current) => { const next = new Set(current); next.delete("anthropic"); return next; }); }}>−</button>
+                </div>}
+                {(Boolean(geminiBaseUrlDraft) || addedProviderProtocols.has("gemini")) && wireApiDraft !== "gemini" && <div className="model-provider-endpoint-row">
+                  <label><span>{zh ? "API 协议" : "API protocol"}</span><select value="gemini" onChange={(event) => { if (event.target.value !== "anthropic") return; const url = geminiBaseUrlDraft; setGeminiBaseUrlDraft(""); setAnthropicBaseUrlDraft(url); setAddedProviderProtocols((current) => { const next = new Set(current); next.delete("gemini"); next.add("anthropic"); return next; }); }}><option value="anthropic" disabled={wireApiDraft === "anthropic" || Boolean(anthropicBaseUrlDraft) || addedProviderProtocols.has("anthropic")}>Anthropic API</option><option value="gemini">Google API</option></select></label>
+                  <label><span>{zh ? "API 主机" : "API host"}</span><input data-testid="model-provider-gemini-api-host" value={geminiBaseUrlDraft} onChange={(event) => setGeminiBaseUrlDraft(event.target.value)} placeholder="https://api.example.com/google" /></label>
+                  <button type="button" className="model-provider-endpoint-remove" aria-label={zh ? "移除 Google API 主机" : "Remove Google API host"} onClick={() => { setGeminiBaseUrlDraft(""); setAddedProviderProtocols((current) => { const next = new Set(current); next.delete("gemini"); return next; }); }}>−</button>
+                </div>}
+              </section>
+              <div className="model-provider-models" data-testid="model-provider-models">
+                <div className="model-provider-models-header">
+                  <div><h3>{zh ? "模型" : "Models"}</h3><small>{zh ? "可为模型设置显示别名；留空时使用原模型名称。" : "Set an optional display alias; an empty alias uses the original model name."}</small></div>
+                  <div><button type="button" onClick={addProviderModel}>＋ {zh ? "新建" : "New"}</button><button type="button" onClick={resetProviderModels}>↶ {zh ? "重置" : "Reset"}</button><button type="button" title={!providerDiscoveryCredentialReady ? (zh ? "请先输入并保存 API Key" : "Enter and save an API Key first") : (zh ? "发现模型" : "Discover models")} disabled={modelConfigBusy || !providerDraft.trim() || !baseUrlDraft.trim() || !providerDiscoveryCredentialReady} onClick={() => void discoverModels()}>↻ {zh ? "获取" : "Fetch"}</button></div>
+                </div>
+                <datalist id="discovered-model-options">{discoveredModels.map((model) => <option key={model} value={model} />)}</datalist>
+                <div className="model-provider-model-list">
+                  <div className="model-provider-model-table-header" role="row">
+                    <span>{zh ? "模型 ID" : "Model ID"}</span>
+                    <span>{zh ? "别名" : "Alias"}</span>
+                    <span>{zh ? "输入与输出模态" : "Input and output modalities"}</span>
+                    <span>{zh ? "API 协议" : "API protocol"}</span>
+                    <span>{zh ? "操作" : "Actions"}</span>
+                  </div>
+                  {providerModelsDraft.length === 0 && newProviderModelDraft === null ? <p>{zh ? "尚未添加模型。可以手工新建，或从提供方获取。" : "No models yet. Add one manually or fetch from the provider."}</p> : providerModelsDraft.map((model) => {
+                    const config = providerModelConfigsDraft[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft, model_aliases: providerModelAliasesDraft, model_operations: providerModelOperationsDraft });
+                    return <div className="model-provider-model-row" key={model}>
+                      <code className="model-provider-model-id" title={model}>{model}</code>
+                      <button type="button" className={`model-provider-model-alias ${config.alias ? "" : "is-placeholder"}`} data-testid={`model-provider-model-alias-${model}`} title={zh ? "点击编辑别名" : "Click to edit alias"} onClick={() => openProviderModelEditor(model)}>{config.alias || model}</button>
+                      <div className="model-modality-directional"><ModelModalityBadges zh={zh} direction="input" modalities={config.input_modalities} onClick={() => openProviderModelEditor(model)} /><span className="model-modality-separator" aria-hidden>→</span><ModelModalityBadges zh={zh} direction="output" modalities={config.output_modalities} onClick={() => openProviderModelEditor(model)} /></div>
+                      <ModelApiProtocolBadge protocol={config.api_protocol} zh={zh} onClick={() => openProviderModelEditor(model)} />
+                      <div className="model-provider-model-operations" data-testid={`model-provider-model-operations-${model}`}>
+                        <label className="model-provider-model-enabled" title={config.enabled ? (zh ? "点击停用" : "Click to disable") : (zh ? "点击启用" : "Click to enable")}><input type="checkbox" checked={config.enabled} onChange={(event) => { const enabled = event.target.checked; setProviderModelConfigsDraft((current) => ({ ...current, [model]: { ...config, enabled } })); if (!enabled && modelDraft === model) { const fallback = providerModelsDraft.find((candidate) => candidate !== model && (providerModelConfigsDraft[candidate]?.enabled ?? true)); setModelDraft(fallback ?? ""); } else if (enabled && !modelDraft) setModelDraft(model); }} aria-label={zh ? `${config.enabled ? "停用" : "启用"}模型 ${model}` : `${config.enabled ? "Disable" : "Enable"} model ${model}`} /><span aria-hidden /></label>
+                        <button type="button" className="model-provider-model-action" data-testid={`model-provider-model-edit-${model}`} title={zh ? "编辑模型信息" : "Edit model information"} aria-label={zh ? `编辑模型 ${model}` : `Edit model ${model}`} onClick={() => openProviderModelEditor(model)}><Pencil size={14} aria-hidden /></button>
+                        <button type="button" className="model-provider-model-action" data-testid={`model-provider-model-copy-${model}`} title={zh ? "复制模型" : "Copy model"} aria-label={zh ? `复制模型 ${model}` : `Copy model ${model}`} onClick={() => duplicateProviderModel(model)}><Copy size={14} aria-hidden /></button>
+                        <button type="button" className="model-provider-model-remove" title={zh ? "删除模型" : "Delete model"} aria-label={zh ? `移除模型 ${model}` : `Remove model ${model}`} onClick={() => removeProviderModel(model)}><Trash2 size={14} aria-hidden /></button>
+                      </div>
+                    </div>;
+                  })}
+                  {newProviderModelDraft !== null && <div className="model-provider-model-row model-provider-model-new" data-testid="model-provider-model-new">
+                    <input autoFocus data-testid="model-provider-model-new-input" value={newProviderModelDraft} maxLength={256} placeholder={zh ? "输入模型 ID" : "Enter model ID"} onChange={(event) => setNewProviderModelDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitProviderModel(); } else if (event.key === "Escape") setNewProviderModelDraft(null); }} />
+                    <span /><span /><span />
+                    <div><button type="button" data-testid="model-provider-model-new-confirm" aria-label={zh ? "添加模型" : "Add model"} onClick={commitProviderModel}>✓</button><button type="button" aria-label={zh ? "取消新建模型" : "Cancel new model"} onClick={() => setNewProviderModelDraft(null)}>×</button></div>
+                  </div>}
+                </div>
+              </div>
+              {providerModelEditor && (() => {
+                const modalityOptions: MyDrSaiModelModality[] = ["text", "image", "audio", "video"];
+                const protocolOptions: Array<{ id: MyDrSaiModelApiProtocol; label: string }> = [{ id: "openai", label: "OpenAI" }, { id: "anthropic", label: "Anthropic" }, { id: "gemini", label: "Gemini" }];
+                const capabilityOptions: MyDrSaiModelCapability[] = ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech", "video_generation"];
+                return <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProviderModelEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setProviderModelEditor(null); }}>
+                  <section className="model-provider-model-editor" role="dialog" aria-modal="true" aria-labelledby="model-provider-model-editor-title" data-testid="model-provider-model-editor">
+                    <header><div><h2 id="model-provider-model-editor-title">{zh ? "编辑模型信息" : "Edit model information"}</h2><p>{zh ? "这些设置按模型保存到 config.toml，并由 Runtime 直接使用。" : "These settings are stored per model in config.toml and consumed directly by the Runtime."}</p></div></header>
+                    <div className="model-provider-model-editor-grid">
+                      <label><span>{zh ? "模型 ID" : "Model ID"}</span><input autoFocus value={providerModelEditor.modelId} maxLength={256} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, modelId: event.target.value } : current); setProviderModelEditorError(null); }} /></label>
+                      <label><span>{zh ? "别名" : "Alias"}</span><input value={providerModelEditor.alias} maxLength={256} placeholder={providerModelEditor.modelId} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, alias: event.target.value } : current)} /></label>
+                      <fieldset><legend>{zh ? "输入模态" : "Input modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.inputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("input", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
+                      <fieldset><legend>{zh ? "输出模态" : "Output modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.outputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("output", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
+                      <fieldset><legend>{zh ? "API 协议" : "API protocol"}</legend><div className="model-provider-capability-options">{protocolOptions.map((protocol) => <label key={protocol.id}><input type="radio" name="model-api-protocol" checked={providerModelEditor.apiProtocol === protocol.id} onChange={() => setProviderModelEditor((current) => current ? { ...current, apiProtocol: protocol.id } : current)} /><span>{protocol.label}</span></label>)}</div></fieldset>
+                      <fieldset className="model-provider-model-editor-wide"><legend>{zh ? "能力" : "Capabilities"}</legend><div className="model-provider-capability-options">{capabilityOptions.map((capability) => <label key={capability}><input type="checkbox" checked={providerModelEditor.capabilities.includes(capability)} onChange={(event) => toggleProviderModelEditorCapability(capability, event.target.checked)} /><span>{capability}</span></label>)}</div></fieldset>
+                      <label className="model-provider-model-editor-enabled"><input type="checkbox" checked={providerModelEditor.enabled} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, enabled: event.target.checked } : current)} /><span>{zh ? "启用此模型" : "Enable this model"}</span></label>
+                    </div>
+                    {providerModelEditorError && <p className="settings-message" role="alert">{providerModelEditorError}</p>}
+                    <footer className="model-provider-delete-actions"><button type="button" onClick={() => setProviderModelEditor(null)}>{zh ? "取消" : "Cancel"}</button><button type="button" data-testid="model-provider-model-editor-save" onClick={saveProviderModelEditor}>{zh ? "保存" : "Save"}</button></footer>
+                  </section>
+                </div>;
+              })()}
+              {myDrSaiConfig?.modelConnection?.model_provider === activeModelProviderTab && myDrSaiConfig.modelConnection.metadata?.known_model === false && <p className="model-provider-hint" data-testid="model-provider-unknown-model-warning">{zh ? "该模型未登记，能力参数尚未校准；将使用安全的通用默认值。" : "This model is not registered; capabilities are uncalibrated and safe generic defaults will be used."}</p>}
+              <div className="model-provider-actions"><button type="button" className="model-provider-button-primary" data-testid="model-provider-save" disabled={modelConfigBusy || !modelProviderDirty || !providerDraft.trim() || !baseUrlDraft.trim()} onClick={() => void saveModelProvider()}>{modelConfigBusy ? (zh ? "处理中…" : "Working…") : (zh ? "保存提供方" : "Save provider")}</button><button type="button" disabled={modelConfigBusy || !providerDraft.trim()} data-testid="model-provider-test-basic" onClick={() => void testModelConnection("basic")}>{zh ? "检查连接" : "Check connection"}</button><button type="button" disabled={modelConfigBusy || !modelDraft.trim() || !providerDraft.trim()} data-testid="model-provider-test-model" onClick={() => setModelTestConfirmationOpen(true)}>{zh ? "测试模型调用" : "Test model call"}</button><button type="button" className="model-provider-button-danger" disabled={modelConfigBusy || providerDraft === "hepai"} onClick={requestModelProviderDeletion}>{zh ? "删除 Provider" : "Delete Provider"}</button>{myDrSaiConfig?.modelConnection?.path && <button type="button" className="model-provider-button-quiet" onClick={() => onOpenPath(myDrSaiConfig.modelConnection!.path!)}>{zh ? "打开配置文件" : "Open config"}</button>}</div>
               {modelConfigMessage && <div className="settings-message">{modelConfigMessage}{modelConfigConflict && <button type="button" data-testid="model-provider-conflict-reload" disabled={modelConfigBusy} onClick={() => void reloadModelConnectionAfterConflict()}>{zh ? "重新加载配置" : "Reload configuration"}</button>}</div>}
+              {modelTestOutput && <div className="model-provider-test-output" data-testid="model-provider-test-output" role="status" aria-live="polite"><span>{zh ? "模型回复" : "Model reply"}</span><pre>{modelTestOutput}</pre></div>}
+            </section>
+            <section className="settings-section model-provider-recovery" data-testid="model-provider-recovery">
+              <div>
+                <h3>{zh ? "模型配置诊断与恢复" : "Model configuration diagnosis and recovery"}</h3>
+                <p>{zh ? "检查配置、凭据和最后可用快照；在线检查会真实调用当前模型。" : "Check configuration, credentials, and the last-known-good snapshot. Online diagnosis calls the current model."}</p>
+              </div>
+              <div className="model-provider-actions">
+                <button type="button" disabled={modelConfigBusy} data-testid="model-provider-doctor" onClick={() => void runModelDoctor(false)}>{zh ? "运行检查" : "Run Doctor"}</button>
+                <button type="button" className="model-provider-button-accent" disabled={modelConfigBusy} data-testid="model-provider-doctor-online" onClick={() => void runModelDoctor(true)}>{zh ? "在线检查" : "Online check"}</button>
+                <button type="button" className="model-provider-button-quiet" disabled={modelConfigBusy || modelDoctorResult?.last_known_good_available !== true} data-testid="model-provider-restore-last-good" onClick={() => void restoreLastKnownGoodModelConnection()}>{zh ? "恢复最后可用配置" : "Restore last-known-good"}</button>
+              </div>
+              {modelDoctorResult && <ul data-testid="model-provider-doctor-result">{modelDoctorResult.checks.map((check) => <li key={check.id} data-status={check.status}><strong>{check.id}</strong><span>{check.message}</span></li>)}</ul>}
             </section>
             {providerPendingDeletion && (
-              <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !modelConfigBusy) setProviderPendingDeletion(null); }} onKeyDown={(event) => { if (event.key === "Escape" && !modelConfigBusy) setProviderPendingDeletion(null); }}>
+              <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !modelConfigBusy) { setProviderPendingDeletion(null); setProviderDeletePreflight(null); } }} onKeyDown={(event) => { if (event.key === "Escape" && !modelConfigBusy) { setProviderPendingDeletion(null); setProviderDeletePreflight(null); } }}>
                 <section className="model-provider-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="model-provider-delete-title" aria-describedby="model-provider-delete-description" data-testid="model-provider-delete-dialog">
                   <h2 id="model-provider-delete-title">{zh ? `删除 Provider“${providerPendingDeletion}”？` : `Delete Provider “${providerPendingDeletion}”?`}</h2>
                   <p id="model-provider-delete-description">{zh ? "请选择是否同时删除系统安全存储中的凭据。取消不会修改 Provider、凭据或当前连接。" : "Choose whether to remove its credential from secure storage. Cancel leaves the Provider, credential, and active connection unchanged."}</p>
+                  {providerDeletePreflight && providerDeletePreflight.references.length > 0 && (
+                    <div className="settings-message" data-testid="model-provider-delete-references">
+                      <p>{zh ? "此 Provider 仍被以下配置引用。请先迁移引用；当前操作不会修改任何配置。" : "This Provider is still referenced. Migrate these selections first; nothing has been changed."}</p>
+                      <ul>{providerDeletePreflight.references.map((reference) => <li key={`${reference.kind}:${reference.id}`}>{reference.label}: {reference.model_id}</li>)}</ul>
+                    </div>
+                  )}
                   <div className="model-provider-delete-actions">
-                    <button type="button" className="danger" disabled={modelConfigBusy} data-testid="model-provider-delete-with-credential" onClick={() => void deleteModelProvider(true)}>{zh ? "删除 Provider 和凭据" : "Delete Provider and credential"}</button>
-                    <button type="button" disabled={modelConfigBusy} data-testid="model-provider-delete-keep-credential" onClick={() => void deleteModelProvider(false)}>{zh ? "仅删除 Provider" : "Delete Provider only"}</button>
-                    <button type="button" autoFocus disabled={modelConfigBusy} data-testid="model-provider-delete-cancel" onClick={() => setProviderPendingDeletion(null)}>{zh ? "取消" : "Cancel"}</button>
+                    <button type="button" className="danger" disabled={modelConfigBusy || !providerDeletePreflight?.can_delete} data-testid="model-provider-delete-with-credential" onClick={() => void deleteModelProvider(true)}>{zh ? "删除 Provider 和凭据" : "Delete Provider and credential"}</button>
+                    <button type="button" disabled={modelConfigBusy || !providerDeletePreflight?.can_delete} data-testid="model-provider-delete-keep-credential" onClick={() => void deleteModelProvider(false)}>{zh ? "仅删除 Provider" : "Delete Provider only"}</button>
+                    <button type="button" autoFocus disabled={modelConfigBusy} data-testid="model-provider-delete-cancel" onClick={() => { setProviderPendingDeletion(null); setProviderDeletePreflight(null); }}>{zh ? "取消" : "Cancel"}</button>
                   </div>
                 </section>
               </div>
@@ -6088,6 +7866,10 @@ function SettingsPanel({
                 </section>
               </div>
             )}
+              </>
+            )}
+            {activePane === "general" && (
+              <>
             <section className="settings-section">
               <div>
                 <h2>{zh ? "HepAI 账号" : "HepAI account"}</h2>
@@ -6111,15 +7893,6 @@ function SettingsPanel({
                     {zh ? "中文" : "Chinese"}
                   </button>
                 </div>
-              </div>
-            </section>
-            <section className="settings-section" data-testid="archived-threads-settings">
-              <div><h2>{zh ? "已归档会话" : "Archived sessions"}</h2><p>{zh ? "归档不会删除消息或工作区内容。" : "Archiving preserves messages and workspace content."}</p></div>
-              <div className="settings-component-list">
-                <input value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder={zh ? "搜索已归档会话" : "Search archived sessions"} />
-                {archivedThreads.length === 0 ? <small>{zh ? "没有匹配的已归档会话。" : "No archived sessions match."}</small> : archivedThreads.map((thread) => (
-                  <div className="settings-row" key={thread.id}><span><strong>{thread.title}</strong><small>{thread.archiveSource === "codex" ? "Codex" : "OpenDrSai"}</small></span><button type="button" onClick={() => void Promise.resolve(onArchiveThread(thread.id, false)).catch((error) => window.alert(error instanceof Error ? error.message : (zh ? "取消归档失败，请重试。" : "Unarchive failed. Please retry.")))}>{zh ? "取消归档" : "Unarchive"}</button></div>
-                ))}
               </div>
             </section>
             <section className="settings-section" data-testid="codex-workspace-sync-settings">
@@ -6158,8 +7931,10 @@ function SettingsPanel({
               </div>
               <div className="settings-component-list">
                 <strong>{zh ? "右侧栏组件" : "Right sidebar components"}</strong>
-                {(["files", "browser", "terminal", "debug"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
-                  const label = component === "files"
+                {(["run", "files", "browser", "terminal", "debug"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
+                  const label = component === "run"
+                    ? (zh ? "运行" : "Run")
+                    : component === "files"
                     ? (zh ? "文件" : "Files")
                     : component === "browser"
                       ? (zh ? "浏览器" : "Browser")
@@ -6202,6 +7977,8 @@ function SettingsPanel({
               <label className="settings-toggle"><span><strong>{zh ? "恢复上次工作区" : "Restore last workspace"}</strong><small>{zh ? "下次启动时重新选择最近使用的工作区。" : "Select the most recently used workspace on launch."}</small></span><input type="checkbox" checked={restoreLastWorkspace} onChange={(event) => onRestoreLastWorkspaceChange(event.target.checked)} /></label>
               <label className="settings-toggle"><span><strong>{zh ? "任务完成通知" : "Completion notifications"}</strong><small>{zh ? "会话或后台任务完成时发送 Windows 通知，点击可返回对应任务。" : "Send a Windows notification for completed conversations and background tasks; click it to return to the task."}</small></span><input type="checkbox" checked={completionNotifications} onChange={(event) => onCompletionNotificationsChange(event.target.checked)} /></label>
             </section>
+              </>
+            )}
           </>
         )}
 
@@ -6337,40 +8114,122 @@ function SettingsPanel({
         {activePane === "agent-defaults" && (
           <>
             <header className="settings-content-header">
-              <h2>{zh ? "智能体默认配置" : "Agent defaults"}</h2>
-              <p>{zh ? "设置新会话默认使用的智能体、模型和思考强度。" : "Choose the Agent, model, and thinking effort used by new conversations."}</p>
+              <h2>{zh ? "智能体配置" : "Agent configuration"}</h2>
+              <p>{zh ? "分别配置本机 OpenDrSai、本机 Codex 和 AI 平台智能体。" : "Configure local OpenDrSai, local Codex, and AI platform Agents independently."}</p>
             </header>
-            <section className="settings-section">
-              <div className="settings-row">
-                <span><strong>{zh ? "默认智能体" : "Default Agent"}</strong><small>{zh ? "会同步应用到聊天输入区。" : "Also applies to the chat composer."}</small></span>
-                <select value={selectedAgentId ?? ""} onChange={(event) => onSelectAgent(event.target.value)} disabled={agents.length === 0}>
-                  {agents.length === 0 && <option value="">{zh ? "暂无可用智能体" : "No Agent available"}</option>}
-                  {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-                </select>
+            <div className="agent-configuration-tabs" role="tablist" aria-label={zh ? "智能体运行来源" : "Agent runtime source"}>
+              {([
+                { id: "opendrsai" as const, label: zh ? "本机 OpenDrSai" : "Local OpenDrSai" },
+                { id: "codex" as const, label: zh ? "本机 Codex" : "Local Codex" },
+                { id: "platform" as const, label: zh ? "AI 平台" : "AI platform" },
+              ]).map((tab) => (
+                <button key={tab.id} type="button" role="tab" aria-selected={activeAgentConfigurationTab === tab.id} className={activeAgentConfigurationTab === tab.id ? "active" : ""} onClick={() => setActiveAgentConfigurationTab(tab.id)}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <section className="settings-section agent-configuration-panel" role="tabpanel">
+              <div>
+                <h2>{activeAgentConfigurationTab === "opendrsai" ? (zh ? "本机 OpenDrSai" : "Local OpenDrSai") : activeAgentConfigurationTab === "codex" ? (zh ? "本机 Codex" : "Local Codex") : (zh ? "AI 平台智能体" : "AI platform Agent")}</h2>
+                <p>{activeConfigurationAgent?.description || (zh ? "当前环境中尚未发现此类智能体。" : "No Agent of this type was found in the current environment.")}</p>
               </div>
+              {activeAgentConfigurationTab === "platform" && (
+                <div className="settings-row">
+                  <span><strong>{zh ? "平台智能体" : "Platform Agent"}</strong><small>{zh ? "选择需要独立配置的 AI 平台智能体。" : "Choose the AI platform Agent to configure independently."}</small></span>
+                  <select value={platformConfigurationAgent?.id ?? ""} onChange={(event) => setPlatformConfigurationAgentId(event.target.value)} disabled={platformConfigurationAgents.length === 0}>
+                    {platformConfigurationAgents.length === 0 && <option value="">{zh ? "暂无平台智能体" : "No platform Agent"}</option>}
+                    {platformConfigurationAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div className="settings-row">
-                <span><strong>{zh ? "默认模型" : "Default model"}</strong><small>{zh ? "模型列表由当前工作区的 OpenDrSai 配置提供。" : "Models are provided by the current workspace OpenDrSai configuration."}</small></span>
-                <select value={selectedModel ?? ""} onChange={(event) => onSelectModel(event.target.value)} disabled={models.length === 0}>
-                  {models.length === 0 && <option value="">{zh ? "暂无可用模型" : "No model available"}</option>}
-                  {models.map((model) => <option key={model.alias} value={model.alias}>{model.display_name || model.alias}</option>)}
-                </select>
+                <span><strong>{zh ? "主模型" : "Primary model"}</strong><small>{zh ? "与聊天输入框使用同一个模型，用于对话、推理和工具调用。" : "Shared with the chat composer for conversations, reasoning, and tool calls."}</small></span>
+                <div className="settings-model-control">
+                  <select data-testid="agent-text-model-select" aria-label={zh ? "主模型" : "Primary model"} value={activeAgentModel} onChange={(event) => {
+                    if (!activeConfigurationAgent) return;
+                    if (activeAgentConfigurationTab !== "opendrsai") { onConfigureAgentModel(activeConfigurationAgent.id, event.target.value); return; }
+                    const [providerId, modelId] = event.target.value.split("::").map(decodeURIComponent);
+                    onConfigureAgentModel(activeConfigurationAgent.id, modelId, providerId);
+                  }} disabled={!activeConfigurationAgent || activeAgentModels.length === 0}>
+                    {activeAgentModels.length === 0 && <option value="">{zh ? "暂无可用模型" : "No model available"}</option>}
+                    {Object.entries(activeAgentModelGroups).map(([provider, providerModels]) => <optgroup key={provider} label={provider}>
+                      {providerModels.map((model) => {
+                        const selected = model.provider_id === activeAgentPreference?.modelRef?.provider_id && model.alias === activeAgentPreference?.modelRef?.model_id;
+                        const usable = isSelectableModelAvailability(model.availability);
+                        const status = usable ? "" : ` · ${model.availability}`;
+                        return <option key={`${model.provider_id || "backend"}:${model.alias}`} disabled={!usable && !selected} value={activeAgentConfigurationTab === "opendrsai" ? `${encodeURIComponent(model.provider_id || "") }::${encodeURIComponent(model.alias)}` : model.alias}>{`${model.display_name || model.alias}${status}`}</option>;
+                      })}
+                    </optgroup>)}
+                  </select>
+                  {activeAgentModelProvider && <small className="settings-model-provider" data-testid="agent-text-model-provider">{zh ? `提供方：${activeAgentModelProvider}` : `Provider: ${activeAgentModelProvider}`}</small>}
+                </div>
               </div>
+              {activeAgentConfigurationTab === "opendrsai" && (activeAgentModels.length === 0 || activeAgentModelUnavailable || modelCatalogState !== "fresh") && <div className="model-catalog-recovery" data-testid="agent-model-catalog-recovery" role="status" aria-live="polite" data-state={activeAgentModelUnavailable ? activeAgentModelDescriptor?.availability : modelCatalogState}>
+                <strong>{modelCatalogRecoveryCopy(activeAgentModelUnavailable ? activeAgentModelDescriptor?.availability ?? "error" : modelCatalogState, zh).title}</strong>
+                <p>{modelCatalogRecoveryCopy(activeAgentModelUnavailable ? activeAgentModelDescriptor?.availability ?? "error" : modelCatalogState, zh).message}</p>
+                <div>
+                  <button type="button" data-testid="agent-model-refresh" onClick={onRefreshAgentModels}>{zh ? "刷新模型" : "Refresh models"}</button>
+                  {(modelCatalogState === "unauthorized" || activeAgentModelDescriptor?.availability === "unauthorized") && <button type="button" data-testid="agent-model-sign-in" onClick={() => void onLogout()}>{zh ? "重新登录" : "Sign in again"}</button>}
+                </div>
+              </div>}
+              {activeAgentConfigurationTab === "opendrsai" && capabilityModelSettings.map((setting) => {
+                const value = setting.selection?.mode === "explicit" && setting.selection.ref
+                  ? `${encodeURIComponent(setting.selection.ref.provider_id)}::${encodeURIComponent(setting.selection.ref.model_id)}`
+                  : "";
+                const groups = setting.models.reduce<Record<string, MyDrSaiModelConfig[]>>((result, model) => {
+                  (result[model.provider_id || (zh ? "其他来源" : "Other sources")] ??= []).push(model);
+                  return result;
+                }, {});
+                const selectedProvider = setting.selection?.mode === "explicit" && setting.selection.ref ? setting.selection.ref.provider_id : undefined;
+                return <div className="settings-row" data-testid={setting.testId} key={setting.role}>
+                  <span><strong>{setting.label}</strong><small>{setting.description}</small></span>
+                  <div className="settings-model-control">
+                    <select aria-label={setting.label} value={value} onChange={(event) => {
+                      if (!event.target.value) { onConfigureAgentCapabilityModel(setting.role); return; }
+                      const [providerId, modelId] = event.target.value.split("::").map(decodeURIComponent);
+                      onConfigureAgentCapabilityModel(setting.role, modelId, providerId);
+                    }} disabled={setting.models.length === 0}>
+                      <option value="">{setting.models.length === 0 ? (zh ? "暂无匹配模型" : "No matching model") : (zh ? "未指定" : "Not assigned")}</option>
+                      {Object.entries(groups).map(([provider, providerModels]) => <optgroup key={provider} label={provider}>
+                        {providerModels.map((model) => <option key={`${model.provider_id}:${model.alias}`} value={`${encodeURIComponent(model.provider_id || "")}::${encodeURIComponent(model.alias)}`}>{model.display_name || model.alias}</option>)}
+                      </optgroup>)}
+                    </select>
+                    {selectedProvider && <small className="settings-model-provider" data-testid={`agent-${setting.role.replaceAll("_", "-")}-provider`}>{zh ? `提供方：${selectedProvider}` : `Provider: ${selectedProvider}`}</small>}
+                  </div>
+                </div>;
+              })}
+              {activeAgentConfigurationTab === "opendrsai" && <div className="model-capability-status" data-testid="agent-model-capability-status" aria-live="polite">
+                <div>
+                  <strong>{zh ? "模型能力验证" : "Model capability verification"}</strong>
+                  <small>{zh ? "区分已声明、Provider 已验证和 Runtime 已验证；未验证状态不会放行回归测试。" : "Distinguishes declared, Provider-verified, and Runtime-verified capabilities. Unverified states do not pass regression preflight."}</small>
+                </div>
+                <button type="button" disabled={modelCapabilityStatusBusy} onClick={() => void refreshModelCapabilityStatus()}>{modelCapabilityStatusBusy ? (zh ? "读取中…" : "Loading…") : (zh ? "刷新状态" : "Refresh status")}</button>
+                {modelCapabilityStatusError && <p role="alert">{modelCapabilityStatusError}</p>}
+                {!modelCapabilityStatusError && !modelCapabilityStatusBusy && (modelCapabilityStatus?.capabilities.length ?? 0) === 0 && <p>{zh ? "尚无真实能力探针结果。请先运行 P2 模型探针。" : "No real capability probe results yet. Run the P2 model probe first."}</p>}
+                {(modelCapabilityStatus?.capabilities ?? []).map((capability) => <div className="model-capability-status-row" key={`${capability.model_id}:${capability.operation}`}>
+                  <span><code>{capability.model_id}</code><small>{capability.operation} · {capability.protocol}</small></span>
+                  <em data-state={capability.status}>{capability.status === "runtime_verified" ? (zh ? "Runtime 已验证" : "Runtime verified") : capability.status === "verified" ? (zh ? "Provider 已验证" : "Provider verified") : capability.status}</em>
+                </div>)}
+              </div>}
               <div className="settings-row">
                 <span><strong>{zh ? "思考强度" : "Thinking effort"}</strong><small>{zh ? "可在每次发送前从聊天输入区临时调整。" : "Can still be changed in the composer before sending."}</small></span>
-                <select value={defaultThinkingEffort} onChange={(event) => onThinkingEffortChange(event.target.value as ThinkingEffort)}>
-                  <option value="low">{zh ? "低" : "Low"}</option>
-                  <option value="medium">{zh ? "中" : "Medium"}</option>
-                  <option value="high">{zh ? "高" : "High"}</option>
-                  <option value="xhigh">{zh ? "极高" : "Extra high"}</option>
+                <select value={activeAgentThinkingEfforts.includes(activeAgentThinkingEffort) ? activeAgentThinkingEffort : activeAgentThinkingEfforts.includes("high") ? "high" : activeAgentThinkingEfforts[0] ?? ""} disabled={!activeConfigurationAgent || activeAgentThinkingEfforts.length === 0} onChange={(event) => activeConfigurationAgent && void onConfigureAgentThinkingEffort(activeConfigurationAgent.id, event.target.value as ThinkingEffort)}>
+                  {activeAgentThinkingEfforts.length === 0 && <option value="">{zh ? "当前模型不支持" : "Not supported by this model"}</option>}
+                  {activeAgentThinkingEfforts.includes("none") && <option value="none">{zh ? "不思考" : "Off"}</option>}
+                  {activeAgentThinkingEfforts.includes("low") && <option value="low">{zh ? "低" : "Low"}</option>}
+                  {activeAgentThinkingEfforts.includes("medium") && <option value="medium">{zh ? "中" : "Medium"}</option>}
+                  {activeAgentThinkingEfforts.includes("high") && <option value="high">{zh ? "高" : "High"}</option>}
+                  {activeAgentThinkingEfforts.includes("xhigh") && <option value="xhigh">{zh ? "极高" : "Extra high"}</option>}
+                  {activeAgentThinkingEfforts.includes("max") && <option value="max">{zh ? "最大" : "Max"}</option>}
                 </select>
               </div>
             </section>
-            <section className="settings-section">
+            {activeAgentConfigurationTab === "opendrsai" && <section className="settings-section">
               <div><h2>{zh ? "执行与上下文" : "Execution and context"}</h2><p>{zh ? "这些选项保存到当前 OpenDrSai 配置，并受现有审批策略约束。" : "These options are saved to the current OpenDrSai configuration and remain governed by approval policy."}</p></div>
               <label className="settings-toggle"><span><strong>{zh ? "先规划再执行" : "Plan mode"}</strong><small>{zh ? "让智能体先生成计划，再开始执行。" : "Ask the Agent to create a plan before acting."}</small></span><input type="checkbox" checked={Boolean(myDrSaiConfig?.config.plan_mode)} disabled={agentConfigSaving || !myDrSaiConfig?.ready} onChange={(event) => void updateAgentConfig({ plan_mode: event.target.checked })} /></label>
               <label className="settings-toggle"><span><strong>{zh ? "限制在当前工作区" : "Restrict to current workspace"}</strong><small>{zh ? "文件操作优先限制在当前工作区，越界操作继续走审批。" : "Prefer file operations inside the current workspace; out-of-scope actions still require approval."}</small></span><input type="checkbox" checked={myDrSaiConfig?.config.workspace_enabled !== false} disabled={agentConfigSaving || !myDrSaiConfig?.ready} onChange={(event) => void updateAgentConfig({ workspace_enabled: event.target.checked })} /></label>
               {agentConfigMessage && <div className="settings-message">{agentConfigMessage}</div>}
-            </section>
+            </section>}
           </>
         )}
 
@@ -6427,7 +8286,7 @@ function SettingsPanel({
                     <small>{zh ? "OpenDrSai Android 远程连接与设备管理。" : "OpenDrSai Android remote connection and device management."}</small>
                   </span>
                   <div className="settings-integration-actions">
-                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={androidRemoteEnabled ? (zh ? "不允许 Android 连接" : "Disallow Android connections") : (zh ? "允许 Android 连接" : "Allow Android connections")} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" disabled={mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (androidRemoteEnabled) void revokeMobileEnrollment(); else void enableMobileRemoteAccess(); }}><span aria-hidden="true" /></button>
+                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={androidRemoteEnabled ? (zh ? "暂停 Android 远程访问" : "Pause Android remote access") : (zh ? "恢复 Android 远程访问" : "Resume Android remote access")} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" disabled={mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (androidRemoteEnabled) void pauseMobileRemoteAccess(); else void enableMobileRemoteAccess(); }}><span aria-hidden="true" /></button>
                     <button type="button" className={`android-refresh-button ${mobileAssociationsState === "loading" ? "is-loading" : ""}`} onClick={() => void refreshAndroidDevices()} disabled={mobileAssociationsState === "loading"} aria-label={zh ? "刷新 Android 设备" : "Refresh Android devices"} aria-busy={mobileAssociationsState === "loading"} title={zh ? "刷新" : "Refresh"} data-testid="android-refresh"><RefreshCw size={15} aria-hidden="true" /></button>
                     <button type="button" onClick={onOpenMobilePairing} disabled={!androidRemoteEnabled || mobileEnrollmentBusy} data-testid="android-connect">{zh ? "连接 Android" : "Connect Android"}</button>
                   </div>
@@ -6442,13 +8301,41 @@ function SettingsPanel({
                     {activeAndroidAssociations.map((association) => (
                       <div key={association.association_id} className="android-device-row" data-state={association.access_state} data-testid="android-device-row">
                         <span className="android-device-presence" aria-hidden="true" />
-                        <span><strong>{association.device_name}</strong><small>{association.device_summary}</small></span>
+                        <span><strong>{association.device_name}</strong><small>{association.device_type === "android" ? (zh ? "Android 设备" : "Android device") : association.device_type} · {association.workspace_scope === "selected" ? (zh ? "指定工作区" : "Selected workspaces") : (zh ? "全部工作区" : "All workspaces")} · {association.permissions.join(" / ")} · {zh ? "授权于" : "Authorized"} {new Date(association.created_at).toLocaleDateString()}</small></span>
                         <em data-testid="android-device-status">{androidDeviceStateText[association.access_state]}{association.last_seen_at ? ` · ${androidRelativeTime(association.last_seen_at, language)}` : ""}</em>
+                        {association.permissions.some((permission) => permission !== "read") ? <button type="button" disabled={mobileEnrollmentBusy} data-testid="android-device-read-only" onClick={() => void makeAndroidDeviceReadOnly(association)}>{zh ? "设为只读" : "Make read-only"}</button> : null}
                         <button type="button" className="danger" disabled={mobileEnrollmentBusy} data-testid="android-device-revoke" onClick={() => void revokeAndroidDevice(association)}>{zh ? "撤销" : "Revoke"}</button>
                       </div>
                     ))}
                   </div>
                 ) : null}
+                <div className="settings-button-row settings-danger-actions" data-testid="android-danger-actions">
+                  <button type="button" disabled={mobileEnrollmentBusy || mobilePairingReadiness?.state === "not_registered"} onClick={() => void renameAndroidRuntime()} data-testid="android-runtime-rename">{zh ? "重命名此电脑" : "Rename this computer"}</button>
+                  <button type="button" disabled={mobileEnrollmentBusy} onClick={() => void diagnoseAndroidRuntime()} data-testid="android-runtime-diagnose">{zh ? "连接诊断" : "Diagnose connection"}</button>
+                  <button type="button" className="danger" disabled={mobileEnrollmentBusy || activeAndroidAssociations.length === 0} onClick={() => void revokeAllAndroidDevices()} data-testid="android-revoke-all">{zh ? "撤销全部设备" : "Revoke all devices"}</button>
+                  <button type="button" className="danger" disabled={mobileEnrollmentBusy || mobilePairingReadiness?.state === "not_registered"} onClick={() => void revokeMobileEnrollment()} data-testid="android-revoke-enrollment">{zh ? "注销此电脑" : "Unregister this computer"}</button>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+
+        {activePane === "archived-sessions" && (
+          <>
+            <header className="settings-content-header">
+              <h2>{zh ? "已归档会话" : "Archived sessions"}</h2>
+              <p>{zh ? "集中查找和恢复已归档的 OpenDrSai 与 Codex 会话。归档不会删除消息或工作区内容。" : "Find and restore archived OpenDrSai and Codex sessions. Archiving preserves messages and workspace content."}</p>
+            </header>
+            <section className="settings-section archived-threads-settings" data-testid="archived-threads-settings">
+              <div>
+                <h2>{zh ? `会话（${archivedThreads.length}）` : `Sessions (${archivedThreads.length})`}</h2>
+                <p>{archiveSearch.trim() ? (zh ? "显示与当前搜索匹配的归档会话。" : "Showing archived sessions matching the current search.") : (zh ? "按标题搜索，或取消归档以将会话恢复到侧边栏。" : "Search by title, or unarchive a session to restore it to the sidebar.")}</p>
+              </div>
+              <div className="settings-component-list">
+                <input value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder={zh ? "搜索已归档会话" : "Search archived sessions"} aria-label={zh ? "搜索已归档会话" : "Search archived sessions"} />
+                {archivedThreads.length === 0 ? <small>{zh ? "没有匹配的已归档会话。" : "No archived sessions match."}</small> : archivedThreads.map((thread) => (
+                  <div className="settings-row" key={thread.id}><span><strong>{thread.title}</strong><small>{thread.archiveSource === "codex" ? "Codex" : "OpenDrSai"}</small></span><button type="button" onClick={() => void Promise.resolve(onArchiveThread(thread.id, false)).catch(() => showAppNotice({ id: "unarchive-failed", title: zh ? "无法恢复会话" : "Conversation could not be restored", description: zh ? "取消归档失败，请重试。" : "Unarchive failed. Please retry." }))}>{zh ? "取消归档" : "Unarchive"}</button></div>
+                ))}
               </div>
             </section>
           </>
@@ -6479,7 +8366,7 @@ function SettingsPanel({
                 <p><strong>{zh ? "应用数据" : "App data"}</strong>{zh ? "：账户登录、会话、缓存、记忆、任务和设置，可以在这里清除。" : ": sign-in, conversations, cache, memory, tasks, and settings can be cleared here."}</p>
                 <p><strong>{zh ? "用户原始材料" : "Your original files"}</strong>{zh ? "：工作区中的 PDF、PPT、数据文件和生成成果。清理应用数据或从 Windows 卸载 OpenDrSai 都不会删除这些文件。" : ": PDFs, presentations, data files, and generated results in your workspaces. Clearing app data or uninstalling OpenDrSai from Windows does not delete them."}</p>
               </div>
-              <div className="settings-button-row"><button type="button" onClick={onExportLocalData}>{zh ? "导出本地数据" : "Export local data"}</button><button type="button" onClick={() => { if (window.confirm(zh ? "重置所有桌面偏好？本地会话内容会保留。" : "Reset all desktop preferences? Local conversation content will be preserved.")) onResetPreferences(); }}>{zh ? "重置偏好" : "Reset preferences"}</button></div>
+              <div className="settings-button-row"><button type="button" data-testid="export-local-data" onClick={onExportLocalData}>{zh ? "导出本地数据" : "Export local data"}</button><button type="button" onClick={() => void requestAppDecision({ id: "reset-desktop-preferences", title: zh ? "重置桌面偏好？" : "Reset desktop preferences?", description: zh ? "将恢复界面、侧边栏和默认选项。" : "Appearance, sidebar, and default choices will be reset.", impact: zh ? "本地会话和工作区文件会保留。" : "Local conversations and workspace files will be preserved.", confirmLabel: zh ? "重置偏好" : "Reset preferences" }).then((confirmed) => { if (confirmed) onResetPreferences(); })}>{zh ? "重置偏好" : "Reset preferences"}</button></div>
               <div className="settings-button-row settings-danger-actions"><button type="button" data-testid="clear-session-data" disabled={cleanupBusy} onClick={() => void openDataCleanup("sessions")}>{zh ? "清除会话" : "Clear conversations"}</button><button type="button" className="danger" data-testid="clear-all-local-data" disabled={cleanupBusy} onClick={() => void openDataCleanup("all_local_data")}>{zh ? "清除全部应用数据" : "Clear all app data"}</button></div>
               {cleanupStatus ? <p className="settings-message" role="status" data-testid="data-cleanup-status">{cleanupStatus}</p> : null}
             </section>
@@ -6550,7 +8437,25 @@ function getAgentModelOptions(
   catalog: MyDrSaiModelConfig[],
   agent: DesktopAgent | undefined,
   selectedModel: string | null,
+  selectedModelRef?: { provider_id: string; model_id: string },
 ): MyDrSaiModelConfig[] {
+  if (agent?.id === "my-drsai") {
+    const providerAware = new Map<string, MyDrSaiModelConfig>();
+    for (const model of catalog) {
+      if (!model.provider_id || !model.alias) continue;
+      providerAware.set(`${model.provider_id}\0${model.alias}`, model);
+    }
+    if (providerAware.size > 0) return [...providerAware.values()];
+    if (selectedModelRef) return [{
+      alias: selectedModelRef.model_id,
+      display_name: selectedModelRef.model_id,
+      model: selectedModelRef.model_id,
+      provider_id: selectedModelRef.provider_id,
+      availability: "unavailable",
+      capability_source: "unknown",
+    }];
+    return [];
+  }
   const byIdentity = new Map<string, MyDrSaiModelConfig>();
   for (const model of catalog) {
     for (const identity of [model.alias, model.model]) {

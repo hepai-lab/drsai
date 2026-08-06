@@ -32,6 +32,11 @@ export function sessionPayloadHash(value: unknown): string {
 
 export class SessionSyncStateStore {
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly pendingCursors = new Map<string, {
+    cursor: number;
+    waiters: Array<{ resolve: (entry: SessionSyncEntry) => void; reject: (error: unknown) => void }>;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
 
   constructor(
     readonly path = join(DRSAI_HOME, "desktop", "session-sync-state.json"),
@@ -46,12 +51,35 @@ export class SessionSyncStateStore {
   advanceCursor(sessionId: string, cursor: number): Promise<SessionSyncEntry> {
     this.requireId(sessionId);
     if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error("Session cursor is invalid.");
-    return this.mutate((file) => {
+    return new Promise<SessionSyncEntry>((resolve, reject) => {
+      const pending = this.pendingCursors.get(sessionId);
+      if (pending) {
+        pending.cursor = Math.max(pending.cursor, cursor);
+        pending.waiters.push({ resolve, reject });
+        return;
+      }
+      const entry = {
+        cursor,
+        waiters: [{ resolve, reject }],
+        timer: setTimeout(() => this.flushCursor(sessionId), 16),
+      };
+      this.pendingCursors.set(sessionId, entry);
+    });
+  }
+
+  private flushCursor(sessionId: string): void {
+    const pending = this.pendingCursors.get(sessionId);
+    if (!pending) return;
+    this.pendingCursors.delete(sessionId);
+    void this.mutate((file) => {
       const current = file.sessions[sessionId] ?? { cursor: 0, updatedAt: new Date(0).toISOString() };
-      const next = { ...current, cursor: Math.max(current.cursor, cursor), updatedAt: new Date().toISOString() };
+      const next = { ...current, cursor: Math.max(current.cursor, pending.cursor), updatedAt: new Date().toISOString() };
       file.sessions[sessionId] = next;
       return next;
-    });
+    }).then(
+      (result) => pending.waiters.forEach(({ resolve }) => resolve(result)),
+      (error) => pending.waiters.forEach(({ reject }) => reject(error)),
+    );
   }
 
   beginOutbox(sessionId: string, entry: Omit<SessionOutboxEntry, "createdAt" | "runId">): Promise<SessionOutboxEntry> {

@@ -16,6 +16,7 @@ import { backupLegacyWorkspaceDataOnce, migrateLegacyWorkspaceRecords, migrateWo
 import { LocalRuntimeClient } from "./runtimeClient";
 import { isRemoteAcceptanceWorkspace } from "./remoteWorkspaceRestorePolicy";
 import { replaceFileSafely } from "./atomicFileReplace";
+import { DEFAULT_WORKSPACE_FOLDER_NAME, ensureDefaultWorkspaceDirectory } from "./defaultWorkspace";
 
 const WORKSPACES_FILE = join(DRSAI_HOME, "desktop", "workspaces.json");
 const WORKSPACES_LEGACY_BACKUP_FILE = join(DRSAI_HOME, "desktop", "workspaces.legacy-v1.backup.json");
@@ -29,6 +30,7 @@ const MAX_REPO_URL_CHARS = 2048;
 const WORKSPACE_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const FOLDER_NAME_PATTERN = /^[^<>:"/\\|?*\u0000-\u001f]+$/;
 let workspaceUpdateQueue: Promise<void> = Promise.resolve();
+let defaultWorkspaceCreation: Promise<WorkspaceProject> | null = null;
 
 export async function listWorkspaces(): Promise<WorkspaceProject[]> {
   const workspaces = await readWorkspaces();
@@ -60,6 +62,46 @@ export async function createWorkspace(rawRequest: unknown): Promise<WorkspacePro
   });
   await writeWorkspaces([workspace, ...existing].slice(0, MAX_WORKSPACES));
   return workspace;
+}
+
+/**
+ * Create or reopen the app-managed first-run workspace. The documents path is
+ * supplied by the trusted main process; renderer callers never choose it.
+ */
+export async function createDefaultWorkspace(documentsPath: string): Promise<WorkspaceProject> {
+  if (defaultWorkspaceCreation) return defaultWorkspaceCreation;
+  defaultWorkspaceCreation = performDefaultWorkspaceCreation(documentsPath).finally(() => {
+    defaultWorkspaceCreation = null;
+  });
+  return defaultWorkspaceCreation;
+}
+
+async function performDefaultWorkspaceCreation(documentsPath: string): Promise<WorkspaceProject> {
+  const canonicalWorkspacePath = await ensureDefaultWorkspaceDirectory(documentsPath);
+
+  const existing = (await readWorkspaces()).find((workspace) =>
+    workspace.location !== "remote" && samePath(workspace.path, canonicalWorkspacePath));
+  const metadata = {
+    ...(existing?.metadata || {}),
+    managedDefault: true,
+    defaultWorkspaceVersion: 1,
+  };
+  if (existing) {
+    return updateWorkspace({
+      id: existing.id,
+      trusted: true,
+      lastOpenedAt: new Date().toISOString(),
+      metadata,
+    });
+  }
+  return createWorkspace({
+    source: "existing",
+    path: canonicalWorkspacePath,
+    name: DEFAULT_WORKSPACE_FOLDER_NAME,
+    description: "OpenDrSai managed default workspace",
+    trusted: true,
+    metadata,
+  });
 }
 
 export async function updateWorkspace(rawRequest: unknown): Promise<WorkspaceProject> {

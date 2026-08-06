@@ -167,8 +167,8 @@ try {
   });
   await waitFor(() => cancelEvents.some((event) => event.type === "chunk"), 3000);
   assert.equal(chat.abortChat(cancelRequestId), true);
-  await waitFor(() => state.stopRequests === 1 && cancelEvents.some((event) => event.type === "aborted"), 3000);
-  assert.equal(state.stopRequests, 1);
+  await waitFor(() => cancelEvents.some((event) => event.type === "aborted"), 3000);
+  assert.equal(state.stopRequests, 0, "DDF cancellation must not call the unrelated Portal Native stop endpoint");
   assert(cancelEvents.some((event) => event.type === "aborted"));
   await waitFor(() => state.diagnostics.some((event) => event.type === "cancel"), 3000);
   assert.equal(
@@ -177,7 +177,7 @@ try {
     "A user-requested chat abort must not be diagnosed as Error: user.",
   );
 
-  console.log("Agent cloud route E2E passed (explicit agentId, HTTP 401 refresh, SSE text/tool/file/input, continuation, stop and secret isolation).");
+  console.log("Agent cloud route E2E passed (explicit agentId, HTTP 401 refresh, SSE text/tool/file/input, DDF abort and secret isolation).");
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
 }

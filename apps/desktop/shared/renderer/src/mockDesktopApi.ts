@@ -35,7 +35,14 @@ import type {
   DesktopWorkflowTemplate,
   DesktopThread,
   DesktopThreadSnapshot,
+  DesktopThreadSnapshotEvent,
+  DesktopThreadSnapshotPatchEvent,
   DesktopRuntimeLogEvent,
+  RunReproductionManifest,
+  RunExperiment,
+  ReplayPlan,
+  RunComparison,
+  RunAdoption,
   DesktopTrustAssessment,
   DesktopTrustStatus,
   DesktopVoiceTranscriptHandoffResult,
@@ -75,7 +82,8 @@ import type {
   WorkspaceProject,
   GatewaySkill,
 } from "@shared/desktopApi";
-import type { StructuredConversationEvent } from "@shared/structuredConversation";
+import { canonicalResultInput, canonicalResultProvenance, RESULT_PROVENANCE_SCHEMA, sha256Web } from "../../api/resultProvenance";
+import type { StructuredActivityEvent, StructuredConversationEvent, StructuredTurnState } from "@shared/structuredConversation";
 import { FULL_DESKTOP_FEATURE_CAPABILITIES } from "@shared/platform";
 import drsaiImageUrl from "./assets/drsai.png";
 
@@ -680,6 +688,97 @@ function buildMockWorkflowRunSteps(
   return template.steps.map((detail, index) => ({ id: `step-${index + 1}`, kind: "manual_review", title: `Step ${index + 1}`, detail, requiresApproval: false }));
 }
 
+function mockRunManifest(runId: string): RunReproductionManifest {
+  return {
+    schema_version: "opendrsai.run-manifest/1",
+    run_id: runId,
+    manifest: {
+      runtime: { runtime_id: "runtime-mock" },
+      backend: { id: "codex" },
+      agent: { definition: "codex@1" },
+      model: { id: "gpt-mock" },
+    },
+    manifest_digest: "a".repeat(64),
+    safe_manifest_digest: "b".repeat(64),
+    reproducibility_level: "compatible",
+    missing_evidence: ["workspace.revision"],
+    created_at: new Date(Date.now() - 18_000).toISOString(),
+    finalized_at: new Date().toISOString(),
+  };
+}
+
+function mockRunExperiment(runId: string, title = "Visual experiment"): RunExperiment {
+  const now = new Date().toISOString();
+  return {
+    schema_version: "opendrsai.run-experiment/1",
+    experiment_id: "experiment-visual",
+    workspace_id: "workspace-visual",
+    session_id: "session-visual",
+    base_run_id: runId,
+    forked_from_item_id: null,
+    forked_from_checkpoint_id: null,
+    draft_version: 1,
+    title,
+    status: "draft",
+    overrides: {},
+    safe_summary: { changed_fields: [], change_count: 0 },
+    overrides_digest: `sha256:${"0".repeat(64)}`,
+    replay_mode: "rerun_from_start",
+    created_by: "mock-user",
+    created_at: now,
+    updated_at: now,
+    executed_run_id: null,
+  };
+}
+
+function mockReplayPlan(experimentId: string, draftVersion: number, replayPlanId = "replay-plan-visual"): ReplayPlan {
+  const now = new Date();
+  return {
+    schema_version: "opendrsai.replay-plan/1",
+    replay_plan_id: replayPlanId,
+    experiment_id: experimentId,
+    draft_version: draftVersion,
+    base_run_id: "run-visual",
+    base_manifest_digest: `sha256:${"a".repeat(64)}`,
+    overrides_digest: `sha256:${"b".repeat(64)}`,
+    replay_mode: "rerun_from_start",
+    policy_version: "replay-policy/1",
+    plan_digest: `sha256:${"c".repeat(64)}`,
+    steps: [], blockers: [], risks: [],
+    estimate: { token_usage: null, token_usage_known: false, monetary_cost: null, monetary_cost_known: false, external_calls: 0, workspace_writes: 0 },
+    approval_requirement: "none",
+    created_at: now.toISOString(),
+    expires_at: new Date(now.getTime() + 86_400_000).toISOString(),
+    stale: false, stale_reasons: [], executable: true,
+  };
+}
+
+function mockRunComparison(baselineRunId: string, candidateRunId: string): RunComparison {
+  return {
+    comparison_id: "comparison-visual",
+    schema_version: "opendrsai.run-comparison/1",
+    baseline_run_id: baselineRunId,
+    candidate_run_id: candidateRunId,
+    source_digest: `sha256:${"d".repeat(64)}`,
+    comparison_digest: `sha256:${"e".repeat(64)}`,
+    created_at: new Date().toISOString(), cached: false,
+    outcome: { baseline_status: "completed", candidate_status: "completed", status_changed: false },
+    steps: [], files: [], artifacts: [],
+    usage: { baseline: { known: false, value: null }, candidate: { known: false, value: null } },
+    attribution: [{ kind: "unattributed", confidence: "unknown" }], incomplete: false,
+  };
+}
+
+function mockRunAdoption(comparisonId: string, status: RunAdoption["status"] = "previewed"): RunAdoption {
+  return {
+    adoption_id: `adoption-${comparisonId}`, schema_version: "opendrsai.run-adoption/1",
+    comparison_id: comparisonId, source_workspace_id: "mock-workspace", worktree_id: "mock-experiment-worktree",
+    preview_digest: `sha256:${"f".repeat(64)}`,
+    preview: { source_workspace_id: "mock-workspace", worktree_id: "mock-experiment-worktree", base_commit: "a".repeat(40), source_head: "a".repeat(40), candidate_head: "b".repeat(40), preview_digest: `sha256:${"f".repeat(64)}`, source_clean: true, candidate_clean: true, conflict_count: 0, can_apply: true, changes: [{ status: "modified", path: "src/example.ts", conflict_possible: false }] },
+    status, selected_paths: [], receipt: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  };
+}
+
 export function installMockDesktopApi(): void {
   if (window.openDrSai) return;
   let health = structuredClone(initialHealth);
@@ -689,17 +788,41 @@ export function installMockDesktopApi(): void {
   let threadSnapshots: Record<string, DesktopThreadSnapshot> = {};
   let workspaces: WorkspaceProject[] = [];
   const longConversationFixtureRuns = Math.min(500, Math.max(0, Number(new URLSearchParams(window.location.search).get("longConversationFixture")) || 0));
+  const activeDeltaFixture = new URLSearchParams(window.location.search).get("activeDeltaFixture") === "1";
+  const structuredActivityFixtureItems = Math.min(10_000, Math.max(0, Number(new URLSearchParams(window.location.search).get("structuredActivityItems")) || 0));
+  const experimentReleaseGateEnabled = new URLSearchParams(window.location.search).get("experimentReleaseGate") === "passed";
+  const resultFirstCompletionFixture = new URLSearchParams(window.location.search).get("resultFirstCompletion") === "1";
+  const resultProvenanceFixture = new URLSearchParams(window.location.search).get("resultProvenance") === "1";
+  const runInspectionSafetyFixture = new URLSearchParams(window.location.search).get("runInspectionSafety") === "1";
+  const operationalStateFixture = new URLSearchParams(window.location.search).get("operationalStateFixture") === "1";
+  let resultFirstCompletionPoll = 0;
+  if (resultProvenanceFixture) {
+    const now = new Date().toISOString();
+    threads = [{
+      id: "mock-result-provenance-session",
+      kind: "agent_run",
+      title: "Result provenance source session",
+      workspacePath: "C:\\Users\\Demo\\Projects\\workspace",
+      createdAt: now,
+      updatedAt: now,
+      lastRunId: "mock-result-provenance-run",
+      lastRequestId: "mock-result-provenance-request",
+      runtimeSessionId: "mock-result-provenance-runtime-session",
+      status: "idle",
+      messageCount: 2,
+    }];
+  }
   if (longConversationFixtureRuns > 0) {
-    const threadId = "mock-long-codex-thread";
+    const threadId = "mock-long-opendrsai-thread";
     const now = new Date().toISOString();
     const messages = Array.from({ length: longConversationFixtureRuns }, (_, index) => {
       const turn = index + 1;
       return [
         { id: `long-user-${turn}`, role: "user" as const, content: `Performance fixture request ${turn}` },
-        { id: `long-assistant-${turn}`, role: "assistant" as const, content: `## Result ${turn}\n\nRendered Markdown for a long Codex conversation.\n\n\`\`\`ts\nconst turn = ${turn};\n\`\`\`` },
+        { id: `long-assistant-${turn}`, role: "assistant" as const, content: `## Result ${turn}\n\nRendered Markdown for a long OpenDrSai conversation.\n\n\`\`\`ts\nconst turn = ${turn};\n\`\`\`` },
       ];
     }).flat();
-    threads = [{ id: threadId, kind: "chat", title: `${longConversationFixtureRuns}-turn Codex fixture`, createdAt: now, updatedAt: now, runtimeSessionId: "mock-codex-session", boundAgentId: "my-codex", boundAgentName: "Codex", messageCount: messages.length }];
+    threads = [{ id: threadId, kind: "chat", title: `${longConversationFixtureRuns}-turn OpenDrSai fixture`, createdAt: now, updatedAt: now, runtimeSessionId: "mock-opendrsai-session", boundAgentId: "my-drsai", boundAgentName: "OpenDrSai", messageCount: messages.length }];
     threadSnapshots = {
       [threadId]: {
         threadId,
@@ -707,14 +830,70 @@ export function installMockDesktopApi(): void {
         messages,
         updatedAt: Date.now(),
         messageCount: messages.length,
-        history: { state: "ready", source: "codex", syncedAt: now, loadedRuns: longConversationFixtureRuns, totalRuns: longConversationFixtureRuns, loadedItems: messages.length, totalItems: messages.length },
+        history: { state: "ready", source: "opendrsai", syncedAt: now, loadedRuns: longConversationFixtureRuns, totalRuns: longConversationFixtureRuns, loadedItems: messages.length, totalItems: messages.length },
       },
     };
+  }
+  if (structuredActivityFixtureItems > 0) {
+    const threadId = "mock-structured-activity-thread";
+    const turnId = "mock-structured-activity-run";
+    const now = new Date().toISOString();
+    const activities: StructuredActivityEvent[] = Array.from({ length: structuredActivityFixtureItems }, (_, index) => {
+      const common = {
+        id: `activity-${index + 1}`,
+        oaepItemId: `item-${index + 1}`,
+        turnId,
+        timestamp: now,
+        source: "mock-opendrsai-runtime",
+        status: index === structuredActivityFixtureItems - 1 ? "error" as const : "completed" as const,
+        title: `Business operation ${index + 1}`,
+      };
+      if (index % 10 === 0) return { ...common, kind: "file_change" as const, path: `C:\\workspace\\result-${index + 1}.md`, action: "modify" as const };
+      if (index % 10 === 1) return { ...common, kind: "subtask" as const, taskId: `subtask-${index + 1}`, agentName: `Research task ${index + 1}` };
+      return { ...common, kind: "tool" as const, toolName: "analyze_material", callId: `call-${index + 1}`, durationMs: 25 };
+    });
+    const structuredTurn: StructuredTurnState = {
+      version: 2,
+      turnId,
+      status: "completed",
+      parts: [
+        { id: `${turnId}:markdown`, kind: "markdown", status: "completed", markdown: "## Core result\n\nThe 10,000-item task completed and the requested report is ready." },
+        { id: `${turnId}:progress`, kind: "progress", status: "completed", summary: "All business operations completed", completed: structuredActivityFixtureItems, total: structuredActivityFixtureItems },
+        { id: `${turnId}:approval`, kind: "interaction", status: "pending", requestId: "approval-10k", interactionType: "approval", prompt: "Approve publishing the generated report?", options: [{ id: "approve", label: "Approve" }, { id: "decline", label: "Decline" }] },
+      ],
+      activities,
+      lastSequence: structuredActivityFixtureItems + 3,
+      seenDedupeKeys: [],
+      protocolIssues: [],
+      meta: { backend: "opendrsai", workspaceLabel: "10k acceptance workspace", durationMs: 12_000 },
+    };
+    threads = [{ id: threadId, kind: "chat", title: "10,000-item process fixture", createdAt: now, updatedAt: now, lastRunId: turnId, runtimeSessionId: "mock-10k-session", boundAgentId: "my-drsai", boundAgentName: "OpenDrSai", messageCount: 2 }];
+    threadSnapshots = { [threadId]: {
+      threadId,
+      title: threads[0].title,
+      messages: [
+        { id: "10k-user", role: "user", content: "Process 10,000 business items." },
+        {
+          id: "10k-assistant",
+          role: "assistant",
+          content: "The 10,000-item task completed and the requested report is ready.",
+          structuredTurn,
+          inputRequest: {
+            requestId: "approval-10k",
+            prompt: "Approve publishing the generated report?",
+            inputType: "approval",
+            options: [{ id: "approve", label: "Approve" }, { id: "decline", label: "Decline" }],
+          },
+        },
+      ],
+      updatedAt: Date.now(),
+      messageCount: 2,
+      history: { state: "ready", source: "opendrsai", syncedAt: now, loadedRuns: 1, totalRuns: 1, loadedItems: structuredActivityFixtureItems, totalItems: structuredActivityFixtureItems },
+    } };
   }
   let terminalSessions: TerminalSessionInfo[] = [];
   let myDrSaiCliConfig: MyDrSaiCliConfig = {
     user_id: "desktop",
-    defult_config_name: "hepai/deepseek-v4-flash",
     plan_mode: false,
     workspace_enabled: true,
     dangerous_allowed: false,
@@ -728,7 +907,7 @@ export function installMockDesktopApi(): void {
       name: "hepai",
       base_url: "https://aiapi.ihep.ac.cn/apiv2",
       wire_api: "openai",
-      requires_api_key: true,
+      requires_api_key: false,
       has_api_key: true,
       api_key_source: "env:HEPAI_API_KEY",
     },
@@ -750,6 +929,8 @@ export function installMockDesktopApi(): void {
   const browserTaskListeners = new Set<Listener<BrowserTaskEvent>>();
   const diagnosticListeners = new Set<Listener<DiagnosticEvent>>();
   const runtimeLogListeners = new Set<Listener<DesktopRuntimeLogEvent>>();
+  const threadSnapshotListeners = new Set<Listener<DesktopThreadSnapshotEvent>>();
+  const threadSnapshotPatchListeners = new Set<Listener<DesktopThreadSnapshotPatchEvent>>();
   const interactiveDebugListeners = new Set<Listener<InteractiveDebugSession>>();
   let diagnosticEvents: DiagnosticEvent[] = [];
   let interactiveDebugSessions: InteractiveDebugSession[] = [];
@@ -1151,6 +1332,8 @@ export function installMockDesktopApi(): void {
   let mockInstalledSkills: MockSkill[] = [];
 
   const api: DesktopApi = {
+    isAppDialogE2eEnabled: () => false,
+    isOperationalStateE2eEnabled: () => operationalStateFixture,
     getPlatformDescriptor: async () => ({
       id: "windows",
       defaultTerminalShell: "powershell",
@@ -1503,6 +1686,8 @@ export function installMockDesktopApi(): void {
       reason: null, retryable: false, action: "none" }),
     syncCodexWorkspaceSessions: async (workspaceId) => ({ workspaceId, discovered: 0, active: 0,
       archived: 0, created: 0, updated: 0, skipped: 0, threads: [] }),
+    cancelCodexWorkspaceSessionSync: async () => true,
+    onCodexWorkspaceSessionSyncProgress: () => () => undefined,
     startCodexBackendLogin: async (type = "chatgpt") => ({ type, loginId: "mock-codex-login",
       verificationUrl: "https://example.test/device", userCode: "MOCK-CODE" }),
     cancelCodexBackendLogin: async () => true,
@@ -1684,7 +1869,10 @@ export function installMockDesktopApi(): void {
       access_state: "online",
       created_at: new Date().toISOString(),
       last_seen_at: new Date().toISOString(),
-      revoked_at: null,
+        revoked_at: null,
+        device_type: "android",
+        workspace_scope: "all",
+        permissions: ["read", "send", "approve", "files"],
     }],
     revokeMobileAssociation: async (associationId) => ({
       association_id: associationId,
@@ -1696,6 +1884,32 @@ export function installMockDesktopApi(): void {
       created_at: new Date().toISOString(),
       last_seen_at: new Date().toISOString(),
       revoked_at: new Date().toISOString(),
+      device_type: "android",
+      workspace_scope: "all",
+      permissions: ["read", "send", "approve", "files"],
+    }),
+    getExperimentReleaseGate: async () => ({
+      schema_version: "opendrsai.experiment-release-gate/1",
+      enabled: experimentReleaseGateEnabled,
+      required_features: ["M31-02", "M31-03", "M31-04", "M31-05"],
+      passed_features: experimentReleaseGateEnabled ? ["M31-02", "M31-03", "M31-04", "M31-05"] : ["M31-03"],
+      blocking_features: experimentReleaseGateEnabled ? [] : ["M31-02", "M31-04", "M31-05"],
+      source_ledger_sha256: "a".repeat(64),
+      reason: experimentReleaseGateEnabled ? "all_release_evidence_passed" : "release_evidence_incomplete",
+    }),
+    shrinkMobileAssociation: async (associationId, permissions) => ({
+      association_id: associationId,
+      subject_summary: "sub_000000000000",
+      device_summary: "dev_000000000000",
+      device_name: "Samsung SM-X936C",
+      status: "active",
+      access_state: "online",
+      created_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
+      revoked_at: null,
+      device_type: "android",
+      workspace_scope: "all",
+      permissions,
     }),
     revokeMobileRuntimeEnrollment: async () => ({
       runtime_id: "runtime_mock",
@@ -1866,6 +2080,18 @@ export function installMockDesktopApi(): void {
       ];
       return workspace;
     },
+    createDefaultWorkspace: async () => {
+      const existing = workspaces.find((workspace) => workspace.metadata?.managedDefault === true);
+      if (existing) return existing;
+      return api.createWorkspace({
+        source: "existing",
+        path: "C:\\Users\\Demo\\Documents\\OpenDrSai Workspace",
+        name: "OpenDrSai Workspace",
+        description: "OpenDrSai managed default workspace",
+        trusted: true,
+        metadata: { managedDefault: true, defaultWorkspaceVersion: 1 },
+      });
+    },
     updateWorkspace: async (request) => {
       const existing = workspaces.find(
         (workspace) => workspace.id === request.id,
@@ -1897,7 +2123,7 @@ export function installMockDesktopApi(): void {
     listAgents: async (): Promise<DesktopAgent[]> => [
       {
         id: "my-drsai",
-        name: "My DrSai",
+        name: "OpenDrSai",
         description: "运行在本机的智能体。",
         owner: "运行在本机的智能体。",
         source: "local",
@@ -1932,6 +2158,41 @@ export function installMockDesktopApi(): void {
         ],
       },
     ],
+    getAgentCatalogSnapshot: async () => ({
+      agents: [
+        {
+          id: "my-drsai",
+          name: "OpenDrSai",
+          description: "运行在本机的智能体。",
+          owner: "Local",
+          source: "local" as const,
+          status: "running" as const,
+          available: true,
+          catalogGroup: "local" as const,
+        },
+        {
+          id: "platform:mock-hepai-agent",
+          name: "HepAI Online Agent",
+          description: "HAI 平台智能体。",
+          owner: "HepAI",
+          source: "remote" as const,
+          status: "running" as const,
+          available: true,
+          capabilities: ["chat", "streaming"],
+          catalogGroup: "official" as const,
+          catalogState: "live" as const,
+        },
+      ],
+      platformStatus: {
+        state: "ready" as const,
+        apiVersion: "fixture-v1",
+        capabilities: ["agent-catalog"],
+        message: "Platform catalog fixture is available.",
+        lastCheckedAt: new Date().toISOString(),
+        cacheState: "fresh" as const,
+      },
+      loadedAt: new Date().toISOString(),
+    }),
     setDefaultAgent: async (agentId) => ({
       agentId,
       saved: true,
@@ -1954,7 +2215,6 @@ export function installMockDesktopApi(): void {
       baseUrl: health.gateway.baseUrl,
       cliPath: "C:\\Users\\Demo\\.drsai\\cli_config.json",
       config: myDrSaiCliConfig,
-      defaultModelAlias: myDrSaiCliConfig.defult_config_name,
       modelConnection: myDrSaiModelConnection,
       models: [
         {
@@ -1993,6 +2253,27 @@ export function installMockDesktopApi(): void {
         },
       ],
     }),
+    getMyDrSaiRuntimeModelCatalog: async () => ({
+      revision: `sha256:${"a".repeat(64)}`,
+      state: "fresh",
+      models: [{
+        ref: { provider_id: "hepai", model_id: "deepseek-v4-pro" },
+        display_name: "DeepSeek V4 Pro",
+        input_modalities: ["text"],
+        output_modalities: ["text"],
+        operations: ["chat", "tool_calling", "reasoning"],
+        reasoning_efforts: ["high", "max"],
+        token_limit: 1_048_576,
+        max_output_tokens: 64_000,
+        availability: "configured_unverified",
+        capability_source: "builtin",
+        capability_confidence: "inferred",
+      }],
+    }),
+    getMyDrSaiAgentModelPolicy: async (agentId = "my-drsai") => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, speech_to_text_model: null, reasoning_effort: "high", effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model }, revision: `sha256:${"a".repeat(64)}`, valid: true }),
+    getMyDrSaiAgentModelCapabilityStatus: async (agentId = "my-drsai") => ({ agent_id: agentId, capabilities: [] }),
+    updateMyDrSaiAgentModelPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, effective_ref: policy.primary_model.ref, revision: `sha256:${"b".repeat(64)}`, valid: true }),
+    migrateMyDrSaiAgentModelPolicy: async (agentId, legacyModel) => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, speech_to_text_model: null, effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel }, revision: `sha256:${"c".repeat(64)}`, valid: true, migrated: true }),
     updateMyDrSaiConfig: async (request): Promise<MyDrSaiConfig> => {
       myDrSaiCliConfig = { ...myDrSaiCliConfig, ...request };
       return api.getMyDrSaiConfig();
@@ -2013,10 +2294,57 @@ export function installMockDesktopApi(): void {
       };
       return structuredClone(myDrSaiModelConnection);
     },
-    testMyDrSaiModelProvider: async (provider) => ({ ok: provider === myDrSaiModelConnection.model_provider, provider, wire_api: myDrSaiModelConnection.provider.wire_api }),
-    testMyDrSaiModelDraft: async (request) => ({ ok: Boolean(request.model && request.model_provider && request.base_url), provider: request.model_provider, wire_api: request.wire_api ?? "openai", persisted: false }),
-    listMyDrSaiModelProviderPresets: async () => [{ id: "hepai", label: "HepAI", base_url: "https://aiapi.ihep.ac.cn/apiv2", wire_api: "openai", requires_api_key: true, api_key_env: "HEPAI_API_KEY", base_url_editable: false, supports_model_discovery: true }],
+    previewMyDrSaiModelConnection: async (request) => ({
+      ok: true,
+      persisted: false,
+      base_revision: myDrSaiModelConnection.revision ?? "a".repeat(64),
+      effective: {
+        ...structuredClone(myDrSaiModelConnection),
+        model: request.model,
+        model_provider: request.model_provider,
+        provider: {
+          ...structuredClone(myDrSaiModelConnection.provider),
+          name: request.model_provider,
+          base_url: request.base_url || myDrSaiModelConnection.provider.base_url,
+          wire_api: request.wire_api || myDrSaiModelConnection.provider.wire_api,
+        },
+      },
+    }),
+    diagnoseMyDrSaiModelConnection: async () => ({
+      ok: true,
+      revision: myDrSaiModelConnection.revision ?? "a".repeat(64),
+      last_known_good_available: true,
+      checks: [{ id: "configuration", status: "ok", message: "Model configuration is valid." }],
+      effective: structuredClone(myDrSaiModelConnection),
+    }),
+    restoreMyDrSaiModelConnection: async () => structuredClone(myDrSaiModelConnection),
+    saveMyDrSaiModelProvider: async (provider, request) => {
+      const modelConfigs = request.models && !Array.isArray(request.models) ? request.models : undefined;
+      const savedProvider = {
+        name: provider,
+        base_url: request.base_url,
+        wire_api: request.wire_api,
+        requires_api_key: request.requires_api_key,
+        has_api_key: Boolean(request.api_key || request.api_key_env),
+        api_key_source: request.api_key ? "config" : request.api_key_env ? `env:${request.api_key_env}` : undefined,
+        models: Array.isArray(request.models) ? request.models : Object.keys(request.models ?? {}),
+        model_configs: modelConfigs,
+      };
+      const providers = (myDrSaiModelConnection.providers ?? []).filter((item) => item.name !== provider);
+      myDrSaiModelConnection = { ...myDrSaiModelConnection, providers: [...providers, savedProvider] };
+      return structuredClone(myDrSaiModelConnection);
+    },
+    testMyDrSaiModelProvider: async (provider, model) => ({ ok: provider === myDrSaiModelConnection.model_provider, provider, model: model ?? myDrSaiModelConnection.model, wire_api: myDrSaiModelConnection.provider.wire_api }),
+    testMyDrSaiModelDraft: async (request, mode) => ({ ok: Boolean(request.model && request.model_provider && request.base_url), provider: request.model_provider, wire_api: request.wire_api ?? "openai", persisted: false, ...(mode === "model" ? { output: "pong" } : {}) }),
+    listMyDrSaiModelProviderPresets: async () => [{ id: "hepai", label: "HepAI", base_url: "https://aiapi.ihep.ac.cn/apiv2", wire_api: "openai", requires_api_key: false, base_url_editable: false, supports_model_discovery: true, auth_mode: "oidc" }],
     discoverMyDrSaiProviderModels: async (provider) => ({ ok: true, provider, models: [myDrSaiModelConnection.model], cached: false }),
+    preflightMyDrSaiModelProviderDeletion: async (provider) => ({
+      provider,
+      references: provider === myDrSaiModelConnection.model_provider ? [
+        { kind: "agent_model_policy", id: "my-drsai", label: "Local OpenDrSai Agent model", model_id: myDrSaiModelConnection.model },
+      ] : [],
+      can_delete: provider !== myDrSaiModelConnection.model_provider,
+    }),
     deleteMyDrSaiModelProvider: async (provider, _deleteCredential = true) => {
       if (provider === myDrSaiModelConnection.model_provider) {
         myDrSaiModelConnection = { ...myDrSaiModelConnection, model_provider: "hepai", provider: { ...myDrSaiModelConnection.provider, name: "hepai", base_url: "https://aiapi.ihep.ac.cn/apiv2" } };
@@ -2082,9 +2410,25 @@ export function installMockDesktopApi(): void {
       return thread;
     },
     getThreadSnapshot: async (threadId) => threadSnapshots[threadId] ?? null,
+    getThreadSnapshotEnvelope: async (threadId) => {
+      const snapshot = threadSnapshots[threadId];
+      return snapshot ? { version: 1, projection: "oaep/1", threadId,
+        runtimeSessionId: threads.find((thread) => thread.id === threadId)?.runtimeSessionId ?? `mock:${threadId}`,
+        sessionSequence: 0, generation: 1, snapshot } : null;
+    },
+    cancelThreadSnapshotHydration: async () => false,
     subscribeThreadSnapshot: async () => false,
     unsubscribeThreadSnapshot: async () => false,
-    onThreadSnapshot: () => () => undefined,
+    onThreadSnapshot: (callback) => {
+      const unsubscribe = subscribe(threadSnapshotListeners, callback);
+      if (activeDeltaFixture && longConversationFixtureRuns > 0) {
+        const snapshot = threadSnapshots["mock-long-opendrsai-thread"];
+        if (snapshot) queueMicrotask(() => callback({ version: 1, projection: "oaep/1", threadId: snapshot.threadId,
+          runtimeSessionId: "mock-opendrsai-session", sessionSequence: 0, generation: 1, snapshot }));
+      }
+      return unsubscribe;
+    },
+    onThreadSnapshotPatch: (callback) => subscribe(threadSnapshotPatchListeners, callback),
     onRuntimeLogEvent: (callback) => subscribe(runtimeLogListeners, callback),
     onThreadCatalogUpdate: () => () => undefined,
     searchThreadMessages: async (request) => {
@@ -2224,6 +2568,8 @@ export function installMockDesktopApi(): void {
       const requestId = request.requestId || crypto.randomUUID();
       const turnId = request.runId || requestId;
       const visualFixture = request.messages.some((message) => message.content.includes("__STRUCTURED_VISUAL_FIXTURE__"));
+      const goalFixture = request.metadata?.goal_confirmation_required === true
+        && request.messages.some((message) => message.content.includes("__GOAL_CONFIRMATION_FIXTURE__"));
       if (visualFixture) {
         const runtimeBase = {
           timestamp: new Date().toISOString(), threadId: "mock-thread", sessionId: "oaep-session-visual",
@@ -2259,6 +2605,17 @@ export function installMockDesktopApi(): void {
       };
       emit(chatListeners, { requestId, type: "start" });
       sendStructured({ type: "turn.started" });
+      if (goalFixture) {
+        sendStructured({
+          type: "part.started",
+          part: {
+            id: `${turnId}:goal`, kind: "interaction", status: "running",
+            requestId: `goal:${turnId}:v1`, interactionType: "confirmation",
+            prompt: "Goal: Prepare a cited release briefing\nMaterials: release-notes.md, metrics.csv\nOutputs: Two-page briefing\nConstraints: Do not publish; preserve source files\nDefaults: language=user_input (source: user_request_language), length=appropriate (source: opendrsai_task_policy), citation_style=preserve_sources (source: available_material_provenance), format=best_fit (source: requested_output_inference)",
+          },
+        });
+        return requestId;
+      }
       sendStructured({
         type: "part.started",
         part: { id: `${turnId}:reasoning`, kind: "reasoning", status: "running", segments: [] },
@@ -2369,7 +2726,133 @@ export function installMockDesktopApi(): void {
       emit(chatListeners, { requestId, type: "aborted" });
       return true;
     },
-    respondChatInput: async () => true,
+    listSessionRuns: async (request) => ({
+      schema_version: "opendrsai.run-inspection/1",
+      object: "list",
+      data: [{
+        run_id: "run-visual",
+        session_id: request.sessionId,
+        status: "completed",
+        manifest: mockRunManifest("run-visual"),
+      }],
+      next_cursor: null,
+      has_more: false,
+    }),
+    pauseMobileRemoteAccess: async () => ({ runtime_id: "runtime-local", status: "paused" }),
+    resumeMobileRemoteAccess: async () => ({ runtime_id: "runtime-local", status: "active" }),
+    renameMobileRuntime: async (displayName) => ({ runtime_id: "runtime-local", display_name: displayName.trim() }),
+    diagnoseMobileRemoteAccess: async () => ({ status: "healthy", action: "none", checks: { runtime: "ok", relay: "ok", oidc: "ok", wss: "ok", heartbeat: "ok", protocol: "ok" } }),
+    getRunInspection: async (request) => ({
+      schema_version: "opendrsai.run-inspection/1",
+      run: {
+        run_id: request.runId,
+        session_id: "session-visual",
+        workspace_id: "workspace-visual",
+        backend_id: "codex",
+        agent_definition: "codex@1",
+        status: "completed",
+        created_at: new Date(Date.now() - 18_000).toISOString(),
+        completed_at: new Date().toISOString(),
+      },
+      summary: {
+        duration_ms: 18_000,
+        counts_by_item_type: { message: 2, command_execution: 1 },
+        counts_by_status: { completed: 3 },
+        error: null,
+        usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46 },
+        artifact_count: 0,
+        warning_count: 0,
+      },
+      timeline: runInspectionSafetyFixture ? [
+        {
+          id: "mock-safe-reasoning", session_id: "session-visual", run_id: request.runId,
+          type: "reasoning", status: "completed", sequence: 1,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          source: { backend: "runtime" },
+          content: { segments: [{ id: "mock-private-segment", text: "mock-raw-cot-canary" }], chain_of_thought: "mock-raw-cot-canary", summary: "Compared the public evidence and verified the result." },
+          event_refs: [{ event_id: "mock-event-reasoning", sequence: 1 }],
+        },
+        {
+          id: "mock-safe-tool", session_id: "session-visual", run_id: request.runId,
+          type: "tool_call", status: "completed", sequence: 2,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          source: { backend: "runtime" },
+          content: { tool_kind: "local", tool_name: "read_file", call_id: "mock-safe-call", arguments: { path: "C:\\Users\\mock-private-user\\OpenDrSai\\secret.txt", api_key: "mock-secret-key-canary" }, result: "Bearer mock-secret-token-canary from /home/mock-private-user/opendrsai/secret.txt" },
+          event_refs: [{ event_id: "mock-event-tool", sequence: 2 }],
+        },
+      ] : [],
+      manifest: runInspectionSafetyFixture ? {
+        ...mockRunManifest(request.runId),
+        manifest: {
+          model: { id: "mock-model", api_key: "mock-secret-key-canary" },
+          prompt: { id: "mock-prompt", digest: "a".repeat(64), content: "mock-system-prompt-canary" },
+          input: { sha256: "b".repeat(64), length: 42, text: "mock-input-body-canary" },
+          workspace: { root: "C:\\Users\\mock-private-user\\OpenDrSai\\workspace" },
+        },
+      } : mockRunManifest(request.runId),
+      page: { next_cursor: null, has_more: false },
+    }),
+    locateRunItem: async (request) => ({
+      schema_version: "opendrsai.run-inspection/1",
+      run_id: request.runId,
+      item_id: request.itemId,
+      item_sequence: 1,
+      timeline_cursor: null,
+    }),
+    createRunExperiment: async (request) => mockRunExperiment(request.runId, request.title),
+    getRunExperimentCapabilities: async (request) => ({
+      schema_version: "opendrsai.run-experiment-capabilities/1",
+      override_schema_version: "opendrsai.run-experiment-overrides/1",
+      run_id: request.runId,
+      backend_id: "opendrsai",
+      supported_override_fields: ["attachments", "input", "model"],
+      supported_model_fields: ["model_id", "provider_id"],
+      default_replay_modes: ["rerun_from_start"],
+      advanced_replay_modes: [],
+      models: [{ provider_id: "openai", model_id: "gpt-test", display_name: "GPT Test", default: true }],
+      available_model_refs: ["openai/gpt-test"],
+      catalog_error: null,
+    }),
+    finalizeRunExperimentCandidate: async (request) => ({
+      experiment_id: request.experimentId, run_id: "run-replay-visual",
+      worktree_id: "worktree-visual", snapshot_created: true,
+      candidate_head: "b".repeat(40), previous_head: "a".repeat(40), change_count: 2,
+    }),
+    getRunExperiment: async () => mockRunExperiment("run-visual"),
+    updateRunExperiment: async (request) => ({ ...mockRunExperiment("run-visual"), draft_version: request.expectedVersion + 1, ...request.patch }),
+    deleteRunExperiment: async () => true,
+    exportRunExperimentPackage: async (request) => ({
+      package: {
+        schema_version: "opendrsai.run-experiment-package/1", exported_at: new Date().toISOString(),
+        privacy_notice: "Redacted fixture package.", experiment: { experiment_id: request.experimentId, base_run_id: "run-visual" },
+        base_manifest: mockRunManifest("run-visual"), candidate_manifest: null, replay_plan: null, comparison: null, adoption: null,
+        proof_scope: ["experiment_lineage"], excluded: ["prompt_bodies"],
+        integrity: { algorithm: "sha256", digest_scope: "package_without_integrity", digest: `sha256:${"a".repeat(64)}` },
+      },
+      savedPath: `C:\\Downloads\\opendrsai-experiment-${request.experimentId}-package.json`, cancelled: false,
+    }),
+    createReplayPlan: async (request) => mockReplayPlan(request.experimentId, request.expectedDraftVersion),
+    getReplayPlan: async (request) => mockReplayPlan("experiment-visual", 1, request.replayPlanId),
+    getReplayBoundaries: async (request) => ({ run_id: request.runId, items: [], runtime_checkpoint: null }),
+    getRunRelations: async (request) => ({ run_id: request.runId, parent: null, children: [], experiments: [] }),
+    executeReplayPlan: async (request) => ({ replay_plan_id: request.replayPlanId, created: true, run: { run_id: "run-replay-visual", status: "completed" } }),
+    createRunComparison: async (request) => mockRunComparison(request.baselineRunId, request.candidateRunId),
+    getRunComparison: async (request) => ({ ...mockRunComparison("run-visual", "run-replay-visual"), comparison_id: request.comparisonId }),
+    getWorktreeAdoptionPreview: async (request) => ({ source_workspace_id: request.sourceWorkspaceId, worktree_id: request.worktreeId, base_commit: "a".repeat(40), source_head: "a".repeat(40), candidate_head: "b".repeat(40), preview_digest: `sha256:${"f".repeat(64)}`, source_clean: true, candidate_clean: true, conflict_count: 0, can_apply: true, changes: [] }),
+    applyWorktreeAdoption: async (request) => ({ worktree: { worktree_id: request.worktreeId, status: "merged" }, preview_digest: request.previewDigest, selected_paths: request.selectedPaths }),
+    getRunAdoptionPreview: async (request) => mockRunAdoption(request.comparisonId),
+    applyRunAdoption: async (request) => ({ ...mockRunAdoption("mock-comparison", "applied"), adoption_id: request.adoptionId, selected_paths: request.selectedPaths, receipt: { selected_count: request.selectedPaths.length, audit_event: "workspace.worktree.adoption.applied" } }),
+    discardRunAdoption: async (request) => ({ ...mockRunAdoption("mock-comparison", "discarded"), adoption_id: request.adoptionId, receipt: { cleanup_requested: request.cleanup !== false, audit_event: "workspace.worktree.adoption.discarded" } }),
+    decideRuntimeSecurityApproval: async (request) => ({ approval_id: request.approvalId, decision: request.decision }),
+    decideRuntimeRunApproval: async (request) => ({ approval_id: request.approvalId, status: request.decision }),
+    getRunReproductionManifest: async (request) => mockRunManifest(request.runId),
+    exportRunReproductionManifest: async (request) => ({ manifest: mockRunManifest(request.runId), savedPath: `C:\\Downloads\\opendrsai-run-${request.runId}-manifest.json`, cancelled: false }),
+    respondChatInput: async (requestId, response) => {
+      const target = globalThis as typeof globalThis & { __opendrsaiGoalFixtureResponses?: Array<{ requestId: string; response: unknown }> };
+      target.__opendrsaiGoalFixtureResponses ??= [];
+      target.__opendrsaiGoalFixtureResponses.push({ requestId, response });
+      return true;
+    },
     startVoiceTranscription: async (request) => {
       const requestId = `fixture-voice-${Date.now()}`;
       const timer = window.setTimeout(() => {
@@ -3235,7 +3718,6 @@ export function installMockDesktopApi(): void {
           runId: `mock-fork-queue-${thread.id}`,
           task: `Mock fork queue dispatch: ${thread.title}`,
           workspacePath: thread.fork.worktreePath,
-          model: request.model,
           metadata: {
             fork_queue_dispatch: true,
             selected_agent_id: assignedAgentId,
@@ -3822,14 +4304,92 @@ export function installMockDesktopApi(): void {
         message: run.steps[stepIndex].message,
       };
     },
-    listBackgroundTasks: async (request) =>
-      backgroundTasks
+    listBackgroundTasks: async (request) => {
+      if (resultProvenanceFixture) {
+        const inputSummary = "Summarize the verified workspace materials and produce a cited report.";
+        const attachments = ["research-notes.pdf", "measurements.csv"];
+        const inputDigest = await sha256Web(canonicalResultInput(inputSummary, attachments));
+        const capturedAt = "2026-08-05T21:30:00.000Z";
+        const unsigned = {
+          schemaVersion: RESULT_PROVENANCE_SCHEMA,
+          sourceTaskId: "mock-result-provenance-task",
+          sourceSessionId: "mock-result-provenance-session",
+          sourceRunId: "mock-result-provenance-run",
+          input: { summary: inputSummary, attachments, digest: inputDigest },
+          target: {
+            artifactId: "mock-result-provenance-artifact",
+            version: 3,
+            versionId: `sha256:${"3".repeat(64)}`,
+          },
+          capturedAt,
+        };
+        const provenance = { ...unsigned, sourceDigest: await sha256Web(canonicalResultProvenance(unsigned)) };
+        return [{
+          id: "mock-result-provenance-task",
+          kind: "agent_run",
+          source: "agent",
+          title: "Verified workspace research summary",
+          status: "completed",
+          createdAt: capturedAt,
+          updatedAt: capturedAt,
+          workspacePath: "C:\\Users\\Demo\\Projects\\workspace",
+          threadId: "mock-result-provenance-session",
+          targetId: "mock-result-provenance-request",
+          progress: 100,
+          message: "The cited report is ready.",
+          verification: "Result provenance fixture is complete.",
+          deliverySummary: {
+            findingSummary: "The cited report is ready.",
+            importance: "high",
+            importanceReason: "The result has a verifiable origin.",
+            artifacts: [{ id: "mock-result-provenance-artifact", label: "verified-research-summary.md", path: "C:\\Users\\Demo\\Projects\\workspace\\verified-research-summary.md", kind: "report", provenance }],
+            suggestedAction: "Verify the source and open the report.",
+            workSummary: inputSummary,
+            coreConclusion: "Every result can return to its source task and Run.",
+            verification: "The provenance digest is independently reproducible.",
+            remainingRisks: "None in the fixture.",
+            completionCriteria: { passed: ["Provenance bound"], incomplete: [] },
+          },
+        }];
+      }
+      if (resultFirstCompletionFixture) {
+        resultFirstCompletionPoll += 1;
+        const completed = resultFirstCompletionPoll >= 2;
+        const now = new Date().toISOString();
+        return [{
+          id: "mock-result-first-completion",
+          kind: "agent_run",
+          source: "agent",
+          title: "M08 result-first completion",
+          status: completed ? "completed" : "running",
+          createdAt: now,
+          updatedAt: now,
+          targetId: "mock-result-first-completion",
+          progress: completed ? 100 : 80,
+          message: completed ? "The requested result is ready." : "Final checks are running.",
+          verification: completed ? "Production Renderer verified." : "Verification is in progress.",
+          ...(completed ? { deliverySummary: {
+            findingSummary: "The requested result is ready.",
+            importance: "high",
+            importanceReason: "The user can continue without opening diagnostics.",
+            artifacts: [],
+            suggestedAction: "Review the result and the incomplete check.",
+            workSummary: "Completed the result-first foreground flow.",
+            coreConclusion: "The result opens automatically after completion.",
+            verification: "Production Renderer transition verified.",
+            remainingRisks: "External HAI release evidence remains incomplete.",
+            completionCriteria: { passed: ["Result shown"], incomplete: ["External HAI release evidence"] },
+          } } : {}),
+        }];
+      }
+      return backgroundTasks
         .filter(
           (task) =>
             !request?.workspacePath || task.workspacePath === request.workspacePath,
         )
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, request?.limit ?? 50),
+        .slice(0, request?.limit ?? 50);
+    },
     enqueueBackgroundTask: async (request) => {
       const now = new Date().toISOString();
       const task: DesktopBackgroundTask = {
@@ -5709,6 +6269,24 @@ export function installMockDesktopApi(): void {
   };
 
   window.openDrSai = api;
+  if (activeDeltaFixture && longConversationFixtureRuns > 0) {
+    let sequence = 0;
+    const timer = window.setInterval(() => {
+      sequence += 1;
+      const messageId = `long-assistant-${longConversationFixtureRuns}`;
+      const event = { version: 2 as const, threadId: "mock-long-opendrsai-thread", runtimeSessionId: "mock-opendrsai-session",
+        baseSequence: sequence - 1, sessionSequence: sequence, generation: 1,
+        patch: { kind: "run.replace" as const, runId: `long-run-${longConversationFixtureRuns}`,
+          removeMessageIds: [messageId], insertAt: longConversationFixtureRuns * 2 - 1,
+          messages: [{ id: messageId, role: "assistant" as const, content: `Streaming fixture delta ${sequence}`,
+            streaming: true, structuredTurn: { version: 2 as const, turnId: `long-run-${longConversationFixtureRuns}`,
+              status: "running" as const, parts: [], activities: [], lastSequence: sequence,
+              seenDedupeKeys: [], protocolIssues: [] } }],
+          updatedAt: Date.now(), messageCount: longConversationFixtureRuns * 2 } };
+      for (const listener of threadSnapshotPatchListeners) listener(event);
+    }, 8);
+    window.addEventListener("beforeunload", () => window.clearInterval(timer), { once: true });
+  }
 }
 
 function subscribe<T>(

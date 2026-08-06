@@ -22,6 +22,8 @@ export interface SessionConversationSubscriber {
 export interface SessionConversationSubscription {
   readonly sessionId: string;
   readonly cursor: number;
+  readonly terminalError?: unknown;
+  readonly phase?: string;
   stop(): void;
   done: Promise<void>;
 }

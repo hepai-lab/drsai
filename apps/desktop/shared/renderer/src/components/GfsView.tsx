@@ -22,6 +22,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { GfsObjectInfo } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
+import { requestAppDecision } from "./AppDecisionDialog";
 
 type GfsPane = "favorites" | "mine";
 
@@ -763,7 +764,7 @@ export function GfsView({
 
   const handleDelete = useCallback(async (path: string, isDir: boolean) => {
     const name = path.replace(/\/$/, "").split("/").pop() ?? path;
-    if (!window.confirm(isDir ? `确定要删除文件夹 "${name}" 及其所有内容吗？此操作不可恢复。` : `确定要删除 "${name}" 吗？此操作不可恢复。`)) return;
+    if (!await requestAppDecision({ id: "delete-gfs-object", tone: "danger", title: isDir ? `删除文件夹“${name}”？` : `删除“${name}”？`, description: isDir ? "该文件夹及其全部内容将被删除。" : "该文件将被删除。", impact: "此操作不可恢复。", confirmLabel: "确认删除" })) return;
     setMessage(null);
     try {
       await desktopApi.gfsDelete({ path });

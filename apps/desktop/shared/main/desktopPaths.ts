@@ -20,9 +20,10 @@ export function createDesktopPathService(options: CreateDesktopPathServiceOption
   const usePackagedRepository = windows && !options.defaultApp && Boolean(packagedRepository);
   const repository = environment.DRSAI_REPO?.trim()
     || (usePackagedRepository ? packagedRepository : join(home, "drsai-agent"));
-  const virtualEnvironment = join(repository, "venv");
+  const runtimeRoot = environment.OPENDRSAI_RUNTIME_ROOT?.trim() || repository;
+  const virtualEnvironment = join(runtimeRoot, "venv");
   const pythonExecutable = join(virtualEnvironment, windows ? "Scripts/python.exe" : "bin/python");
-  const cliExecutable = windows ? join(virtualEnvironment, "Scripts/drsai.exe") : join(repository, "drsai");
+  const cliExecutable = windows ? join(virtualEnvironment, "Scripts/drsai.exe") : join(runtimeRoot, "drsai");
   const commandExecutable = windows ? join(virtualEnvironment, "Scripts/drsai.cmd") : cliExecutable;
   const enhancedPathEntries = windows
     ? [join(virtualEnvironment, "Scripts"), join(home, "git", "cmd"), join(home, "node")]

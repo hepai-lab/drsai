@@ -63,8 +63,22 @@ export function projectOaepEventForPresentation(
     output.push({ ...base("turn-started"), type: "turn.started" });
   };
 
-  if (["event.run.created", "event.run.started", "event.run.waiting", "event.run.resumed"].includes(event.type)) {
+  if (["event.run.created", "event.run.started"].includes(event.type)) {
     ensureStarted();
+    return output;
+  }
+  if (event.type === "event.run.waiting") {
+    ensureStarted();
+    const position = Number(event.data.queue_position);
+    output.push({ ...base("turn-waiting"), type: "turn.waiting",
+      ...(event.data.reason ? { reason: String(event.data.reason) } : {}),
+      ...(Number.isSafeInteger(position) && position > 0 ? { queuePosition: position } : {}) });
+    return output;
+  }
+  if (event.type === "event.run.resumed") {
+    ensureStarted();
+    output.push({ ...base("turn-resumed"), type: "turn.resumed",
+      ...(event.data.reason ? { reason: String(event.data.reason) } : {}) });
     return output;
   }
   if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {
@@ -96,6 +110,11 @@ export function projectOaepEventForPresentation(
 
   const item = isOaepItem(event.data.item) ? event.data.item : currentItem;
   if (!item || (item.type === "message" && item.content.role !== "assistant")) return output;
+  if (event.type === "event.item.delta") {
+    const deltaKind = typeof event.data.delta?.kind === "string" ? event.data.delta.kind : "";
+    if (deltaKind.startsWith("reasoning.") && event.data.delta?.visibility
+        && event.data.delta.visibility !== "user") return output;
+  }
   ensureStarted();
   const projected = projectOaepAssistantItem(item, projection.turnId, true);
 

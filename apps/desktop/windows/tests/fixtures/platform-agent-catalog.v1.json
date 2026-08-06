@@ -10,6 +10,7 @@
         "owner": "Fixture Team",
         "mode": "ddf",
         "status": "online",
+        "capabilities": ["chat", "streaming"],
         "model": "fixture-model",
         "api_key": "MUST_NOT_REACH_RENDERER",
         "config": {

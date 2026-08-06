@@ -4,6 +4,7 @@ import type {
   DesktopUserPreferenceUpsertRequest,
   DesktopUserPreferenceValue,
 } from "@shared/desktopApi";
+import { redactSensitiveData, scanSensitiveData, type SensitiveDataKind } from "../../api/sensitiveData";
 
 const EXPLICIT_MEMORY_MARKER = /(?:以后|今后|将来).{0,10}(?:默认|都|一直)|(?:请|帮我)?记住|remember|from now on|always default/i;
 const TASK_MARKER = /(?:分析|生成|制作|创建|总结|调研|研究|修改|翻译|发送|运行|打开|比较|检查|analy[sz]e|generate|create|summari[sz]e|research|edit|translate|send|run|open|compare|check)/i;
@@ -14,7 +15,7 @@ const SENSITIVE_PATTERNS = {
   temporary_path: /(?:\b[A-Za-z]:\\(?:Users\\[^\\\s]+\\AppData\\Local\\Temp|Windows\\Temp)\\[^\s"']+|%TEMP%\\[^\s"']+|\/tmp\/[^\s"']+)/ig,
 } as const;
 
-export type MemorySafetyKind = keyof typeof SENSITIVE_PATTERNS;
+export type MemorySafetyKind = SensitiveDataKind | keyof typeof SENSITIVE_PATTERNS;
 
 export interface MemorySafetyIntent {
   explicitMemoryRequest: boolean;
@@ -24,9 +25,12 @@ export interface MemorySafetyIntent {
 }
 
 export function analyzeMemorySafetyIntent(text: string): MemorySafetyIntent {
-  const sensitiveKinds = (Object.entries(SENSITIVE_PATTERNS) as [MemorySafetyKind, RegExp][])
+  const sensitiveKinds = [...new Set<MemorySafetyKind>([
+    ...scanSensitiveData(text).map((match) => match.kind),
+    ...(Object.entries(SENSITIVE_PATTERNS) as [keyof typeof SENSITIVE_PATTERNS, RegExp][])
     .filter(([, pattern]) => resetAndTest(pattern, text))
-    .map(([kind]) => kind);
+    .map(([kind]) => kind),
+  ])];
   return {
     explicitMemoryRequest: EXPLICIT_MEMORY_MARKER.test(text),
     temporary: TEMPORARY_MARKER.test(text),
@@ -67,10 +71,14 @@ export function canHandleMemoryRequestLocally(text: string): boolean {
 }
 
 export function redactSensitiveMemoryText(text: string): string {
-  let redacted = text;
+  let redacted = redactSensitiveData(text);
   const labels: Record<MemorySafetyKind, string> = {
     api_key: "[API Key 已隐藏]",
     token: "[令牌已隐藏]",
+    user_secret: "[秘密已隐藏]",
+    bearer_token: "[令牌已隐藏]",
+    email: "[邮箱已隐藏]",
+    phone: "[手机号已隐藏]",
     temporary_path: "[临时路径已隐藏]",
   };
   for (const [kind, pattern] of Object.entries(SENSITIVE_PATTERNS) as [MemorySafetyKind, RegExp][]) {
@@ -87,8 +95,8 @@ export function formatMemorySafetyNotice(
   const notices: string[] = [];
   if (safety.hasSensitiveContent) {
     notices.push(language === "zh"
-      ? "为保护隐私，我没有保存你提供的 API Key、令牌或临时路径，也没有把它发送给模型；这些内容不会进入后续会话上下文。请通过受保护的凭据设置提供任务所需秘密。"
-      : "For your privacy, I did not save or send the API key, token, or temporary path to the model. It will not appear in later conversation context; use protected credential settings when a task needs a secret.");
+      ? "为保护隐私，我没有保存或发送检测到的 API Key、令牌、个人信息或临时路径；这些内容不会进入模型或后续会话上下文。请通过受保护的凭据设置提供任务所需秘密。"
+      : "For your privacy, I did not save or send the detected API key, token, personal information, or temporary path. It will not enter the model or later conversation context; use protected credential settings when a task needs a secret.");
   }
   if (safety.temporary) {
     notices.push(language === "zh"

@@ -39,6 +39,21 @@ try {
   assert.deepEqual(presentation.backendRetryIdentity("pending", "safe-key"), { reuseKey: true, idempotencyKey: "safe-key" });
 
   const app = await readFile(join(root, "../shared/renderer/src/App.tsx"), "utf8");
+  const windowsMain = await readFile(join(root, "src/main/index.ts"), "utf8");
+  for (const phase of ["discovered", "read", "projected", "persisted", "cancelled"]) {
+    assert(windowsMain.includes(`emit(\"${phase}\"`), `Workspace sync must report the ${phase} phase`);
+  }
+  assert(windowsMain.includes("controller.signal.throwIfAborted()"));
+  assert(windowsMain.includes('secureHandle("desktop:cancel-codex-workspace-session-sync"'));
+  assert(app.includes("cancelCodexWorkspaceSessionSync(requestId)"), "Cancel must reach Main instead of only hiding a late result");
+  for (const command of [
+    'action === "resync_workspace"', 'syncWorkspaceSessions(activeWorkspace)',
+    'action === "repair_codex"', 'desktopApi.restartCodexBackend()',
+    'action === "new_task"', 'await handleNewChat()',
+    'action === "diagnostics"', 'setActiveRightTab("debug")',
+  ]) assert(app.includes(command), `Recovery UI is missing command routing: ${command}`);
+  const chatWorkspace = await readFile(join(root, "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
+  assert(chatWorkspace.includes('className="chat-recovery-actions"') && chatWorkspace.includes("onRecoveryAction(message.id, action.id)"));
   assert(app.includes("health?.update.currentVersion"), "About must show the Electron Desktop version, not the Runtime version");
   const locationBlock = app.slice(app.indexOf("workspaceLocationChoice === null"), app.indexOf("workspaceLocationChoice === \"remote\""));
   assert(locationBlock.includes('"本地" : "Local"') && locationBlock.includes('"远程" : "Remote"'));
@@ -46,18 +61,24 @@ try {
   const statusBundle = join(temp, "status.mjs");
   await build({ entryPoints: [join(root, "src/main/codexBackendStatus.ts")], outfile: statusBundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const { presentCodexBackendStatus } = await import(pathToFileURL(statusBundle).href);
+  const readiness = (installed, contract) => ({
+    refreshed_at: "2026-08-05T00:00:00Z",
+    transport: { state: installed === "ready" ? "ready" : "fault" }, installed: { state: installed },
+    contract: { state: contract }, account: { state: "unknown", reason: "not_probed" },
+    models: { state: "ready" }, executable: { state: "unknown", reason: "account_not_probed" },
+  });
   const states = [
-    presentCodexBackendStatus({ backend_id: "codex", available: true, version: "0.142.5" }, { logged_in: true, auth_mode: "chatgpt", email: "user@example.test", plan_type: "plus", credential_source: null, requires_openai_auth: true }).state,
-    presentCodexBackendStatus({ backend_id: "codex", available: false, reason: "codex_artifact_not_installed" }).state,
-    presentCodexBackendStatus({ backend_id: "codex", available: false, reason: "codex_version_incompatible" }).state,
-    presentCodexBackendStatus({ backend_id: "codex", available: true }, { logged_in: false, auth_mode: null, email: null, plan_type: null, credential_source: null, requires_openai_auth: true }).state,
-    presentCodexBackendStatus({ backend_id: "codex", available: false, reason: "codex_connection_eof" }).state,
+    presentCodexBackendStatus({ backend_id: "codex", available: true, version: "0.142.5", readiness: readiness("ready", "ready") }, { state: "signed_in", logged_in: true, auth_mode: "chatgpt", email: "user@example.test", plan_type: "plus", credential_source: null, requires_openai_auth: true }).state,
+    presentCodexBackendStatus({ backend_id: "codex", available: false, reason: "opaque", readiness: readiness("missing", "unknown") }).state,
+    presentCodexBackendStatus({ backend_id: "codex", available: false, reason: "opaque", readiness: readiness("ready", "blocked") }).state,
+    presentCodexBackendStatus({ backend_id: "codex", available: true, readiness: readiness("ready", "ready") }, { state: "signed_out", logged_in: false, auth_mode: null, email: null, plan_type: null, credential_source: null, requires_openai_auth: true }).state,
+    presentCodexBackendStatus({ backend_id: "codex", available: false, reason: "opaque", readiness: readiness("unknown", "unknown") }).state,
   ];
   assert.deepEqual(states, ["available", "not_installed", "version_incompatible", "not_logged_in", "fault"]);
   const detailedStatus = presentCodexBackendStatus({
     backend_id: "codex", available: true, version: "0.142.5", connection_state: "ready",
     app_server_state: "running", transport: "local-process", adapter_version: "oaep-codex/2.0",
-  }, { logged_in: true, auth_mode: "chatgpt", email: "user@example.test", plan_type: "plus", credential_source: null, requires_openai_auth: true });
+  }, { state: "signed_in", logged_in: true, auth_mode: "chatgpt", email: "user@example.test", plan_type: "plus", credential_source: null, requires_openai_auth: true });
   assert.equal(detailedStatus.appServerState, "running");
   assert.equal(detailedStatus.transport, "local-process");
   assert.equal(detailedStatus.adapterVersion, "oaep-codex/2.0");
@@ -66,9 +87,12 @@ try {
   const errorsBundle = join(temp, "user-facing-errors.mjs");
   await build({ entryPoints: [join(root, "../shared/renderer/src/userFacingErrors.ts")], outfile: errorsBundle, bundle: true, platform: "node", format: "esm", target: "node22" });
   const { describeUserFacingError } = await import(pathToFileURL(errorsBundle).href);
-  const connectionError = describeUserFacingError(new Error("codex_connection_eof: token=secret"), "zh");
-  assert.equal(connectionError.title, "暂时无法连接 Codex。");
+  const connectionError = describeUserFacingError({ code: "codex_connection_eof", retryable: true, message: "token=secret" }, "zh");
+  assert.equal(connectionError.title, "OpenDrSai 暂时无法连接后端。");
   assert(!connectionError.title.includes("codex_connection_eof") && !connectionError.action.includes("secret"));
+  const resumeError = describeUserFacingError({ code: "codex_session_recovery_required", retryable: false, message: "internal developer text" }, "zh");
+  assert.deepEqual(resumeError.actions.map((action) => action.id), ["resync_workspace", "new_task", "diagnostics"]);
+  assert(!resumeError.title.includes("codex_session_recovery_required") && !resumeError.action.includes("internal developer text"));
 
   const gateway = await readFile(join(root, "../shared/main/gateway.ts"), "utf8");
   assert(gateway.includes("getLocalCodexDevelopmentEnv") && gateway.includes('DRSAI_CODEX_DEVELOPMENT: "1"'));
@@ -84,9 +108,9 @@ try {
   assert(chat.includes('request.agentId === "my-codex"'));
   assert(chat.includes("createAgentRun(") && chat.includes("runtimeSessionId,") && chat.includes("agentDefinition,"));
   assert(chat.includes("existingThread?.runtimeSessionId"), "Codex follow-up turns must reuse the mapped Runtime Session");
-  assert(chat.includes("codex_session_resume_required"), "A missing Codex binding must never silently create a replacement task");
-  assert(chat.includes("requiresCodexSessionResume(existingThread, agentDefinition)"), "Only imported or previously-run Codex tasks may require Session recovery");
-  assert(chat.includes('syncBackendSessions(resolved.workspaceId, "codex")'), "Imported Codex tasks must auto-sync before recovery is required");
+  assert(chat.includes("codex_session_recovery_required"), "A missing Codex binding must never silently create a replacement task");
+  assert(chat.includes("client.getBackendSessionBinding(existingThread.id)") && chat.includes("codexContinuationAction(binding)"), "Codex continuation must use the authoritative Runtime binding state");
+  assert(chat.includes('syncBackendSessions(resolved.workspaceId, "codex", controller.signal)'), "Imported Codex tasks must auto-sync before recovery is required");
   assert(chat.includes("projectOaepEventForPresentation") && chat.includes('type: "structured"'));
   assert(chat.includes("cancelAgentRun") && chat.includes("respondAgentApproval"));
   assert(chat.includes("export async function recoverChatRun"), "Codex Run output must be recoverable after an Electron restart");
@@ -94,7 +118,7 @@ try {
   assert(oaepProjector.includes('kind: "reasoning.append"'), "Codex reasoning must use the structured reasoning part");
   assert(oaepProjector.includes("projectOaepAssistantItem"), "Codex tools and file changes must share the history/live OAEP Item projection");
   const recoveryBlock = chat.slice(chat.indexOf("export async function recoverChatRun"), chat.indexOf("export async function respondChatInput"));
-  assert(recoveryBlock.includes("mapCodexOaepEvent") && recoveryBlock.includes("hasOaepTerminal"), "Recovered Codex runs must settle through the shared OAEP projector");
+  assert(recoveryBlock.includes("mapRuntimeOaepEvent") && recoveryBlock.includes("hasOaepTerminal"), "Recovered Codex runs must settle through the shared OAEP projector");
   assert(!recoveryBlock.includes('push({ type: "done"') && !recoveryBlock.includes('push({ type: "error"'), "Recovery must not synthesize a second legacy terminal");
   const adapter = await readFile(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
   assert(adapter.includes("desktopApi.recoverChatRun"), "Renderer must request Codex Run replay for an interrupted turn");

@@ -32,6 +32,7 @@ import type {
 } from "@shared/desktopApi";
 import type { AppLanguage } from "../../navigation";
 import { desktopApi } from "../../desktopApi";
+import { requestAppDecision } from "../AppDecisionDialog";
 import {
   AgentFileActivityPanel,
   createTraceEventsFromAttachments,
@@ -318,9 +319,9 @@ export function FilesContextPanel({
     }
   }
 
-  function addSelectedFile(): void {
+  async function addSelectedFile(): Promise<void> {
     if (!selectedNode || selectedNode.type !== "file" || selectedInBasket) return;
-    commitAttachments([createFileAttachment(selectedNode, preview)]);
+    await commitAttachments([createFileAttachment(selectedNode, preview)]);
   }
 
   function toggleContextSelection(node: WorkspaceFileNode): void {
@@ -332,7 +333,7 @@ export function FilesContextPanel({
     });
   }
 
-  function attachSelectedContextNodes(): void {
+  async function attachSelectedContextNodes(): Promise<void> {
     const attachments = selectedContextNodes
       .filter((node) => !basket.some((item) => item.path === node.path))
       .map((node) =>
@@ -341,14 +342,14 @@ export function FilesContextPanel({
           : createFileAttachment(node, preview?.path === node.path ? preview : null),
       );
     if (attachments.length === 0) return;
-    commitAttachments(attachments);
+    await commitAttachments(attachments);
   }
 
-  function attachSelectedDirectory(): void {
+  async function attachSelectedDirectory(): Promise<void> {
     if (!selectedNode || selectedNode.type !== "directory") return;
-    if (!confirmUntrustedContextShare()) return;
+    if (!await confirmUntrustedContextShare()) return;
     const files = collectFileNodes(selectedNode);
-    if (files.length > 200 && !confirmLargeDirectoryContext(files.length)) return;
+    if (files.length > 200 && !await confirmLargeDirectoryContext(files.length)) return;
     const attachment = createDirectoryAttachment(selectedNode, workspacePath);
     const nextBasket = [...basket.filter((item) => item.path !== selectedNode.path), attachment];
     onBasketChange(nextBasket);
@@ -356,28 +357,24 @@ export function FilesContextPanel({
     recordSnapshot(nextBasket);
   }
 
-  function confirmLargeDirectoryContext(fileCount: number): boolean {
-    return window.confirm(
-      zh
-        ? `该目录包含 ${fileCount} 个文件，交给智能体的文件清单会被截断。确认加入？`
-        : `This folder contains ${fileCount} files and the agent manifest will be truncated. Attach it?`,
-    );
+  function confirmLargeDirectoryContext(fileCount: number): Promise<boolean> {
+    return requestAppDecision({ id: "attach-large-directory", title: zh ? "加入大型目录？" : "Attach a large folder?", description: zh ? `该目录包含 ${fileCount} 个文件。` : `This folder contains ${fileCount} files.`, impact: zh ? "交给智能体的文件清单会被截断；原始文件不会修改。" : "The file list provided to the agent will be truncated; source files are unchanged.", confirmLabel: zh ? "仍然加入" : "Attach anyway" });
   }
 
   async function attachSelectedDiff(): Promise<void> {
     if (!selectedNode) return;
-    if (!confirmUntrustedContextShare()) return;
+    if (!await confirmUntrustedContextShare()) return;
     await loadDiff(false);
   }
 
   async function attachSelectedStagedDiff(): Promise<void> {
     if (!selectedNode) return;
-    if (!confirmUntrustedContextShare()) return;
+    if (!await confirmUntrustedContextShare()) return;
     await loadDiff(true);
   }
 
   async function attachWorkspaceDiff(): Promise<void> {
-    if (!confirmUntrustedContextShare()) return;
+    if (!await confirmUntrustedContextShare()) return;
     const diff = await desktopApi.getWorkspaceGitDiff({
       workspacePath,
       workspaceId,
@@ -499,8 +496,8 @@ export function FilesContextPanel({
     if (result) setError(result);
   }
 
-  function commitAttachments(attachments: ChatAttachment[]): boolean {
-    if (!confirmUntrustedContextShare()) return false;
+  async function commitAttachments(attachments: ChatAttachment[]): Promise<boolean> {
+    if (!await confirmUntrustedContextShare()) return false;
     const nextBasket = [...basket, ...attachments];
     onBasketChange(nextBasket);
     recordTrace(attachments);
@@ -508,9 +505,9 @@ export function FilesContextPanel({
     return true;
   }
 
-  function prepareManagerPresentation(): void {
+  async function prepareManagerPresentation(): Promise<void> {
     if (!selectedNode || !canCreateManagerPresentation) return;
-    if (!selectedInBasket && !commitAttachments([createFileAttachment(selectedNode, preview)])) return;
+    if (!selectedInBasket && !await commitAttachments([createFileAttachment(selectedNode, preview)])) return;
     onPrepareTask(buildManagerPresentationTask(language));
   }
 
@@ -519,7 +516,7 @@ export function FilesContextPanel({
     audience: ManagerPresentationAudience = "non_expert_managers",
   ): Promise<void> {
     if (!selectedNode || !canCreateManagerPresentation) return;
-    if (!selectedInBasket && !commitAttachments([createFileAttachment(selectedNode, preview)])) return;
+    if (!selectedInBasket && !await commitAttachments([createFileAttachment(selectedNode, preview)])) return;
     const interrupted = managerPresentationProgress?.phase === "interrupted"
       && managerPresentationRequestRef.current === managerPresentationProgress.requestId;
     if (mode === "restart" && interrupted && managerPresentationProgress) {
@@ -713,11 +710,11 @@ export function FilesContextPanel({
     ]);
   }
 
-  function handleBasketChange(nextBasket: ChatAttachment[]): void {
+  async function handleBasketChange(nextBasket: ChatAttachment[]): Promise<void> {
     const added = nextBasket.filter(
       (next) => !basket.some((current) => current.path === next.path && current.name === next.name),
     );
-    if (added.length > 0 && !confirmUntrustedContextShare()) return;
+    if (added.length > 0 && !await confirmUntrustedContextShare()) return;
     onBasketChange(nextBasket);
     if (added.length > 0) {
       recordTrace(added);
@@ -725,13 +722,9 @@ export function FilesContextPanel({
     }
   }
 
-  function confirmUntrustedContextShare(): boolean {
-    if (workspaceTrusted) return true;
-    return window.confirm(
-      zh
-        ? "该工作区尚未信任。确认要把这些文件材料交给智能体？"
-        : "This workspace is not trusted. Attach this file context to the agent anyway?",
-    );
+  function confirmUntrustedContextShare(): Promise<boolean> {
+    if (workspaceTrusted) return Promise.resolve(true);
+    return requestAppDecision({ id: "attach-untrusted-workspace-context", tone: "danger", title: zh ? "使用未信任工作区的材料？" : "Use files from an untrusted workspace?", description: zh ? "这些文件材料将提供给当前智能体任务。" : "These files will be provided to the current agent task.", impact: zh ? "请先确认文件来源可信；原始文件不会因加入上下文而修改。" : "Confirm the file source is trusted. Attaching context does not modify source files.", confirmLabel: zh ? "确认使用材料" : "Use these files" });
   }
 
   function recordSnapshot(

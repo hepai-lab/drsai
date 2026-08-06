@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import {
   createHash,
+  createHmac,
   createPublicKey,
   createVerify,
   randomBytes,
@@ -22,8 +23,7 @@ import type {
 import { DRSAI_HOME } from "./paths";
 import { isDesktopDevelopment } from "./desktopRuntimeMode";
 import { getActivePlatformConfig } from "./platformConfig";
-import { normalizeModelAlias } from "./modelDefaults";
-import { saveApiKeyAndDefaultModel } from "./settings";
+import { saveApiKeyAndSync } from "./settings";
 import { sanitizeDiagnosticUrl } from "./secretRedaction";
 
 const IS_DESKTOP_DEV = isDesktopDevelopment();
@@ -59,7 +59,9 @@ const OIDC_CLIENT_ID = process.env.OPENDRSAI_OIDC_CLIENT_ID || "opendrsai-deskto
 const OIDC_BASE_SCOPE = "openid email profile roles groups hai_api";
 const OIDC_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 const OIDC_FETCH_TIMEOUT_MS = Number(process.env.OPENDRSAI_OIDC_FETCH_TIMEOUT_MS || "10000");
-const OIDC_AUTH_COMPLETE_DEEP_LINK = "opendrsai://auth-complete";
+const OIDC_AUTH_COMPLETE_DEEP_LINK = process.env.OPENDRSAI_DEEP_LINK_PROTOCOL === "opendrsai-dev"
+  ? "opendrsai-dev://auth-complete"
+  : "opendrsai://auth-complete";
 
 interface StoredAuthSession extends AuthSession {
   sessionId: string;
@@ -174,7 +176,7 @@ export async function login(rawRequest: unknown): Promise<LoginResult> {
   }
 
   if (request.apiKey) {
-    const saveResult = await saveApiKeyAndDefaultModel(request.apiKey, request.defaultModel);
+    const saveResult = await saveApiKeyAndSync(request.apiKey);
     if (!saveResult.ok) {
       return { ok: false, session: null, message: saveResult.message };
     }
@@ -487,12 +489,6 @@ function normalizeLoginRequest(rawRequest: unknown): LoginRequest | { message: s
   const email = typeof value.email === "string" ? value.email.trim() : undefined;
   const password = typeof value.password === "string" ? value.password : undefined;
   const apiKey = typeof value.apiKey === "string" ? value.apiKey.trim() : undefined;
-  let defaultModel: string | undefined;
-  try {
-    defaultModel = normalizeModelAlias(value.defaultModel);
-  } catch {
-    return { message: "Default model is invalid." };
-  }
   const developerBypass = value.developerBypass === true;
   const rememberMe = value.rememberMe !== false;
 
@@ -512,7 +508,7 @@ function normalizeLoginRequest(rawRequest: unknown): LoginRequest | { message: s
     return { message: "API key must be a single line." };
   }
 
-  return { email, password, apiKey, defaultModel, developerBypass, rememberMe };
+  return { email, password, apiKey, developerBypass, rememberMe };
 }
 
 function normalizeLogoutOptions(rawOptions: unknown): LogoutOptions {
@@ -622,6 +618,48 @@ function createDeveloperSession(rememberMe = true): StoredAuthSession {
   const now = new Date().toISOString();
   const e2eUserId = process.env.OPENDRSAI_E2E_AUTH_USER_ID?.trim() || "developer-local";
   const e2eGroups = process.env.OPENDRSAI_E2E_AUTH_GROUPS?.split(",").map((group) => group.trim()).filter(Boolean);
+  const e2eSigningSecret = process.env.OPENDRSAI_E2E_OIDC_HS256_SECRET?.trim();
+  if (e2eSigningSecret) {
+    const sessionId = randomUUID();
+    const expiresAtSeconds = Math.floor(Date.now() / 1000) + (rememberMe ? 7 : 1) * 24 * 60 * 60;
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const header = encode({ alg: "HS256", typ: "JWT" });
+    const payload = encode({
+      sub: e2eUserId,
+      iss: OIDC_ISSUER,
+      aud: "hai-api",
+      org_id: "opendrsai-e2e",
+      sid: sessionId,
+      typ: "access_token",
+      scope: "hai_api",
+      roles: ["admin"],
+      groups: e2eGroups || [],
+      iat: Math.floor(Date.now() / 1000),
+      exp: expiresAtSeconds,
+    });
+    const unsignedToken = `${header}.${payload}`;
+    const signature = createHmac("sha256", e2eSigningSecret).update(unsignedToken).digest("base64url");
+    return {
+      authenticated: true,
+      sessionId,
+      createdAt: now,
+      expiresAt: new Date(expiresAtSeconds * 1000).toISOString(),
+      accessTokenExpiresAt: new Date(expiresAtSeconds * 1000).toISOString(),
+      authMode: "oidc",
+      authProvider: "ihep",
+      issuer: OIDC_ISSUER,
+      clientId: "hai-api",
+      accessToken: `${unsignedToken}.${signature}`,
+      user: {
+        id: e2eUserId,
+        email: process.env.OPENDRSAI_E2E_AUTH_EMAIL?.trim() || "e2e@opendrsai.local",
+        name: "OpenDrSai E2E",
+        role: "admin",
+        roles: ["admin"],
+        groups: e2eGroups?.length ? e2eGroups : undefined,
+      },
+    };
+  }
   return {
     authenticated: true,
     sessionId: randomUUID(),
@@ -641,6 +679,7 @@ function createDeveloperSession(rememberMe = true): StoredAuthSession {
 function isDeveloperBypassAllowed(): boolean {
   return (
     IS_DESKTOP_DEV ||
+    Boolean(process.env.OPENDRSAI_E2E_OIDC_HS256_SECRET?.trim()) ||
     process.env.OPENDRSAI_DEV_AUTH_BYPASS === "1" ||
     process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
   );

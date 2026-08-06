@@ -8,6 +8,8 @@ const navigation = readFileSync(resolve(root, "../shared/renderer/src/navigation
 const shell = readFileSync(resolve(root, "../shared/renderer/src/components/WorkspaceShell.tsx"), "utf8");
 const styles = readFileSync(resolve(root, "../shared/renderer/src/styles.css"), "utf8");
 const smoke = readFileSync(resolve(root, "src/main/e2eSmoke.ts"), "utf8");
+const backgroundTasks = readFileSync(resolve(root, "src/main/backgroundTasks.ts"), "utf8");
+const api = readFileSync(resolve(root, "../shared/api/desktopApi.ts"), "utf8");
 
 const checks = {
   fixedRouteDeclared: navigation.includes('results: "results"'),
@@ -32,6 +34,11 @@ const checks = {
   fourTaskPackagedScenario: smoke.includes('"g1-paper-summary"') && smoke.includes('"g4-mentor-report"'),
   noChatNavigationInScenario: smoke.includes('navigationPath: "main-sidebar-results"') && smoke.includes('noChatTemporaryLinkUsed'),
   everyResultOpenedInScenario: smoke.includes('everyResultOpenActionWorks') && smoke.includes('idsStableAfterRefresh'),
+  provenanceContractPersisted: api.includes("DesktopArtifactProvenance") && api.includes('schemaVersion: "opendrsai.result-provenance/1"'),
+  provenanceNormalizedAtPersistenceBoundary: backgroundTasks.includes("normalizeArtifactProvenance") && backgroundTasks.includes("ensureTaskArtifactProvenance"),
+  sourceTaskAndRunActionsVisible: app.includes('data-testid="results-open-source-task"') && app.includes('data-testid="results-open-source-run"'),
+  sourceDigestCanBeVerified: app.includes("verifyResultProvenance") && app.includes('data-testid="results-verify-provenance"'),
+  packagedProvenanceCoverage: smoke.includes("everyResultHasProvenance") && smoke.includes("everySourceDigestVerifies") && smoke.includes("sourceTaskActionReturnsOriginalTask") && smoke.includes("sourceRunActionOpensInspector"),
 };
 
 const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);

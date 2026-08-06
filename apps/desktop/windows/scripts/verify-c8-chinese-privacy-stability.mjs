@@ -8,6 +8,7 @@ const rounds = Number(process.env.OPENDRSAI_C8_STABILITY_ROUNDS || "20");
 if (!Number.isInteger(rounds) || rounds < 1 || rounds > 100) throw new Error("OPENDRSAI_C8_STABILITY_ROUNDS must be between 1 and 100.");
 const evidenceRoot = join(root, "release", "product-evidence", "c8-chinese-privacy");
 mkdirSync(evidenceRoot, { recursive: true });
+const configuredRetries = 0;
 const results = [];
 for (let index = 1; index <= rounds; index += 1) {
   const runId = `stability-${String(index).padStart(2, "0")}`;
@@ -19,7 +20,8 @@ for (let index = 1; index <= rounds; index += 1) {
   results.push(item);
   if (!item.ok) throw new Error(`C8 stability failed at ${runId}.\n${completed.stdout || ""}\n${completed.stderr || ""}\n${summary ? JSON.stringify(summary, null, 2) : "No summary JSON"}`);
 }
+const actualRetries = 0;
 const ok = results.length === rounds && results.every((item) => item.ok && item.logsSecretFree && item.applicationDataSecretFree);
-writeFileSync(join(evidenceRoot, "stability-summary.json"), `${JSON.stringify({ roundsRequested: rounds, roundsCompleted: results.length, passed: results.filter((item) => item.ok).length, failed: results.filter((item) => !item.ok).length, totalChecks: results.reduce((sum, item) => sum + item.checks, 0), sensitiveValuesLeakFreeEveryRound: ok, cernPdfVerifiedEveryRound: ok, ok, results }, null, 2)}\n`);
-if (!ok) throw new Error("C8 Chinese-path privacy stability did not complete every requested round.");
+writeFileSync(join(evidenceRoot, "stability-summary.json"), `${JSON.stringify({ roundsRequested: rounds, roundsCompleted: results.length, configuredRetries, actualRetries, passed: results.filter((item) => item.ok).length, failed: results.filter((item) => !item.ok).length, totalChecks: results.reduce((sum, item) => sum + item.checks, 0), sensitiveValuesLeakFreeEveryRound: ok, cernPdfVerifiedEveryRound: ok, ok, results }, null, 2)}\n`);
+if (!ok || configuredRetries !== 0 || actualRetries !== 0) throw new Error("C8 Chinese-path privacy stability did not complete every requested round without retries.");
 console.log(`C8 Chinese-path privacy stability passed ${rounds}/${rounds} rounds and ${results.reduce((sum, item) => sum + item.checks, 0)} checks.`);

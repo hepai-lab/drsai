@@ -1,7 +1,7 @@
 param(
     [string]$DrsaiHome,
     [ValidateRange(1, 65535)]
-    [int]$GatewayPort = 18642,
+    [int]$GatewayPort = 28642,
     [switch]$InstallPrerequisites,
     [switch]$InstallOnly,
     [switch]$ForceInstall,
@@ -216,8 +216,15 @@ function Get-InstallTarget {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return $null }
     $item = Get-Item $Path -Force
+    $sourceMarker = Join-Path $Path ".dev-source"
+    if (Test-Path -LiteralPath $sourceMarker) {
+        $source = (Get-Content -LiteralPath $sourceMarker -Raw).Trim()
+        if (-not $source) { return $null }
+        if (Test-Path -LiteralPath $source) { return (Resolve-Path -LiteralPath $source).Path }
+        return $source
+    }
     if ($item.Target) { return [string]$item.Target }
-    return (Resolve-Path $Path).Path
+    return $null
 }
 
 function Test-DeveloperBackendReady {
@@ -225,6 +232,12 @@ function Test-DeveloperBackendReady {
         [string]$InstallPath,
         [string]$ExpectedRepo
     )
+
+    if (-not (Test-Path -LiteralPath $InstallPath)) { return $false }
+    $installItem = Get-Item -LiteralPath $InstallPath -Force
+    if (($installItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        return $false
+    }
 
     $target = Get-InstallTarget $InstallPath
     if (-not $target -or $target.TrimEnd("\") -ine $ExpectedRepo.TrimEnd("\")) {
@@ -503,6 +516,8 @@ function Start-HotReloadGateway {
 
     Add-PathIfExists (Split-Path -Parent $PythonPath)
     $env:DRSAI_HOME = $DrsaiHome
+    $env:DRSAI_API_PORT = [string]$Port
+    $env:OPENDRSAI_GATEWAY_PORT = [string]$Port
     $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
     $env:DRSAI_GATEWAY_HOT_RELOAD = "1"
     $env:OPENDRSAI_GATEWAY_INSTANCE_TOKEN = $instanceToken
@@ -570,8 +585,12 @@ function Start-HotReloadGateway {
 }
 
 if (-not $DrsaiHome) {
-    $DrsaiHome = if ($env:DRSAI_HOME) { $env:DRSAI_HOME } else { Join-Path $env:USERPROFILE ".drsai" }
+    # Development must never mutate or attach to the production profile at
+    # %USERPROFILE%\.drsai unless the caller explicitly opts into that path.
+    $DrsaiHome = Join-Path $env:USERPROFILE ".drsai-dev"
 }
+$DrsaiHome = [IO.Path]::GetFullPath($DrsaiHome)
+$ElectronUserData = Join-Path $DrsaiHome "electron-user-data"
 
 # Desktop development must exercise the same OIDC-only credential boundary as
 # a clean packaged install. Static keys in the host environment or ~/.drsai/.env
@@ -608,10 +627,10 @@ if (-not (Test-Path $DesktopDir)) {
 $InstallDir = Join-Path $DrsaiHome "drsai-agent"
 if (Test-Path $InstallDir) {
     $existingRepo = Get-InstallTarget $InstallDir
-    if ($existingRepo.TrimEnd("\") -ine $RepoRoot.TrimEnd("\")) {
+    if ($existingRepo -and $existingRepo.TrimEnd("\") -ine $RepoRoot.TrimEnd("\")) {
         $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
         $backupDir = Join-Path $DrsaiHome "drsai-agent.backup-$stamp"
-        Write-Host "Existing developer backend is not linked to this checkout." -ForegroundColor Yellow
+        Write-Host "Existing developer backend belongs to another checkout." -ForegroundColor Yellow
         Write-Host "  Existing: $existingRepo" -ForegroundColor Yellow
         Write-Host "  Expected: $RepoRoot" -ForegroundColor Yellow
         Write-Host "  Moving existing backend to: $backupDir" -ForegroundColor Yellow
@@ -624,6 +643,8 @@ Write-Host ""
 Write-Host "OpenDrSai Windows desktop developer bootstrap" -ForegroundColor Cyan
 Write-Host "  Repository:  $RepoRoot" -ForegroundColor Green
 Write-Host "  DrSai home:  $DrsaiHome" -ForegroundColor Green
+Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
+Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
 Write-Host "  Desktop app: $DesktopDir" -ForegroundColor Green
 Write-Host ""
 
@@ -646,7 +667,7 @@ $backendFingerprint = Get-ValidationFingerprint -Paths @(
 )
 $cachedBackendReady = (-not $ForceInstall) -and (Test-Path $BackendValidationStamp) -and
     ((Get-Content -LiteralPath $BackendValidationStamp -Raw -ErrorAction SilentlyContinue) -eq $backendFingerprint) -and
-    (Test-Path (Join-Path $InstallDir "venv\Scripts\python.exe"))
+    (Test-DeveloperBackendReady -InstallPath $InstallDir -ExpectedRepo $RepoRoot)
 $backendReady = if ($cachedBackendReady) { $true } elseif ($ForceInstall) { $false } else {
     Test-DeveloperBackendReady -InstallPath $InstallDir -ExpectedRepo $RepoRoot
 }
@@ -663,7 +684,7 @@ if ($backendReady -and -not $ForceInstall) {
     Invoke-StepProcess `
         -FilePath "powershell" `
         -ArgumentList (@("-NoProfile") + $installArgs) `
-        -Prefix "Installing linked developer backend" `
+        -Prefix "Installing independent developer backend" `
         -LogName "backend-install" `
         -LogDir $DevLogDir `
         -ShowNestedSteps
@@ -746,10 +767,16 @@ try {
         exit 0
     }
 
-    Write-Host "    Starting Electron dev server..." -ForegroundColor Green
+    Write-Host "    Starting Electron dev server with hot reload..." -ForegroundColor Green
+    Write-Host "    Renderer: React/CSS hot module replacement; main/preload: automatic Electron restart." -ForegroundColor DarkGray
     Write-Host "    Startup preparation: $($StartupStopwatch.ElapsedMilliseconds) ms" -ForegroundColor DarkGray
     $env:DRSAI_HOME = $DrsaiHome
+    $env:OPENDRSAI_DEV_HOME = $DrsaiHome
+    $env:DRSAI_REPO = $RepoRoot
+    $env:OPENDRSAI_RUNTIME_ROOT = $InstallDir
+    $env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData
     $env:OPENDRSAI_GATEWAY_STARTUP = if ($StartGateway) { "eager" } else { "on-demand" }
+    $env:OPENDRSAI_DEV_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_VOICE_TTS_RUNTIME = "gateway-provider"
     if ($StartGateway) {
         $env:DRSAI_GATEWAY_DEV_MANAGED = "1"

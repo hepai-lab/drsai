@@ -23,7 +23,7 @@ import { listProviderErrorAnalytics } from "../../../../shared/main/providerErro
 import { listProviderUsageAnalytics } from "../../../../shared/main/providerUsageAnalytics";
 import { remoteWorkspaceController } from "../../../../shared/main/remoteWorkspaceController";
 import { LocalRuntimeClient } from "../../../../shared/main/runtimeClient";
-import { saveApiKeyAndDefaultModel } from "../../../../shared/main/settings";
+import { saveApiKeyAndSync } from "../../../../shared/main/settings";
 import { getGatewayStatus, startGateway, stopGateway } from "../gateway";
 import type { MacosServiceContainer } from "../serviceContainer";
 
@@ -61,7 +61,7 @@ export function registerMacosRuntimeServicesIpc(
   ipcMain.handle("desktop:browser-task-stop", (_event, request) => browser.stop(request));
   ipcMain.handle("desktop:browser-task-pending-approvals", () => browser.pendingApprovals());
   ipcMain.handle("desktop:browser-task-approve", (_event, request) => browser.approve(request));
-  ipcMain.handle("desktop:get-codex-backend-status", async (_event, refresh) => { const client = await LocalRuntimeClient.connect(); const capability = (await client.getCapabilities()).agent_backends?.codex; return !capability?.available ? presentCodexBackendStatus(capability) : presentCodexBackendStatus(capability, await client.getBackendAccount("codex", refresh === true)); });
+  ipcMain.handle("desktop:get-codex-backend-status", async (_event, refresh) => { const client = await LocalRuntimeClient.connect(); let capability = (await client.getCapabilities()).agent_backends?.codex; if (capability?.available) { await client.getBackendModels("codex", refresh === true); capability = (await client.getCapabilities()).agent_backends?.codex; } return !capability?.available ? presentCodexBackendStatus(capability) : presentCodexBackendStatus(capability, await client.getBackendAccount("codex", refresh === true)); });
   ipcMain.handle("desktop:start-codex-backend-login", async (_event, rawType) => { const type = rawType === "chatgptDeviceCode" ? "chatgptDeviceCode" : "chatgpt"; const result = await (await LocalRuntimeClient.connect()).startBackendLogin("codex", type); const externalUrl = result.authUrl ?? result.verificationUrl; if (externalUrl) await shell.openExternal(assertAllowedExternalUrl(externalUrl)); return { type: result.type, loginId: result.loginId, verificationUrl: result.verificationUrl, userCode: result.userCode }; });
   ipcMain.handle("desktop:cancel-codex-backend-login", async (_event, loginId) => { if (typeof loginId !== "string" || !loginId.trim()) return false; await (await LocalRuntimeClient.connect()).cancelBackendLogin("codex", loginId.trim()); return true; });
   ipcMain.handle("desktop:logout-codex-backend", async () => { await (await LocalRuntimeClient.connect()).logoutBackend("codex"); return true; });
@@ -71,5 +71,5 @@ export function registerMacosRuntimeServicesIpc(
   ipcMain.handle("desktop:provider-usage-analytics-list", () => listProviderUsageAnalytics());
   ipcMain.handle("desktop:provider-error-analytics-list", () => listProviderErrorAnalytics());
   ipcMain.handle("desktop:remote-ssh-diagnostics", () => remoteWorkspaceController.diagnostics());
-  ipcMain.handle("desktop:save-api-key", (_event, apiKey: string, defaultModel?: string) => app.isPackaged ? { ok: false, message: "This build receives service authorization through HepAI OIDC." } : saveApiKeyAndDefaultModel(apiKey, defaultModel));
+  ipcMain.handle("desktop:save-api-key", (_event, apiKey: string) => app.isPackaged ? { ok: false, message: "This build receives service authorization through HepAI OIDC." } : saveApiKeyAndSync(apiKey));
 }

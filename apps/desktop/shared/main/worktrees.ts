@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { DesktopForkWorktreeRequest, DesktopForkWorktreeResult, DesktopWorktreeEventBatch, DesktopWorktreeEventRequest, DesktopWorktreeListRequest, DesktopWorktreeMigrationDiagnostic, DesktopWorktreeSummary } from "../api/desktopApi";
 import { DRSAI_HOME } from "./paths";
+import { requireAuthContext } from "./auth";
 import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, type RuntimeClient, type RuntimeWorktree } from "./runtimeClient";
 import { listThreads, updateThread } from "./threads";
 
@@ -24,7 +25,11 @@ export async function listRuntimeWorktrees(request: DesktopWorktreeListRequest):
   if (process.env.OPENDRSAI_LEGACY_DESKTOP_WORKTREE === "1") return listLegacy(request.workspacePath);
   const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
   await migrateLegacyForks(request.workspacePath, resolved.client, resolved.workspaceId);
-  return (await resolved.client.listWorktrees(resolved.workspaceId, request.includeRemoved === true)).map(mapRuntimeWorktree);
+  return (await resolved.client.listWorktrees(
+    resolved.workspaceId,
+    request.includeRemoved === true,
+    await requireAuthContext(),
+  )).map(mapRuntimeWorktree);
 }
 
 export async function listRuntimeWorktreeEvents(request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch> {
@@ -33,7 +38,11 @@ export async function listRuntimeWorktreeEvents(request: DesktopWorktreeEventReq
   const afterSequence = Math.max(0, request.afterSequence ?? 0);
   try {
     const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    const batch = await resolved.client.listWorkspaceEvents(resolved.workspaceId, afterSequence);
+    const batch = await resolved.client.listWorkspaceEvents(
+      resolved.workspaceId,
+      afterSequence,
+      await requireAuthContext(),
+    );
     return { events: batch.events.filter((event) => event.type.startsWith("worktree.")).map((event) => ({ eventId: event.event_id, workspaceId: event.workspace_id, sequence: event.sequence, type: event.type, data: event.data })), nextSequence: batch.nextSequence };
   } catch (error) {
     if (!isLocalRuntimeUnavailableError(error)) throw error;

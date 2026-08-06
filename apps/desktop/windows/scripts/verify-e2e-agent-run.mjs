@@ -166,6 +166,20 @@ if (scenario === "g1-results-center") {
   mkdirSync(join(workspacePath, "research-synthesis"), { recursive: true });
   writeFileSync(join(workspacePath, "research-synthesis", "README.md"), "# Research synthesis\n", "utf8");
   writeFileSync(join(workspacePath, "mentor-report.pptx"), "deterministic-presentation-fixture", "utf8");
+  const desktopStateDir = join(appHome, "desktop");
+  mkdirSync(desktopStateDir, { recursive: true });
+  const seededAt = "2026-08-05T00:00:00.000Z";
+  writeFileSync(join(desktopStateDir, "workspaces.json"), `${JSON.stringify([{
+    id: "workspace-g1-results",
+    name: "G1 results fixture",
+    path: workspacePath,
+    type: "local",
+    createdAt: seededAt,
+    updatedAt: seededAt,
+    lastOpenedAt: seededAt,
+    trusted: true,
+    pinned: true,
+  }], null, 2)}\n`, "utf8");
 }
 if (scenario === "g3-output-versions") {
   writeFileSync(join(workspacePath, "mentor-report.md"), [
@@ -1436,6 +1450,10 @@ function runPackagedApp({ appHome, resultPath, workspacePath }) {
       if (code === 0) {
         resolveRun();
         return;
+      }
+      if (existsSync(resultPath)) {
+        mkdirSync(evidenceDir, { recursive: true });
+        copyFileSync(resultPath, evidenceResult);
       }
       const result = existsSync(resultPath) ? `\n${readFileSync(resultPath, "utf8")}` : "";
       reject(new Error(`Packaged app exited with code ${code}. Gateway requests: ${gatewayRequests.join(", ") || "none"}.${result}\n${stdout}\n${stderr}`));

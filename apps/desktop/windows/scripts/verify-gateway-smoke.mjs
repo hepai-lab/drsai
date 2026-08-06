@@ -129,6 +129,26 @@ try {
   });
   assert(wrongSubject.statusCode === 403, `OIDC subject mismatch returned ${wrongSubject.statusCode}`);
 
+  const identityHeaders = {
+    Authorization: `Bearer ${fakeOidcToken(oidcUser)}`,
+    "X-OpenDrSai-Auth-Mode": "oidc",
+    "X-OpenDrSai-Principal": oidcUser,
+  };
+  const derivedIdentityMemory = await requestText("/v1/memory", { method: "GET", headers: identityHeaders });
+  assert(derivedIdentityMemory.statusCode === 200, `OIDC-derived memory identity returned ${derivedIdentityMemory.statusCode}: ${derivedIdentityMemory.text.slice(0, 300)}`);
+  const matchingIdentityMemory = await requestText(`/v1/memory?user_id=${encodeURIComponent(oidcUser)}`, { method: "GET", headers: identityHeaders });
+  assert(matchingIdentityMemory.statusCode === 200, `matching memory identity returned ${matchingIdentityMemory.statusCode}`);
+  const forgedIdentityMemory = await requestText("/v1/memory?user_id=d0b66156-3680-4405-8c87-01b186b92a8c", { method: "GET", headers: identityHeaders });
+  assert(forgedIdentityMemory.statusCode === 403, `forged memory identity returned ${forgedIdentityMemory.statusCode}`);
+  const expiredIdentityMemory = await requestText("/v1/memory", {
+    method: "GET",
+    headers: {
+      ...identityHeaders,
+      Authorization: `Bearer ${fakeOidcToken(oidcUser, Math.floor(Date.now() / 1000) - 1)}`,
+    },
+  });
+  assert(expiredIdentityMemory.statusCode === 401, `expired OIDC identity returned ${expiredIdentityMemory.statusCode}`);
+
   console.log("Gateway smoke passed: health, model configuration preview/commit/conflict/doctor, auth, and chat SSE.");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
@@ -238,14 +258,14 @@ async function requestText(path, init) {
   return { statusCode: response.status, headers: response.headers, text: await response.text() };
 }
 
-function fakeOidcToken(subject) {
+function fakeOidcToken(subject, expiresAt = Math.floor(Date.now() / 1000) + 600) {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
   const header = encode({ alg: "HS256", typ: "JWT" });
   const payload = encode({
     iss: "https://ai-dev.ihep.ac.cn/api",
     sub: subject,
     aud: "hai-api",
-    exp: Math.floor(Date.now() / 1000) + 600,
+    exp: expiresAt,
     typ: "access_token",
     scope: "openid hai_api",
     org_id: "gateway-smoke-org",

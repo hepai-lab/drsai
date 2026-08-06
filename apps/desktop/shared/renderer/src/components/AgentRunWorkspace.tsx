@@ -79,8 +79,7 @@ export function AgentRunWorkspace({
   workspaceTrusted = true,
 }: AgentRunWorkspaceProps): React.JSX.Element {
   const zh = language === "zh";
-  const [liveGatewayReady, setLiveGatewayReady] = useState(Boolean(health?.gatewayReady));
-  const canRun = Boolean((health?.gatewayReady || liveGatewayReady) && workspaceTrusted);
+  const canRun = Boolean(health?.gatewayReady && workspaceTrusted);
   const [task, setTask] = useState("");
   const [executionDepth, setExecutionDepth] = useState<AgentTaskDepth>("standard");
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
@@ -102,28 +101,6 @@ export function AgentRunWorkspace({
   useEffect(() => {
     if (initialTask) setTask(initialTask);
   }, [initialTask]);
-
-  useEffect(() => {
-    let active = true;
-    const refreshGateway = async () => {
-      try {
-        const gateway = await desktopApi.getGatewayStatus();
-        if (active) setLiveGatewayReady(gateway.ready === true);
-      } catch {
-        if (active) setLiveGatewayReady(false);
-      }
-    };
-    void refreshGateway();
-    const timer = window.setInterval(() => void refreshGateway(), 1_000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (health?.gatewayReady) setLiveGatewayReady(true);
-  }, [health?.gatewayReady]);
 
   useEffect(() => {
     return desktopApi.onAgentRunEvent((event) => {

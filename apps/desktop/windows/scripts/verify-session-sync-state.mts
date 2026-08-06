@@ -33,6 +33,19 @@ try {
   const recovered = await restarted.get(sessionId);
   assert.equal(recovered.cursor, 15);
   assert.equal(recovered.outbox?.runId, "run-one");
+  assert.deepEqual(
+    await restarted.beginOutbox(sessionId, pending),
+    recovered.outbox,
+    "Desktop restart must reuse the acknowledged Outbox entry instead of sending the user message again",
+  );
+  await assert.rejects(
+    () => restarted.beginOutbox(sessionId, { ...pending, idempotencyKey: "desktop-runtime-request-replacement" }),
+    /awaiting Runtime acknowledgement/,
+    "Desktop restart must not replace an ambiguous acknowledged message with a second Runtime request",
+  );
+  await restarted.advanceCursor(sessionId, 21);
+  assert.equal((await new SessionSyncStateStore(path).get(sessionId)).cursor, 21,
+    "a second Desktop restart must resume from the latest durable OAEP cursor");
   assert.equal(await restarted.completeOutbox(sessionId, pending.sourceMessageId), true);
   assert.equal((await restarted.get(sessionId)).outbox, undefined);
 

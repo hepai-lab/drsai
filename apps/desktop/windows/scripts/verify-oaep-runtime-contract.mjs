@@ -10,8 +10,10 @@ const agent = readFileSync(join(repo, "cores", "python", "packages", "drsai", "s
 const oaep = readFileSync(join(repo, "cores", "python", "packages", "drsai", "src", "drsai", "backend", "runtime", "oaep.py"), "utf8");
 const runtimeClient = readFileSync(join(root, "..", "shared", "main", "runtimeClient.ts"), "utf8");
 const subscription = readFileSync(join(root, "..", "shared", "main", "threadRuntimeSubscription.ts"), "utf8");
+const oaepSessionStream = readFileSync(join(root, "..", "shared", "main", "oaepSessionStream.ts"), "utf8");
 const protocolSelection = readFileSync(join(root, "..", "shared", "main", "runtimeProtocolSelection.ts"), "utf8");
 const projection = readFileSync(join(root, "..", "shared", "main", "threadRuntimeProjection.ts"), "utf8");
+const presentationProjector = readFileSync(join(root, "..", "shared", "main", "oaepPresentationProjector.ts"), "utf8");
 const chat = readFileSync(join(root, "..", "shared", "main", "chat.ts"), "utf8");
 const chatAdapter = readFileSync(join(root, "..", "shared", "renderer", "src", "adapters", "useDesktopChatAdapter.ts"), "utf8");
 const chatWorkspace = readFileSync(join(root, "..", "shared", "renderer", "src", "components", "ChatWorkspace.tsx"), "utf8");
@@ -67,8 +69,13 @@ assert.ok(subscription.includes("selectRuntimeConversationProtocol(capabilities)
 for (const capability of ["oaep.v1", "oaep.session.snapshot", "oaep.session.events", "oaep.session.events.stream", "event.cursor_expired"]) {
   assert.ok(protocolSelection.includes(`"${capability}"`), `Desktop OAEP selection requirement missing: ${capability}`);
 }
-assert.ok(protocolSelection.includes('profiles.includes("oaep.session-stream/1")'), "Desktop subscription must require the OAEP profile.");
-assert.ok(subscription.includes("openOaepEventStream"), "Desktop subscription must open OAEP Event stream.");
+assert.ok(
+  protocolSelection.includes('const OAEP_PROFILE = "oaep.session-stream/1"')
+    && protocolSelection.includes("profiles.includes(OAEP_PROFILE)"),
+  "Desktop subscription must require the OAEP profile.",
+);
+assert.ok(subscription.includes("subscribeOaepSession"), "Desktop thread subscription must use the shared OAEP Session controller.");
+assert.ok(oaepSessionStream.includes("openOaepEventStream"), "Shared OAEP Session controller must open OAEP Event stream.");
 for (const runtimeLogOperation of [
   "runtime.protocol.selected",
   "oaep.snapshot.loaded",
@@ -83,8 +90,9 @@ assert.ok(subscription.includes("sanitizeRuntimeDetails"), "OAEP runtime log det
 assert.ok(!subscription.includes("data: event.data"), "OAEP runtime logs must not copy conversation or command payloads.");
 assert.ok(subscription.includes("hasDelta") && subscription.includes("hasItem"), "OAEP runtime logs must retain content-free event shape diagnostics.");
 assert.ok(projection.includes("projectOaepThreadSnapshot"), "Desktop projection must expose OAEP snapshot projection.");
-assert.ok(chat.includes('event.type === "event.run.failed"'), "Desktop live chat must map OAEP Run failures to visible chat errors.");
-assert.ok(chat.includes('event.type === "event.run.cancelled"'), "Desktop live chat must map OAEP Run cancellation to aborted chat events.");
+assert.ok(chat.includes('"event.run.completed", "event.run.failed", "event.run.cancelled"'), "Desktop live chat must recognize every OAEP terminal state.");
+assert.ok(presentationProjector.includes('type: "turn.error"'), "Desktop OAEP presentation must map Run failure to a visible structured error.");
+assert.ok(presentationProjector.includes('type: "turn.cancelled"'), "Desktop OAEP presentation must map Run cancellation to a visible structured cancellation.");
 assert.ok(chatAdapter.includes("runtimeVisibleError"), "Desktop chat adapter must preserve Runtime/OAEP error text for visible rendering.");
 assert.ok(chatAdapter.includes("settleAssistantAfterHiddenError("), "Desktop chat adapter must explicitly settle failed assistant bubbles.");
 assert.ok(!chatWorkspace.includes('{"No response content."}'), "Chat UI must not fall back to the old opaque No response content text.");

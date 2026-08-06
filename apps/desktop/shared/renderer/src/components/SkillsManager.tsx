@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import type { GatewaySkill } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
+import { requestAppDecision } from "./AppDecisionDialog";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -219,9 +220,9 @@ export function SkillsManager({ language, activeThreadId }: SkillsManagerProps):
     }
   }
 
-  function goBack(): void {
+  async function goBack(): Promise<void> {
     if (view.kind === "editor" && editorDirty) {
-      if (!window.confirm(zh ? "有未保存的更改，确认放弃？" : "You have unsaved changes. Discard?")) return;
+      if (!await requestAppDecision({ id: "discard-skill-editor", tone: "danger", title: zh ? "放弃未保存的更改？" : "Discard unsaved changes?", description: zh ? "技能编辑器中的未保存内容会丢失。" : "Unsaved content in the skill editor will be lost.", impact: zh ? "已保存的技能内容不会改变。" : "Previously saved skill content is unchanged.", confirmLabel: zh ? "放弃更改" : "Discard changes" })) return;
     }
     setEditorDirty(false);
     setView({ kind: "list" });

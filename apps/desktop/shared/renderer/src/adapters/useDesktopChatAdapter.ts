@@ -42,13 +42,14 @@ import {
 } from "../chatCommands";
 import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
-import { describeUserFacingError } from "../userFacingErrors";
+import { describeUserFacingError, type UserFacingRecoveryAction } from "../userFacingErrors";
 import { emitAssistantSpeechStreamEvent } from "../voice/streaming/assistantSpeechStream";
 import {
   formatRecentTerminalTestResult,
   readRecentTerminalTestResult,
 } from "../terminalTestResults";
 import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel";
+import { sanitizeSensitiveValue } from "../../../api/sensitiveData";
 import {
   appendDebugLog,
   appendStructuredActivityLog,
@@ -74,6 +75,7 @@ export interface DesktopChatAdapter {
   clearRuntimeMode: () => void;
   clearCommandAttachments: () => void;
   removeCommandAttachment: (index: number) => void;
+  dismissRecoveryActions: (messageId: string) => void;
   setInput: (value: string) => void;
   submit: (
     attachments?: ChatAttachment[],
@@ -421,7 +423,7 @@ export function useDesktopChatAdapter({
           : new RegExp(`^Use\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+skill\\s+to\\b`, "i").test(rawInput)),
     );
     const text = (skillPrefix && !alreadyPrefixed ? `${skillPrefix}${rawInput}` : rawInput).trim();
-    if (!text || activeRequestId || activeRequestIdRef.current) return false;
+    if (!text) return false;
 
     const materialPaths = [...new Set(attachments
       .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
@@ -578,6 +580,8 @@ export function useDesktopChatAdapter({
         model: options?.model?.trim() || undefined,
         metadata: {
           selected_agent_id: options?.agentId?.trim() || undefined,
+          goal_confirmation_required: options?.agentId?.trim() === "my-drsai"
+            && options.goalConfirmationRequired === true,
           workspace_instructions: workspaceInstructions || [],
           selected_agent: options?.agentName?.trim() || undefined,
           thinking_effort: options?.thinkingEffort,
@@ -607,7 +611,7 @@ export function useDesktopChatAdapter({
         : languageRef.current === "zh" ? "聊天未能启动。" : "Chat failed to start.";
       appendDebugLog(
         "error",
-        `${formatAssistantError(message, false, languageRef.current)}\n\n${message}`,
+        describeUserFacingError(error, languageRef.current).diagnosticCode,
         "chat",
       );
       setActiveRequestId(null);
@@ -664,6 +668,7 @@ export function useDesktopChatAdapter({
   function applyChatEvent(event: ChatEvent): void {
     if (event.sessionId && event.sessionId !== threadIdRef.current) return;
     if (!acceptChatEventSequence(lastSequenceByRequest.current, event.requestId, event.seq)) return;
+    event = sanitizeSensitiveValue(event);
     const recoveryTimer = recoveryTimersRef.current[event.requestId];
     if (recoveryTimer !== undefined) {
       window.clearTimeout(recoveryTimer);
@@ -671,10 +676,28 @@ export function useDesktopChatAdapter({
     }
     if (event.type === "start") {
       touchStreamingAssistant(event.requestId, "feedback");
+      if (event.runId) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            runtimeRunId: event.runId,
+          })),
+        ));
+      }
       setActiveRequestId(event.requestId);
       return;
     }
     if (event.type === "structured" && event.structuredEvent) {
+      if (event.runId) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            runtimeRunId: event.runId,
+          })),
+        ));
+      }
       structuredRequests.current.add(event.requestId);
       delete pendingDeltasByRequest.current[event.requestId];
       const structuredEvent = event.structuredEvent;
@@ -705,9 +728,14 @@ export function useDesktopChatAdapter({
       delete pendingStructuredEventsByRequest.current[event.requestId];
       applyStructuredEventBatch(event.requestId, [...pendingStructuredEvents, structuredEvent]);
       if (structuredEvent.type === "turn.error") {
+        const friendly = describeUserFacingError({
+          code: structuredEvent.code ?? "backend_fault",
+          retryable: false,
+          diagnostic_reference: structuredEvent.debugRef,
+        }, languageRef.current);
         appendDebugLog(
           "error",
-          `${formatAssistantError(structuredEvent.message, false, languageRef.current)}\n\n${structuredEvent.message}`,
+          `${friendly.title} ${friendly.action}\n${friendly.diagnosticCode}`,
           "chat",
         );
       }
@@ -888,7 +916,7 @@ export function useDesktopChatAdapter({
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
       emitAssistantSpeechStreamEvent({ type: "error", requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
-      const rawError = event.failureRecovery?.message || event.error || "Chat failed.";
+      const rawError = event.errorEnvelope ?? event.failureRecovery ?? { code: "unexpected_error", retryable: true };
       const friendlyError = describeUserFacingError(rawError, languageRef.current);
       const runtimeVisibleError = `${friendlyError.title} ${friendlyError.action}`;
       if (structuredRequests.current.has(event.requestId)) {
@@ -897,7 +925,8 @@ export function useDesktopChatAdapter({
           publishAndReturn(settleAssistantAfterHiddenError(
             current,
             assistantId,
-            formatAssistantError(runtimeVisibleError, developerModeRef.current, languageRef.current),
+            runtimeVisibleError,
+            friendlyError.actions,
           )),
         );
         structuredRequests.current.delete(event.requestId);
@@ -911,14 +940,15 @@ export function useDesktopChatAdapter({
       const assistantId = streamingAssistantByRequest.current[event.requestId];
       appendDebugLog(
         "error",
-        `${formatAssistantError(runtimeVisibleError, false, languageRef.current)}\n\n${runtimeVisibleError}`,
+        `${runtimeVisibleError}\n${friendlyError.diagnosticCode}`,
         "chat",
       );
       setMessages((current) =>
         publishAndReturn(settleAssistantAfterHiddenError(
           current,
           assistantId,
-          formatAssistantError(runtimeVisibleError, developerModeRef.current, languageRef.current),
+          runtimeVisibleError,
+          friendlyError.actions,
         )),
       );
       delete streamingAssistantByRequest.current[event.requestId];
@@ -1723,6 +1753,12 @@ export function useDesktopChatAdapter({
     return entries;
   }
 
+  function dismissRecoveryActions(messageId: string): void {
+    setMessages((current) => current.map((message) =>
+      message.id === messageId ? { ...message, recoveryActions: undefined } : message,
+    ));
+  }
+
   return {
     activeRequestId,
     commandAttachments,
@@ -1732,6 +1768,7 @@ export function useDesktopChatAdapter({
     clearCommandAttachments,
     clearRuntimeMode,
     removeCommandAttachment,
+    dismissRecoveryActions,
     setInput,
     submit,
     abort,
@@ -2576,6 +2613,7 @@ function createStructuredToolActivity(
 ): Extract<StructuredActivityEvent, { kind: "tool" }> {
   return {
     id: event.id,
+    ...(event.oaepItemId ? { oaepItemId: event.oaepItemId } : {}),
     turnId,
     timestamp: event.timestamp?.trim() || new Date().toISOString(),
     source: "desktop-sse",
@@ -2751,62 +2789,6 @@ function getDebugLevel(level: string | undefined): "log" | "info" | "warn" | "er
   return "info";
 }
 
-function formatAssistantError(error: string, developerMode: boolean, language: "en" | "zh"): string {
-  const raw = error.trim();
-  if (!raw || developerMode) return raw;
-
-  if (/HepAI session expired|token_expired|session expired/i.test(raw)) {
-    return language === "zh" ? "HepAI 登录已过期，请重新登录。" : "Your HepAI session expired. Sign in again.";
-  }
-  if (/invalid_token|authentication context is not valid/i.test(raw)) {
-    return language === "zh" ? "HepAI 登录凭据无效，请退出后重新登录。" : "Your HepAI credentials are invalid. Sign out and sign in again.";
-  }
-  if (/subject_mismatch/i.test(raw)) {
-    return language === "zh" ? "HepAI 登录身份不一致，请退出后重新登录。" : "Your HepAI identity does not match this session. Sign out and sign in again.";
-  }
-  if (/agent_credentials_unavailable/i.test(raw)) {
-    return language === "zh"
-      ? "当前 HepAI 账号尚未配置可用的模型访问凭据，请联系平台管理员。"
-      : "No model access credential is configured for this HepAI account. Contact the platform administrator.";
-  }
-  if (/agent_credentials_invalid/i.test(raw)) {
-    return language === "zh"
-      ? "当前 HepAI 账号的模型访问凭据已失效，请在 HepAI 平台更新或联系管理员。"
-      : "The model access credential for this HepAI account is invalid. Update it in HepAI or contact the administrator.";
-  }
-  if (/unsupported_issuer|invalid_model_base_url/i.test(raw)) {
-    return language === "zh" ? "当前 HepAI 登录环境尚未配置对应的模型服务。" : "No model service is configured for this HepAI environment.";
-  }
-  if (/account cannot use this model|model_forbidden/i.test(raw)) {
-    return language === "zh" ? "当前账号没有使用该模型的权限。" : "Your account cannot use this model.";
-  }
-  if (/quota or concurrency limit|quota_exceeded|rate limit/i.test(raw)) {
-    return language === "zh" ? "模型额度或并发上限已达到，请稍后重试。" : "The model quota or concurrency limit was reached.";
-  }
-  if (/selected model is unavailable|model_not_found/i.test(raw)) {
-    return language === "zh" ? "所选模型当前不可用，请更换模型。" : "The selected model is unavailable. Choose another model.";
-  }
-  if (/model service is temporarily unavailable|upstream_unavailable/i.test(raw)) {
-    return language === "zh" ? "模型服务暂时不可用，请稍后重试。" : "The model service is temporarily unavailable.";
-  }
-  if (/No candidate worker|candidate worker/i.test(raw)) {
-    return language === "zh"
-      ? "模型服务当前不可用：没有找到可用的模型 worker。请稍后重试或切换模型。"
-      : "The model service is unavailable: no model worker was found. Try again later or switch models.";
-  }
-  if (/timed out|timeout/i.test(raw)) {
-    return language === "zh"
-      ? "模型响应超时。请稍后重试。"
-      : "The model response timed out. Please try again later.";
-  }
-  if (/HTTP\s*5\d\d|InternalServerError|INTERNAL_ERROR/i.test(raw)) {
-    return language === "zh"
-      ? "模型服务返回内部错误。请稍后重试或切换模型。"
-      : "The model service returned an internal error. Try again later or switch models.";
-  }
-  return language === "zh" ? "聊天失败。请稍后重试。" : "Chat failed. Please try again later.";
-}
-
 function updateAssistantByIdOrLatestStreaming(
   messages: UiMessage[],
   assistantId: string | undefined,
@@ -2823,6 +2805,7 @@ function settleAssistantAfterHiddenError(
   messages: UiMessage[],
   assistantId: string | undefined,
   visibleError?: string,
+  recoveryActions?: UserFacingRecoveryAction[],
 ): UiMessage[] {
   const next = [...messages];
   const index = findAssistantIndex(next, assistantId);
@@ -2836,6 +2819,7 @@ function settleAssistantAfterHiddenError(
         replyFailed: false,
         streaming: false,
         error: true,
+        recoveryActions,
         structuredTurn: message.structuredTurn
           ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
           : undefined,
@@ -2858,6 +2842,7 @@ function settleAssistantAfterHiddenError(
     ...message,
     streaming: false,
     error: false,
+    recoveryActions,
     structuredTurn: message.structuredTurn
       ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
       : undefined,

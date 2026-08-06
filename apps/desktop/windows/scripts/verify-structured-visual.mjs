@@ -47,14 +47,24 @@ const baseUrl = `http://127.0.0.1:${address.port}`;
 const browser = await chromium.launch({ headless: true, executablePath: chromePath });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, colorScheme: "light" });
 const results = [];
+let accessibility = null;
 
 try {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("opendrsai:first-run-complete:v3", "true");
+  });
   await page.goto(`${baseUrl}?structuredVisualFixture=1`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: /进入开发者工作区|Enter developer workspace/ }).click();
-  const composer = page.locator("textarea").last();
+  const composer = page.getByTestId("composer-input");
   await composer.waitFor({ state: "visible" });
   await composer.fill("__STRUCTURED_VISUAL_FIXTURE__");
-  await page.getByRole("button", { name: /发送|Send/, exact: true }).click();
+  const composerForm = composer.locator("xpath=ancestor::form[1]");
+  const submit = composerForm.locator('button.composer-submit:not(.stop)').first();
+  await submit.waitFor({ state: "visible" });
+  assert.match((await submit.innerText()).trim(), /发送|Send|排队|Queue/,
+    "The visible composer action must explain whether the message sends now or queues.");
+  assert.equal(await submit.isEnabled(), true, "The structured fixture composer action must be enabled.");
+  await submit.click();
   await page.locator('.structured-message-parts[data-turn-status="completed"]').last().waitFor({ state: "visible" });
   await page.locator(".chat-markdown-image").last().waitFor({ state: "visible" });
   const completedTurn = page.locator('.structured-message-parts[data-turn-status="completed"]').last();
@@ -76,6 +86,47 @@ try {
   assert.match(processText, /Analysis summary|分析摘要/, "Reasoning must be labeled as an analysis summary.");
   assert.match(processText, /Result ready/, "Completed progress commentary must remain available in history.");
   assert.match(processText, /Actions and changes|操作与变更/, "Tool and file activity must be available inside the process layer.");
+  const processSummary = process.locator("summary");
+  await processSummary.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await process.evaluate((node) => node.hasAttribute("open")), false,
+    "The process disclosure must close from the keyboard.");
+  await page.keyboard.press("Space");
+  assert.equal(await process.evaluate((node) => node.hasAttribute("open")), true,
+    "The process disclosure must open from the keyboard.");
+  accessibility = await page.evaluate(() => {
+    const scopes = [
+      document.querySelector(".conversation-titlebar"),
+      Array.from(document.querySelectorAll(".structured-message-parts")).at(-1),
+      document.querySelector('[data-testid="composer-input"]')?.closest("form"),
+    ].filter(Boolean);
+    const elements = scopes.flatMap((scope) => Array.from(scope.querySelectorAll("button, input, textarea, select, summary, a[href]")))
+      .filter((element) => {
+        const style = getComputedStyle(element);
+        return style.display !== "none" && style.visibility !== "hidden";
+      });
+    const accessibleName = (element) => String(
+      element?.getAttribute("aria-label") || element?.getAttribute("title")
+      || (element?.getAttribute("aria-labelledby")
+        ? document.getElementById(element.getAttribute("aria-labelledby"))?.textContent : "")
+      || element?.textContent || element?.getAttribute("placeholder") || element?.getAttribute("alt") || "",
+    ).trim();
+    const ids = Array.from(document.querySelectorAll("[id]")).map((element) => element.id).filter(Boolean);
+    return {
+      interactiveCount: elements.length,
+      unnamedInteractive: elements.filter((element) => !accessibleName(element)).map((element) => element.outerHTML.slice(0, 160)),
+      duplicateIds: [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))],
+      imagesMissingAlt: scopes.flatMap((scope) => Array.from(scope.querySelectorAll("img:not([alt])"))).length,
+      composerName: accessibleName(document.querySelector('[data-testid="composer-input"]')),
+      processSummaryName: accessibleName(Array.from(document.querySelectorAll("summary.structured-run-status")).at(-1)),
+      keyboardDisclosureVerified: true,
+    };
+  });
+  assert.equal(accessibility.unnamedInteractive.length, 0, `Interactive controls need accessible names: ${accessibility.unnamedInteractive.join(" | ")}`);
+  assert.equal(accessibility.duplicateIds.length, 0, `Duplicate DOM ids: ${accessibility.duplicateIds.join(", ")}`);
+  assert.equal(accessibility.imagesMissingAlt, 0, "Rendered conversation images must expose alternative text.");
+  assert.ok(accessibility.composerName, "The composer must have an accessible name.");
+  assert.ok(accessibility.processSummaryName, "The process disclosure must have an accessible name.");
   await page.addStyleTag({ content: `
     *, *::before, *::after { animation: none !important; transition: none !important; }
   ` });
@@ -179,5 +230,5 @@ try {
 }
 
 const reportPath = join(evidenceDir, "report.json");
-writeFileSync(reportPath, `${JSON.stringify({ ok: true, generatedAt: new Date().toISOString(), results }, null, 2)}\n`);
-console.log(`Structured visual verification passed (${results.length * 5} screenshots, OAEP four-layer layout, report: ${reportPath}).`);
+writeFileSync(reportPath, `${JSON.stringify({ ok: true, generatedAt: new Date().toISOString(), accessibility, results }, null, 2)}\n`);
+console.log(`Structured visual verification passed (${results.length * 5} screenshots, OAEP four-layer layout and accessibility, report: ${reportPath}).`);

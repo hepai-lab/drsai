@@ -3,50 +3,67 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "path";
 import type {
   DesktopAgent,
+  DesktopAgentCatalogSnapshot,
   DesktopAgentListOptions,
   DesktopAgentPreferenceResult,
   PlatformAgentStatus,
 } from "../api/desktopApi";
 import {
+  LOCAL_OPENDRSAI_AGENT_ID,
+  LOCAL_OPENDRSAI_AGENT_NAME,
+} from "../api/desktopApi";
+import {
   invalidateAuthSession,
+  getAuthSession,
   refreshAuthContextAfterUnauthorized,
   requireAuthContext,
 } from "./auth";
-import { getGatewayStatus } from "./gateway";
+import { getGatewaySnapshot } from "./gateway";
 import { DRSAI_HOME } from "./paths";
 import { getActivePlatformConfig } from "./platformConfig";
 import {
   fetchPlatformAgents,
-  recordPlatformAgentUsage,
   respondPlatformAgentInput,
   respondDdfAgentInput,
-  setPlatformDefaultAgent,
   stopPlatformAgentThread,
   type PlatformAgentClientOptions,
 } from "./platformAgentClient";
 import {
   createPublicAgentCachePayload,
+  createPlatformCatalogSubjectKey,
+  getOrCreateCatalogFlight,
+  markCachedPlatformAgents,
   mergeAndSortAgents,
   parsePublicAgentCachePayload,
   type PlatformAgentExecutionDescriptor,
 } from "./agentCatalog";
 import { recordAgentTelemetry } from "./agentTelemetry";
 import { LocalRuntimeClient } from "./runtimeClient";
+import { getMyDrSaiAgentModelPolicy } from "./myDrSaiConfig";
 
-const LOCAL_AGENT_ID = "my-drsai";
 const ACTIVE_PLATFORM = getActivePlatformConfig();
 const PLATFORM_BASE_URL = ACTIVE_PLATFORM.portalUrl;
 const PLATFORM_AGENTS_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENTS_ENABLED || "true").toLowerCase());
 const PLATFORM_CHAT_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENT_CHAT_ENABLED || "true").toLowerCase());
 const PLATFORM_CACHE_ID = createHash("sha256").update(PLATFORM_BASE_URL).digest("hex").slice(0, 12);
-const PLATFORM_CACHE_PATH = join(
-  DRSAI_HOME,
-  "cache",
-  `platform-agents.${ACTIVE_PLATFORM.name}.${PLATFORM_CACHE_ID}.v1.json`,
-);
 const PLATFORM_CACHE_TTL_MS = positiveIntegerEnv("OPENDRSAI_AGENT_CACHE_TTL_MS", 2 * 60 * 60 * 1000);
+const PLATFORM_MEMORY_TTL_MS = positiveIntegerEnv("OPENDRSAI_AGENT_MEMORY_TTL_MS", 5 * 60 * 1000);
 
 let platformExecutionDescriptors = new Map<string, PlatformAgentExecutionDescriptor>();
+let activePlatformSubjectKey: string | null = null;
+const platformCatalogMemory = new Map<string, {
+  at: number;
+  agents: DesktopAgent[];
+  executionDescriptors: PlatformAgentExecutionDescriptor[];
+  status: PlatformAgentStatus;
+}>();
+const platformCatalogFlights = new Map<string, Promise<{
+  agents: DesktopAgent[];
+  executionDescriptors: PlatformAgentExecutionDescriptor[];
+  status: PlatformAgentStatus;
+}>>();
+let localAgentCache: { at: number; agents: DesktopAgent[] } | undefined;
+let localAgentFlight: Promise<DesktopAgent[]> | undefined;
 
 let platformStatus: PlatformAgentStatus = {
   state: "requires_login",
@@ -67,16 +84,27 @@ export async function listAgents(options: DesktopAgentListOptions = {}): Promise
     };
   }
   const [localAgents, platformAgents] = await Promise.all([
-    listLocalAgents(),
+    listLocalAgents(options),
     PLATFORM_AGENTS_ENABLED ? listPlatformAgents(options) : Promise.resolve([]),
   ]);
-  // The Agent Square has exactly two authorities: this device owns My DrSai,
+  // The Agent Square has exactly two authorities: this device owns OpenDrSai,
   // and HAI owns every other catalog entry. Do not merge legacy device-side
   // remote-agent records here; those records have no platform identity
   // or authorization context and previously made HAI agents look local.
   const agents = mergeAndSortAgents(localAgents, platformAgents);
   recordAgentTelemetry({ event: "catalog_refresh", source: "platform", status: platformStatus.state, count: agents.length });
   return agents;
+}
+
+export async function getAgentCatalogSnapshot(
+  options: DesktopAgentListOptions = {},
+): Promise<DesktopAgentCatalogSnapshot> {
+  const agents = await listAgents(options);
+  return {
+    agents,
+    platformStatus: getPlatformAgentStatus(),
+    loadedAt: new Date().toISOString(),
+  };
 }
 
 export function getPlatformAgentStatus(): PlatformAgentStatus {
@@ -87,7 +115,7 @@ export function getPlatformAgentExecutionDescriptor(
   agentId: string,
 ): PlatformAgentExecutionDescriptor | null {
   const descriptor = platformExecutionDescriptors.get(agentId);
-  return descriptor ? { ...descriptor } : null;
+  return descriptor ? { ...descriptor, capabilities: [...descriptor.capabilities] } : null;
 }
 
 export function getPlatformAgentChatUrl(_platformId: string): string {
@@ -97,30 +125,30 @@ export function getPlatformAgentChatUrl(_platformId: string): string {
   return `${ACTIVE_PLATFORM.baseUrl}/chat/completions`;
 }
 
-export function isPlatformAgentExecutionAvailable(): boolean {
-  return PLATFORM_AGENTS_ENABLED && PLATFORM_CHAT_ENABLED && platformStatus.state === "ready" && platformStatus.capabilities.includes("agent-chat");
+export function isPlatformAgentExecutionAvailable(agentId: string): boolean {
+  const descriptor = platformExecutionDescriptors.get(agentId);
+  if (!PLATFORM_AGENTS_ENABLED || !PLATFORM_CHAT_ENABLED || !descriptor?.available) return false;
+  const capabilities = new Set(descriptor.capabilities.map((item) => item.toLowerCase()));
+  return capabilities.has("chat") && capabilities.has("streaming");
 }
 
 export async function setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult> {
-  if (agentId === LOCAL_AGENT_ID) {
+  if (agentId === LOCAL_OPENDRSAI_AGENT_ID) {
     recordAgentTelemetry({ event: "agent_selected", agentId, source: "local", status: "default" });
     return { agentId, saved: true, message: "Local agent selected as the desktop default." };
   }
   const descriptor = getPlatformAgentExecutionDescriptor(agentId);
   if (!descriptor) return { agentId, saved: false, message: "Agent not found in the platform catalog." };
-  const result = await setPlatformDefaultAgent(platformClientOptions(), descriptor.platformId);
-  if (result.ok) recordAgentTelemetry({ event: "agent_selected", agentId, mode: descriptor.mode, source: "platform", status: "default" });
-  return { agentId, saved: result.ok, message: result.message };
+  return { agentId, saved: false, message: "Platform default-agent preferences are not supported by the HAI catalog contract." };
 }
 
 export async function recordAgentUsage(agentId: string): Promise<DesktopAgentPreferenceResult> {
-  if (agentId === LOCAL_AGENT_ID) {
+  if (agentId === LOCAL_OPENDRSAI_AGENT_ID) {
     return { agentId, saved: true, message: "Local agent usage recorded on this device." };
   }
   const descriptor = getPlatformAgentExecutionDescriptor(agentId);
   if (!descriptor) return { agentId, saved: false, message: "Agent not found in the platform catalog." };
-  const result = await recordPlatformAgentUsage(platformClientOptions(), descriptor.platformId);
-  return { agentId, saved: result.ok, message: result.message };
+  return { agentId, saved: false, message: "Platform usage mutation is not supported; Desktop records privacy-safe execution telemetry locally." };
 }
 
 export async function stopPlatformChat(agentId: string, threadId: string): Promise<boolean> {
@@ -157,81 +185,174 @@ export async function respondToDdfChatInput(
   })).ok;
 }
 
-async function listLocalAgents(): Promise<DesktopAgent[]> {
-  const gateway = await getGatewayStatus();
+async function listLocalAgents(options: DesktopAgentListOptions = {}): Promise<DesktopAgent[]> {
+  if (!options.refresh && localAgentCache && Date.now() - localAgentCache.at < 5_000) {
+    return structuredClone(localAgentCache.agents);
+  }
+  if (localAgentFlight) return structuredClone(await localAgentFlight);
+  localAgentFlight = loadLocalAgents(options);
+  try {
+    const agents = await localAgentFlight;
+    localAgentCache = { at: Date.now(), agents: structuredClone(agents) };
+    return agents;
+  } finally {
+    localAgentFlight = undefined;
+  }
+}
+
+async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<DesktopAgent[]> {
+  // Catalog discovery is read-only. It must never start Python, Gateway, or
+  // Codex merely because the user opened the Agent Square.
+  const gateway = getGatewaySnapshot();
   const agents: DesktopAgent[] = [{
-    id: LOCAL_AGENT_ID,
-    name: "My DrSai",
+    id: LOCAL_OPENDRSAI_AGENT_ID,
+    name: LOCAL_OPENDRSAI_AGENT_NAME,
     description: "An agent running on this computer.",
     owner: "Local",
     source: "local",
     status: gateway.ready ? "running" : "stopped",
     mode: "local",
-    available: gateway.ready,
+    // OpenDrSai starts its Runtime lazily when the user sends a task. A cold
+    // Runtime is therefore not an unavailable agent.
+    available: true,
     capabilities: ["chat", "workspace", "tools"],
     catalogGroup: "local",
-    model: "deepseek-v4-pro",
     url: gateway.baseUrl,
-    error: gateway.ready
-      ? undefined
-      : gateway.externalConflict
-        ? "The local port is already used by another service."
-        : "The local OpenDrSai gateway is not running.",
+    error: gateway.externalConflict
+      ? "The local Runtime port is already used by another service."
+      : undefined,
   }];
+  if (!gateway.ready) return agents;
   try {
-    const capability = (await (await LocalRuntimeClient.connect()).getCapabilities()).agent_backends?.codex;
+    const policy = await getMyDrSaiAgentModelPolicy("my-drsai");
+    agents[0] = {
+      ...agents[0],
+      model: policy.effective_ref?.model_id,
+      error: policy.valid ? agents[0].error : policy.error || "The configured OpenDrSai model is unavailable.",
+    };
+  } catch {
+    // Keep local Agent discovery available while policy diagnostics recover.
+  }
+  try {
+    const client = await LocalRuntimeClient.connect();
+    const [modelCatalog, account] = await Promise.all([
+      client.getBackendModels("codex", options.refresh === true),
+      client.getBackendAccount("codex", options.refresh === true),
+    ]);
+    const capability = (await client.getCapabilities()).agent_backends?.codex;
+    const visibleModels = modelCatalog.models?.filter((model) => !model.hidden) ?? [];
+    const defaultModel = modelCatalog.default_model
+      ?? visibleModels.find((model) => model.default)?.id;
+    const executable = capability?.available === true && capability.contract_compatible !== false
+      && account.state === "signed_in" && modelCatalog.stale !== true && visibleModels.length > 0;
     agents.push({
       id: "my-codex", name: "Codex", description: "Codex Agent Backend running in this Workspace Runtime.",
-      owner: "Local", source: "local", status: capability?.available ? "running" : "stopped", mode: "local",
-      available: capability?.available === true, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local",
-      model: "gpt-5.4", models: ["gpt-5.4"],
-      error: capability?.available ? undefined : capability?.reason ?? "Codex is unavailable.",
+      owner: "Local", source: "local", status: executable ? "running" : "stopped", mode: "local",
+      available: executable, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local",
+      model: defaultModel, models: visibleModels.map((model) => model.id),
+      error: capability?.available
+        ? account.state === "signed_out" ? "Codex needs you to sign in before sending a message."
+          : account.state !== "signed_in" ? "Codex account status is temporarily unavailable."
+          : visibleModels.length ? undefined : "Codex model information is unavailable. Start or reconnect Codex and refresh."
+        : capability?.reason ?? "Codex is unavailable.",
     });
   } catch {
-    agents.push({ id: "my-codex", name: "Codex", description: "Codex Agent Backend is unavailable.", owner: "Local",
-      source: "local", status: "unreachable", mode: "local", available: false, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local", error: "Runtime capability could not be read." });
+    // Codex is a backend choice, not a required Agent Square entry. If an
+    // already-running Runtime cannot describe it, omit it instead of turning
+    // catalog browsing into a Runtime recovery workflow.
   }
   return agents;
 }
 
 async function listPlatformAgents(options: DesktopAgentListOptions): Promise<DesktopAgent[]> {
-  try {
-    const result = await fetchPlatformAgents(platformClientOptions(options.refresh === true));
-    if (result.status.state === "ready") {
-      platformExecutionDescriptors = new Map(
-        result.executionDescriptors.map((descriptor) => [descriptor.publicId, descriptor]),
-      );
-      const syncedAt = result.status.lastCheckedAt ?? new Date().toISOString();
-      writePlatformCache(result.agents, syncedAt);
-      platformStatus = {
-        ...result.status,
-        lastSuccessfulSyncAt: syncedAt,
-        cacheState: "fresh",
-      };
-      return result.agents;
-    }
-    const cached = readPlatformCache();
+  const subjectKey = await platformSubjectKey();
+  if (!subjectKey) {
+    activePlatformSubjectKey = null;
+    platformExecutionDescriptors.clear();
+    platformStatus = {
+      state: "requires_login",
+      apiVersion: null,
+      capabilities: [],
+      message: "Sign in with HepAI to load platform agents.",
+      lastCheckedAt: new Date().toISOString(),
+      lastSuccessfulSyncAt: null,
+      cacheState: "none",
+    };
+    return [];
+  }
+  activePlatformSubjectKey = subjectKey;
+  const memory = platformCatalogMemory.get(subjectKey);
+  if (!options.refresh && memory && Date.now() - memory.at <= PLATFORM_MEMORY_TTL_MS) {
+    activatePlatformCatalog(subjectKey, memory);
+    return structuredClone(memory.agents);
+  }
+  if (options.preferCache && !options.refresh) {
+    const cached = readPlatformCache(subjectKey);
     if (cached) {
-      platformExecutionDescriptors = new Map(
-        cached.agents.map((agent) => [agent.id, cacheExecutionDescriptor(agent)]),
-      );
-      platformStatus = {
-        ...result.status,
-        message: `${result.status.message} Showing the last cached platform catalog.`,
-        lastSuccessfulSyncAt: cached.savedAt,
-        cacheState: cached.fresh ? "fresh" : "stale",
-      };
-      return cached.agents;
+      const catalog = cachedPlatformCatalog(cached);
+      activatePlatformCatalog(subjectKey, catalog);
+      return structuredClone(catalog.agents);
     }
     platformExecutionDescriptors.clear();
-    platformStatus = { ...result.status, lastSuccessfulSyncAt: null, cacheState: "none" };
-    return [];
-  } catch (error) {
-    const cached = readPlatformCache();
-    platformExecutionDescriptors = new Map(
-      (cached?.agents ?? []).map((agent) => [agent.id, cacheExecutionDescriptor(agent)]),
-    );
     platformStatus = {
+      state: "loading",
+      apiVersion: null,
+      capabilities: [],
+      message: "Loading platform agents from HepAI.",
+      lastCheckedAt: null,
+      lastSuccessfulSyncAt: null,
+      cacheState: "none",
+    };
+    return [];
+  }
+
+  const flight = getOrCreateCatalogFlight(
+    platformCatalogFlights,
+    subjectKey,
+    () => loadLivePlatformCatalog(subjectKey, options.refresh === true),
+  );
+  const catalog = await flight;
+  activatePlatformCatalog(subjectKey, catalog);
+  return structuredClone(catalog.agents);
+}
+
+async function loadLivePlatformCatalog(subjectKey: string, refresh: boolean): Promise<{
+  at: number;
+  agents: DesktopAgent[];
+  executionDescriptors: PlatformAgentExecutionDescriptor[];
+  status: PlatformAgentStatus;
+}> {
+  try {
+    const result = await fetchPlatformAgents(platformClientOptions(refresh));
+    if (result.status.state === "ready") {
+      const syncedAt = result.status.lastCheckedAt ?? new Date().toISOString();
+      const catalog = {
+        at: Date.now(),
+        agents: result.agents.map((agent) => ({ ...agent, catalogState: "live" as const })),
+        executionDescriptors: result.executionDescriptors,
+        status: {
+          ...result.status,
+          lastSuccessfulSyncAt: syncedAt,
+          cacheState: "fresh" as const,
+        },
+      };
+      platformCatalogMemory.set(subjectKey, catalog);
+      writePlatformCache(subjectKey, catalog.agents, syncedAt);
+      return catalog;
+    }
+    const cached = readPlatformCache(subjectKey);
+    if (cached) {
+      return cachedPlatformCatalog(cached, result.status);
+    }
+    return {
+      at: 0,
+      agents: [],
+      executionDescriptors: [],
+      status: { ...result.status, lastSuccessfulSyncAt: null, cacheState: "none" },
+    };
+  } catch (error) {
+    const cached = readPlatformCache(subjectKey);
+    const failureStatus: PlatformAgentStatus = {
       state: "error",
       apiVersion: null,
       capabilities: [],
@@ -243,12 +364,59 @@ async function listPlatformAgents(options: DesktopAgentListOptions): Promise<Des
       cacheState: cached ? (cached.fresh ? "fresh" : "stale") : "none",
     };
     if (cached) {
-      platformStatus.message += " Showing the last cached platform catalog.";
-      return cached.agents;
+      return cachedPlatformCatalog(cached, failureStatus);
     }
-    platformStatus.message += " Local agents remain available.";
-    return [];
+    failureStatus.message += " Local agents remain available.";
+    return { at: 0, agents: [], executionDescriptors: [], status: failureStatus };
   }
+}
+
+function activatePlatformCatalog(
+  subjectKey: string,
+  catalog: { agents: DesktopAgent[]; executionDescriptors: PlatformAgentExecutionDescriptor[]; status: PlatformAgentStatus },
+): void {
+  if (activePlatformSubjectKey !== subjectKey) return;
+  platformExecutionDescriptors = new Map(
+    catalog.executionDescriptors.map((descriptor) => [descriptor.publicId, descriptor]),
+  );
+  platformStatus = { ...catalog.status, capabilities: [...catalog.status.capabilities] };
+}
+
+function cachedPlatformCatalog(
+  cached: { agents: DesktopAgent[]; savedAt: string; fresh: boolean },
+  failureStatus?: PlatformAgentStatus,
+): {
+  at: number;
+  agents: DesktopAgent[];
+  executionDescriptors: PlatformAgentExecutionDescriptor[];
+  status: PlatformAgentStatus;
+} {
+  const agents = markCachedPlatformAgents(cached.agents);
+  return {
+    at: 0,
+    agents,
+    executionDescriptors: agents.map(cacheExecutionDescriptor),
+    status: {
+      ...(failureStatus ?? {
+        state: "loading" as const,
+        apiVersion: null,
+        capabilities: [],
+        message: "Showing the last cached platform catalog while HepAI refreshes.",
+        lastCheckedAt: null,
+      }),
+      message: failureStatus
+        ? `${failureStatus.message} Showing the last cached platform catalog.`
+        : "Showing the last cached platform catalog while HepAI refreshes.",
+      lastSuccessfulSyncAt: cached.savedAt,
+      cacheState: cached.fresh ? "fresh" : "stale",
+    },
+  };
+}
+
+async function platformSubjectKey(): Promise<string | null> {
+  const session = await getAuthSession();
+  if (!session.authenticated || session.authMode !== "oidc" || !session.user?.id) return null;
+  return createPlatformCatalogSubjectKey(ACTIVE_PLATFORM.name, PLATFORM_CACHE_ID, session.user.id);
 }
 
 function platformClientOptions(refresh = false): PlatformAgentClientOptions {
@@ -274,9 +442,18 @@ function platformClientOptions(refresh = false): PlatformAgentClientOptions {
   };
 }
 
-function writePlatformCache(agents: DesktopAgent[], savedAt: string): void {
+function platformCachePath(subjectKey: string): string {
+  return join(
+    DRSAI_HOME,
+    "cache",
+    `platform-agents.${ACTIVE_PLATFORM.name}.${PLATFORM_CACHE_ID}.${subjectKey}.v2.json`,
+  );
+}
+
+function writePlatformCache(subjectKey: string, agents: DesktopAgent[], savedAt: string): void {
   const directory = join(DRSAI_HOME, "cache");
-  const temporaryPath = `${PLATFORM_CACHE_PATH}.tmp`;
+  const cachePath = platformCachePath(subjectKey);
+  const temporaryPath = `${cachePath}.tmp`;
   try {
     mkdirSync(directory, { recursive: true });
     writeFileSync(
@@ -284,17 +461,18 @@ function writePlatformCache(agents: DesktopAgent[], savedAt: string): void {
       `${JSON.stringify(createPublicAgentCachePayload(agents, savedAt), null, 2)}\n`,
       { encoding: "utf8", mode: 0o600 },
     );
-    renameSync(temporaryPath, PLATFORM_CACHE_PATH);
+    renameSync(temporaryPath, cachePath);
   } catch {
     // Catalog caching is best-effort; a read-only profile must not hide live agents.
   }
 }
 
-function readPlatformCache(): { agents: DesktopAgent[]; savedAt: string; fresh: boolean } | null {
-  if (!existsSync(PLATFORM_CACHE_PATH)) return null;
+function readPlatformCache(subjectKey: string): { agents: DesktopAgent[]; savedAt: string; fresh: boolean } | null {
+  const cachePath = platformCachePath(subjectKey);
+  if (!existsSync(cachePath)) return null;
   try {
     const payload = parsePublicAgentCachePayload(
-      JSON.parse(readFileSync(PLATFORM_CACHE_PATH, "utf8")),
+      JSON.parse(readFileSync(cachePath, "utf8")),
     );
     if (!payload) return null;
     const age = Date.now() - Date.parse(payload.savedAt);
@@ -315,7 +493,8 @@ function cacheExecutionDescriptor(agent: DesktopAgent): PlatformAgentExecutionDe
     mode: agent.mode || "remote",
     name: agent.name,
     model: agent.model,
-    available: agent.available !== false,
+    available: false,
+    capabilities: agent.capabilities ? [...agent.capabilities] : [],
   };
 }
 

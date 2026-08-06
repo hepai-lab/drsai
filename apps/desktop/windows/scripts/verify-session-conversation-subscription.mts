@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { subscribeSessionConversation } from "../../shared/main/sessionConversationSubscription.ts";
-import { selectRuntimeConversationProtocol } from "../../shared/main/runtimeProtocolSelection.ts";
+import { selectRuntimeConversationProtocol, selectRuntimeConversationProtocolResult } from "../../shared/main/runtimeProtocolSelection.ts";
+import { OAEP_SCHEMA_SHA256 } from "../../shared/api/oaep.generated.ts";
 import { oaepArtifactMetadataRequest } from "../../shared/main/oaepOwopResources.ts";
 import {
   projectOaepThreadSnapshot,
@@ -28,6 +29,14 @@ assert.match(subscriptionSource, /isDestroyed\?\.\(\)/);
 assert.equal(subscriptionSource.includes("/destroyed/i"), true);
 assert.match(windowsMainSource, /subscription\.stop\(\)/);
 assert.match(windowsMainSource, /catch\s*\{/);
+assert.match(windowsMainSource, /function ensureRuntimeThreadCleanup\(/);
+const snapshotSubscriptionHandler = windowsMainSource.slice(
+  windowsMainSource.indexOf('secureHandle("desktop:subscribe-thread-snapshot"'),
+  windowsMainSource.indexOf('secureHandle("desktop:unsubscribe-thread-snapshot"'),
+);
+assert.match(snapshotSubscriptionHandler, /ensureRuntimeThreadCleanup\(event\.sender\)/);
+assert.equal(snapshotSubscriptionHandler.includes('event.sender.once("destroyed"'), false,
+  "Thread re-subscription must not add another WebContents destroyed listener");
 
 const encoder = new TextEncoder();
 const sessionId = "session-subscription-one";
@@ -272,6 +281,15 @@ assert.equal(selectRuntimeConversationProtocol({
   capability_versions: Object.fromEntries(oaepCapabilities.map((name) => [name, 1])),
   protocols: { oaep: { version: "1.0", profiles: ["oaep.session-stream/1"] } },
 }), "oaep");
+assert.deepEqual(selectRuntimeConversationProtocolResult({
+  protocol_version: 1,
+  capabilities: oaepCapabilities,
+  capability_versions: Object.fromEntries(oaepCapabilities.map((name) => [name, 1])),
+  protocols: { oaep: { version: "1.0", profiles: ["oaep.session-stream/1"] } },
+}), {
+  selected: "oaep", version: "1.0", schemaHash: OAEP_SCHEMA_SHA256,
+  fallbackReason: null, upgradeAction: null,
+});
 assert.throws(() => selectRuntimeConversationProtocol({
   protocol_version: 1,
   capabilities: ["oaep.v1"],
@@ -287,6 +305,14 @@ assert.equal(selectRuntimeConversationProtocol({
   capabilities: legacyCapabilities,
   capability_versions: Object.fromEntries(legacyCapabilities.map((name) => [name, 1])),
 }), "legacy");
+assert.deepEqual(selectRuntimeConversationProtocolResult({
+  protocol_version: 1,
+  capabilities: legacyCapabilities,
+  capability_versions: Object.fromEntries(legacyCapabilities.map((name) => [name, 1])),
+}), {
+  selected: "legacy", version: "1", schemaHash: null,
+  fallbackReason: "oaep_unavailable", upgradeAction: "upgrade_runtime",
+});
 const versionMatrix = JSON.parse(readFileSync(
   "../../../cores/protocol/relay/oaep-version-matrix.json", "utf-8",
 )) as { cases: Array<{ name: string; capabilities: string[]; protocols: Record<string, unknown>; expected: string }> };

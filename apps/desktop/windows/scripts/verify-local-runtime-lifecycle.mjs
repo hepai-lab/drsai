@@ -13,6 +13,9 @@ const runtimeHome = join(temp, "runtime-home");
 const workspacePath = join(temp, "workspace");
 const bundle = join(temp, "local-runtime-acceptance.mjs");
 const port = 24_000 + (process.pid % 20_000);
+const crashRoundsIndex = process.argv.indexOf("--crash-rounds");
+const crashRounds = crashRoundsIndex >= 0 ? Number(process.argv[crashRoundsIndex + 1]) : 1;
+assert(Number.isInteger(crashRounds) && crashRounds >= 1 && crashRounds <= 20, "Crash rounds must be between 1 and 20");
 
 mkdirSync(workspacePath, { recursive: true });
 const definition = join(runtimeHome, "assets", "agents", "local-acceptance", "1.json");
@@ -94,14 +97,28 @@ try {
   const restoredEvents = await request({ baseUrl: `http://127.0.0.1:${port}`, headers: secondDesktop.getGatewayRequestHeaders() }, "GET", `/v1/runs/${run.run_id}/events`);
   assert(restoredRun.status === "completed" && restoredEvents.data.length === events.data.length, "Desktop restart lost Run/Event history");
 
-  const beforeCrash = await secondDesktop.getGatewayStatus();
-  killProcessTree(beforeCrash.pid);
-  await waitUntil(async () => !(await secondDesktop.getGatewayStatus()).ready, 10_000, "Desktop did not detect Local Runtime exit");
-  assert(await secondDesktop.startGateway(), "Desktop did not restart Local Runtime after abnormal exit");
-  const afterCrash = await secondClient.getRuntime();
-  assert(afterCrash.runtime_id === afterDesktopRestart.runtime_id, "Runtime crash changed stable runtime_id");
-  assert(afterCrash.instance_id !== afterDesktopRestart.instance_id, "Runtime crash did not rotate instance_id");
-  assert((await secondClient.listWorkspaces()).some((item) => item.workspace_id === workspace.workspace_id), "Runtime crash recovery lost Workspace Registry");
+  let previousIdentity = afterDesktopRestart;
+  for (let crashRound = 1; crashRound <= crashRounds; crashRound += 1) {
+    const beforeCrash = await secondDesktop.getGatewayStatus();
+    killProcessTree(beforeCrash.pid);
+    await waitUntil(async () => !(await secondDesktop.getGatewayStatus()).ready, 10_000, `Desktop did not detect Local Runtime exit in round ${crashRound}`);
+    assert(await secondDesktop.startGateway(), `Desktop did not restart Local Runtime after abnormal exit in round ${crashRound}`);
+    const afterCrash = await secondClient.getRuntime();
+    assert(afterCrash.runtime_id === afterDesktopRestart.runtime_id, `Runtime crash changed stable runtime_id in round ${crashRound}`);
+    assert(afterCrash.instance_id !== previousIdentity.instance_id, `Runtime crash did not rotate instance_id in round ${crashRound}`);
+    assert((await secondClient.listWorkspaces()).some((item) => item.workspace_id === workspace.workspace_id), `Runtime crash recovery lost Workspace Registry in round ${crashRound}`);
+    const completedAfterCrash = await request(
+      { baseUrl: `http://127.0.0.1:${port}`, headers: secondDesktop.getGatewayRequestHeaders() },
+      "GET", `/v1/runs/${run.run_id}`,
+    );
+    const eventsAfterCrash = await request(
+      { baseUrl: `http://127.0.0.1:${port}`, headers: secondDesktop.getGatewayRequestHeaders() },
+      "GET", `/v1/runs/${run.run_id}/events`,
+    );
+    assert(completedAfterCrash.status === "completed", `Completed Run changed terminal state in round ${crashRound}`);
+    assert(eventsAfterCrash.data.length === events.data.length, `Completed Run was re-executed in round ${crashRound}`);
+    previousIdentity = afterCrash;
+  }
 
   await secondDesktop.stopGateway();
   active = null;
@@ -148,7 +165,7 @@ try {
     delete process.env.OPENDRSAI_GATEWAY_STARTUP;
   }
 
-  console.log("Windows Local Runtime lifecycle verification passed.");
+  console.log(`Windows Local Runtime lifecycle verification passed (${crashRounds}/${crashRounds} crash rounds).`);
 } finally {
   try { await active?.stopGateway(); } catch {}
   rmSync(temp, { recursive: true, force: true });

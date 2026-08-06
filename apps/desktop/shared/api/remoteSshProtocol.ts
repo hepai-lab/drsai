@@ -14,8 +14,15 @@ export const REMOTE_CAPABILITY_VERSIONS = {
 export type RemoteCapability = keyof typeof REMOTE_CAPABILITY_VERSIONS;
 
 export interface RemoteProtocolErrorBody {
-  error?: { code?: string; message?: string; retryable?: boolean; correlation_id?: string };
-  detail?: string | { code?: string; message?: string; correlation_id?: string };
+  error?: RemoteProtocolErrorDetail;
+  detail?: string | RemoteProtocolErrorDetail;
+}
+
+interface RemoteProtocolErrorDetail {
+  code?: string; message?: string; retryable?: boolean; correlation_id?: string;
+  detail?: { approval_id?: string };
+  category?: string; user_message_key?: string; recovery_actions?: string[];
+  diagnostic_reference?: string; redacted_details?: Record<string, unknown>;
 }
 
 export class RemoteProtocolError extends Error {
@@ -25,11 +32,28 @@ export class RemoteProtocolError extends Error {
     readonly code: string,
     readonly correlationId?: string,
     readonly retryable = false,
+    readonly detail: { approvalId?: string } = {},
+    readonly envelope?: RemoteProtocolErrorDetail,
   ) { super(message); this.name = "RemoteProtocolError"; }
 }
 
 export function parseRemoteProtocolError(status: number, body: RemoteProtocolErrorBody | null, correlationHeader?: string | null): RemoteProtocolError {
-  const detail = body?.error ?? (typeof body?.detail === "object" ? body.detail : undefined);
-  const message = detail?.message ?? (typeof body?.detail === "string" ? body.detail : `Remote Gateway request failed (${status}).`);
-  return new RemoteProtocolError(message, status, detail?.code ?? `http_${status}`, detail?.correlation_id ?? correlationHeader ?? undefined, body?.error?.retryable === true);
+  const errorValue: unknown = body?.error;
+  const detailValue: unknown = body?.detail;
+  const detail = errorValue && typeof errorValue === "object"
+    ? errorValue as NonNullable<RemoteProtocolErrorBody["error"]>
+    : detailValue && typeof detailValue === "object"
+      ? detailValue as Exclude<RemoteProtocolErrorBody["detail"], string | undefined>
+      : undefined;
+  const stringError = typeof errorValue === "string" ? errorValue : undefined;
+  const message = detail?.message
+    ?? (typeof detailValue === "string" ? detailValue : stringError)
+    ?? `Remote Gateway request failed (${status}).`;
+  return new RemoteProtocolError(
+    message, status, detail?.code ?? `http_${status}`,
+    detail?.correlation_id ?? correlationHeader ?? undefined,
+    detail?.retryable === true,
+    { approvalId: detail?.detail?.approval_id },
+    detail,
+  );
 }

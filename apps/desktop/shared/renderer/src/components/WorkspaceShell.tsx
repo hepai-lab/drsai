@@ -18,6 +18,7 @@ import {
   Info,
   Keyboard,
   IdCard,
+  Languages,
   LogOut,
   Maximize2,
   MessageSquarePlus,
@@ -26,6 +27,7 @@ import {
   PackageOpen,
   PanelLeft,
   PanelRight,
+  Plus,
   RefreshCw,
   RotateCcw,
   RotateCw,
@@ -68,6 +70,8 @@ import { getAssistantVisibleAnswer } from "../chatOutputModel";
 import { extractShareConclusion, extractShareMessageText } from "@shared/threadShareHtml";
 import { ChatMessageContent } from "./ChatMessageContent";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
+import { userFacingFailureMessage } from "../userFacingLanguage";
+import { showAppNotice } from "./AppDecisionDialog";
 import { ThreadActivityBubble } from "./ThreadActivityBubble";
 import type { ThreadActivityState } from "../threadActivity";
 import {
@@ -376,8 +380,12 @@ export function WorkspaceShell({
   const [rightPanelWidth, setRightPanelWidth] = useState(420);
   const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
   const [rightPanelActivated, setRightPanelActivated] = useState(!rightPanelCollapsed);
+  const [openRightTabs, setOpenRightTabs] = useState<RightTab[]>(() => rightTabs.map(({ id }) => id));
+  const availableRightTabIdsRef = useRef<Set<RightTab>>(new Set(rightTabs.map(({ id }) => id)));
+  const [rightTabMenuOpen, setRightTabMenuOpen] = useState(false);
   const workbenchMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const rightTabMenuRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
   const commandPaletteResultsRef = useRef<HTMLElement | null>(null);
@@ -443,9 +451,10 @@ export function WorkspaceShell({
       setWorktreesDegraded(null);
       setWorktreeMigrationDiagnostics(await onGetWorktreeMigrationDiagnostics(request));
     } catch (error) {
-      setWorktrees([]);
-      setWorktreesDegraded(null);
-      setWorktreesError(error instanceof Error ? error.message : String(error));
+      // Preserve the last successful Runtime projection while the managed
+      // Gateway recovers. Clearing it turns a transient health miss into an
+      // apparent data-loss event in the UI.
+      setWorktreesError(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setWorktreesLoading(false);
     }
@@ -463,7 +472,7 @@ export function WorkspaceShell({
         maxChars: 120_000,
       }));
     } catch (error) {
-      setReviewError(error instanceof Error ? error.message : String(error));
+      setReviewError(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setReviewLoading(false);
     }
@@ -480,8 +489,14 @@ export function WorkspaceShell({
     if (!activeWorkspace?.path) return;
     let disposed = false;
     let reading = false;
+    let consecutiveFailures = 0;
+    let retryAfter = 0;
+    const recordFailure = (): void => {
+      consecutiveFailures += 1;
+      retryAfter = Date.now() + Math.min(60_000, 5_000 * (2 ** Math.min(4, consecutiveFailures - 1)));
+    };
     const readEvents = async (): Promise<void> => {
-      if (disposed || reading || document.visibilityState !== "visible") return;
+      if (disposed || reading || document.visibilityState !== "visible" || Date.now() < retryAfter) return;
       reading = true;
       try {
         const batch = await onListWorktreeEvents({
@@ -493,12 +508,16 @@ export function WorkspaceShell({
         worktreeEventCursor.current = Math.max(worktreeEventCursor.current, batch.nextSequence);
         if (batch.degraded) {
           setWorktreesDegraded(batch.degraded);
+          recordFailure();
           return;
         }
+        consecutiveFailures = 0;
+        retryAfter = 0;
         setWorktreesDegraded(null);
         if (batch.events.length > 0) await refreshWorktrees();
       } catch {
         // Keep the last Runtime projection visible; the next generation retries.
+        recordFailure();
       } finally {
         reading = false;
       }
@@ -529,6 +548,38 @@ export function WorkspaceShell({
     [searchableThreads],
   );
 
+  const visibleRightTabs = rightTabs.filter(({ id }) => openRightTabs.includes(id));
+  const availableRightTabs = rightTabs.filter(({ id }) => !openRightTabs.includes(id));
+
+  useEffect(() => {
+    const nextIds = rightTabs.map(({ id }) => id);
+    const nextIdSet = new Set(nextIds);
+    const newlyAvailable = nextIds.filter((id) => !availableRightTabIdsRef.current.has(id));
+    availableRightTabIdsRef.current = nextIdSet;
+    setOpenRightTabs((current) => {
+      const retained = current.filter((id) => nextIdSet.has(id));
+      const additions = newlyAvailable.filter((id) => !retained.includes(id));
+      return retained.length === current.length && additions.length === 0
+        ? current
+        : [...retained, ...additions];
+    });
+  }, [rightTabs]);
+
+  function openRightTab(id: RightTab): void {
+    setOpenRightTabs((current) => current.includes(id) ? current : [...current, id]);
+    onRightTabChange(id);
+    setRightTabMenuOpen(false);
+  }
+
+  function closeRightTab(id: RightTab): void {
+    const closingIndex = openRightTabs.indexOf(id);
+    const remaining = openRightTabs.filter((tab) => tab !== id);
+    setOpenRightTabs(remaining);
+    if (id === activeRightTab && remaining.length > 0) {
+      onRightTabChange(remaining[Math.min(closingIndex, remaining.length - 1)]);
+    }
+  }
+
   useEffect(() => {
     function handlePointerDown(event: PointerEvent): void {
       if (!userMenuRef.current?.contains(event.target as Node)) {
@@ -540,11 +591,19 @@ export function WorkspaceShell({
       if (!commandPaletteRef.current?.contains(event.target as Node)) {
         closeCommandPalette();
       }
+      if (!rightTabMenuRef.current?.contains(event.target as Node)) {
+        setRightTabMenuOpen(false);
+      }
     }
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, []);
+
+  useEffect(() => {
+    if (rightPanelCollapsed || !rightTabs.some(({ id }) => id === activeRightTab)) return;
+    setOpenRightTabs((current) => current.includes(activeRightTab) ? current : [...current, activeRightTab]);
+  }, [activeRightTab, rightPanelCollapsed, rightTabs]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
@@ -771,7 +830,7 @@ export function WorkspaceShell({
       });
       setWorkspaceCreateOpen(false);
     } catch (error) {
-      setWorkspaceCreateError(error instanceof Error ? error.message : String(error));
+      setWorkspaceCreateError(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -820,7 +879,7 @@ export function WorkspaceShell({
       });
       closeWorkspaceDetails();
     } catch (error) {
-      setWorkspaceSaveError(error instanceof Error ? error.message : String(error));
+      setWorkspaceSaveError(userFacingFailureMessage(error, language, "operation"));
       setWorkspaceSavePending(false);
     }
   }
@@ -1049,7 +1108,7 @@ export function WorkspaceShell({
             ? {
                 ...current,
                 loading: false,
-                error: error instanceof Error ? error.message : String(error),
+                error: userFacingFailureMessage(error, language, "operation"),
               }
             : current,
         );
@@ -1149,7 +1208,7 @@ export function WorkspaceShell({
           ? {
               ...current,
               busy: false,
-              error: error instanceof Error ? error.message : String(error),
+              error: userFacingFailureMessage(error, language, "operation"),
             }
           : current,
       );
@@ -1187,7 +1246,7 @@ export function WorkspaceShell({
         current
           ? {
               ...current,
-              error: error instanceof Error ? error.message : String(error),
+              error: userFacingFailureMessage(error, language, "operation"),
             }
           : current,
       );
@@ -1214,7 +1273,7 @@ export function WorkspaceShell({
         current
           ? {
               ...current,
-              error: error instanceof Error ? error.message : String(error),
+              error: userFacingFailureMessage(error, language, "operation"),
             }
           : current,
       );
@@ -1476,7 +1535,7 @@ export function WorkspaceShell({
         key,
         path: file.path,
         status: "error",
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingFailureMessage(error, language, "operation"),
       });
     }
   }
@@ -1509,7 +1568,7 @@ export function WorkspaceShell({
           ? {
               ...current,
               stageStatus: "error",
-              stageMessage: error instanceof Error ? error.message : String(error),
+              stageMessage: userFacingFailureMessage(error, language, "operation"),
             }
           : current,
       );
@@ -1560,7 +1619,7 @@ export function WorkspaceShell({
           ? {
               ...current,
               writeStatus: "error",
-              writeMessage: error instanceof Error ? error.message : String(error),
+              writeMessage: userFacingFailureMessage(error, language, "operation"),
             }
           : current,
       );
@@ -1717,7 +1776,7 @@ export function WorkspaceShell({
   function runThreadMenuAction(action: () => void | Promise<void>): void {
     closeThreadMenu();
     void Promise.resolve(action()).catch((error) => {
-      window.alert(error instanceof Error ? error.message : (zh ? "操作失败，请重试。" : "The operation failed. Please retry."));
+      void showAppNotice({ id: "thread-menu-action-failed", title: zh ? "操作未完成" : "Action did not complete", description: userFacingFailureMessage(error, language, "operation") });
     });
   }
 
@@ -2218,7 +2277,10 @@ export function WorkspaceShell({
                 {zh ? "设置" : "Settings"}
               </button>
               <div className="titlebar-language-row">
-                <span>{zh ? "语言" : "Language"}</span>
+                <span className="titlebar-language-label">
+                  <Languages size={15} aria-hidden />
+                  <span>{zh ? "语言" : "Language"}</span>
+                </span>
                 <div className="language-segment" role="group" aria-label={zh ? "语言" : "Language"}>
                   <button
                     type="button"
@@ -2251,6 +2313,17 @@ export function WorkspaceShell({
           )}
         </div>
         <div className="titlebar-window-divider" aria-hidden />
+        <button
+          className="titlebar-right-panel-toggle"
+          data-testid="titlebar-right-panel-toggle"
+          type="button"
+          onClick={onToggleRightPanel}
+          title={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
+          aria-label={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
+          aria-pressed={!rightPanelCollapsed}
+        >
+          <span aria-hidden />
+        </button>
       </div>
 
       <aside className="sidebar">
@@ -2493,35 +2566,6 @@ export function WorkspaceShell({
         >
           <section className="main-content-area">
             {mainContent}
-            {/* Floating open/close control stays on the main surface top-right across left-nav views. */}
-            {!isRightPanelExpanded && (
-              <button
-                className="titlebar-right-panel-toggle chat-right-panel-float-toggle"
-                type="button"
-                onClick={onToggleRightPanel}
-                title={
-                  rightPanelCollapsed
-                    ? zh
-                      ? "显示右侧栏"
-                      : "Show right panel"
-                    : zh
-                      ? "隐藏右侧栏"
-                      : "Hide right panel"
-                }
-                aria-label={
-                  rightPanelCollapsed
-                    ? zh
-                      ? "显示右侧栏"
-                      : "Show right panel"
-                    : zh
-                      ? "隐藏右侧栏"
-                      : "Hide right panel"
-                }
-                aria-pressed={!rightPanelCollapsed}
-              >
-                <span aria-hidden />
-              </button>
-            )}
           </section>
           {!rightPanelCollapsed && !isRightPanelExpanded && (
             <div
@@ -2535,34 +2579,43 @@ export function WorkspaceShell({
 
           {rightPanelActivated ? <aside className={`${rightPanelClassName} ${rightPanelCollapsed ? "is-collapsed" : ""}`} aria-hidden={rightPanelCollapsed || undefined}>
               <div className="right-tabs">
-                {/* Close control lives on the main float button; only keep one here when panel is fullscreen. */}
-                {isRightPanelExpanded ? (
-                  <button
-                    className="titlebar-right-panel-toggle"
-                    type="button"
-                    onClick={onToggleRightPanel}
-                    title={zh ? "隐藏右侧栏" : "Hide right panel"}
-                    aria-label={zh ? "隐藏右侧栏" : "Hide right panel"}
-                    aria-pressed
-                  >
-                    <span aria-hidden />
-                  </button>
-                ) : null}
-                {rightTabs.map(({ id, label }) => {
+                <div className="right-tabs-list" role="tablist" aria-label={zh ? "右侧面板" : "Side panel"}>
+                {visibleRightTabs.map(({ id, label }) => {
                   const Icon = rightTabIcons[id];
                   return (
-                    <button
-                      key={id}
-                      className={id === activeRightTab ? "active" : ""}
-                      onClick={() => onRightTabChange(id)}
-                      title={label}
-                      aria-label={label}
-                    >
-                      <Icon size={15} />
-                      <span>{label}</span>
-                    </button>
+                    <div key={id} className={`right-tab ${id === activeRightTab ? "active" : ""}`}>
+                      <button type="button" role="tab" aria-selected={id === activeRightTab} onClick={() => onRightTabChange(id)} title={label}>
+                        <Icon size={15} />
+                        <span>{label}</span>
+                      </button>
+                      <button type="button" className="right-tab-close" onClick={() => closeRightTab(id)} title={zh ? `关闭${label}` : `Close ${label}`} aria-label={zh ? `关闭${label}` : `Close ${label}`}>
+                        <X size={12} />
+                      </button>
+                    </div>
                   );
                 })}
+                </div>
+                <div className="right-tab-add" ref={rightTabMenuRef}>
+                  <button
+                    type="button"
+                    className="right-tab-add-button"
+                    disabled={availableRightTabs.length === 0}
+                    onClick={() => setRightTabMenuOpen((open) => !open)}
+                    title={availableRightTabs.length > 0 ? (zh ? "添加面板" : "Add panel") : (zh ? "所有面板均已显示" : "All panels are already shown")}
+                    aria-label={availableRightTabs.length > 0 ? (zh ? "添加面板" : "Add panel") : (zh ? "所有面板均已显示" : "All panels are already shown")}
+                    aria-expanded={availableRightTabs.length > 0 ? rightTabMenuOpen : false}
+                  >
+                    <Plus size={15} />
+                  </button>
+                  {rightTabMenuOpen && availableRightTabs.length > 0 && (
+                    <div className="right-tab-add-menu" role="menu">
+                      {availableRightTabs.map(({ id, label }) => {
+                        const Icon = rightTabIcons[id];
+                        return <button type="button" role="menuitem" key={id} onClick={() => openRightTab(id)}><Icon size={14} /><span>{label}</span></button>;
+                      })}
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
                   className="right-panel-expand-button"
@@ -2574,7 +2627,7 @@ export function WorkspaceShell({
                   {isRightPanelExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                 </button>
               </div>
-              {activeRightTab === "files" ? (
+              {openRightTabs.includes(activeRightTab) ? activeRightTab === "files" ? (
                 <div className="files-worktree-context">
                   <div className="files-worktree-switcher" role="tablist" aria-label={zh ? "文件面板视图" : "Files panel view"}>
                     <button type="button" role="tab" aria-selected={!worktreeOpen} className={!worktreeOpen ? "active" : ""} onClick={() => setWorktreeOpen(false)}>
@@ -2589,7 +2642,17 @@ export function WorkspaceShell({
                   </div>
                   {worktreeOpen ? renderWorktreePanel() : rightPanel}
                 </div>
-              ) : rightPanel}
+              ) : rightPanel : (
+                <button
+                  type="button"
+                  className="right-tabs-empty"
+                  onClick={() => setRightTabMenuOpen(true)}
+                  aria-label={zh ? "打开添加面板菜单" : "Open add panel menu"}
+                >
+                  <Plus size={18} />
+                  <span>{zh ? "点击加号添加" : "Click the plus button to add a panel"}</span>
+                </button>
+              )}
           </aside> : null}
         </section>
       </main>

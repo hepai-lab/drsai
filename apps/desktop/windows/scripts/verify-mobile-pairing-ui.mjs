@@ -10,6 +10,9 @@ const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
 const app = read("../shared/renderer/src/App.tsx");
 const component = read("../shared/renderer/src/components/MobilePairingDialog.tsx");
+assert.ok(component.includes("Allowed workspaces") && component.includes("Selected workspaces only")
+  && component.includes("workspace_scope") && component.includes("workspace_ids"),
+"pairing dialog must explicitly bind all/selected Workspace authorization into the grant");
 const styles = read("../shared/renderer/src/styles.css");
 const preload = read("../shared/main/preload.ts");
 const main = read("src/main/index.ts");
@@ -32,8 +35,9 @@ const checks = [
   ["trusted IPC handlers", main.includes('secureHandle("desktop:mobile-remote-enable"') && main.includes('secureHandle("desktop:mobile-pairing-create"') && main.includes("mobilePairingControllerFor(event.sender)")],
   ["settings android management panel", app.includes('data-testid="android-device-counts"') && app.includes('data-testid="android-device-list"') && app.includes('data-testid="android-device-revoke"') && app.includes("androidOnlineDeviceCount")],
   ["remote workspace only slow refresh", app.includes('activePane !== "remote-workspace"') && app.includes("window.setInterval(refresh, 30_000)") && !app.includes('activePane !== "integrations" && activePane !== "remote-workspace"')],
-  ["association and device revocation", app.includes("listMobileAssociations") && app.includes("revokeMobileAssociation") && app.includes("revokeMobileRuntimeEnrollment") && app.includes("enableMobileRemoteAccess") && app.includes('data-testid=\"android-remote-toggle\"') && app.includes('role=\"switch\"') && app.includes("Disallow Android connections") && preload.includes("desktop:mobile-association-revoke") && main.includes('secureHandle("desktop:mobile-enrollment-revoke"')],
-  ["device-bound association labels", app.includes("association.device_name") && app.includes("association.device_summary") && !app.includes("association.device_id")],
+  ["pause is distinct from destructive revocation", app.includes("pauseMobileRemoteAccess") && app.includes("resumeMobileRemoteAccess") && app.includes("revokeMobileAssociation") && app.includes("revokeMobileRuntimeEnrollment") && app.includes('data-testid=\"android-remote-toggle\"') && app.includes('role=\"switch\"') && app.includes("Pause Android remote access") && preload.includes("desktop:mobile-remote-pause") && main.includes('secureHandle("desktop:mobile-enrollment-revoke"')],
+  ["device-bound association labels", app.includes("association.device_name") && app.includes("association.created_at") && !app.includes("association.device_id") && !app.includes("association.subject_summary")],
+  ["authorization explanation and read-only downgrade", app.includes("association.workspace_scope") && app.includes("association.permissions.join") && app.includes('data-testid="android-device-read-only"') && app.includes("shrinkMobileAssociation") && preload.includes("desktop:mobile-association-shrink") && main.includes('secureHandle("desktop:mobile-association-shrink"')],
   ["loading and failure states", app.includes("AndroidDeviceLoadState") && app.includes("platform-offline") && app.includes("management-unavailable") && app.includes('data-testid=\"android-device-state\"')],
   ["association access does not disable enrollment", app.includes('state === "management-unavailable" ? null') && !app.includes("当前账号没有查看此 Host Android 设备的权限")],
   ["responsive and reduced-motion CSS", styles.includes(".mobile-pairing-dialog") && styles.includes("prefers-reduced-motion") && styles.includes("max-width: 520px")],

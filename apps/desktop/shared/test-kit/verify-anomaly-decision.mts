@@ -11,10 +11,13 @@ try {
   await writeFile(sourcePath, source, "utf8");
   const keep = await applyAnomalyDecision({ workspacePath: root, sourcePath, anomalyColumn: "is_anomaly", decision: "keep" });
   assert.equal(keep.totalRows, 3); assert.equal(keep.anomalyRows, 2); assert.equal(keep.outputs.length, 1); assert.equal(keep.outputs[0].rowCount, 3);
+  assert.match(keep.resultSummary, /保留异常/);
   const exclude = await applyAnomalyDecision({ workspacePath: root, sourcePath, anomalyColumn: "IS_ANOMALY", decision: "exclude" });
   assert.equal(exclude.outputs[0].rowCount, 1); assert.equal(exclude.outputs[0].anomalyCount, 0);
+  assert.match(exclude.resultSummary, /排除异常/);
   const both = await applyAnomalyDecision({ workspacePath: root, sourcePath, anomalyColumn: "is_anomaly", decision: "both" });
   assert.deepEqual(both.outputs.map((output) => output.role), ["kept_all", "excluded_anomalies"]);
+  assert.match(both.resultSummary, /两种都做/);
   assert(both.outputs.every((output) => /^sha256:[a-f0-9]{64}$/.test(output.sha256)));
   assert.equal(await readFile(sourcePath, "utf8"), source, "source CSV must never be modified");
   assert.equal(JSON.parse(await readFile(both.receiptPath, "utf8")).sourceSha256, both.sourceSha256);

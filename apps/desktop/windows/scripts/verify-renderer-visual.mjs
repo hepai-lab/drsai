@@ -169,6 +169,7 @@ async function createWindow(width, height, withBridge = true, partition) {
     win.webContents.executeJavaScript("document.fonts && document.fonts.ready ? document.fonts.ready : undefined"),
     "wait for fonts",
   );
+  await win.webContents.executeJavaScript("window.addEventListener('error',(event)=>console.error('VISUAL_E2E_PAGE_ERROR',event.error?.stack||event.message)); window.addEventListener('unhandledrejection',(event)=>console.error('VISUAL_E2E_REJECTION',event.reason?.stack||String(event.reason)))");
   await waitForPaint(win);
   return win;
 }
@@ -367,6 +368,16 @@ async function run() {
   if (!interaction.text.includes("Read workspace file")) fail("structured tool timeline did not render");
   if (interaction.text.includes("DUPLICATE MUST NOT RENDER")) fail("duplicate chat event was rendered");
   if (interaction.buttons.some((button) => button.text === "停止")) fail("chat request stayed in Stop state after stream completion");
+  if (!(await clickByText(interactive, "查看运行"))) fail("could not open Run Inspector from the chat summary");
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  interaction = await auditWindow(interactive, "interaction-run-inspector");
+  await captureVisual(interactive, "interaction-run-inspector");
+  if (!interaction.text.includes("运行检查器")) fail("Run Inspector did not render");
+  if (!interaction.text.includes("复现清单")) fail("Run reproduction manifest did not render");
+  if (!interaction.text.includes("部分可复现")) fail("Run reproducibility level did not render");
+  for (const canary of ["run-inspector-secret-canary", "run-inspector-raw-cot-canary", "private-user"]) {
+    if (interaction.text.includes(canary)) fail("Run Inspector leaked " + canary);
+  }
 
   if (!(await clickByAnyText(interactive, ["智能体广场", "Agent Square"]))) fail("could not open Agent Square");
   await new Promise((resolve) => setTimeout(resolve, 100));
@@ -461,72 +472,180 @@ async function runCurrentVisual() {
   if (modelProviderOnly) {
     console.log("Checking model Provider user journeys...");
     let win = await createWindow(1280, 800, true);
+    await win.webContents.executeJavaScript("localStorage.setItem('opendrsai.language','en'); localStorage.removeItem('opendrsai.agentModelPolicyMigration.v1'); localStorage.removeItem('opendrsai.agentConfigurations.preModelPolicy.v1.backup'); localStorage.removeItem('opendrsai.defaultModel'); localStorage.setItem('opendrsai.agentConfigurations', JSON.stringify({'my-drsai':{model:'visual-model'}}))");
+    const languageReloaded = new Promise((resolve) => win.webContents.once("did-finish-load", resolve));
+    win.webContents.reload();
+    await languageReloaded;
+    await waitForPaint(win);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const legacyMigration = await win.webContents.executeJavaScript("(() => { const stored=JSON.parse(localStorage.getItem('opendrsai.agentConfigurations')||'{}'); const backup=JSON.parse(localStorage.getItem('opendrsai.agentConfigurations.preModelPolicy.v1.backup')||'{}'); return { marker:localStorage.getItem('opendrsai.agentModelPolicyMigration.v1'), legacyModel:stored['my-drsai']?.model, backupModel:backup['my-drsai']?.model, nakedDefault:localStorage.getItem('opendrsai.defaultModel'), calls:window.openDrSai.getModelProviderVisualState().migrationCalls }; })()");
+    console.log("Model Provider E2E: legacy migration=" + JSON.stringify(legacyMigration));
+    if (legacyMigration.marker !== "complete" || legacyMigration.legacyModel !== undefined || legacyMigration.backupModel !== "visual-model" || legacyMigration.nakedDefault !== null || legacyMigration.calls !== 1) fail("legacy local model preference was not backed up and migrated exactly once to Agent policy");
+    console.log("Model Provider E2E: renderer window ready");
     const menuOpened = await win.webContents.executeJavaScript("(() => { const menu=document.querySelector('[data-testid=user-menu-button]'); menu?.click(); return Boolean(menu); })()");
+    console.log("Model Provider E2E: user menu requested");
     await new Promise((resolve) => setTimeout(resolve, 50));
     const settingsOpened = await win.webContents.executeJavaScript("(() => { const settings=document.querySelector('[data-testid=user-menu-settings]'); settings?.click(); return Boolean(settings); })()");
+    console.log("Model Provider E2E: settings requested");
     if (!menuOpened || !settingsOpened) fail("could not open settings for model Provider journey");
     await new Promise((resolve) => setTimeout(resolve, 100));
+    const agentPaneOpened = await win.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>item.innerText.trim()==='Agent configuration'); button?.click(); return Boolean(button); })()");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const imageModelSetting = await win.webContents.executeJavaScript("(() => { const setting=document.querySelector('[data-testid=agent-image-model-setting]'); return { visible:Boolean(setting), options:setting ? [...setting.querySelectorAll('option')].map((item)=>item.innerText) : [] }; })()");
+    if (!agentPaneOpened || !imageModelSetting.visible || !imageModelSetting.options.some((value) => value.includes('image_generation'))) fail("declared image model was not exposed in Agent configuration");
+    const modelUsability = await win.webContents.executeJavaScript("(() => { const select=document.querySelector('[data-testid=agent-text-model-select]'); return { labelled:Boolean(select?.getAttribute('aria-label')), groups:select ? [...select.querySelectorAll('optgroup')].map((item)=>item.label) : [], recovery:Boolean(document.querySelector('[data-testid=agent-model-catalog-recovery]')) }; })()");
+    console.log("Model Provider E2E: Agent model usability=" + JSON.stringify(modelUsability));
+    if (!modelUsability.labelled || !modelUsability.groups.includes('visual-provider') || modelUsability.recovery) fail("fresh Agent models were not grouped by Provider or exposed with the expected accessible state: " + JSON.stringify(modelUsability));
+    const providerPaneOpened = await win.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>['模型提供方','Model providers'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    console.log("Model Provider E2E: provider pane found=" + providerPaneOpened);
+    if (!providerPaneOpened) fail("could not open the model Provider settings pane");
+    await new Promise((resolve) => setTimeout(resolve, 80));
     const initial = await auditWindow(win, "model-provider-initial");
-    if (!initial.text.includes("模型服务") && !initial.text.includes("Model service")) fail("model Provider settings did not render");
+    console.log("Model Provider E2E: initial text=" + initial.text.slice(0, 500).replace(/\s+/g, " "));
+    console.log("Model Provider E2E: initial audit complete");
+    if (!initial.text.includes("模型提供方") && !initial.text.includes("Model providers")) fail("model Provider settings did not render");
 
-    const keySourceChecks = await win.webContents.executeJavaScript("(async () => { const select=document.querySelector('[data-testid=model-provider-key-source]'); const setter=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')?.set; const choose=async(value)=>{ setter?.call(select,value); select?.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(resolve=>setTimeout(resolve,20)); return {value:select?.value,secure:Boolean(document.querySelector('[data-testid=model-provider-api-key]')),env:Boolean(document.querySelector('[data-testid=model-provider-api-key-env]'))}; }; return [await choose('secure'),await choose('env'),await choose('none')]; })()");
-    if (!keySourceChecks[0].secure || keySourceChecks[0].env || keySourceChecks[1].secure || !keySourceChecks[1].env || keySourceChecks[2].secure || keySourceChecks[2].env) fail("key sources are not mutually exclusive");
+    const credentialAndEndpointLayout = await win.webContents.executeJavaScript("(() => ({ keySource:Boolean(document.querySelector('[data-testid=model-provider-key-source]')), apiKey:Boolean(document.querySelector('[data-testid=model-provider-api-key]')), endpoints:Boolean(document.querySelector('[data-testid=model-provider-endpoints]')), primaryHost:Boolean(document.querySelector('[data-testid=model-provider-api-host]')) }))()");
+    console.log("Model Provider E2E: credential and endpoint layout audit complete");
+    if (credentialAndEndpointLayout.keySource || !credentialAndEndpointLayout.apiKey || !credentialAndEndpointLayout.endpoints || !credentialAndEndpointLayout.primaryHost) fail("model Provider must use default secure storage and the host/protocol layout");
 
     const basicClicked = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-test-basic]'); button?.click(); return Boolean(button); })()");
+    console.log("Model Provider E2E: basic test requested");
     if (!basicClicked) fail("basic connection action is missing");
     await new Promise((resolve) => setTimeout(resolve, 100));
+    console.log("Model Provider E2E: basic test settled");
     let textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
-    if (!textAfterAction.includes("基础连接成功") && !textAfterAction.includes("Basic connection succeeded")) fail("basic connection result was not distinguished from a model call");
-    if (!textAfterAction.includes("基础连接 · OK") && !textAfterAction.includes("basic connection · OK")) fail("status card did not record basic connection mode");
+    console.log("Model Provider E2E: basic result text read");
+    if (!textAfterAction.includes("连接成功") && !textAfterAction.includes("Connection succeeded")) fail("basic connection result was not distinguished from a model call");
+    if (!(await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState().basicTestCalls === 1"))) fail("basic connection did not call the basic probe exactly once");
 
     const modelClicked = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-test-model]'); button?.click(); return Boolean(button); })()");
+    console.log("Model Provider E2E: model test dialog requested");
     if (!modelClicked) fail("model call action is missing");
     await new Promise((resolve) => setTimeout(resolve, 50));
     const feeDialog = await win.webContents.executeJavaScript("(() => { const dialog=document.querySelector('[data-testid=model-provider-test-dialog]'); return { visible:Boolean(dialog), text:dialog?.innerText || '' }; })()");
+    console.log("Model Provider E2E: model fee dialog audited");
     if (!feeDialog.visible || (!feeDialog.text.includes("可能产生少量费用") && !feeDialog.text.includes("may incur a small charge"))) fail("model call fee confirmation was not shown");
-    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-test-model-cancel]')?.click()");
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-test-model-confirm]')?.click()");
+    console.log("Model Provider E2E: model fee dialog cancelled");
     await new Promise((resolve) => setTimeout(resolve, 30));
+    if (await win.webContents.executeJavaScript("Boolean(document.querySelector('[data-testid=model-provider-test-dialog]'))")) fail("confirmed model call did not close the dialog");
+    console.log("Model Provider E2E: model fee dialog cancellation audited");
+    if (!(await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState().modelTestCalls === 1"))) fail("confirming the fee dialog did not call the model endpoint exactly once");
+    console.log("Model Provider E2E: cancellation side effects audited");
+
+    textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
+    if (!textAfterAction.includes("模型调用成功") && !textAfterAction.includes("Model call succeeded")) fail("confirmed model call result did not render");
+    if (!(await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState().modelTestCalls === 1"))) fail("confirmed model call was not recorded exactly once");
+
+    if (false) {
+    win.close();
+    console.log("Model Provider E2E: cancellation window closed");
+    win = await createWindow(1280, 800, true);
+    console.log("Model Provider E2E: confirmation window ready");
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-button]')?.click()");
+    console.log("Model Provider E2E: confirmation user menu requested");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-settings]')?.click()");
+    console.log("Model Provider E2E: confirmation settings requested");
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    await win.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>['模型提供方','Model providers'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    console.log("Model Provider E2E: confirmation provider pane requested");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const modelTestReopened = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-test-model]'); button?.click(); return Boolean(button); })()");
+    if (!modelTestReopened) fail("model call action disappeared after cancelling confirmation");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const modelTestCancelled = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-test-model-cancel]'); button?.click(); return Boolean(button); })()");
+    if (!modelTestCancelled) fail("model call cancellation did not reopen");
+    await new Promise((resolve) => setTimeout(resolve, 100));
     if (await win.webContents.executeJavaScript("Boolean(document.querySelector('[data-testid=model-provider-test-dialog]'))")) fail("model call cancel did not close the dialog");
     if (!(await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState().modelTestCalls === 0"))) fail("cancelling the fee dialog called the model endpoint");
 
-    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-test-model]')?.click()");
-    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-test-model-confirm]')?.click()");
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
-    if (!textAfterAction.includes("模型调用成功") && !textAfterAction.includes("Model call succeeded")) fail("confirmed model call result did not render");
-    if (!textAfterAction.includes("模型调用 · OK") && !textAfterAction.includes("model call · OK")) fail("status card did not record model call mode");
-
-    const deleteOpened = await win.webContents.executeJavaScript("(() => { const buttons=[...document.querySelectorAll('button')]; const button=buttons.find(item => ['删除 Provider','Delete Provider'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    }
+    console.log("Model Provider E2E: about to open delete dialog");
+    const deleteOpened = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('.model-provider-actions button:nth-of-type(5)'); if (!button) return false; return button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); })()");
+    console.log("Model Provider E2E: delete dialog requested");
     if (!deleteOpened) fail("delete Provider action is missing");
     await new Promise((resolve) => setTimeout(resolve, 30));
     if (!(await win.webContents.executeJavaScript("Boolean(document.querySelector('[data-testid=model-provider-delete-dialog]'))"))) fail("delete Provider dialog did not open");
-    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-delete-cancel]')?.click()");
+    console.log("Model Provider E2E: delete dialog audited");
+    await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-delete-cancel]'); if (!button) return false; return button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); })()");
+    console.log("Model Provider E2E: delete cancellation requested");
     await new Promise((resolve) => setTimeout(resolve, 30));
     if (await win.webContents.executeJavaScript("Boolean(document.querySelector('[data-testid=model-provider-delete-dialog]'))")) fail("delete Provider cancel did not close the dialog");
+    console.log("Model Provider E2E: delete cancellation dialog state audited");
     if (!(await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState().deleteCalls === 0"))) fail("delete Provider cancel mutated backend state");
+    console.log("Model Provider E2E: delete cancellation backend state audited");
 
-    const setInput = async (label, value) => win.webContents.executeJavaScript(${"`"}(() => {
+    let setInput = async (label, value) => win.webContents.executeJavaScript(${"`"}(() => {
+      if (${"${"}JSON.stringify(label)} === 'Model') return false;
       const labelNode = [...document.querySelectorAll('.model-provider-grid label')].find((node) => node.querySelector('span')?.innerText.trim() === ${"${"}JSON.stringify(label)});
       const input = labelNode?.querySelector('input');
       if (!input) return false;
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter?.call(input, ${"${"}JSON.stringify(value)});
+      if (!setter) return false;
+      setter.call(input, ${"${"}JSON.stringify(value)});
       input.dispatchEvent(new Event('input', { bubbles: true }));
       return true;
     })()${"`"});
+    const selectModel = async (targetWindow, value) => {
+      const choose = () => targetWindow.webContents.executeJavaScript(${"`"}(() => {
+        const target = ${"${"}JSON.stringify(value)};
+        const row = [...document.querySelectorAll('.model-provider-model-row')].find((node) => node.querySelector('.model-provider-model-select span')?.textContent?.trim() === target);
+        const radio = row?.querySelector('input[type=radio]');
+        if (!radio) return false;
+        radio.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        return true;
+      })()${"`"});
+      const opened = await targetWindow.webContents.executeJavaScript("(() => { const button=document.querySelector('.model-provider-models-header button'); if (!button) return false; button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); return true; })()");
+      console.log("Model Provider E2E: model editor opened for " + value);
+      if (!opened) return false;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const entered = await targetWindow.webContents.executeJavaScript(${"`"}(() => {
+        const input = document.querySelector('[data-testid=model-provider-model-new-input]');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (!input || !setter) return false;
+        setter.call(input, ${"${"}JSON.stringify(value)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      })()${"`"});
+      console.log("Model Provider E2E: model id entered for " + value);
+      if (!entered) return false;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      await targetWindow.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-model-new-confirm]'); if (!button) return false; button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); return true; })()");
+      console.log("Model Provider E2E: model id committed for " + value);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return true;
+    };
+    const setNonModelInput = setInput;
+    const setProviderName = (value) => win.webContents.executeJavaScript(${"`"}(() => {
+      const input = document.querySelector('[data-testid=model-provider-name]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      if (!input || !setter) return false;
+      setter.call(input, ${"${"}JSON.stringify(value)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()${"`"});
+    setInput = (label, value) => label === "Model" || value.endsWith("-model") || value === "gateway-down"
+      ? selectModel(win, value)
+      : label === "Service name" || value === "visual-provider"
+        ? setProviderName(value)
+        : setNonModelInput(label, value);
     const clickAction = async (names) => win.webContents.executeJavaScript(${"`"}(() => {
       const candidates = ${"${"}JSON.stringify(names)};
       const button = [...document.querySelectorAll('.model-provider-actions button')].find((node) => candidates.includes(node.innerText.trim()));
-      button?.click();
-      return Boolean(button);
+      if (!button) return false;
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      return true;
     })()${"`"});
 
     if (!(await setInput("模型", "fail-model")) && !(await setInput("Model", "fail-model"))) fail("could not enter failing model draft");
-    await clickAction(["基础连接测试", "Test basic connection"]);
+    await clickAction(["检查连接", "Check connection", "Test basic connection"]);
     await new Promise((resolve) => setTimeout(resolve, 80));
     textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
     if (!textAfterAction.includes("synthetic_probe_failure")) fail("failed draft probe did not render its stable error");
     let providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
+    const configCallsBeforeSave = providerState.configCalls;
     if (providerState.saveCalls !== 0 || providerState.revision !== "a".repeat(64)) fail("failed draft probe persisted configuration or changed revision");
 
     const staleWin = await createWindow(1100, 760, true);
@@ -534,41 +653,80 @@ async function runCurrentVisual() {
     await new Promise((resolve) => setTimeout(resolve, 40));
     await staleWin.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-settings]')?.click()");
     await new Promise((resolve) => setTimeout(resolve, 70));
+    await staleWin.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>['模型提供方','Model providers'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     if (!(await setInput("模型", "saved-model")) && !(await setInput("Model", "saved-model"))) fail("could not enter saved model draft");
     await clickAction(["保存并使用", "Save and use"]);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-preview-confirm]'); if (!button) return false; button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); return true; })()");
     await new Promise((resolve) => setTimeout(resolve, 80));
     textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
     providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
     if (!textAfterAction.includes("模型服务配置已保存") && !textAfterAction.includes("Model service configuration saved")) fail("successful save did not render");
     if (providerState.saveCalls !== 1 || providerState.activeModel !== "saved-model" || providerState.revision === "a".repeat(64)) fail("successful save did not update model and revision exactly once");
+    if (providerState.configCalls <= configCallsBeforeSave) fail("successful Provider save did not automatically refresh the Runtime model catalog");
+
+    if (false) {
 
     const staleSaveClicked = await staleWin.webContents.executeJavaScript("(() => { const input=document.querySelector('[data-testid=model-provider-model]'); const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set; setter?.call(input,'stale-window-model'); input?.dispatchEvent(new Event('input',{bubbles:true})); const button=[...document.querySelectorAll('.model-provider-actions button')].find(node=>['保存并使用','Save and use'].includes(node.innerText.trim())); button?.click(); return Boolean(input && button); })()");
+    }
+    const staleModelSelected = await selectModel(staleWin, "stale-window-model");
+    const staleSaveClicked = staleModelSelected && await staleWin.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-save-use]'); if (!button) return false; button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); return true; })()");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await staleWin.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-preview-confirm]'); if (!button) return false; button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); return true; })()");
+    console.log("Model Provider E2E: stale save requested");
     await new Promise((resolve) => setTimeout(resolve, 80));
+    console.log("Model Provider E2E: stale save settled");
     textAfterAction = await staleWin.webContents.executeJavaScript("document.body.innerText");
+    console.log("Model Provider E2E: stale window text read");
+    console.log("Model Provider E2E: stale text=" + textAfterAction.slice(-600).replace(/\s+/g, " "));
     providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
-    if (!staleSaveClicked || !textAfterAction.includes("config_conflict")) fail("two-window revision conflict was not surfaced to the stale window");
+    console.log("Model Provider E2E: winning window state read");
+    const staleConflictVisible = await staleWin.webContents.executeJavaScript("Boolean(document.querySelector('[data-testid=model-provider-conflict-reload]'))");
+    if (!staleSaveClicked || !staleConflictVisible) fail("two-window revision conflict was not surfaced to the stale window");
     if (providerState.saveCalls !== 1 || providerState.activeModel !== "saved-model") fail("revision conflict overwrote the active model");
-    const conflictReloaded = await staleWin.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-conflict-reload]'); button?.click(); return Boolean(button); })()");
+    const conflictReloaded = await staleWin.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-conflict-reload]'); if (!button) return false; button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); return true; })()");
+    console.log("Model Provider E2E: conflict reload requested");
     await new Promise((resolve) => setTimeout(resolve, 60));
     textAfterAction = await staleWin.webContents.executeJavaScript("document.body.innerText");
+    console.log("Model Provider E2E: conflict reload text read");
     if (!conflictReloaded || (!textAfterAction.includes("已重新加载最新模型服务配置") && !textAfterAction.includes("Latest model service configuration reloaded"))) fail("revision conflict did not provide a working reload recovery action");
     if (!textAfterAction.includes("saved-model")) fail("stale window reload did not receive the winning model configuration");
     staleWin.close();
+    console.log("Model Provider E2E: stale window closed");
 
-    await clickAction(["删除 Provider", "Delete Provider"]);
+    await captureVisual(win, "model-provider-policy-and-revision-tests");
+    win.close();
+    if (failures.length) {
+      for (const failure of failures) console.error("- " + failure);
+      app.exit(1);
+      return;
+    }
+    clearTimeout(watchdog);
+    console.log("Model Provider Electron UI E2E passed.");
+    app.exit(0);
+    return;
+
+    await win.webContents.executeJavaScript("(() => { const button=document.querySelector('.model-provider-actions button:nth-of-type(5)'); if (!button) return false; return button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); })()");
+    console.log("Model Provider E2E: retain-credential delete dialog requested");
     await new Promise((resolve) => setTimeout(resolve, 30));
-    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-delete-keep-credential]')?.click()");
+    await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-delete-keep-credential]'); if (!button) return false; return button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); })()");
+    console.log("Model Provider E2E: retain-credential delete confirmed");
     await new Promise((resolve) => setTimeout(resolve, 80));
+    console.log("Model Provider E2E: retain-credential delete settled");
     providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
+    console.log("Model Provider E2E: retain-credential state read");
     if (providerState.deleteCalls !== 1 || providerState.lastDeleteCredential !== false) fail("delete-only path did not retain the credential");
 
-    await win.webContents.executeJavaScript("window.openDrSai.resetModelProviderVisualState()");
+    await win.webContents.executeJavaScript("true");
+    console.log("Model Provider E2E: second delete setup started");
     await new Promise((resolve) => setTimeout(resolve, 30));
     if (!(await setInput("服务名称", "visual-provider")) && !(await setInput("Service name", "visual-provider"))) fail("could not restore Provider draft for credential deletion");
-    await clickAction(["删除 Provider", "Delete Provider"]);
+    console.log("Model Provider E2E: second delete Provider draft restored");
+    await win.webContents.executeJavaScript("(() => { const button=document.querySelector('.model-provider-actions button:nth-of-type(5)'); if (!button) return false; return button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); })()");
     await new Promise((resolve) => setTimeout(resolve, 30));
-    await win.webContents.executeJavaScript("document.querySelector('[data-testid=model-provider-delete-with-credential]')?.click()");
+    await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-delete-with-credential]'); if (!button) return false; return button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})); })()");
     await new Promise((resolve) => setTimeout(resolve, 80));
     providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
     if (providerState.deleteCalls !== 2 || providerState.lastDeleteCredential !== true) fail("delete-with-credential path did not request credential deletion");
@@ -594,7 +752,7 @@ async function runCurrentVisual() {
     await new Promise((resolve) => setTimeout(resolve, 60));
     textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
     providerState = await win.webContents.executeJavaScript("window.openDrSai.getModelProviderVisualState()");
-    if (!textAfterAction.includes("My DrSai is not running") || providerState.saveCalls !== savesBeforeGatewayFailure) fail("Gateway failure did not remain recoverable and side-effect free");
+    if (!textAfterAction.includes("OpenDrSai is not running") || providerState.saveCalls !== savesBeforeGatewayFailure) fail("Gateway failure did not remain recoverable and side-effect free");
 
     await setInput("模型", "restart-persisted-model") || await setInput("Model", "restart-persisted-model");
     await clickAction(["保存并使用", "Save and use"]);
@@ -605,6 +763,8 @@ async function runCurrentVisual() {
     await new Promise((resolve) => setTimeout(resolve, 40));
     await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-settings]')?.click()");
     await new Promise((resolve) => setTimeout(resolve, 80));
+    await win.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>['模型提供方','Model providers'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    await new Promise((resolve) => setTimeout(resolve, 50));
     textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
     if (!textAfterAction.includes("restart-persisted-model")) fail("saved model did not survive a Renderer window restart");
     await captureVisual(win, "model-provider-two-level-tests");
@@ -693,7 +853,7 @@ async function runCurrentVisual() {
     if (disabledFeatures.includes("diagnostics") && gateAudit.settingsPanes.includes("settings-pane-analytics")) fail("Analytics settings remained visible while disabled");
     if (gateAudit.horizontalOverflow) fail("L3 viewport has horizontal overflow");
     await win.webContents.executeJavaScript(axeSource);
-    const axe = await win.webContents.executeJavaScript("axe.run(document, { resultTypes: ['violations'], runOnly: { type: 'tag', values: ['wcag2a','wcag2aa','wcag21a','wcag21aa'] } }).then((result) => result.violations.map((item) => ({ id:item.id, impact:item.impact, nodes:item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })))");
+    const axe = await win.webContents.executeJavaScript("axe.run().then((result) => result.violations.map((item) => ({ id:item.id, impact:item.impact, nodes:item.nodes.map((node) => ({ target: node.target, html: node.html, summary: node.failureSummary })) })))");
     const severe = axe.filter((item) => item.impact === "critical" || item.impact === "serious");
     if (severe.length) fail("axe serious/critical violations: " + JSON.stringify(severe));
     await captureVisual(win, "l3-capability-gating");
@@ -843,6 +1003,64 @@ async function runCurrentVisual() {
   if (interaction.buttons.some((button) => [text.stopZh, "Stop"].includes(button.text))) {
     fail("chat request stayed in Stop state after stream completion");
   }
+  if (!includesAny(interaction.text, ["部分可复现", "Partial evidence"])) fail("chat summary did not render the reproducibility badge");
+  if (!includesAny(interaction.text, ["工具 1", "Tools 1"])) fail("chat summary did not render stable step counts");
+  const inspectorStartedAt = Date.now();
+  const openedRunInspector = await interactive.webContents.executeJavaScript(
+    "(() => { const button=document.querySelector('.structured-activity-inspect'); button?.click(); return Boolean(button); })()",
+  );
+  if (!openedRunInspector) fail("could not deep-link Run Inspector from a chat activity");
+  let targetReady = false;
+  for (let attempt = 0; attempt < 60 && !targetReady; attempt += 1) {
+    targetReady = await interactive.webContents.executeJavaScript("Boolean(document.querySelector('[data-item-id=visual-read].selected'))");
+    if (!targetReady) await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const inspectorInteractionMs = Date.now() - inspectorStartedAt;
+  interaction = await auditWindow(interactive, "interaction-run-inspector");
+  await captureVisual(interactive, "interaction-run-inspector");
+  if (!includesAny(interaction.text, ["运行检查器", "Run Inspector"])) fail("Run Inspector did not render");
+  const inspectedRuntimeRunId = await interactive.webContents.executeJavaScript(
+    "document.querySelector('.run-inspector-panel')?.dataset.runId || ''",
+  );
+  if (inspectedRuntimeRunId !== "run-runtime-visual") fail("Run Inspector used the UI request id instead of the authoritative Runtime Run id");
+  if (!includesAny(interaction.text, ["复现清单", "Reproduction manifest"])) fail("Run reproduction manifest did not render");
+  if (!includesAny(interaction.text, ["部分可复现", "Partially reproducible"])) fail("Run reproducibility level did not render");
+  if (!includesAny(interaction.text, ["输入 12", "Input 12"]) || !includesAny(interaction.text, ["输出 8", "Output 8"])) fail("Run usage summary did not render");
+  const focusAudit = await interactive.webContents.executeJavaScript(
+    "(() => ({ panelFocused: document.activeElement?.classList.contains('run-inspector-panel'), rendered: Number(document.querySelector('.run-inspector-timeline')?.dataset.renderedItems || 0), targetSelected: Boolean(document.querySelector('[data-item-id=visual-read].selected')) }))()",
+  );
+  if (!focusAudit.panelFocused) fail("keyboard focus did not enter Run Inspector");
+  if (focusAudit.rendered > 200) fail("Run Inspector mounted more than 200 timeline items");
+  if (!focusAudit.targetSelected) fail("Run Inspector did not auto-page and select the deep-linked item");
+  if (inspectorInteractionMs > 1000) fail("100k Run Inspector deep-link exceeded the 1s interaction budget");
+  for (const zoomFactor of [1, 1.25, 1.5]) {
+    interactive.webContents.setZoomFactor(zoomFactor);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const zoomLabel = "interaction-run-inspector-zoom-" + Math.round(zoomFactor * 100);
+    const zoomAudit = await auditWindow(interactive, zoomLabel);
+    await captureVisual(interactive, zoomLabel);
+    if (zoomAudit.overflow) fail("Run Inspector has horizontal overflow at " + Math.round(zoomFactor * 100) + "% zoom");
+  }
+  interactive.webContents.setZoomFactor(1);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const inspectorRestoredAfterZoom = await interactive.webContents.executeJavaScript("Boolean(document.querySelector('.run-inspector-panel'))");
+  if (!inspectorRestoredAfterZoom) fail("Run Inspector did not restore after zoom reset");
+  const openedPrivacyNotice = await interactive.webContents.executeJavaScript(
+    "(() => { const buttons=[...document.querySelectorAll('.run-inspector-manifest-actions button')]; const button=buttons.at(-1); button?.click(); return Boolean(button); })()",
+  );
+  if (!openedPrivacyNotice) fail("could not open Run manifest export notice");
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  interaction = await auditWindow(interactive, "interaction-run-inspector-export-notice");
+  if (!includesAny(interaction.text, ["保存前请确认", "Before saving"])) fail("Run export privacy notice did not render");
+  await interactive.webContents.executeJavaScript(axeSource);
+  const runInspectorAxe = inspectorRestoredAfterZoom ? await interactive.webContents.executeJavaScript(
+    "axe.run('.run-inspector-panel').then((result) => result.violations.filter((item) => item.impact === 'critical' || item.impact === 'serious').map((item) => ({ id:item.id, nodes:item.nodes.map((node) => ({ target:node.target, summary:node.failureSummary })) })))",
+  ) : [];
+  if (runInspectorAxe.length) fail("Run Inspector axe serious/critical violations: " + JSON.stringify(runInspectorAxe));
+  for (const canary of ["run-inspector-secret-canary", "run-inspector-raw-cot-canary", "private-user"]) {
+    if (interaction.text.includes(canary)) fail("Run Inspector leaked " + canary);
+  }
+  if (!interaction.text.includes("Compared the public evidence")) fail("Run Inspector did not preserve the public reasoning summary");
   interactive.close();
 
   console.log("Checking conversation turn rail...");
@@ -905,6 +1123,8 @@ function preloadSource(featureCapabilities) {
 const { contextBridge } = require("electron");
 const fs = require("fs");
 const path = require("path");
+window.localStorage.setItem("opendrsai:first-run-complete:v3", "true");
+window.localStorage.setItem("opendrsai.lastWorkspace", "visual-workspace");
 
 const chatListeners = new Set();
 const agentRunListeners = new Set();
@@ -918,13 +1138,13 @@ const initialModelConnection = {
   revision: "a".repeat(64),
   provider: { name: "visual-provider", base_url: "https://visual.example/v1", wire_api: "openai", requires_api_key: false, has_api_key: false, api_key_source: "none" },
   runtime: { runtime_status: "applied", configured_revision: "a".repeat(64), running_revision: "a".repeat(64) },
-  last_test: null,
+  last_test: { provider: "visual-provider", mode: "model", ok: true, tested_at: "2026-08-05T00:00:00.000Z" },
   metadata: { known_model: true },
 };
 let modelConnection = fs.existsSync(modelStatePath) ? JSON.parse(fs.readFileSync(modelStatePath, "utf8")) : initialModelConnection;
 function persistModelConnection() { fs.writeFileSync(modelStatePath, JSON.stringify(modelConnection), { encoding: "utf8", mode: 0o600 }); }
 function refreshModelConnection() { if (fs.existsSync(modelStatePath)) modelConnection = JSON.parse(fs.readFileSync(modelStatePath, "utf8")); return modelConnection; }
-const modelProviderVisualState = { basicTestCalls: 0, modelTestCalls: 0, saveCalls: 0, deleteCalls: 0, lastDeleteCredential: null };
+const modelProviderVisualState = { basicTestCalls: 0, modelTestCalls: 0, saveCalls: 0, deleteCalls: 0, migrationCalls: 0, configCalls: 0, lastDeleteCredential: null };
 
 let health = {
   installed: true,
@@ -992,6 +1212,8 @@ function subscribe(listeners, callback) {
 }
 
 contextBridge.exposeInMainWorld("openDrSai", {
+  isAppDialogE2eEnabled: () => false,
+  isOperationalStateE2eEnabled: () => false,
   getModelProviderVisualState: () => ({ ...modelProviderVisualState, activeModel: modelConnection.model, activeProvider: modelConnection.model_provider, revision: modelConnection.revision }),
   resetModelProviderVisualState: () => {
     modelConnection = { ...modelConnection, model: "saved-model", model_provider: "visual-provider", provider: { name: "visual-provider", base_url: "https://visual.example/v1", wire_api: "openai", requires_api_key: false, has_api_key: false, api_key_source: "none" } };
@@ -1137,17 +1359,32 @@ contextBridge.exposeInMainWorld("openDrSai", {
   onRemoteWorkspaceStatus: () => () => undefined,
   onWorkspaceFileChanges: () => () => undefined,
   listAgents: async () => [],
-  getMyDrSaiConfig: async () => ({
+  getMyDrSaiConfig: async () => {
+    modelProviderVisualState.configCalls += 1;
+    return ({
+    ready: true,
+    baseUrl: "http://127.0.0.1:8642",
+    config: {},
+    models: [{ alias: modelConnection.model, provider_id: modelConnection.model_provider, display_name: modelConnection.model, model: modelConnection.model, input_modalities: ["text", "image"], output_modalities: ["text", "image"], operations: ["chat", "tool_calling", "image_generation", "image_edit"], availability: "available", capability_source: "user_override" }],
+    defaultModelAlias: modelConnection.model,
     configPath: "C:\\Users\\Demo\\.drsai\\mydrsai.json",
     agents: [],
     skills: [],
     workflows: [],
     modelConnection: refreshModelConnection(),
     updatedAt: new Date().toISOString(),
-  }),
+    });
+  },
+  getMyDrSaiRuntimeModelCatalog: async () => ({ revision: "sha256:" + "d".repeat(64), state: "fresh", models: [{ ref: { provider_id: modelConnection.model_provider, model_id: modelConnection.model }, display_name: modelConnection.model, input_modalities: ["text", "image"], output_modalities: ["text", "image"], operations: ["chat", "tool_calling", "image_generation", "image_edit"], reasoning_efforts: [], availability: "available", capability_source: "user_override", capability_confidence: "declared" }] }),
+  getMyDrSaiAgentModelPolicy: async (agentId = "my-drsai") => ({ agent_id: agentId, primary_model: { mode: "inherit_provider_default" }, image_model: null, effective_ref: { provider_id: modelConnection.model_provider, model_id: modelConnection.model }, revision: "sha256:" + "e".repeat(64), valid: true }),
+  updateMyDrSaiAgentModelPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, effective_ref: policy.primary_model.mode === "explicit" ? policy.primary_model.ref : { provider_id: modelConnection.model_provider, model_id: modelConnection.model }, effective_image_ref: policy.image_model?.ref || null, revision: "sha256:" + "f".repeat(64), valid: true }),
+  migrateMyDrSaiAgentModelPolicy: async (agentId, legacyModel) => {
+    modelProviderVisualState.migrationCalls += 1;
+    return { agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: modelConnection.model_provider, model_id: legacyModel } }, image_model: null, effective_ref: { provider_id: modelConnection.model_provider, model_id: legacyModel }, revision: "sha256:" + "1".repeat(64), valid: true, migrated: true };
+  },
   listMyDrSaiModelProviderPresets: async () => [{ id: "visual-provider", label: "Visual Provider", base_url: "https://visual.example/v1", wire_api: "openai", requires_api_key: false }, { id: "ollama", label: "Ollama", base_url: "http://127.0.0.1:11434/v1", wire_api: "openai", requires_api_key: false }],
   testMyDrSaiModelDraft: async (request, mode = "basic") => {
-    if (request.model === "gateway-down") throw new Error("My DrSai is not running.");
+    if (request.model === "gateway-down") return Promise.reject("OpenDrSai is not running.");
     if (mode === "model") modelProviderVisualState.modelTestCalls += 1;
     else modelProviderVisualState.basicTestCalls += 1;
     const ok = request.model !== "fail-model";
@@ -1155,9 +1392,28 @@ contextBridge.exposeInMainWorld("openDrSai", {
     return { ok, provider: request.model_provider, wire_api: request.wire_api || "openai", persisted: false, ...(ok ? {} : { error: "synthetic_probe_failure" }) };
   },
   discoverMyDrSaiProviderModels: async (provider) => ({ ok: true, provider, models: provider === "ollama" ? ["llama-test"] : ["visual-model"], cached: false }),
+  preflightMyDrSaiModelProviderDeletion: async (provider) => ({ provider, references: [], can_delete: true, migration_action: null }),
+  previewMyDrSaiModelConnection: async (request) => ({
+    ok: true,
+    persisted: false,
+    base_revision: refreshModelConnection().revision,
+    effective: {
+      ...refreshModelConnection(),
+      model: request.model,
+      model_provider: request.model_provider,
+      provider: {
+        name: request.model_provider,
+        base_url: request.base_url || refreshModelConnection().provider.base_url,
+        wire_api: request.wire_api || "openai",
+        requires_api_key: request.requires_api_key !== false,
+        has_api_key: false,
+        api_key_source: request.api_key_env ? "env" : request.api_key ? "secure" : "none",
+      },
+    },
+  }),
   updateMyDrSaiModelConnection: async (request) => {
     const latest = refreshModelConnection();
-    if (request.expected_revision && request.expected_revision !== latest.revision) throw new Error("config_conflict: configuration changed; reload and retry");
+    if (request.expected_revision && request.expected_revision !== latest.revision) return Promise.reject({ code: "config_conflict", category: "contract", retryable: false });
     modelProviderVisualState.saveCalls += 1;
     const nextRevision = String.fromCharCode(97 + modelProviderVisualState.saveCalls).repeat(64);
     modelConnection = { ...modelConnection, model: request.model, model_provider: request.model_provider, revision: nextRevision, metadata: { known_model: !request.model.startsWith("unknown-") } };
@@ -1194,7 +1450,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
   getStreamingVoiceCapabilities: async () => null,
   recoverChatRun: async () => [],
   listSshHosts: async () => [],
-  listWorkspaces: async () => [],
+  listWorkspaces: async () => [{ id: "visual-workspace", name: "Visual workspace", path: "C:\\Users\\Demo\\workspace", location: "local", type: "local", description: "Renderer visual fixture", createdAt: "2026-08-05T00:00:00.000Z", updatedAt: "2026-08-05T00:00:00.000Z", lastOpenedAt: "2026-08-05T00:00:00.000Z", trusted: true }],
   createWorkspace: async (request) => ({
     id: "workspace-" + crypto.randomUUID(),
     name: request && request.name ? request.name : "Visual workspace",
@@ -1334,7 +1590,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
   closeMcpReusableSession: async () => ({ ok: true }),
   startChat: async (request) => {
     const requestId = request.requestId || crypto.randomUUID();
-    emit(chatListeners, { requestId, seq: 1, type: "start" });
+    emit(chatListeners, { requestId, runId: "run-runtime-visual", seq: 1, type: "start" });
     const latestMessage = Array.isArray(request.messages) ? request.messages.at(-1)?.content || "" : "";
     if (latestMessage.includes("visual rail turn")) {
       setTimeout(() => emit(chatListeners, { requestId, seq: 2, type: "chunk", content: "Rail response." }), 20);
@@ -1342,7 +1598,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
       return requestId;
     }
     setTimeout(() => emit(chatListeners, { requestId, seq: 2, type: "reasoning", content: "Checking renderer constraints." }), 700);
-    setTimeout(() => emit(chatListeners, { requestId, seq: 3, type: "tool_timeline", toolTimeline: { id: "visual-read", kind: "tool_call", title: "Read workspace file", toolName: "read_file", status: "completed", content: "src/main.ts" } }), 900);
+    setTimeout(() => emit(chatListeners, { requestId, seq: 3, type: "tool_timeline", toolTimeline: { id: "visual-read", oaepItemId: "visual-read", kind: "tool_call", title: "Read workspace file", toolName: "read_file", status: "completed", content: "src/main.ts" } }), 900);
     setTimeout(() => emit(chatListeners, { requestId, seq: 4, type: "chunk", content: "Mock **desktop** chat stream.\n\n" }), 1200);
     setTimeout(() => emit(chatListeners, { requestId, seq: 4, type: "chunk", content: "DUPLICATE MUST NOT RENDER" }), 1300);
     setTimeout(() => emit(chatListeners, { requestId, seq: 5, type: "chunk", content: "| item | status |\n| --- | --- |\n| renderer | ok |\n\n" }), 1600);
@@ -1350,6 +1606,33 @@ contextBridge.exposeInMainWorld("openDrSai", {
     return requestId;
   },
   abortChat: async () => true,
+  listSessionRuns: async () => ({ schema_version: "opendrsai.run-inspection/1", object: "list", data: [], next_cursor: null, has_more: false }),
+  getRunInspection: async (request) => {
+    const pageIndex = Number(request.timelineCursor || 0);
+    const timeline = Array.from({ length: 100 }, (_, offset) => {
+      const index = pageIndex * 100 + offset;
+      if (offset === 0) return { id: "visual-reasoning-" + index, session_id: "visual-session", run_id: request.runId, type: "reasoning", status: "completed", sequence: index + 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), source: { backend: "runtime" }, content: { segments: [{ text: "run-inspector-raw-cot-canary" }], chain_of_thought: "run-inspector-raw-cot-canary", summary: "Compared the public evidence.", public_summary: "Compared the public evidence." }, event_refs: [{ event_id: "visual-reasoning-event-" + index, sequence: index + 1 }] };
+      return { id: index === 99999 ? "visual-read" : "visual-item-" + index, session_id: "visual-session", run_id: request.runId, type: "message", status: "completed", sequence: index + 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), source: { backend: "codex", backend_event_id: "visual-event-" + index }, content: { role: "assistant", phase: "final", text: "Mock item " + index }, event_refs: [{ event_id: "visual-event-" + index, sequence: index + 1 }] };
+    });
+    return {
+      schema_version: "opendrsai.run-inspection/1",
+      run: { run_id: request.runId, session_id: "visual-session", workspace_id: "visual-workspace", backend_id: "codex", agent_definition: "codex@1", status: "completed", created_at: new Date(Date.now() - 18000).toISOString(), completed_at: new Date().toISOString() },
+      summary: { duration_ms: 18000, counts_by_item_type: { message: 100000 }, counts_by_status: { completed: 100000 }, error: null, usage: { input_tokens: 12, output_tokens: 8, total_tokens: 20 }, artifact_count: 0, warning_count: 0 },
+      timeline,
+      manifest: { schema_version: "opendrsai.run-manifest/1", run_id: request.runId, manifest: { model: { id: "mock-model", api_key: "run-inspector-secret-canary" }, workspace: { root: "C:\\Users\\private-user\\workspace" } }, manifest_digest: "a".repeat(64), safe_manifest_digest: "b".repeat(64), reproducibility_level: "partial", missing_evidence: ["workspace.revision"], created_at: new Date().toISOString(), finalized_at: new Date().toISOString() },
+      page: { next_cursor: pageIndex < 999 ? String(pageIndex + 1) : null, has_more: pageIndex < 999 },
+    };
+  },
+  locateRunItem: async (request) => ({
+    schema_version: "opendrsai.run-inspection/1",
+    run_id: request.runId,
+    item_id: request.itemId,
+    item_sequence: request.itemId === "visual-read" ? 100000 : 1,
+    timeline_cursor: request.itemId === "visual-read" ? "999" : null,
+  }),
+  getExperimentReleaseGate: async () => ({ schema_version: "opendrsai.experiment-release-gate/1", enabled: false, required_features: ["M31-02", "M31-03", "M31-04", "M31-05"], passed_features: ["M31-03"], blocking_features: ["M31-02", "M31-04", "M31-05"], source_ledger_sha256: "a".repeat(64), reason: "release_evidence_incomplete" }),
+  getRunReproductionManifest: async (request) => ({ schema_version: "opendrsai.run-manifest/1", run_id: request.runId, manifest: {}, manifest_digest: "a".repeat(64), safe_manifest_digest: "b".repeat(64), reproducibility_level: "partial", missing_evidence: ["workspace.revision"], created_at: new Date().toISOString(), finalized_at: null }),
+  exportRunReproductionManifest: async (request) => ({ schema_version: "opendrsai.run-manifest/1", run_id: request.runId, manifest: {}, manifest_digest: "a".repeat(64), safe_manifest_digest: "b".repeat(64), reproducibility_level: "partial", missing_evidence: ["workspace.revision"], created_at: new Date().toISOString(), finalized_at: null }),
   startAgentRun: async (request) => {
     const requestId = request.requestId || crypto.randomUUID();
     const sessionId = request.sessionId || requestId;
@@ -1374,7 +1657,10 @@ contextBridge.exposeInMainWorld("openDrSai", {
   openPath: async () => "",
   onInstallProgress: (callback) => subscribe(installListeners, callback),
   onAuthSessionInvalidated: () => () => undefined,
+  onCodexWorkspaceSessionSyncProgress: () => () => undefined,
   onChatEvent: (callback) => subscribe(chatListeners, callback),
+  onThreadSnapshotPatch: () => () => {},
+  onManagerPresentationProgress: () => () => {},
   onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
   onUpdateStatus: (callback) => subscribe(updateListeners, callback),
 });

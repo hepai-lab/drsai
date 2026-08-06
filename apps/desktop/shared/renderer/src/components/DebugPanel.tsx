@@ -21,6 +21,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { requestAppDecision } from "./AppDecisionDialog";
 import type { AgentRunDiagnosticState, DiagnosticEvent, DiagnosticIncident, DiagnosticPackagePreview, DiagnosticSnapshot, DiagnosticSourceContext, DiagnosticSourceContextRequest, DiagnosticSourceLocation, DiagnosticTrace, InteractiveDebugPolicy, InteractiveDebugScope, InteractiveDebugSession, InteractiveDebugTarget, InteractiveDebugVariable, ProductionDiagnosticStatus } from "@shared/diagnostics";
 import type { StructuredActivityEvent } from "@shared/structuredConversation";
 import {
@@ -243,7 +244,7 @@ function InteractiveDebugWorkbench({ zh, onOpenSource, onMessage }: { zh: boolea
   const active = sessions[0];
 
   async function setDebuggingEnabled(enabled: boolean): Promise<void> {
-    if (enabled && !window.confirm(zh ? "交互调试可以启动或连接本地进程，并读取暂停时的变量。仅在你信任当前工作区时启用。是否继续？" : "Interactive debugging can launch or attach to local processes and inspect paused variables. Enable it only for a workspace you trust. Continue?")) return;
+    if (enabled && !await requestAppDecision({ id: "enable-interactive-debugging", tone: "danger", title: zh ? "启用交互调试？" : "Enable interactive debugging?", description: zh ? "交互调试可以启动或连接本地进程，并读取暂停时的变量。" : "Interactive debugging can launch or attach to local processes and inspect paused variables.", impact: zh ? "仅应在你信任当前工作区时启用；活动进程可能受到影响。" : "Enable only for a trusted workspace; active processes may be affected.", confirmLabel: zh ? "我信任并启用" : "Trust and enable" })) return;
     try {
       const nextPolicy = await window.openDrSai.updateInteractiveDebugPolicy({ enabled, acknowledgedRisk: true });
       const [nextTargets, nextSessions] = await Promise.all([window.openDrSai.listInteractiveDebugTargets(), window.openDrSai.listInteractiveDebugSessions()]);

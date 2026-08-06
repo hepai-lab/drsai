@@ -9,6 +9,7 @@ import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
 import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
 import { redactDesktopSecrets } from "./secretRedaction";
+import { redactSensitiveData } from "../api/sensitiveData";
 
 let processService: DesktopProcessService | null = null;
 let desktopAppRuntime = {
@@ -34,6 +35,10 @@ const GATEWAY_INSTANCE_TOKEN = loadGatewayInstanceToken();
 const PERSIST_RUNTIME = !HOT_RELOAD_GATEWAY && process.env.OPENDRSAI_RUNTIME_PERSIST !== "0";
 const GATEWAY_START_TIMEOUT_MS = Math.max(5_000, Math.min(120_000,
   Number(process.env.OPENDRSAI_GATEWAY_START_TIMEOUT_MS || "30000") || 30_000));
+const GATEWAY_PROBE_TIMEOUT_MS = Math.max(500, Math.min(15_000,
+  Number(process.env.OPENDRSAI_GATEWAY_PROBE_TIMEOUT_MS || "2500") || 2_500));
+const GATEWAY_PROBE_CACHE_MS = Math.max(0, Math.min(5_000,
+  Number(process.env.OPENDRSAI_GATEWAY_PROBE_CACHE_MS || "750") || 750));
 const NODE_PTY_MODULE = (() => {
   try {
     return dirname(dirname(require.resolve("node-pty")));
@@ -49,6 +54,8 @@ let gatewayStartPromise: Promise<boolean> | null = null;
 let adoptedPersistentRuntime = false;
 let gatewaySpawnError: Error | null = null;
 let gatewayRegistration: ManagedProcessRegistration | null = null;
+let gatewayProbePromise: Promise<GatewayProbe> | null = null;
+let gatewayProbeCache: { probe: GatewayProbe; expiresAt: number } | null = null;
 
 interface GatewayEndpointProbe extends GatewayEndpointStatus {
   error?: string;
@@ -64,6 +71,13 @@ interface GatewayProbe {
   diagnosticCode: string;
   diagnosticMessage: string;
 }
+
+export type GatewayModelDiscoveryResult =
+  | { state: "ready"; models: Array<{ id: string; name: string }> }
+  | { state: "auth_expired"; diagnosticCode: string; message: string }
+  | { state: "auth_required"; diagnosticCode: string; message: string }
+  | { state: "forbidden"; diagnosticCode: string; message: string }
+  | { state: "unavailable"; diagnosticCode: string; message: string; retryAfterMs?: number };
 
 function loadGatewayInstanceToken(): string {
   const configured = process.env.OPENDRSAI_GATEWAY_INSTANCE_TOKEN?.trim();
@@ -100,9 +114,13 @@ async function checkGatewayEndpoints(): Promise<boolean> {
 
 export async function getGatewayStatus(): Promise<GatewayStatus> {
   const probe = await probeGatewayEndpoints();
-  const processManaged = isManagedGatewayRunning();
+  // Ownership and health are deliberately independent. A managed Runtime that
+  // misses one probe deadline is degraded, not a foreign port occupant.
+  const managed = isGatewayOwnershipKnown();
   const externalMode = getGatewayStartupMode() === "external";
-  const managed = processManaged || adoptedPersistentRuntime || ((DEV_MANAGED_EXTERNAL_GATEWAY || externalMode) && probe.ready);
+  const diagnosticMessage = managed && probe.diagnosticCode === "gateway_probe_timeout"
+    ? "The managed OpenDrSai Runtime is busy and did not answer before the probe deadline. Desktop will retry without starting a competing process."
+    : probe.diagnosticMessage;
   return {
     ready: managed && probe.ready,
     managed,
@@ -113,7 +131,7 @@ export async function getGatewayStatus(): Promise<GatewayStatus> {
     lastLog: lastGatewayLog,
     portOpen: probe.portOpen,
     diagnosticCode: probe.diagnosticCode,
-    diagnosticMessage: probe.diagnosticMessage,
+    diagnosticMessage,
     endpoints: {
       health: publicEndpointStatus(probe.health),
       models: publicEndpointStatus(probe.models),
@@ -130,18 +148,26 @@ export async function startGateway(): Promise<boolean> {
 }
 
 export function getGatewaySnapshot(): GatewayStatus {
-  const processManaged = isManagedGatewayRunning();
+  const managed = isGatewayOwnershipKnown();
+  const probe = gatewayProbeCache && gatewayProbeCache.expiresAt > Date.now()
+    ? gatewayProbeCache.probe
+    : undefined;
+  const ready = Boolean(managed && probe?.ready);
   return {
-    ready: false,
-    managed: processManaged,
-    externalReady: false,
-    externalConflict: false,
+    ready,
+    managed,
+    externalReady: Boolean(probe?.ready),
+    externalConflict: Boolean(probe?.portOpen && !managed && getGatewayStartupMode() !== "external"),
     baseUrl: GATEWAY_BASE_URL,
     pid: gatewayProcess?.pid ?? null,
     lastLog: lastGatewayLog,
-    portOpen: false,
-    diagnosticCode: "gateway_not_checked",
-    diagnosticMessage: "Gateway has not completed endpoint probing yet.",
+    portOpen: Boolean(probe?.portOpen),
+    diagnosticCode: probe?.diagnosticCode ?? "gateway_not_checked",
+    diagnosticMessage: probe?.diagnosticMessage ?? "Gateway has not completed endpoint probing yet.",
+    endpoints: probe ? {
+      health: publicEndpointStatus(probe.health),
+      models: publicEndpointStatus(probe.models),
+    } : undefined,
   };
 }
 
@@ -218,6 +244,11 @@ async function killPortOccupant(port: string): Promise<boolean> {
 async function startGatewayOnce(): Promise<boolean> {
   if (!managedProcessRegistry.accepting) return false;
   if (await checkGatewayReady()) return true;
+  // Ownership can disappear before the short-lived health cache expires when
+  // a Runtime is force-terminated. Never adopt a cached response from the
+  // dead instance as an external Runtime; startup preflight must observe the
+  // port and authenticated health endpoint again.
+  gatewayProbeCache = null;
   const preflight = await probeGatewayEndpoints();
   if (getGatewayStartupMode() === "external") {
     return preflight.ready;
@@ -227,15 +258,22 @@ async function startGatewayOnce(): Promise<boolean> {
     return true;
   }
   if (preflight.portOpen && !isManagedGatewayRunning()) {
+    const message = isGatewayOwnershipKnown() && preflight.diagnosticCode === "gateway_probe_timeout"
+      ? "The managed OpenDrSai Runtime is busy; Desktop will not start a competing process."
+      : preflight.diagnosticMessage;
     appendGatewayLog(Buffer.from(
-      `\nGateway port ${GATEWAY_PORT} is occupied but not usable: ${preflight.diagnosticCode}. ${preflight.diagnosticMessage}`,
+      `\nGateway port ${GATEWAY_PORT} is occupied but not usable: ${preflight.diagnosticCode}. ${message}`,
     ));
     return false;
   }
   if (gatewayProcess && !gatewayProcess.killed) return false;
   if (!existsSync(DRSAI_PYTHON)) return false;
 
-  const args = HOT_RELOAD_GATEWAY
+  // uvicorn's Windows reload worker uses a SelectorEventLoop and cannot
+  // reliably launch the subprocess-backed Agent backends. Keep the Desktop
+  // fallback consistent with scripts/dev.ps1: Windows reloads by restarting
+  // the dev command, while other platforms retain source hot reload.
+  const args = HOT_RELOAD_GATEWAY && process.platform !== "win32"
     ? [
         "-m",
         "uvicorn",
@@ -289,6 +327,7 @@ async function startGatewayOnce(): Promise<boolean> {
     gatewayRegistration = null;
     gatewayProcess = null;
     adoptedPersistentRuntime = false;
+    gatewayProbeCache = null;
   });
   if (PERSIST_RUNTIME) gatewayProcess.unref();
 
@@ -354,39 +393,59 @@ function isManagedGatewayRunning(): boolean {
   return Boolean(gatewayProcess && gatewayProcess.pid && !gatewayProcess.killed);
 }
 
+function isGatewayOwnershipKnown(): boolean {
+  return isManagedGatewayRunning()
+    || adoptedPersistentRuntime
+    || DEV_MANAGED_EXTERNAL_GATEWAY
+    || getGatewayStartupMode() === "external";
+}
+
 function appendGatewayLog(chunk: Buffer): void {
-  lastGatewayLog = redactDesktopSecrets(`${lastGatewayLog}${chunk.toString()}`).slice(-12000);
+  lastGatewayLog = redactSensitiveData(redactDesktopSecrets(`${lastGatewayLog}${chunk.toString()}`)).slice(-12000);
 }
 
 async function probeGatewayEndpoints(): Promise<GatewayProbe> {
-  const [health, models] = await Promise.all([
-    requestJson(`${GATEWAY_BASE_URL}/health`, getGatewayRequestHeaders()),
-    requestJson(`${GATEWAY_BASE_URL}/v1/models`, getGatewayRequestHeaders()),
-  ]);
-  const modelsReady = Boolean(
-    models.ok &&
-    models.body &&
-    models.body.object === "list" &&
-    Array.isArray(models.body.data),
-  );
-  const ready = health.ok && modelsReady;
-  const reachable = health.statusCode !== null || models.statusCode !== null;
+  const now = Date.now();
+  if (gatewayProbeCache && gatewayProbeCache.expiresAt > now) return gatewayProbeCache.probe;
+  if (gatewayProbePromise) return gatewayProbePromise;
+  gatewayProbePromise = probeGatewayEndpointsOnce().then((probe) => {
+    gatewayProbeCache = { probe, expiresAt: Date.now() + GATEWAY_PROBE_CACHE_MS };
+    return probe;
+  }).finally(() => {
+    gatewayProbePromise = null;
+  });
+  return gatewayProbePromise;
+}
+
+async function probeGatewayEndpointsOnce(): Promise<GatewayProbe> {
+  // Liveness must stay independent from model discovery. The model endpoint
+  // may initialize providers or contact remote services, while /health is a
+  // cheap process-readiness contract.
+  const health = await requestJson(`${GATEWAY_BASE_URL}/health`, getGatewayRequestHeaders());
+  const models: GatewayEndpointProbe = { ok: false, statusCode: null, state: "not_checked" };
+  const ready = Boolean(health.ok && health.body?.status === "ok");
+  const reachable = health.statusCode !== null;
   const portOpen = reachable || await isTcpPortOpen(GATEWAY_HOST, Number(GATEWAY_PORT));
-  const unauthorized = health.state === "unauthorized" || models.state === "unauthorized";
+  const unauthorized = health.state === "unauthorized";
+  const authenticatedResponse = !unauthorized && health.statusCode !== null;
+  if (authenticatedResponse && !DEV_MANAGED_EXTERNAL_GATEWAY && getGatewayStartupMode() !== "external") {
+    // A response accepted the installation-scoped instance token. Preserve
+    // that ownership across later busy/timeout probes for persistent Runtime.
+    adoptedPersistentRuntime = true;
+  }
   const diagnosticCode = ready ? "gateway_ready"
     : unauthorized ? "gateway_unauthorized"
-    : health.state === "timeout" || models.state === "timeout" ? "gateway_probe_timeout"
+    : health.state === "timeout" ? "gateway_probe_timeout"
     : !reachable && portOpen ? "gateway_port_occupied"
     : !reachable ? "gateway_unreachable"
     : !health.ok ? `gateway_health_${health.state}`
-    : !modelsReady ? `gateway_models_${models.state === "ok" ? "invalid_response" : models.state}`
+    : health.body?.status !== "ok" ? "gateway_health_invalid_response"
     : "gateway_unavailable";
-  const diagnosticMessage = ready ? "Gateway health and model endpoints are ready."
+  const diagnosticMessage = ready ? "Gateway health endpoint is ready; model availability is checked separately."
     : unauthorized ? "A process is listening on the Gateway port, but it rejected this Desktop instance token."
     : !reachable && portOpen ? "A non-OpenDrSai process is listening on the Gateway port."
     : !reachable ? "No process responded on the Gateway port."
-    : !health.ok ? `Gateway /health is not ready (${health.state}${health.statusCode ? ` ${health.statusCode}` : ""}).`
-    : `Gateway /v1/models is not ready (${models.state}${models.statusCode ? ` ${models.statusCode}` : ""}).`;
+    : `Gateway /health is not ready (${health.state}${health.statusCode ? ` ${health.statusCode}` : ""}).`;
   return { ready, reachable, portOpen, unauthorized, health, models, diagnosticCode, diagnosticMessage };
 }
 
@@ -415,6 +474,7 @@ function publicEndpointStatus(endpoint: GatewayEndpointProbe): GatewayEndpointSt
 function requestJson(
   url: string,
   headers: Record<string, string> = {},
+  timeoutMs = GATEWAY_PROBE_TIMEOUT_MS,
 ): Promise<GatewayEndpointProbe & { body: Record<string, unknown> | null }> {
   return new Promise((resolve) => {
     let settled = false;
@@ -432,29 +492,28 @@ function requestJson(
       });
       res.on("end", () => {
         const statusCode = res.statusCode ?? null;
+        let parsedBody: Record<string, unknown> | null = null;
+        try {
+          const parsed = JSON.parse(body);
+          parsedBody = typeof parsed === "object" && parsed !== null ? parsed : null;
+        } catch { /* Preserve the HTTP status even if the error body is not JSON. */ }
         if (res.statusCode !== 200) {
           finish({
             ok: false,
-            body: null,
+            body: parsedBody,
             statusCode,
             state: statusCode === 401 || statusCode === 403 ? "unauthorized" : "http_error",
           });
           return;
         }
-        try {
-          const parsed = JSON.parse(body);
-          finish({
-            ok: true,
-            body: typeof parsed === "object" && parsed !== null ? parsed : null,
-            statusCode,
-            state: "ok",
-          });
-        } catch {
+        if (parsedBody) {
+          finish({ ok: true, body: parsedBody, statusCode, state: "ok" });
+        } else {
           finish({ ok: false, body: null, statusCode, state: "invalid_response" });
         }
       });
     });
-    req.setTimeout(1200, () => {
+    req.setTimeout(timeoutMs, () => {
       timedOut = true;
       req.destroy();
       finish({ ok: false, body: null, statusCode: null, state: "timeout" });
@@ -496,16 +555,44 @@ export async function stopGateway(): Promise<boolean> {
   return gatewayStopPromise;
 }
 
-export async function getGatewayModels(
+export async function discoverGatewayModels(
   accessToken: string,
-): Promise<Array<{ id: string; name: string }>> {
+): Promise<GatewayModelDiscoveryResult> {
   const response = await requestJson(`${GATEWAY_BASE_URL}/v1/models`, {
     ...getGatewayRequestHeaders(),
     Authorization: `Bearer ${accessToken}`,
     "X-OpenDrSai-Auth-Mode": "oidc",
-  });
-  if (!response.ok || !Array.isArray(response.body?.data)) return [];
-  return response.body.data.flatMap((item) => {
+  }, 5_000);
+  if (!response.ok) {
+    const error = readGatewayError(response.body);
+    if (response.statusCode === 401) {
+      return {
+        state: error.code === "token_expired" ? "auth_expired" : "auth_required",
+        diagnosticCode: error.code || "model_catalog_unauthorized",
+        message: error.message || "The HepAI authentication context is not valid.",
+      };
+    }
+    if (response.statusCode === 403) {
+      return {
+        state: "forbidden",
+        diagnosticCode: error.code || "model_catalog_forbidden",
+        message: error.message || "This HepAI account cannot use the model service.",
+      };
+    }
+    return {
+      state: "unavailable",
+      diagnosticCode: error.code || `model_catalog_${response.state}`,
+      message: error.message || "The HepAI model catalog is temporarily unavailable.",
+    };
+  }
+  if (!Array.isArray(response.body?.data)) {
+    return {
+      state: "unavailable",
+      diagnosticCode: "model_catalog_invalid_response",
+      message: "The HepAI model catalog returned an invalid response.",
+    };
+  }
+  const models = response.body.data.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const row = item as Record<string, unknown>;
     if (typeof row.id !== "string" || !row.id.trim()) return [];
@@ -513,6 +600,24 @@ export async function getGatewayModels(
     const name = typeof row.name === "string" && row.name.trim() ? row.name.trim() : id;
     return [{ id, name }];
   });
+  return { state: "ready", models };
+}
+
+export async function getGatewayModels(
+  accessToken: string,
+): Promise<Array<{ id: string; name: string }>> {
+  const result = await discoverGatewayModels(accessToken);
+  return result.state === "ready" ? result.models : [];
+}
+
+function readGatewayError(body: Record<string, unknown> | null): { code: string; message: string } {
+  const raw = body?.error ?? body?.detail;
+  if (!raw || typeof raw !== "object") return { code: "", message: "" };
+  const error = raw as Record<string, unknown>;
+  return {
+    code: typeof error.code === "string" ? error.code.slice(0, 120) : "",
+    message: typeof error.message === "string" ? error.message.slice(0, 500) : "",
+  };
 }
 
 export async function shutdownGateway(preserveRuntime = false): Promise<boolean> {

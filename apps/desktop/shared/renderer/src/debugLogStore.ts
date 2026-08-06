@@ -4,6 +4,7 @@ import type {
 } from "@shared/structuredConversation";
 import type { DiagnosticDomain, DiagnosticEvent, DiagnosticEventInput, DiagnosticStackFrame, DiagnosticStatus } from "@shared/diagnostics";
 import type { DesktopRuntimeLogEvent } from "@shared/desktopApi";
+import { sanitizeSensitiveValue } from "../../api/sensitiveData";
 
 export type DebugLogLevel = "log" | "info" | "warn" | "error";
 export type DebugLogSource = "console" | "window" | "promise" | "chat" | "activity" | "protocol" | "diagnostic" | "runtime";
@@ -71,7 +72,7 @@ export function appendDebugLog(
 
 export function appendStructuredActivityLog(activity: StructuredActivityEvent): void {
   const existing = entries.find((entry) => entry.source === "activity" && entry.activityId === activity.id);
-  const next: DebugLogEntry = {
+  const next: DebugLogEntry = sanitizeSensitiveValue({
     id: existing?.id ?? nextId++,
     level: activity.status === "error" ? "error" : activity.kind === "retry" ? "warn" : "info",
     message: activity.title,
@@ -84,7 +85,7 @@ export function appendStructuredActivityLog(activity: StructuredActivityEvent): 
     activity,
     ...(activity.kind === "tool" && activity.durationMs !== undefined ? { durationMs: activity.durationMs } : {}),
     raw: serializeBounded(activity),
-  };
+  });
   entries = existing
     ? entries.map((entry) => entry.id === existing.id ? next : entry)
     : [...entries, next].slice(-MAX_ENTRIES);
@@ -172,22 +173,23 @@ export function installDebugLogCapture(): void {
 }
 
 export function appendRuntimeLogEvent(event: DesktopRuntimeLogEvent): void {
+  const safeEvent = sanitizeSensitiveValue(event);
   const next: Omit<DebugLogEntry, "id"> = {
-    level: event.level === "debug" ? "log" : event.level,
-    message: event.message,
-    timestamp: parseTimestamp(event.timestamp),
+    level: safeEvent.level === "debug" ? "log" : safeEvent.level,
+    message: safeEvent.message,
+    timestamp: parseTimestamp(safeEvent.timestamp),
     source: "runtime",
-    turnId: event.runId,
+    turnId: safeEvent.runId,
     module: "runtime",
-    component: event.protocol,
-    operation: event.operation,
-    diagnosticStatus: event.status,
-    runtime: event,
-    raw: serializeBounded(event),
+    component: safeEvent.protocol,
+    operation: safeEvent.operation,
+    diagnosticStatus: safeEvent.status,
+    runtime: safeEvent,
+    raw: serializeBounded(safeEvent),
   };
-  if (isRuntimeDelta(event)) {
+  if (isRuntimeDelta(safeEvent)) {
     const previous = entries.at(-1);
-    if (previous?.runtime && runtimeCoalesceKey(previous.runtime) === runtimeCoalesceKey(event)
+    if (previous?.runtime && runtimeCoalesceKey(previous.runtime) === runtimeCoalesceKey(safeEvent)
       && next.timestamp - previous.timestamp <= 250) {
       entries = [...entries.slice(0, -1), { ...next, id: previous.id, coalescedCount: (previous.coalescedCount ?? 1) + 1 }];
     } else {
@@ -200,6 +202,7 @@ export function appendRuntimeLogEvent(event: DesktopRuntimeLogEvent): void {
 }
 
 function appendDiagnosticEvent(event: DiagnosticEvent, shouldNotify = true): void {
+  event = sanitizeSensitiveValue(event);
   if (event.domain === "protocol") return;
   if (entries.some((entry) => entry.diagnosticId === event.id)) return;
   const entry: DebugLogEntry = {
@@ -253,7 +256,7 @@ function mapActivityStatus(status: StructuredActivityEvent["status"]): Diagnosti
 }
 
 function append(entry: Omit<DebugLogEntry, "id">): void {
-  entries = [...entries, { ...entry, id: nextId++ }].slice(-MAX_ENTRIES);
+  entries = [...entries, { ...sanitizeSensitiveValue(entry), id: nextId++ }].slice(-MAX_ENTRIES);
   notify();
 }
 

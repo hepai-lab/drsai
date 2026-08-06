@@ -80,7 +80,8 @@ const checks = [
       auth.includes('server.listen(0, "127.0.0.1")') &&
       auth.includes("openExternalUrl(url)") &&
       auth.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
-      auth.includes("opendrsai://auth-complete") &&
+      auth.includes('"opendrsai-dev://auth-complete"') &&
+      auth.includes('"opendrsai://auth-complete"') &&
       auth.includes('id="open-app"') &&
       auth.includes("window.location.href = openAppLink.href") &&
       auth.includes('window.addEventListener("blur", closePage') &&
@@ -201,7 +202,7 @@ const checks = [
     bootstrap.includes("requireAuthContext") &&
       bootstrap.includes('auth.authMode !== "oidc"') &&
       bootstrap.includes("startGateway()") &&
-      bootstrap.includes("getGatewayModels(auth.accessToken)") &&
+      bootstrap.includes("discoverModelsWithRecovery(auth.accessToken)") &&
       bootstrap.includes('tools: ["files", "shell", "git"]') &&
       gateway.includes('Authorization: `Bearer ${accessToken}`') &&
       gateway.includes('"X-OpenDrSai-Auth-Mode": "oidc"') &&

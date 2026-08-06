@@ -17,6 +17,12 @@ function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+function boundedTimeoutFromEnv(name, fallback, minimum, maximum) {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(parsed)));
+}
+
 function agentItems(payload) {
   const root = record(payload);
   if (Array.isArray(root.data)) return root.data;
@@ -192,6 +198,13 @@ async function main() {
       report.selectedModel = model;
       const threadId = `desktop-live-ddf-${Date.now()}`;
       const chatStartedAt = Date.now();
+      const liveChatTimeoutMs = boundedTimeoutFromEnv(
+        "OPENDRSAI_LIVE_CHAT_TIMEOUT_MS",
+        120_000,
+        10_000,
+        180_000,
+      );
+      report.chatTimeoutMs = liveChatTimeoutMs;
       const chat = await fetch(`https://ai-dev.ihep.ac.cn/api/native/v1/agents/${encodeURIComponent(agentId)}/chat`, {
         method: "POST",
         headers: {
@@ -208,7 +221,7 @@ async function main() {
           attachments: [],
           metadata: { source: "windows-native-ddf-smoke" },
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(liveChatTimeoutMs),
       });
       report.chatDurationMs = Date.now() - chatStartedAt;
       report.chatStatus = chat.status;

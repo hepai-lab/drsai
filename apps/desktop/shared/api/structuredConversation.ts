@@ -19,6 +19,8 @@ export interface ReasoningSegment {
   text: string;
   status: StructuredPartStatus;
   source?: string;
+  reasoningKind?: "summary" | "commentary" | "analysis";
+  visibility?: "user" | "diagnostic" | "hidden";
   startedAt?: string;
   completedAt?: string;
 }
@@ -105,6 +107,8 @@ export type StructuredAssistantPart =
 
 interface ActivityEventBase {
   id: string;
+  /** Present only when this activity is projected from a durable OAEP Item. */
+  oaepItemId?: string;
   turnId: string;
   timestamp: string;
   source: string;
@@ -117,6 +121,9 @@ export type StructuredActivityEvent =
       kind: "tool";
       toolName: string;
       callId: string;
+      operationId?: string;
+      correlationId?: string;
+      runtimeRunId?: string;
       input?: unknown;
       output?: unknown;
       durationMs?: number;
@@ -170,6 +177,8 @@ export type StructuredPartDelta =
 
 export type StructuredConversationEvent =
   | (StructuredEventBase & { type: "turn.started" })
+  | (StructuredEventBase & { type: "turn.waiting"; reason?: string; queuePosition?: number })
+  | (StructuredEventBase & { type: "turn.resumed"; reason?: string })
   | (StructuredEventBase & { type: "part.started"; part: StructuredAssistantPart })
   | (StructuredEventBase & { type: "part.delta"; partId: string; delta: StructuredPartDelta })
   | (StructuredEventBase & { type: "part.completed"; part: StructuredAssistantPart })
@@ -194,6 +203,8 @@ export interface StructuredTurnMeta {
   backend?: string;
   workspaceLabel?: string;
   stopReason?: string;
+  queuePosition?: number;
+  waitingReason?: string;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | Record<string, unknown>;
 }
 
@@ -467,6 +478,12 @@ export function applyStructuredConversationEvent(
   switch (event.type) {
     case "turn.started":
       return { ...next, status: "running", meta: { ...next.meta, backend: event.source } };
+    case "turn.waiting":
+      return { ...next, status: "pending", meta: { ...next.meta,
+        ...(event.reason ? { waitingReason: event.reason } : {}),
+        ...(event.queuePosition !== undefined ? { queuePosition: event.queuePosition } : {}) } };
+    case "turn.resumed":
+      return { ...next, status: "running", meta: { ...next.meta, queuePosition: undefined, waitingReason: undefined } };
     case "part.started":
       return startPart(next, event.part, event.sequence);
     case "part.delta":
@@ -510,7 +527,7 @@ export function validateStructuredConversationEvent(event: unknown): StructuredP
     return invalidEvent("Event sequence must be a positive integer.");
   }
   const supportedTypes = new Set([
-    "turn.started", "part.started", "part.delta", "part.completed",
+    "turn.started", "turn.waiting", "turn.resumed", "part.started", "part.delta", "part.completed",
     "activity.updated", "turn.completed", "turn.cancelled", "turn.error",
   ]);
   if (!supportedTypes.has(String(value.type))) return invalidEvent("Unsupported event type.");
@@ -649,7 +666,9 @@ function isStructuredActivityEvent(activity: unknown): activity is StructuredAct
 function isReasoningSegment(segment: unknown): segment is ReasoningSegment {
   if (!segment || typeof segment !== "object") return false;
   const value = segment as Record<string, unknown>;
-  return isNonEmptyString(value.id) && typeof value.text === "string" && isPartStatus(value.status);
+  return isNonEmptyString(value.id) && typeof value.text === "string" && isPartStatus(value.status)
+    && (value.reasoningKind === undefined || ["summary", "commentary", "analysis"].includes(String(value.reasoningKind)))
+    && (value.visibility === undefined || ["user", "diagnostic", "hidden"].includes(String(value.visibility)));
 }
 
 function isPartStatus(value: unknown): value is StructuredPartStatus {
@@ -734,6 +753,8 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
         text: segment.text.slice(0, 80_000),
         status: segment.status,
         ...(segment.source ? { source: segment.source.slice(0, 200) } : {}),
+        ...(segment.reasoningKind ? { reasoningKind: segment.reasoningKind } : {}),
+        ...(segment.visibility ? { visibility: segment.visibility } : {}),
         ...(segment.startedAt ? { startedAt: segment.startedAt.slice(0, 80) } : {}),
         ...(segment.completedAt ? { completedAt: segment.completedAt.slice(0, 80) } : {}),
       })),
@@ -803,6 +824,9 @@ function sanitizeStructuredActivity(activity: StructuredActivityEvent): Structur
   };
   if (activity.kind === "tool") return {
     ...base, kind: activity.kind, toolName: activity.toolName.slice(0, 300), callId: activity.callId.slice(0, 200),
+    ...(activity.operationId ? { operationId: activity.operationId.slice(0, 200) } : {}),
+    ...(activity.correlationId ? { correlationId: activity.correlationId.slice(0, 200) } : {}),
+    ...(activity.runtimeRunId ? { runtimeRunId: activity.runtimeRunId.slice(0, 200) } : {}),
     ...(activity.input !== undefined ? { input: boundStructuredPayload(activity.input) } : {}),
     ...(activity.output !== undefined ? { output: boundStructuredPayload(activity.output) } : {}),
     ...(Number.isFinite(activity.durationMs) ? { durationMs: activity.durationMs } : {}),

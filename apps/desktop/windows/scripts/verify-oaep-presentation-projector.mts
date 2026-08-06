@@ -154,6 +154,17 @@ assert.deepEqual(
   new Set(matrixProjection.flatMap((entry) => entry.activities.map((activity) => activity.kind))),
   new Set(["tool", "file_change"]),
 );
+const hiddenReasoning = completedItem({ id: "hidden-r", type: "reasoning", content: { segments: [
+  { id: "analysis", text: "private-canary", kind: "analysis", visibility: "hidden", source: "backend" },
+] } }, 11);
+assert.deepEqual(projectOaepAssistantItem(hiddenReasoning, runId).parts, [],
+  "historical projection must not render hidden reasoning");
+const hiddenProjection = createOaepPresentationProjection("hidden-reasoning");
+assert.deepEqual(projectOaepEventForPresentation(event("event.item.delta", { delta: {
+  kind: "reasoning.text.append", text: "private-canary", segment_id: "analysis",
+  reasoning_kind: "analysis", visibility: "hidden", reasoning_source: "backend",
+} }, hiddenReasoning.id), hiddenProjection, hiddenReasoning), [],
+"live projection must not render hidden reasoning");
 
 const sevenDeltaMatrix = [
   ["message.text.append", tenItemMatrix[0]],

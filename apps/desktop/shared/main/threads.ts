@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "fs/promises";
 import { dirname, join } from "path";
 import type {
@@ -13,13 +13,18 @@ import type {
   ChatMessagePart,
   UpdateThreadRequest,
 } from "../api/desktopApi";
+import { LOCAL_OPENDRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import { DRSAI_HOME } from "./paths";
 import { sanitizeStructuredTurnState } from "../api/structuredConversation";
 import { replaceFileSafely } from "./atomicFileReplace";
 
 const THREADS_FILE = join(DRSAI_HOME, "desktop", "threads.json");
 const THREAD_SNAPSHOTS_FILE = join(DRSAI_HOME, "desktop", "thread-snapshots.json");
-const MAX_THREADS = 200;
+const THREAD_SNAPSHOTS_DIRECTORY = join(DRSAI_HOME, "desktop", "thread-snapshots");
+// The P3 session directory is metadata-only, so retaining 1,000 active entries
+// does not hydrate conversation bodies. Snapshot bodies remain independently
+// sharded and are opened only through getThreadSnapshot().
+const MAX_THREADS = 1_000;
 const MAX_ARCHIVED_THREADS = 2_000;
 const MAX_THREAD_SNAPSHOTS = 2_000;
 const MAX_SNAPSHOT_MESSAGES = 500;
@@ -37,13 +42,29 @@ const THREAD_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const atomicJsonWriteQueues = new Map<string, Promise<void>>();
 const jsonMutationQueues = new Map<string, Promise<void>>();
 let staleThreadFilesCleaned = false;
+const threadSnapshotIoMetrics = { shardReads: 0, shardWrites: 0, legacyCatalogReads: 0, shardDirectoryScans: 0 };
+
+export function getThreadSnapshotIoMetrics(): Readonly<typeof threadSnapshotIoMetrics> {
+  return { ...threadSnapshotIoMetrics };
+}
+
+export function resetThreadSnapshotIoMetrics(): void {
+  threadSnapshotIoMetrics.shardReads = 0;
+  threadSnapshotIoMetrics.shardWrites = 0;
+  threadSnapshotIoMetrics.legacyCatalogReads = 0;
+  threadSnapshotIoMetrics.shardDirectoryScans = 0;
+}
 
 export async function listThreads(): Promise<DesktopThread[]> {
   if (!staleThreadFilesCleaned) {
     staleThreadFilesCleaned = true;
     await cleanupStaleThreadTemporaryFiles();
   }
-  return (await readThreads()).sort(compareThreads);
+  return serializeJsonMutation(THREADS_FILE, async () => {
+    const result = await readThreadsWithMigration();
+    if (result.migrated) await writeThreads(result.threads);
+    return result.threads.sort(compareThreads);
+  });
 }
 
 async function cleanupStaleThreadTemporaryFiles(): Promise<void> {
@@ -127,8 +148,9 @@ export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
     return true;
   });
   if (!deleted) return false;
+  await rm(threadSnapshotPath(threadId), { force: true }).catch(() => undefined);
   await serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
-    const snapshots = await readThreadSnapshots();
+    const snapshots = await readLegacyThreadSnapshots();
     if (snapshots[threadId]) {
       delete snapshots[threadId];
       await writeThreadSnapshots(snapshots);
@@ -139,8 +161,14 @@ export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
 
 export async function getThreadSnapshot(rawThreadId: unknown): Promise<DesktopThreadSnapshot | null> {
   const threadId = sanitizeThreadId(rawThreadId);
-  const snapshots = await readThreadSnapshots();
-  return snapshots[threadId] ?? null;
+  const sharded = await readThreadSnapshotShard(threadId);
+  if (sharded) return sharded;
+  // One-time compatibility path for installations created before snapshots
+  // were sharded. Only the requested legacy entry is migrated; subsequent
+  // opens are O(size of this conversation), not O(all conversations).
+  const legacy = (await readLegacyThreadSnapshots())[threadId] ?? null;
+  if (legacy) await writeThreadSnapshotShard(legacy);
+  return legacy;
 }
 
 export async function searchThreadMessages(
@@ -192,13 +220,9 @@ function createSearchSnippet(content: string, matchIndex: number, matchLength: n
 
 export async function updateThreadSnapshot(rawRequest: unknown): Promise<DesktopThreadSnapshot> {
   const snapshot = validateThreadSnapshot(rawRequest);
-  return serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
-    const snapshots = await readThreadSnapshots();
-    const nextSnapshots = {
-      ...snapshots,
-      [snapshot.threadId]: snapshot,
-    };
-    await writeThreadSnapshots(nextSnapshots);
+  const path = threadSnapshotPath(snapshot.threadId);
+  return serializeJsonMutation(path, async () => {
+    await writeThreadSnapshotShard(snapshot);
     return snapshot;
   });
 }
@@ -220,13 +244,29 @@ export async function upsertThreadFromRun(input: {
 }
 
 async function readThreads(): Promise<DesktopThread[]> {
+  return (await readThreadsWithMigration()).threads;
+}
+
+async function readThreadsWithMigration(): Promise<{ threads: DesktopThread[]; migrated: boolean }> {
   try {
     const parsed = parseStoredJson(await readFile(THREADS_FILE, "utf8"));
-    if (!Array.isArray(parsed)) return [];
-    return retainThreads(parsed.filter(isThread));
+    if (!Array.isArray(parsed)) return { threads: [], migrated: false };
+    let migrated = false;
+    const threads = retainThreads(parsed.filter(isThread)).map((thread) => {
+      const next = migrateLocalAgentDisplayName(thread);
+      if (next !== thread) migrated = true;
+      return next;
+    });
+    return { threads, migrated };
   } catch {
-    return [];
+    return { threads: [], migrated: false };
   }
+}
+
+export function migrateLocalAgentDisplayName(thread: DesktopThread): DesktopThread {
+  if (thread.boundAgentId !== LOCAL_OPENDRSAI_AGENT_ID) return thread;
+  if (thread.boundAgentName !== "My DrSai" && thread.boundAgentName !== "My Dr.Sai") return thread;
+  return { ...thread, boundAgentName: LOCAL_OPENDRSAI_AGENT_NAME };
 }
 
 async function writeThreads(threads: DesktopThread[]): Promise<void> {
@@ -242,8 +282,9 @@ function retainThreads(threads: DesktopThread[]): DesktopThread[] {
   return [...active.slice(0, MAX_THREADS), ...archived.slice(0, MAX_ARCHIVED_THREADS)];
 }
 
-async function readThreadSnapshots(): Promise<Record<string, DesktopThreadSnapshot>> {
+async function readLegacyThreadSnapshots(): Promise<Record<string, DesktopThreadSnapshot>> {
   try {
+    threadSnapshotIoMetrics.legacyCatalogReads += 1;
     const parsed = parseStoredJson(await readFile(THREAD_SNAPSHOTS_FILE, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const entries = Object.values(parsed)
@@ -261,6 +302,44 @@ async function readThreadSnapshots(): Promise<Record<string, DesktopThreadSnapsh
   } catch {
     return {};
   }
+}
+
+async function readThreadSnapshots(): Promise<Record<string, DesktopThreadSnapshot>> {
+  const legacy = await readLegacyThreadSnapshots();
+  let names: string[] = [];
+  try {
+    threadSnapshotIoMetrics.shardDirectoryScans += 1;
+    names = (await readdir(THREAD_SNAPSHOTS_DIRECTORY)).filter((name) => /^[a-f0-9]{64}\.json$/.test(name));
+  } catch { /* No sharded snapshots yet. */ }
+  const sharded = await Promise.all(names.slice(0, MAX_THREAD_SNAPSHOTS).map(async (name) => {
+    try {
+      threadSnapshotIoMetrics.shardReads += 1;
+      return validateThreadSnapshot(parseStoredJson(await readFile(join(THREAD_SNAPSHOTS_DIRECTORY, name), "utf8")));
+    } catch { return null; }
+  }));
+  const combined = { ...legacy };
+  for (const snapshot of sharded) if (snapshot) combined[snapshot.threadId] = snapshot;
+  return Object.fromEntries(Object.values(combined)
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, MAX_THREAD_SNAPSHOTS)
+    .map((snapshot) => [snapshot.threadId, snapshot]));
+}
+
+function threadSnapshotPath(threadId: string): string {
+  return join(THREAD_SNAPSHOTS_DIRECTORY, `${createHash("sha256").update(threadId).digest("hex")}.json`);
+}
+
+async function readThreadSnapshotShard(threadId: string): Promise<DesktopThreadSnapshot | null> {
+  try {
+    threadSnapshotIoMetrics.shardReads += 1;
+    const snapshot = validateThreadSnapshot(parseStoredJson(await readFile(threadSnapshotPath(threadId), "utf8")));
+    return snapshot.threadId === threadId ? snapshot : null;
+  } catch { return null; }
+}
+
+async function writeThreadSnapshotShard(snapshot: DesktopThreadSnapshot): Promise<void> {
+  threadSnapshotIoMetrics.shardWrites += 1;
+  await writeAtomicJson(threadSnapshotPath(snapshot.threadId), snapshot);
 }
 
 async function writeThreadSnapshots(snapshots: Record<string, DesktopThreadSnapshot>): Promise<void> {

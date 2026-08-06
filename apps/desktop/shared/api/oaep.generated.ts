@@ -1,5 +1,5 @@
 // Generated from cores/protocol/oaep/oaep.schema.json; do not edit.
-export const OAEP_SCHEMA_SHA256 = "92020971b3fb9d549ff08e10221bf34db13213e5206a9aa4b5222461a9f011ae" as const;
+export const OAEP_SCHEMA_SHA256 = "304304216b4133e6b00dd3d93897d4f84ccc716ee830f2ecca11c77585d0970d" as const;
 export const OAEP_VERSION = "1.0" as const;
 export const OAEP_PROFILE = "oaep.session-stream/1" as const;
 export type OaepItemType = "message" | "reasoning" | "plan" | "command_execution" | "file_change" | "tool_call" | "artifact" | "interaction" | "subtask" | "notice";
@@ -12,10 +12,11 @@ export interface OaepResourceRef { protocol: "owop/1"; workspace_id: string; res
 export interface OaepContentReferences { operation_ref?: OaepOperationRef; resource_refs?: OaepResourceRef[]; }
 export interface OaepMessagePart { type: "text" | "image" | "audio" | "file" | "resource_ref"; text?: string; url?: string; name?: string; mime_type?: string; resource_ref?: OaepResourceRef; }
 export interface OaepMessageContent extends OaepContentReferences { role: "user" | "assistant" | "system"; text: string; phase?: "commentary" | "final"; citations?: Record<string, unknown>[]; parts?: OaepMessagePart[]; }
-export interface OaepReasoningContent extends OaepContentReferences { segments: Array<{id: string; text: string}>; }
+export interface OaepReasoningContent extends OaepContentReferences { segments: Array<{id: string; text: string; kind?: "summary" | "commentary" | "analysis"; visibility?: "user" | "diagnostic" | "hidden"; source?: "backend" | "adapter" | "runtime"}>; }
 export interface OaepPlanContent extends OaepContentReferences { text: string; steps: Array<{id: string; title: string; status: string}>; explanation?: string; }
-export interface OaepCommandExecutionContent extends OaepContentReferences { command: string[]; display_command: string; cwd: string; output: string; stdout_tail?: string; stderr_tail?: string; exit_code?: number | null; duration_ms?: number | null; }
-export interface OaepToolCallContent extends OaepContentReferences { tool_kind: string; tool_name: string; call_id: string; arguments: Record<string, unknown>; result: unknown; server?: string | null; duration_ms?: number | null; }
+export interface OaepReplayPolicy { classification?: "pure" | "read_only_versioned" | "read_only_mutable" | "workspace_write" | "external_write" | "unknown"; tool_reference?: string; source_event_id?: string; input_digest?: string; implementation_digest?: string; schema_digest?: string; result_digest?: string; current?: Record<string, string>; }
+export interface OaepCommandExecutionContent extends OaepContentReferences { command: string[]; display_command: string; cwd: string; output: string; stdout_tail?: string; stderr_tail?: string; exit_code?: number | null; duration_ms?: number | null; replay_policy?: OaepReplayPolicy; }
+export interface OaepToolCallContent extends OaepContentReferences { tool_kind: string; tool_name: string; call_id: string; arguments: Record<string, unknown>; result: unknown; server?: string | null; duration_ms?: number | null; replay_policy?: OaepReplayPolicy; }
 export interface OaepFileChangeContent extends OaepContentReferences { changes: Array<Record<string, unknown>>; summary: string; }
 export interface OaepArtifactContent extends OaepContentReferences { artifact_id: string; artifact_type: string; name: string; summary: string; path?: string | null; mime_type?: string | null; size?: number | null; sha256?: string | null; previewable?: boolean; downloadable?: boolean; }
 export interface OaepInteractionContent extends OaepContentReferences { interaction_type: string; prompt: string; options: Array<Record<string, unknown>>; approval_id?: string | null; operation?: string; request_summary?: Record<string, unknown>; related_item_id?: string | null; response?: unknown; deadline_at?: string | null; }
@@ -36,8 +37,10 @@ export type OaepItem =
   | (OaepItemBase & { type: "interaction"; content: OaepInteractionContent })
   | (OaepItemBase & { type: "subtask"; content: OaepSubtaskContent })
   | (OaepItemBase & { type: "notice"; content: OaepNoticeContent });
-export interface OaepDelta { kind: string; text?: string; segment_id?: string; stream?: "stdout" | "stderr" | "combined"; }
+export interface OaepDelta { kind: string; text?: string; segment_id?: string; stream?: "stdout" | "stderr" | "combined"; reasoning_kind?: "summary" | "commentary" | "analysis"; visibility?: "user" | "diagnostic" | "hidden"; reasoning_source?: "backend" | "adapter" | "runtime"; }
 export interface OaepEventData { item?: OaepItem; delta?: OaepDelta; error?: OaepError; [key: string]: unknown; }
 export interface OaepEvent { version: typeof OAEP_VERSION; event_id: string; session_id: string; run_id?: string; item_id?: string; sequence: number; type: OaepEventType; timestamp: string; dedupe_key: string; source: OaepSource; data: OaepEventData; }
-export interface OaepSnapshot { version: typeof OAEP_VERSION; session: OaepSession; runs: OaepRun[]; items: OaepItem[]; snapshot_sequence: number; }
+export interface OaepSnapshotCheckpoint { sequence: number; snapshot_hash: string; item_count: number; }
+export interface OaepSnapshotWindow { limit: number; has_more: boolean; next_cursor: string | null; }
+export interface OaepSnapshot { version: typeof OAEP_VERSION; session: OaepSession; runs: OaepRun[]; items: OaepItem[]; snapshot_sequence: number; checkpoint?: OaepSnapshotCheckpoint; window?: OaepSnapshotWindow; }
 export interface OaepEventPage { version: typeof OAEP_VERSION; object: "list"; data: OaepEvent[]; next_sequence: number; has_more: boolean; }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { createServer as createTcpServer } from "node:net";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,6 +12,22 @@ const temp = mkdtempSync(join(tmpdir(), "opendrsai-runtime-health-"));
 const bundle = join(temp, "runtime-health-robustness.mjs");
 const home = join(temp, "home");
 mkdirSync(home, { recursive: true });
+
+const agentRunWorkspace = readFileSync(
+  resolve(desktop, "../shared/renderer/src/components/AgentRunWorkspace.tsx"),
+  "utf8",
+);
+const windowsMain = readFileSync(resolve(desktop, "src/main/index.ts"), "utf8");
+assert.ok(
+  !agentRunWorkspace.includes("getGatewayStatus()")
+    && !agentRunWorkspace.includes("setInterval(() => void refreshGateway"),
+  "AgentRunWorkspace must consume centralized health instead of starting one probe loop per mount",
+);
+assert.ok(
+  windowsMain.includes('item.status === "running"')
+    && windowsMain.includes("item.id !== activeThreadId"),
+  "Runtime catalog sync must exclude idle history and the active OAEP subscription",
+);
 
 const unauthorizedServer = createServer((request, response) => {
   if (request.url === "/health" || request.url === "/v1/models" || request.url === "/v1/runtime") {
@@ -25,6 +41,24 @@ const unauthorizedServer = createServer((request, response) => {
 const tcpOccupant = createTcpServer((socket) => {
   socket.on("error", () => undefined);
   socket.end("not an OpenDrSai Gateway\r\n");
+});
+let managedDelayMs = 700;
+const managedRequests = { health: 0, models: 0 };
+const managedServer = createServer((request, response) => {
+  const endpoint = request.url === "/health" ? "health" : request.url === "/v1/models" ? "models" : null;
+  if (!endpoint) {
+    response.writeHead(404, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: { code: "not_found" } }));
+    return;
+  }
+  managedRequests[endpoint] += 1;
+  setTimeout(() => {
+    if (response.destroyed) return;
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(endpoint === "health"
+      ? { status: "ok" }
+      : { object: "list", data: [{ id: "fixture-model" }] }));
+  }, managedDelayMs);
 });
 
 try {
@@ -63,7 +97,7 @@ try {
   assert.equal(status.portOpen, true, "Unauthorized Gateway should report the port as open");
   assert.equal(status.diagnosticCode, "gateway_unauthorized", "Gateway diagnostic code did not preserve unauthorized state");
   assert.equal(status.endpoints.health.state, "unauthorized", "Health endpoint state was not classified");
-  assert.equal(status.endpoints.models.state, "unauthorized", "Models endpoint state was not classified");
+  assert.equal(status.endpoints.models.state, "not_checked", "Liveness probe must not initialize the model catalog");
 
   const unavailableError = await captureError(() => runtime.LocalRuntimeClient.connect());
   assert(
@@ -83,7 +117,7 @@ try {
   assert.equal(failureEvent.attributes?.runtimeUnavailable, true, "Runtime diagnostic did not mark unavailable state");
   assert.equal(failureEvent.attributes?.gatewayDiagnosticCode, "gateway_unauthorized", "Runtime diagnostic lost Gateway code");
   assert.equal(failureEvent.attributes?.gatewayHealthState, "unauthorized", "Runtime diagnostic lost /health state");
-  assert.equal(failureEvent.attributes?.gatewayModelsState, "unauthorized", "Runtime diagnostic lost /v1/models state");
+  assert.equal(failureEvent.attributes?.gatewayModelsState, "not_checked", "Runtime diagnostic must record deferred model discovery");
 
   const degraded = await runtime.listRuntimeWorktreeEvents({ workspacePath: temp, afterSequence: 9 });
   assert.deepEqual(degraded.events, [], "Degraded Worktree event poll must not fabricate events");
@@ -115,10 +149,45 @@ try {
     "Non-HTTP port occupant did not surface a structured unavailable error",
   );
 
+  await closeServer(tcpOccupant);
+  await new Promise((resolveListen) => managedServer.listen(0, "127.0.0.1", resolveListen));
+  const managedAddress = managedServer.address();
+  assert(managedAddress && typeof managedAddress === "object", "Managed fixture did not expose a TCP port");
+  Object.assign(process.env, {
+    DRSAI_HOME: home,
+    OPENDRSAI_GATEWAY_PORT: String(managedAddress.port),
+    OPENDRSAI_GATEWAY_INSTANCE_TOKEN: "fixture-runtime-token-0123456789abcdef",
+    OPENDRSAI_GATEWAY_PROBE_TIMEOUT_MS: "500",
+    OPENDRSAI_GATEWAY_PROBE_CACHE_MS: "1",
+    DRSAI_GATEWAY_DEV_MANAGED: "1",
+  });
+  const managedRuntime = await import(`${pathToFileURL(bundle).href}?case=managed-busy`);
+  const busyStatus = await managedRuntime.getGatewayStatus();
+  assert.equal(busyStatus.ready, false, "Slow managed Gateway unexpectedly reported ready");
+  assert.equal(busyStatus.managed, true, "Slow managed Gateway lost its ownership state");
+  assert.equal(busyStatus.externalConflict, false, "Slow managed Gateway was misclassified as an external conflict");
+  assert.equal(busyStatus.diagnosticCode, "gateway_probe_timeout", "Slow managed Gateway did not preserve timeout diagnostics");
+  assert.match(busyStatus.diagnosticMessage, /managed OpenDrSai Runtime is busy/i, "Managed timeout did not expose recovery guidance");
+
+  setTimeout(() => { managedDelayMs = 0; }, 100);
+  const recoveredClient = await managedRuntime.LocalRuntimeClient.connect();
+  assert(recoveredClient, "A managed Runtime did not recover within the same connect call after a transient timeout");
+
+  managedRequests.health = 0;
+  managedRequests.models = 0;
+  await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+  const clients = await Promise.all(Array.from({ length: 20 }, () => managedRuntime.LocalRuntimeClient.connect()));
+  assert.equal(clients.length, 20, "Concurrent managed Runtime connections did not recover");
+  assert(
+    managedRequests.health <= 2 && managedRequests.models === 0,
+    `Concurrent connections did not share Gateway probes: ${JSON.stringify(managedRequests)}`,
+  );
+
   console.log("Runtime health robustness verification passed.");
 } finally {
   await closeServer(unauthorizedServer);
   await closeServer(tcpOccupant);
+  await closeServer(managedServer);
   rmSync(temp, { recursive: true, force: true });
 }
 

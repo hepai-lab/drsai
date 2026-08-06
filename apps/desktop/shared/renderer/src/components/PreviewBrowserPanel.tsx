@@ -23,7 +23,9 @@ import {
 } from "lucide-react";
 import { type CSSProperties, FormEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import { desktopApi } from "../desktopApi";
+import { userFacingFailureMessage } from "../userFacingLanguage";
 import { BrowserPanelErrorBoundary } from "./previewBrowser/BrowserPanelErrorBoundary";
+import { requestAppDecision } from "./AppDecisionDialog";
 import { LINK_NAVIGATION_MESSAGE, LINK_NAVIGATION_SCRIPT, PICK_ELEMENT_SCRIPT, READ_TEXT_SCRIPT, SNAPSHOT_SCRIPT, createActionScript } from "./previewBrowser/scripts";
 import { DEFAULT_URL, MAX_HISTORY, STORAGE_KEY, createTab, loadState, normalizeUrlInput } from "./previewBrowser/state";
 import type { BrowserTaskEvent } from "@shared/desktopApi";
@@ -138,7 +140,7 @@ function PreviewBrowserPanelContent({
     try {
       action(getReadyActiveWebview());
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(userFacingFailureMessage(error, language, "connection"));
     }
   }
 
@@ -181,7 +183,7 @@ function PreviewBrowserPanelContent({
 
   function installLinkNavigationRouter(tabId: string, node: OpenDrSaiWebviewTag): void {
     node.executeJavaScript(LINK_NAVIGATION_SCRIPT, false).catch((error: unknown) => {
-      const message = `Link navigation bridge failed: ${error instanceof Error ? error.message : String(error)}`;
+      const message = userFacingFailureMessage(error, language, "connection");
       setNetworkEvents((current) => [message, ...current].slice(0, 30));
       if (tabId === activeTabIdRef.current) setStatus(message);
     });
@@ -229,7 +231,7 @@ function PreviewBrowserPanelContent({
       );
       setStatus(`Zoom ${percent}%`);
     } catch (error) {
-      setStatus(`Zoom failed: ${error instanceof Error ? error.message : String(error)}`);
+      setStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -311,7 +313,7 @@ function PreviewBrowserPanelContent({
         void openInNewTab(payload.url);
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(userFacingFailureMessage(error, language, "operation"));
     }
     return true;
   }
@@ -605,7 +607,7 @@ function PreviewBrowserPanelContent({
       setAttachedCount((count) => count + 1);
       setStatus("Browser context added to the next message.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -623,7 +625,7 @@ function PreviewBrowserPanelContent({
           : "Read-only check complete: no visible text.",
       );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -636,7 +638,7 @@ function PreviewBrowserPanelContent({
         setStatus(`Selected: ${selector}`);
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -653,7 +655,8 @@ function PreviewBrowserPanelContent({
     }
     const needsApproval = mode === "click" || mode === "type" || mode === "select" || mode === "key_press";
     if (needsApproval) {
-      const ok = window.confirm(`Allow browser action: ${mode} ${selector || actionKey}?`);
+      const target = selector || actionKey;
+      const ok = await requestAppDecision({ id: "controlled-browser-action", title: isZh ? "允许网页操作？" : "Allow browser action?", description: isZh ? `动作：${browserActionLabel(mode, true)}；对象：${target}` : `Action: ${browserActionLabel(mode, false)}; target: ${target}`, impact: isZh ? "该操作会在当前网页执行一次，不会自动重复。" : "This action will run once on the current page and will not repeat automatically.", confirmLabel: isZh ? "允许执行一次" : "Allow once" });
       if (!ok) {
         setStatus("Controlled action cancelled.");
         return;
@@ -678,7 +681,7 @@ function PreviewBrowserPanelContent({
       setStatus(message);
       refreshNavigationState();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -701,7 +704,7 @@ function PreviewBrowserPanelContent({
       setTaskResult(null);
       setStatus(`browser-use task queued: ${result.taskId}`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -719,7 +722,7 @@ function PreviewBrowserPanelContent({
         setStatus(approved ? "browser-use action approved." : "browser-use action rejected.");
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -731,7 +734,7 @@ function PreviewBrowserPanelContent({
         setStatus("Stopping browser-use task...");
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -973,6 +976,14 @@ function PreviewBrowserPanelContent({
       </div>
     </aside>
   );
+}
+
+function browserActionLabel(mode: BrowserActionMode, zh: boolean): string {
+  const labels: Record<BrowserActionMode, [string, string]> = {
+    click: ["点击", "Click"], type: ["输入文字", "Type text"], select: ["选择选项", "Select option"],
+    key_press: ["按键", "Press key"], assert_text: ["检查文字", "Check text"], wait_for: ["等待页面内容", "Wait for page content"],
+  };
+  return labels[mode]?.[zh ? 0 : 1] ?? (zh ? "网页操作" : "Browser action");
 }
 
 function formatBrowserTaskEvent(event: BrowserTaskEvent): string {

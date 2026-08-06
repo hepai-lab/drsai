@@ -33,27 +33,6 @@ export interface PlatformAgentMutationResult {
   message: string;
 }
 
-export async function setPlatformDefaultAgent(
-  options: PlatformAgentClientOptions,
-  platformId: string,
-): Promise<PlatformAgentMutationResult> {
-  return mutatePlatformAgent(options, "/api/native/v1/agents/default", {
-    method: "PUT",
-    body: JSON.stringify({ agent_id: platformId }),
-  });
-}
-
-export async function recordPlatformAgentUsage(
-  options: PlatformAgentClientOptions,
-  platformId: string,
-): Promise<PlatformAgentMutationResult> {
-  return mutatePlatformAgent(
-    options,
-    `/api/native/v1/agents/${encodeURIComponent(platformId)}/usage`,
-    { method: "POST" },
-  );
-}
-
 export async function stopPlatformAgentThread(
   options: PlatformAgentClientOptions,
   platformId: string,
@@ -136,30 +115,12 @@ export async function fetchPlatformAgents(
     dataRecord.version,
   );
   let capabilities = normalizeCapabilities(record.capabilities ?? dataRecord.capabilities);
-  if (options.catalogBaseUrl) {
-    try {
-      const nativeResponse = await requestNativeMetadata(fetchImpl, options, accessToken);
-      if (nativeResponse.ok) {
-        const nativeBody = readRecord(await nativeResponse.json());
-        const nativeData = readRecord(nativeBody.data);
-        apiVersion = firstString(
-          nativeResponse.headers.get("x-opendrsai-api-version"),
-          nativeBody.api_version,
-          nativeBody.version,
-          nativeData.api_version,
-          nativeData.version,
-          apiVersion,
-        );
-        capabilities = normalizeCapabilities(
-          nativeBody.capabilities ?? nativeData.capabilities ?? capabilities,
-        );
-      }
-    } catch {
-      // Agent discovery remains usable when optional Native API metadata fails.
-    }
-  }
+  // The authoritative HAI /apiv2 catalog already carries version and
+  // capability metadata. A second Portal Native request used to add up to six
+  // seconds to every Agent Square load and could overwrite the DDF catalog's
+  // actual capabilities, so it is intentionally not part of discovery.
   const normalized = extractAgentArray(body)
-    .map(normalizePlatformAgent)
+    .map((value) => normalizePlatformAgent(value, options))
     .filter((item): item is NonNullable<ReturnType<typeof normalizePlatformAgent>> => item !== null);
   return {
     agents: normalized.map((item) => item.agent),
@@ -238,28 +199,6 @@ export async function respondDdfAgentInput(
   return { ok: false, message: messages[response.status] ?? `Agent input failed (HTTP ${response.status}).` };
 }
 
-async function requestNativeMetadata(
-  fetchImpl: typeof fetch,
-  options: PlatformAgentClientOptions,
-  accessToken: string,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
-  try {
-    return await fetchImpl(joinUrl(options.baseUrl, AGENTS_PATH), {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      redirect: "error",
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function requestAgents(
   fetchImpl: typeof fetch,
   options: PlatformAgentClientOptions,
@@ -307,7 +246,7 @@ function extractAgentArray(body: unknown): unknown[] {
   return [];
 }
 
-function normalizePlatformAgent(value: unknown): {
+function normalizePlatformAgent(value: unknown, options: PlatformAgentClientOptions): {
   agent: DesktopAgent;
   executionDescriptor: PlatformAgentExecutionDescriptor;
 } | null {
@@ -328,6 +267,7 @@ function normalizePlatformAgent(value: unknown): {
     agent.description ?? config.description,
     "Platform agent.",
   );
+  const capabilities = normalizeAgentCapabilities(agent.capabilities ?? config.capabilities) ?? [];
   return {
     agent: {
       id: publicId,
@@ -340,12 +280,12 @@ function normalizePlatformAgent(value: unknown): {
       available,
       featured: agent.featured === true,
       isDefault: agent.is_default === true || agent.isDefault === true,
-      capabilities: normalizeAgentCapabilities(agent.capabilities ?? config.capabilities),
+      capabilities,
       lastUsedAt: firstString(agent.last_used_at, agent.lastUsedAt) || undefined,
       catalogGroup: normalizeCatalogGroup(agent.catalog_group, agent.catalogGroup),
       model,
       models,
-      logo: firstString(agent.logo, agent.avatar) || undefined,
+      logo: normalizePlatformLogo(firstString(agent.logo, agent.avatar), options),
       examples: normalizeExamples(agent.examples ?? config.examples),
       error: available ? undefined : "This platform agent is currently unavailable.",
       ...(mode ? { mode } : {}),
@@ -357,6 +297,7 @@ function normalizePlatformAgent(value: unknown): {
       name,
       model,
       available,
+      capabilities,
     },
   };
 }
@@ -523,6 +464,28 @@ function normalizeAgentCapabilities(value: unknown): string[] | undefined {
 function normalizeCatalogGroup(...values: unknown[]): "official" | "mine" {
   const value = firstString(...values).toLowerCase();
   return value === "mine" || value === "user" || value === "owned" ? "mine" : "official";
+}
+
+function normalizePlatformLogo(
+  value: string,
+  options: PlatformAgentClientOptions,
+): string | undefined {
+  if (!value) return undefined;
+  try {
+    const base = new URL(options.catalogBaseUrl ?? options.baseUrl);
+    const resolved = new URL(value, base);
+    if (resolved.protocol !== "https:") return undefined;
+    const trustedHosts = [options.catalogBaseUrl, options.baseUrl]
+      .filter((candidate): candidate is string => Boolean(candidate))
+      .map((candidate) => new URL(candidate).hostname.toLowerCase());
+    const host = resolved.hostname.toLowerCase();
+    if (!trustedHosts.some((trusted) => host === trusted || host.endsWith(`.${trusted}`))) {
+      return undefined;
+    }
+    return resolved.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function readRecord(value: unknown): Record<string, unknown> {

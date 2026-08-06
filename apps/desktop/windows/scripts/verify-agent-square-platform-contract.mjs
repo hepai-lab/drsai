@@ -12,7 +12,7 @@ const fixture = JSON.parse(readFileSync(join(root, "tests/fixtures/platform-agen
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { fetchPlatformAgents, setPlatformDefaultAgent, recordPlatformAgentUsage, stopPlatformAgentThread, respondPlatformAgentInput, respondDdfAgentInput } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+const { fetchPlatformAgents, stopPlatformAgentThread, respondPlatformAgentInput, respondDdfAgentInput } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 
 function response(status, body = {}) {
   return new Response(JSON.stringify(body), {
@@ -62,6 +62,7 @@ function harness(responses, { refreshFails = false } = {}) {
   assert.equal(result.agents[0].available, true);
   assert.equal(result.executionDescriptors[0].platformId, "fixture-ddf-1");
   assert.equal(result.executionDescriptors[0].mode, "ddf");
+  assert.deepEqual(result.executionDescriptors[0].capabilities, ["chat", "streaming"]);
   assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents?refresh=false");
   assert.equal(test.calls[0].authorization, "Bearer access-token-1");
   const publicPayload = JSON.stringify(result);
@@ -105,24 +106,6 @@ function harness(responses, { refreshFails = false } = {}) {
   assert.deepEqual(result.agents[0].localizedDescription, { en: "English description", zh: "中文描述" });
   assert.equal(result.agents[0].description, "English description");
   assert.deepEqual(result.agents[1].localizedDescription, { en: "Object English", zh: "对象中文" });
-}
-
-{
-  const test = harness([response(401), response(200)]);
-  const result = await setPlatformDefaultAgent(test.options, "owned-agent");
-  assert.equal(result.ok, true);
-  assert.equal(test.refreshes, 1);
-  assert.equal(test.calls[0].method, "PUT");
-  assert.equal(test.calls[0].body, JSON.stringify({ agent_id: "owned-agent" }));
-  assert.equal(test.calls[1].authorization, "Bearer access-token-2");
-}
-
-{
-  const test = harness([response(200)]);
-  const result = await recordPlatformAgentUsage(test.options, "agent/with space");
-  assert.equal(result.ok, true);
-  assert.equal(test.calls[0].method, "POST");
-  assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents/agent%2Fwith%20space/usage");
 }
 
 {
@@ -176,19 +159,31 @@ function harness(responses, { refreshFails = false } = {}) {
         },
       }],
     }),
-    response(200, fixture),
   ]);
   test.options.catalogBaseUrl = "https://ai-dev.ihep.ac.cn/apiv2";
   test.options.refresh = true;
   const result = await fetchPlatformAgents(test.options);
   assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/apiv2/agents/list_agents?refresh=true");
-  assert.equal(test.calls[1].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents");
+  assert.equal(test.calls.length, 1, "HAI discovery must not wait for a second Portal Native metadata request");
   assert.deepEqual(result.agents.map((agent) => agent.id), ["platform:drsai_v3_test"]);
   assert.deepEqual(result.agents[0].examples, [
     { zh: "检查 BESIII 事例选择", en: "Review BESIII event selection" },
     { zh: "生成 BESIII 分析方案", en: "Create a BESIII analysis plan" },
   ]);
-  assert.deepEqual(result.status.capabilities, ["agents", "agent-details"]);
+  assert.deepEqual(result.status.capabilities, []);
+}
+
+{
+  const test = harness([response(200, {
+    agents: [
+      { id: "trusted-logo", name: "Trusted", availability: "available", capabilities: ["chat", "streaming"], logo: "/assets/agent.png" },
+      { id: "third-party-logo", name: "Third party", availability: "available", capabilities: ["chat", "streaming"], logo: "https://tracking.invalid/pixel.png" },
+    ],
+  })]);
+  test.options.catalogBaseUrl = "https://ai-dev.ihep.ac.cn/apiv2";
+  const result = await fetchPlatformAgents(test.options);
+  assert.equal(result.agents[0].logo, "https://ai-dev.ihep.ac.cn/assets/agent.png");
+  assert.equal(result.agents[1].logo, undefined, "untrusted third-party logo URLs must not reach the Renderer");
 }
 
 {
@@ -239,4 +234,4 @@ assert(agentsSource.includes("requireAuthContext()"), "platform catalog must use
 assert(authSource.includes("refreshAuthContextAfterUnauthorized"), "strict post-401 refresh entrypoint is missing");
 assert(!source.includes("console."), "platform client must not log tokens or request payloads");
 
-console.log("Agent square A1/A2/A3/E2 contract verification passed (OIDC primary path, one 401 retry, capability fallback, public DTO redaction, preference mutations).");
+console.log("Agent square platform contract verification passed (OIDC, one 401 retry, one-request HAI discovery, safe DTO and DDF input routing).");

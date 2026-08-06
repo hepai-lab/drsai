@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuthSession,
   DesktopA5ServiceGuidanceScenario,
@@ -51,6 +51,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [serviceBlocker, setServiceBlocker] = useState<DesktopBootstrapBlocker | null>(null);
   const [loginFailed, setLoginFailed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const refreshPromiseRef = useRef<Promise<void> | null>(null);
+  const bootstrapPromiseRef = useRef<Promise<boolean> | null>(null);
+  const initialLoadPromiseRef = useRef<Promise<void> | null>(null);
 
   function applyA5ServiceGuidanceScenario(scenario: DesktopA5ServiceGuidanceScenario): void {
     setSession(scenario.session);
@@ -66,37 +69,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     return true;
   }
 
-  async function refresh(): Promise<void> {
-    const next = await desktopApi.getAuthSession();
-    setSession(next);
-    if (next.authenticated) {
-      if (next.authMode === "offline") {
-        setServiceReady(true);
-        setServiceBlocker(null);
-        setMessage("Developer workspace unlocked.");
-        return;
+  function refresh(): Promise<void> {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    const operation = (async () => {
+      const next = await desktopApi.getAuthSession();
+      setSession(next);
+      if (next.authenticated) {
+        if (next.authMode === "offline") {
+          setServiceReady(true);
+          setServiceBlocker(null);
+          setMessage("Developer workspace unlocked.");
+          return;
+        }
+        void retryBootstrap();
       }
-      void retryBootstrap();
-    }
+    })();
+    refreshPromiseRef.current = operation;
+    const clear = (): void => {
+      if (refreshPromiseRef.current === operation) refreshPromiseRef.current = null;
+    };
+    void operation.then(clear, clear);
+    return operation;
   }
 
-  async function retryBootstrap(): Promise<boolean> {
+  function retryBootstrap(): Promise<boolean> {
+    if (bootstrapPromiseRef.current) return bootstrapPromiseRef.current;
     setServiceBusy(true);
-    try {
-      const bootstrap = await desktopApi.bootstrapDesktop();
-      setServiceReady(bootstrap.ready);
-      setServiceBlocker(bootstrap.ready ? null : bootstrap.blocker ?? classifyBootstrapBlocker(bootstrap.message));
-      setMessage(bootstrap.message);
-      return bootstrap.ready;
-    } catch (error) {
-      setServiceReady(false);
-      const nextMessage = error instanceof Error ? error.message : "OpenDrSai service preparation failed.";
-      setServiceBlocker(classifyBootstrapBlocker(nextMessage));
-      setMessage(nextMessage);
-      return false;
-    } finally {
+    const operation = (async () => {
+      try {
+        const bootstrap = await desktopApi.bootstrapDesktop();
+        setServiceReady(bootstrap.ready);
+        setServiceBlocker(bootstrap.ready ? null : bootstrap.blocker ?? classifyBootstrapBlocker(bootstrap.message));
+        setMessage(bootstrap.message);
+        return bootstrap.ready;
+      } catch (error) {
+        setServiceReady(false);
+        const nextMessage = error instanceof Error ? error.message : "OpenDrSai service preparation failed.";
+        setServiceBlocker(classifyBootstrapBlocker(nextMessage));
+        setMessage(nextMessage);
+        return false;
+      }
+    })();
+    bootstrapPromiseRef.current = operation;
+    const clear = (): void => {
+      if (bootstrapPromiseRef.current === operation) bootstrapPromiseRef.current = null;
       setServiceBusy(false);
-    }
+    };
+    void operation.then(clear, clear);
+    return operation;
+  }
+
+  function loadInitialSession(): Promise<void> {
+    if (initialLoadPromiseRef.current) return initialLoadPromiseRef.current;
+    const operation = (async () => {
+      const handled = await loadA5ServiceGuidanceScenario();
+      if (!handled) await refresh();
+    })().catch((error) => {
+      setMessage(error instanceof Error ? error.message : "Could not read sign-in state.");
+      setSession(anonymousSession);
+    });
+    const tracked = operation.finally(() => setLoading(false));
+    initialLoadPromiseRef.current = tracked;
+    return tracked;
   }
 
   useEffect(() => {
@@ -114,16 +148,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       });
       setMessage("Your HepAI session is no longer valid. Sign in again.");
     });
-    loadA5ServiceGuidanceScenario()
-      .then((handled) => {
-        if (handled) return undefined;
-        return refresh();
-      })
-      .catch((error) => {
-        setMessage(error instanceof Error ? error.message : "Could not read sign-in state.");
-        setSession(anonymousSession);
-      })
-      .finally(() => setLoading(false));
+    void loadInitialSession();
     return unsubscribe;
   }, []);
 
