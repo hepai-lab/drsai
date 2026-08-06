@@ -1,7 +1,9 @@
 ########################
 # Cursor IDE（个人配置，不提交）
 ########################
+.opendrsai/
 .cursor/
+.uv-cache-browser/
 
 ########################
 # 项目特定文件
@@ -325,3 +327,12 @@ device.png
 # captured schemas, or machine-specific proof files.
 .artifacts/
 approval-proof.txt
+
+# Raw device/UI captures are local validation output. Keep the curated JSON
+# acceptance ledgers and release manifests in docs, but do not accumulate
+# screenshots, accessibility dumps, or unfinished probe output in Git.
+docs/android/reports/evidence/**/*.png
+docs/android/reports/evidence/**/*.xml
+docs/android/reports/evidence/p9/pending/
+docs/desktop/evidence/**/*.png
+docs/desktop/evidence/**/accessibility-tree.json
