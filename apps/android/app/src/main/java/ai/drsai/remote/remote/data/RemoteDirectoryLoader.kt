@@ -19,6 +19,9 @@ data class RemoteDirectoryEntry(
     val workspaces: List<RemoteWorkspaceRef>,
     val workspaceProjectionCached: Boolean = false,
     val lastSyncedAt: Long? = null,
+    val cacheMetadata: RemoteCacheMetadata = RemoteCachePolicy.metadata(
+        RemoteCacheSource.NETWORK, lastSyncedAt, RemoteCachePolicy.WORKSPACE_TTL_MS, System.currentTimeMillis(),
+    ),
 )
 
 data class RemoteDirectoryResult(
@@ -50,7 +53,8 @@ interface RemoteDirectoryCache {
 class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirectoryCache {
     override suspend fun read(subject: String, organization: String): List<RemoteDirectoryEntry> {
         val dao = database.remoteDao()
-        return dao.runtimes(subject, organization).map { runtime ->
+        val now = System.currentTimeMillis()
+        return dao.runtimes(subject, organization).take(RemoteCachePolicy.MAX_HOSTS).map { runtime ->
             val workspaceEntities = dao.workspaces(subject, organization, runtime.runtimeId)
             RemoteDirectoryEntry(
                 runtime = DiscoveredRuntime(
@@ -67,7 +71,7 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
                         (0 until values.length()).map(values::getString).toSet()
                     }.getOrDefault(emptySet()),
                 ),
-                workspaces = workspaceEntities.map { workspace ->
+                workspaces = workspaceEntities.take(RemoteCachePolicy.MAX_WORKSPACES_PER_HOST).map { workspace ->
                     RemoteWorkspaceRef(
                         runtimeId = RuntimeId(workspace.runtimeId),
                         workspaceId = WorkspaceId(workspace.workspaceId),
@@ -80,6 +84,12 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
                 workspaceProjectionCached = true,
                 lastSyncedAt = workspaceEntities.maxOfOrNull { it.lastSyncedAt }
                     ?: runtime.lastSyncedAt,
+                cacheMetadata = RemoteCachePolicy.metadata(
+                    RemoteCacheSource.CACHE,
+                    workspaceEntities.maxOfOrNull { it.lastSyncedAt } ?: runtime.lastSyncedAt,
+                    RemoteCachePolicy.WORKSPACE_TTL_MS,
+                    now,
+                ),
             )
         }
     }
@@ -93,11 +103,12 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
         val dao = database.remoteDao()
         val existingRuntimes = dao.runtimes(subject, organization)
             .associateBy { it.runtimeId }
-        val authorized = runtimes.map { it.reference.runtimeId.value }.toSet()
+        val boundedRuntimes = runtimes.take(RemoteCachePolicy.MAX_HOSTS)
+        val authorized = boundedRuntimes.map { it.reference.runtimeId.value }.toSet()
         existingRuntimes.values
             .filterNot { it.runtimeId in authorized }
             .forEach { purgeRuntime(dao, subject, organization, it.runtimeId) }
-        dao.saveRuntimes(runtimes.map { runtime ->
+        dao.saveRuntimes(boundedRuntimes.map { runtime ->
             RemoteRuntimeEntity(
                 subject = subject,
                 organization = organization,
@@ -124,13 +135,14 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
         catalogRevision: String?,
     ) = database.withTransaction {
         val dao = database.remoteDao()
-        val activeIds = workspaces.map { it.workspaceId.value }.toSet()
+        val boundedWorkspaces = workspaces.take(RemoteCachePolicy.MAX_WORKSPACES_PER_HOST)
+        val activeIds = boundedWorkspaces.map { it.workspaceId.value }.toSet()
         dao.allWorkspaces(subject, organization, runtimeId.value)
             .filterNot { it.workspaceId in activeIds }
             .forEach {
                 purgeWorkspace(dao, subject, organization, runtimeId.value, it.workspaceId)
             }
-        dao.saveWorkspaces(workspaces.map { workspace ->
+        dao.saveWorkspaces(boundedWorkspaces.map { workspace ->
             RemoteWorkspaceEntity(
                 subject = subject,
                 organization = organization,
@@ -176,6 +188,9 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
         organization: String,
         runtimeId: String,
     ) {
+        dao.clearRuntimeOaepEvents(subject, organization, runtimeId)
+        dao.clearRuntimeOaepItems(subject, organization, runtimeId)
+        dao.clearRuntimeOaepRuns(subject, organization, runtimeId)
         dao.clearRuntimeConversationItems(subject, organization, runtimeId)
         dao.clearRuntimeSessionEvents(subject, organization, runtimeId)
         dao.clearRuntimeEvents(subject, organization, runtimeId)
@@ -201,6 +216,9 @@ class RoomRemoteDirectoryCache(private val database: ChatDatabase) : RemoteDirec
         runtimeId: String,
         workspaceId: String,
     ) {
+        dao.clearWorkspaceOaepEvents(subject, organization, runtimeId, workspaceId)
+        dao.clearWorkspaceOaepItems(subject, organization, runtimeId, workspaceId)
+        dao.clearWorkspaceOaepRuns(subject, organization, runtimeId, workspaceId)
         dao.clearWorkspaceConversationItems(subject, organization, runtimeId, workspaceId)
         dao.clearWorkspaceSessionEvents(subject, organization, runtimeId, workspaceId)
         dao.clearWorkspaceEvents(subject, organization, runtimeId, workspaceId)
@@ -361,13 +379,18 @@ class RemoteDirectoryLoader(
         for (runtime in runtimes) {
             val runtimeId = runtime.reference.runtimeId
             val previous = cachedByRuntime[runtimeId]
-            if (runtime.state == RemoteConnectionState.OFFLINE) {
+            if (runtime.state == RemoteConnectionState.OFFLINE || runtime.state == RemoteConnectionState.PAUSED) {
                 stale = stale || previous != null
                 entries += RemoteDirectoryEntry(
                     runtime,
                     previous?.workspaces.orEmpty(),
                     workspaceProjectionCached = true,
                     lastSyncedAt = previous?.lastSyncedAt,
+                    cacheMetadata = RemoteCachePolicy.metadata(
+                        RemoteCacheSource.CACHE, previous?.lastSyncedAt,
+                        RemoteCachePolicy.WORKSPACE_TTL_MS, now,
+                        if (runtime.state == RemoteConnectionState.PAUSED) "runtime_paused" else "runtime_offline",
+                    ),
                 )
                 continue
             }
@@ -381,6 +404,9 @@ class RemoteDirectoryLoader(
                     workspaces,
                     workspaceProjectionCached = false,
                     lastSyncedAt = now,
+                    cacheMetadata = RemoteCachePolicy.metadata(
+                        RemoteCacheSource.NETWORK, now, RemoteCachePolicy.WORKSPACE_TTL_MS, now,
+                    ),
                 )
             } catch (failure: RelayHttpException) {
                 if (failure.status == 403) {
@@ -394,6 +420,10 @@ class RemoteDirectoryLoader(
                         previous?.workspaces.orEmpty(),
                         workspaceProjectionCached = true,
                         lastSyncedAt = previous?.lastSyncedAt,
+                        cacheMetadata = RemoteCachePolicy.metadata(
+                            RemoteCacheSource.CACHE, previous?.lastSyncedAt,
+                            RemoteCachePolicy.WORKSPACE_TTL_MS, now, "catalog_unavailable",
+                        ),
                     )
                 }
             } catch (_: java.io.IOException) {
@@ -404,6 +434,10 @@ class RemoteDirectoryLoader(
                     previous?.workspaces.orEmpty(),
                     workspaceProjectionCached = true,
                     lastSyncedAt = previous?.lastSyncedAt,
+                    cacheMetadata = RemoteCachePolicy.metadata(
+                        RemoteCacheSource.CACHE, previous?.lastSyncedAt,
+                        RemoteCachePolicy.WORKSPACE_TTL_MS, now, "network_unavailable",
+                    ),
                 )
             }
         }

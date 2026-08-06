@@ -6,6 +6,7 @@ import ai.drsai.remote.remote.data.RelayDiscoveryService
 import ai.drsai.remote.remote.data.RemoteDirectoryLoader
 import ai.drsai.remote.remote.data.RemoteDirectoryCache
 import ai.drsai.remote.remote.data.RemoteDirectoryEntry
+import ai.drsai.remote.remote.data.RemoteCacheSource
 import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.WorkspaceRecencyKey
 import ai.drsai.remote.remote.data.WorkspaceRecencyStore
@@ -133,6 +134,8 @@ class RemoteDirectoryLoaderTest {
         assertTrue(result.entries.single().workspaceProjectionCached)
         assertEquals(listOf(workspace), result.entries.single().workspaces)
         assertEquals(123L, result.entries.single().lastSyncedAt)
+        assertEquals(RemoteCacheSource.CACHE, result.entries.single().cacheMetadata.source)
+        assertEquals("runtime_offline", result.entries.single().cacheMetadata.staleReason)
     }
 
     @Test

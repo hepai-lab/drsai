@@ -1,12 +1,9 @@
 package ai.drsai.remote.runtime.python
 
-import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import net.i2p.crypto.eddsa.EdDSAEngine
-import net.i2p.crypto.eddsa.EdDSAPublicKey
-import net.i2p.crypto.eddsa.spec.EdDSANamedCurveTable
-import net.i2p.crypto.eddsa.spec.EdDSAPublicKeySpec
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -22,20 +19,20 @@ data class RuntimePolicyDiagnostic(
 )
 
 class Ed25519RuntimePolicySignatureVerifier(publicKeyHex: String) : RuntimePolicySignatureVerifier {
-    private val key: EdDSAPublicKey
+    private val key: Ed25519PublicKeyParameters
 
     init {
         val bytes = publicKeyHex.hexPolicyBytes()
         require(bytes.size == 32) { "runtime_policy_public_key_invalid" }
-        val curve = EdDSANamedCurveTable.getByName("Ed25519")
-        key = EdDSAPublicKey(EdDSAPublicKeySpec(bytes, curve))
+        key = Ed25519PublicKeyParameters(bytes, 0)
     }
 
     override fun verify(canonicalPayload: ByteArray, signature: ByteArray): Boolean = runCatching {
-        val engine = EdDSAEngine(MessageDigest.getInstance("SHA-512"))
-        engine.initVerify(key)
-        engine.update(canonicalPayload)
-        engine.verify(signature)
+        Ed25519Signer().run {
+            init(false, key)
+            update(canonicalPayload, 0, canonicalPayload.size)
+            verifySignature(signature)
+        }
     }.getOrDefault(false)
 }
 
@@ -64,7 +61,7 @@ class RuntimeRolloutPolicyClient(
                 ).also(store::recordPolicyDiagnostic)
             }
         }.getOrElse { error ->
-            store.clearPolicy()
+            store.failSafePolicy()
             RuntimePolicyDiagnostic(
                 "fail_safe", null, null, error.message ?: "runtime_policy_unknown", nowEpochSeconds(),
             ).also(store::recordPolicyDiagnostic)

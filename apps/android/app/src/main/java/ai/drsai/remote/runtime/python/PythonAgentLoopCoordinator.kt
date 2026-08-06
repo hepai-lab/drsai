@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -16,7 +19,25 @@ private data class ModelHostOutcome(
     val deltas: List<String>,
     val finishReason: String?,
     val toolCalls: JSONArray,
+    val reasoningSummaries: List<String>,
+    val errorCode: String? = null,
 )
+
+enum class PythonSideEffectFaultPoint {
+    TOOL_INTENT_PERSISTED,
+    TOOL_EXECUTION_MARKED,
+    TOOL_HANDLER_RETURNED,
+    TOOL_RECEIPT_PERSISTED,
+    ARTIFACT_INTENT_PERSISTED,
+    ARTIFACT_EXECUTION_MARKED,
+    ARTIFACT_HANDLER_RETURNED,
+    ARTIFACT_RECEIPT_PERSISTED,
+    APPROVAL_DECISION_PERSISTED,
+}
+
+fun interface PythonSideEffectFaultInjector {
+    fun hit(point: PythonSideEffectFaultPoint, operationId: String)
+}
 
 /** Drives Python Core requests through Android-owned host adapters. */
 class PythonAgentLoopCoordinator(
@@ -25,6 +46,7 @@ class PythonAgentLoopCoordinator(
     private val maxHostSteps: Int = 64,
     private val metrics: PythonRuntimeMetrics = NoOpPythonRuntimeMetrics,
     private val onSideEffectEvidence: () -> Unit = {},
+    private val faultInjector: PythonSideEffectFaultInjector = PythonSideEffectFaultInjector { _, _ -> },
 ) {
     init { require(maxHostSteps > 0) { "max_host_steps_invalid" } }
 
@@ -36,15 +58,52 @@ class PythonAgentLoopCoordinator(
         var inboundSequence = start.sequence
         var hostSteps = 0
         val auditedOperations = linkedMapOf<String, String>()
-        val lifecycleState = ports.lifecycle.current()
-        val maxSubagentParallel = if (lifecycleState == PythonRuntimeLifecycleState.FOREGROUND) 2 else 1
+        var lifecycleState = ports.lifecycle.current()
+        fun maxSubagentParallel() = if (lifecycleState == PythonRuntimeLifecycleState.FOREGROUND) 2 else 1
+        val checkpointMutex = Mutex()
+
+        fun mergeHostState(target: JSONObject, source: JSONObject): JSONObject {
+            source.keys().forEach { key ->
+                if (!key.startsWith("_host_")) return@forEach
+                val incoming = source.optJSONObject(key)
+                val current = target.optJSONObject(key)
+                if (incoming != null && current != null) {
+                    incoming.keys().forEach { nested -> current.put(nested, incoming.get(nested)) }
+                } else {
+                    target.put(key, source.get(key))
+                }
+            }
+            return target
+        }
+
+        suspend fun persistHostState(sequence: Long, patch: JSONObject) = checkpointMutex.withLock {
+            val saved = ports.stateStore.loadCheckpoint(start.runId)
+            val state = saved?.state?.let { JSONObject(it.toString()) } ?: JSONObject()
+            ports.stateStore.saveCheckpoint(HostCheckpoint(
+                start.runId, maxOf(saved?.sequence ?: 0, sequence), mergeHostState(state, patch),
+            ))
+        }
+
+        suspend fun persistCoreState(sequence: Long, coreState: JSONObject) = checkpointMutex.withLock {
+            val saved = ports.stateStore.loadCheckpoint(start.runId)
+            val state = JSONObject(coreState.toString())
+            saved?.state?.let { mergeHostState(state, it) }
+            ports.stateStore.saveCheckpoint(HostCheckpoint(start.runId, sequence, state))
+        }
 
         suspend fun send(command: PythonRuntimeEnvelope) {
-            hostSteps += 1
-            check(hostSteps <= maxHostSteps) { "python_runtime_host_step_limit" }
+            // Streaming text/reasoning chunks are transport fragments, not agent
+            // turns. Counting each token-sized chunk made ordinary long answers
+            // exhaust the host-step budget before MODEL_COMPLETED arrived.
+            if (command.messageType != PythonRuntimeMessageType.MODEL_CHUNK) {
+                hostSteps += 1
+                check(hostSteps <= maxHostSteps) { "python_runtime_host_step_limit" }
+            }
             val result = bridge.execute(command)
             check(result.decision == MailboxDecision.ACCEPTED) { "python_runtime_bridge_${result.code}" }
-            check(result.status == "python_runtime_ready") { "python_runtime_unavailable" }
+            check(result.status == "python_runtime_ready") {
+                "python_runtime_unavailable:${command.messageType.wireName}:${result.status ?: "missing_status"}:${result.error ?: result.code}"
+            }
             result.outbound.forEach(queue::addLast)
         }
 
@@ -76,21 +135,44 @@ class PythonAgentLoopCoordinator(
                 modelId = payload.getString("model_id"),
                 messages = payload.getJSONArray("messages"),
                 tools = payload.optJSONArray("tools") ?: JSONArray(),
+                toolChoice = payload.optJSONObject("tool_choice") ?: JSONObject()
+                    .put("policy_version", "p9-tool-choice-v1")
+                    .put("mode", "auto"),
+                modelRouteSnapshot = payload.optJSONObject("model_route_snapshot"),
             )
             val deltas = mutableListOf<String>()
             var finishReason: String? = null
             var toolCalls = JSONArray()
-            ports.model.stream(request).collect { chunk ->
-                if (chunk.delta.isNotEmpty()) deltas += chunk.delta
-                if (chunk.finishReason != null) finishReason = chunk.finishReason
-                if (chunk.toolCalls.length() > 0) toolCalls = chunk.toolCalls
+            val reasoningSummaries = mutableListOf<String>()
+            var errorCode: String? = null
+            try {
+                ports.model.stream(request).collect { chunk ->
+                    if (chunk.delta.isNotEmpty()) deltas += chunk.delta
+                    if (chunk.finishReason != null) finishReason = chunk.finishReason
+                    if (chunk.toolCalls.length() > 0) toolCalls = chunk.toolCalls
+                    if (chunk.reasoningSummary.isNotEmpty()) reasoningSummaries += chunk.reasoningSummary
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                val name = error::class.simpleName.orEmpty().lowercase()
+                errorCode = if ("timeout" in name) "model_timeout" else "model_host_failed"
             }
             return ModelHostOutcome(
-                payload.optString("subagent_id").ifBlank { null }, deltas, finishReason, toolCalls,
+                payload.optString("subagent_id").ifBlank { null }, deltas, finishReason, toolCalls, reasoningSummaries, errorCode,
             )
         }
 
         suspend fun deliverModel(outcome: ModelHostOutcome) {
+            if (outcome.errorCode != null) {
+                send(response(
+                    PythonRuntimeMessageType.MODEL_FAILED,
+                    JSONObject().put("code", outcome.errorCode).put("retryable", outcome.errorCode == "model_timeout")
+                        .apply { if (outcome.subagentId != null) put("subagent_id", outcome.subagentId) },
+                    "model_failed",
+                ))
+                return
+            }
             outcome.deltas.forEach { delta ->
                 send(
                     response(
@@ -102,6 +184,13 @@ class PythonAgentLoopCoordinator(
                     )
                 )
             }
+            outcome.reasoningSummaries.forEach { summary ->
+                send(response(
+                    PythonRuntimeMessageType.MODEL_CHUNK,
+                    JSONObject().put("reasoning_summary", summary),
+                    "reasoning_summary",
+                ))
+            }
             send(
                 response(
                     PythonRuntimeMessageType.MODEL_COMPLETED,
@@ -109,6 +198,7 @@ class PythonAgentLoopCoordinator(
                         .put("content", outcome.deltas.joinToString(""))
                         .put("finish_reason", outcome.finishReason)
                         .put("tool_calls", outcome.toolCalls)
+                        .put("reasoning_summary", outcome.reasoningSummaries.joinToString(""))
                         .apply { if (outcome.subagentId != null) put("subagent_id", outcome.subagentId) },
                     "model_completed",
                 )
@@ -117,7 +207,8 @@ class PythonAgentLoopCoordinator(
 
         start.payload.put("lifecycle_state", lifecycleState.name.lowercase())
             .put("subagent_max_active", 3)
-            .put("subagent_max_parallel", maxSubagentParallel)
+            .put("subagent_max_parallel", maxSubagentParallel())
+        try {
         send(start)
         while (queue.isNotEmpty()) {
             val outbound = queue.removeFirst()
@@ -133,9 +224,20 @@ class PythonAgentLoopCoordinator(
                 }
                 PythonRuntimeMessageType.MODEL_REQUEST -> {
                     if (outbound.payload.optString("subagent_id").isNotBlank()) {
+                        val currentLifecycle = ports.lifecycle.current()
+                        if (currentLifecycle != lifecycleState) {
+                            lifecycleState = currentLifecycle
+                            send(response(
+                                PythonRuntimeMessageType.LIFECYCLE_CHANGED,
+                                JSONObject().put("state", lifecycleState.name.lowercase()),
+                                "lifecycle_changed:${lifecycleState.name.lowercase()}",
+                            ))
+                        }
+                        val parallelLimit = maxSubagentParallel()
                         val batch = mutableListOf(outbound)
                         while (queue.firstOrNull()?.messageType == PythonRuntimeMessageType.MODEL_REQUEST &&
-                            batch.size < maxSubagentParallel
+                            queue.firstOrNull()?.payload?.optString("subagent_id")?.isNotBlank() == true &&
+                            batch.size < parallelLimit
                         ) batch += queue.removeFirst()
                         coroutineScope { batch.map { request -> async { collectModel(request) } }.awaitAll() }
                             .forEach { deliverModel(it) }
@@ -145,12 +247,26 @@ class PythonAgentLoopCoordinator(
                     val payload = outbound.payload
                     val saved = ports.stateStore.loadCheckpoint(start.runId)
                     val approvedCalls = saved?.state?.optJSONObject("_host_approved_calls") ?: JSONObject()
+                    val retryPolicy = payload.optJSONObject("retry_policy") ?: JSONObject()
+                    val reportedRisk = payload.optString("risk", "sensitive")
+                    val authoritativeRisk = ports.tools.authoritativeRisk(payload.getString("name"))
+                    require(authoritativeRisk == null || authoritativeRisk == reportedRisk) { "tool_risk_registry_drift" }
+                    val risk = authoritativeRisk ?: reportedRisk
+                    val maxAttempts = retryPolicy.optInt("max_attempts", 1)
+                    require(maxAttempts in 1..2) { "tool_retry_attempts_invalid" }
+                    require(maxAttempts == 1 || risk == "read_only") { "tool_side_effect_retry_forbidden" }
+                    val retryableCodes = retryPolicy.optJSONArray("retryable_error_codes")
+                        ?.let { array -> (0 until array.length()).map(array::getString).toSet() }
+                        ?: emptySet()
                     val call = HostToolCall(
                         callId = payload.getString("call_id"),
                         name = payload.getString("name"),
                         arguments = payload.getJSONObject("arguments"),
                         idempotencyKey = outbound.idempotencyKey,
                         approved = approvedCalls.optBoolean(payload.getString("call_id"), false),
+                        risk = risk,
+                        maxAttempts = maxAttempts,
+                        retryableErrorCodes = retryableCodes,
                     )
                     val receipts = saved?.state?.optJSONObject("_host_tool_results") ?: JSONObject()
                     val intents = saved?.state?.optJSONObject("_host_tool_intents") ?: JSONObject()
@@ -163,13 +279,7 @@ class PythonAgentLoopCoordinator(
                     val result = durableReceipt?.toHostToolResult()
                         ?: if (existingIntent?.optString("status") == "executing") {
                             intents.put(call.callId, existingIntent.put("status", "needs_reconciliation"))
-                            ports.stateStore.saveCheckpoint(
-                                HostCheckpoint(
-                                    start.runId,
-                                    maxOf(saved?.sequence ?: 0, outbound.sequence),
-                                    JSONObject().put("_host_tool_intents", intents),
-                                )
-                            )
+                            persistHostState(outbound.sequence, JSONObject().put("_host_tool_intents", intents))
                             audit(call.callId, "tool", "reconciliation", "needs_reconciliation")
                             error("python_tool_needs_reconciliation:${call.callId}")
                         } else {
@@ -180,31 +290,46 @@ class PythonAgentLoopCoordinator(
                                     .put("call_id", call.callId)
                                     .put("idempotency_key", call.idempotencyKey)
                                     .put("name", call.name)
-                                    .put("status", "executing"),
+                                    .put("status", "prepared"),
                             )
-                            ports.stateStore.saveCheckpoint(
-                                HostCheckpoint(
-                                    start.runId,
-                                    maxOf(saved?.sequence ?: 0, outbound.sequence),
-                                    JSONObject().put("_host_tool_intents", intents),
-                                )
+                            persistHostState(outbound.sequence, JSONObject().put("_host_tool_intents", intents))
+                            faultInjector.hit(PythonSideEffectFaultPoint.TOOL_INTENT_PERSISTED, call.callId)
+                            intents.put(call.callId, intents.getJSONObject(call.callId).put("status", "executing"))
+                            persistHostState(outbound.sequence, JSONObject().put("_host_tool_intents", intents))
+                            faultInjector.hit(PythonSideEffectFaultPoint.TOOL_EXECUTION_MARKED, call.callId)
+                            var attempt = 0
+                            var executed: HostToolResult
+                            do {
+                                attempt += 1
+                                audit(call.callId, "tool", "execution", "attempt:$attempt")
+                                executed = ports.tools.execute(call)
+                            } while (
+                                !executed.succeeded &&
+                                attempt < call.maxAttempts &&
+                                executed.errorCode?.lowercase() in call.retryableErrorCodes
                             )
-                            audit(call.callId, "tool", "execution", "started")
-                            ports.tools.execute(call).also { executed ->
+                            faultInjector.hit(PythonSideEffectFaultPoint.TOOL_HANDLER_RETURNED, call.callId)
                             receipts.put(call.callId, executed.toJson())
                             intents.put(call.callId, intents.getJSONObject(call.callId).put("status", "receipt_persisted"))
-                            ports.stateStore.saveCheckpoint(
-                                HostCheckpoint(
-                                    start.runId,
-                                    maxOf(saved?.sequence ?: 0, outbound.sequence),
-                                    JSONObject()
-                                        .put("_host_tool_intents", intents)
-                                        .put("_host_tool_results", receipts),
-                                )
-                            )
+                            persistHostState(outbound.sequence, JSONObject()
+                                .put("_host_tool_intents", intents)
+                                .put("_host_tool_results", receipts))
+                            faultInjector.hit(PythonSideEffectFaultPoint.TOOL_RECEIPT_PERSISTED, call.callId)
                             audit(call.callId, "tool", "receipt", if (executed.succeeded) "succeeded" else "failed")
+                            executed
                         }
-                        }
+                    val artifactRefs = JSONArray()
+                    result.artifactIds.distinct().forEach { artifactId ->
+                        val descriptor = ports.artifacts.describe(artifactId)
+                        require(descriptor.artifactId == artifactId) { "tool_artifact_identity_mismatch" }
+                        require(descriptor.size >= 0L) { "tool_artifact_size_invalid" }
+                        require(descriptor.sha256.matches(Regex("^[a-fA-F0-9]{64}$"))) { "tool_artifact_digest_invalid" }
+                        artifactRefs.put(JSONObject()
+                            .put("artifact_id", descriptor.artifactId)
+                            .put("mime_type", descriptor.mimeType)
+                            .put("size", descriptor.size)
+                            .put("sha256", descriptor.sha256.lowercase()))
+                    }
                     send(
                         response(
                             PythonRuntimeMessageType.TOOL_RESULT,
@@ -213,52 +338,67 @@ class PythonAgentLoopCoordinator(
                                 .put("succeeded", result.succeeded)
                                 .put("content", result.content)
                                 .put("error_code", result.errorCode)
-                                .put("artifact_ids", JSONArray(result.artifactIds)),
+                                .put("artifact_ids", JSONArray(result.artifactIds))
+                                .put("artifacts", artifactRefs),
                             "tool_result:${result.callId}",
                         )
                     )
                 }
                 PythonRuntimeMessageType.APPROVAL_REQUEST -> {
                     val payload = outbound.payload
-                    val decision = ports.approval.request(
+                    val approvalId = payload.getString("approval_id")
+                    val callId = payload.getString("call_id")
+                    val saved = ports.stateStore.loadCheckpoint(start.runId)
+                    val durableDecisions = saved?.state?.optJSONObject("_host_approval_results") ?: JSONObject()
+                    val existingDecision = durableDecisions.optJSONObject(approvalId)
+                    require(existingDecision == null || existingDecision.getString("call_id") == callId) {
+                        "approval_replay_binding_mismatch"
+                    }
+                    val decision = existingDecision?.let {
+                        HostApprovalDecision(approvalId, it.getString("decision"))
+                    } ?: ports.approval.request(
                         HostApprovalRequest(
-                            approvalId = payload.getString("approval_id"),
-                            callId = payload.getString("call_id"),
+                            approvalId = approvalId,
+                            callId = callId,
                             risk = payload.getString("risk"),
                             title = payload.getString("title"),
                             summary = payload.getString("summary"),
                             name = payload.getString("name"),
                             arguments = payload.getJSONObject("arguments"),
                         )
-                    )
-                    audit(payload.getString("approval_id"), "approval", "approval", decision.decision)
+                    ).also { completed ->
+                        require(completed.approvalId == approvalId) { "approval_result_identity_mismatch" }
+                        require(completed.decision in setOf("approved", "rejected")) { "approval_decision_invalid" }
+                        durableDecisions.put(approvalId, JSONObject()
+                            .put("approval_id", approvalId)
+                            .put("call_id", callId)
+                            .put("decision", completed.decision))
+                        val patch = JSONObject().put("_host_approval_results", durableDecisions)
+                        if (completed.decision == "approved") {
+                            patch.put("_host_approved_calls", JSONObject().put(callId, true))
+                        }
+                        persistHostState(outbound.sequence, patch)
+                        faultInjector.hit(PythonSideEffectFaultPoint.APPROVAL_DECISION_PERSISTED, approvalId)
+                    }
+                    audit(approvalId, "approval", "approval", decision.decision)
                     if (decision.decision == "approved") {
-                        val saved = ports.stateStore.loadCheckpoint(start.runId)
-                        val approvedCalls = saved?.state?.optJSONObject("_host_approved_calls") ?: JSONObject()
-                        approvedCalls.put(payload.getString("call_id"), true)
-                        ports.stateStore.saveCheckpoint(
-                            HostCheckpoint(
-                                start.runId,
-                                maxOf(saved?.sequence ?: 0, outbound.sequence),
-                                JSONObject().put("_host_approved_calls", approvedCalls),
-                            )
-                        )
+                        persistHostState(outbound.sequence, JSONObject().put(
+                            "_host_approved_calls", JSONObject().put(callId, true),
+                        ))
                     }
                     send(
                         response(
                             PythonRuntimeMessageType.APPROVAL_RESULT,
                             JSONObject()
                                 .put("approval_id", decision.approvalId)
-                                .put("call_id", payload.getString("call_id"))
+                                .put("call_id", callId)
                                 .put("decision", decision.decision),
                             "approval_result:${decision.approvalId}",
                         )
                     )
                 }
                 PythonRuntimeMessageType.CHECKPOINT_REQUEST -> {
-                    ports.stateStore.saveCheckpoint(
-                        HostCheckpoint(start.runId, outbound.sequence, outbound.payload.getJSONObject("state"))
-                    )
+                    persistCoreState(outbound.sequence, outbound.payload.getJSONObject("state"))
                 }
                 PythonRuntimeMessageType.ARTIFACT_REQUEST -> {
                     val payload = outbound.payload
@@ -305,32 +445,30 @@ class PythonAgentLoopCoordinator(
                                 val intent = intents.optJSONObject(operationId)
                                 if (intent?.optString("status") == "executing") {
                                     intents.put(operationId, intent.put("status", "needs_reconciliation"))
-                                    ports.stateStore.saveCheckpoint(HostCheckpoint(
-                                        start.runId, maxOf(saved?.sequence ?: 0, outbound.sequence),
-                                        JSONObject().put("_host_artifact_intents", intents),
-                                    ))
+                                    persistHostState(outbound.sequence, JSONObject().put("_host_artifact_intents", intents))
                                     audit(operationId, "artifact", "reconciliation", "needs_reconciliation")
                                     error("artifact_needs_reconciliation:$operationId")
                                 }
                                 audit(operationId, "artifact", "intent", "persisting")
                                 intents.put(operationId, JSONObject()
                                     .put("operation_id", operationId).put("operation", operation)
-                                    .put("status", "executing"))
-                                ports.stateStore.saveCheckpoint(HostCheckpoint(
-                                    start.runId, maxOf(saved?.sequence ?: 0, outbound.sequence),
-                                    JSONObject().put("_host_artifact_intents", intents),
-                                ))
+                                    .put("status", "prepared"))
+                                persistHostState(outbound.sequence, JSONObject().put("_host_artifact_intents", intents))
+                                faultInjector.hit(PythonSideEffectFaultPoint.ARTIFACT_INTENT_PERSISTED, operationId)
+                                intents.put(operationId, intents.getJSONObject(operationId).put("status", "executing"))
+                                persistHostState(outbound.sequence, JSONObject().put("_host_artifact_intents", intents))
+                                faultInjector.hit(PythonSideEffectFaultPoint.ARTIFACT_EXECUTION_MARKED, operationId)
                                 audit(operationId, "artifact", "execution", "started")
                                 ports.artifacts.mutate(HostArtifactMutation(
                                     operationId, operation, payload.optString("artifact_id").ifBlank { null }, payload,
                                 )).also { completed ->
+                                    faultInjector.hit(PythonSideEffectFaultPoint.ARTIFACT_HANDLER_RETURNED, operationId)
                                     receipts.put(operationId, completed.toJson())
                                     intents.put(operationId, intents.getJSONObject(operationId).put("status", "receipt_persisted"))
-                                    ports.stateStore.saveCheckpoint(HostCheckpoint(
-                                        start.runId, maxOf(saved?.sequence ?: 0, outbound.sequence),
-                                        JSONObject().put("_host_artifact_intents", intents)
-                                            .put("_host_artifact_results", receipts),
-                                    ))
+                                    persistHostState(outbound.sequence, JSONObject()
+                                        .put("_host_artifact_intents", intents)
+                                        .put("_host_artifact_results", receipts))
+                                    faultInjector.hit(PythonSideEffectFaultPoint.ARTIFACT_RECEIPT_PERSISTED, operationId)
                                     audit(operationId, "artifact", "receipt", if (completed.succeeded) "succeeded" else "failed")
                                 }
                             }
@@ -345,6 +483,12 @@ class PythonAgentLoopCoordinator(
                 }
                 else -> error("python_runtime_outbound_type_invalid:${outbound.messageType.wireName}")
             }
+        }
+        } finally {
+            // Terminal runtime events are outbound from Python and therefore do not pass
+            // through PythonRuntimeMailbox.submit(). Always release the bridge-side
+            // single-flight lease when this host loop exits, including normal completion.
+            runCatching { bridge.releaseSessionRun(start.sessionId, start.runId) }
         }
     }
 }

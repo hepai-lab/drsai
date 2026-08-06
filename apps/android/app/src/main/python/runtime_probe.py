@@ -1,12 +1,39 @@
-"""Minimal Android entry point used before the complete Core factory is wired."""
+"""Android Host adapter for the shared production Agent Kernel."""
 
 import json
 import platform
+import gc
 
-from mobile_core import RuntimeEnvelope, create_shared_mobile_core
+from mobile_core import RuntimeEnvelope
+from agent_kernel import production_capability_manifest
+from agent_kernel_factory import create_agent_kernel, kernel_factory_identity
 
 
-_core = create_shared_mobile_core(surface="android")
+_core = create_agent_kernel(surface="android")
+gc.collect()
+try:
+    import ctypes
+
+    ctypes.CDLL("libc.so").malloc_trim(0)
+except (AttributeError, OSError):
+    # Not every supported libc exposes malloc_trim. Python GC above remains
+    # the portable baseline and startup must never fail for this optimization.
+    pass
+
+
+def health() -> str:
+    """Return only after the shared Python Core and its imports are initialized."""
+    return json.dumps(
+        {
+            "python_version": platform.python_version(),
+            "status": "python_runtime_ready",
+            "agent_type": _core.agent_type,
+            "agent_kernel": kernel_factory_identity(_core),
+            "capability_manifest": production_capability_manifest("android"),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def execute(envelope_json: str) -> str:
@@ -29,4 +56,4 @@ def execute(envelope_json: str) -> str:
 def reset() -> None:
     """Drop every in-memory Run and idempotency cache before process shutdown/logout."""
     global _core
-    _core = create_shared_mobile_core(surface="android")
+    _core = create_agent_kernel(surface="android")

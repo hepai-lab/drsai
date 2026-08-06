@@ -64,3 +64,16 @@ object PythonCheckpointCodec {
         else -> JSONObject.quote(value.toString())
     }
 }
+
+object PythonCheckpointMigrationPolicy {
+    private val incompatibleCodes = setOf(
+        "python_checkpoint_fields_missing",
+        "python_checkpoint_version_unsupported",
+        "python_checkpoint_reader_too_old",
+        "python_checkpoint_checksum_mismatch",
+        "python_checkpoint_sequence_invalid",
+    )
+
+    fun terminalFailureCode(error: Throwable): String? =
+        error.message?.takeIf(incompatibleCodes::contains)?.let { "python_checkpoint_incompatible" }
+}

@@ -44,6 +44,16 @@ class OaepJsonCodecTest {
         root.put("snapshot_sequence", events.getJSONObject(events.length() - 1).getLong("sequence"))
     }
 
+    private fun windowFixture(): JSONObject {
+        val candidates = listOf(
+            File("../../../cores/protocol/oaep/snapshot-window.examples.json"),
+            File("../../cores/protocol/oaep/snapshot-window.examples.json"),
+            File("cores/protocol/oaep/snapshot-window.examples.json"),
+        )
+        return JSONObject(candidates.firstOrNull(File::isFile)?.readText()
+            ?: error("OAEP Snapshot window fixture was not found"))
+    }
+
     @Test
     fun `official fixture decodes all native OAEP item kinds and OWOP references`() {
         val snapshot = OaepJsonCodec.snapshot(snapshotFixture())
@@ -103,6 +113,46 @@ class OaepJsonCodecTest {
         val message = root.getJSONArray("items").getJSONObject(0)
         message.getJSONObject("content").remove("text")
         assertTrue(runCatching { OaepJsonCodec.item(message) }.isFailure)
+    }
+
+    @Test
+    fun `bounded snapshot decodes checkpoint and opaque history cursor`() {
+        val root = snapshotFixture()
+        val sequence = root.getLong("snapshot_sequence")
+        root.put("checkpoint", JSONObject()
+            .put("sequence", sequence)
+            .put("snapshot_hash", "a".repeat(64))
+            .put("item_count", root.getJSONArray("items").length()))
+        root.put("window", JSONObject()
+            .put("limit", 100)
+            .put("has_more", true)
+            .put("next_cursor", "enc:v1:opaque"))
+
+        val snapshot = OaepJsonCodec.snapshot(root)
+        assertEquals(sequence, snapshot.checkpoint?.sequence)
+        assertEquals("enc:v1:opaque", snapshot.window?.nextCursor)
+
+        root.getJSONObject("checkpoint").put("sequence", sequence + 1)
+        assertEquals(
+            "oaep_snapshot_checkpoint_sequence_mismatch",
+            runCatching { OaepJsonCodec.snapshot(root) }.exceptionOrNull()?.message,
+        )
+    }
+
+    @Test
+    fun `shared snapshot window fixture decodes every page without gaps`() {
+        val fixture = windowFixture()
+        val pages = fixture.getJSONArray("pages")
+        val ids = buildSet {
+            repeat(pages.length()) { pageIndex ->
+                OaepJsonCodec.snapshot(pages.getJSONObject(pageIndex)).items.forEach { add(it.id) }
+            }
+        }
+        val expected = fixture.getJSONArray("expected_item_ids")
+        assertEquals(
+            (0 until expected.length()).map(expected::getString).toSet(),
+            ids,
+        )
     }
 
     @Test

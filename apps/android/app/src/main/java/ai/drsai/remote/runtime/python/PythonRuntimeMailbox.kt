@@ -72,6 +72,11 @@ class PythonRuntimeMailbox(private val retainedKeys: Int = 512) {
         activeRunBySession.clear()
     }
 
+    @Synchronized
+    fun releaseSessionRun(sessionId: String, runId: String) {
+        activeRunBySession.remove(sessionId, runId)
+    }
+
     companion object {
         private val TERMINAL_EVENT_KINDS = setOf("run.completed", "run.failed", "run.cancelled")
     }

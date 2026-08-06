@@ -251,8 +251,14 @@ interface WorkbenchDao {
     @Query("SELECT * FROM workbench_runs WHERE subject=:subject ORDER BY updatedAt DESC, runId ASC")
     suspend fun allRuns(subject: String): List<WorkbenchRunEntity>
 
+    @Query("SELECT * FROM workbench_runs WHERE subject=:subject AND organization=:organization AND sessionId=:sessionId ORDER BY updatedAt,runId")
+    suspend fun sessionRuns(subject: String, organization: String, sessionId: String): List<WorkbenchRunEntity>
+
     @Query("SELECT * FROM workbench_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND runId=:runId ORDER BY sequence")
     suspend fun events(subject: String, organization: String, runtimeId: String, runId: String): List<WorkbenchEventEntity>
+
+    @Query("SELECT * FROM workbench_events WHERE subject=:subject AND organization=:organization AND sessionId=:sessionId ORDER BY timestamp,runId,sequence")
+    suspend fun sessionEvents(subject: String, organization: String, sessionId: String): List<WorkbenchEventEntity>
 
     @Query("SELECT COUNT(*) > 0 FROM workbench_events WHERE eventId=:eventId")
     suspend fun eventExists(eventId: String): Boolean

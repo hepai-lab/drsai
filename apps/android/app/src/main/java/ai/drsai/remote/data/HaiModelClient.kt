@@ -1,7 +1,11 @@
 package ai.drsai.remote.data
 
 import ai.drsai.remote.BuildConfig
+import ai.drsai.remote.runtime.python.ModelRuntimeCapabilities
+import ai.drsai.remote.runtime.security.SensitiveDataRedactor
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -20,6 +24,7 @@ class ApiException(
     val status: Int,
     override val message: String,
     val retryable: Boolean = status == 0 || status == 408 || status == 429 || status >= 500,
+    val code: String? = null,
 ) : Exception(message)
 
 internal class SseParser {
@@ -79,6 +84,16 @@ interface ModelGateway {
     suspend fun logout()
 }
 
+interface ToolChoiceAwareModelGateway {
+    suspend fun streamCompletionWithToolChoice(
+        model: String,
+        messages: List<RuntimeMessage>,
+        tools: JSONArray,
+        toolChoice: JSONObject,
+        onDelta: suspend (ModelDelta) -> Unit,
+    )
+}
+
 class HaiModelClient(
     private val tokens: AuthTokenStore,
     private val oidc: TokenLifecycleClient,
@@ -88,8 +103,15 @@ class HaiModelClient(
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .callTimeout(5, TimeUnit.MINUTES)
         .build(),
-    private val availableToolNames: () -> Set<String> = { BASE_LOCAL_TOOL_NAMES },
-) : ModelGateway {
+    private val providerStore: ModelConfigurationResolver? = null,
+    private val requestTemperature: Double? = null,
+) : ModelGateway, ToolChoiceAwareModelGateway, PinnedModelRouteGateway {
+    init {
+        require(requestTemperature == null || requestTemperature in 0.0..2.0) {
+            "model_temperature_invalid"
+        }
+    }
+
     private val refreshMutex = Mutex()
     private val activeCall = AtomicReference<okhttp3.Call?>()
     private val activeResponse = AtomicReference<Response?>()
@@ -116,7 +138,12 @@ class HaiModelClient(
                 val row = items.optJSONObject(index) ?: return@mapNotNull null
                 row.optString("id").takeIf(String::isNotBlank)?.let { id ->
                     val name = row.stringOrNull("name").orEmpty().ifBlank { id }
-                    ModelInfo(id, name, modelSupportsVision(row, id, name))
+                    ModelInfo(
+                        id,
+                        name,
+                        modelSupportsVision(row, id, name),
+                        modelSupportsTools(row, id, name),
+                    )
                 }
             }
         }
@@ -129,42 +156,120 @@ class HaiModelClient(
         messages: List<RuntimeMessage>,
         toolsEnabled: Boolean,
         onDelta: suspend (ModelDelta) -> Unit,
-    ) = streamCompletionInternal(
-        model, messages, if (toolsEnabled) toolDefinitions(availableToolNames()) else null, onDelta,
-    )
+    ) {
+        require(!toolsEnabled) { "model_tool_schemas_required" }
+        streamCompletionInternal(model, messages, null, ModelToolChoiceProtocolAdapter.none(), onDelta)
+    }
+
+    override suspend fun pinModelRoute(modelId: String): JSONObject {
+        val configured = providerStore?.resolveModel(modelId)
+        if (configured == null) {
+            if (tokens.accessToken.isNullOrBlank()) throw ApiException(
+                401, "model_provider_credentials_missing:hepai", retryable = false,
+                code = "model_provider_credentials_missing",
+            )
+            return PinnedModelRoute.create(modelId, "hepai", modelId, baseUrl, "openai", 0, "oidc")
+        }
+        val (provider, model) = configured
+        if (providerStore.apiKey(provider.id).isNullOrBlank()) throw ApiException(
+            401, "model_provider_credentials_missing:${provider.id}", retryable = false,
+            code = "model_provider_credentials_missing",
+        )
+        return PinnedModelRoute.create(
+            modelId, provider.id, model.upstreamId, provider.baseUrl, provider.wireApi, provider.revision, "api_key",
+        )
+    }
 
     override suspend fun streamCompletionWithTools(
         model: String,
         messages: List<RuntimeMessage>,
         tools: JSONArray,
         onDelta: suspend (ModelDelta) -> Unit,
-    ) = streamCompletionInternal(model, messages, tools.toHaiToolDefinitions(), onDelta)
+    ) = streamCompletionInternal(model, messages, tools, ModelToolChoiceProtocolAdapter.automatic(), onDelta)
+
+    override suspend fun streamCompletionWithToolChoice(
+        model: String,
+        messages: List<RuntimeMessage>,
+        tools: JSONArray,
+        toolChoice: JSONObject,
+        onDelta: suspend (ModelDelta) -> Unit,
+    ) = streamCompletionInternal(model, messages, tools, toolChoice, onDelta)
+
+    override suspend fun streamCompletionWithPinnedRoute(
+        modelId: String,
+        route: JSONObject,
+        messages: List<RuntimeMessage>,
+        tools: JSONArray,
+        toolChoice: JSONObject,
+        onDelta: suspend (ModelDelta) -> Unit,
+    ) = streamCompletionInternal(modelId, messages, tools, toolChoice, onDelta, route)
 
     private suspend fun streamCompletionInternal(
         model: String,
         messages: List<RuntimeMessage>,
         tools: JSONArray?,
+        toolChoice: JSONObject,
         onDelta: suspend (ModelDelta) -> Unit,
+        pinnedRoute: JSONObject? = null,
     ) = withContext(Dispatchers.IO) {
+        val validatedRoute = pinnedRoute?.let { PinnedModelRoute.validate(it, model) }
+        val customConfiguration = if (validatedRoute == null) providerStore?.resolveModel(model) else null
+        val customProvider = when {
+            validatedRoute == null -> customConfiguration?.first
+            validatedRoute.getString("provider_id") == "hepai" -> null
+            else -> ModelProviderEntity(
+                validatedRoute.getString("provider_id"), null, validatedRoute.getString("provider_id"),
+                validatedRoute.getString("base_url"), validatedRoute.getString("wire_api"),
+                false, true, validatedRoute.getLong("provider_revision"), 0, 0,
+            )
+        }
+        val upstreamModel = validatedRoute?.getString("upstream_model_id")
+            ?: customConfiguration?.second?.upstreamId ?: model
+        if (customProvider?.wireApi == "anthropic") {
+            streamAnthropic(customProvider, upstreamModel, messages, tools, toolChoice, onDelta)
+            return@withContext
+        }
+        val providerCapabilities = ModelRuntimeCapabilities(
+            model, "openai", tools = tools != null && tools.length() > 0, parallelTools = false,
+            reasoning = false, source = "configured",
+        )
+        val wireTools = tools?.let { ModelToolSchemaProtocolAdapter.adapt(providerCapabilities, it) }
         val body = JSONObject()
-            .put("model", model)
+            .put("model", upstreamModel)
             .put("messages", JSONArray(messages.map(::messageJson)))
             .put("stream", true)
             .put("max_tokens", 2048)
-        if (tools != null && tools.length() > 0) {
-            body.put("tools", tools)
-            body.put("tool_choice", "auto")
+        if (requestTemperature != null) body.put("temperature", requestTemperature)
+        if (wireTools != null && wireTools.length() > 0) {
+            body.put("tools", wireTools)
+            body.put("tool_choice", ModelToolChoiceProtocolAdapter.openAi(toolChoice))
         }
-        val response = authenticatedResponse { token ->
-            Request.Builder()
-                .url("${baseUrl.trimEnd('/')}/chat/completions")
+        val requestFactory: (String, String) -> Request = { endpoint, token -> Request.Builder()
+                .url("${endpoint.trimEnd('/')}/chat/completions")
                 .header("Accept", "text/event-stream")
                 .header("Authorization", "Bearer $token")
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
         }
+        val response = if (customProvider == null) {
+            authenticatedResponse { token -> requestFactory(baseUrl, token) }
+        } else {
+            val apiKey = providerStore?.apiKey(customProvider.id)
+                ?: throw ApiException(
+                    401, "model_provider_credentials_missing:${customProvider.id}", retryable = false,
+                    code = "model_provider_credentials_missing",
+                )
+            executeProviderRequest(
+                customProvider,
+                upstreamModel,
+                requestFactory(customProvider.baseUrl, apiKey),
+            )
+        }
         response.use {
-            if (!it.isSuccessful) throw responseError(it.code, it.body?.string().orEmpty())
+            if (!it.isSuccessful) throw responseError(
+                it.code, it.body?.string().orEmpty(), customProvider, upstreamModel,
+                toolSchemaRequest = wireTools != null && wireTools.length() > 0,
+            )
             val reader = it.body?.charStream() ?: throw ApiException(0, "模型响应为空")
             val parser = SseParser()
             val chars = CharArray(2048)
@@ -212,6 +317,33 @@ class HaiModelClient(
         }
     }
 
+    private suspend fun executeProviderRequest(
+        provider: ModelProviderEntity,
+        model: String,
+        request: Request,
+    ): Response {
+        val host = request.url.host
+        runCatching {
+            Log.i(
+                "HaiModelClient",
+                "provider_request provider=${provider.displayName.take(80)} protocol=${provider.wireApi} host=$host model=${model.take(120)}",
+            )
+        }
+        var response = execute(request)
+        if (response.code !in setOf(502, 503, 504)) return response
+        val firstStatus = response.code
+        response.close()
+        runCatching {
+            Log.w(
+                "HaiModelClient",
+                "provider_request_retry provider=${provider.displayName.take(80)} host=$host model=${model.take(120)} status=$firstStatus",
+            )
+        }
+        delay(750)
+        response = execute(request)
+        return response
+    }
+
     private suspend fun refresh(failedToken: String): Boolean = refreshMutex.withLock {
         if (tokens.accessToken != failedToken) return@withLock true
         val refreshToken = tokens.refreshToken ?: return@withLock false
@@ -222,32 +354,59 @@ class HaiModelClient(
         }.getOrDefault(false)
     }
 
-    private fun responseError(status: Int, raw: String): ApiException {
+    private fun responseError(
+        status: Int,
+        raw: String,
+        provider: ModelProviderEntity? = null,
+        upstreamModel: String? = null,
+        toolSchemaRequest: Boolean = false,
+    ): ApiException {
         val json = runCatching { JSONObject(raw) }.getOrNull()
         val detail = json?.optJSONObject("error")?.stringOrNull("message")
             ?: json?.stringOrNull("detail")
             ?: json?.stringOrNull("message")
+        val safeDetail = SensitiveDataRedactor.redact(detail.orEmpty()).take(240)
+        runCatching {
+            Log.w(
+                "HaiModelClient",
+                "model_request_failed status=$status detail=$safeDetail",
+            )
+        }
         val imageUnsupported = status == 400 && (
             raw.contains("unknown variant `image_url`", ignoreCase = true) ||
                 raw.contains("unknown variant 'image_url'", ignoreCase = true) ||
                 (raw.contains("image_url", ignoreCase = true) && raw.contains("expected `text`", ignoreCase = true))
             )
+        val providerName = provider?.displayName?.trim()?.take(80).orEmpty().ifBlank { "HAI" }
+        val host = provider?.baseUrl?.let { value -> runCatching { java.net.URI(value).host }.getOrNull() }
+        val route = listOfNotNull(host, upstreamModel?.takeIf(String::isNotBlank)).joinToString(" · ")
+        val routeSuffix = route.takeIf(String::isNotBlank)?.let { "（$it）" }.orEmpty()
+        val schemaRejected = status == 400 && toolSchemaRequest && listOf(
+            "schema", "input_schema", "tools", "tool_choice", "function",
+        ).any { raw.contains(it, ignoreCase = true) }
         val message = when {
-            imageUnsupported -> "当前 HAI 模型不支持图片输入，请切换到视觉模型"
-            status == 401 -> "HAI 登录已过期，请重新登录"
-            status == 403 -> "当前账号没有使用该模型的权限"
-            status == 404 -> "请求的 HAI 模型不可用"
+            imageUnsupported -> "当前 $providerName 模型不支持图片输入，请切换到视觉模型"
+            schemaRejected -> "$providerName 不接受当前工具 Schema$routeSuffix"
+            status == 401 && provider == null -> "HAI 登录已过期，请重新登录"
+            status == 401 -> "$providerName API Key 无效或已过期"
+            status == 403 -> "$providerName 拒绝访问当前模型"
+            status == 404 -> "$providerName 未提供请求的模型$routeSuffix"
             status == 429 -> "模型请求过于频繁或额度不足，请稍后重试"
-            status in 500..599 -> "HAI 模型服务暂时不可用"
-            else -> detail?.takeIf(String::isNotBlank) ?: "模型请求失败（HTTP $status）"
+            status in 500..599 -> "$providerName 模型服务暂时不可用（HTTP $status）$routeSuffix"
+            else -> safeDetail.takeIf(String::isNotBlank) ?: "模型请求失败（HTTP $status）"
         }
-        return ApiException(status, message, retryable = !imageUnsupported && (status == 408 || status == 429 || status >= 500))
+        return ApiException(
+            status,
+            message,
+            retryable = !imageUnsupported && !schemaRejected && (status == 408 || status == 429 || status >= 500),
+            code = if (schemaRejected) "model_tool_schema_rejected" else null,
+        )
     }
 
     private fun parseDelta(raw: String): ModelDelta {
         val root = runCatching { JSONObject(raw) }.getOrElse { throw ApiException(0, "模型返回了无效流数据") }
         root.optJSONObject("error")?.let {
-            throw ApiException(0, it.optString("message", "模型流返回错误"))
+            throw ApiException(0, SensitiveDataRedactor.redact(it.optString("message", "模型流返回错误")))
         }
         val choice = root.optJSONArray("choices")?.optJSONObject(0)
             ?: return ModelDelta(null, emptyList(), null)
@@ -261,11 +420,13 @@ class HaiModelClient(
                 ToolCallDelta(
                     index = item.optInt("index", index),
                     id = item.stringOrNull("id")?.takeIf(String::isNotBlank),
-                    name = function.stringOrNull("name")?.takeIf(String::isNotBlank),
+                    name = function.stringOrNull("name")?.takeIf(String::isNotBlank)?.let(::fromHaiToolName),
                     arguments = function.stringOrNull("arguments").orEmpty(),
                 )
             },
             finishReason = choice.stringOrNull("finish_reason")?.takeIf(String::isNotBlank),
+            // Only the provider's explicit public summary channel is accepted. Never expose reasoning_content/CoT.
+            reasoningSummary = delta.stringOrNull("reasoning_summary")?.takeIf(String::isNotBlank),
         )
     }
 
@@ -292,84 +453,160 @@ class HaiModelClient(
                 JSONObject()
                     .put("id", call.id)
                     .put("type", "function")
-                    .put("function", JSONObject().put("name", call.name).put("arguments", call.arguments))
+                    .put("function", JSONObject().put("name", toHaiToolName(call.name)).put("arguments", call.arguments))
             }))
         }
         return json
     }
-
-    private fun toolDefinitions(available: Set<String>) = JSONArray(listOf(
-        tool("get_current_time", "Get the current device time and timezone", JSONObject().put("type", "object").put("properties", JSONObject())),
-        tool("get_device_info", "Get non-identifying Android environment information", JSONObject().put("type", "object").put("properties", JSONObject())),
-        tool("save_memory", "Save a short fact the user explicitly wants remembered", JSONObject()
-            .put("type", "object")
-            .put("properties", JSONObject().put("content", JSONObject().put("type", "string").put("maxLength", 500)))
-            .put("required", JSONArray().put("content"))),
-        tool("search_memory", "Search facts previously saved for this user", JSONObject()
-            .put("type", "object")
-            .put("properties", JSONObject()
-                .put("query", JSONObject().put("type", "string").put("maxLength", 100))
-                .put("limit", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 10)))
-            .put("required", JSONArray().put("query"))),
-        tool("workspace.list", "List files in the user-granted workspace", JSONObject()
-            .put("type", "object").put("properties", JSONObject().put("path", JSONObject().put("type", "string")))),
-        tool("workspace.read", "Read a text file in the user-granted workspace", JSONObject()
-            .put("type", "object").put("properties", JSONObject().put("path", JSONObject().put("type", "string")))
-            .put("required", JSONArray().put("path"))),
-        tool("workspace.search", "Search file names in the user-granted workspace", JSONObject()
-            .put("type", "object").put("properties", JSONObject().put("query", JSONObject().put("type", "string")))
-            .put("required", JSONArray().put("query"))),
-        tool("workspace.write", "Write a file in the user-granted workspace after approval", JSONObject()
-            .put("type", "object").put("properties", JSONObject()
-                .put("path", JSONObject().put("type", "string"))
-                .put("content", JSONObject().put("type", "string")))
-            .put("required", JSONArray().put("path").put("content"))),
-    ).filter { it.optJSONObject("function")?.optString("name") in available })
-
-    private fun tool(name: String, description: String, parameters: JSONObject) = JSONObject()
-        .put("type", "function")
-        .put("function", JSONObject().put("name", name).put("description", description).put("parameters", parameters))
-}
 
 private fun JSONObject.stringOrNull(name: String): String? {
     if (!has(name) || isNull(name)) return null
     return opt(name) as? String
 }
 
-private fun JSONArray.toHaiToolDefinitions(): JSONArray = JSONArray().also { output ->
-    repeat(length()) { index ->
-        val source = getJSONObject(index)
-        if (source.optString("type") == "function" && source.optJSONObject("function") != null) {
-            output.put(source)
-        } else {
-            val name = source.getString("name")
-            val parameters = source.optJSONObject("parameters")
-                ?: JSONObject().put("type", "object").put("properties", JSONObject())
-            output.put(
-                JSONObject().put("type", "function").put(
-                    "function",
-                    JSONObject().put("name", name)
-                        .put("description", source.optString("description", name))
-                        .put("parameters", parameters),
-                )
+    private suspend fun streamAnthropic(
+        provider: ModelProviderEntity,
+        model: String,
+        messages: List<RuntimeMessage>,
+        tools: JSONArray?,
+        toolChoice: JSONObject,
+        onDelta: suspend (ModelDelta) -> Unit,
+    ) {
+        val apiKey = providerStore?.apiKey(provider.id)
+            ?: throw ApiException(
+                401, "model_provider_credentials_missing:${provider.id}", retryable = false,
+                code = "model_provider_credentials_missing",
             )
+        val system = messages.filter { it.role == "system" }.joinToString("\n\n") { it.content }
+        val body = JSONObject()
+            .put("model", model)
+            .put("messages", JSONArray(messages.filterNot { it.role == "system" }.map(::anthropicMessageJson)))
+            .put("stream", true)
+            .put("max_tokens", 2048)
+        if (requestTemperature != null) body.put("temperature", requestTemperature)
+        if (system.isNotBlank()) body.put("system", system)
+        val providerCapabilities = ModelRuntimeCapabilities(
+            model, "anthropic", tools = tools != null && tools.length() > 0, parallelTools = false,
+            reasoning = false, source = "configured",
+        )
+        val wireTools = tools?.let { ModelToolSchemaProtocolAdapter.adapt(providerCapabilities, it) }
+        val anthropicChoice = ModelToolChoiceProtocolAdapter.anthropic(toolChoice)
+        if (wireTools != null && wireTools.length() > 0 && anthropicChoice != null) {
+            body.put("tools", wireTools)
+            body.put("tool_choice", anthropicChoice)
+        }
+        val endpoint = if (provider.baseUrl.trimEnd('/').endsWith("/v1")) {
+            "${provider.baseUrl.trimEnd('/')}/messages"
+        } else "${provider.baseUrl.trimEnd('/')}/v1/messages"
+        val request = Request.Builder().url(endpoint)
+                .header("Accept", "text/event-stream")
+                .header("x-api-key", apiKey)
+                .header("anthropic-version", "2023-06-01")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+        val response = executeProviderRequest(provider, model, request)
+        response.use {
+            if (!it.isSuccessful) throw responseError(
+                it.code, it.body?.string().orEmpty(), provider, model,
+                toolSchemaRequest = wireTools != null && wireTools.length() > 0,
+            )
+            val reader = it.body?.charStream() ?: throw ApiException(0, "模型响应为空")
+            val parser = SseParser()
+            val chars = CharArray(2048)
+            var completed = false
+            while (!completed) {
+                val count = reader.read(chars)
+                if (count < 0) break
+                parser.feed(String(chars, 0, count)).forEach { event ->
+                    val delta = parseAnthropicDelta(event)
+                    if (delta.finishReason == "message_stop") completed = true else onDelta(delta)
+                }
+            }
+            if (!completed) parser.finish().forEach { event ->
+                val delta = parseAnthropicDelta(event)
+                if (delta.finishReason == "message_stop") completed = true else onDelta(delta)
+            }
+            if (!completed) throw ApiException(0, "模型流在完成前中断")
+        }
+    }
+
+    private fun anthropicMessageJson(message: RuntimeMessage): JSONObject {
+        if (message.role == "tool") {
+            return JSONObject().put("role", "user").put("content", JSONArray().put(
+                JSONObject().put("type", "tool_result").put("tool_use_id", message.toolCallId).put("content", message.content),
+            ))
+        }
+        val content = JSONArray()
+        if (message.content.isNotBlank()) content.put(JSONObject().put("type", "text").put("text", message.content))
+        message.images.forEach { image ->
+            val encoded = image.dataUrl.substringAfter("base64,", "")
+            if (encoded.isNotBlank()) content.put(JSONObject().put("type", "image").put("source", JSONObject()
+                .put("type", "base64").put("media_type", image.mimeType).put("data", encoded)))
+        }
+        message.toolCalls.forEach { call ->
+            content.put(JSONObject().put("type", "tool_use").put("id", call.id).put("name", toHaiToolName(call.name))
+                .put("input", runCatching { JSONObject(call.arguments) }.getOrDefault(JSONObject())))
+        }
+        return JSONObject().put("role", if (message.role == "assistant") "assistant" else "user")
+            .put("content", if (content.length() == 0) JSONArray().put(JSONObject().put("type", "text").put("text", " ")) else content)
+    }
+
+    private fun parseAnthropicDelta(raw: String): ModelDelta {
+        val root = runCatching { JSONObject(raw) }.getOrElse { throw ApiException(0, "模型返回了无效流数据") }
+        root.optJSONObject("error")?.let { throw ApiException(0, it.optString("message", "模型流返回错误")) }
+        return when (root.optString("type")) {
+            "content_block_start" -> {
+                val block = root.optJSONObject("content_block") ?: JSONObject()
+                if (block.optString("type") == "tool_use") ModelDelta(null, listOf(ToolCallDelta(root.optInt("index"), block.optString("id"), fromHaiToolName(block.optString("name")), "")), null)
+                else ModelDelta(null, emptyList(), null)
+            }
+            "content_block_delta" -> {
+                val delta = root.optJSONObject("delta") ?: JSONObject()
+                when (delta.optString("type")) {
+                    "text_delta" -> ModelDelta(delta.optString("text").takeIf(String::isNotEmpty), emptyList(), null)
+                    "input_json_delta" -> ModelDelta(null, listOf(ToolCallDelta(root.optInt("index"), null, null, delta.optString("partial_json"))), null)
+                    else -> ModelDelta(null, emptyList(), null)
+                }
+            }
+            "message_delta" -> ModelDelta(null, emptyList(), root.optJSONObject("delta")?.optString("stop_reason")?.takeIf(String::isNotBlank))
+            "message_stop" -> ModelDelta(null, emptyList(), "message_stop")
+            else -> ModelDelta(null, emptyList(), null)
         }
     }
 }
 
+internal fun toHaiToolName(canonical: String): String = canonical.replace(".", "__dot__")
+
+internal fun fromHaiToolName(wire: String): String = wire.replace("__dot__", ".")
+
 internal fun selectPreferredModel(models: List<ModelInfo>): ModelInfo {
     if (models.isEmpty()) throw ApiException(404, "当前 HAI 账号没有可用模型", retryable = false)
-    return models.firstOrNull { it.id == "deepseek-ai/deepseek-v4-pro" }
+    return models.firstOrNull(ModelInfo::tools)
+        ?: models.firstOrNull { it.id == "deepseek-ai/deepseek-v4-pro" }
         ?: models.firstOrNull { it.id.contains("deepseek-v4-pro", ignoreCase = true) }
         ?: models.first()
 }
 
-private val BASE_LOCAL_TOOL_NAMES = setOf(
-    "get_current_time", "get_device_info", "save_memory", "search_memory",
-)
-
 internal fun selectVisionModel(models: List<ModelInfo>, preferred: ModelInfo? = null): ModelInfo? =
     preferred?.takeIf(ModelInfo::vision) ?: models.firstOrNull(ModelInfo::vision)
+
+internal fun modelSupportsTools(row: JSONObject, id: String, name: String): Boolean {
+    fun explicit(container: JSONObject?): Boolean? {
+        if (container == null) return null
+        listOf("tools", "tool_calling", "supports_tools", "function_calling").forEach { key ->
+            if (container.has(key) && !container.isNull(key)) return container.optBoolean(key)
+        }
+        val capabilities = container.optJSONArray("capabilities") ?: return null
+        return (0 until capabilities.length()).any { index ->
+            capabilities.optString(index).lowercase() in setOf("tools", "tool_calling", "function_calling")
+        }
+    }
+    explicit(row)?.let { return it }
+    explicit(row.optJSONObject("model_info"))?.let { return it }
+    val value = "$id $name".lowercase()
+    if ("deepseek" in value) return false
+    return listOf("gpt-4", "gpt-5", "qwen", "claude", "gemini", "glm-4", "glm-5").any(value::contains)
+}
 
 internal fun modelSupportsVision(row: JSONObject, id: String, name: String): Boolean {
     fun explicit(container: JSONObject?): Boolean? {

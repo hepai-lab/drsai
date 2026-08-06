@@ -8,10 +8,30 @@ import kotlin.random.Random
 
 class RemoteReliabilityTest {
     @Test fun `state machine distinguishes transport runtime and business errors`() {
-        val machine = RemoteConnectionStateMachine(); machine.connected(); assertEquals(RemoteConnectionState.ONLINE, machine.state)
-        machine.degraded(RemoteFailure(RemoteFailureSource.RUNTIME, "backend_unhealthy", true)); assertEquals(RemoteConnectionState.DEGRADED, machine.state)
-        machine.authenticationRequired(RemoteFailure(RemoteFailureSource.RELAY, "auth_required", false)); assertEquals(RemoteConnectionState.AUTH_REQUIRED, machine.state)
-        machine.connected(false); assertEquals(RemoteConnectionState.INCOMPATIBLE, machine.state)
+        val machine = RemoteConnectionStateMachine()
+        machine.connecting(); machine.connected(); assertEquals(RemoteLifecycleState.ONLINE, machine.state)
+        machine.degraded(RemoteFailure(RemoteFailureSource.RUNTIME, "backend_unhealthy", true)); assertEquals(RemoteLifecycleState.STALE, machine.state)
+        machine.authenticationRequired(RemoteFailure(RemoteFailureSource.RELAY, "auth_required", false)); assertEquals(RemoteLifecycleState.AUTH_REQUIRED, machine.state)
+        machine.connecting(); machine.connected(false); assertEquals(RemoteLifecycleState.INCOMPATIBLE, machine.state)
+    }
+
+    @Test fun `lifecycle transition graph rejects every undefined edge`() {
+        for (from in RemoteLifecycleState.entries) {
+            for (to in RemoteLifecycleState.entries) {
+                val machine = RemoteConnectionStateMachine(from)
+                if (canTransitionRemoteLifecycle(from, to)) {
+                    if (to == RemoteLifecycleState.AUTH_REQUIRED) {
+                        machine.transition(to, RemoteFailure(RemoteFailureSource.RELAY, "auth_required", false))
+                    } else {
+                        machine.transition(to)
+                    }
+                    assertEquals(to, machine.state)
+                } else {
+                    assertThrows(IllegalArgumentException::class.java) { machine.transition(to) }
+                    assertEquals(from, machine.state)
+                }
+            }
+        }
     }
 
     @Test fun `network and lifecycle rebuild only transport and resume from committed sequence`() {

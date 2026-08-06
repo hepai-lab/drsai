@@ -15,19 +15,55 @@ fun versionCodeFor(version: String): Int {
         (parts.getOrElse(1) { 0 } * 100) + parts.getOrElse(2) { 0 }
 }
 val systemVersionCode = versionCodeFor(systemVersion)
+val p9AcceptanceLedgerFile = rootProject.file(
+    "../../docs/android/reports/progress/ANDROID_P9_ACCEPTANCE_LEDGER.json"
+)
+val p9AcceptanceLedger = JsonSlurper().parse(p9AcceptanceLedgerFile) as Map<*, *>
+val p9AcceptanceItems = (p9AcceptanceLedger["items"] as? List<*>)
+    ?.map { it as? Map<*, *> ?: error("Invalid P9 acceptance item") }
+    ?: error("P9 acceptance ledger items are missing")
+val expectedP9Ids = (1..12).flatMap { module ->
+    (1..6).map { feature -> "M%02d-F%02d".format(module, feature) }
+}
+val actualP9Ids = p9AcceptanceItems.map { it["id"]?.toString().orEmpty() }
+require(p9AcceptanceLedger["schema_version"] == 1) { "Unsupported P9 acceptance ledger schema" }
+require(p9AcceptanceLedger["expected_total"] == 72) { "P9 acceptance total must be 72" }
+require(actualP9Ids == expectedP9Ids) { "P9 acceptance IDs are missing, duplicated, or out of order" }
+p9AcceptanceItems.filter { it["status"] == "accepted" }.forEach { item ->
+    require((item["tests"] as? List<*>)?.isNotEmpty() == true) { "Accepted P9 item ${item["id"]} has no tests" }
+    require((item["evidence"] as? List<*>)?.isNotEmpty() == true) { "Accepted P9 item ${item["id"]} has no evidence" }
+}
+val desktopAgentParityComplete = p9AcceptanceItems.all {
+    it["status"] == "accepted" &&
+        (it["tests"] as? List<*>)?.isNotEmpty() == true &&
+        (it["evidence"] as? List<*>)?.isNotEmpty() == true
+}
 val androidBuildPython = providers.gradleProperty("opendrsai.android.buildPython")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_BUILD_PYTHON"))
     .getOrElse(rootProject.file("../../.venv/Scripts/python.exe").absolutePath)
-val pythonRuntimeEnabled = providers.gradleProperty("opendrsai.android.pythonRuntimeEnabled")
-    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_PYTHON_RUNTIME_ENABLED"))
-    .map(String::toBooleanStrict)
-    .getOrElse(false)
 val runtimePolicyPublicKey = providers.gradleProperty("opendrsai.android.runtimePolicyPublicKey")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_RUNTIME_POLICY_PUBLIC_KEY"))
+    .getOrElse("")
+val firebaseApiKey = providers.gradleProperty("opendrsai.android.firebase.apiKey")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_FIREBASE_API_KEY"))
+    .getOrElse("")
+val firebaseApplicationId = providers.gradleProperty("opendrsai.android.firebase.applicationId")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_FIREBASE_APPLICATION_ID"))
+    .getOrElse("")
+val firebaseProjectId = providers.gradleProperty("opendrsai.android.firebase.projectId")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_FIREBASE_PROJECT_ID"))
+    .getOrElse("")
+val firebaseSenderId = providers.gradleProperty("opendrsai.android.firebase.senderId")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_FIREBASE_SENDER_ID"))
     .getOrElse("")
 val acceptanceVersion = providers.gradleProperty("opendrsai.android.acceptanceVersion").orNull?.also {
     require(Regex("\\d+\\.\\d+\\.\\d+").matches(it)) { "Invalid acceptance version: $it" }
 }
+val developmentVersion = providers.gradleProperty("opendrsai.android.developmentVersion")
+    .getOrElse("1.5.6")
+    .also {
+        require(Regex("\\d+\\.\\d+\\.\\d+").matches(it)) { "Invalid development version: $it" }
+    }
 val androidOidcClientId = providers.gradleProperty("opendrsai.oidc.clientId")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_OIDC_CLIENT_ID"))
     .getOrElse("opendrsai-android")
@@ -126,7 +162,13 @@ android {
     sourceSets.getByName("test").resources.srcDir(
         rootProject.file("../../cores/protocol/android-runtime/fixtures")
     )
+    sourceSets.getByName("androidTest").assets.srcDir(
+        rootProject.file("../../cores/protocol/android-runtime/fixtures")
+    )
     compileSdk = 35
+    packaging {
+        resources.excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+    }
     testBuildType = providers.gradleProperty("opendrsai.android.testBuildType").getOrElse("debug")
 
     defaultConfig {
@@ -150,8 +192,16 @@ android {
         buildConfigField("String", "ANDROID_UPDATE_CHANNEL", "stable".asBuildConfigString())
         buildConfigField("boolean", "ANDROID_UPDATE_ALLOW_INSECURE_LOCAL", "false")
         buildConfigField("boolean", "PYTHON_LOCAL_RUNTIME_ENABLED", "false")
+        buildConfigField("boolean", "FULL_AGENT_RUNTIME_ENABLED", "false")
+        // Derived from the machine-readable 72-item ledger; never hand-set this claim.
+        buildConfigField("boolean", "DESKTOP_AGENT_PARITY_COMPLETE", desktopAgentParityComplete.toString())
+        buildConfigField("boolean", "KOTLIN_LITE_RUNTIME_ENABLED", "true")
         buildConfigField("String", "RUNTIME_POLICY_URL", "$haiBaseUrl/api/runtime-policy/android".asBuildConfigString())
         buildConfigField("String", "RUNTIME_POLICY_PUBLIC_KEY", runtimePolicyPublicKey.asBuildConfigString())
+        buildConfigField("String", "FIREBASE_API_KEY", firebaseApiKey.asBuildConfigString())
+        buildConfigField("String", "FIREBASE_APPLICATION_ID", firebaseApplicationId.asBuildConfigString())
+        buildConfigField("String", "FIREBASE_PROJECT_ID", firebaseProjectId.asBuildConfigString())
+        buildConfigField("String", "FIREBASE_SENDER_ID", firebaseSenderId.asBuildConfigString())
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         manifestPlaceholders["appLabel"] = "OpenDrSai"
     }
@@ -190,7 +240,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            manifestPlaceholders["appLabel"] = "OpenDrSai.Debug"
+            manifestPlaceholders["appLabel"] = "OpenDrSai.Dev"
             buildConfigField("String", "HAI_BASE_URL", developmentHaiBaseUrl.asBuildConfigString())
             buildConfigField("String", "OIDC_ISSUER", developmentOidcIssuer.asBuildConfigString())
             buildConfigField("String", "OIDC_DISCOVERY_URL", developmentOidcDiscoveryUrl.asBuildConfigString())
@@ -200,7 +250,11 @@ android {
             buildConfigField("String", "ANDROID_UPDATE_FALLBACK_MANIFEST_URL", devUpdateFallbackManifestUrl.asBuildConfigString())
             buildConfigField("String", "ANDROID_UPDATE_CHANNEL", (androidUpdateChannelOverride ?: "dev").asBuildConfigString())
             buildConfigField("boolean", "ANDROID_UPDATE_ALLOW_INSECURE_LOCAL", androidUpdateAllowInsecureLocal.toString())
-            buildConfigField("boolean", "PYTHON_LOCAL_RUNTIME_ENABLED", pythonRuntimeEnabled.toString())
+            // Debug has one local authority: the embedded Full Agent Runtime.
+            // This is deliberately not controlled by a local preference or unsigned rollout flag.
+            buildConfigField("boolean", "PYTHON_LOCAL_RUNTIME_ENABLED", "true")
+            buildConfigField("boolean", "FULL_AGENT_RUNTIME_ENABLED", "true")
+            buildConfigField("boolean", "KOTLIN_LITE_RUNTIME_ENABLED", "false")
             buildConfigField("String", "RUNTIME_POLICY_URL", "$developmentHaiBaseUrl/api/runtime-policy/android".asBuildConfigString())
             manifestPlaceholders["usesCleartextTraffic"] = "true"
         }
@@ -242,6 +296,8 @@ android {
             buildConfigField("String", "ANDROID_UPDATE_CHANNEL", (androidUpdateChannelOverride ?: "dev").asBuildConfigString())
             buildConfigField("boolean", "ANDROID_UPDATE_ALLOW_INSECURE_LOCAL", androidUpdateAllowInsecureLocal.toString())
             buildConfigField("boolean", "PYTHON_LOCAL_RUNTIME_ENABLED", "true")
+            buildConfigField("boolean", "FULL_AGENT_RUNTIME_ENABLED", "true")
+            buildConfigField("boolean", "KOTLIN_LITE_RUNTIME_ENABLED", "false")
             buildConfigField("String", "RUNTIME_POLICY_URL", "$developmentHaiBaseUrl/api/runtime-policy/android".asBuildConfigString())
             isMinifyEnabled = false
             isShrinkResources = false
@@ -272,7 +328,15 @@ androidComponents {
         if (variant.buildType == "release" || variant.buildType == "mvp") {
             variant.packaging.jniLibs.excludes.add("**/x86_64/*.so")
         }
-        val variantVersion = if (variant.buildType == "acceptance") acceptanceVersion ?: systemVersion else systemVersion
+        val variantVersion = when (variant.buildType) {
+            "debug" -> developmentVersion
+            "acceptance" -> acceptanceVersion ?: developmentVersion
+            // MVP is the non-debug acceptance artifact for the current
+            // development train. Using the last stable system version here
+            // would make its declared protocol profile newer than the APK.
+            "mvp" -> developmentVersion
+            else -> systemVersion
+        }
         variant.outputs.forEach { output ->
             (output as VariantOutputImpl).apply {
                 versionName.set(variantVersion)
@@ -499,7 +563,6 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     add("acceptanceImplementation", "androidx.compose.ui:ui-test-manifest")
     implementation("androidx.navigation:navigation-compose:2.9.1")
@@ -511,8 +574,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
+    implementation("com.google.firebase:firebase-messaging")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    implementation("net.i2p.crypto:eddsa:0.3.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.84")
     implementation("androidx.room:room-runtime:2.7.2")
     implementation("androidx.room:room-ktx:2.7.2")
     kapt("androidx.room:room-compiler:2.7.2")
@@ -525,4 +591,5 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

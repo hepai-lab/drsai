@@ -20,6 +20,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import ai.drsai.remote.remote.data.parseAccessGrantCode
+import ai.drsai.remote.remote.data.RemoteActionableState
+import ai.drsai.remote.remote.data.RemoteRecoveryAction
 
 class RemoteWorkspaceUiTest {
     @get:Rule
@@ -244,5 +246,59 @@ class RemoteWorkspaceUiTest {
         ).assertIsDisplayed()
         composeRule.onAllNodesWithText("执行 Shell").assertCountEquals(0)
         composeRule.onAllNodesWithText("写入文件").assertCountEquals(0)
+    }
+
+    @Test
+    fun notificationPermissionGapIsActionableWithoutHidingWorkspaces() {
+        var enableCalls = 0
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteHomeScreen(
+                    state = RemoteHomeUiState(
+                        computers = listOf(
+                            RemoteComputerUi(
+                                runtimeId = RuntimeId("runtime-notify"),
+                                displayName = "开发电脑",
+                                state = RemoteConnectionState.ONLINE,
+                                lastSeenLabel = "刚刚",
+                                workspaces = emptyList(),
+                            ),
+                        ),
+                        notificationState = RemoteNotificationReadiness.PERMISSION_REQUIRED,
+                    ),
+                    onBack = {},
+                    onAssociate = {},
+                    onRefresh = {},
+                    onOpenWorkspace = {},
+                    onEnableNotifications = { enableCalls += 1 },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("允许系统通知后，App 关闭时也能收到任务结果和审批提醒").assertIsDisplayed()
+        composeRule.onNodeWithText("启用通知").assertIsDisplayed().performClick()
+        composeRule.runOnIdle { assertEquals(1, enableCalls) }
+        composeRule.onNodeWithText("开发电脑").assertIsDisplayed()
+    }
+
+    @Test fun actionableStateShowsOneSafePrimaryAction() {
+        var selected: RemoteRecoveryAction? = null
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteActionableStateCard(
+                    RemoteActionableState(
+                        "登录已过期",
+                        "重新登录后可继续使用原有设备授权。",
+                        RemoteRecoveryAction.SIGN_IN,
+                        "重新登录",
+                    ),
+                    onAction = { selected = it },
+                )
+            }
+        }
+        composeRule.onNodeWithText("登录已过期").assertIsDisplayed()
+        composeRule.onNodeWithText("重新登录").assertIsDisplayed().performClick()
+        composeRule.onAllNodesWithText("https://internal.example").assertCountEquals(0)
+        composeRule.runOnIdle { assertEquals(RemoteRecoveryAction.SIGN_IN, selected) }
     }
 }

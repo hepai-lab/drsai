@@ -11,6 +11,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.Debug
 import android.os.PowerManager
+import android.net.TrafficStats
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -35,6 +36,12 @@ class PythonRuntimePerformanceTest {
         val coldStarts = mutableListOf<Long>()
         val pssSamples = mutableListOf<Double>()
         val cpuSamples = mutableListOf<Double>()
+        val uid = context.applicationInfo.uid
+        val networkRxBefore = TrafficStats.getUidRxBytes(uid)
+        val networkTxBefore = TrafficStats.getUidTxBytes(uid)
+        val batteryManager = context.getSystemService(BatteryManager::class.java)
+        val batteryBefore = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val energyBefore = batteryManager.getLongProperty(BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER)
 
         repeat(10) { index ->
             val client = PythonRuntimeClient(context)
@@ -71,7 +78,10 @@ class PythonRuntimePerformanceTest {
         }
 
         val storageBytes = File(context.applicationInfo.sourceDir).length() + directoryBytes(context.dataDir)
-        val batteryManager = context.getSystemService(BatteryManager::class.java)
+        val networkRxAfter = TrafficStats.getUidRxBytes(uid)
+        val networkTxAfter = TrafficStats.getUidTxBytes(uid)
+        val batteryAfter = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val energyAfter = batteryManager.getLongProperty(BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER)
         val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val powerManager = context.getSystemService(PowerManager::class.java)
         val evidence = JSONObject()
@@ -83,7 +93,13 @@ class PythonRuntimePerformanceTest {
             .put("cpu_percent", JSONArray(cpuSamples))
             .put("cpu_p95_percent", percentile95(cpuSamples))
             .put("storage_mb", storageBytes / 1024.0 / 1024.0)
-            .put("battery_percent", batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
+            .put("network_rx_bytes", counterDelta(networkRxBefore, networkRxAfter))
+            .put("network_tx_bytes", counterDelta(networkTxBefore, networkTxAfter))
+            .put("battery_percent_before", batteryBefore)
+            .put("battery_percent_after", batteryAfter)
+            .put("battery_drop_percent", if (batteryBefore >= 0 && batteryAfter >= 0) (batteryBefore - batteryAfter).coerceAtLeast(0) else JSONObject.NULL)
+            .put("energy_counter_before_nwh", energyBefore.takeIf { it >= 0 } ?: JSONObject.NULL)
+            .put("energy_counter_after_nwh", energyAfter.takeIf { it >= 0 } ?: JSONObject.NULL)
             .put("battery_temperature_c", batteryIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)?.div(10.0))
             .put(
                 "thermal_status",
@@ -124,6 +140,9 @@ class PythonRuntimePerformanceTest {
         file.isDirectory -> file.listFiles()?.sumOf(::directoryBytes) ?: 0L
         else -> 0L
     }
+
+    private fun counterDelta(before: Long, after: Long): Long =
+        if (before < 0 || after < 0) -1 else (after - before).coerceAtLeast(0)
 
     private fun processCpuTicks(pid: Int): Long? = runCatching {
         val fields = File("/proc/$pid/stat").readText().trim().split(' ')

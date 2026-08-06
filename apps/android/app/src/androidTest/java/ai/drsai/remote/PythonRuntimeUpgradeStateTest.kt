@@ -12,9 +12,13 @@ import ai.drsai.remote.data.MIGRATION_7_8
 import ai.drsai.remote.data.MIGRATION_8_9
 import ai.drsai.remote.data.MIGRATION_9_10
 import ai.drsai.remote.data.MIGRATION_10_11
+import ai.drsai.remote.data.MIGRATION_11_12
+import ai.drsai.remote.data.MIGRATION_12_13
 import ai.drsai.remote.data.MessageEntity
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.runtime.python.HostCheckpoint
+import ai.drsai.remote.runtime.python.PythonRunRecovery
+import ai.drsai.remote.runtime.python.PythonRuntimeMessageType
 import ai.drsai.remote.runtime.python.RoomPythonCheckpointStore
 import ai.drsai.remote.runtime.v2.RunCommand
 import ai.drsai.remote.workbench.data.RoomRunJournal
@@ -102,6 +106,21 @@ class PythonRuntimeUpgradeStateTest {
                 val checkpoint = requireNotNull(RoomPythonCheckpointStore(db).loadCheckpoint("upgrade-python-run"))
                 assertEquals(7, checkpoint.sequence)
                 assertEquals("checkpoint-preserved", checkpoint.state.getString("marker"))
+                val durableRun = requireNotNull(
+                    RoomRunJournal(db).checkpoint(WorkbenchId("upgrade-python-run"))
+                )
+                assertEquals("upgrade-python-run", durableRun.command.runId.value)
+                assertEquals("upgrade-python-idempotency", durableRun.command.idempotencyKey)
+                val resume = PythonRunRecovery.resumeEnvelope(
+                    "upgrade-python-run", CONVERSATION, RoomPythonCheckpointStore(db),
+                )
+                assertEquals(PythonRuntimeMessageType.RESUME_RUN, resume.messageType)
+                assertEquals("upgrade-python-run", resume.runId)
+                assertEquals("paused", resume.payload.getString("resume_phase"))
+                assertEquals(
+                    "checkpoint-preserved",
+                    resume.payload.getJSONObject("state").getString("marker"),
+                )
             } finally {
                 db.close()
             }
@@ -134,7 +153,7 @@ class PythonRuntimeUpgradeStateTest {
     private fun database(context: Context) = Room.databaseBuilder(context, ChatDatabase::class.java, DATABASE)
         .addMigrations(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
-            MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
+            MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
         )
         .build()
 

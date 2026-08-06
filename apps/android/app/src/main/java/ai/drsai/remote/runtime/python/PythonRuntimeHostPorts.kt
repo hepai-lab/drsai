@@ -11,6 +11,10 @@ data class HostModelRequest(
     val modelId: String,
     val messages: JSONArray,
     val tools: JSONArray = JSONArray(),
+    val toolChoice: JSONObject = JSONObject()
+        .put("policy_version", "p9-tool-choice-v1")
+        .put("mode", "auto"),
+    val modelRouteSnapshot: JSONObject? = null,
 )
 
 data class HostModelChunk(
@@ -18,6 +22,7 @@ data class HostModelChunk(
     val delta: String = "",
     val finishReason: String? = null,
     val toolCalls: JSONArray = JSONArray(),
+    val reasoningSummary: String = "",
 )
 
 data class HostToolCall(
@@ -26,6 +31,9 @@ data class HostToolCall(
     val arguments: JSONObject,
     val idempotencyKey: String,
     val approved: Boolean = false,
+    val risk: String = "sensitive",
+    val maxAttempts: Int = 1,
+    val retryableErrorCodes: Set<String> = emptySet(),
 )
 
 data class HostToolResult(
@@ -67,7 +75,10 @@ interface PythonStateStoreHostPort {
     suspend fun saveCheckpoint(checkpoint: HostCheckpoint)
     suspend fun loadCheckpoint(runId: String): HostCheckpoint?
 }
-interface PythonToolHostPort { suspend fun execute(call: HostToolCall): HostToolResult }
+interface PythonToolHostPort {
+    suspend fun execute(call: HostToolCall): HostToolResult
+    fun authoritativeRisk(toolName: String): String? = null
+}
 interface PythonApprovalHostPort { suspend fun request(request: HostApprovalRequest): HostApprovalDecision }
 interface PythonArtifactHostPort {
     suspend fun describe(artifactId: String): HostArtifactDescriptor

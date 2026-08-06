@@ -38,13 +38,20 @@ class RuntimeReliabilityTest {
             DeviceConstraints(80, true, ThermalLevel.NORMAL, false, false), true))
     }
 
-    @Test fun resourcePressureReducesConcurrencyOrRoutesAwayWithoutLargeHeap() {
+    @Test fun resourcePressureBlocksOrOffersExplicitRemoteWithoutAnyLiteRoute() {
         val healthy = DeviceConstraints(80, true, ThermalLevel.NORMAL, false, true)
         assertEquals("python_local", RuntimeResourcePolicy.decide(healthy, 256, 1024).route)
         assertEquals(2, RuntimeResourcePolicy.decide(healthy, 256, 1024).maxParallelAgents)
-        assertEquals("kotlin_lite", RuntimeResourcePolicy.decide(healthy.copy(lowMemory = true), 256, 1024).route)
-        assertEquals("remote_full", RuntimeResourcePolicy.decide(healthy.copy(thermal = ThermalLevel.SEVERE), 256, 1024).route)
-        assertEquals("resource_artifact_limit", RuntimeResourcePolicy.decide(healthy, 256, 65L * 1024 * 1024).reason)
+        val lowMemory = RuntimeResourcePolicy.decide(healthy.copy(lowMemory = true), 256, 1024)
+        assertEquals("full_runtime_blocked", lowMemory.route)
+        assertEquals(0, lowMemory.maxParallelAgents)
+        assertEquals("remote_full_offer", RuntimeResourcePolicy.decide(healthy.copy(thermal = ThermalLevel.SEVERE), 256, 1024).route)
+        val oversizedArtifact = RuntimeResourcePolicy.decide(healthy, 256, 65L * 1024 * 1024)
+        assertEquals("full_runtime_blocked", oversizedArtifact.route)
+        assertEquals("resource_artifact_limit", oversizedArtifact.reason)
+        listOf(lowMemory, oversizedArtifact).forEach { decision ->
+            assertFalse(decision.route.contains("lite", ignoreCase = true))
+        }
     }
 
     @Test fun cursorMergeDropsDuplicatesAndReportsTheFirstGap() {

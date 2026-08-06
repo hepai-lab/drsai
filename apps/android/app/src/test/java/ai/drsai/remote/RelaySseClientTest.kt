@@ -196,4 +196,22 @@ class RelaySseClientTest {
             .sessionStream(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 0)
             .toList()
     }
+
+    @Test fun `workspace catalog SSE emits one content free invalidation`() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "event: session.catalog.changed\n" +
+                "data: {\"event_id\":\"event-2\",\"session_id\":\"session\"," +
+                "\"type\":\"event.session.archived\",\"sequence\":2}\n\n",
+        ))
+        var connected = false
+        val events = RelaySseClient(server.url("/").toString(), { "token" })
+            .workspaceSessionCatalogStream(RuntimeId("rt"), WorkspaceId("ws")) { connected = true }
+            .toList()
+        assertTrue(connected)
+        assertEquals(1, events.size)
+        assertEquals(
+            "/v1/runtimes/rt/workspaces/ws/session-catalog-events/stream",
+            server.takeRequest().path,
+        )
+    }
 }

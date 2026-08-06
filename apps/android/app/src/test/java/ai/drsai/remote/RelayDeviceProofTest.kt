@@ -4,6 +4,7 @@ import ai.drsai.remote.BuildConfig
 import ai.drsai.remote.remote.security.RelayAssociationDevice
 import ai.drsai.remote.remote.security.RelayDeviceProof
 import ai.drsai.remote.remote.security.RelayDeviceSigner
+import ai.drsai.remote.remote.security.rawEd25519PrivateSeed
 import ai.drsai.remote.remote.security.rawEd25519PublicKey
 import ai.drsai.remote.remote.security.authorizeRelayRequest
 import okhttp3.MediaType.Companion.toMediaType
@@ -66,6 +67,17 @@ class RelayDeviceProofTest {
     }
 
     @Test
+    fun `legacy EdDSA PKCS8 private seed migrates without changing identity`() {
+        val seed = ByteArray(32) { it.toByte() }
+        val legacyPkcs8Prefix = byteArrayOf(
+            0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+            0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+        )
+        assertArrayEquals(seed, rawEd25519PrivateSeed(legacyPkcs8Prefix + seed))
+        assertArrayEquals(seed, rawEd25519PrivateSeed(seed))
+    }
+
+    @Test
     fun `missing device proof is allowed only in debug fixtures`() {
         val request = Request.Builder().url("https://relay.invalid/v1/runtimes").build()
         if (BuildConfig.DEBUG) {
@@ -80,13 +92,28 @@ class RelayDeviceProofTest {
         }
     }
 
-    private class CapturingSigner : RelayDeviceSigner {
+    @Test
+    fun `device key rotation becomes due only after bounded age`() {
+        val signer = CapturingSigner(createdAt = 1_000L)
+        val before = RelayDeviceProof(signer, epochSeconds = { 1_999L })
+        val due = RelayDeviceProof(signer, epochSeconds = { 2_000L })
+
+        assertEquals(false, before.isKeyRotationDue(maxAgeSeconds = 1_000L))
+        assertEquals(true, due.isKeyRotationDue(maxAgeSeconds = 1_000L))
+    }
+
+    private class CapturingSigner(
+        private val createdAt: Long = Long.MAX_VALUE,
+    ) : RelayDeviceSigner {
         override val associationDevice = RelayAssociationDevice(
             deviceId = "android.test-device",
             deviceName = "Android test device",
             devicePublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         )
         var message: String? = null
+
+        override val keyCreatedAtEpochSeconds: Long
+            get() = createdAt
 
         override fun sign(message: ByteArray): ByteArray {
             this.message = message.toString(Charsets.UTF_8)

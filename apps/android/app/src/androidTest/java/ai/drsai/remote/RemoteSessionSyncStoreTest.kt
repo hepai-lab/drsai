@@ -17,6 +17,8 @@ import ai.drsai.remote.remote.generated.OaepPlanContent
 import ai.drsai.remote.remote.generated.OaepRun
 import ai.drsai.remote.remote.generated.OaepSession
 import ai.drsai.remote.remote.generated.OaepSnapshot
+import ai.drsai.remote.remote.generated.OaepSnapshotCheckpoint
+import ai.drsai.remote.remote.generated.OaepSnapshotWindow
 import ai.drsai.remote.remote.generated.OaepSource
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -154,6 +156,43 @@ class RemoteSessionSyncStoreTest {
             event.copy(eventId = "event-6", sequence = 6, dedupeKey = "event-6"), 4,
         ))
         assertEquals(4, store.oaepSessionCursor("user", "", "rt", "session")!!.lastSequence)
+    }
+
+    @Test
+    fun oaep_older_snapshot_window_merges_without_replacing_newer_items_or_cursor() = runTest {
+        val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
+        val run = OaepRun(
+            id = "run-1", sessionId = "session", parentRunId = null,
+            status = "completed", createdAt = "now", updatedAt = "now", completedAt = "now",
+        )
+        val checkpoint = OaepSnapshotCheckpoint(30, "a".repeat(64), 2)
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run), listOf(oaepMessageItem("completed")), 30,
+                checkpoint, OaepSnapshotWindow(1, true, "older-page"),
+            ),
+            1,
+        )
+        val older = oaepMessageItem("completed").copy(
+            id = "item-older", sequence = 0, createdAt = "before", updatedAt = "before",
+            source = OaepSource(
+                "runtime", client = "android", messageId = "source-older", runtimeId = "rt",
+            ),
+        )
+        store.mergeOaepSnapshotWindow(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run), listOf(older), 30,
+                checkpoint, OaepSnapshotWindow(1, false, null),
+            ),
+        )
+
+        assertEquals(
+            setOf("item-1", "item-older"),
+            store.oaepSessionItems("user", "", "rt", "session").map { it.itemId }.toSet(),
+        )
+        assertEquals(30, store.oaepSessionCursor("user", "", "rt", "session")!!.lastSequence)
     }
 
     @Test

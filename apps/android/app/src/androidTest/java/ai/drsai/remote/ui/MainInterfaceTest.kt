@@ -38,6 +38,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
 import ai.drsai.remote.data.ApprovalUiItem
+import ai.drsai.remote.data.FullRuntimeDiagnosticUi
+import ai.drsai.remote.data.RuntimePolicyDiagnosticUi
 import ai.drsai.remote.data.DEFAULT_AGENT
 import ai.drsai.remote.data.AttachmentDraft
 import ai.drsai.remote.data.AttachmentStatus
@@ -83,23 +85,82 @@ class MainInterfaceTest {
     }
 
     @Test
+    fun profileVersionInfoShowsVersionBuildChannelAndOaepRuntime() {
+        composeRule.setContent {
+            MaterialTheme {
+                ProfileVersionInfo("1.5.6", 10506, "debug")
+            }
+        }
+
+        composeRule.onNodeWithTag("profile-version-info").assertIsDisplayed()
+        composeRule.onNodeWithText("版本信息").assertIsDisplayed()
+        composeRule.onNodeWithText("OpenDrSai 1.5.6 (10506)").assertIsDisplayed()
+        composeRule.onNodeWithText("构建渠道：Debug · Android Agent Runtime · OAEP 1.0").assertIsDisplayed()
+    }
+
+    @Test
+    fun fullRuntimeDiagnosticShowsBindingRouteCapabilitiesAndNoKotlinFallback() {
+        composeRule.setContent {
+            MaterialTheme {
+                FullRuntimeDiagnosticSection(
+                    diagnostic = FullRuntimeDiagnosticUi(
+                        buildEnabled = true,
+                        bindingState = "READY",
+                        health = "READY",
+                        process = "ai.drsai.remote.debug:runtime · pid 4242",
+                        starts = 3,
+                        bindAttempts = 2,
+                        bindSuccesses = 2,
+                        route = "Full Local",
+                        availableTools = listOf("get_current_time"),
+                        permissionRequiredTools = listOf("workspace.read"),
+                        availableSkills = listOf("core.plan"),
+                        kernelVersion = "p9.1",
+                        kernelSha256 = "a".repeat(64),
+                        promptVersion = "p9-agent-kernel-v1",
+                        toolManifestVersion = "p9-tools-v1",
+                        skillManifestVersion = "p9-skill-manifest-v1",
+                        skillManifestSha256 = "d".repeat(64),
+                    ),
+                    policy = RuntimePolicyDiagnosticUi("verified", "v1", null, 100, false, 1),
+                    onRetry = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("full-runtime-diagnostic").assertIsDisplayed()
+        composeRule.onNodeWithText("kotlin_fallback_available=false").assertIsDisplayed()
+        composeRule.onNodeWithText("路由 Full Local · 绑定 READY · 健康 READY").assertIsDisplayed()
+        composeRule.onNodeWithText("Build enabled=true · 进程 ai.drsai.remote.debug:runtime · pid 4242").assertIsDisplayed()
+        composeRule.onNodeWithText("Kernel p9.1 · ${"a".repeat(12)}").assertIsDisplayed()
+        composeRule.onNodeWithText("Prompt p9-agent-kernel-v1 · Tool p9-tools-v1").assertIsDisplayed()
+        composeRule.onNodeWithText("Skill p9-skill-manifest-v1 · ${"d".repeat(12)}").assertIsDisplayed()
+    }
+
+    @Test
     fun permanentWorkbenchDrawerRendersItsPrimaryNavigation() {
         var searchOpened = 0
+        var settingsOpened = 0
         composeRule.setContent {
             MaterialTheme {
                 NavigationDrawer(
                     state = AppState(user = ai.drsai.remote.data.User("wide", "宽屏账户")),
                     modal = false,
                     onNewConversation = {}, onOpenConversation = {}, onSelectAgent = {}, onRefreshAgents = {},
-                    onOpenProfile = {}, onOpenSearch = { searchOpened += 1 }, onOpenRemoteWorkspaces = {},
+                    onOpenProfile = {}, onOpenSettings = { settingsOpened += 1 },
+                    onOpenSearch = { searchOpened += 1 }, onOpenRemoteWorkspaces = {},
                 )
             }
         }
         composeRule.onNodeWithText("远程工作区").assertIsDisplayed()
         composeRule.onNodeWithText("宽屏账户").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("搜索").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("open-settings").assertIsDisplayed().performClick()
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(0)
-        composeRule.runOnIdle { assertEquals(1, searchOpened) }
+        composeRule.runOnIdle {
+            assertEquals(1, searchOpened)
+            assertEquals(1, settingsOpened)
+        }
     }
 
     @Test
@@ -336,7 +397,7 @@ class MainInterfaceTest {
         }
         composeRule.onNodeWithText("Run 创建后会固定到所选 Runtime，不会静默切换。").assertIsDisplayed()
         composeRule.onNodeWithText("计算节点 · 远程 Runtime").assertIsDisplayed()
-        composeRule.onNodeWithText("Android 本地 · Lite Runtime").performClick()
+        composeRule.onNodeWithText("Android 本地 · Full Agent Runtime").performClick()
         composeRule.runOnIdle { assertEquals("local", selected) }
     }
 

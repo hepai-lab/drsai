@@ -8,21 +8,15 @@ import androidx.security.crypto.MasterKey
 import okio.Buffer
 import okhttp3.HttpUrl
 import okhttp3.Request
-import net.i2p.crypto.eddsa.EdDSAPublicKey
-import net.i2p.crypto.eddsa.EdDSASecurityProvider
 import java.nio.charset.StandardCharsets
-import java.security.KeyPairGenerator
-import java.security.KeyFactory
 import java.security.MessageDigest
-import java.security.PrivateKey
-import java.security.PublicKey
-import java.security.Signature
-import java.security.Security
-import java.security.spec.PKCS8EncodedKeySpec
-import java.security.spec.X509EncodedKeySpec
 import java.time.Instant
 import java.util.Base64
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
 
 data class RelayAssociationDevice(
     val deviceId: String,
@@ -32,7 +26,33 @@ data class RelayAssociationDevice(
 
 interface RelayDeviceSigner {
     val associationDevice: RelayAssociationDevice
+    val keyCreatedAtEpochSeconds: Long
+        get() = Long.MAX_VALUE
     fun sign(message: ByteArray): ByteArray
+    fun beginKeyRotation(): RelayDeviceKeyRotation =
+        error("relay_device_key_rotation_not_supported")
+}
+
+class RelayDeviceKeyRotation internal constructor(
+    val newDevicePublicKey: String,
+    private val signAction: (ByteArray) -> ByteArray = {
+        error("relay_device_pending_key_not_available")
+    },
+    private val discardAction: () -> Unit = {},
+    private val commitAction: () -> Unit,
+) {
+    private val settled = AtomicBoolean(false)
+
+    fun commit() {
+        check(settled.compareAndSet(false, true)) { "relay_device_key_rotation_already_settled" }
+        commitAction()
+    }
+
+    fun discard() {
+        if (settled.compareAndSet(false, true)) discardAction()
+    }
+
+    internal fun sign(message: ByteArray): ByteArray = signAction(message)
 }
 
 class RelayDeviceProof(
@@ -43,7 +63,29 @@ class RelayDeviceProof(
     val associationDevice: RelayAssociationDevice
         get() = signer.associationDevice
 
-    fun authorize(request: Request, accessToken: String): Request {
+    fun beginKeyRotation(): RelayDeviceKeyRotation = signer.beginKeyRotation()
+
+    fun isKeyRotationDue(maxAgeSeconds: Long = DEFAULT_KEY_MAX_AGE_SECONDS): Boolean {
+        require(maxAgeSeconds > 0) { "relay_device_key_max_age_invalid" }
+        val createdAt = signer.keyCreatedAtEpochSeconds
+        return createdAt > 0 && createdAt != Long.MAX_VALUE &&
+            epochSeconds() >= createdAt + maxAgeSeconds
+    }
+
+    fun authorize(request: Request, accessToken: String): Request =
+        authorizeWith(request, accessToken, signer::sign)
+
+    fun authorizeWithPendingKey(
+        request: Request,
+        accessToken: String,
+        rotation: RelayDeviceKeyRotation,
+    ): Request = authorizeWith(request, accessToken, rotation::sign)
+
+    private fun authorizeWith(
+        request: Request,
+        accessToken: String,
+        sign: (ByteArray) -> ByteArray,
+    ): Request {
         require(accessToken.isNotBlank()) { "relay_device_access_token_required" }
         val timestamp = epochSeconds().toString()
         val requestNonce = nonce()
@@ -63,7 +105,7 @@ class RelayDeviceProof(
             nonce = requestNonce,
             accessTokenSha256 = sha256Hex(accessToken.toByteArray(StandardCharsets.UTF_8)),
         )
-        val signature = base64Url(signer.sign(canonical.toByteArray(StandardCharsets.UTF_8)))
+        val signature = base64Url(sign(canonical.toByteArray(StandardCharsets.UTF_8)))
         require(signature.length == 86) { "relay_device_signature_invalid" }
         return request.newBuilder()
             .header("X-Relay-Device-Id", associationDevice.deviceId)
@@ -74,6 +116,8 @@ class RelayDeviceProof(
     }
 
     companion object {
+        const val DEFAULT_KEY_MAX_AGE_SECONDS: Long = 90L * 24L * 60L * 60L
+
         internal fun randomNonce(): String {
             val bytes = ByteArray(24)
             java.security.SecureRandom().nextBytes(bytes)
@@ -85,9 +129,6 @@ class RelayDeviceProof(
 class KeystoreWrappedRelayDeviceSigner(
     context: Context,
 ) : RelayDeviceSigner {
-    init {
-        ensureEdDsaProvider()
-    }
     private val prefs = EncryptedSharedPreferences.create(
         context.applicationContext,
         "opendrsai_relay_device_identity",
@@ -97,17 +138,18 @@ class KeystoreWrappedRelayDeviceSigner(
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
     )
-    private val keyPair by lazy(::loadOrCreate)
-    private val privateKey: PrivateKey
+    @Volatile private var keyPair = loadOrCreate()
+    @Volatile private var keyCreatedAt = loadOrCreateKeyCreatedAt()
+    private val stableDeviceId = loadOrCreateDeviceId()
+    private val privateKey: Ed25519PrivateKeyParameters
         get() = keyPair.first
-    private val publicKey: PublicKey
+    private val publicKey: Ed25519PublicKeyParameters
         get() = keyPair.second
 
     override val associationDevice: RelayAssociationDevice
         get() {
-            val raw = rawEd25519PublicKey(publicKey)
+            val raw = publicKey.encoded
             val encoded = base64Url(raw)
-            val identityDigest = sha256Hex(raw).take(32)
             val name = listOf(Build.MANUFACTURER, Build.MODEL)
                 .joinToString(" ")
                 .replace(Regex("\\s+"), " ")
@@ -115,81 +157,161 @@ class KeystoreWrappedRelayDeviceSigner(
                 .ifBlank { "Android device" }
                 .take(128)
             return RelayAssociationDevice(
-                deviceId = "android.$identityDigest",
+                deviceId = stableDeviceId,
                 deviceName = name,
                 devicePublicKey = encoded,
             )
         }
 
+    override val keyCreatedAtEpochSeconds: Long
+        get() = keyCreatedAt
+
     override fun sign(message: ByteArray): ByteArray {
-        ensureEdDsaProvider()
-        return Signature.getInstance(SIGNATURE_ALGORITHM, SOFTWARE_PROVIDER).run {
-            initSign(privateKey)
-            update(message)
-            sign()
+        return Ed25519Signer().run {
+            init(true, privateKey)
+            update(message, 0, message.size)
+            generateSignature()
         }.also {
             require(it.size == 64) { "relay_device_signature_invalid" }
         }
     }
 
-    private fun loadOrCreate(): Pair<PrivateKey, PublicKey> = synchronized(KEYPAIR_LOCK) {
-        ensureEdDsaProvider()
-        val factory = KeyFactory.getInstance(KEY_ALGORITHM, SOFTWARE_PROVIDER)
+    override fun beginKeyRotation(): RelayDeviceKeyRotation {
+        val replacement = synchronized(KEYPAIR_LOCK) {
+            loadPendingKeyPair() ?: run {
+                val replacementPrivate = Ed25519PrivateKeyParameters(java.security.SecureRandom())
+                val generated = replacementPrivate to replacementPrivate.generatePublicKey()
+                check(validEd25519KeyPair(generated)) { "relay_device_keypair_self_test_failed" }
+                check(
+                    prefs.edit()
+                        .putString(PENDING_PRIVATE_KEY, base64Url(generated.first.encoded))
+                        .putString(PENDING_PUBLIC_KEY, base64Url(generated.second.encoded))
+                        .commit()
+                ) { "relay_device_pending_key_store_failed" }
+                generated
+            }
+        }
+        return RelayDeviceKeyRotation(
+            newDevicePublicKey = base64Url(replacement.second.encoded),
+            commitAction = {
+                synchronized(KEYPAIR_LOCK) {
+                    val rotatedAt = Instant.now().epochSecond
+                    check(
+                        prefs.edit()
+                            .putString(PRIVATE_KEY, base64Url(replacement.first.encoded))
+                            .putString(PUBLIC_KEY, base64Url(replacement.second.encoded))
+                            .putLong(KEY_CREATED_AT, rotatedAt)
+                            .remove(PENDING_PRIVATE_KEY)
+                            .remove(PENDING_PUBLIC_KEY)
+                            .commit()
+                    ) { "relay_device_key_rotation_store_failed" }
+                    keyPair = replacement
+                    keyCreatedAt = rotatedAt
+                }
+            },
+            signAction = { message ->
+                Ed25519Signer().run {
+                    init(true, replacement.first)
+                    update(message, 0, message.size)
+                    generateSignature()
+                }
+            },
+            discardAction = {
+                synchronized(KEYPAIR_LOCK) {
+                    check(
+                        prefs.edit().remove(PENDING_PRIVATE_KEY).remove(PENDING_PUBLIC_KEY).commit()
+                    ) { "relay_device_pending_key_cleanup_failed" }
+                }
+            },
+        )
+    }
+
+    private fun loadPendingKeyPair(): Pair<Ed25519PrivateKeyParameters, Ed25519PublicKeyParameters>? {
+        val privateEncoded = prefs.getString(PENDING_PRIVATE_KEY, null)
+        val publicEncoded = prefs.getString(PENDING_PUBLIC_KEY, null)
+        if (privateEncoded == null && publicEncoded == null) return null
+        val pair = if (privateEncoded != null && publicEncoded != null) runCatching {
+            val privateSeed = rawEd25519PrivateSeed(Base64.getUrlDecoder().decode(privateEncoded))
+            val publicRaw = rawEd25519PublicKey(Base64.getUrlDecoder().decode(publicEncoded))
+            Ed25519PrivateKeyParameters(privateSeed, 0) to Ed25519PublicKeyParameters(publicRaw, 0)
+        }.getOrNull()?.takeIf(::validEd25519KeyPair) else null
+        if (pair != null) return pair
+        check(prefs.edit().remove(PENDING_PRIVATE_KEY).remove(PENDING_PUBLIC_KEY).commit()) {
+            "relay_device_invalid_pending_key_cleanup_failed"
+        }
+        return null
+    }
+
+    private fun loadOrCreateKeyCreatedAt(): Long = synchronized(KEYPAIR_LOCK) {
+        prefs.getLong(KEY_CREATED_AT, 0L).takeIf { it > 0 }?.let { return@synchronized it }
+        val createdAt = Instant.now().epochSecond
+        check(prefs.edit().putLong(KEY_CREATED_AT, createdAt).commit()) {
+            "relay_device_key_created_at_store_failed"
+        }
+        createdAt
+    }
+
+    private fun loadOrCreate(): Pair<Ed25519PrivateKeyParameters, Ed25519PublicKeyParameters> = synchronized(KEYPAIR_LOCK) {
         val privateEncoded = prefs.getString(PRIVATE_KEY, null)
         val publicEncoded = prefs.getString(PUBLIC_KEY, null)
         if (privateEncoded != null || publicEncoded != null) {
             if (privateEncoded != null && publicEncoded != null) runCatching {
-                factory.generatePrivate(
-                    PKCS8EncodedKeySpec(Base64.getUrlDecoder().decode(privateEncoded)),
-                ) to factory.generatePublic(
-                    X509EncodedKeySpec(Base64.getUrlDecoder().decode(publicEncoded)),
-                )
+                val privateSeed = rawEd25519PrivateSeed(Base64.getUrlDecoder().decode(privateEncoded))
+                val publicRaw = rawEd25519PublicKey(Base64.getUrlDecoder().decode(publicEncoded))
+                Ed25519PrivateKeyParameters(privateSeed, 0) to Ed25519PublicKeyParameters(publicRaw, 0)
             }.getOrNull()?.takeIf(::validEd25519KeyPair)?.let { return@synchronized it }
             check(prefs.edit().remove(PRIVATE_KEY).remove(PUBLIC_KEY).commit()) {
                 "relay_device_invalid_keypair_cleanup_failed"
             }
         }
-        val generated = KeyPairGenerator.getInstance(KEY_ALGORITHM, SOFTWARE_PROVIDER)
-            .generateKeyPair()
-        val pair = generated.private to generated.public
+        val privateKey = Ed25519PrivateKeyParameters(java.security.SecureRandom())
+        val pair = privateKey to privateKey.generatePublicKey()
         check(validEd25519KeyPair(pair)) { "relay_device_keypair_self_test_failed" }
         check(
             prefs.edit()
-                .putString(PRIVATE_KEY, base64Url(generated.private.encoded))
-                .putString(PUBLIC_KEY, base64Url(generated.public.encoded))
+                .putString(PRIVATE_KEY, base64Url(pair.first.encoded))
+                .putString(PUBLIC_KEY, base64Url(pair.second.encoded))
                 .commit()
         ) { "relay_device_keypair_store_failed" }
         pair
     }
 
-    private fun validEd25519KeyPair(pair: Pair<PrivateKey, PublicKey>): Boolean =
+    private fun loadOrCreateDeviceId(): String = synchronized(KEYPAIR_LOCK) {
+        prefs.getString(DEVICE_ID, null)?.takeIf {
+            it.length in 16..128 && it.matches(Regex("^[A-Za-z0-9._-]+$"))
+        }?.let { return@synchronized it }
+        // Migration preserves the identity already enrolled by previous
+        // builds, whose device id was derived from the then-current key.
+        val migrated = "android.${sha256Hex(keyPair.second.encoded).take(32)}"
+        check(prefs.edit().putString(DEVICE_ID, migrated).commit()) {
+            "relay_device_id_store_failed"
+        }
+        migrated
+    }
+
+    private fun validEd25519KeyPair(pair: Pair<Ed25519PrivateKeyParameters, Ed25519PublicKeyParameters>): Boolean =
         runCatching {
             val probe = "opendrsai-relay-device-self-test".toByteArray()
-            val signed = Signature.getInstance(SIGNATURE_ALGORITHM, SOFTWARE_PROVIDER).run {
-                initSign(pair.first)
-                update(probe)
-                sign()
+            val signed = Ed25519Signer().run {
+                init(true, pair.first)
+                update(probe, 0, probe.size)
+                generateSignature()
             }
-            signed.size == 64 && Signature.getInstance(SIGNATURE_ALGORITHM, SOFTWARE_PROVIDER).run {
-                initVerify(pair.second)
-                update(probe)
-                verify(signed)
+            signed.size == 64 && Ed25519Signer().run {
+                init(false, pair.second)
+                update(probe, 0, probe.size)
+                verifySignature(signed)
             }
         }.getOrDefault(false)
 
     companion object {
-        private val SOFTWARE_PROVIDER = EdDSASecurityProvider.PROVIDER_NAME
-        private const val KEY_ALGORITHM = "EdDSA"
-        private const val SIGNATURE_ALGORITHM = "NONEwithEdDSA"
         private const val PRIVATE_KEY = "private_pkcs8"
         private const val PUBLIC_KEY = "public_x509"
+        private const val DEVICE_ID = "stable_device_id"
+        private const val KEY_CREATED_AT = "key_created_at_epoch_seconds"
+        private const val PENDING_PRIVATE_KEY = "pending_private_seed"
+        private const val PENDING_PUBLIC_KEY = "pending_public_raw"
         private val KEYPAIR_LOCK = Any()
-
-        private fun ensureEdDsaProvider() {
-            if (Security.getProvider(SOFTWARE_PROVIDER) == null) {
-                Security.addProvider(EdDSASecurityProvider())
-            }
-        }
     }
 }
 
@@ -281,17 +403,12 @@ internal fun rawEd25519PublicKey(encoded: ByteArray): ByteArray {
     return encoded.copyOfRange(encoded.size - 32, encoded.size)
 }
 
-private fun rawEd25519PublicKey(publicKey: PublicKey): ByteArray {
-    if (publicKey is EdDSAPublicKey) return publicKey.abyte.copyOf()
-    require(
-        publicKey.algorithm.equals("Ed25519", ignoreCase = true) ||
-            publicKey.algorithm.equals("EdDSA", ignoreCase = true)
-    ) { "relay_device_public_key_algorithm_invalid" }
-    val encoded = requireNotNull(publicKey.encoded) {
-        "relay_device_public_key_encoding_missing"
+internal fun rawEd25519PrivateSeed(encoded: ByteArray): ByteArray {
+    if (encoded.size == 32) return encoded.copyOf()
+    val ed25519Oid = byteArrayOf(0x06, 0x03, 0x2b, 0x65, 0x70)
+    require(encoded.size >= 32 && encoded.containsSubsequence(ed25519Oid)) {
+        "relay_device_private_key_encoding_invalid"
     }
-    require(encoded.size >= 32) { "relay_device_public_key_encoding_invalid" }
-    // AndroidOpenSSL Ed25519 SPKI ends in the fixed 32-byte compressed public key.
     return encoded.copyOfRange(encoded.size - 32, encoded.size)
 }
 

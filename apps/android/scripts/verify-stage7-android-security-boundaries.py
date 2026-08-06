@@ -45,7 +45,17 @@ def main() -> int:
     require("release_cleartext_disabled", 'manifestPlaceholders["usesCleartextTraffic"] = "false"' in release)
 
     source_text = "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in (app / "src/main").rglob("*.kt"))
-    pending_calls = re.findall(r"PendingIntent\.get\w+\([\s\S]*?\n\s*\)", source_text)
+    pending_calls: list[str] = []
+    for match in re.finditer(r"PendingIntent\.get\w+\(", source_text):
+        depth = 1
+        cursor = match.end()
+        while cursor < len(source_text) and depth:
+            if source_text[cursor] == "(":
+                depth += 1
+            elif source_text[cursor] == ")":
+                depth -= 1
+            cursor += 1
+        pending_calls.append(source_text[match.start():cursor] if depth == 0 else "")
     require("pending_intents_immutable", bool(pending_calls) and all("FLAG_IMMUTABLE" in call for call in pending_calls))
     forbidden = ("DexClassLoader", "PathClassLoader", "InMemoryDexClassLoader", "Runtime.getRuntime().exec", "ProcessBuilder(")
     require("no_dynamic_code_execution", not any(token in source_text for token in forbidden))

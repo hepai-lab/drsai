@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -13,6 +14,12 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.DrSaiRemote"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <!-- The QR scanner is optional. Initializing ML Kit on every app start
+             retains memory beside the always-ready Python runtime, so initialize
+             it lazily when the user opens the scanner instead. -->
+        <provider
+            android:name="com.google.mlkit.common.internal.MlKitInitProvider"
+            tools:node="remove" />
         <activity
             android:name=".ExternalEntryActivity"
             android:exported="true"
@@ -68,5 +75,17 @@
             android:exported="false"
             android:process=":runtime"
             android:stopWithTask="false" />
+        <service
+            android:name=".remote.device.OpenDrSaiFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <!-- The installed HepAI push adapter forwards only the fixed opaque
+             identity envelope to this UID-private receiver. -->
+        <receiver
+            android:name=".remote.device.RemoteWorkspaceNotificationReceiver"
+            android:exported="false" />
     </application>
 </manifest>

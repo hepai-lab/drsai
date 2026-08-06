@@ -3,6 +3,8 @@ package ai.drsai.remote.runtime.python
 import ai.drsai.remote.data.CompletedToolCall
 import ai.drsai.remote.data.ModelDelta
 import ai.drsai.remote.data.ModelGateway
+import ai.drsai.remote.data.ToolChoiceAwareModelGateway
+import ai.drsai.remote.data.PinnedModelRouteGateway
 import ai.drsai.remote.data.RuntimeMessage
 import ai.drsai.remote.data.LocalToolRegistry
 import ai.drsai.remote.data.ChatDao
@@ -18,55 +20,74 @@ import android.os.PowerManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-class HaiPythonModelHostPort(private val gateway: ModelGateway) : PythonModelHostPort {
-    override fun stream(request: HostModelRequest): Flow<HostModelChunk> = flow {
-        val calls = linkedMapOf<Int, ToolCallBuilder>()
+class HaiPythonModelHostPort(
+    private val gateway: ModelGateway,
+    private val capabilityResolver: (String) -> ModelRuntimeCapabilities? = { null },
+) : PythonModelHostPort {
+    override fun stream(request: HostModelRequest): Flow<HostModelChunk> = channelFlow {
+        val modelCapabilities = capabilityResolver(request.modelId)
+        modelCapabilities?.requireRunSupport(request.tools.length())
+        val calls = StreamedToolCallAssembler()
         var finishReason: String? = null
         var receivedDelta = false
         suspend fun complete(tools: JSONArray) {
-            gateway.streamCompletionWithTools(
-                request.modelId,
-                request.messages.toRuntimeMessages(),
-                tools,
-            ) { delta: ModelDelta ->
+            val messages = request.messages.toRuntimeMessages()
+            val consume: suspend (ModelDelta) -> Unit = { delta ->
                 if (!delta.content.isNullOrEmpty() || delta.toolCalls.isNotEmpty()) receivedDelta = true
                 delta.content?.takeIf(String::isNotEmpty)?.let {
-                    emit(HostModelChunk(request.requestId, delta = it))
+                    send(HostModelChunk(request.requestId, delta = it))
+                }
+                delta.reasoningSummary?.takeIf(String::isNotEmpty)?.let {
+                    send(HostModelChunk(request.requestId, reasoningSummary = it))
                 }
                 delta.toolCalls.forEach { part ->
-                    calls.getOrPut(part.index) { ToolCallBuilder() }.apply {
-                        if (!part.id.isNullOrBlank()) id = part.id
-                        if (!part.name.isNullOrBlank()) name = part.name
-                        arguments.append(part.arguments)
-                    }
+                    calls.append(part)
                 }
                 if (delta.finishReason != null) finishReason = delta.finishReason
+            }
+            if (gateway is PinnedModelRouteGateway && request.modelRouteSnapshot != null) {
+                gateway.streamCompletionWithPinnedRoute(
+                    request.modelId, request.modelRouteSnapshot, messages, tools, request.toolChoice, consume,
+                )
+            } else if (gateway is ToolChoiceAwareModelGateway) {
+                gateway.streamCompletionWithToolChoice(
+                    request.modelId, messages, tools, request.toolChoice, consume,
+                )
+            } else {
+                gateway.streamCompletionWithTools(request.modelId, messages, tools, consume)
             }
         }
         try {
             complete(request.tools)
         } catch (error: ApiException) {
+            if (error.code != null) throw error
             if (error.status != 400 || request.tools.length() == 0 || receivedDelta) throw error
-            calls.clear()
-            finishReason = null
-            complete(JSONArray())
+            throw ApiException(
+                status = error.status,
+                message = "model_tools_unsupported:${request.modelId}:${error.message}",
+                retryable = false,
+                code = "model_tools_unsupported",
+            )
         }
-        emit(
+        val completedCalls = calls.finish()
+        modelCapabilities?.requireToolCallBatch(completedCalls.length())
+        send(
             HostModelChunk(
                 requestId = request.requestId,
                 finishReason = finishReason ?: "stop",
-                toolCalls = JSONArray(calls.toSortedMap().values.map { builder ->
-                    builder.toJson().also { call ->
+                toolCalls = JSONArray((0 until completedCalls.length()).map { index ->
+                    completedCalls.getJSONObject(index).also { call ->
                         request.tools.findTool(call.getString("name"))?.let { schema ->
                             call.put("requires_approval", schema.optBoolean("requires_approval"))
                                 .put("risk", schema.optString("risk", "sensitive"))
                                 .put("title", schema.optString("title", call.getString("name")))
                                 .put("summary", schema.optString("summary", schema.optString("description")))
+                                .putOpt("oaep_output_type", schema.optString("oaep_output_type").takeIf(String::isNotBlank))
                         }
                     }
                 }),
@@ -74,24 +95,18 @@ class HaiPythonModelHostPort(private val gateway: ModelGateway) : PythonModelHos
         )
     }
 
-    private data class ToolCallBuilder(
-        var id: String? = null,
-        var name: String? = null,
-        val arguments: StringBuilder = StringBuilder(),
-    ) {
-        fun toJson(): JSONObject = JSONObject()
-            .put("call_id", requireNotNull(id) { "model_tool_call_id_missing" })
-            .put("name", requireNotNull(name) { "model_tool_call_name_missing" })
-            .put("arguments", JSONObject(arguments.toString().ifBlank { "{}" }))
-    }
 }
 
 fun interface PythonToolExecutor {
     suspend fun execute(call: HostToolCall): HostToolResult
 }
 
-class AndroidPythonToolHostPort(private val executor: PythonToolExecutor) : PythonToolHostPort {
+class AndroidPythonToolHostPort(
+    private val executor: PythonToolExecutor,
+    private val riskResolver: (String) -> String? = { null },
+) : PythonToolHostPort {
     override suspend fun execute(call: HostToolCall): HostToolResult = executor.execute(call)
+    override fun authoritativeRisk(toolName: String): String? = riskResolver(toolName)
 }
 
 class LocalToolRegistryPythonExecutor(
@@ -178,7 +193,7 @@ class ScopedPythonArtifactHostPort(
         val artifact = dao.toolArtifacts(accountSubject, runId)
             .firstOrNull { it.id == artifactId && it.sessionId == sessionId }
             ?: error("artifact_not_found")
-        return ByteArtifactSource("application/json", artifact.content.toByteArray(Charsets.UTF_8))
+        return ByteArtifactSource("text/plain", artifact.content.toByteArray(Charsets.UTF_8))
     }
 
     private sealed interface ArtifactSource {

@@ -1,38 +1,33 @@
 package ai.drsai.remote.remote.ui
 
+import android.Manifest
 import android.app.Application
-import androidx.room.Room
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import ai.drsai.remote.BuildConfig
-import ai.drsai.remote.data.AccessTokenCoordinator
-import ai.drsai.remote.data.ChatDatabase
-import ai.drsai.remote.data.MIGRATION_1_2
-import ai.drsai.remote.data.MIGRATION_2_3
-import ai.drsai.remote.data.MIGRATION_3_4
-import ai.drsai.remote.data.MIGRATION_4_5
-import ai.drsai.remote.data.MIGRATION_5_6
-import ai.drsai.remote.data.MIGRATION_6_7
-import ai.drsai.remote.data.MIGRATION_7_8
-import ai.drsai.remote.data.MIGRATION_8_9
-import ai.drsai.remote.data.MIGRATION_9_10
-import ai.drsai.remote.data.MIGRATION_10_11
-import ai.drsai.remote.data.OidcClient
-import ai.drsai.remote.data.SecureTokenStore
-import ai.drsai.remote.remote.data.HttpRelayDiscoveryService
 import ai.drsai.remote.remote.data.AndroidDevicePresence
-import ai.drsai.remote.remote.data.AndroidRemoteConnectivity
+import ai.drsai.remote.remote.data.RemoteWorkspaceContainer
 import ai.drsai.remote.remote.data.RemoteDirectoryEntry
 import ai.drsai.remote.remote.data.RemoteDirectoryLoader
 import ai.drsai.remote.remote.data.RemoteLifecycleCoordinator
-import ai.drsai.remote.remote.data.RoomRemoteDirectoryCache
 import ai.drsai.remote.remote.data.SharedPreferencesWorkspaceRecencyStore
 import ai.drsai.remote.remote.data.RuntimeInstanceTracker
+import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.associationErrorMessage
+import ai.drsai.remote.remote.data.RemoteSearchResult
+import ai.drsai.remote.remote.data.RemoteSearchKind
+import ai.drsai.remote.remote.data.RemoteSearchSource
+import ai.drsai.remote.remote.data.SharedPreferencesPushRegistrationStateStore
+import ai.drsai.remote.remote.device.RemotePushProvider
+import ai.drsai.remote.remote.device.RemotePushProviderStatus
+import ai.drsai.remote.remote.device.RemotePushRegistrationScheduler
+import ai.drsai.remote.BuildConfig
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RemoteConnectionState
-import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -43,37 +38,30 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.drop
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 
 class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
-    private val tokenStore = SecureTokenStore(app)
-    private val auth = AccessTokenCoordinator(tokenStore, OidcClient(refreshClientId = { tokenStore.oidcClientId }))
-    private val deviceProof = androidRelayDeviceProof(app)
-    private val relay = HttpRelayDiscoveryService(
-        BuildConfig.RELAY_BASE_URL,
-        auth::current,
-        auth::refreshAfter,
-        deviceProof = deviceProof,
-    )
-    private val connectivity = AndroidRemoteConnectivity(app)
+    private val container = RemoteWorkspaceContainer.get(app)
+    private val tokenStore = container.tokenStore
+    private val relay = container.relayDiscovery
+    private val connectivity = container.connectivity
     private val lifecycleCoordinator = RemoteLifecycleCoordinator()
     private val instances = RuntimeInstanceTracker()
-    private val database = Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-        .addMigrations(
-            MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
-            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-        )
-        .build()
+    private val instructionVersions = WorkspaceInstructionVersionStore(app)
     private val directory = RemoteDirectoryLoader(
         relay,
         SharedPreferencesWorkspaceRecencyStore(app),
-        RoomRemoteDirectoryCache(database),
+        container.directoryCache,
     )
     private val mutableState = MutableStateFlow(RemoteHomeUiState(loading = true))
     private var searchJob: Job? = null
     private val refreshGeneration = AtomicLong(0)
+    private val keyRotationInFlight = AtomicBoolean(false)
     val state: StateFlow<RemoteHomeUiState> = mutableState.asStateFlow()
 
     init {
+        refreshNotificationReadiness()
+        RemotePushRegistrationScheduler.schedule(app)
         refresh()
         viewModelScope.launch {
             connectivity.online.drop(1).collect { online ->
@@ -83,6 +71,25 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun refreshNotificationReadiness() {
+        val app = getApplication<Application>()
+        val provider = RemotePushProvider.initialize(app)
+        val notificationsEnabled = NotificationManagerCompat.from(app).areNotificationsEnabled() &&
+            (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(
+                app,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED)
+        val readiness = when {
+            provider == RemotePushProviderStatus.NOT_CONFIGURED ->
+                RemoteNotificationReadiness.PROVIDER_NOT_CONFIGURED
+            provider == RemotePushProviderStatus.PLAY_SERVICES_UNAVAILABLE ->
+                RemoteNotificationReadiness.PLAY_SERVICES_UNAVAILABLE
+            !notificationsEnabled -> RemoteNotificationReadiness.PERMISSION_REQUIRED
+            else -> RemoteNotificationReadiness.READY
+        }
+        mutableState.update { it.copy(notificationState = readiness) }
+    }
+
     fun refresh(query: String? = mutableState.value.query) = viewModelScope.launch(Dispatchers.IO) {
         val generation = refreshGeneration.incrementAndGet()
         val normalizedQuery = query?.trim().orEmpty()
@@ -90,6 +97,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         runCatching {
             val subject = tokenStore.user()?.id ?: error("remote_subject_required")
             val cached = directory.cached(subject)
+            val cachedSearch = container.unifiedSearch.cached(subject, normalizedQuery)
             if (cached.isNotEmpty() && mutableState.value.computers.isEmpty()) {
                 mutableState.update {
                     it.copy(
@@ -97,12 +105,17 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                         loading = false,
                         refreshing = true,
                         stale = true,
+                        searchResults = cachedSearch,
                     )
                 }
             }
-            directory.synchronize(subject, query = normalizedQuery)
-        }.onSuccess { result ->
+            container.singleFlight.run("host:$subject:$normalizedQuery") {
+                val result = directory.synchronize(subject, query = normalizedQuery)
+                result to container.unifiedSearch.cached(subject, normalizedQuery)
+            }
+        }.onSuccess { (result, cachedSearch) ->
             reportPresence(result.entries.map { it.runtime.reference.runtimeId }.distinct())
+            scheduleDeviceKeyRotation(result.entries)
             if (generation == refreshGeneration.get()) {
                 mutableState.value = RemoteHomeUiState(
                     computers = result.entries.toUiComputers(),
@@ -114,6 +127,8 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                         else -> null
                     },
                     recentlyAssociatedRuntimeId = mutableState.value.recentlyAssociatedRuntimeId,
+                    searchResults = onlineSearchResults(result.entries, normalizedQuery) + cachedSearch,
+                    notificationState = mutableState.value.notificationState,
                 )
             }
         }.onFailure { failure ->
@@ -137,6 +152,28 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun scheduleDeviceKeyRotation(entries: List<RemoteDirectoryEntry>) {
+        if (!container.deviceProof.isKeyRotationDue() ||
+            !keyRotationInFlight.compareAndSet(false, true)
+        ) return
+        // The synchronized catalog contains only currently associated
+        // Runtimes; revoked associations are removed before this point.
+        val runtimeId = entries.firstOrNull()?.runtime?.reference?.runtimeId
+        if (runtimeId == null) {
+            keyRotationInFlight.set(false)
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { relay.rotateDeviceKey(runtimeId) }
+                .onFailure {
+                    mutableState.update { state ->
+                        state.copy(error = "设备安全密钥暂时无法更新，将自动重试")
+                    }
+                }
+            keyRotationInFlight.set(false)
+        }
+    }
+
     private fun List<RemoteDirectoryEntry>.toUiComputers(
         forceCached: Boolean = false,
     ): List<RemoteComputerUi> = map { entry ->
@@ -152,6 +189,9 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             runtime.state
         }
+        val activity = tokenStore.user()?.id?.let { subject ->
+            container.activity.runtime(subject, runtime.reference.runtimeId.value)
+        } ?: ai.drsai.remote.remote.data.RemoteActivitySummary()
         RemoteComputerUi(
             runtimeId = runtime.reference.runtimeId,
             displayName = runtime.reference.displayName,
@@ -162,14 +202,23 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
             lastSeenLabel = when {
                 cached && entry.lastSyncedAt != null ->
                     "缓存 · 上次同步 ${formatSyncTime(entry.lastSyncedAt)}"
+                runtime.state == RemoteConnectionState.PAUSED -> "此电脑已暂停"
                 runtime.state == RemoteConnectionState.OFFLINE -> "离线"
                 else -> "刚刚连接"
             },
             workspaces = entry.workspaces,
             workspacesCached = cached,
             lastSyncedAtMillis = entry.lastSyncedAt,
+            pendingApprovalCount = activity.pendingApprovals,
+            unreadTurnCount = activity.unreadTurns,
+            runningRunCount = activity.runningRuns,
+            lastActivityAt = activity.lastActivityAt,
         )
-    }
+    }.sortedWith(compareByDescending<RemoteComputerUi> { it.pendingApprovalCount > 0 }
+        .thenByDescending { it.runningRunCount > 0 }
+        .thenByDescending { it.unreadTurnCount }
+        .thenByDescending { it.lastActivityAt }
+        .thenBy { it.displayName })
 
     private fun formatSyncTime(timestamp: Long): String =
         java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
@@ -281,6 +330,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { relay.associate(payload) }
             .onSuccess { runtimeId ->
                 runCatching { relay.recordPresence(runtimeId) }
+                RemotePushRegistrationScheduler.schedule(getApplication())
                 mutableState.update { it.copy(recentlyAssociatedRuntimeId = runtimeId) }
                 refresh()
             }
@@ -293,13 +343,23 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun revokeAssociation(runtimeId: ai.drsai.remote.remote.model.RuntimeId) =
+    fun revokeAssociation(runtimeId: ai.drsai.remote.remote.model.RuntimeId, clearLocalCache: Boolean = false) =
         viewModelScope.launch(Dispatchers.IO) {
             mutableState.update { it.copy(refreshing = true, error = null) }
             runCatching { relay.revokeAssociation(runtimeId) }
                 .onSuccess {
-                    tokenStore.user()?.id?.let { subject ->
-                        directory.removeCachedRuntime(subject, runtimeId)
+                    tokenStore.user()?.let { user ->
+                        SharedPreferencesPushRegistrationStateStore(
+                            getApplication(), "${BuildConfig.OIDC_ISSUER}\n${user.id}",
+                        ).clear(runtimeId)
+                    }
+                    val cleanupFailure = tokenStore.user()?.id?.let { subject ->
+                        if (clearLocalCache) runCatching {
+                            directory.removeCachedRuntime(subject, runtimeId)
+                            container.drafts.clearRuntime(subject, runtimeId.value)
+                            container.activity.clearRuntime(subject, runtimeId.value)
+                            instructionVersions.clearRuntime(subject, runtimeId)
+                        }.exceptionOrNull() else null
                     }
                     mutableState.update { state ->
                         state.copy(
@@ -308,9 +368,12 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                                 ?.takeUnless { it == runtimeId },
                             refreshing = false,
                             stale = false,
+                            error = cleanupFailure?.let {
+                                "访问已解除，但本机缓存未能完全清除，请重试清理"
+                            },
                         )
                     }
-                    refresh()
+                    if (cleanupFailure == null) refresh()
                 }
                 .onFailure { failure ->
                     mutableState.update {
@@ -329,9 +392,24 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     override fun onCleared() {
-        connectivity.close()
-        database.close()
         super.onCleared()
+    }
+
+    private fun onlineSearchResults(entries: List<RemoteDirectoryEntry>, query: String): List<RemoteSearchResult> {
+        if (query.isBlank()) return emptyList()
+        return entries.flatMap { entry ->
+            buildList {
+                val runtime = entry.runtime.reference
+                if (runtime.displayName.contains(query, ignoreCase = true)) {
+                    add(RemoteSearchResult(RemoteSearchKind.HOST, runtime.displayName, "计算机",
+                        RemoteSearchSource.ONLINE, runtime.runtimeId))
+                }
+                entry.workspaces.filter { it.displayName.contains(query, ignoreCase = true) }.forEach { workspace ->
+                    add(RemoteSearchResult(RemoteSearchKind.WORKSPACE, workspace.displayName, "工作区",
+                        RemoteSearchSource.ONLINE, workspace.runtimeId, workspace.workspaceId))
+                }
+            }
+        }.distinctBy { listOf(it.kind, it.runtimeId.value, it.workspaceId?.value, it.sessionId?.value) }
     }
 }
 

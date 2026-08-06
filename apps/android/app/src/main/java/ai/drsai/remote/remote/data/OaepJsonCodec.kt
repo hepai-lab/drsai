@@ -6,6 +6,33 @@ import org.json.JSONObject
 
 /** Strict OAEP envelope decoder. Legacy Session Event shapes fail closed. */
 object OaepJsonCodec {
+    fun sessionJson(value: OaepSession): JSONObject = JSONObject()
+        .put("id", value.id).put("workspace_id", value.workspaceId)
+        .putOpt("title", value.title).put("status", value.status)
+        .putOpt("backend", value.backend).put("created_at", value.createdAt)
+        .put("updated_at", value.updatedAt)
+
+    fun snapshotJson(value: OaepSnapshot): JSONObject = JSONObject()
+        .put("version", value.version)
+        .put("session", sessionJson(value.session))
+        .put("runs", JSONArray(value.runs.map(::runJson)))
+        .put("items", JSONArray(value.items.map(::itemJson)))
+        .put("snapshot_sequence", value.snapshotSequence)
+
+    fun eventPageJson(value: OaepEventPage): JSONObject = JSONObject()
+        .put("version", value.version)
+        .put("object", value.objectType)
+        .put("data", JSONArray(value.data.map(::eventJson)))
+        .put("next_sequence", value.nextSequence)
+        .put("has_more", value.hasMore)
+
+    fun runJson(value: OaepRun): JSONObject = JSONObject()
+        .put("id", value.id).put("session_id", value.sessionId)
+        .putOpt("parent_run_id", value.parentRunId).putOpt("sequence", value.sequence)
+        .putOpt("source", value.source?.let(::sourceJson))
+        .put("status", value.status).put("created_at", value.createdAt)
+        .put("updated_at", value.updatedAt).putOpt("completed_at", value.completedAt)
+
     fun itemJson(value: OaepItem): JSONObject = JSONObject()
         .put("id", value.id).put("session_id", value.sessionId).put("run_id", value.runId)
         .put("type", value.type).put("status", value.status).put("sequence", value.sequence)
@@ -46,8 +73,27 @@ object OaepJsonCodec {
             snapshotSequence = root.getLong("snapshot_sequence").also {
                 require(it >= 0) { "oaep_snapshot_sequence_invalid" }
             },
+            checkpoint = root.optJSONObject("checkpoint")?.let { checkpoint ->
+                OaepSnapshotCheckpoint(
+                    checkpoint.getLong("sequence"), checkpoint.required("snapshot_hash"),
+                    checkpoint.getLong("item_count"),
+                )
+            },
+            window = root.optJSONObject("window")?.let { window ->
+                OaepSnapshotWindow(
+                    window.getInt("limit"), window.getBoolean("has_more"),
+                    window.stringOrNull("next_cursor"),
+                )
+            },
         ).also(::validateSnapshot)
     }
+
+    fun session(root: JSONObject) = OaepSession(
+        id = root.required("id"), workspaceId = root.required("workspace_id"),
+        title = root.stringOrNull("title"), status = root.required("status"),
+        backend = root.stringOrNull("backend"), createdAt = root.required("created_at"),
+        updatedAt = root.required("updated_at"),
+    )
 
     fun eventPage(root: JSONObject): OaepEventPage {
         require(root.getString("version") == OaepContract.VERSION) { "oaep_version_invalid" }
@@ -131,6 +177,24 @@ object OaepJsonCodec {
 
     private fun validateSnapshot(snapshot: OaepSnapshot) {
         require(snapshot.session.id.isNotBlank())
+        snapshot.checkpoint?.let { checkpoint ->
+            require(checkpoint.sequence == snapshot.snapshotSequence) {
+                "oaep_snapshot_checkpoint_sequence_mismatch"
+            }
+            require(checkpoint.snapshotHash.matches(Regex("[0-9a-f]{64}"))) {
+                "oaep_snapshot_checkpoint_hash_invalid"
+            }
+            require(checkpoint.itemCount >= snapshot.items.size) {
+                "oaep_snapshot_checkpoint_count_invalid"
+            }
+        }
+        snapshot.window?.let { window ->
+            require(window.limit in 1..500) { "oaep_snapshot_window_limit_invalid" }
+            require(window.hasMore == !window.nextCursor.isNullOrBlank()) {
+                "oaep_snapshot_window_cursor_invalid"
+            }
+            require(snapshot.checkpoint != null) { "oaep_snapshot_window_checkpoint_missing" }
+        }
         require(snapshot.runs.all { it.sessionId == snapshot.session.id }) {
             "oaep_snapshot_run_scope_mismatch"
         }
@@ -144,10 +208,12 @@ object OaepJsonCodec {
         }) { "oaep_item_sequence_invalid" }
     }
 
-    private fun run(root: JSONObject) = OaepRun(
+    fun run(root: JSONObject) = OaepRun(
         id = root.required("id"),
         sessionId = root.required("session_id"),
         parentRunId = root.stringOrNull("parent_run_id"),
+        sequence = root.longOrNull("sequence"),
+        source = root.objectOrNull("source")?.let(::source),
         status = root.required("status"),
         createdAt = root.required("created_at"),
         updatedAt = root.required("updated_at"),
@@ -161,6 +227,12 @@ object OaepJsonCodec {
         client = root.stringOrNull("client"),
         messageId = root.stringOrNull("message_id"),
         runtimeId = root.stringOrNull("runtime_id"),
+        backendVersion = root.stringOrNull("backend_version"),
+        adapter = root.stringOrNull("adapter"),
+        adapterVersion = root.stringOrNull("adapter_version"),
+        mappingVersion = root.stringOrNull("mapping_version"),
+        backendRunId = root.stringOrNull("backend_run_id"),
+        backendRunIndex = root.longOrNull("backend_run_index"),
     )
 
     private fun delta(root: JSONObject) = OaepDelta(
@@ -199,12 +271,14 @@ object OaepJsonCodec {
                 root.getJSONArray("command").strings(), root.getString("display_command"),
                 root.getString("cwd"), root.getString("output"), root.stringOrNull("stdout_tail"),
                 root.stringOrNull("stderr_tail"), root.intOrNull("exit_code"),
-                root.doubleOrNull("duration_ms"), operation, resources,
+                root.doubleOrNull("duration_ms"),
+                root.objectOrNull("replay_policy")?.toMap().orEmpty(), operation, resources,
             )
             "tool_call" -> OaepToolCallContent(
                 root.required("tool_kind"), root.required("tool_name"), root.required("call_id"),
-                root.getJSONObject("arguments").toMap(), root.opt("result").nullValue(),
-                root.stringOrNull("server"), root.doubleOrNull("duration_ms"), operation, resources,
+                root.getJSONObject("arguments").toMap(), root.opt("result").nullValue().jsonValue(),
+                root.stringOrNull("server"), root.doubleOrNull("duration_ms"),
+                root.objectOrNull("replay_policy")?.toMap().orEmpty(), operation, resources,
             )
             "file_change" -> OaepFileChangeContent(
                 root.objects("changes").map { it.toMap() }, root.getString("summary"), operation, resources,
@@ -252,6 +326,9 @@ object OaepJsonCodec {
         .put("backend", value.backend).putOpt("backend_item_id", value.backendItemId)
         .putOpt("backend_event_id", value.backendEventId).putOpt("client", value.client)
         .putOpt("message_id", value.messageId).putOpt("runtime_id", value.runtimeId)
+        .putOpt("backend_version", value.backendVersion).putOpt("adapter", value.adapter)
+        .putOpt("adapter_version", value.adapterVersion).putOpt("mapping_version", value.mappingVersion)
+        .putOpt("backend_run_id", value.backendRunId).putOpt("backend_run_index", value.backendRunIndex)
 
     private fun errorJson(value: OaepError) = JSONObject()
         .put("code", value.code).put("message", value.message)
@@ -283,7 +360,7 @@ object OaepJsonCodec {
                 .putOpt("exit_code", value.exitCode).putOpt("duration_ms", value.durationMs)
             is OaepToolCallContent -> JSONObject().put("tool_kind", value.toolKind)
                 .put("tool_name", value.toolName).put("call_id", value.callId)
-                .put("arguments", JSONObject(value.arguments)).put("result", value.result)
+                .put("arguments", JSONObject(value.arguments)).put("result", jsonWireValue(value.result))
                 .putOpt("server", value.server).putOpt("duration_ms", value.durationMs)
             is OaepFileChangeContent -> JSONObject().put("changes", JSONArray(value.changes))
                 .put("summary", value.summary)
@@ -296,11 +373,11 @@ object OaepJsonCodec {
                 .put("prompt", value.prompt).put("options", JSONArray(value.options))
                 .putOpt("approval_id", value.approvalId).putOpt("operation", value.operation)
                 .put("request_summary", JSONObject(value.requestSummary))
-                .putOpt("related_item_id", value.relatedItemId).putOpt("response", value.response)
+                .putOpt("related_item_id", value.relatedItemId).putOpt("response", jsonWireValue(value.response))
                 .putOpt("deadline_at", value.deadlineAt)
             is OaepSubtaskContent -> JSONObject().put("title", value.title).put("summary", value.summary)
                 .putOpt("agent_name", value.agentName).putOpt("child_run_id", value.childRunId)
-                .putOpt("result", value.result)
+                .putOpt("result", jsonWireValue(value.result))
             is OaepNoticeContent -> JSONObject().put("level", value.level).put("code", value.code)
                 .put("message", value.message).putOpt("error", value.error?.let(::errorJson))
                 .put("details", JSONObject(value.details))
@@ -311,10 +388,19 @@ object OaepJsonCodec {
     }
 }
 
+private fun jsonWireValue(value: Any?): Any? = when (value) {
+    null -> null
+    is JSONObject, is JSONArray, is String, is Number, is Boolean -> value
+    is Map<*, *> -> JSONObject(value.entries.associate { (key, nested) -> key.toString() to jsonWireValue(nested) })
+    is Iterable<*> -> JSONArray(value.map(::jsonWireValue))
+    is Array<*> -> JSONArray(value.map(::jsonWireValue))
+    else -> value.toString()
+}
+
 private fun JSONObject.required(name: String): String = getString(name).also {
     require(it.isNotBlank()) { "oaep_${name}_required" }
 }
-private fun JSONObject.stringOrNull(name: String): String? =
+    private fun JSONObject.stringOrNull(name: String): String? =
     if (!has(name) || isNull(name)) null else getString(name)
 private fun JSONObject.objectOrNull(name: String): JSONObject? =
     if (!has(name) || isNull(name)) null else getJSONObject(name)
@@ -327,15 +413,12 @@ private fun JSONObject.intOrNull(name: String): Int? = if (!has(name) || isNull(
 private fun JSONObject.longOrNull(name: String): Long? = if (!has(name) || isNull(name)) null else getLong(name)
 private fun JSONObject.doubleOrNull(name: String): Double? = if (!has(name) || isNull(name)) null else getDouble(name)
 private fun Any?.nullValue(): Any? = if (this == JSONObject.NULL) null else this
+private fun Any?.jsonValue(): Any? = when (this) {
+    null, JSONObject.NULL -> null
+    is JSONObject -> toMap()
+    is JSONArray -> List(length()) { index -> get(index).jsonValue() }
+    else -> this
+}
 private fun JSONObject.toMap(): Map<String, Any?> = keys().asSequence().associateWith { key ->
-    when (val value = get(key)) {
-        JSONObject.NULL -> null
-        is JSONObject -> value.toMap()
-        is JSONArray -> List(value.length()) { index -> when (val nested = value.get(index)) {
-            JSONObject.NULL -> null
-            is JSONObject -> nested.toMap()
-            else -> nested
-        } }
-        else -> value
-    }
+    get(key).jsonValue()
 }

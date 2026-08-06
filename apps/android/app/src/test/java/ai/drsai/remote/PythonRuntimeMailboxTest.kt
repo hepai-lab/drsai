@@ -76,4 +76,20 @@ class PythonRuntimeMailboxTest {
         mailbox.clear()
         assertEquals(MailboxDecision.ACCEPTED, mailbox.submit(message()).decision)
     }
+
+    @Test
+    fun `explicit failure cleanup releases only the matching session run`() {
+        val mailbox = PythonRuntimeMailbox()
+        assertEquals(MailboxDecision.ACCEPTED, mailbox.submit(message()).decision)
+        mailbox.releaseSessionRun("session-1", "another-run")
+        assertEquals(
+            MailboxDecision.CONFLICT,
+            mailbox.submit(message("request-2", "run-2", key = "key-2")).decision,
+        )
+        mailbox.releaseSessionRun("session-1", "run-1")
+        assertEquals(
+            MailboxDecision.ACCEPTED,
+            mailbox.submit(message("request-2", "run-2", key = "key-2")).decision,
+        )
+    }
 }

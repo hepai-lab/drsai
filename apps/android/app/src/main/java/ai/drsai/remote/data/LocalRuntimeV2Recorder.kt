@@ -13,8 +13,8 @@ import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONObject
 
 /**
- * Compatibility bridge used while the proven LocalAgentRuntime tool/model loop
- * is moved behind RuntimeV2Engine. It makes current production runs durable in
+ * Compatibility bridge used while the Android Full Runtime event path is
+ * moved behind RuntimeV2Engine. It makes current production runs durable in
  * the unified Run/Event journal without changing their user-visible behavior.
  */
 class RuntimeV2EventRecorder(private val journal: RunJournal) {
@@ -44,6 +44,18 @@ class RuntimeV2EventRecorder(private val journal: RunJournal) {
         val checkpoint = checkpoints[runId.value] ?: journal.checkpoint(runId) ?: error("run_checkpoint_missing")
         if (checkpoint.terminal) return checkpoint
         return transition(checkpoint, WorkbenchRunStatus.CANCELLED, "run.cancelled", "{\"source\":\"user\"}")
+    }
+
+    suspend fun failUnrecoverable(runId: WorkbenchId, code: String): RunCheckpoint {
+        val checkpoint = checkpoints[runId.value] ?: journal.checkpoint(runId) ?: error("run_checkpoint_missing")
+        if (checkpoint.terminal) return checkpoint
+        return transition(
+            checkpoint,
+            WorkbenchRunStatus.FAILED,
+            "run.failed",
+            JSONObject().put("code", code).put("retryable", false).toString(),
+            failureCode = code,
+        )
     }
 
     suspend fun pause(runId: WorkbenchId): RunCheckpoint {
@@ -85,6 +97,7 @@ class RuntimeV2EventRecorder(private val journal: RunJournal) {
         status: WorkbenchRunStatus,
         kind: String,
         payload: String,
+        failureCode: String? = current.failureCode,
     ): RunCheckpoint {
         RunTransitionPolicy.requireTransition(current.status, status)
         val sequence = current.lastSequence + 1
@@ -97,7 +110,7 @@ class RuntimeV2EventRecorder(private val journal: RunJournal) {
             kind,
             payloadJson = payload,
         )
-        val next = current.copy(status = status, lastSequence = sequence)
+        val next = current.copy(status = status, lastSequence = sequence, failureCode = failureCode)
         check(journal.append(event, next) == EventAppendDecision.APPEND) { "run_transition_not_appended" }
         if (next.terminal) checkpoints.remove(current.command.runId.value)
         else checkpoints[current.command.runId.value] = next

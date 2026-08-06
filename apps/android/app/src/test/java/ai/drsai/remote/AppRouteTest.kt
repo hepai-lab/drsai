@@ -24,6 +24,8 @@ class AppRouteTest {
             AppRoute.AgentsAndSkills,
             AppRoute.Approvals,
             AppRoute.Archived,
+            AppRoute.Settings,
+            AppRoute.ModelSettings,
             AppRoute.RemoteHome,
             AppRoute.WorkspaceSessions(runtime, workspace),
             AppRoute.RemoteSession(runtime, workspace, session),

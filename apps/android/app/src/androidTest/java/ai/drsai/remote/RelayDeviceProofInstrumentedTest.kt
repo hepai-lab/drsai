@@ -6,15 +6,12 @@ import ai.drsai.remote.remote.security.relayDeviceCanonicalQuery
 import ai.drsai.remote.remote.security.relayDeviceCanonicalString
 import ai.drsai.remote.remote.security.sha256Hex
 import okhttp3.Request
-import net.i2p.crypto.eddsa.EdDSASecurityProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.security.KeyFactory
-import java.security.Signature
-import java.security.Security
-import java.security.spec.X509EncodedKeySpec
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
 import java.util.Base64
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -55,22 +52,11 @@ class RelayDeviceProofInstrumentedTest {
         )
 
         val raw = Base64.getUrlDecoder().decode(first.associationDevice.devicePublicKey)
-        val x509Prefix = byteArrayOf(
-            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03,
-            0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-        )
-        if (Security.getProvider(EdDSASecurityProvider.PROVIDER_NAME) == null) {
-            Security.addProvider(EdDSASecurityProvider())
-        }
-        val publicKey = KeyFactory.getInstance("EdDSA", EdDSASecurityProvider.PROVIDER_NAME)
-            .generatePublic(X509EncodedKeySpec(x509Prefix + raw))
-        val verified = Signature.getInstance(
-            "NONEwithEdDSA",
-            EdDSASecurityProvider.PROVIDER_NAME,
-        ).run {
-            initVerify(publicKey)
-            update(canonical.toByteArray())
-            verify(signature)
+        val canonicalBytes = canonical.toByteArray()
+        val verified = Ed25519Signer().run {
+            init(false, Ed25519PublicKeyParameters(raw, 0))
+            update(canonicalBytes, 0, canonicalBytes.size)
+            verifySignature(signature)
         }
 
         assertTrue(verified)

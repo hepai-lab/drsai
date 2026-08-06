@@ -7,6 +7,8 @@ import ai.drsai.remote.runtime.coordinator.ChatEngine
 import ai.drsai.remote.runtime.coordinator.ChatExecutionRouter
 import ai.drsai.remote.runtime.coordinator.JournaledChatExecutionCoordinator
 import ai.drsai.remote.runtime.coordinator.ChatRunRequest
+import ai.drsai.remote.runtime.coordinator.ChatLifecycleSignal
+import ai.drsai.remote.runtime.coordinator.RunCoordinatorLeaseRegistry
 import ai.drsai.remote.runtime.v2.EventAppendDecision
 import ai.drsai.remote.runtime.v2.RunCheckpoint
 import ai.drsai.remote.runtime.v2.RunCommand
@@ -25,6 +27,15 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ChatExecutionRouterTest {
+    @Test fun coordinatorLeaseAllowsOneOwnerPerAccountRunAndReleasesDeterministically() {
+        assertEquals(true, RunCoordinatorLeaseRegistry.acquire("alice", "run"))
+        assertEquals(false, RunCoordinatorLeaseRegistry.acquire("alice", "run"))
+        assertEquals(true, RunCoordinatorLeaseRegistry.acquire("bob", "run"))
+        RunCoordinatorLeaseRegistry.release("alice", "run")
+        assertEquals(true, RunCoordinatorLeaseRegistry.acquire("alice", "run"))
+        RunCoordinatorLeaseRegistry.release("alice", "run")
+        RunCoordinatorLeaseRegistry.release("bob", "run")
+    }
     @Test fun executionAndLifecycleStayOnTheRunAuthority() = runTest {
         val local = FakeEngine(RuntimeAuthority.LOCAL_DEVICE)
         val remote = FakeEngine(RuntimeAuthority.REMOTE_RUNTIME)
@@ -65,6 +76,10 @@ class ChatExecutionRouterTest {
 
         assertEquals(3, events.size)
         assertEquals(listOf(1L, 2L, 3L), events.map { it.checkpoint.lastSequence })
+        assertEquals(
+            listOf(ChatLifecycleSignal.ACTIVE, ChatLifecycleSignal.ACTIVE, ChatLifecycleSignal.COMPLETED),
+            events.map { it.lifecycle },
+        )
         assertEquals(WorkbenchRunStatus.COMPLETED, journal.checkpoint(command.runId)?.status)
         assertEquals(3, journal.events.size)
     }

@@ -1,40 +1,21 @@
 package ai.drsai.remote.remote.ui
 
 import android.app.Application
-import androidx.room.Room
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import ai.drsai.remote.BuildConfig
-import ai.drsai.remote.data.AccessTokenCoordinator
-import ai.drsai.remote.data.ChatDatabase
-import ai.drsai.remote.data.MIGRATION_1_2
-import ai.drsai.remote.data.MIGRATION_2_3
-import ai.drsai.remote.data.MIGRATION_3_4
-import ai.drsai.remote.data.MIGRATION_4_5
-import ai.drsai.remote.data.MIGRATION_5_6
-import ai.drsai.remote.data.MIGRATION_6_7
-import ai.drsai.remote.data.MIGRATION_7_8
-import ai.drsai.remote.data.MIGRATION_8_9
-import ai.drsai.remote.data.MIGRATION_9_10
-import ai.drsai.remote.data.MIGRATION_10_11
-import ai.drsai.remote.data.OidcClient
-import ai.drsai.remote.data.SecureTokenStore
-import ai.drsai.remote.remote.data.RelayRemoteRepository
+import ai.drsai.remote.remote.data.RemoteWorkspaceContainer
 import ai.drsai.remote.remote.data.RemoteAgentDefinition
 import ai.drsai.remote.remote.data.collectAllPages
-import ai.drsai.remote.remote.data.HttpOwopRelayTransport
-import ai.drsai.remote.remote.data.RelayWorkspaceOperationsClient
 import ai.drsai.remote.remote.data.RemoteProjectInstructionLoader
 import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.remote.data.RelayHttpException
-import ai.drsai.remote.remote.data.RoomRemoteDirectoryCache
 import ai.drsai.remote.remote.data.AndroidDevicePresence
+import ai.drsai.remote.remote.data.safeRemoteFailureMessage
 import ai.drsai.remote.runtime.context.PromptFragment
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
-import ai.drsai.remote.remote.security.androidRelayDeviceProof
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 internal fun normalizedWorkspaceSessionQuery(query: String?): String? =
     query?.trim()?.takeIf(String::isNotEmpty)
@@ -57,39 +39,22 @@ class WorkspaceSessionsViewModel(
     runtimeName: String,
     workspaceName: String,
 ) : AndroidViewModel(app) {
-    private val tokenStore = SecureTokenStore(app)
-    private val auth = AccessTokenCoordinator(tokenStore, OidcClient(refreshClientId = { tokenStore.oidcClientId }))
-    private val deviceProof = androidRelayDeviceProof(app)
-    private val repository = RelayRemoteRepository(
-        BuildConfig.RELAY_BASE_URL,
-        auth::current,
-        refreshAfter = auth::refreshAfter,
-        deviceProof = deviceProof,
-    )
+    private val container = RemoteWorkspaceContainer.get(app)
+    private val tokenStore = container.tokenStore
+    private val repository = container.repository
     private val instructionLoader = RemoteProjectInstructionLoader(
-        RelayWorkspaceOperationsClient(
-            HttpOwopRelayTransport(
-                BuildConfig.RELAY_BASE_URL,
-                runtimeId,
-                auth::current,
-                deviceProof = deviceProof,
-            )
-        ),
+        container.workspace(runtimeId),
     )
     private val instructionVersionStore = WorkspaceInstructionVersionStore(app)
-    private val database = Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-        .addMigrations(
-            MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
-            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-        )
-        .build()
-    private val directoryCache = RoomRemoteDirectoryCache(database)
+    private val directoryCache = container.directoryCache
+    private val activity = container.activity
     private val mutableState = MutableStateFlow(
         WorkspaceSessionsUiState(runtimeName = runtimeName, workspaceName = workspaceName, loading = true),
     )
     val state: StateFlow<WorkspaceSessionsUiState> = mutableState.asStateFlow()
     private val generation = AtomicLong(0)
     private var searchJob: Job? = null
+    private var catalogJob: Job? = null
     private var acceptedInstructionVersions: Map<String, String>? = tokenStore.user()?.id?.let { subject ->
         instructionVersionStore.accepted(subject, runtimeId, workspaceId)
     }
@@ -97,6 +62,28 @@ class WorkspaceSessionsViewModel(
     init {
         AndroidDevicePresence.markAccessing(runtimeId)
         refresh()
+        observeCatalog()
+    }
+
+    private fun observeCatalog() {
+        catalogJob?.cancel()
+        catalogJob = viewModelScope.launch(Dispatchers.IO) {
+            var retryMillis = 500L
+            while (isActive) {
+                runCatching {
+                    container.stream.workspaceSessionCatalogStream(runtimeId, workspaceId) {
+                        refresh()
+                    }.collect {
+                        retryMillis = 500L
+                        refresh()
+                    }
+                }
+                if (isActive) {
+                    delay(retryMillis)
+                    retryMillis = (retryMillis * 2).coerceAtMost(15_000L)
+                }
+            }
+        }
     }
 
     fun refresh(query: String? = mutableState.value.query) = viewModelScope.launch(Dispatchers.IO) {
@@ -104,16 +91,23 @@ class WorkspaceSessionsViewModel(
         val normalizedQuery = normalizedWorkspaceSessionQuery(query)
         mutableState.update { it.copy(loading = true, error = null) }
         runCatching {
-            coroutineScope {
-                val definitions = async { repository.agentDefinitions(runtimeId) }
-                val sessions = async {
-                    collectAllPages { cursor ->
-                        repository.sessions(runtimeId, workspaceId, cursor, normalizedQuery)
+            container.singleFlight.run("workspace:${runtimeId.value}:${workspaceId.value}:${normalizedQuery.orEmpty()}") {
+                coroutineScope {
+                    val definitions = async { repository.agentDefinitions(runtimeId) }
+                    val sessions = async {
+                        collectAllPages { cursor ->
+                            repository.sessions(
+                                runtimeId, workspaceId, cursor, normalizedQuery,
+                                if (mutableState.value.showArchived) {
+                                    ai.drsai.remote.remote.model.RemoteResourceLifecycle.ARCHIVED
+                                } else ai.drsai.remote.remote.model.RemoteResourceLifecycle.ACTIVE,
+                            )
+                        }
                     }
+                    val approvals = async { repository.approvals(runtimeId, workspaceId) }
+                    val instructions = async { runCatching { instructionLoader.load(workspaceId) } }
+                    RefreshPayload(definitions.await(), sessions.await(), approvals.await(), instructions.await())
                 }
-                val approvals = async { repository.approvals(runtimeId, workspaceId) }
-                val instructions = async { runCatching { instructionLoader.load(workspaceId) } }
-                RefreshPayload(definitions.await(), sessions.await(), approvals.await(), instructions.await())
             }
         }.onSuccess { payload ->
             if (requestGeneration == generation.get()) {
@@ -126,7 +120,22 @@ class WorkspaceSessionsViewModel(
                         lastRunStatus = summary.lastRunStatus,
                         updatedAtLabel = summary.updatedAt,
                         lifecycle = summary.lifecycle,
+                        unreadTurns = tokenStore.user()?.id?.let { subject ->
+                            activity.observeSession(subject, runtimeId.value, summary.reference.sessionId.value, summary.updatedAt)
+                        } ?: 0,
+                        pendingApprovals = payload.approvals.count { approval ->
+                            approval.status == "pending" && approval.sessionId == summary.reference.sessionId
+                        },
+                        runningRuns = if (summary.lastRunStatus in setOf("queued", "running", "waiting_approval")) 1 else 0,
                     )
+                }
+                tokenStore.user()?.id?.let { subject ->
+                    activity.saveWorkspace(subject, runtimeId.value, workspaceId.value,
+                        sessionItems.fold(ai.drsai.remote.remote.data.RemoteActivitySummary()) { total, session ->
+                            total + ai.drsai.remote.remote.data.RemoteActivitySummary(
+                                session.unreadTurns, session.pendingApprovals, session.runningRuns, session.updatedAtLabel,
+                            )
+                        })
                 }
                 val instructionVersions = payload.instructions.getOrNull().orEmpty().associate { fragment ->
                     fragment.source to fragment.version.orEmpty()
@@ -145,7 +154,7 @@ class WorkspaceSessionsViewModel(
                         values.isEmpty() -> "未发现项目指令"
                         else -> "已校验 ${values.size} 份项目指令"
                     } },
-                    onFailure = { failure -> "项目指令不可读取：${failure.message}" },
+                    onFailure = { failure -> "项目指令不可读取：${safeRemoteFailureMessage(failure)}" },
                 )
                 mutableState.update { it.copy(agentDefinitions = payload.definitions, sessions = sessionItems,
                     capabilities = listOf(
@@ -176,7 +185,7 @@ class WorkspaceSessionsViewModel(
                         error = if (failure is RelayHttpException && failure.status == 403) {
                             "当前设备已无权访问此远程主机"
                         } else {
-                            failure.message ?: "会话加载失败"
+                            safeRemoteFailureMessage(failure)
                         },
                     )
                 }
@@ -228,13 +237,36 @@ class WorkspaceSessionsViewModel(
             )
         }.onSuccess { refresh() }
             .onFailure { failure ->
-                mutableState.update { it.copy(creating = false, error = failure.message ?: "会话创建失败") }
+                mutableState.update { it.copy(creating = false, error = safeRemoteFailureMessage(failure)) }
             }
     }
 
     override fun onCleared() {
-        database.close()
+        catalogJob?.cancel()
         super.onCleared()
+    }
+
+    fun toggleArchived() {
+        mutableState.update { it.copy(showArchived = !it.showArchived) }
+        refresh()
+    }
+
+    fun renameSession(reference: ai.drsai.remote.remote.model.RemoteSessionRef, title: String) =
+        mutateSession(reference, title = title)
+
+    fun setArchived(reference: ai.drsai.remote.remote.model.RemoteSessionRef, archived: Boolean) =
+        mutateSession(reference, lifecycle = if (archived) {
+            ai.drsai.remote.remote.model.RemoteResourceLifecycle.ARCHIVED
+        } else ai.drsai.remote.remote.model.RemoteResourceLifecycle.ACTIVE)
+
+    private fun mutateSession(
+        reference: ai.drsai.remote.remote.model.RemoteSessionRef,
+        title: String? = null,
+        lifecycle: ai.drsai.remote.remote.model.RemoteResourceLifecycle? = null,
+    ) = viewModelScope.launch(Dispatchers.IO) {
+        runCatching { repository.updateSession(reference, title, lifecycle) }
+            .onSuccess { refresh() }
+            .onFailure { failure -> mutableState.update { it.copy(error = safeRemoteFailureMessage(failure)) } }
     }
 
     companion object {

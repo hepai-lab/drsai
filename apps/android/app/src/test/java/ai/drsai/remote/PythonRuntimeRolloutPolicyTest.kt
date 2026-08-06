@@ -10,47 +10,28 @@ import org.json.JSONObject
 
 class PythonRuntimeRolloutPolicyTest {
     @Test
-    fun `Python requires build user and health gates`() {
-        assertEquals(
-            LocalRuntimeImplementation.PYTHON_SHARED_CORE,
-            PythonRuntimeRolloutPolicy.select(PythonRuntimeRolloutState(true, true, true, policyEnabled = true)),
-        )
-        listOf(
-            PythonRuntimeRolloutState(false, true, true),
-            PythonRuntimeRolloutState(true, false, true),
-            PythonRuntimeRolloutState(true, true, false),
-            PythonRuntimeRolloutState(true, true, true, policyEnabled = false),
-        ).forEach {
-            assertEquals(LocalRuntimeImplementation.KOTLIN_LITE, PythonRuntimeRolloutPolicy.select(it))
-        }
-    }
-
-    @Test
-    fun `fallback is forbidden after any side effect evidence`() {
-        assertTrue(PythonRuntimeRolloutPolicy.mayFallbackToKotlin(false, false))
-        assertFalse(PythonRuntimeRolloutPolicy.mayFallbackToKotlin(true, false))
-        assertFalse(PythonRuntimeRolloutPolicy.mayFallbackToKotlin(false, true))
-    }
-
-    @Test
-    fun `signed policy gates every production rollout dimension and kill switch fails safe`() {
+    fun `signed policy can only allow or block the full runtime`() {
         val payload = policyJson(emergencyDisabled = false).toString()
         val verified = SignedRuntimeRolloutPolicy.verifyAndParse(
             JSONObject().put("payload", payload).put("signature_hex", "0102"),
             RuntimePolicySignatureVerifier { bytes, signature -> bytes.decodeToString() == payload && signature.contentEquals(byteArrayOf(1, 2)) },
         )
         val context = RuntimeRolloutContext(200, "beta", 35, "arm64-v8a", 256, 11, 20, 1_500)
-        val state = PythonRuntimeRolloutState(true, true, true, policyEnabled = true, remoteFullAvailable = true)
-        assertEquals(RuntimeRoute.PYTHON_LOCAL, PythonRuntimeRolloutPolicy.route(state, context, verified))
-        assertEquals(RuntimeRoute.REMOTE_FULL, PythonRuntimeRolloutPolicy.route(state, context.copy(apiLevel = 25), verified))
-        assertEquals(RuntimeRoute.REMOTE_FULL, PythonRuntimeRolloutPolicy.route(state, context, null))
+        val state = PythonRuntimeRolloutState(true, true, true, policyEnabled = true)
+        assertEquals(RuntimeRoute.FULL_LOCAL, PythonRuntimeRolloutPolicy.route(state, context, verified))
+        assertEquals(RuntimeRoute.FULL_RUNTIME_BLOCKED, PythonRuntimeRolloutPolicy.route(state, context.copy(apiLevel = 25), verified))
+        assertEquals(RuntimeRoute.FULL_RUNTIME_BLOCKED, PythonRuntimeRolloutPolicy.route(state, context, null))
+        assertEquals(
+            RuntimeRoute.FULL_LOCAL,
+            PythonRuntimeRolloutPolicy.route(state.copy(policyEnabled = false), context, null),
+        )
 
         val killedPayload = policyJson(emergencyDisabled = true).toString()
         val killed = SignedRuntimeRolloutPolicy.verifyAndParse(
             JSONObject().put("payload", killedPayload).put("signature_hex", "00"),
             RuntimePolicySignatureVerifier { _, _ -> true },
         )
-        assertEquals(RuntimeRoute.REMOTE_FULL, PythonRuntimeRolloutPolicy.route(state, context, killed))
+        assertEquals(RuntimeRoute.FULL_RUNTIME_BLOCKED, PythonRuntimeRolloutPolicy.route(state, context, killed))
         assertEquals(
             RuntimeRoute.MANUAL_RECOVERY,
             PythonRuntimeRolloutPolicy.route(state.copy(sideEffectsCommitted = true), context, killed),
@@ -68,7 +49,7 @@ class PythonRuntimeRolloutPolicyTest {
         val expired = VerifiedRuntimePolicy(RuntimeRolloutPolicyDocument.fromJson(policyJson(false)), "digest")
         val context = RuntimeRolloutContext(200, "beta", 35, "arm64-v8a", 256, 1, 2, 3_000)
         assertEquals(
-            RuntimeRoute.KOTLIN_LITE,
+            RuntimeRoute.FULL_RUNTIME_BLOCKED,
             PythonRuntimeRolloutPolicy.route(PythonRuntimeRolloutState(true, true, true, policyEnabled = true), context, expired),
         )
     }

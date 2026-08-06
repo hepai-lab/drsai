@@ -6,8 +6,14 @@ import com.chaquo.python.android.AndroidPlatform
 
 class ChaquopyRuntimeExecutor(private val context: Context) {
     @Synchronized
+    fun health(): String {
+        ensureStarted()
+        return Python.getInstance().getModule("runtime_probe").callAttr("health").toString()
+    }
+
+    @Synchronized
     fun execute(envelopeJson: String): String {
-        if (!Python.isStarted()) Python.start(AndroidPlatform(context.applicationContext))
+        ensureStarted()
         return Python.getInstance()
             .getModule("runtime_probe")
             .callAttr("execute", envelopeJson)
@@ -15,6 +21,10 @@ class ChaquopyRuntimeExecutor(private val context: Context) {
     }
 
     fun started(): Boolean = Python.isStarted()
+
+    private fun ensureStarted() {
+        if (!Python.isStarted()) Python.start(AndroidPlatform(context.applicationContext))
+    }
 
     @Synchronized
     fun reset() {

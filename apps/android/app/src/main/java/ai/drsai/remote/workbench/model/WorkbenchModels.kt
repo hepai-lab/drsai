@@ -179,11 +179,16 @@ enum class RuntimeCapability {
     ARTIFACTS,
     PROJECT_FILES,
     SHELL,
+    PTY,
     GIT,
     WORKTREE,
     CODEX,
     MCP,
+    MCP_STDIO,
     BACKGROUND_RUNS,
+    WEB_SEARCH,
+    WEB_FETCH,
+    BROWSER_SESSION,
 }
 
 data class RuntimeLimits(

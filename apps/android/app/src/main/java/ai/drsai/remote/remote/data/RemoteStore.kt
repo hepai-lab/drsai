@@ -270,11 +270,15 @@ interface RemoteCacheDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertSessionEvent(item: RemoteSessionEventEntity): Long
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveOaepRuns(items: List<RemoteOaepRunEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveOaepItems(items: List<RemoteOaepItemEntity>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertOlderOaepRuns(items: List<RemoteOaepRunEntity>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertOlderOaepItems(items: List<RemoteOaepItemEntity>)
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertOaepEvent(item: RemoteOaepEventEntity): Long
     @Query("SELECT * FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId ORDER BY runId,itemSequence,itemId")
     suspend fun oaepItems(subject: String, organization: String, runtimeId: String, sessionId: String): List<RemoteOaepItemEntity>
     @Query("SELECT * FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND itemId=:itemId")
     suspend fun oaepItem(subject: String, organization: String, runtimeId: String, sessionId: String, itemId: String): RemoteOaepItemEntity?
+    @Query("SELECT * FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND sourceMessageId=:sourceMessageId AND optimistic=1 LIMIT 1")
+    suspend fun optimisticOaepItem(subject: String, organization: String, runtimeId: String, sessionId: String, sourceMessageId: String): RemoteOaepItemEntity?
     @Query("SELECT * FROM remote_oaep_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND eventId=:eventId")
     suspend fun oaepEvent(subject: String, organization: String, runtimeId: String, sessionId: String, eventId: String): RemoteOaepEventEntity?
     @Query("DELETE FROM remote_oaep_runs WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId")
@@ -285,6 +289,27 @@ interface RemoteCacheDao {
     suspend fun clearOptimisticOaepMessage(subject: String, organization: String, runtimeId: String, sessionId: String, sourceMessageId: String)
     @Query("DELETE FROM remote_oaep_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND eventSequence<=:throughSequence")
     suspend fun clearOaepEventsThrough(subject: String, organization: String, runtimeId: String, sessionId: String, throughSequence: Long)
+    @Query("DELETE FROM remote_oaep_runs WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId")
+    suspend fun clearRuntimeOaepRuns(subject: String, organization: String, runtimeId: String)
+    @Query("DELETE FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId")
+    suspend fun clearRuntimeOaepItems(subject: String, organization: String, runtimeId: String)
+    @Query("DELETE FROM remote_oaep_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId")
+    suspend fun clearRuntimeOaepEvents(subject: String, organization: String, runtimeId: String)
+    @Query("DELETE FROM remote_oaep_runs WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND workspaceId=:workspaceId")
+    suspend fun clearWorkspaceOaepRuns(subject: String, organization: String, runtimeId: String, workspaceId: String)
+    @Query("DELETE FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND workspaceId=:workspaceId")
+    suspend fun clearWorkspaceOaepItems(subject: String, organization: String, runtimeId: String, workspaceId: String)
+    @Query("DELETE FROM remote_oaep_events WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND workspaceId=:workspaceId")
+    suspend fun clearWorkspaceOaepEvents(subject: String, organization: String, runtimeId: String, workspaceId: String)
+    @Query("DELETE FROM remote_oaep_runs WHERE subject=:subject AND organization=:organization")
+    suspend fun clearOaepRuns(subject: String, organization: String)
+    @Query("DELETE FROM remote_oaep_items WHERE subject=:subject AND organization=:organization")
+    suspend fun clearOaepItems(subject: String, organization: String)
+    @Query("DELETE FROM remote_oaep_events WHERE subject=:subject AND organization=:organization")
+    suspend fun clearOaepEvents(subject: String, organization: String)
+    @Query("DELETE FROM remote_oaep_runs WHERE subject=:subject") suspend fun clearSubjectOaepRuns(subject: String)
+    @Query("DELETE FROM remote_oaep_items WHERE subject=:subject") suspend fun clearSubjectOaepItems(subject: String)
+    @Query("DELETE FROM remote_oaep_events WHERE subject=:subject") suspend fun clearSubjectOaepEvents(subject: String)
 
     @Query("SELECT * FROM remote_event_cursors WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND resourceType=:resourceType AND resourceId=:resourceId")
     suspend fun cursor(subject: String, organization: String, runtimeId: String, resourceType: String, resourceId: String): RemoteEventCursorEntity?
@@ -320,6 +345,12 @@ interface RemoteCacheDao {
     suspend fun allWorkspaces(subject: String, organization: String, runtimeId: String): List<RemoteWorkspaceEntity>
     @Query("SELECT * FROM remote_sessions WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND workspaceId=:workspaceId ORDER BY sessionId")
     suspend fun allSessions(subject: String, organization: String, runtimeId: String, workspaceId: String): List<RemoteSessionEntity>
+    @Query("SELECT * FROM remote_workspaces WHERE subject=:subject AND organization=:organization ORDER BY displayName,workspaceId")
+    suspend fun allSubjectWorkspaces(subject: String, organization: String): List<RemoteWorkspaceEntity>
+    @Query("SELECT * FROM remote_sessions WHERE subject=:subject AND organization=:organization ORDER BY title,sessionId")
+    suspend fun allSubjectSessions(subject: String, organization: String): List<RemoteSessionEntity>
+    @Query("SELECT * FROM remote_oaep_items WHERE subject=:subject AND organization=:organization ORDER BY updatedAt DESC LIMIT :limit")
+    suspend fun recentSubjectOaepItems(subject: String, organization: String, limit: Int): List<RemoteOaepItemEntity>
     @Query("SELECT * FROM pending_remote_approvals WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId ORDER BY approvalId")
     suspend fun approvals(subject: String, organization: String, runtimeId: String): List<PendingRemoteApprovalEntity>
     @Query("SELECT * FROM remote_runs WHERE subject=:subject AND organization=:organization ORDER BY lastSyncedAt DESC")
@@ -391,12 +422,24 @@ interface RemoteCacheDao {
     suspend fun pruneAccountEventsBefore(subject: String, organization: String, before: String)
     @Query("DELETE FROM remote_events WHERE rowid IN (SELECT rowid FROM remote_events WHERE subject=:subject AND organization=:organization ORDER BY timestamp DESC, sequence DESC LIMIT -1 OFFSET :capacity)")
     suspend fun trimAccountEvents(subject: String, organization: String, capacity: Int)
+    @Query("DELETE FROM remote_session_events WHERE rowid IN (SELECT rowid FROM remote_session_events WHERE subject=:subject AND organization=:organization ORDER BY sessionSequence DESC LIMIT -1 OFFSET :capacity)")
+    suspend fun trimAccountSessionEvents(subject: String, organization: String, capacity: Int)
+    @Query("DELETE FROM remote_oaep_events WHERE rowid IN (SELECT rowid FROM remote_oaep_events WHERE subject=:subject AND organization=:organization ORDER BY timestamp DESC, eventSequence DESC LIMIT -1 OFFSET :capacity)")
+    suspend fun trimAccountOaepEvents(subject: String, organization: String, capacity: Int)
+    @Query("DELETE FROM remote_oaep_items WHERE rowid IN (SELECT rowid FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND optimistic=0 AND status IN ('completed','failed','cancelled') ORDER BY updatedAt DESC, latestEventSequence DESC, itemId DESC LIMIT -1 OFFSET :capacity)")
+    suspend fun trimAccountTerminalOaepItems(subject: String, organization: String, capacity: Int)
     @Query("DELETE FROM pending_remote_approvals WHERE subject=:subject AND organization=:organization AND expiresAt < :before")
     suspend fun pruneExpiredApprovals(subject: String, organization: String, before: String)
     @Query("DELETE FROM remote_event_cursors WHERE subject=:subject AND organization=:organization AND updatedAt < :beforeMillis")
     suspend fun pruneStaleCursors(subject: String, organization: String, beforeMillis: Long)
     @Query("SELECT COUNT(*) FROM remote_events WHERE subject=:subject AND organization=:organization")
     suspend fun eventCount(subject: String, organization: String): Int
+    @Query("SELECT COUNT(*) FROM remote_session_events WHERE subject=:subject AND organization=:organization")
+    suspend fun sessionEventCount(subject: String, organization: String): Int
+    @Query("SELECT COUNT(*) FROM remote_oaep_events WHERE subject=:subject AND organization=:organization")
+    suspend fun oaepEventCount(subject: String, organization: String): Int
+    @Query("SELECT COUNT(*) FROM remote_oaep_items WHERE subject=:subject AND organization=:organization")
+    suspend fun oaepItemCount(subject: String, organization: String): Int
     @Query("SELECT COUNT(*) FROM pending_remote_approvals WHERE subject=:subject AND organization=:organization")
     suspend fun approvalCount(subject: String, organization: String): Int
     @Query("SELECT COUNT(*) FROM remote_event_cursors WHERE subject=:subject AND organization=:organization")
@@ -410,6 +453,13 @@ interface RemoteCacheDao {
     @Query("DELETE FROM remote_sessions WHERE subject=:subject") suspend fun clearSubjectSessions(subject: String)
     @Query("DELETE FROM remote_workspaces WHERE subject=:subject") suspend fun clearSubjectWorkspaces(subject: String)
     @Query("DELETE FROM remote_runtimes WHERE subject=:subject") suspend fun clearSubjectRuntimes(subject: String)
+    @Query("DELETE FROM workbench_approval_grants WHERE subject=:subject") suspend fun clearSubjectWorkbenchApprovalGrants(subject: String)
+    @Query("DELETE FROM workbench_approvals WHERE subject=:subject") suspend fun clearSubjectWorkbenchApprovals(subject: String)
+    @Query("DELETE FROM workbench_audit WHERE subject=:subject") suspend fun clearSubjectWorkbenchAudit(subject: String)
+    @Query("DELETE FROM workbench_events WHERE subject=:subject") suspend fun clearSubjectWorkbenchEvents(subject: String)
+    @Query("DELETE FROM workbench_runs WHERE subject=:subject") suspend fun clearSubjectWorkbenchRuns(subject: String)
+    @Query("DELETE FROM workbench_sessions WHERE subject=:subject") suspend fun clearSubjectWorkbenchSessions(subject: String)
+    @Query("DELETE FROM workbench_workspaces WHERE subject=:subject") suspend fun clearSubjectWorkbenchWorkspaces(subject: String)
 }
 
 enum class EventDecision { APPLY, DUPLICATE, OUT_OF_ORDER, GAP, CROSS_SCOPE }
@@ -444,6 +494,19 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
         subject: String, organization: String, runtimeId: String, sessionId: String,
     ): List<RemoteOaepItemEntity> =
         database.remoteDao().oaepItems(subject, organization, runtimeId, sessionId)
+
+    suspend fun uncertainOaepSourceMessageIds(
+        subject: String, organization: String, runtimeId: String, sessionId: String,
+    ): List<String> = database.remoteDao().oaepItems(subject, organization, runtimeId, sessionId)
+        .asSequence()
+        .filter(RemoteOaepItemEntity::optimistic)
+        .filter { item ->
+            runCatching { JSONObject(item.contentJson).optString("delivery_state") == "uncertain" }
+                .getOrDefault(false)
+        }
+        .mapNotNull(RemoteOaepItemEntity::sourceMessageId)
+        .distinct()
+        .toList()
 
     suspend fun replaceOaepSnapshot(
         subject: String,
@@ -486,6 +549,35 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
         ))
     }
 
+    suspend fun mergeOaepSnapshotWindow(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        workspaceId: String,
+        snapshot: OaepSnapshot,
+    ) = database.withTransaction {
+        require(snapshot.session.workspaceId == workspaceId) { "remote_workspace_scope_mismatch" }
+        val dao = database.remoteDao()
+        val committed = dao.cursor(
+            subject, organization, runtimeId, "oaep-session", snapshot.session.id,
+        )?.lastSequence ?: error("oaep_snapshot_base_missing")
+        require(snapshot.snapshotSequence == committed) { "oaep_snapshot_window_waterline_mismatch" }
+        // An older pagination window shares the latest snapshot waterline. It
+        // may fill gaps, but must never replace a newer Run or Item already
+        // projected from the leading window or the live event stream. REPLACE
+        // is especially unsafe here because the sourceMessageId unique index
+        // would let an older duplicate evict the newer authoritative Item.
+        dao.insertOlderOaepRuns(snapshot.runs.map { run ->
+            RemoteOaepRunEntity(
+                subject, organization, runtimeId, workspaceId, snapshot.session.id,
+                run.id, run.parentRunId, run.status, run.createdAt, run.updatedAt, run.completedAt,
+            )
+        })
+        dao.insertOlderOaepItems(snapshot.items.map { item ->
+            item.toOaepEntity(subject, organization, runtimeId, workspaceId, snapshot.snapshotSequence)
+        })
+    }
+
     suspend fun saveOptimisticOaepMessage(
         subject: String,
         organization: String,
@@ -506,8 +598,19 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
             "message", "pending", sequence,
             dao.cursor(subject, organization, runtimeId, "oaep-session", sessionId)?.lastSequence ?: 0L,
             "android", "android", sourceMessageId, syncedAt.toString(), syncedAt.toString(),
-            JSONObject().put("role", "user").put("text", text).toString(), true,
+            JSONObject().put("role", "user").put("text", text).put("delivery_state", "optimistic").toString(), true,
         )))
+    }
+
+    suspend fun markOptimisticOaepDelivery(
+        subject: String, organization: String, runtimeId: String, sessionId: String,
+        sourceMessageId: String, delivery: RemoteDeliveryState, syncedAt: Long,
+    ) = database.withTransaction {
+        val dao = database.remoteDao()
+        val item = dao.optimisticOaepItem(subject, organization, runtimeId, sessionId, sourceMessageId)
+            ?: return@withTransaction
+        val content = JSONObject(item.contentJson).put("delivery_state", delivery.name.lowercase())
+        dao.saveOaepItems(listOf(item.copy(contentJson = content.toString(), updatedAt = syncedAt.toString())))
     }
 
     suspend fun applyOaepEvent(
@@ -738,6 +841,7 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
 
     suspend fun clearAccount(subject: String, organization: String) = database.withTransaction {
         database.remoteDao().apply {
+            clearOaepEvents(subject, organization); clearOaepItems(subject, organization); clearOaepRuns(subject, organization)
             clearConversationItems(subject, organization)
             clearSessionEvents(subject, organization)
             clearEvents(subject, organization)
@@ -752,9 +856,13 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
 
     suspend fun clearSubject(subject: String) = database.withTransaction {
         database.remoteDao().apply {
+            clearSubjectOaepEvents(subject); clearSubjectOaepItems(subject); clearSubjectOaepRuns(subject)
             clearSubjectConversationItems(subject); clearSubjectSessionEvents(subject)
             clearSubjectEvents(subject); clearSubjectCursors(subject); clearSubjectApprovals(subject)
             clearSubjectRuns(subject); clearSubjectSessions(subject); clearSubjectWorkspaces(subject); clearSubjectRuntimes(subject)
+            clearSubjectWorkbenchApprovalGrants(subject); clearSubjectWorkbenchApprovals(subject)
+            clearSubjectWorkbenchAudit(subject); clearSubjectWorkbenchEvents(subject)
+            clearSubjectWorkbenchRuns(subject); clearSubjectWorkbenchSessions(subject); clearSubjectWorkbenchWorkspaces(subject)
         }
     }
 
@@ -764,11 +872,15 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
         eventBeforeTimestamp: String,
         cursorBeforeMillis: Long,
         maxEvents: Int,
+        maxTerminalItems: Int = RemoteCachePolicy.MAX_TERMINAL_ITEMS_PER_ACCOUNT,
     ) = database.withTransaction {
-        require(maxEvents >= 0) { "remote_cache_capacity_invalid" }
+        require(maxEvents >= 0 && maxTerminalItems >= 0) { "remote_cache_capacity_invalid" }
         database.remoteDao().apply {
             pruneAccountEventsBefore(subject, organization, eventBeforeTimestamp)
             trimAccountEvents(subject, organization, maxEvents)
+            trimAccountSessionEvents(subject, organization, maxEvents)
+            trimAccountOaepEvents(subject, organization, maxEvents)
+            trimAccountTerminalOaepItems(subject, organization, maxTerminalItems)
             pruneExpiredApprovals(subject, organization, eventBeforeTimestamp)
             pruneStaleCursors(subject, organization, cursorBeforeMillis)
         }

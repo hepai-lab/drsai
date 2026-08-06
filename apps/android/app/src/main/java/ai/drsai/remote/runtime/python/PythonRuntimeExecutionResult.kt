@@ -8,6 +8,7 @@ data class PythonRuntimeExecutionResult(
     val code: String,
     val status: String?,
     val outbound: List<PythonRuntimeEnvelope>,
+    val error: String? = null,
 ) {
     companion object {
         fun fromJson(root: JSONObject): PythonRuntimeExecutionResult {
@@ -25,6 +26,7 @@ data class PythonRuntimeExecutionResult(
                         }
                     }
                 },
+                error = python?.optString("error")?.ifBlank { null },
             )
         }
     }

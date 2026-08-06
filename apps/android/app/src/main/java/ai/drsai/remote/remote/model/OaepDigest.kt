@@ -11,6 +11,13 @@ fun oaepItemsDigest(items: List<OaepItem>): String {
         .sortedWith(compareBy<OaepItem> { it.runId }.thenBy { it.sequence }.thenBy { it.id })
         .map { item ->
             val json = OaepJsonCodec.itemJson(item)
+            val content = json.getJSONObject("content").also { value ->
+                // `parts` is an optional OAEP 1.1 compatibility field. The
+                // generated Kotlin model uses an empty-list default, while
+                // Python/Desktop preserve absence. Canonical digests must
+                // treat those representations as the same semantic value.
+                if (value.optJSONArray("parts")?.length() == 0) value.remove("parts")
+            }
             linkedMapOf(
                 "id" to item.id,
                 "session_id" to item.sessionId,
@@ -19,13 +26,18 @@ fun oaepItemsDigest(items: List<OaepItem>): String {
                 "status" to item.status,
                 "sequence" to item.sequence,
                 "source" to json.getJSONObject("source"),
-                "content" to json.getJSONObject("content"),
+                "content" to content,
             )
         })
     return MessageDigest.getInstance("SHA-256")
         .digest(canonical.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
 }
+
+/** Canonical JSON SHA-256 used by cross-runtime Snapshot/Event parity gates. */
+fun canonicalOaepJsonDigest(value: Any?): String = MessageDigest.getInstance("SHA-256")
+    .digest(canonicalOaep(value).toByteArray(Charsets.UTF_8))
+    .joinToString("") { "%02x".format(it) }
 
 private fun canonicalOaep(value: Any?): String = when (value) {
     null -> "null"

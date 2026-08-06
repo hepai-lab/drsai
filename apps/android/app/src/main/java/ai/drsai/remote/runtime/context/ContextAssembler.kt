@@ -182,9 +182,13 @@ data class MemoryPrivacyPolicy(
     val allowLongTermMemory: Boolean = true,
     val excludedLabels: Set<String> = setOf("credential", "secret", "medical"),
 ) {
+    private val sensitiveContent: Regex get() = Regex(
+        "(?i)(身份证|银行卡|密码\\s*[:：]|病历|诊断结果|medical record|diagnosis|private key)",
+    )
+
     fun mayPersist(label: String, content: String): Boolean =
         enabled && allowLongTermMemory && label.lowercase() !in excludedLabels &&
-            SensitiveDataRedactor.redact(content) == content
+            SensitiveDataRedactor.redact(content) == content && !sensitiveContent.containsMatchIn(content)
 }
 
 data class ConversationSummary(

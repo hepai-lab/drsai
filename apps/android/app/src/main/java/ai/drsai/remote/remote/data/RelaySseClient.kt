@@ -186,12 +186,56 @@ class RelaySseClient(
         awaitClose { activeCall?.cancel(); reader.cancel() }
     }
 
+    /** One content-free stream per visible Workspace, never one stream per Session. */
+    fun workspaceSessionCatalogStream(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        onConnected: () -> Unit = {},
+    ): Flow<Unit> = channelFlow {
+        val url = root.newBuilder().addPathSegments(
+            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/session-catalog-events/stream",
+        ).build()
+        var activeCall: okhttp3.Call? = null
+        val reader = launch(Dispatchers.IO) {
+            val initialToken = accessToken()
+            fun call(token: String) = streamingHttp.newCall(authorizeRelayRequest(
+                deviceProof,
+                Request.Builder().url(url).header("Accept", "text/event-stream")
+                    .header("Authorization", "Bearer $token").build(),
+                token,
+            )).also { activeCall = it }
+            var response = call(initialToken).execute()
+            if (response.code == 401) {
+                response.close()
+                val refreshed = refreshAfter(initialToken)
+                if (refreshed.isNullOrBlank()) throw RelayHttpException(401, null, "oidc_auth_invalid")
+                response = call(refreshed).execute()
+            }
+            response.use {
+                if (!response.isSuccessful) throw relayHttpException(response)
+                val source = response.body?.source() ?: error("relay_workspace_catalog_sse_empty")
+                onConnected()
+                var hasData = false
+                while (!source.exhausted()) {
+                    val line = source.readUtf8Line() ?: break
+                    when {
+                        line.startsWith("data:") -> hasData = true
+                        line.isEmpty() && hasData -> { send(Unit); hasData = false }
+                    }
+                }
+            }
+            close()
+        }
+        awaitClose { activeCall?.cancel(); reader.cancel() }
+    }
+
     fun oaepSessionStream(
         runtimeId: RuntimeId,
         workspaceId: WorkspaceId,
         sessionId: SessionId,
         afterSequence: Long,
         onConnected: () -> Unit = {},
+        onReceived: (OaepEvent, Double) -> Unit = { _, _ -> },
     ): Flow<OaepEvent> = channelFlow {
         require(afterSequence >= 0) { "after_sequence_invalid" }
         val url = root.newBuilder()
@@ -231,6 +275,7 @@ class RelaySseClient(
                         when {
                             line.startsWith("data:") -> data.append(line.removePrefix("data:").trim())
                             line.isEmpty() && data.isNotEmpty() -> {
+                                val decodeStarted = System.nanoTime()
                                 val event = OaepJsonCodec.event(JSONObject(data.toString()))
                                 require(event.sessionId == sessionId.value) {
                                     "remote_session_event_scope_mismatch"
@@ -238,6 +283,7 @@ class RelaySseClient(
                                 event.source.runtimeId?.let {
                                     require(it == runtimeId.value) { "remote_runtime_event_scope_mismatch" }
                                 }
+                                onReceived(event, (System.nanoTime() - decodeStarted) / 1_000_000.0)
                                 send(event)
                                 data.clear()
                             }

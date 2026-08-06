@@ -317,11 +317,7 @@ class OidcClient(
         return AuthTokens(
             accessToken = accessToken,
             refreshToken = refreshToken,
-            user = User(
-                id = subject,
-                name = idClaims.optString("name", idClaims.optString("email", subject)),
-                avatarUrl = idClaims.optString("picture").ifBlank { null },
-            ),
+            user = oidcUser(idClaims, accessClaims),
         )
     }
 

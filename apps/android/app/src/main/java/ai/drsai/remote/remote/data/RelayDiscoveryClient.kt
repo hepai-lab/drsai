@@ -69,6 +69,7 @@ internal fun runtimeConnectionState(status: String, version: String): RemoteConn
         "online" -> RemoteConnectionState.ONLINE
         "degraded" -> RemoteConnectionState.DEGRADED
         "offline" -> RemoteConnectionState.OFFLINE
+        "paused" -> RemoteConnectionState.PAUSED
         else -> RemoteConnectionState.INCOMPATIBLE
     }
     return if (
@@ -89,6 +90,8 @@ interface RelayDiscoveryService {
     suspend fun associate(accessGrantPayload: String): RuntimeId
     suspend fun revokeAssociation(runtimeId: RuntimeId)
     suspend fun recordPresence(runtimeId: RuntimeId, accessing: Boolean = false)
+    suspend fun rotateDeviceKey(runtimeId: RuntimeId): Unit =
+        throw UnsupportedOperationException("device_key_rotation_not_supported")
 }
 
 class HttpRelayDiscoveryService(
@@ -306,6 +309,55 @@ class HttpRelayDiscoveryService(
         response.use {
             if (!response.isSuccessful) throw relayHttpException(response)
         }
+    }
+
+    override suspend fun rotateDeviceKey(runtimeId: RuntimeId): Unit = withContext(Dispatchers.IO) {
+        require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
+        val proof = requireNotNull(deviceProof) { "relay_device_proof_required" }
+        val rotation = proof.beginKeyRotation()
+        val url = root.newBuilder()
+            .addPathSegments("v1/associations/${runtimeId.value}/device-key/rotate")
+            .build()
+        val encodedBody = JSONObject()
+            .put("new_device_public_key", rotation.newDevicePublicKey)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+        fun execute(token: String, pendingKey: Boolean = false) = http.newCall(
+            Request.Builder().url(url)
+                .header("Authorization", "Bearer $token")
+                .post(encodedBody)
+                .build()
+                .let { request ->
+                    if (pendingKey) proof.authorizeWithPendingKey(request, token, rotation)
+                    else authorizeRelayRequest(proof, request, token)
+                },
+        ).execute()
+        val initialToken = accessToken()
+        var currentToken = initialToken
+        var response = execute(currentToken)
+        if (response.code == 401) {
+            response.close()
+            refreshAfter(initialToken)?.takeIf(String::isNotBlank)?.let { refreshed ->
+                currentToken = refreshed
+                response = execute(currentToken)
+            }
+        }
+        if (response.code == 401) {
+            // A prior process may have died after Relay committed the new key
+            // but before the local promotion. The pending key was persisted
+            // before the first request, so use it only to idempotently confirm
+            // the exact same rotation operation.
+            response.close()
+            response = execute(currentToken, pendingKey = true)
+        }
+        response.use {
+            if (!response.isSuccessful) {
+                val failure = relayHttpException(response)
+                if (response.code in setOf(400, 409, 422)) rotation.discard()
+                throw failure
+            }
+        }
+        rotation.commit()
     }
 
     private suspend fun <T> getPage(

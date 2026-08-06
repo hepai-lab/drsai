@@ -71,8 +71,9 @@ data class ApprovalRequestState(
 
 object SensitiveDataRedactor {
     private val bearer = Regex("(?i)bearer\\s+[a-z0-9._~+/-]+=*")
-    private val jsonSecret = Regex("(?i)(\"(?:access_token|refresh_token|api_key|password|cookie)\"\\s*:\\s*)\"[^\"]*\"")
-    private val assignmentSecret = Regex("(?i)((?:access_token|refresh_token|api_key|password|cookie)\\s*[=:]\\s*)[^\\s,;]+")
+    private val jsonSecret = Regex("(?i)(\"(?:access_token|refresh_token|api_key|x-api-key|authorization|password|cookie)\"\\s*:\\s*)\"[^\"]*\"")
+    private val assignmentSecret = Regex("(?i)((?:access_token|refresh_token|api_key|x-api-key|authorization|password|cookie)\\s*[=:]\\s*)[^\\s,;]+")
+    private val commonApiKey = Regex("(?i)\\bsk-(?:ant-)?[a-z0-9_-]{8,}")
     private val privateKey = Regex("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----")
 
     fun redact(value: String): String = value
@@ -80,4 +81,5 @@ object SensitiveDataRedactor {
         .replace(bearer, "Bearer [REDACTED]")
         .replace(jsonSecret, "$1\"[REDACTED]\"")
         .replace(assignmentSecret, "$1[REDACTED]")
+        .replace(commonApiKey, "[REDACTED_API_KEY]")
 }

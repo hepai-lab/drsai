@@ -27,6 +27,21 @@ class PythonCheckpointCodecTest {
         assertEquals("python_checkpoint_reader_too_old", runCatching { PythonCheckpointCodec.decode(oldReader) }.exceptionOrNull()?.message)
     }
 
+    @Test fun `known incompatible checkpoints terminate migration but transient failures propagate`() {
+        listOf(
+            "python_checkpoint_fields_missing",
+            "python_checkpoint_version_unsupported",
+            "python_checkpoint_reader_too_old",
+            "python_checkpoint_checksum_mismatch",
+            "python_checkpoint_sequence_invalid",
+        ).forEach { code ->
+            assertEquals("python_checkpoint_incompatible", PythonCheckpointMigrationPolicy.terminalFailureCode(
+                IllegalArgumentException(code),
+            ))
+        }
+        assertEquals(null, PythonCheckpointMigrationPolicy.terminalFailureCode(IllegalStateException("database_busy")))
+    }
+
     @Test fun `checksum is canonical across object key order`() {
         val first = PythonCheckpointCodec.encode(1, JSONObject().put("b", 2).put("a", 1))
         val second = PythonCheckpointCodec.encode(1, JSONObject().put("a", 1).put("b", 2))

@@ -5,12 +5,16 @@ import ai.drsai.remote.runtime.security.ApprovalDecision
 import ai.drsai.remote.runtime.security.ApprovalRequestState
 import ai.drsai.remote.runtime.security.SensitiveDataRedactor
 import ai.drsai.remote.runtime.tools.ToolDefinition
+import ai.drsai.remote.runtime.tools.ToolApprovalPreviewer
 import ai.drsai.remote.runtime.tools.ToolExecutionContext
 import ai.drsai.remote.runtime.tools.ToolExecutionOutcome
 import ai.drsai.remote.runtime.tools.ToolRegistry
 import ai.drsai.remote.runtime.tools.ToolRisk
 import ai.drsai.remote.runtime.tools.ToolOutputArtifactSink
 import ai.drsai.remote.runtime.tools.ToolAuditSink
+import ai.drsai.remote.runtime.tools.ToolPermissionPolicy
+import ai.drsai.remote.runtime.tools.ToolPolicyDecision
+import ai.drsai.remote.runtime.tools.objectToolSchema
 import ai.drsai.remote.workbench.model.ApprovalStatus
 import ai.drsai.remote.workbench.model.RuntimeCapability
 import ai.drsai.remote.workbench.model.WorkbenchId
@@ -22,11 +26,67 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolApprovalPolicyTest {
+    @Test fun approvalUsesHostPreparedPreviewWithoutCallingTheMutationHandler() = runTest {
+        var executions = 0
+        val registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                "files.write", 1, "Write file", ToolRisk.EXTERNAL_WRITE,
+                requiredArguments = setOf("path"), requiredCapabilities = setOf(RuntimeCapability.SAF_WRITE),
+            ),
+            approvalPreviewer = ToolApprovalPreviewer { context, arguments ->
+                "{\"call\":\"${context.toolCallId}\",\"diff\":\"+++ ${arguments.getString("path")}\"}"
+            },
+        ) { _, _ -> executions += 1; "ok" }
+        val context = ToolExecutionContext(
+            "alice", setOf(RuntimeCapability.SAF_WRITE), toolCallId = "call-1",
+        )
+
+        val prepared = registry.prepareApproval(context, "files.write", "{\"path\":\"notes.txt\"}")
+        assertTrue(requireNotNull(prepared).arguments.contains("+++ notes.txt"))
+        assertEquals(0, executions)
+        assertEquals(
+            ToolExecutionOutcome.Success("ok"),
+            registry.execute(context.copy(approved = true), "files.write", "{\"path\":\"notes.txt\"}"),
+        )
+        assertEquals(1, executions)
+    }
+
+    @Test fun everyCapabilityRiskAndApprovalCombinationFollowsTheSinglePolicyMatrix() {
+        ToolRisk.entries.forEach { risk ->
+            listOf(false, true).forEach { hasCapability ->
+                listOf(false, true).forEach { approved ->
+                    val definition = ToolDefinition(
+                        "matrix.${risk.name.lowercase()}", 1, "Matrix", risk,
+                        requiredCapabilities = setOf(RuntimeCapability.SAF_WRITE),
+                    )
+                    val context = ToolExecutionContext(
+                        "alice",
+                        if (hasCapability) setOf(RuntimeCapability.SAF_WRITE) else emptySet(),
+                        approved = approved,
+                    )
+                    val expected = when {
+                        risk == ToolRisk.FORBIDDEN || !hasCapability -> ToolPolicyDecision.DENY
+                        risk in setOf(ToolRisk.EXTERNAL_WRITE, ToolRisk.SENSITIVE) && !approved ->
+                            ToolPolicyDecision.REQUIRE_APPROVAL
+                        else -> ToolPolicyDecision.ALLOW
+                    }
+                    assertEquals("$risk capability=$hasCapability approved=$approved", expected,
+                        ToolPermissionPolicy.decide(definition, context))
+                }
+            }
+        }
+    }
+
     @Test fun registryRejectsDuplicatesInvalidArgumentsAndMissingCapabilities() = runTest {
         val registry = ToolRegistry()
         val definition = ToolDefinition(
             "files.write", 1, "Write file", ToolRisk.EXTERNAL_WRITE,
-            requiredArguments = setOf("path"), requiredCapabilities = setOf(RuntimeCapability.SAF_WRITE),
+            requiredArguments = setOf("path"),
+            parameterSchemaJson = objectToolSchema(
+                org.json.JSONObject().put("path", org.json.JSONObject().put("type", "string")), setOf("path"),
+            ),
+            requiredCapabilities = setOf(RuntimeCapability.SAF_WRITE),
         )
         registry.register(definition) { _, _ -> "ok" }
         assertThrows(IllegalArgumentException::class.java) { registry.register(definition) { _, _ -> "again" } }
@@ -39,6 +99,30 @@ class ToolApprovalPolicyTest {
             ToolExecutionOutcome.Success("ok"),
             registry.execute(capable.copy(approved = true), "files.write", "{\"path\":\"a\"}"),
         )
+    }
+
+    @Test fun accountScopedToolsCanShareIdsAndRevokeWithoutCrossAccountVisibility() = runTest {
+        val registry = ToolRegistry()
+        val definition = ToolDefinition("connector.read", 1, "Connector read", ToolRisk.READ_ONLY)
+        var aliceActive = true
+        registry.register(definition, ownerSubject = "alice", available = { aliceActive }) { _, _ -> "alice" }
+        registry.register(definition, ownerSubject = "bob") { _, _ -> "bob" }
+
+        val alice = ToolExecutionContext("alice", emptySet(), approved = true)
+        val bob = ToolExecutionContext("bob", emptySet(), approved = true)
+        val mallory = ToolExecutionContext("mallory", emptySet(), approved = true)
+        assertEquals(listOf("connector.read"), registry.definitions(alice).map { it.id })
+        assertEquals(listOf("connector.read"), registry.definitions(bob).map { it.id })
+        assertTrue(registry.definitions(mallory).isEmpty())
+        assertEquals(ToolExecutionOutcome.Success("alice"), registry.execute(alice, "connector.read", "{}"))
+        assertEquals(ToolExecutionOutcome.Success("bob"), registry.execute(bob, "connector.read", "{}"))
+
+        aliceActive = false
+        assertTrue(registry.definitions(alice).isEmpty())
+        assertEquals("tool_not_available", (registry.execute(alice, "connector.read", "{}") as ToolExecutionOutcome.Rejected).code)
+        registry.unregister("alice", setOf("connector.read"))
+        assertEquals("tool_not_registered", (registry.execute(alice, "connector.read", "{}") as ToolExecutionOutcome.Rejected).code)
+        assertEquals(ToolExecutionOutcome.Success("bob"), registry.execute(bob, "connector.read", "{}"))
     }
 
     @Test fun forbiddenToolsAreNeverVisibleOrExecutable() = runTest {

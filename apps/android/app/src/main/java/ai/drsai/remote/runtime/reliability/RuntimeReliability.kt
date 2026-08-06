@@ -92,9 +92,9 @@ data class RuntimeResourceDecision(
 )
 object RuntimeResourcePolicy {
     fun decide(value: DeviceConstraints, memoryClassMb: Int, artifactBytes: Long): RuntimeResourceDecision = when {
-        artifactBytes > 64L * 1024 * 1024 -> RuntimeResourceDecision(0, true, "kotlin_lite", "resource_artifact_limit")
-        value.lowMemory || memoryClassMb < 192 -> RuntimeResourceDecision(1, true, "kotlin_lite", "resource_low_memory")
-        value.thermal >= ThermalLevel.SEVERE -> RuntimeResourceDecision(1, true, "remote_full", "resource_thermal")
+        artifactBytes > 64L * 1024 * 1024 -> RuntimeResourceDecision(0, true, "full_runtime_blocked", "resource_artifact_limit")
+        value.lowMemory || memoryClassMb < 192 -> RuntimeResourceDecision(0, true, "full_runtime_blocked", "resource_low_memory")
+        value.thermal >= ThermalLevel.SEVERE -> RuntimeResourceDecision(1, true, "remote_full_offer", "resource_thermal")
         else -> RuntimeResourceDecision(2, true, "python_local", "resource_healthy")
     }
 }

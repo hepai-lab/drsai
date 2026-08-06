@@ -5,16 +5,19 @@ import ai.drsai.remote.remote.data.parseAccessGrantCode
 import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.associationErrorMessage
 import ai.drsai.remote.remote.data.compatibleWindowsRuntimeVersion
+import ai.drsai.remote.remote.data.runtimeConnectionState
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.security.RelayAssociationDevice
 import ai.drsai.remote.remote.security.RelayDeviceProof
+import ai.drsai.remote.remote.security.RelayDeviceKeyRotation
 import ai.drsai.remote.remote.security.RelayDeviceSigner
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -169,6 +172,10 @@ class RelayDiscoveryClientTest {
         assertEquals(false, compatibleWindowsRuntimeVersion("1.4.7"))
         assertEquals(false, compatibleWindowsRuntimeVersion("1.5.3-rc1"))
         assertEquals(false, compatibleWindowsRuntimeVersion("unknown"))
+    }
+
+    @Test fun `paused runtime remains recognizable and is not treated as incompatible`() {
+        assertEquals(RemoteConnectionState.PAUSED, runtimeConnectionState("paused", "1.5.3"))
     }
 
     @Test fun `workspace page sends bounded limit and opaque cursor`() = runTest {
@@ -522,6 +529,64 @@ class RelayDiscoveryClientTest {
         assertEquals(setOf("workspace.list", "session.list"), runtime.capabilities)
     }
 
+    @Test fun `device key rotation commits only after Relay success and keeps stable device id`() = runTest {
+        val signer = RotatingSigner()
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(), { "token" },
+            deviceProof = RelayDeviceProof(
+                signer,
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-rotation-0123456789" },
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"association_id":"a","runtime_id":"rt","subject_summary":"sub_x","device_summary":"dev_x","device_name":"Android","status":"active","access_state":"online","created_at":"2026-01-01T00:00:00Z"}"""
+        ))
+        service.rotateDeviceKey(RuntimeId("rt"))
+        assertEquals(1, signer.generation)
+        assertEquals("android.stable-device", signer.associationDevice.deviceId)
+        server.takeRequest().apply {
+            assertEquals("/v1/associations/rt/device-key/rotate", requestUrl?.encodedPath)
+            assertEquals("android.stable-device", getHeader("X-Relay-Device-Id"))
+            assertEquals("B".repeat(43), JSONObject(body.readUtf8()).getString("new_device_public_key"))
+        }
+
+        val failedSigner = RotatingSigner()
+        val failed = HttpRelayDiscoveryService(
+            server.url("/").toString(), { "token" },
+            deviceProof = RelayDeviceProof(
+                failedSigner,
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-rotation-9876543210" },
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(500).setBody("{}"))
+        kotlin.runCatching { failed.rotateDeviceKey(RuntimeId("rt")) }
+            .onSuccess { error("failed rotation committed") }
+        assertEquals(0, failedSigner.generation)
+        assertEquals("A".repeat(43), failedSigner.associationDevice.devicePublicKey)
+        server.takeRequest()
+
+        val recoveringSigner = RotatingSigner()
+        val recovering = HttpRelayDiscoveryService(
+            server.url("/").toString(), { "token" },
+            deviceProof = RelayDeviceProof(
+                recoveringSigner,
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-recovery-0123456789" },
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(401).setBody("{}"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"association_id":"a","runtime_id":"rt","subject_summary":"sub_x","device_summary":"dev_x","device_name":"Android","status":"active","access_state":"online","created_at":"2026-01-01T00:00:00Z"}"""
+        ))
+        recovering.rotateDeviceKey(RuntimeId("rt"))
+        assertEquals(1, recoveringSigner.generation)
+        val oldProof = server.takeRequest().getHeader("X-Relay-Device-Signature")
+        val pendingProof = server.takeRequest().getHeader("X-Relay-Device-Signature")
+        assertNotEquals(oldProof, pendingProof)
+    }
+
     private class CapturingSigner : RelayDeviceSigner {
         override val associationDevice = RelayAssociationDevice(
             deviceId = "android.test-device",
@@ -530,5 +595,24 @@ class RelayDiscoveryClientTest {
         )
 
         override fun sign(message: ByteArray): ByteArray = ByteArray(64) { it.toByte() }
+    }
+
+    private class RotatingSigner : RelayDeviceSigner {
+        var generation = 0
+        override val associationDevice: RelayAssociationDevice
+            get() = RelayAssociationDevice(
+                deviceId = "android.stable-device",
+                deviceName = "Android test device",
+                devicePublicKey = if (generation == 0) "A".repeat(43) else "B".repeat(43),
+            )
+
+        override fun sign(message: ByteArray): ByteArray = ByteArray(64) { generation.toByte() }
+
+        override fun beginKeyRotation(): RelayDeviceKeyRotation =
+            RelayDeviceKeyRotation(
+                "B".repeat(43),
+                signAction = { ByteArray(64) { 1 } },
+                commitAction = { generation = 1 },
+            )
     }
 }

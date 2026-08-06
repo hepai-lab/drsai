@@ -1,18 +1,18 @@
 package ai.drsai.remote.runtime.python
 
 import android.content.Context
+import ai.drsai.remote.runtime.security.AndroidRuntimeKillSwitch
+import ai.drsai.remote.runtime.security.AndroidRuntimeKillSwitchSnapshot
 import java.security.MessageDigest
 import org.json.JSONObject
 
-enum class LocalRuntimeImplementation { KOTLIN_LITE, PYTHON_SHARED_CORE }
-enum class RuntimeRoute { KOTLIN_LITE, PYTHON_LOCAL, REMOTE_FULL, MANUAL_RECOVERY }
+enum class RuntimeRoute { FULL_LOCAL, FULL_RUNTIME_BLOCKED, MANUAL_RECOVERY }
 
 data class PythonRuntimeRolloutState(
     val buildEnabled: Boolean,
     val userEnabled: Boolean,
     val pythonHealthy: Boolean,
     val policyEnabled: Boolean = false,
-    val remoteFullAvailable: Boolean = false,
     val sideEffectsCommitted: Boolean = false,
 )
 
@@ -42,6 +42,7 @@ data class RuntimeRolloutPolicyDocument(
     val abis: Set<String>,
     val minMemoryClassMb: Int,
     val decisionReason: String,
+    val disabledRuntimeFeatures: Set<AndroidRuntimeKillSwitch> = emptySet(),
 ) {
     init {
         require(policyVersion.isNotBlank()) { "runtime_policy_version_required" }
@@ -74,6 +75,9 @@ data class RuntimeRolloutPolicyDocument(
             abis = root.getJSONArray("abis").toStringSet(),
             minMemoryClassMb = root.getInt("min_memory_class_mb"),
             decisionReason = root.optString("reason").ifBlank { "policy_applied" }.take(200),
+            disabledRuntimeFeatures = root.optJSONArray("disabled_runtime_features")?.let {
+                AndroidRuntimeKillSwitchSnapshot.fromJson(it).disabled
+            }.orEmpty(),
         )
     }
 }
@@ -100,29 +104,20 @@ object SignedRuntimeRolloutPolicy {
 }
 
 object PythonRuntimeRolloutPolicy {
-    fun select(state: PythonRuntimeRolloutState): LocalRuntimeImplementation =
-        if (state.buildEnabled && state.userEnabled && state.pythonHealthy && state.policyEnabled) {
-            LocalRuntimeImplementation.PYTHON_SHARED_CORE
-        } else LocalRuntimeImplementation.KOTLIN_LITE
-
+    /** A policy can block Full Runtime; it can never select another local implementation. */
     fun route(
         state: PythonRuntimeRolloutState,
         context: RuntimeRolloutContext,
         verifiedPolicy: VerifiedRuntimePolicy?,
     ): RuntimeRoute {
-        if (state.sideEffectsCommitted && (!state.pythonHealthy || verifiedPolicy?.document?.permits(context) != true)) {
+        val explicitlyBlocked = state.policyEnabled && verifiedPolicy?.document?.permits(context) != true
+        if (state.sideEffectsCommitted && (!state.pythonHealthy || explicitlyBlocked)) {
             return RuntimeRoute.MANUAL_RECOVERY
         }
-        if (state.buildEnabled && state.userEnabled && state.pythonHealthy && state.policyEnabled &&
-            verifiedPolicy?.document?.permits(context) == true
-        ) return RuntimeRoute.PYTHON_LOCAL
-        return if (state.remoteFullAvailable) RuntimeRoute.REMOTE_FULL else RuntimeRoute.KOTLIN_LITE
+        return if (state.buildEnabled && state.userEnabled && state.pythonHealthy && !explicitlyBlocked) {
+            RuntimeRoute.FULL_LOCAL
+        } else RuntimeRoute.FULL_RUNTIME_BLOCKED
     }
-
-    fun mayFallbackToKotlin(
-        pythonStartedSideEffect: Boolean,
-        checkpointHasCompletedSideEffects: Boolean,
-    ): Boolean = !pythonStartedSideEffect && !checkpointHasCompletedSideEffects
 }
 
 class PythonRuntimePreferenceStore(context: Context, private val defaultEnabled: Boolean) {
@@ -136,17 +131,35 @@ class PythonRuntimePreferenceStore(context: Context, private val defaultEnabled:
             preferences.getLong("policy_expires_at", 0) >= System.currentTimeMillis() / 1000
 
     fun installVerifiedPolicy(policy: VerifiedRuntimePolicy) {
+        val disabled = policy.document.disabledRuntimeFeatures.toMutableSet().apply {
+            if (policy.document.emergencyDisabled) add(AndroidRuntimeKillSwitch.KERNEL)
+        }
         preferences.edit()
             .putBoolean("policy_verified", policy.document.pythonEnabled && !policy.document.emergencyDisabled)
             .putLong("policy_expires_at", policy.document.expiresAtEpochSeconds)
             .putString("policy_version", policy.document.policyVersion)
             .putString("policy_payload_sha256", policy.payloadSha256)
+            .putStringSet("disabled_runtime_features", disabled.mapTo(mutableSetOf()) { it.wireId })
+            .apply()
+    }
+
+    fun killSwitchSnapshot(): AndroidRuntimeKillSwitchSnapshot = AndroidRuntimeKillSwitchSnapshot(
+        preferences.getStringSet("disabled_runtime_features", emptySet()).orEmpty()
+            .mapTo(linkedSetOf(), AndroidRuntimeKillSwitch::parse),
+    )
+
+    /** A configured signed-policy channel fails closed at the kernel boundary. */
+    fun failSafePolicy() {
+        preferences.edit()
+            .putBoolean("policy_verified", false)
+            .putStringSet("disabled_runtime_features", setOf(AndroidRuntimeKillSwitch.KERNEL.wireId))
             .apply()
     }
 
     fun clearPolicy() {
         preferences.edit().remove("policy_verified").remove("policy_expires_at")
             .remove("policy_version").remove("policy_payload_sha256").apply()
+        preferences.edit().remove("disabled_runtime_features").apply()
     }
 
     fun recordPolicyDiagnostic(value: RuntimePolicyDiagnostic) {
