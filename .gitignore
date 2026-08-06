@@ -334,5 +334,8 @@ approval-proof.txt
 docs/android/reports/evidence/**/*.png
 docs/android/reports/evidence/**/*.xml
 docs/android/reports/evidence/p9/pending/
+docs/android/reports/evidence/round*.*
+docs/android/reports/evidence/samsung-model-provider-*/
 docs/desktop/evidence/**/*.png
 docs/desktop/evidence/**/accessibility-tree.json
+docs/desktop/evidence/round*/
