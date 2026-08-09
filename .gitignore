@@ -348,3 +348,10 @@ docs/desktop/evidence/round*/
 
 # Desktop renderer bundles are reproducible build output.
 apps/desktop/shared/renderer/out/
+
+# Windows packaging consumes these two brand assets from buildResources.
+# Keep other generated build directories ignored while making clean/CI builds branded.
+!apps/desktop/windows/build/
+apps/desktop/windows/build/*
+!apps/desktop/windows/build/icon.ico
+!apps/desktop/windows/build/icon.png
