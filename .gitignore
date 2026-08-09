@@ -9,6 +9,7 @@
 # 项目特定文件
 ########################
 release
+.tmp_abort_audit.txt
 .tmp-runtime-inspect
 .pnpm-store
 .tmp-gateway.pid
