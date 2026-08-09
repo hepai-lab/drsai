@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     DEFAULT_ADMIN_PASSWORD: str = "DrSai@Admin2024!"
     DEFAULT_DEV_USER: str = "dev"
     DEFAULT_DEV_PASSWORD: str = "DrSai@Dev2024!"
-    # Optional absolute path to skills root (folders with SKILL.md). If unset, server walks up from package to find agent_skills/skills.
+    # Optional relocation of the single built-in skills root. If unset, the
+    # server walks up from the package to find skills/skills.
     AGENT_SKILLS_CATALOG_DIR: str | None = None
 
     model_config = {"env_prefix": "DRSAI_UI_"}
