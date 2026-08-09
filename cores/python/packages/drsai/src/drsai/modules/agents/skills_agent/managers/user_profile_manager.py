@@ -20,6 +20,7 @@ import json
 from datetime import datetime
 from loguru import logger
 from pydantic import BaseModel
+from drsai.configs.constant import WORKSPACE_RUNS_DIR
 from drsai.modules.components.tool import (
     ToolSchema,
     ParametersSchema,
@@ -75,6 +76,26 @@ class SessionMemory(BaseModel):
     # 用户反馈
     user_feedback: Optional[Dict[str, Any]] = None
 
+def _resolve_internal_storage_dir(work_dir: str | Path) -> Path:
+    """Resolve profile storage without ever using the repository CWD by accident.
+
+    Production callers pass an absolute per-user storage directory.  A relative
+    value is retained for compatibility with lightweight callers, but is always
+    rooted beneath ``DRSAI_HOME/workspace/runs`` rather than ``Path.cwd()``.
+    """
+    requested = Path(work_dir).expanduser()
+    if requested.is_absolute():
+        return requested.resolve()
+
+    storage_root = Path(WORKSPACE_RUNS_DIR).resolve()
+    resolved = (storage_root / requested).resolve()
+    try:
+        resolved.relative_to(storage_root)
+    except ValueError as exc:
+        raise ValueError("Relative profile storage must remain inside DRSAI_HOME/workspace/runs.") from exc
+    return resolved
+
+
 class UserProfileManager:
     """
     管理用户画像、记忆、技能和偏好设置的文件管理器
@@ -96,8 +117,8 @@ class UserProfileManager:
         
         self.agent_name = agent_name
         self.user_name = user_id
-        self.work_dir = Path(work_dir)
-        self.work_dir.mkdir(exist_ok=True)
+        self.work_dir = _resolve_internal_storage_dir(work_dir)
+        self.work_dir.mkdir(parents=True, exist_ok=True)
         self.tmp_dir = self.work_dir / "tmp"
         self.tmp_dir.mkdir(exist_ok=True)
         self.download_dir = self.work_dir / "downloads"
@@ -123,7 +144,6 @@ class UserProfileManager:
 
         # 初始化文件
         self._initialize_files()
-
     def _initialize_files(self):
         """初始化所有必要的文件"""
  
