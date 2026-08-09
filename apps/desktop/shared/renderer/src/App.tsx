@@ -30,7 +30,6 @@ import {
   Smartphone,
   Sparkles,
   Terminal as TerminalIcon,
-  TestTube2,
   Trash2,
   Type,
   Video,
@@ -132,8 +131,6 @@ import { MobilePairingDialog, mobilePairingErrorText } from "./components/Mobile
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { RunInspectorPanel } from "./components/RunInspectorPanel";
-import { RegressionPanel } from "./components/RegressionPanel";
-import type { RegressionCaseDetail, RegressionEvaluation } from "@shared/regression";
 import { AppDecisionDialogHost, requestAppDecision, showAppNotice } from "./components/AppDecisionDialog";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
 import {
@@ -205,7 +202,6 @@ interface TerminalCommandProposal {
 
 const rightTabIcons: Record<RightTab, LucideIcon> = {
   run: ListTree,
-  regression: TestTube2,
   files: FileText,
   templates: Sparkles,
   browser: Globe2,
@@ -257,7 +253,6 @@ interface SidebarComponentVisibility {
 }
 interface RightSidebarComponentVisibility {
   run: boolean;
-  regression: boolean;
   files: boolean;
   browser: boolean;
   terminal: boolean;
@@ -486,7 +481,6 @@ function AuthenticatedApp({
   const [appearance, setAppearance] = useState<AppearanceMode>(() => loadAppearance());
   const [sidebarComponents, setSidebarComponents] = useState<SidebarComponentVisibility>(() => loadSidebarComponents());
   const [rightSidebarComponents, setRightSidebarComponents] = useState<RightSidebarComponentVisibility>(() => loadRightSidebarComponents());
-  const [regressionTestingEnabled, setRegressionTestingEnabled] = useState(false);
   const [myDrSaiConfig, setMyDrSaiConfig] = useState<MyDrSaiConfig | null>(null);
   const [myDrSaiAgentModelPolicy, setMyDrSaiAgentModelPolicy] = useState<MyDrSaiAgentModelPolicy | null>(null);
   const myDrSaiConfigRef = useRef<MyDrSaiConfig | null>(null);
@@ -529,10 +523,9 @@ function AuthenticatedApp({
         : id === "browser" && platformDescriptor?.capabilities.features.browser !== true ? false
         : id === "debug" && platformDescriptor?.capabilities.features.debugger !== true ? false
         : id === "terminal" && platformDescriptor?.capabilities.features.terminal !== true ? false
-        : id === "regression" && !regressionTestingEnabled ? false
         : rightSidebarComponents[id],
     ),
-    [language, platformDescriptor, regressionTestingEnabled, rightSidebarComponents],
+    [language, platformDescriptor, rightSidebarComponents],
   );
   const firstVisibleRightTab = rightTabs[0]?.id;
   const title =
@@ -773,42 +766,6 @@ function AuthenticatedApp({
     workspaceName: effectiveWorkspace.name,
     workspacePath: effectiveWorkspacePath,
   });
-  const chatRef = useRef(chat);
-  chatRef.current = chat;
-
-  const runRegressionCase = useCallback(async (detail: RegressionCaseDetail, evaluation: RegressionEvaluation): Promise<void> => {
-    const evaluationId = evaluation.evaluation_id;
-    try {
-      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "preparing_session" });
-      const thread = await desktopApi.createThread({ kind: "agent_run", title: `[Regression] ${detail.id}`, workspacePath: effectiveWorkspacePath });
-      setThreads((current) => sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]));
-      setActiveThreadId(thread.id);
-      navigateTo(MENU_IDS.currentSession);
-      setRightPanelCollapsed(false);
-      setActiveRightTab("regression");
-      const preparedText = detail.input.messages.filter((message) => message.role === "user").flatMap((message) => message.parts)
-        .map((part) => part.text ?? (part.asset_name ? `[asset: ${part.asset_name}]` : part.resource_ref ? `[resource: ${part.resource_ref}]` : ""))
-        .filter(Boolean).join("\n\n");
-      if (!preparedText) throw new Error("regression_case_has_no_user_input");
-      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "filling_composer", updates: { thread_id: thread.id } });
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
-      chatRef.current.setInput(preparedText);
-      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "ready_to_send", updates: { thread_id: thread.id } });
-      await new Promise((resolve) => window.setTimeout(resolve, 650));
-      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "sending", updates: { thread_id: thread.id } });
-      const inputHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(preparedText))))
-        .map((byte) => byte.toString(16).padStart(2, "0")).join("");
-      const sent = await chatRef.current.submit([], { onStarted: ({ requestId }) => {
-        void desktopApi.attachRegressionRun({ evaluationId, threadId: thread.id, runId: requestId, inputSha256: inputHash })
-          .then(() => desktopApi.transitionRegressionEvaluation({ evaluationId, status: "running", updates: { thread_id: thread.id, run_id: requestId, input_sha256: inputHash } }));
-      } }, preparedText);
-      if (!sent) throw new Error("regression_chat_submission_rejected");
-    } catch (reason) {
-      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "blocked", updates: { error_code: "desktop_execution_failed", error_message: reason instanceof Error ? reason.message : String(reason) } }).catch(() => undefined);
-      throw reason;
-    }
-  }, [effectiveWorkspacePath]);
-
   const proposeTerminalCommand = useCallback((
     command: string,
     workflow?: { workflowRunId?: string; workflowStepId?: string },
@@ -1140,15 +1097,6 @@ function AuthenticatedApp({
     window.localStorage.setItem(RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY, JSON.stringify(rightSidebarComponents));
   }, [rightSidebarComponents]);
 
-  useEffect(() => {
-    let active = true;
-    void desktopApi.isRegressionTestingEnabled().then((enabled) => {
-      if (active) setRegressionTestingEnabled(enabled);
-    }).catch(() => {
-      if (active) setRegressionTestingEnabled(false);
-    });
-    return () => { active = false; };
-  }, []);
 
   useEffect(() => {
     if (rightTabs.some(({ id }) => id === activeRightTab)) return;
@@ -2139,7 +2087,10 @@ function AuthenticatedApp({
   async function handleThreadUpdated(
     snapshot: ChatThreadSnapshot,
   ): Promise<void> {
-    threadSnapshotStore.set(snapshot.threadId, snapshot);
+    const storedSnapshot = threadSnapshotStore.get(snapshot.threadId);
+    if (!storedSnapshot || storedSnapshot.updatedAt < snapshot.updatedAt) {
+      threadSnapshotStore.set(snapshot.threadId, snapshot);
+    }
     void desktopApi.updateThreadSnapshot(snapshot).catch(() => {
       // The local snapshot is still kept in renderer state and localStorage if disk persistence fails.
     });
@@ -2952,8 +2903,6 @@ function AuthenticatedApp({
           setActiveRightTab("debug");
         }}
       />
-    ) : activeRightTab === "regression" ? (
-      <RegressionPanel language={language} onRunCase={runRegressionCase} />
     ) : activeRightTab === "debug" ? (
       <DebugPanel
         language={language}
@@ -3681,7 +3630,6 @@ function loadSidebarComponents(): SidebarComponentVisibility {
 function loadRightSidebarComponents(): RightSidebarComponentVisibility {
   const defaults: RightSidebarComponentVisibility = {
     run: true,
-    regression: true,
     files: true,
     browser: true,
     terminal: true,
@@ -3692,7 +3640,6 @@ function loadRightSidebarComponents(): RightSidebarComponentVisibility {
     if (!value || typeof value !== "object") return defaults;
     return {
       run: typeof value.run === "boolean" ? value.run : defaults.run,
-      regression: typeof value.regression === "boolean" ? value.regression : defaults.regression,
       files: typeof value.files === "boolean" ? value.files : defaults.files,
       browser: typeof value.browser === "boolean" ? value.browser : defaults.browser,
       terminal: typeof value.terminal === "boolean" ? value.terminal : defaults.terminal,
@@ -8494,7 +8441,7 @@ function SettingsPanel({
               </div>
               <div className="settings-component-list">
                 <strong>{zh ? "右侧栏组件" : "Right sidebar components"}</strong>
-                {(["run", "regression", "files", "browser", "terminal", "debug"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
+                {(["run", "files", "browser", "terminal", "debug"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
                   const label = component === "run"
                     ? (zh ? "运行" : "Run")
                     : component === "files"

@@ -301,6 +301,7 @@
     "verify:opendrsai-unified-runtime-packaged": "node scripts/verify-opendrsai-unified-runtime-packaged.mjs",
     "verify:opendrsai-oaep-item-parity": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-opendrsai-oaep-item-parity.mts",
     "verify:thread-patch-frame-batcher": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-thread-patch-frame-batcher.mts",
+    "verify:thread-snapshot-publishing": "node scripts/verify-thread-snapshot-publishing.mjs",
     "verify:recovery-action-coordinator": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-recovery-action-coordinator.mts",
     "verify:mobile-pairing-controller": "node --experimental-strip-types scripts/verify-mobile-pairing-controller.mjs",
     "verify:mobile-pairing-host-e2e": "node --experimental-strip-types scripts/verify-mobile-pairing-host-e2e.mjs",

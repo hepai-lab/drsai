@@ -83,7 +83,6 @@ export interface DesktopChatAdapter {
   submit: (
     attachments?: ChatAttachment[],
     options?: ChatSubmitOptions,
-    preparedText?: string,
   ) => Promise<boolean>;
   abort: () => Promise<void>;
 }
@@ -124,7 +123,7 @@ export function useDesktopChatAdapter({
   onOpenSkillsSquare?: (target?: Extract<ChatCommandAction, { type: "open-view" }>["target"]) => void;
   onSelectAgent?: (agentId: string) => void;
   onSelectModel?: (model: string) => void;
-  onThreadUpdated?: (snapshot: ChatThreadSnapshot) => void;
+  onThreadUpdated?: (snapshot: ChatThreadSnapshot) => void | Promise<void>;
   threadId: string;
   threadSnapshot?: ChatThreadSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
@@ -153,6 +152,9 @@ export function useDesktopChatAdapter({
   const structuredFlushTimerRef = useRef<number | null>(null);
   const appliedSnapshotUpdatedAtRef = useRef(0);
   const lastPublishedSnapshotAtRef = useRef(0);
+  const pendingThreadSnapshotRef = useRef<ChatThreadSnapshot | null>(null);
+  const threadSnapshotPublishQueuedRef = useRef(false);
+  const onThreadUpdatedRef = useRef(onThreadUpdated);
   const threadIdRef = useRef(threadId);
   const languageRef = useRef(language);
   const developerModeRef = useRef(developerMode);
@@ -161,6 +163,8 @@ export function useDesktopChatAdapter({
   const projectMemoryRef = useRef<DesktopProjectMemoryEntry[]>([]);
   const teamMemoryRef = useRef<DesktopTeamMemoryEntry[]>([]);
   const userPreferencesRef = useRef<DesktopUserPreference[]>([]);
+
+  onThreadUpdatedRef.current = onThreadUpdated;
 
   function clearStructuredFlush(): void {
     pendingStructuredEventsByRequest.current = {};
@@ -411,7 +415,6 @@ export function useDesktopChatAdapter({
   async function submit(
     attachments: ChatAttachment[] = [],
     options?: ChatSubmitOptions,
-    preparedText?: string,
   ): Promise<boolean> {
     const skillName = options?.skillName?.trim();
     const skillPrefix = skillName
@@ -419,7 +422,7 @@ export function useDesktopChatAdapter({
         ? `用 ${skillName} `
         : `Use ${skillName} skill to `
       : "";
-    const rawInput = (preparedText ?? input).trim();
+    const rawInput = input.trim();
     const alreadyPrefixed = Boolean(
       skillName &&
         (languageRef.current === "zh"
@@ -1044,25 +1047,63 @@ export function useDesktopChatAdapter({
   }
 
   function publishAndReturn(nextMessages: UiMessage[]): UiMessage[] {
-    publishThreadUpdate(nextMessages);
+    scheduleThreadUpdate(nextMessages);
     return nextMessages;
   }
 
   function publishThreadUpdate(nextMessages: UiMessage[]): void {
+    const snapshot = createThreadSnapshot(nextMessages);
+    if (snapshot) notifyThreadUpdated(snapshot);
+  }
+
+  function scheduleThreadUpdate(nextMessages: UiMessage[]): void {
+    const snapshot = createThreadSnapshot(nextMessages);
+    if (!snapshot) return;
+    pendingThreadSnapshotRef.current = snapshot;
+    if (threadSnapshotPublishQueuedRef.current) return;
+    threadSnapshotPublishQueuedRef.current = true;
+    queueMicrotask(() => {
+      threadSnapshotPublishQueuedRef.current = false;
+      const pendingSnapshot = pendingThreadSnapshotRef.current;
+      pendingThreadSnapshotRef.current = null;
+      if (pendingSnapshot) notifyThreadUpdated(pendingSnapshot);
+    });
+  }
+
+  function notifyThreadUpdated(snapshot: ChatThreadSnapshot): void {
+    try {
+      const result = onThreadUpdatedRef.current?.(snapshot);
+      if (result) void result.catch((error) => {
+        appendDebugLog(
+          "error",
+          error instanceof Error ? error.message : "Thread snapshot update failed.",
+          "chat",
+        );
+      });
+    } catch (error) {
+      appendDebugLog(
+        "error",
+        error instanceof Error ? error.message : "Thread snapshot update failed.",
+        "chat",
+      );
+    }
+  }
+
+  function createThreadSnapshot(nextMessages: UiMessage[]): ChatThreadSnapshot | null {
     const nonWelcome = nextMessages.filter((message) => message.id !== "welcome");
-    if (!nonWelcome.length) return;
+    if (!nonWelcome.length) return null;
     const firstUser = nonWelcome.find((message) => message.role === "user");
     const updatedAt = Math.max(Date.now(), lastPublishedSnapshotAtRef.current + 1);
     lastPublishedSnapshotAtRef.current = updatedAt;
     appliedSnapshotUpdatedAtRef.current = updatedAt;
-    onThreadUpdated?.({
+    return {
       threadId: threadIdRef.current,
       title: firstUser?.content.replace(/[\r\n]+/g, " ").trim().slice(0, 48)
         || (languageRef.current === "zh" ? "新会话" : "New chat"),
       messages: nextMessages,
       updatedAt,
       messageCount: nonWelcome.length,
-    });
+    };
   }
 
   function publishLocalAssistantResult(
