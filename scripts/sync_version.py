@@ -44,6 +44,17 @@ def update_json_version(path: Path, version: str) -> None:
     replace(path, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"')
 
 
+def update_workspace_lock_version(path: Path, workspace: str, version: str) -> None:
+    """Update only a named workspace entry, never a dependency version."""
+    replace(
+        path,
+        rf'(^\s{{4}}"{re.escape(workspace)}"\s*:\s*\{{\s*\n'
+        rf'\s{{6}}"name"\s*:\s*"[^"]+",\s*\n'
+        rf'\s{{6}}"version"\s*:\s*)"[^"]+"',
+        rf'\g<1>"{version}"',
+    )
+
+
 def main(argv: list[str]) -> int:
     version = read_target_version(argv)
     VERSION_FILE.write_text(version + "\n", encoding="utf-8")
@@ -65,7 +76,7 @@ def main(argv: list[str]) -> int:
     )
     update_json_version(WINDOWS_DESKTOP_PACKAGE, version)
     update_json_version(MACOS_DESKTOP_PACKAGE, version)
-    replace(DESKTOP_LOCK, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)
+    update_workspace_lock_version(DESKTOP_LOCK, "macos", version)
 
     print(f"Synchronized DrSai version to {version}")
     return 0
