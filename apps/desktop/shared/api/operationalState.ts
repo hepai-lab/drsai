@@ -32,13 +32,17 @@ export function deriveOperationalState(facts: OperationalStateFacts): Operationa
     ? "identity"
     : facts.runtime !== "ready"
       ? "runtime"
-      : facts.model !== "ready"
+      : facts.model === "unconfigured" || facts.model === "unknown"
         ? "model"
         : facts.workspace !== "trusted"
           ? "workspace"
           : null;
-  const currentLayer = blocker ?? "run";
-  const state = blocker ? facts[blocker] : facts.run;
+  // A configured model that has not been explicitly tested is advisory. It
+  // must not block the workspace or trigger a paid probe before the user has
+  // asked the model to do useful work.
+  const runNeedsAttention = ["queued", "running", "waiting_approval", "recovering", "failed"].includes(facts.run);
+  const currentLayer = blocker ?? (runNeedsAttention ? "run" : facts.model === "untested" ? "model" : "run");
+  const state = currentLayer === "run" ? facts.run : facts[currentLayer];
   const blockingLayer = blocker ?? (["waiting_approval", "failed"].includes(facts.run) ? "run" : null);
   const currentIndex = ORDER.indexOf(currentLayer);
   return {
@@ -64,6 +68,7 @@ const VISIBLE_RUN_STATES = new Set<OperationalRunState>([
 
 export function shouldShowOperationalStateBar(decision: OperationalStateDecision): boolean {
   if (decision.blockingLayer !== null) return true;
+  if (decision.currentLayer === "model" && decision.state === "untested") return true;
   return decision.currentLayer === "run"
     && VISIBLE_RUN_STATES.has(decision.state as OperationalRunState);
 }

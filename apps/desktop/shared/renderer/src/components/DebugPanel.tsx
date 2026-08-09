@@ -178,7 +178,7 @@ export function DebugPanel({ language, onSelectTurn, onPrepareRerun, requestedVi
       </div>
 
       <div className={`debug-output ${view}`} ref={outputRef} role="log">
-        {view === "agent" && <AgentDiagnosticView snapshot={snapshot} activityGroups={activityGroups} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} onSelectTurn={onSelectTurn} onPrepareRerun={onPrepareRerun} onMessage={setActionMessage} />}
+        {view === "agent" && <AgentDiagnosticView snapshot={snapshot} activityGroups={activityGroups} runtimeLogs={visible} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} onSelectTurn={onSelectTurn} onPrepareRerun={onPrepareRerun} onMessage={setActionMessage} />}
         {view === "app-errors" && <AppErrorView snapshot={snapshot} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} />}
         {view === "overview" && <DiagnosticOverview snapshot={snapshot} traces={traces} zh={zh} />}
         {view === "traces" && (traces.length ? traces.map((trace) => <TraceCard key={trace.traceId} trace={trace} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} />) : <DebugEmpty zh={zh} />)}
@@ -438,9 +438,10 @@ function RawDebugEntry({ entry, zh }: { entry: DebugLogEntry; zh: boolean }): Re
   return <article className={`debug-entry ${entry.level}`}><time>{new Date(entry.timestamp).toLocaleTimeString()}</time><span>{entry.module || entry.source}</span><pre>{body}</pre><button type="button" className="debug-entry-copy" onClick={() => void copyTextSafely(body)} title={zh ? "复制" : "Copy"} aria-label={zh ? "复制此诊断记录" : "Copy diagnostic record"}><Clipboard size={14} /></button></article>;
 }
 
-function AgentDiagnosticView({ snapshot, activityGroups, zh, onOpenSource, onSelectTurn, onPrepareRerun, onMessage }: {
+function AgentDiagnosticView({ snapshot, activityGroups, runtimeLogs, zh, onOpenSource, onSelectTurn, onPrepareRerun, onMessage }: {
   snapshot: DiagnosticSnapshot | null;
   activityGroups: ActivityGroupModel[];
+  runtimeLogs: DebugLogEntry[];
   zh: boolean;
   onOpenSource: (source: DiagnosticSourceLocation, workspaceId?: string) => void;
   onSelectTurn?: (turnId: string) => void;
@@ -459,7 +460,12 @@ function AgentDiagnosticView({ snapshot, activityGroups, zh, onOpenSource, onSel
   const elapsed = terminal ? run.elapsedMs : Math.max(run.elapsedMs, now - Date.parse(run.startedAt));
   const phaseElapsed = terminal ? run.phaseElapsedMs : Math.max(run.phaseElapsedMs, now - Date.parse(run.phaseStartedAt));
   const incident = (snapshot?.incidents ?? []).find((item) => item.domain === "agent" && item.traceId === run.traceId);
-  const milestones = run.recentEvents.filter((event) => event.visibility === "milestone" || event.status === "failed");
+  const oaepEvents = runtimeLogs.filter((entry) => {
+    const runtime = entry.runtime;
+    if (runtime?.protocol !== "oaep/1" || !runtime.eventType?.startsWith("event.")) return false;
+    if (run.runId) return runtime.runId === run.runId || (!runtime.runId && Boolean(run.sessionId) && runtime.sessionId === run.sessionId);
+    return runtime.runId === run.traceId || runtime.sessionId === run.sessionId;
+  });
   const activityGroup = activityGroups.find((group) => group.turnId === run.runId || group.turnId === run.traceId);
   return <div className="agent-diagnostic-view">
     <section className={`agent-current-state ${run.status}`}>
@@ -479,7 +485,16 @@ function AgentDiagnosticView({ snapshot, activityGroups, zh, onOpenSource, onSel
       const prepared = onPrepareRerun(run.runId || run.traceId);
       onMessage?.(prepared ? (zh ? "已将原任务放回输入框，请确认后重新运行。" : "The original task is ready in the composer for confirmation.") : (zh ? "未找到本轮的原始用户输入。" : "The original user input could not be found."));
     }}><RotateCcw size={11} />{zh ? "准备重新运行" : "Prepare rerun"}</button></div>}
-    <section className="agent-milestone-section"><h3>{zh ? "关键时间线" : "Milestone timeline"}</h3>{milestones.length ? <ol>{milestones.map((event) => <li key={event.id} className={event.status}><time>{new Date(event.timestamp).toLocaleTimeString()}</time><span className="diagnostic-state-dot" /><span><strong>{formatAgentPhase(event.agentPhase ?? "preparing", zh)}</strong><small>{event.message}</small></span>{event.durationMs !== undefined && <em>{formatDuration(event.durationMs)}</em>}</li>)}</ol> : <p>{zh ? "等待第一个关键事件。" : "Waiting for the first milestone."}</p>}</section>
+    <section className="agent-milestone-section"><h3>{zh ? "OAEP 原始事件" : "Raw OAEP events"}</h3>{oaepEvents.length ? <ol>{oaepEvents.map((entry) => {
+      const runtime = entry.runtime!;
+      const metadata = [
+        runtime.sequence !== undefined ? `sequence=${runtime.sequence}` : undefined,
+        runtime.runId ? `run_id=${runtime.runId}` : undefined,
+        runtime.itemId ? `item_id=${runtime.itemId}` : undefined,
+        runtime.source ? `source=${runtime.source}` : undefined,
+      ].filter(Boolean).join(" · ");
+      return <li key={entry.id} className={runtime.status}><time>{new Date(entry.timestamp).toLocaleTimeString()}</time><span className="diagnostic-state-dot" /><span><strong><code>{runtime.eventType}</code></strong><small>{metadata || runtime.message}</small></span></li>;
+    })}</ol> : <p>{zh ? "等待当前 Run 的第一个 OAEP 事件。" : "Waiting for the first OAEP event for this run."}</p>}</section>
     {activityGroup && <section className="agent-tool-activity"><h3>{zh ? "工具与活动" : "Tools and activity"}</h3><ActivityGroup group={activityGroup} zh={zh} onSelectTurn={onSelectTurn} /></section>}
   </div>;
 }

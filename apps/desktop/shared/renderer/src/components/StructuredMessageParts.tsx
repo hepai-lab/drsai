@@ -17,6 +17,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { userFacingBusinessText } from "../userFacingLanguage";
+import { formatWebSearchActivitySummary } from "../webSearchPresentation";
 import { boundedProcessWindow, PROCESS_ACTIVITY_WINDOW_SIZE, PROCESS_PART_WINDOW_SIZE } from "../boundedProcessWindow";
 import type {
   ArtifactPart,
@@ -383,7 +384,9 @@ function StructuredActivityDetails({
       <span>{formatActivitySummary(activity, language)}</span>
       {activity.kind === "file_change" ? <small>{activity.action}</small> : null}
       {activity.kind === "tool" ? <small>{language === "zh" ? "执行记录已保存" : "Execution record saved"}</small> : null}
-      {activity.kind === "tool" && activity.durationMs !== undefined ? <time>{formatRunDuration(activity.durationMs, language)}</time> : null}
+      {activity.kind === "tool" && activity.toolName !== "web_search" && activity.durationMs !== undefined
+        ? <time>{formatRunDuration(activity.durationMs, language)}</time>
+        : null}
       {onOpenRun && activity.oaepItemId ? <button type="button" className="structured-activity-inspect" onClick={() => onOpenRun(activity.oaepItemId!)} aria-label={`${language === "zh" ? "查看运行项目" : "Inspect run item"}: ${activity.title}`}><ArrowUpRight size={12} /></button> : null}
       {onCreateExperiment && activity.oaepItemId ? <button type="button" className="structured-activity-inspect" onClick={() => onCreateExperiment(activity.oaepItemId!)} aria-label={`${language === "zh" ? "从运行项目创建实验" : "Create experiment from run item"}: ${activity.title}`}><FlaskConical size={12} /></button> : null}
     </div>)}
@@ -443,7 +446,10 @@ function formatRunDuration(durationMs: number, language: "en" | "zh"): string {
 }
 
 export function formatActivitySummary(activity: StructuredActivityEvent, language: "en" | "zh"): string {
-  if (activity.kind === "tool") return userFacingBusinessText(activity.toolName, language === "zh" ? "执行任务步骤" : "Run task step");
+  if (activity.kind === "tool") {
+    if (activity.toolName === "web_search") return formatWebSearchActivitySummary(activity, language);
+    return userFacingBusinessText(activity.toolName, language === "zh" ? "执行任务步骤" : "Run task step");
+  }
   if (activity.kind === "model") return language === "zh" ? "正在生成" : "Generating";
   if (activity.kind === "retry") {
     return language === "zh"

@@ -137,6 +137,7 @@ export type UiMessage = ChatMessage & {
   toolTimeline?: ChatToolTimelineEvent[];
   parts?: ChatMessagePart[];
   structuredTurn?: StructuredTurnState;
+  queuedAt?: number;
   startedAt?: number;
   lastEventAt?: number;
   firstFeedbackAt?: number;
@@ -241,6 +242,7 @@ function splitGoalConfirmationList(value: string): string[] {
 
 interface ChatWorkspaceProps {
   activeRequestId: string | null;
+  cancellingRequestId?: string | null;
   canChat: boolean;
   chatUnavailableReason?: string;
   conversationId: string;
@@ -306,6 +308,7 @@ interface ChatWorkspaceProps {
 
 function ChatWorkspaceImpl({
   activeRequestId,
+  cancellingRequestId = null,
   canChat,
   chatUnavailableReason,
   conversationId,
@@ -369,7 +372,10 @@ function ChatWorkspaceImpl({
     if (!workspacePath || typeof desktopApi.getRunReproductionManifest !== "function") return;
     const runIds = [...new Set(messages
       .map((message) => message.runtimeRunId)
-      .filter((runId): runId is string => Boolean(runId)))]
+      // RuntimeEngine owns the `run-` namespace. Request IDs and platform-run
+      // IDs may also travel through ChatEvent.runId, but they have no Runtime
+      // manifest and must never be sent to a run-scoped Runtime endpoint.
+      .filter((runId): runId is string => Boolean(runId?.startsWith("run-"))))]
       .slice(-50);
     if (!runIds.length) return;
     let active = true;
@@ -701,8 +707,8 @@ function ChatWorkspaceImpl({
   }, [conversationId]);
 
   useEffect(() => {
-    if (selectedAgentId !== "my-drsai") setTaskInteractionMode("normal");
-  }, [selectedAgentId]);
+    if (!agentOptions.some((agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex")) setTaskInteractionMode("normal");
+  }, [agentOptions, selectedAgentId]);
 
   async function respondToAgentInput(
     request: NonNullable<UiMessage["inputRequest"]>,
@@ -798,6 +804,9 @@ function ChatWorkspaceImpl({
     ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
     : "";
   const activeAgentName = selectedAgentName?.trim() || "OpenDrSai";
+  const isLocalOpenDrSaiAgent = agentOptions.some(
+    (agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex",
+  );
   const workspaceLocationLabel =
     workspaceLocation === "remote"
       ? zh
@@ -819,11 +828,11 @@ function ChatWorkspaceImpl({
     [modelOptions, selectedModelName, selectedModelProviderId],
   );
   const supportedThinkingEfforts = useMemo<ThinkingEffort[]>(() => {
-    if (selectedAgentId !== "my-drsai") return THINKING_EFFORTS;
+    if (!isLocalOpenDrSaiAgent) return THINKING_EFFORTS;
     if (!activeModelConfig?.operations?.includes("reasoning")) return [];
     const configured = activeModelConfig.reasoning_efforts ?? [];
     return THINKING_EFFORTS.filter((effort) => configured.includes(effort));
-  }, [activeModelConfig, selectedAgentId]);
+  }, [activeModelConfig, isLocalOpenDrSaiAgent]);
   useEffect(() => {
     if (supportedThinkingEfforts.length > 0 && !supportedThinkingEfforts.includes(thinkingEffort)) {
       setThinkingEffort(supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0]);
@@ -1546,11 +1555,11 @@ function ChatWorkspaceImpl({
           forkQueueAgentSelections,
           agentOptions,
         ),
-        goalConfirmationRequired: selectedAgentId === "my-drsai" && taskInteractionMode === "confirm_goal",
+        goalConfirmationRequired: isLocalOpenDrSaiAgent && taskInteractionMode === "confirm_goal",
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
         skillName: selectedSkillName,
-        thinkingEffort: selectedAgentId !== "my-drsai" || thinkingEffortSupported ? thinkingEffort : undefined,
+        thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
       },
     );
     if (submitted) {
@@ -3223,7 +3232,7 @@ function ChatWorkspaceImpl({
                       <button type="button" disabled={!hasAgentOptions} aria-expanded={configurationSection === "agent"} onMouseEnter={(event) => revealConfigurationSection("agent", event.currentTarget)} onFocus={(event) => revealConfigurationSection("agent", event.currentTarget)} onClick={(event) => revealConfigurationSection("agent", event.currentTarget)}><span><strong>{zh ? "智能体" : "Agent"}</strong><small>{activeAgentName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "模型" : "Model"}</strong><small>{activeModelName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" disabled={!showThinkingEffort} aria-expanded={configurationSection === "thinking"} onMouseEnter={(event) => revealConfigurationSection("thinking", event.currentTarget)} onFocus={(event) => revealConfigurationSection("thinking", event.currentTarget)} onClick={(event) => revealConfigurationSection("thinking", event.currentTarget)}><span><strong>{zh ? "推理强度" : "Reasoning effort"}</strong><small>{thinkingEffortMenuLabel}</small></span><ChevronRight size={14} /></button>
-                      <button type="button" data-testid="composer-task-mode" disabled={selectedAgentId !== "my-drsai" || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "任务模式" : "Task mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-task-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "任务模式" : "Task mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
                     </div>
                     {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "agent" ? (zh ? "选择智能体" : "Choose agent") : configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择任务模式" : "Choose task mode")}>
                       <div className="composer-configuration-options">
@@ -3243,7 +3252,7 @@ function ChatWorkspaceImpl({
                             {effort === thinkingEffort ? <Check size={14} aria-hidden /> : null}
                           </button>
                         )) : (["normal", "confirm_goal"] as const).map((mode) => (
-                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-task-mode-${mode}`} disabled={selectedAgentId !== "my-drsai" || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
+                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-task-mode-${mode}`} disabled={!isLocalOpenDrSaiAgent || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
                             <span><strong>{mode === "normal" ? (zh ? "常规" : "Normal") : (zh ? "目标" : "Goal")}</strong><small>{mode === "normal" ? (zh ? "适合日常问答和简单任务，立即开始" : "Best for everyday questions and simple tasks; starts right away") : (zh ? "适合复杂任务，开始前与你核对需求和预期结果" : "Best for complex tasks; reviews your needs and expected result first")}</small></span>
                             {mode === taskInteractionMode ? <Check size={14} aria-hidden /> : null}
                           </button>
@@ -3380,9 +3389,11 @@ function ChatWorkspaceImpl({
                       title={zh ? "明确停止当前任务并改为执行这条消息" : "Explicitly stop the active task and run this message"}>
                       {zh ? "停止并替换" : "Stop & replace"}
                     </button> : null}
-                    <button className="composer-submit stop" type="button" onClick={() => void onAbort()}>
+                    <button className="composer-submit stop" type="button" disabled={cancellingRequestId === activeRequestId} onClick={() => void onAbort()}>
                       <Square size={16} />
-                      {messages.some((message) => message.structuredTurn?.turnId === activeRequestId && message.structuredTurn.status === "pending")
+                      {cancellingRequestId === activeRequestId
+                        ? (zh ? "正在取消…" : "Cancelling…")
+                        : messages.some((message) => message.structuredTurn?.turnId === activeRequestId && message.structuredTurn.status === "pending")
                         ? (zh ? "取消排队" : "Cancel queued") : (zh ? "停止" : "Stop")}
                     </button>
                   </>
@@ -3520,6 +3531,7 @@ function VirtualizedMessage({
       className={`${className} ${renderContent ? "virtual-message-rendered" : "virtual-message-placeholder"}`}
       data-message-id={message.id}
       data-structured-turn-id={message.structuredTurn?.turnId}
+      data-run-id={message.structuredTurn?.turnId ?? (message.role === "assistant" ? message.id : undefined)}
       style={renderContent ? undefined : { height: placeholderHeight }}
       aria-hidden={renderContent ? undefined : true}
     >
@@ -3739,7 +3751,18 @@ function StreamingStatus({
     return null;
   }
 
-  const startedAt = message.startedAt ?? now;
+  if (!message.startedAt) {
+    const queuedSeconds = Math.max(0, Math.floor((now - (message.queuedAt ?? now)) / 1000));
+    return (
+      <div className="streaming-status">
+        <span className="streaming-dot" aria-hidden />
+        <span>{zh ? "正在排队" : "Queued"}</span>
+        <time>{zh ? `已等待 ${queuedSeconds} 秒` : `Waiting ${queuedSeconds}s`}</time>
+      </div>
+    );
+  }
+
+  const startedAt = message.startedAt;
   const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
   const lastEventAt = message.lastEventAt ?? startedAt;
   const idleSeconds = Math.max(0, Math.floor((now - lastEventAt) / 1000));

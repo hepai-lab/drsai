@@ -24,6 +24,7 @@ import type {
 } from "../api/desktopApi";
 import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
+import { getVoiceProviderReadiness } from "./voiceProviderReadiness";
 import {
   clampVoiceDuration,
   decodeVoiceAudioData,
@@ -67,8 +68,16 @@ const activeVoiceTasks = new Map<string, ActiveVoiceTask>();
 
 async function getGatewayVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus> {
   const status = await getGatewayStatus();
-  const hasCredential = Boolean(process.env.HEPAI_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim());
-  const state = !status.ready ? "unavailable" : hasCredential ? "ready" : "auth_required";
+  const readiness = status.ready
+    ? await getVoiceProviderReadiness(status.baseUrl, getGatewayRequestHeaders(), "speech_to_text").catch(() => ({ state: "unconfigured" as const }))
+    : { state: "unconfigured" as const };
+  const state = !status.ready
+    ? "unavailable"
+    : readiness.state === "ready"
+      ? "ready"
+      : readiness.state === "auth_required"
+        ? "auth_required"
+        : "unavailable";
   return {
     runtimeId: "gateway-provider",
     state,
@@ -81,7 +90,9 @@ async function getGatewayVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus
       ? "Voice transcription runtime is ready."
       : state === "auth_required"
         ? "Configure a transcription provider API key."
-        : "Start the local gateway and configure a transcription provider.",
+        : status.ready
+          ? "Assign a speech-to-text model in Agent settings."
+          : "Start the local gateway and configure a transcription provider.",
   };
 }
 

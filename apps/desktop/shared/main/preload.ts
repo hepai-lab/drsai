@@ -396,6 +396,8 @@ const api: DesktopApi = {
     options?: LogoutOptions,
   ): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke("desktop:logout", options),
+  restartApplication: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:restart-application"),
   previewLocalDataCleanup: (scope: DesktopDataCleanupScope) =>
     ipcRenderer.invoke("desktop:local-data-cleanup-preview", scope),
   clearLocalData: (request: DesktopDataCleanupRequest) =>
@@ -584,6 +586,22 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:get-my-drsai-config", workspacePath),
   getMyDrSaiRuntimeModelCatalog: () => ipcRenderer.invoke("desktop:get-my-drsai-runtime-model-catalog"),
   getMyDrSaiAgentModelPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-policy", agentId),
+  getMyDrSaiAgentToolPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-tool-policy", agentId),
+  updateMyDrSaiAgentToolPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-tool-policy", agentId, policy),
+  previewMyDrSaiAgentTools: (agentId) => ipcRenderer.invoke("desktop:preview-my-drsai-agent-tools", agentId),
+  testAgentTool: (toolId) => ipcRenderer.invoke("desktop:test-agent-tool", toolId),
+  getMyDrSaiAgentSkillPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-skill-policy", agentId),
+  updateMyDrSaiAgentSkillPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-skill-policy", agentId, policy),
+  previewMyDrSaiAgentSkills: (agentId) => ipcRenderer.invoke("desktop:preview-my-drsai-agent-skills", agentId),
+  getMyDrSaiAgentKnowledgePolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-knowledge-policy", agentId),
+  updateMyDrSaiAgentKnowledgePolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-knowledge-policy", agentId, policy),
+  previewMyDrSaiAgentKnowledge: (agentId) => ipcRenderer.invoke("desktop:preview-my-drsai-agent-knowledge", agentId),
+  indexKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:index-knowledge-base", knowledgeId),
+  testKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:test-knowledge-base", knowledgeId),
+  searchKnowledgeBase: (knowledgeId, query) => ipcRenderer.invoke("desktop:search-knowledge-base", knowledgeId, query),
+  listKnowledgeBases: () => ipcRenderer.invoke("desktop:list-knowledge-bases"),
+  createKnowledgeBase: (request) => ipcRenderer.invoke("desktop:create-knowledge-base", request),
+  deleteKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:delete-knowledge-base", knowledgeId),
   getMyDrSaiAgentModelCapabilityStatus: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-capability-status", agentId),
   updateMyDrSaiAgentModelPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-model-policy", agentId, policy),
   migrateMyDrSaiAgentModelPolicy: (agentId, legacyModel, expectedRevision) => ipcRenderer.invoke("desktop:migrate-my-drsai-agent-model-policy", agentId, legacyModel, expectedRevision),
@@ -754,8 +772,8 @@ const api: DesktopApi = {
   startChat: (request: ChatRequest): Promise<string> =>
     ipcRenderer.invoke("desktop:start-chat", request),
   recoverChatRun: (request) => ipcRenderer.invoke("desktop:recover-chat-run", request),
-  abortChat: (requestId: string): Promise<boolean> =>
-    ipcRenderer.invoke("desktop:abort-chat", requestId),
+  cancelChatTurn: (request): Promise<import("../api/desktopApi").ChatTurnCancelResult> =>
+    ipcRenderer.invoke("desktop:cancel-chat-turn", request),
   listSessionRuns: (request) => ipcRenderer.invoke("desktop:run-list", request),
   getRunInspection: (request) => ipcRenderer.invoke("desktop:run-inspection", request),
   locateRunItem: (request) => ipcRenderer.invoke("desktop:run-item-locator", request),

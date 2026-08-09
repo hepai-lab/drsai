@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "child_process";
+import { request as httpRequest } from "http";
 import { createHash } from "crypto";
 import { basename, dirname, join } from "path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
@@ -13,6 +14,7 @@ import { createWorkspace } from "./workspaces";
 import { createThread } from "./threads";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import { LocalRuntimeClient, RuntimeOWOPError } from "../../../shared/main/runtimeClient";
+import { getGatewayRequestHeaders } from "./gateway";
 
 interface SmokeResult {
   ok: boolean;
@@ -130,6 +132,7 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_MODEL_PREVIEW !== "1" &&
     process.env.OPENDRSAI_E2E_RUNTIME_UNIFIED !== "1" &&
     process.env.OPENDRSAI_E2E_P8_IPC !== "1" &&
+    process.env.OPENDRSAI_E2E_P3_DESKTOP !== "1" &&
     process.env.OPENDRSAI_E2E_SMOKE !== "1" &&
     process.env.OPENDRSAI_E2E_CHAT !== "1" &&
     process.env.OPENDRSAI_E2E_RUN_TRACEABILITY_PHASE1 !== "1" &&
@@ -174,6 +177,10 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
 
   const watchdog = setTimeout(async () => {
     const rendererStage = await window.webContents.executeJavaScript("document.documentElement.dataset.firstRunE2eStage || null", true).catch(() => null);
+    const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+    if (screenshotPath) {
+      try { mkdirSync(dirname(screenshotPath), { recursive: true }); writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG()); } catch { /* preserve watchdog result even when capture fails */ }
+    }
     writeResult(resultPath, {
       ok: false,
       checks: {},
@@ -184,6 +191,7 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         isLoadingMainFrame: window.webContents.isLoadingMainFrame(),
         rendererStage,
         startupTrace: (globalThis as { __OPENDRSAI_E2E_TRACE?: unknown }).__OPENDRSAI_E2E_TRACE,
+        ...(screenshotPath ? { screenshotPath, windowPid: process.pid } : {}),
       },
       error: "Packaged app smoke timed out.",
     });
@@ -210,6 +218,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
       ? runUnifiedRuntimeSmoke
       : process.env.OPENDRSAI_E2E_P8_IPC === "1"
       ? runP8IpcSmoke
+      : process.env.OPENDRSAI_E2E_P3_DESKTOP === "1"
+      ? runP3DesktopSmoke
       : process.env.OPENDRSAI_E2E_RUN_TRACEABILITY_PHASE1 === "1"
       ? runTraceabilityPhase1Smoke
       : process.env.OPENDRSAI_E2E_RUN_EDITABLE_PHASE2 === "1"
@@ -5569,7 +5579,7 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
             while (Date.now() < abortDeadline && !events.some((event) => event.type === "start")) {
               await new Promise((resolve) => setTimeout(resolve, 50));
             }
-            await api.abortChat(requestId);
+            await api.cancelChatTurn({ requestId });
           }
           const deadline = Date.now() + (options.waitMs || 12000);
           while (Date.now() < deadline && !events.some((event) => ["done", "error", "aborted"].includes(event.type))) {
@@ -7661,6 +7671,185 @@ async function runP8IpcSmoke(window: BrowserWindow): Promise<SmokeResult> {
     finalContentLength: renderMetrics.finalContentLength, rendererErrors: observed.errors,
     usedJSHeapBytes: heap, rendererUrl: window.webContents.getURL(),
   } };
+}
+
+async function runP3DesktopSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const input = process.env.OPENDRSAI_P3_INPUT;
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  const developerBypass = process.env.OPENDRSAI_E2E_P3_DEVELOPER_LOGIN === "1";
+  if (!input || !screenshotPath) throw new Error("P3 Desktop smoke requires OPENDRSAI_P3_INPUT and OPENDRSAI_E2E_SCREENSHOT.");
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const input = ${JSON.stringify(process.env.OPENDRSAI_P3_INPUT)};
+      const waitFor = async (predicate, timeout) => {
+        const end = Date.now() + timeout;
+        while (Date.now() < end) { const value = predicate(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 50)); }
+        return null;
+      };
+      const visible = (selector) => Array.from(document.querySelectorAll(selector)).find((node) => {
+        const style = getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0 && rect.width > 0 && rect.height > 0;
+      }) || null;
+      const loginScreenVisible = () => Boolean(visible("[data-testid='login-screen'], .login-screen"));
+      // Renderer text nodes normalize line breaks and adjacent whitespace.  The
+      // user-visible message must still be matched against the whole prompt,
+      // but comparison must follow the browser's whitespace semantics.
+      const normalized = (value) => (value || "").replace(/\\s+/g, " ").trim();
+      const details = { authMode: ${JSON.stringify(developerBypass ? "developer_bypass" : "oidc")} };
+      if (${JSON.stringify(developerBypass)} && loginScreenVisible()) {
+        const developerLogin = await waitFor(() => visible("[data-testid='developer-workspace-login']"), 10000);
+        if (!developerLogin) return { checks: { composer: false, developerLogin: false }, details: { ...details, developerLogin: "action_missing" } };
+        developerLogin.click();
+        const unlockedComposer = await waitFor(() => visible(".composer textarea"), 10000);
+        if (!unlockedComposer) return { checks: { composer: false, developerLogin: false }, details: { ...details, developerLogin: "timed_out" } };
+        const authDeadline = Date.now() + 10_000;
+        let developerSession = null;
+        while (Date.now() < authDeadline) {
+          developerSession = await window.openDrSai?.getAuthSession?.();
+          if (developerSession?.authenticated === true) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        if (developerSession?.authenticated !== true) {
+          return { checks: { composer: true, developerLogin: false }, details: { ...details, developerLogin: "session_not_ready" } };
+        }
+      }
+      if (${JSON.stringify(process.env.OPENDRSAI_E2E_P3_VERIFY_MODEL === "1")} && loginScreenVisible()) {
+        return { checks: { composer: false, modelConnectionVerified: false }, details: { ...details, modelVerification: "requires_login" } };
+      }
+      const textarea = await waitFor(() => visible(".composer textarea"), 10000);
+      if (!textarea) return { checks: { composer: false }, details };
+      let modelConnectionVerified = true;
+      if (${JSON.stringify(process.env.OPENDRSAI_E2E_P3_VERIFY_MODEL === "1")}) {
+        if (loginScreenVisible()) return { checks: { composer: Boolean(textarea), modelConnectionVerified: false }, details: { ...details, modelVerification: "requires_login" } };
+        const verify = await waitFor(() => visible("[data-testid='operational-primary-action']"), 10000);
+        if (!verify) return { checks: { composer: true, modelConnectionVerified: false }, details: { ...details, modelVerification: "action_missing" } };
+        verify.click();
+        const modelTimeout = Math.min(45_000, Math.max(5_000, ${timeoutMs} - 5_000));
+        const state = await waitFor(() => {
+          if (loginScreenVisible()) return "requires_login";
+          const bar = document.querySelector("[data-testid='operational-state-bar']");
+          const value = bar?.getAttribute("data-current-state") || "";
+          return ["ready", "idle", "completed", "unconfigured", "blocked", "anonymous", "failed"].includes(value) ? value : null;
+        }, modelTimeout);
+        modelConnectionVerified = state === "ready" || state === "idle" || state === "completed";
+        if (!modelConnectionVerified) return { checks: { composer: true, modelConnectionVerified: false }, details: { ...details, modelVerification: state || "timed_out" } };
+      }
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setter?.call(textarea, input); textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      const submit = await waitFor(() => { const button = visible(".composer-submit"); return button && !button.disabled ? button : null; }, 10000);
+      if (!submit) return { checks: { composer: true, submit: false }, details };
+      submit.click();
+      const user = await waitFor(() => Array.from(document.querySelectorAll(".message.user, [data-message-role='user']")).find((node) => normalized(node.textContent).includes(normalized(input))) || null, 10000);
+      // A progress card is also an assistant message.  Do not capture it as a
+      // response: P3 accepts only the renderer's explicit final-result layer.
+      const assistant = await waitFor(() => Array.from(document.querySelectorAll(".message.assistant .structured-result-layer")).find((node) => (node.textContent || "").trim().length > 0) || null, ${timeoutMs});
+      const runElement = assistant?.closest(".message.assistant[data-run-id], [data-message-role='assistant'][data-run-id]") || null;
+      const threadElement = document.querySelector("[data-thread-id]");
+      return { checks: { composer: true, developerLogin: ${JSON.stringify(developerBypass)} ? true : true, modelConnectionVerified, submit: true, userMessageVisible: Boolean(user), finalResponseVisible: Boolean(assistant) }, details: {
+        ...details,
+        userMessageVisible: Boolean(user), finalResponseVisible: Boolean(assistant), finalResponseText: assistant?.textContent?.trim() || "", errorBannerVisible: Boolean(visible("[role='alert'].error, .error-banner")),
+        runId: runElement?.getAttribute("data-run-id") || null, sessionId: threadElement?.getAttribute("data-thread-id") || null,
+      } };
+    })()
+  `, true) as SmokeResult;
+  mkdirSync(dirname(screenshotPath), { recursive: true });
+  writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
+  result.details.screenshotPath = screenshotPath;
+  result.details.windowPid = process.pid;
+  const runId = typeof result.details.runId === "string" ? result.details.runId : "";
+  const sessionId = typeof result.details.sessionId === "string" ? result.details.sessionId : "";
+  if (runId && sessionId && result.checks.finalResponseVisible) {
+    await writeP3RuntimeEvidence(runId, sessionId).catch((error) => {
+      result.details.runtimeEvidenceError = error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240);
+    });
+  }
+  result.ok = Object.values(result.checks).every(Boolean) && Boolean(result.details.runId) && Boolean(result.details.sessionId);
+  if (!result.ok && !result.error) result.error = "P3 Desktop UI did not produce a visible response with Run and Session association.";
+  return result;
+}
+
+async function writeP3RuntimeEvidence(runId: string, sessionId: string): Promise<void> {
+  const destination = process.env.OPENDRSAI_E2E_RUNTIME_EVIDENCE;
+  if (!destination) return;
+  const encodedRun = encodeURIComponent(runId);
+  const encodedSession = encodeURIComponent(sessionId);
+  const [run, inspection, snapshot, manifest] = await Promise.all([
+    p3GatewayGet(`/v1/runs/${encodedRun}`),
+    p3CollectInspection(`/v1/runs/${encodedRun}/inspection`),
+    p3CollectSnapshot(`/v1/sessions/${encodedSession}/oaep-snapshot`),
+    p3GatewayGet(`/v1/runs/${encodedRun}/reproduction-manifest`),
+  ]);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, JSON.stringify({ run, inspection, snapshot, manifest }), "utf8");
+}
+
+async function p3CollectInspection(path: string): Promise<Record<string, unknown>> {
+  let cursor: string | undefined;
+  let merged: Record<string, unknown> | undefined;
+  const seen = new Set<string>();
+  for (let pageNumber = 0; pageNumber < 10_000; pageNumber += 1) {
+    const page = await p3GatewayGet(`${path}?limit=500${cursor ? `&timeline_cursor=${encodeURIComponent(cursor)}` : ""}`);
+    const timeline = Array.isArray(page.timeline) ? page.timeline : null;
+    if (!timeline) throw new Error("P3 run inspection has no timeline");
+    for (const item of timeline) {
+      const id = item && typeof item === "object" ? (item as { id?: unknown }).id : undefined;
+      if (typeof id !== "string" || !id || seen.has(id)) throw new Error("P3 run inspection pagination is invalid");
+      seen.add(id);
+    }
+    if (!merged) merged = { ...page, timeline: [], _pagination_required: true };
+    (merged.timeline as unknown[]).push(...timeline);
+    const window = page.page && typeof page.page === "object" ? page.page as Record<string, unknown> : {};
+    if (window.has_more !== true) {
+      merged.page = { ...window, has_more: false, next_cursor: null, complete: true };
+      return merged;
+    }
+    cursor = typeof window.next_cursor === "string" ? window.next_cursor : undefined;
+    if (!cursor) throw new Error("P3 run inspection pagination did not advance");
+  }
+  throw new Error("P3 run inspection exceeded the pagination safety limit");
+}
+
+async function p3CollectSnapshot(path: string): Promise<Record<string, unknown>> {
+  let cursor: string | undefined;
+  let merged: Record<string, unknown> | undefined;
+  const seen = new Set<string>();
+  let checkpoint: unknown;
+  for (let pageNumber = 0; pageNumber < 10_000; pageNumber += 1) {
+    const page = await p3GatewayGet(`${path}?limit=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+    const items = Array.isArray(page.items) ? page.items : null;
+    if (!items) throw new Error("P3 OAEP snapshot has no items");
+    if (!merged) { merged = { ...page, items: [], _pagination_required: true }; checkpoint = page.checkpoint; }
+    else if (page.checkpoint !== checkpoint) throw new Error("P3 OAEP snapshot checkpoint changed during pagination");
+    for (const item of items) {
+      const id = item && typeof item === "object" ? (item as { id?: unknown }).id : undefined;
+      if (typeof id !== "string" || !id || seen.has(id)) throw new Error("P3 OAEP snapshot pagination is invalid");
+      seen.add(id);
+    }
+    (merged.items as unknown[]).push(...items);
+    const window = page.window && typeof page.window === "object" ? page.window as Record<string, unknown> : {};
+    cursor = typeof window.next_cursor === "string" ? window.next_cursor : undefined;
+    if (!cursor) { merged.window = { ...window, next_cursor: null, complete: true }; return merged; }
+  }
+  throw new Error("P3 OAEP snapshot exceeded the pagination safety limit");
+}
+
+function p3GatewayGet(path: string): Promise<Record<string, unknown>> {
+  const port = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "28642";
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({ hostname: "127.0.0.1", port: Number(port), path, method: "GET", headers: { ...getGatewayRequestHeaders(), Accept: "application/json" } }, (response) => {
+      let data = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => { data += chunk; });
+      response.on("end", () => {
+        if (!response.statusCode || response.statusCode >= 400) return reject(new Error(`P3 runtime evidence request failed: ${response.statusCode ?? 0}`));
+        try { resolve(JSON.parse(data) as Record<string, unknown>); } catch { reject(new Error("P3 runtime evidence response was not JSON")); }
+      });
+    });
+    request.setTimeout(15_000, () => { request.destroy(); reject(new Error("P3 runtime evidence request timed out")); });
+    request.on("error", reject);
+    request.end();
+  });
 }
 
 async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {

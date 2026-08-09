@@ -87,7 +87,7 @@ for (const channel of [
   "desktop:start-agent-run",
   "desktop:abort-agent-run",
   "desktop:start-chat",
-  "desktop:abort-chat",
+  "desktop:cancel-chat-turn",
   "desktop:terminal-create",
   "desktop:terminal-list",
   "desktop:terminal-write",

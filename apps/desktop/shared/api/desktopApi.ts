@@ -10,6 +10,7 @@ import type {
 import type { ExecutionActionKind } from "./executionPolicy";
 import type { DesktopPlatformDescriptor } from "./platform";
 import type { InteractionOption, StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+import type { OaepEvent } from "./oaep.generated";
 export type { InteractionOption } from "./structuredConversation";
 import type {
   RunInspection,
@@ -319,11 +320,18 @@ export interface AuthSession {
   refreshable?: boolean;
 }
 
-// Keep this compatibility ID stable: it is persisted in threads and local
-// preferences. Product surfaces must use the display name instead of deriving
-// a label from the ID.
-export const LOCAL_OPENDRSAI_AGENT_ID = "my-drsai";
+// Read-only migration alias. Current Agent identities come from config.toml
+// and configs/agents, never from a product-wide constant.
+export const LEGACY_MY_DRSAI_AGENT_ID = "my-drsai";
 export const LOCAL_OPENDRSAI_AGENT_NAME = "OpenDrSai";
+
+export interface ConfiguredAgentDescriptor {
+  agent_name: string;
+  display_name: string;
+  enabled: boolean;
+  config_file: string;
+  current: boolean;
+}
 
 export interface DesktopBootstrapResult {
   ready: boolean;
@@ -794,7 +802,7 @@ export interface ChatEvent {
   requestId: string;
   /** Monotonic per-request sequence assigned by the main process. */
   seq?: number;
-  type: "start" | "structured" | "chunk" | "reasoning" | "status" | "connection" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
+  type: "start" | "oaep" | "structured" | "chunk" | "reasoning" | "status" | "connection" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
@@ -811,6 +819,8 @@ export interface ChatEvent {
   failureRecovery?: DesktopFailureRecovery;
   errorEnvelope?: RuntimeErrorEnvelope;
   structuredEvent?: StructuredConversationEvent;
+  /** Authoritative OAEP event, forwarded unchanged for diagnostics and protocol inspection. */
+  oaepEvent?: OaepEvent;
   connection?: {
     status: "retrying" | "restored";
     attempt: number;
@@ -3151,6 +3161,124 @@ export interface MyDrSaiAgentModelPolicy extends AgentModelPolicy {
   warning?: string | null;
 }
 
+export interface ChatTurnIdentity {
+  requestId: string;
+  sessionId?: string;
+  runId?: string;
+}
+
+export interface ChatTurnCancelResult {
+  accepted: boolean;
+  state: "cancelling" | "cancelled" | "completed" | "failed" | "not_found";
+}
+
+export type AgentResourceMode = "inherit" | "explicit" | "all_enabled";
+
+export interface AgentToolPolicy {
+  agent_id: string;
+  mode: AgentResourceMode;
+  enabled: string[];
+  disabled: string[];
+  require_approval: string[];
+  revision: string;
+  expected_revision?: string | null;
+}
+
+export interface AgentToolPreviewRow {
+  tool_id: string;
+  status: "configured" | "available" | "degraded" | "credential_required" | "runtime_unavailable" | "unsupported_platform" | "disabled";
+  error?: string | null;
+  capabilities: string[];
+  selected: boolean;
+}
+
+export interface AgentToolPreview {
+  agent_id: string;
+  mode: AgentResourceMode;
+  tools: AgentToolPreviewRow[];
+  missing_ids: string[];
+  disabled_ids: string[];
+  agent_revision: string;
+  registry_revision: string;
+}
+
+export interface AgentSkillPolicy {
+  agent_id: string;
+  mode: AgentResourceMode;
+  enabled: string[];
+  disabled: string[];
+  allow_thread_override: boolean;
+  revision: string;
+  expected_revision?: string | null;
+}
+
+export interface AgentSkillPreview {
+  agent_id: string;
+  mode: AgentResourceMode;
+  skills: Array<GatewaySkill & { enabled_for_agent: boolean }>;
+  enabled_ids: string[];
+  missing_ids: string[];
+  allow_thread_override: boolean;
+  revision: string;
+}
+
+export interface AgentKnowledgePolicy {
+  agent_id: string;
+  mode: AgentResourceMode;
+  sources: string[];
+  retrieval_policy: "auto" | "always" | "never";
+  top_k: number;
+  score_threshold: number;
+  require_citations: boolean;
+  revision: string;
+  expected_revision?: string | null;
+}
+
+export interface KnowledgeBaseResource {
+  knowledge_id: string;
+  display_name: string;
+  type: "local-files" | "ragflow";
+  enabled: boolean;
+  config: Record<string, unknown>;
+  credential_configured?: boolean;
+  status?: "not_indexed" | "indexing" | "ready" | "stale" | "failed" | "credential_required" | "configured" | "disabled";
+  document_count?: number;
+  chunk_count?: number;
+  selected?: boolean;
+}
+
+export interface SaveKnowledgeBaseRequest {
+  knowledge_id: string;
+  display_name: string;
+  type: "local-files" | "ragflow";
+  enabled: boolean;
+  config: Record<string, unknown>;
+  credential?: string;
+}
+
+export interface AgentKnowledgePreview {
+  agent_id: string;
+  mode: AgentResourceMode;
+  sources: string[];
+  missing_ids: string[];
+  knowledge_bases: KnowledgeBaseResource[];
+  retrieval_policy: "auto" | "always" | "never";
+  top_k: number;
+  score_threshold: number;
+  require_citations: boolean;
+  revision: string;
+}
+
+export interface KnowledgeSearchEvidence {
+  knowledge_id: string;
+  document_id: string;
+  chunk_id: string;
+  source: string;
+  score: number;
+  content_sha256: string;
+  content?: string;
+}
+
 export interface ModelCapabilityProbeStatus {
   probe_id: string;
   agent_id: string;
@@ -3221,6 +3349,7 @@ export interface MyDrSaiConfig {
 
 export interface CodexWorkspaceSessionSyncResult {
   workspaceId: string;
+  cancelled?: boolean;
   discovered: number;
   active: number;
   archived: number;
@@ -3279,7 +3408,7 @@ export interface MyDrSaiModelConnection {
   revision?: string;
   warnings?: string[];
   runtime?: { configured_revision: string; runtime_revisions: string[]; runtime_status: "not_started" | "applied" | "partially_applied" | "pending_next_turn"; active_runtime_count: number };
-  last_test?: { provider: string; model?: string; mode: string; ok: boolean; tested_at: string; error?: string; status_code?: number } | null;
+  last_test?: { provider: string; model?: string; mode: string; ok: boolean; tested_at: string; error?: string; status_code?: number; fingerprint?: string; last_success?: { provider: string; model?: string; mode: string; ok: boolean; tested_at: string; fingerprint?: string } } | null;
 }
 
 export interface MyDrSaiProviderPreset {
@@ -5017,6 +5146,7 @@ export interface DesktopApi {
   pollDesktopSsoLogin(deviceCode: string): Promise<DesktopSsoPollResult>;
   cancelDesktopSsoLogin(deviceCode: string): Promise<boolean>;
   logout(options?: LogoutOptions): Promise<{ ok: boolean; message: string }>;
+  restartApplication(): Promise<boolean>;
   previewLocalDataCleanup(scope: DesktopDataCleanupScope): Promise<DesktopDataCleanupPreview>;
   clearLocalData(request: DesktopDataCleanupRequest): Promise<DesktopDataCleanupResult>;
   refreshAuthSession(): Promise<AuthSession>;
@@ -5082,7 +5212,7 @@ export interface DesktopApi {
   listRemoteThreads(workspaceId: string): Promise<DesktopThread[]>;
   preflightRemoteGateway(hostAlias: string): Promise<RemoteGatewayPreflight>;
   getRemoteSshDiagnosticReport(): Promise<RemoteSshDiagnosticReport>;
-  installRemoteGateway(request: RemoteGatewayInstallRequest): Promise<RemoteGatewayInstallResult>;
+  installRemoteGateway(request: RemoteGatewayInstallRequest): Promise<RemoteGatewayInstallResult | null>;
   requestRemoteGatewayInstallApproval(
     request: RemoteGatewayInstallRequest,
   ): Promise<DesktopApprovalProposalResult>;
@@ -5101,7 +5231,7 @@ export interface DesktopApi {
   onWorkspaceFileChanges(callback: (event: WorkspaceFileChangeEvent) => void): () => void;
   generateManagerPresentation(
     request: ManagerPresentationGenerateRequest,
-  ): Promise<ManagerPresentationGenerateResult>;
+  ): Promise<ManagerPresentationGenerateResult | null>;
   cancelManagerPresentation(
     request: ManagerPresentationCancelRequest,
   ): Promise<ManagerPresentationCancelResult>;
@@ -5169,6 +5299,22 @@ export interface DesktopApi {
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
   getMyDrSaiRuntimeModelCatalog(): Promise<RuntimeModelCatalog>;
   getMyDrSaiAgentModelPolicy(agentId?: string): Promise<MyDrSaiAgentModelPolicy>;
+  getMyDrSaiAgentToolPolicy(agentId: string): Promise<AgentToolPolicy>;
+  updateMyDrSaiAgentToolPolicy(agentId: string, policy: AgentToolPolicy): Promise<AgentToolPolicy>;
+  previewMyDrSaiAgentTools(agentId: string): Promise<AgentToolPreview>;
+  testAgentTool(toolId: string): Promise<{ ok: boolean; tool_id: string; status: string; tested: string; error?: string }>;
+  getMyDrSaiAgentSkillPolicy(agentId: string): Promise<AgentSkillPolicy>;
+  updateMyDrSaiAgentSkillPolicy(agentId: string, policy: AgentSkillPolicy): Promise<AgentSkillPolicy>;
+  previewMyDrSaiAgentSkills(agentId: string): Promise<AgentSkillPreview>;
+  getMyDrSaiAgentKnowledgePolicy(agentId: string): Promise<AgentKnowledgePolicy>;
+  updateMyDrSaiAgentKnowledgePolicy(agentId: string, policy: AgentKnowledgePolicy): Promise<AgentKnowledgePolicy>;
+  previewMyDrSaiAgentKnowledge(agentId: string): Promise<AgentKnowledgePreview>;
+  indexKnowledgeBase(knowledgeId: string): Promise<{ knowledge_id: string; status: string; document_count: number; chunk_count: number }>;
+  testKnowledgeBase(knowledgeId: string): Promise<{ ok: boolean; knowledge_id: string; type: string; status?: string; dataset_count?: number }>;
+  searchKnowledgeBase(knowledgeId: string, query: string): Promise<{ knowledge_id: string; query: string; evidence: KnowledgeSearchEvidence[] }>;
+  listKnowledgeBases(): Promise<KnowledgeBaseResource[]>;
+  createKnowledgeBase(request: SaveKnowledgeBaseRequest): Promise<KnowledgeBaseResource>;
+  deleteKnowledgeBase(knowledgeId: string): Promise<{ status: string }>;
   getMyDrSaiAgentModelCapabilityStatus(agentId?: string): Promise<AgentModelCapabilityStatus>;
   updateMyDrSaiAgentModelPolicy(agentId: string, policy: AgentModelPolicy): Promise<MyDrSaiAgentModelPolicy>;
   migrateMyDrSaiAgentModelPolicy(agentId: string, legacyModel: string, expectedRevision?: string): Promise<MyDrSaiAgentModelPolicy>;
@@ -5211,7 +5357,7 @@ export interface DesktopApi {
   listWorktreeEvents(request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch>;
   startChat(request: ChatRequest): Promise<string>;
   recoverChatRun(request: ChatRunRecoveryRequest): Promise<ChatEvent[]>;
-  abortChat(requestId: string): Promise<boolean>;
+  cancelChatTurn(request: ChatTurnIdentity): Promise<ChatTurnCancelResult>;
   listSessionRuns(request: SessionRunsReadRequest): Promise<SessionRunList>;
   getRunInspection(request: RunInspectionOpenRequest): Promise<RunInspection>;
   locateRunItem(request: RunItemLocatorRequest): Promise<RunItemLocator>;

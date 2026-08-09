@@ -138,7 +138,7 @@ import {
   startUpdateScheduler,
   subscribeUpdateStatus,
 } from "./updates";
-import { abortChat, hasActiveChats, recoverChatRun, respondChatInput, startChat } from "./chat";
+import { cancelChatTurn, hasActiveChats, recoverChatRun, respondChatInput, startChat } from "./chat";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import {
@@ -162,7 +162,7 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { deleteMyDrSaiModelProvider, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, listMyDrSaiModelProviderPresets, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiModelConnection, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, testMyDrSaiModelDraft, testMyDrSaiModelProvider, updateMyDrSaiAgentModelPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection } from "../../../shared/main/myDrSaiConfig";
+import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
@@ -825,7 +825,8 @@ const isE2eSmokeProcess =
   Boolean(process.env.OPENDRSAI_E2E_FIRST_RUN_DRAFT_STAGE) ||
   process.env.OPENDRSAI_E2E_MODEL_PREVIEW === "1" ||
   process.env.OPENDRSAI_E2E_RUNTIME_UNIFIED === "1" ||
-  process.env.OPENDRSAI_E2E_P8_IPC === "1" ||
+    process.env.OPENDRSAI_E2E_P8_IPC === "1" ||
+    process.env.OPENDRSAI_E2E_P3_DESKTOP === "1" ||
   process.env.OPENDRSAI_E2E_SMOKE === "1" ||
   process.env.OPENDRSAI_E2E_CHAT === "1" ||
   process.env.OPENDRSAI_E2E_RUN_TRACEABILITY_PHASE1 === "1" ||
@@ -3287,10 +3288,10 @@ function secureHandle<T extends unknown[]>(
         ...(propagated.runId ? { runId: propagated.runId } : {}),
         ...(propagated.workspaceId ? { workspaceId: propagated.workspaceId } : {}),
       }, () => Promise.resolve(handler(event, ...args)));
-      await operation.complete(`${channel} completed`);
+      void operation.complete(`${channel} completed`).catch(() => undefined);
       return result;
     } catch (error) {
-      await operation.fail(error);
+      void operation.fail(error).catch(() => undefined);
       throw error;
     } finally {
       clearTimeout(waitTimer);
@@ -4267,6 +4268,15 @@ function registerIpc(): void {
     stopGateway();
     return logout(options);
   });
+  secureHandle("desktop:restart-application", () => {
+    setTimeout(() => {
+      app.relaunch();
+      // Bypass the normal quit handler so an externally managed development
+      // Gateway remains available while Electron replaces itself.
+      app.exit(0);
+    }, 100).unref();
+    return true;
+  });
   secureHandle("desktop:refresh-auth-session", () => refreshAuthSession());
   secureHandle("desktop:bootstrap", () => bootstrapDesktop());
   secureHandle("desktop:get-health", async () => {
@@ -4390,7 +4400,11 @@ function registerIpc(): void {
       return { workspaceId, discovered: result.discovered, active: result.active, archived: result.archived,
         created: result.created, updated: result.updated, skipped: result.skipped, conflicts: result.conflicts, threads };
     } catch (error) {
-      if (controller.signal.aborted) emit("cancelled", 0, 0);
+      if (controller.signal.aborted) {
+        emit("cancelled", 0, 0);
+        return { workspaceId, cancelled: true, discovered: 0, active: 0, archived: 0,
+          created: 0, updated: 0, skipped: 0, conflicts: 0, threads: [] };
+      }
       throw error;
     } finally {
       codexWorkspaceSyncControllers.delete(requestId);
@@ -4630,9 +4644,14 @@ function registerIpc(): void {
     preflightRemoteGateway(hostAlias),
   );
   secureHandle("desktop:remote-ssh-diagnostics", () => getRemoteSshDiagnosticReport());
-  secureHandle("desktop:remote-gateway-install", (_event, request: Parameters<typeof installRemoteGateway>[0]) =>
-    installRemoteGateway(request),
-  );
+  secureHandle("desktop:remote-gateway-install", async (_event, request: Parameters<typeof installRemoteGateway>[0]) => {
+    try {
+      return await installRemoteGateway(request);
+    } catch (error) {
+      if (error instanceof Error && error.message === "Remote Gateway operation was cancelled.") return null;
+      throw error;
+    }
+  });
   secureHandle("desktop:remote-gateway-install-approval", (_event, request: RemoteGatewayInstallRequest) =>
     requestRemoteGatewayInstallApproval(request),
   );
@@ -4825,7 +4844,9 @@ function registerIpc(): void {
       });
       return presentationResult;
     } catch (error) {
-      if (!(error instanceof ManagerPresentationCancelledError)) {
+      if (error instanceof ManagerPresentationCancelledError) {
+        return null;
+      } else {
         const failureAttempts = error && typeof error === "object" && "attempts" in error
           ? Math.max(1, Number(error.attempts) || 1)
           : 1;
@@ -5103,6 +5124,22 @@ function registerIpc(): void {
   });
   secureHandle("desktop:get-my-drsai-runtime-model-catalog", () => getMyDrSaiRuntimeModelCatalog());
   secureHandle("desktop:get-my-drsai-agent-model-policy", (_event, agentId?: string) => getMyDrSaiAgentModelPolicy(agentId));
+  secureHandle("desktop:get-my-drsai-agent-tool-policy", (_event, agentId: string) => getMyDrSaiAgentToolPolicy(agentId));
+  secureHandle("desktop:update-my-drsai-agent-tool-policy", (_event, agentId: string, policy: Parameters<typeof updateMyDrSaiAgentToolPolicy>[1]) => updateMyDrSaiAgentToolPolicy(agentId, policy));
+  secureHandle("desktop:preview-my-drsai-agent-tools", (_event, agentId: string) => previewMyDrSaiAgentTools(agentId));
+  secureHandle("desktop:test-agent-tool", (_event, toolId: string) => testAgentTool(toolId));
+  secureHandle("desktop:get-my-drsai-agent-skill-policy", (_event, agentId: string) => getMyDrSaiAgentSkillPolicy(agentId));
+  secureHandle("desktop:update-my-drsai-agent-skill-policy", (_event, agentId: string, policy: Parameters<typeof updateMyDrSaiAgentSkillPolicy>[1]) => updateMyDrSaiAgentSkillPolicy(agentId, policy));
+  secureHandle("desktop:preview-my-drsai-agent-skills", (_event, agentId: string) => previewMyDrSaiAgentSkills(agentId));
+  secureHandle("desktop:get-my-drsai-agent-knowledge-policy", (_event, agentId: string) => getMyDrSaiAgentKnowledgePolicy(agentId));
+  secureHandle("desktop:update-my-drsai-agent-knowledge-policy", (_event, agentId: string, policy: Parameters<typeof updateMyDrSaiAgentKnowledgePolicy>[1]) => updateMyDrSaiAgentKnowledgePolicy(agentId, policy));
+  secureHandle("desktop:preview-my-drsai-agent-knowledge", (_event, agentId: string) => previewMyDrSaiAgentKnowledge(agentId));
+  secureHandle("desktop:index-knowledge-base", (_event, knowledgeId: string) => indexKnowledgeBase(knowledgeId));
+  secureHandle("desktop:test-knowledge-base", (_event, knowledgeId: string) => testKnowledgeBase(knowledgeId));
+  secureHandle("desktop:search-knowledge-base", (_event, knowledgeId: string, query: string) => searchKnowledgeBase(knowledgeId, query));
+  secureHandle("desktop:list-knowledge-bases", () => listKnowledgeBases());
+  secureHandle("desktop:create-knowledge-base", (_event, request: Parameters<typeof createKnowledgeBase>[0]) => createKnowledgeBase(request));
+  secureHandle("desktop:delete-knowledge-base", (_event, knowledgeId: string) => deleteKnowledgeBase(knowledgeId));
   secureHandle("desktop:get-my-drsai-agent-model-capability-status", (_event, agentId?: string) => getMyDrSaiAgentModelCapabilityStatus(agentId));
   secureHandle("desktop:update-my-drsai-agent-model-policy", (_event, agentId: string, policy: unknown) => updateMyDrSaiAgentModelPolicy(agentId, policy));
   secureHandle("desktop:migrate-my-drsai-agent-model-policy", (_event, agentId: string, legacyModel: string, expectedRevision?: string) => migrateMyDrSaiAgentModelPolicy(agentId, legacyModel, expectedRevision));
@@ -5122,18 +5159,25 @@ function registerIpc(): void {
       threadSnapshotHydrations.set(requestId, controller);
     }
     try {
-    const thread = (await listThreads()).find((item) => item.id === threadId);
-    if (thread?.runtimeSessionId) {
-      const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
-      if (envelope) return envelope;
-    }
-    controller.signal.throwIfAborted();
-    const remote = await getRemoteThreadSnapshot(threadId);
-    const snapshot = remote ?? await getThreadSnapshot(threadId);
-    if (!snapshot) return null;
-    return { version: 1, projection: "conversation/1", threadId,
-      runtimeSessionId: thread?.runtimeSessionId ?? `persisted:${threadId}`,
-      sessionSequence: 0, generation: 0, source: "persisted", snapshot };
+      const thread = (await listThreads()).find((item) => item.id === threadId);
+      if (thread?.runtimeSessionId) {
+        const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
+        if (envelope) return envelope;
+      }
+      controller.signal.throwIfAborted();
+      const remote = await getRemoteThreadSnapshot(threadId);
+      const snapshot = remote ?? await getThreadSnapshot(threadId);
+      if (!snapshot) return null;
+      return { version: 1, projection: "conversation/1", threadId,
+        runtimeSessionId: thread?.runtimeSessionId ?? `persisted:${threadId}`,
+        sessionSequence: 0, generation: 0, source: "persisted", snapshot };
+    } catch (error) {
+      // Cancellation is part of the hydration protocol: the renderer cancels
+      // stale work when a newer generation starts or the active Thread
+      // changes. Resolve the obsolete invocation quietly so Electron does not
+      // report an expected AbortError as an IPC handler failure.
+      if (controller.signal.aborted && error instanceof Error && error.name === "AbortError") return null;
+      throw error;
     } finally {
       if (requestId && threadSnapshotHydrations.get(requestId) === controller) threadSnapshotHydrations.delete(requestId);
     }
@@ -5471,8 +5515,8 @@ function registerIpc(): void {
     return startChat(event.sender, request);
   });
   secureHandle("desktop:recover-chat-run", (event, request) => recoverChatRun(request, event.sender));
-  secureHandle("desktop:abort-chat", (_event, requestId: string) =>
-    abortChat(requestId),
+  secureHandle("desktop:cancel-chat-turn", (_event, request) =>
+    cancelChatTurn(request),
   );
   secureHandle("desktop:run-list", async (_event, request: SessionRunsReadRequest) => {
     const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);

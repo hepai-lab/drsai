@@ -557,6 +557,12 @@ export function FilesContextPanel({
         requirements: recovering ? managerPresentationRequirements : [],
       });
       if (managerPresentationRequestRef.current !== requestId) return;
+      if (!result) {
+        setManagerPresentationProgress((current) => current?.requestId === requestId && current.phase === "cancelled"
+          ? current
+          : { requestId, phase: "cancelled", progress: 100, message: zh ? "已取消生成；未保留未完成的 PPT 文件。" : "Generation cancelled; no incomplete PPT was kept." });
+        return;
+      }
       setManagerPresentationResult(result);
       setAudienceResults((current) => ({ ...current, [result.audience]: result }));
       const artifactEvent: AgentFileTraceEvent = {

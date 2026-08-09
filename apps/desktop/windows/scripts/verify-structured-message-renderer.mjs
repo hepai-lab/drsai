@@ -73,7 +73,7 @@ assert.ok(workspace.includes("<StructuredMessageParts"), "ChatWorkspace must ren
 assert.ok(workspace.includes("onOpenDebug={onOpenDebug}"), "Compact activity must route details to the Debug panel.");
 assert.ok(workspace.includes('messages.some((message) => message.streaming)'), "Elapsed duration must refresh for the entire streaming turn.");
 assert.ok(workspace.includes("<StreamingStatus") && workspace.includes("已执行"), "Pre-output streaming state must expose elapsed time without a duplicate stop action.");
-assert.ok(adapter.includes("const aborted = await desktopApi.abortChat(requestId)") && adapter.includes('event.type === "aborted" ? "cancelled" : "completed"'), "Composer stop must abort the runtime and settle structured streaming state.");
+assert.ok(adapter.includes("desktopApi.cancelChatTurn") && adapter.includes('event.type === "aborted" ? "cancelled" : "completed"'), "Composer cancellation must use the single Turn cancellation contract and settle structured streaming state.");
 assert.ok(workspace.includes("!message.structuredTurn && message.reasoningContent"), "Legacy reasoning must only be a fallback.");
 assert.ok(workspace.includes("!message.structuredTurn && message.inputRequest"), "Legacy interaction must only be a fallback.");
 assert.ok(workspace.includes("onOpenWorkspaceArtifact"), "ChatWorkspace must expose the existing files-panel route.");

@@ -11,6 +11,10 @@ import { collectMigrationAliases, getCliConfigUserId, rememberUserIdAlias, setCl
 import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
 import { redactDesktopSecrets } from "./secretRedaction";
 import { redactSensitiveData } from "../api/sensitiveData";
+import {
+  registerGatewayIdentitySynchronizer,
+  requireCoordinatedAuthContext,
+} from "./authGatewayCoordination";
 
 let processService: DesktopProcessService | null = null;
 let desktopAppRuntime = {
@@ -193,14 +197,15 @@ export async function syncAuthIdentityToGateway(explicitUserId?: string): Promis
   return userId;
 }
 
+registerGatewayIdentitySynchronizer(syncAuthIdentityToGateway);
+
 async function canonicalizeHistoricalUserIds(
   canonicalUserId: string,
   previousCliUserId: string | null,
 ): Promise<void> {
   let email: string | null = null;
   try {
-    const { requireAuthContext } = await import("./auth");
-    email = (await requireAuthContext()).session.user?.email ?? null;
+    email = (await requireCoordinatedAuthContext()).session.user?.email ?? null;
   } catch {
     email = null;
   }
@@ -468,8 +473,7 @@ function normalizeDesktopUserId(value: unknown): string | null {
 
 async function resolveAuthenticatedUserId(): Promise<string | null> {
   try {
-    const { requireAuthContext } = await import("./auth");
-    return normalizeDesktopUserId((await requireAuthContext()).userId);
+    return normalizeDesktopUserId((await requireCoordinatedAuthContext()).userId);
   } catch {
     return null;
   }

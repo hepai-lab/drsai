@@ -176,7 +176,7 @@ function p10SourceEntries() { return [
   "apps/desktop/windows/tests/remote-ssh/fake_codex_app_server.py",
   ...["verify-codex-adapter.mjs", "generate-codex-p10-ledger.mjs", "verify-codex-p10-ledger.mjs", "verify-p10-error-contract.mts",
     "verify-p10-snapshot-waterline.mts", "verify-p10-resource-governance.mts", "verify-p10-architecture-boundary.mjs",
-    "verify-p10-turn-queue-ux.mts", "verify-thread-patch-frame-batcher.mts", "run-codex-p9-live.mjs", "verify-p8-electron-ipc.mjs", "verify-structured-visual.mjs",
+    "verify-thread-patch-frame-batcher.mts", "run-codex-p9-live.mjs", "verify-p8-electron-ipc.mjs", "verify-structured-visual.mjs",
     "verify-codex-p10-user-journey.mjs", "verify-codex-desktop-integration.mjs", "verify-session-sync-state.mts",
     "verify-session-conversation-subscription.mts", "verify-codex-session-resume-policy.mts", "verify-codex-p7-attachments.mts", "verify-thread-archive.mts"
   ].map((name) => `apps/desktop/windows/scripts/${name}`),

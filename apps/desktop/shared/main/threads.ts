@@ -14,7 +14,7 @@ import type {
   ChatMessagePart,
   UpdateThreadRequest,
 } from "../api/desktopApi";
-import { LOCAL_OPENDRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
+import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import { DRSAI_HOME } from "./paths";
 import { sanitizeStructuredTurnState } from "../api/structuredConversation";
 import { replaceFileSafely } from "./atomicFileReplace";
@@ -266,7 +266,7 @@ async function readThreadsWithMigration(): Promise<{ threads: DesktopThread[]; m
 }
 
 export function migrateLocalAgentDisplayName(thread: DesktopThread): DesktopThread {
-  if (thread.boundAgentId !== LOCAL_OPENDRSAI_AGENT_ID) return thread;
+  if (thread.boundAgentId !== LEGACY_MY_DRSAI_AGENT_ID) return thread;
   if (thread.boundAgentName !== "My DrSai" && thread.boundAgentName !== "My Dr.Sai") return thread;
   return { ...thread, boundAgentName: LOCAL_OPENDRSAI_AGENT_NAME };
 }

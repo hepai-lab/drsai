@@ -5,7 +5,7 @@ import type { RuntimeCapabilities } from "./runtimeClient";
 // this mirror against the generated TS/Kotlin/Python constants.
 const OAEP_VERSION = "1.0";
 const OAEP_PROFILE = "oaep.session-stream/1";
-const OAEP_SCHEMA_SHA256 = "304304216b4133e6b00dd3d93897d4f84ccc716ee830f2ecca11c77585d0970d";
+const OAEP_SCHEMA_SHA256 = "f586a6171063f0a1d1019097558b0fd8175692437fc0f685ac914710a7f15640";
 
 const OAEP_REQUIRED = [
   "oaep.v1",

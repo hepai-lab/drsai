@@ -9,6 +9,7 @@ import type { AgentRunEvent, AgentRunFileEvent, AgentRunRequest, ChatAttachment,
 import { buildAgentTaskDepthContract, isAgentTaskDepth } from "../api/agentTaskDepth";
 import { invalidateAuthSession, requireAuthContext, type AuthContext } from "./auth";
 import { getGatewayRequestHeaders, startGateway } from "./gateway";
+import { getCurrentAgentName } from "./myDrSaiConfig";
 import {
   ChatSseError,
   isCompletionDoneFrame,
@@ -30,7 +31,7 @@ import {
 } from "./networkRecovery";
 import { listRecordedAgentRunEvents, recordAgentRunEvent } from "./agentRunJournal";
 import { BoundedEventDispatcher } from "./boundedEventDispatcher";
-import { abortChat, startChat } from "./chat";
+import { cancelChatTurn, startChat } from "./chat";
 import { createOaepAgentRunBridge } from "./oaepAgentRunBridge";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
@@ -99,7 +100,7 @@ export async function startAgentRun(
   }
   const controller = new AbortController();
   activeRuns.set(requestId, { controller, request, webContents });
-  startRuntimeAgentSurface(webContents, requestId, sessionId, runId, request);
+  void startRuntimeAgentSurface(webContents, requestId, sessionId, runId, request);
 
   return { requestId, sessionId, runId };
 }
@@ -111,16 +112,18 @@ export function abortAgentRun(requestId: string): boolean {
   const active = activeRuns.get(requestId);
   if (!active) return false;
   active.controller.abort("user");
-  return abortChat(requestId);
+  void cancelChatTurn({ requestId, sessionId: active.request.sessionId || active.request.threadId });
+  return true;
 }
 
-function startRuntimeAgentSurface(
+async function startRuntimeAgentSurface(
   webContents: WebContents,
   requestId: string,
   sessionId: string,
   runId: string,
   request: AgentRunRequest,
-): void {
+): Promise<void> {
+  const agentName = await getCurrentAgentName();
   const bridge = createOaepAgentRunBridge({ requestId, sessionId, runId });
   const target = {
     send(channel: string, event: unknown): void {
@@ -137,7 +140,7 @@ function startRuntimeAgentSurface(
     threadId: sessionId,
     sessionId,
     runId,
-    agentId: "my-drsai",
+    agentId: agentName,
     workspacePath: request.workspacePath,
     attachments: normalizeAgentRunAttachments(request.files),
     messages: [{ role: "user", content: buildAgentExecutionPrompt(request) }],

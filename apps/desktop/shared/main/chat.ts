@@ -3,11 +3,12 @@ import { appendFileSync, createReadStream, createWriteStream, mkdirSync } from "
 import { readFile, stat, mkdir, writeFile, readdir, rm, rename, statfs, open } from "fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { pipeline } from "stream/promises";
-import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, MaterialRoleItem, OaepInputResource } from "../api/desktopApi";
-import { LOCAL_OPENDRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
+import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, ChatTurnCancelResult, ChatTurnIdentity, MaterialRoleItem, OaepInputResource } from "../api/desktopApi";
+import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import { normalizeRuntimeErrorEnvelope } from "../api/errorEnvelope";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
 import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToDdfChatInput, respondToPlatformChatInput, stopPlatformChat } from "./agents";
+import { getMyDrSaiAgentModelPolicy, listConfiguredAgents } from "./myDrSaiConfig";
 import {
   createChatToolTimelineAccumulator,
   createChatContentNormalizer,
@@ -49,7 +50,6 @@ import { codexContinuationAction } from "./codexSessionResumePolicy";
 import { selectCurrentUserInput } from "./chatInput";
 import { materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
 import { decideRuntimeRestartRecovery } from "../api/runtimeRestartRecovery";
-import { getMyDrSaiAgentModelPolicy } from "./myDrSaiConfig";
 import {
   createOaepPresentationProjection,
   projectOaepEventForPresentation,
@@ -112,9 +112,6 @@ const CHAT_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_CHAT_TIMEOUT_MS", 300_000);
 const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", 180_000);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
-const activeChats = new Map<string, AbortController>();
-const activeChatEventTargets = new Map<string, ChatEventTarget>();
-const platformChatTargets = new Map<string, { agentId: string; threadId: string; mode: string }>();
 const platformInputTargets = new Map<string, { agentId: string; chatId: string; runId: string }>();
 interface RuntimeProjectionTarget {
   approvalId?: string;
@@ -129,8 +126,20 @@ interface RuntimeChatTarget extends RuntimeProjectionTarget {
   goalClarification?: { settle: (answer: string | null) => void };
 }
 
-const runtimeChatTargets = new Map<string, RuntimeChatTarget>();
-const recoveredRuntimeSubscriptions = new Map<string, { stop(): void }>();
+interface ChatTurnRecord {
+  requestId: string;
+  sessionId: string;
+  runId?: string;
+  phase: "pending" | "running" | "cancelling";
+  cancelRequested: boolean;
+  controller: AbortController;
+  eventTarget: ChatEventTarget;
+  runtime?: RuntimeChatTarget;
+  platform?: { agentId: string; threadId: string; mode: string };
+  subscription?: { stop(): void };
+}
+
+const chatTurns = new Map<string, ChatTurnRecord>();
 // A Runtime terminal already projected as StructuredConversation must not be
 // followed by a second, legacy done/error terminal.
 const structuredTerminalRequests = new Set<string>();
@@ -138,22 +147,29 @@ const chatEventSequences = new Map<string, number>();
 const chatDiagnosticOperations = new Map<string, Promise<DiagnosticOperationHandle>>();
 
 export function hasActiveChats(): boolean {
-  return activeChats.size > 0;
+  return chatTurns.size > 0;
 }
 
 export function startChat(webContents: ChatEventTarget, request: unknown): string {
-  if (activeChats.size >= MAX_ACTIVE_CHATS) {
+  if (chatTurns.size >= MAX_ACTIVE_CHATS) {
     throw new Error("Too many active chat requests. Stop one before starting another.");
   }
   const validated = validateChatRequest(request);
   const requestId = validated.requestId || randomUUID();
   const runRequest: ChatRequest = { ...validated, runId: validated.runId || randomUUID() };
-  if (activeChats.has(requestId)) {
+  if (chatTurns.has(requestId)) {
     throw new Error("Chat request is already active.");
   }
   const controller = new AbortController();
-  activeChats.set(requestId, controller);
-  activeChatEventTargets.set(requestId, webContents);
+  chatTurns.set(requestId, {
+    requestId,
+    sessionId: runRequest.sessionId || requestId,
+    runId: runRequest.runId,
+    phase: "pending",
+    cancelRequested: false,
+    controller,
+    eventTarget: webContents,
+  });
   chatEventSequences.set(requestId, 0);
   chatDiagnosticOperations.set(requestId, desktopDiagnostics.start({
     traceId: requestId,
@@ -168,9 +184,7 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
   }));
 
   runChat(webContents, requestId, runRequest, controller).catch(async (error) => {
-    activeChats.delete(requestId);
-    activeChatEventTargets.delete(requestId);
-    platformChatTargets.delete(requestId);
+    const turn = chatTurns.get(requestId);
     const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
     const cancelledByUser = controller.signal.aborted && !timedOut;
     const errorMessage = timedOut
@@ -198,40 +212,68 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
         failureRecovery: getFailureRecovery(error),
       });
     }
+    turn?.subscription?.stop();
+    chatTurns.delete(requestId);
   });
 
   return requestId;
 }
 
-export function abortChat(requestId: string): boolean {
-  if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) {
-    return false;
+export async function cancelChatTurn(rawIdentity: unknown): Promise<ChatTurnCancelResult> {
+  const identity = validateChatTurnIdentity(rawIdentity);
+  if (!identity) return { accepted: false, state: "not_found" };
+  let turn = chatTurns.get(identity.requestId);
+  if (!turn && identity.sessionId) {
+    const thread = (await listThreads()).find((candidate) => candidate.id === identity.sessionId);
+    const runId = identity.runId || thread?.lastRunId;
+    if (!runId || !thread?.workspacePath) return { accepted: false, state: "not_found" };
+    const resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
+    const run = await resolved.client.getAgentRun(runId).catch(() => null);
+    if (!run) return { accepted: false, state: "not_found" };
+    if (run.status === "completed") return { accepted: false, state: "completed" };
+    if (run.status === "failed") return { accepted: false, state: "failed" };
+    if (run.status === "cancelled") return { accepted: true, state: "cancelled" };
+    await resolved.client.cancelAgentRun(runId);
+    return { accepted: true, state: "cancelling" };
   }
-  const controller = activeChats.get(requestId);
-  if (!controller) return false;
-  const platformTarget = platformChatTargets.get(requestId);
+  if (!turn) return { accepted: false, state: "not_found" };
+  if (turn.phase === "cancelling") return { accepted: true, state: "cancelling" };
+  const requestId = identity.requestId;
+  turn.cancelRequested = true;
+  turn.phase = "cancelling";
+  const platformTarget = turn.platform;
   // DDF runs are streamed through /apiv2/chat/completions. Aborting the fetch
   // is authoritative unless HAI publishes a matching DDF stop contract; the
   // Portal Native thread-stop endpoint belongs only to Native agents.
   if (platformTarget && platformTarget.mode !== "ddf") {
     void stopPlatformChat(platformTarget.agentId, platformTarget.threadId).catch(() => undefined);
   }
-  const runtimeTarget = runtimeChatTargets.get(requestId);
+  const runtimeTarget = turn.runtime;
   if (runtimeTarget) void runtimeTarget.client.cancelAgentRun(runtimeTarget.runId).catch(() => undefined);
-  const recoveredSubscription = recoveredRuntimeSubscriptions.get(requestId);
-  if (recoveredSubscription) {
-    recoveredSubscription.stop();
-    recoveredRuntimeSubscriptions.delete(requestId);
-    runtimeChatTargets.delete(requestId);
+  turn.controller.abort("user");
+  if (!runtimeTarget) {
+    structuredTerminalRequests.add(requestId);
+    emit(turn.eventTarget, {
+      requestId,
+      sessionId: turn.sessionId,
+      runId: turn.runId,
+      type: "aborted",
+    });
+    return { accepted: true, state: "cancelled" };
   }
-  controller.abort("user");
-  activeChats.delete(requestId);
-  activeChatEventTargets.delete(requestId);
-  platformChatTargets.delete(requestId);
   // Keep the Runtime target until runChat reaches its finally block. The
   // cancellation path still needs the authoritative Runtime Run ID when it
   // persists the recoverable Thread binding.
-  return true;
+  return { accepted: true, state: "cancelling" };
+}
+
+function validateChatTurnIdentity(value: unknown): ChatTurnIdentity | null {
+  if (!value || typeof value !== "object") return null;
+  const identity = value as ChatTurnIdentity;
+  if (typeof identity.requestId !== "string" || !REQUEST_ID_PATTERN.test(identity.requestId)) return null;
+  if (identity.sessionId !== undefined && (typeof identity.sessionId !== "string" || !SESSION_ID_PATTERN.test(identity.sessionId))) return null;
+  if (identity.runId !== undefined && (typeof identity.runId !== "string" || !SESSION_ID_PATTERN.test(identity.runId))) return null;
+  return identity;
 }
 
 /**
@@ -248,13 +290,14 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   ) return [];
   const requestId = request.requestId;
   const sessionId = request.sessionId;
-  if (eventTarget && activeChats.has(requestId)) activeChatEventTargets.set(requestId, eventTarget);
+  const existingTurn = chatTurns.get(requestId);
+  if (eventTarget && existingTurn) existingTurn.eventTarget = eventTarget;
   const thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
   if (!thread?.lastRunId) return [];
   if (!thread.runtimeSessionId || !thread.workspacePath) {
     const journal = await listRecordedChatRunEvents(thread.lastRunId);
     const recovered = journal.map((event, index) => ({ ...event, requestId, sessionId, seq: index + 1 }));
-    if (thread.status === "running" && !activeChats.has(thread.lastRequestId ?? requestId)) {
+    if (thread.status === "running" && !chatTurns.has(thread.lastRequestId ?? requestId)) {
       recovered.push({ requestId, sessionId, runId: thread.lastRunId, seq: recovered.length + 1, type: "error", error: "Chat run was interrupted by an application restart. Recovered output is preserved." });
       await updateThread({ id: thread.id, status: "error" });
     }
@@ -303,17 +346,14 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
       recoveredSubscription ? presentationItemForOaepEvent(recoveredSubscription.state, event) : undefined,
     );
     if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {
-      recoveredRuntimeSubscriptions.delete(requestId);
       recoveredSubscription?.stop();
-      activeChats.delete(requestId);
-      activeChatEventTargets.delete(requestId);
-      runtimeChatTargets.delete(requestId);
+      chatTurns.delete(requestId);
       chatEventSequences.delete(requestId);
       await updateThread({ id: thread.id, status: event.type === "event.run.completed" ? "idle" : "error" });
     }
   };
   if (recoveryDecision.kind === "reconnect" && eventTarget) {
-    recoveredRuntimeSubscriptions.get(requestId)?.stop();
+    chatTurns.get(requestId)?.subscription?.stop();
     recoveredSubscription = await subscribeOaepSession(client, thread.runtimeSessionId, {
       onEvent(event) { void settleRecoveredSubscription(event); },
       onConnection(status, attempt) {
@@ -389,17 +429,24 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
     });
   } else if (recoveredSubscription && eventTarget) {
     const controller = new AbortController();
-    recoveredRuntimeSubscriptions.set(requestId, recoveredSubscription);
-    activeChats.set(requestId, controller);
-    activeChatEventTargets.set(requestId, eventTarget);
-    runtimeChatTargets.set(requestId, {
+    const runtime: RuntimeChatTarget = {
       client,
       controller,
       runId: thread.lastRunId,
       projection: target.projection,
+    };
+    chatTurns.set(requestId, {
+      requestId,
+      sessionId,
+      runId: thread.lastRunId,
+      phase: "running",
+      cancelRequested: false,
+      controller,
+      eventTarget,
+      runtime,
+      subscription: recoveredSubscription,
     });
     chatEventSequences.set(requestId, recovered.length);
-    controller.signal.addEventListener("abort", () => recoveredSubscription?.stop(), { once: true });
     liveReady = true;
     for (const event of bufferedLiveEvents.splice(0)) {
       await settleRecoveredSubscription(event);
@@ -425,11 +472,11 @@ export async function respondChatInput(
     if (accepted) platformInputTargets.delete(requestId);
     return accepted;
   }
-  const target = platformChatTargets.get(requestId);
+  const target = chatTurns.get(requestId)?.platform;
   if (target && target.mode !== "ddf") {
     return respondToPlatformChatInput(target.agentId, target.threadId, response);
   }
-  const runtime = runtimeChatTargets.get(requestId);
+  const runtime = chatTurns.get(requestId)?.runtime;
   if (runtime?.goalClarification) {
     const answer = typeof response === "string"
       ? response.trim()
@@ -679,28 +726,43 @@ async function runChat(
   const sessionId = request.threadId || request.sessionId || requestId;
   const runId = request.runId || requestId;
   const isCodexBackend = request.agentId === "my-codex";
-  const platformDescriptor = request.agentId && request.agentId !== LOCAL_OPENDRSAI_AGENT_ID && !isCodexBackend
-    ? getPlatformAgentExecutionDescriptor(request.agentId)
+  const configuredAgents = await listConfiguredAgents().catch(() => ({ current_agent: "", agents: [] }));
+  const requestedAgentName = request.agentId === LEGACY_MY_DRSAI_AGENT_ID
+    ? configuredAgents.current_agent
+    : request.agentId;
+  const localAgent = configuredAgents.agents.find((agent) => agent.agent_name === requestedAgentName)
+    ?? configuredAgents.agents.find((agent) => agent.current);
+  const platformDescriptor = requestedAgentName && !localAgent && !isCodexBackend
+    ? getPlatformAgentExecutionDescriptor(requestedAgentName)
     : null;
-  if (request.agentId && request.agentId !== LOCAL_OPENDRSAI_AGENT_ID && !isCodexBackend && !platformDescriptor) {
+  if (requestedAgentName && !localAgent && !isCodexBackend && !platformDescriptor) {
     throw new Error("The selected platform agent is unavailable. Refresh the agent square and try again.");
   }
   if (platformDescriptor && request.agentId && !isPlatformAgentExecutionAvailable(request.agentId)) {
     throw new Error("Platform agent chat is not enabled in this environment yet. OpenDrSai remains available.");
   }
   if (platformDescriptor && request.agentId) assertAgentCircuitAvailable(request.agentId);
-  const boundAgentId = request.agentId || LOCAL_OPENDRSAI_AGENT_ID;
-  const boundAgentName = isCodexBackend ? "Codex" : platformDescriptor?.name || LOCAL_OPENDRSAI_AGENT_NAME;
+  const boundAgentId = isCodexBackend ? "my-codex" : requestedAgentName || localAgent?.agent_name || configuredAgents.current_agent;
+  if (!boundAgentId) throw new Error("No current Agent is configured.");
+  const boundAgentName = isCodexBackend ? "Codex" : platformDescriptor?.name || localAgent?.display_name || LOCAL_OPENDRSAI_AGENT_NAME;
   const executionStartedAt = Date.now();
   recordAgentTelemetry({ event: "execution_started", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local" });
   if (platformDescriptor && request.agentId) {
-    platformChatTargets.set(requestId, {
+    const turn = chatTurns.get(requestId);
+    if (turn) turn.platform = {
       agentId: request.agentId,
       threadId: sessionId,
       mode: platformDescriptor.mode,
-    });
+    };
   }
-  emit(webContents, { requestId, sessionId, runId, type: "start" });
+  // Platform runs use the request ID as their stable execution identity. Local
+  // Runtime runs do not: createAgentRun() assigns the authoritative ID later.
+  // Publishing the provisional request ID here makes the renderer treat it as
+  // a persisted Runtime Run and race a manifest read against a row that can
+  // never exist.
+  if (platformDescriptor) {
+    emit(webContents, { requestId, sessionId, runId, type: "start" });
+  }
   await upsertThreadFromRun({
     id: sessionId,
     kind: "chat",
@@ -724,6 +786,7 @@ async function runChat(
   const attachmentContext = await buildAttachmentContext(request.attachments);
   const enrichedRequest: ChatRequest = {
     ...request,
+    agentId: boundAgentId,
     messages: withAttachmentContext(request.messages, attachmentContext),
     metadata: {
       ...(request.metadata || {}),
@@ -748,14 +811,14 @@ async function runChat(
         isCodexBackend ? "codex@1" : "opendrsai@1",
         auth,
       );
-      activeChats.delete(requestId);
       recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt });
       await upsertThreadFromRun({ id: sessionId, kind: "chat", title: deriveThreadTitle(request.messages),
-        workspacePath: request.workspacePath, boundAgentId, boundAgentName, lastRunId: runtimeChatTargets.get(requestId)?.runId ?? runId,
+        workspacePath: request.workspacePath, boundAgentId, boundAgentName, lastRunId: chatTurns.get(requestId)?.runtime?.runId ?? runId,
         lastRequestId: requestId, status: "idle", messageCount: request.messages.length });
       // OAEP event.run.* is the only Runtime terminal source. The shared
       // projector already sent the terminal Structured Event.
       structuredTerminalRequests.delete(requestId);
+      chatTurns.delete(requestId);
       return;
     }
     // Only HAI Platform Agents reach this branch. OpenDrSai and Codex have
@@ -886,7 +949,6 @@ async function runChat(
     if (controller.signal.aborted) {
       throw new Error("Chat request was aborted.");
     }
-    activeChats.delete(requestId);
     if (platformDescriptor && request.agentId) recordAgentCircuitSuccess(request.agentId);
     recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local", durationMs: Date.now() - executionStartedAt });
     await upsertThreadFromRun({
@@ -896,7 +958,7 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: runtimeChatTargets.get(requestId)?.runId ?? (isCodexBackend ? undefined : runId),
+      lastRunId: chatTurns.get(requestId)?.runtime?.runId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
       status: "idle",
       messageCount: request.messages.length,
@@ -920,7 +982,7 @@ async function runChat(
             ? "user_cancelled"
             : "execution_error",
     });
-    const authoritativeRuntimeRunId = runtimeChatTargets.get(requestId)?.runId;
+    const authoritativeRuntimeRunId = chatTurns.get(requestId)?.runtime?.runId;
     await upsertThreadFromRun({
       id: sessionId,
       kind: "chat",
@@ -939,8 +1001,7 @@ async function runChat(
     throw error;
   } finally {
     clearTimeout(timeout);
-    platformChatTargets.delete(requestId);
-    runtimeChatTargets.delete(requestId);
+    chatTurns.get(requestId)?.subscription?.stop();
   }
 }
 
@@ -1443,7 +1504,7 @@ async function runRuntimeBackendChat(
         presentationItemForOaepEvent(state, event),
       );
       if (liveProjectionTarget.approvalId) {
-        const responseTarget = runtimeChatTargets.get(requestId);
+        const responseTarget = chatTurns.get(requestId)?.runtime;
         if (responseTarget) responseTarget.approvalId = liveProjectionTarget.approvalId;
       }
       if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {
@@ -1521,7 +1582,28 @@ async function runRuntimeBackendChat(
     runId: run.run_id,
     projection: liveProjectionTarget.projection,
   };
-  runtimeChatTargets.set(requestId, target);
+  const turn = chatTurns.get(requestId);
+  if (!turn) {
+    await target.client.cancelAgentRun(target.runId).catch(() => undefined);
+    throw new DOMException("Chat turn was cancelled before Runtime binding.", "AbortError");
+  }
+  turn.runId = run.run_id;
+  turn.runtime = target;
+  turn.subscription = liveSubscription;
+  if (turn.cancelRequested || controller.signal.aborted) {
+    await target.client.cancelAgentRun(target.runId).catch(() => undefined);
+    throw new DOMException("Chat turn was cancelled before execution.", "AbortError");
+  }
+  turn.phase = "running";
+  // Bind the renderer only after the Runtime has persisted the authoritative
+  // Run. From this point every run-scoped read (manifest, inspection, cancel)
+  // can safely use run.run_id.
+  emit(webContents, {
+    requestId,
+    sessionId: displaySessionId,
+    runId: run.run_id,
+    type: "start",
+  });
 
   const prompt = selectCurrentUserInput(request.messages);
   const goalConfirmationRequired = agentDefinition === "opendrsai@1"
@@ -1578,7 +1660,7 @@ async function runRuntimeBackendChat(
   }
   let failure: unknown;
   const modelSelection = agentDefinition === "opendrsai@1" && client.location === "local"
-    ? await getMyDrSaiAgentModelPolicy("my-drsai").then((policy) => {
+    ? await getMyDrSaiAgentModelPolicy(request.agentId).then((policy) => {
         if (!policy.valid || !policy.effective_ref) {
           throw new Error(policy.error || "Configure a primary model for this OpenDrSai Agent before starting a Run.");
         }
@@ -1597,6 +1679,7 @@ async function runRuntimeBackendChat(
       ...(modelSelection ? { modelSelection } : { model: request.model }),
       metadata: {
         ...(request.metadata ?? {}),
+        ...(agentDefinition === "opendrsai@1" && request.agentId ? { agent_name: request.agentId } : {}),
         desktop_request_id: requestId,
         ...(goalConfirmationRequired ? { goal_required: true } : {}),
       },
@@ -1683,13 +1766,19 @@ function mapRuntimeOaepEvent(
   if (item?.type === "interaction" && item.status === "waiting") {
     target.approvalId = String(item.content.approval_id ?? "");
   }
-  return projectOaepEventForPresentation(event, target.projection, currentItem).map((structuredEvent) => ({
+  return [{
     requestId,
     sessionId,
     runId,
-    type: "structured",
+    type: "oaep" as const,
+    oaepEvent: event,
+  }, ...projectOaepEventForPresentation(event, target.projection, currentItem).map((structuredEvent) => ({
+    requestId,
+    sessionId,
+    runId,
+    type: "structured" as const,
     structuredEvent,
-  }));
+  }))];
 }
 
 function isOaepItem(value: unknown): value is OaepItem {
@@ -2032,7 +2121,7 @@ async function readSse(
       const inputRequest = parseAgentInputRequestSseFrame(frame);
       if (inputRequest) {
         const interactionRequestId = inputRequest.requestId || requestId;
-        const platformTarget = platformChatTargets.get(requestId);
+        const platformTarget = chatTurns.get(requestId)?.platform;
         if (platformTarget?.mode === "ddf") {
           platformInputTargets.set(interactionRequestId, {
             agentId: platformTarget.agentId,
@@ -2122,7 +2211,7 @@ async function readSse(
     const inputRequest = parseAgentInputRequestSseFrame(buffer);
     if (inputRequest) {
       const interactionRequestId = inputRequest.requestId || requestId;
-      const platformTarget = platformChatTargets.get(requestId);
+      const platformTarget = chatTurns.get(requestId)?.platform;
       if (platformTarget?.mode === "ddf") {
         platformInputTargets.set(interactionRequestId, {
           agentId: platformTarget.agentId,
@@ -2340,17 +2429,18 @@ function emit(webContents: ChatEventTarget, event: ChatEvent): void {
   const seq = (chatEventSequences.get(event.requestId) ?? 0) + 1;
   chatEventSequences.set(event.requestId, seq);
   const sequenced = { ...event, seq };
-  const currentTarget = activeChatEventTargets.get(event.requestId) ?? webContents;
+  const currentTarget = chatTurns.get(event.requestId)?.eventTarget ?? webContents;
   getChatEventDispatcher(currentTarget).enqueue(sequenced);
   recordChatRunEvent(sequenced);
-  void recordChatDiagnosticEvent(event, seq);
+  const runtimeTarget = chatTurns.get(event.requestId)?.runtime;
+  void recordChatDiagnosticEvent(event, seq, runtimeTarget);
   if (event.type === "done" || event.type === "error" || event.type === "aborted") {
     chatEventSequences.delete(event.requestId);
-    activeChatEventTargets.delete(event.requestId);
+    chatTurns.delete(event.requestId);
   }
 }
 
-async function recordChatDiagnosticEvent(event: ChatEvent, seq: number): Promise<void> {
+async function recordChatDiagnosticEvent(event: ChatEvent, seq: number, runtimeTarget?: RuntimeChatTarget): Promise<void> {
   try {
     const operation = await chatDiagnosticOperations.get(event.requestId);
     if (event.type === "done") {
@@ -2360,10 +2450,8 @@ async function recordChatDiagnosticEvent(event: ChatEvent, seq: number): Promise
     }
     if (event.type === "error") {
       await operation?.fail(new Error(event.error || "Chat run failed"), "CHAT_RUN_FAILED");
-      const runtimeTarget = runtimeChatTargets.get(event.requestId);
       if (runtimeTarget) await ingestRuntimeDiagnostics(event.requestId, operation?.spanId, runtimeTarget.client, runtimeTarget.runId);
       chatDiagnosticOperations.delete(event.requestId);
-      runtimeChatTargets.delete(event.requestId);
       return;
     }
     if (event.type === "aborted") {

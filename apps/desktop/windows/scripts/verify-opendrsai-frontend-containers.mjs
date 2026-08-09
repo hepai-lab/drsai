@@ -56,10 +56,10 @@ const diagnostics = readFileSync(resolve(renderer, containers.DiagnosticsContain
 assert.match(diagnostics, /const \[busy, setBusy\] = useState/);
 assert.match(diagnostics, /const \[message, setMessage\] = useState/);
 assert.match(diagnostics, /copyTextSafely/);
-assert.match(diagnostics, /completedAutomaticRecoveries\.has\(autoRecoverKey\)/, "model verification must be deduplicated per selected configuration");
-assert.match(diagnostics, /void recover\(\)/, "unverified persisted models must be checked automatically");
-assert.match(authenticatedApp, /testMyDrSaiModelProvider\(provider, model\)/, "model recovery must test the selected persisted model inline");
-assert.match(authenticatedApp, /autoRecoverKey=\{operationalDecision\.currentLayer === "model"[\s\S]{0,600}operationalDecision\.state === "untested"/, "only untested model state may trigger automatic verification");
+assert.doesNotMatch(diagnostics, /autoRecoverKey|completedAutomaticRecoveries/, "automatic Agent verification must not depend on whether the status popover is mounted");
+assert.match(authenticatedApp, /testMyDrSaiModelProvider\(provider, model\)/, "current Agent model recovery must test the selected persisted model inline");
+assert.match(authenticatedApp, /automaticAgentModelVerificationsRef[\s\S]{0,1400}myDrSaiAgentModelPolicy\.agent_id[\s\S]{0,400}ref\.provider_id[\s\S]{0,200}ref\.model_id[\s\S]{0,500}testMyDrSaiModelProvider\(ref\.provider_id, ref\.model_id\)/, "automatic verification must be keyed by the current Agent and its effective model ref");
+assert.match(authenticatedApp, /const selectedRef = myDrSaiAgentModelPolicy\?\.effective_ref;[\s\S]{0,1200}const provider = selectedRef\.provider_id;[\s\S]{0,100}const model = selectedRef\.model_id;/, "verification must not fall back to a legacy global or HAI model");
 assert.match(authenticatedApp, /if \(!config\?\.modelConnection\?\.model \|\| !config\.modelConnection\.model_provider\)/, "model recovery must open settings only when persisted configuration is unavailable");
 
 console.log(JSON.stringify({

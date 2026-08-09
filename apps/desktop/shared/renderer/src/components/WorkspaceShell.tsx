@@ -2301,6 +2301,18 @@ export function WorkspaceShell({
               <button
                 type="button"
                 role="menuitem"
+                data-testid="user-menu-restart-application"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  void desktopApi.restartApplication();
+                }}
+              >
+                <RotateCw size={15} />
+                {zh ? "重启应用" : "Restart application"}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
                 onClick={() => {
                   setUserMenuOpen(false);
                   onLogout();

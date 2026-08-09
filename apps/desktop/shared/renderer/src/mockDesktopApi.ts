@@ -822,7 +822,7 @@ export function installMockDesktopApi(): void {
         { id: `long-assistant-${turn}`, role: "assistant" as const, content: `## Result ${turn}\n\nRendered Markdown for a long OpenDrSai conversation.\n\n\`\`\`ts\nconst turn = ${turn};\n\`\`\`` },
       ];
     }).flat();
-    threads = [{ id: threadId, kind: "chat", title: `${longConversationFixtureRuns}-turn OpenDrSai fixture`, createdAt: now, updatedAt: now, runtimeSessionId: "mock-opendrsai-session", boundAgentId: "my-drsai", boundAgentName: "OpenDrSai", messageCount: messages.length }];
+    threads = [{ id: threadId, kind: "chat", title: `${longConversationFixtureRuns}-turn OpenDrSai fixture`, createdAt: now, updatedAt: now, runtimeSessionId: "mock-opendrsai-session", boundAgentId: "opendrsai", boundAgentName: "OpenDrSai", messageCount: messages.length }];
     threadSnapshots = {
       [threadId]: {
         threadId,
@@ -867,7 +867,7 @@ export function installMockDesktopApi(): void {
       protocolIssues: [],
       meta: { backend: "opendrsai", workspaceLabel: "10k acceptance workspace", durationMs: 12_000 },
     };
-    threads = [{ id: threadId, kind: "chat", title: "10,000-item process fixture", createdAt: now, updatedAt: now, lastRunId: turnId, runtimeSessionId: "mock-10k-session", boundAgentId: "my-drsai", boundAgentName: "OpenDrSai", messageCount: 2 }];
+    threads = [{ id: threadId, kind: "chat", title: "10,000-item process fixture", createdAt: now, updatedAt: now, lastRunId: turnId, runtimeSessionId: "mock-10k-session", boundAgentId: "opendrsai", boundAgentName: "OpenDrSai", messageCount: 2 }];
     threadSnapshots = { [threadId]: {
       threadId,
       title: threads[0].title,
@@ -1657,6 +1657,7 @@ export function installMockDesktopApi(): void {
       };
       return { ok: true, message: "Mock sign-out complete." };
     },
+    restartApplication: async () => true,
     previewLocalDataCleanup: async (scope) => ({
       scope,
       applicationData: [{ category: "sessions", label: "会话", description: "清除会话记录。" }],
@@ -2122,7 +2123,7 @@ export function installMockDesktopApi(): void {
     listThreads: async () => threads,
     listAgents: async (): Promise<DesktopAgent[]> => [
       {
-        id: "my-drsai",
+        id: "opendrsai",
         name: "OpenDrSai",
         description: "运行在本机的智能体。",
         owner: "运行在本机的智能体。",
@@ -2161,7 +2162,7 @@ export function installMockDesktopApi(): void {
     getAgentCatalogSnapshot: async () => ({
       agents: [
         {
-          id: "my-drsai",
+          id: "opendrsai",
           name: "OpenDrSai",
           description: "运行在本机的智能体。",
           owner: "Local",
@@ -2270,8 +2271,24 @@ export function installMockDesktopApi(): void {
         capability_confidence: "inferred",
       }],
     }),
-    getMyDrSaiAgentModelPolicy: async (agentId = "my-drsai") => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, speech_to_text_model: null, reasoning_effort: "high", effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model }, revision: `sha256:${"a".repeat(64)}`, valid: true }),
-    getMyDrSaiAgentModelCapabilityStatus: async (agentId = "my-drsai") => ({ agent_id: agentId, capabilities: [] }),
+    getMyDrSaiAgentModelPolicy: async (agentId = "opendrsai") => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, speech_to_text_model: null, reasoning_effort: "high", effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model }, revision: `sha256:${"a".repeat(64)}`, valid: true }),
+    getMyDrSaiAgentToolPolicy: async (agentId) => ({ agent_id: agentId, mode: "inherit", enabled: [], disabled: [], require_approval: [], revision: `sha256:${"d".repeat(64)}` }),
+    updateMyDrSaiAgentToolPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, revision: `sha256:${"e".repeat(64)}` }),
+    previewMyDrSaiAgentTools: async (agentId) => ({ agent_id: agentId, mode: "inherit", tools: [{ tool_id: "builtin.image_generation", status: "available", capabilities: ["tool.call", "builtin"], selected: true }, { tool_id: "builtin.web-search", status: "available", capabilities: ["tool.call", "builtin", "network.public_https"], selected: true }], missing_ids: [], disabled_ids: [], agent_revision: `sha256:${"d".repeat(64)}`, registry_revision: `sha256:${"f".repeat(64)}` }),
+    testAgentTool: async (toolId) => ({ ok: true, tool_id: toolId, status: "available", tested: "configuration" }),
+    getMyDrSaiAgentSkillPolicy: async (agentId) => ({ agent_id: agentId, mode: "inherit", enabled: [], disabled: [], allow_thread_override: true, revision: `sha256:${"d".repeat(64)}` }),
+    updateMyDrSaiAgentSkillPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, revision: `sha256:${"e".repeat(64)}` }),
+    previewMyDrSaiAgentSkills: async (agentId) => ({ agent_id: agentId, mode: "inherit", skills: [], enabled_ids: [], missing_ids: [], allow_thread_override: true, revision: `sha256:${"d".repeat(64)}` }),
+    getMyDrSaiAgentKnowledgePolicy: async (agentId) => ({ agent_id: agentId, mode: "inherit", sources: [], retrieval_policy: "auto", top_k: 6, score_threshold: 0.35, require_citations: true, revision: `sha256:${"d".repeat(64)}` }),
+    updateMyDrSaiAgentKnowledgePolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, revision: `sha256:${"e".repeat(64)}` }),
+    previewMyDrSaiAgentKnowledge: async (agentId) => ({ agent_id: agentId, mode: "inherit", sources: [], missing_ids: [], knowledge_bases: [], retrieval_policy: "auto", top_k: 6, score_threshold: 0.35, require_citations: true, revision: `sha256:${"d".repeat(64)}` }),
+    indexKnowledgeBase: async (knowledgeId) => ({ knowledge_id: knowledgeId, status: "ready", document_count: 1, chunk_count: 1 }),
+    testKnowledgeBase: async (knowledgeId) => ({ ok: true, knowledge_id: knowledgeId, type: "local-files", status: "ready" }),
+    searchKnowledgeBase: async (knowledgeId, query) => ({ knowledge_id: knowledgeId, query, evidence: [{ knowledge_id: knowledgeId, document_id: "doc", chunk_id: "chunk", source: "guide.md", score: 1, content_sha256: `sha256:${"a".repeat(64)}`, content: "Preview evidence" }] }),
+    listKnowledgeBases: async () => [],
+    createKnowledgeBase: async (request) => ({ ...request, status: "not_indexed" }),
+    deleteKnowledgeBase: async () => ({ status: "ok" }),
+    getMyDrSaiAgentModelCapabilityStatus: async (agentId = "opendrsai") => ({ agent_id: agentId, capabilities: [] }),
     updateMyDrSaiAgentModelPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, effective_ref: policy.primary_model.ref, revision: `sha256:${"b".repeat(64)}`, valid: true }),
     migrateMyDrSaiAgentModelPolicy: async (agentId, legacyModel) => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, speech_to_text_model: null, effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel }, revision: `sha256:${"c".repeat(64)}`, valid: true, migrated: true }),
     updateMyDrSaiConfig: async (request): Promise<MyDrSaiConfig> => {
@@ -2341,7 +2358,7 @@ export function installMockDesktopApi(): void {
     preflightMyDrSaiModelProviderDeletion: async (provider) => ({
       provider,
       references: provider === myDrSaiModelConnection.model_provider ? [
-        { kind: "agent_model_policy", id: "my-drsai", label: "Local OpenDrSai Agent model", model_id: myDrSaiModelConnection.model },
+        { kind: "agent_model_policy", id: "opendrsai", label: "OpenDrSai primary model", model_id: myDrSaiModelConnection.model },
       ] : [],
       can_delete: provider !== myDrSaiModelConnection.model_provider,
     }),
@@ -2722,9 +2739,9 @@ export function installMockDesktopApi(): void {
       return requestId;
     },
     recoverChatRun: async () => [],
-    abortChat: async (requestId) => {
+    cancelChatTurn: async ({ requestId }) => {
       emit(chatListeners, { requestId, type: "aborted" });
-      return true;
+      return { accepted: true, state: "cancelling" };
     },
     listSessionRuns: async (request) => ({
       schema_version: "opendrsai.run-inspection/1",

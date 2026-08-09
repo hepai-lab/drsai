@@ -9,6 +9,7 @@ param(
     [switch]$NoDevServer,
     [switch]$NoGateway,
     [switch]$WithGateway,
+    [string]$PipIndexUrl = "https://pypi.tuna.tsinghua.edu.cn/simple",
     [switch]$ShowLibPngWarnings
 )
 
@@ -253,7 +254,7 @@ function Test-DeveloperBackendReady {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        & $venvPython -c "import drsai" *> $null
+        & $venvPython -c "import drsai, playwright; from drsai.backend.runtime.web_search import web_search_runtime_status; assert web_search_runtime_status()['status'] == 'available'" *> $null
         if ($LASTEXITCODE -ne 0) { return $false }
 
         & $venvPython -W ignore -m drsai.backend.run_cli version *> $null
@@ -523,7 +524,8 @@ function Start-HotReloadGateway {
     $env:OPENDRSAI_GATEWAY_INSTANCE_TOKEN = $instanceToken
     $env:PYTHONPATH = if ($env:PYTHONPATH) { "$drsaiSrc$([IO.Path]::PathSeparator)$env:PYTHONPATH" } else { $drsaiSrc }
 
-    $args = @(
+    $gatewayCommand = $PythonPath
+    $gatewayArgs = @(
         "-m", "uvicorn",
         "drsai.backend.gateway:app",
         "--host", "127.0.0.1",
@@ -531,15 +533,24 @@ function Start-HotReloadGateway {
     )
     # uvicorn's Windows reload worker uses SelectorEventLoop, which cannot
     # launch the Codex app-server subprocess required by CodexAdapter.
-    # Run the source Gateway directly on Windows; restart the dev command to
-    # pick up Python changes. Other platforms retain hot reload.
-    if (-not ($IsWindows -or $env:OS -eq "Windows_NT")) {
-        $args += @("--reload", "--reload-dir", $reloadDir)
+    # Keep the Gateway worker on Windows' subprocess-capable event loop. An
+    # outer watcher restarts that direct worker when Python changes instead of
+    # using uvicorn's incompatible Windows reload worker.
+    if ($IsWindows -or $env:OS -eq "Windows_NT") {
+        $watcher = Join-Path $ScriptDir "watch-gateway.ps1"
+        $gatewayCommand = (Get-Command powershell.exe).Source
+        $gatewayArgs = @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$watcher`"",
+            "-PythonPath", "`"$PythonPath`"", "-RepoRoot", "`"$RepoRoot`"",
+            "-WatchPath", "`"$reloadDir`"", "-Port", [string]$Port
+        )
+    } else {
+        $gatewayArgs += @("--reload", "--reload-dir", $reloadDir)
     }
 
     $proc = Start-Process `
-        -FilePath $PythonPath `
-        -ArgumentList $args `
+        -FilePath $gatewayCommand `
+        -ArgumentList $gatewayArgs `
         -WorkingDirectory $RepoRoot `
         -PassThru `
         -NoNewWindow `
@@ -554,7 +565,7 @@ function Start-HotReloadGateway {
         }
         if (Test-GatewayReady -Port $Port -Token $instanceToken) {
             [Console]::Write("`r$((' ' * 120))`r")
-            $gatewayMode = if ($IsWindows -or $env:OS -eq "Windows_NT") { "Windows subprocess-compatible" } else { "uvicorn --reload" }
+            $gatewayMode = if ($IsWindows -or $env:OS -eq "Windows_NT") { "Windows source watcher" } else { "uvicorn --reload" }
             Write-Host "    OK Gateway ready at http://127.0.0.1:$Port ($gatewayMode)." -ForegroundColor Green
             Write-Host "    Logs: $stdout" -ForegroundColor DarkGray
             return $proc
@@ -597,7 +608,21 @@ $ElectronUserData = Join-Path $DrsaiHome "electron-user-data"
 # must not mask missing request-scoped OIDC propagation.
 $env:OPENDRSAI_DESKTOP_DEV = "1"
 $env:OPENDRSAI_OIDC_ONLY = "1"
+$BuiltInSkillsDir = Join-Path $RepoRoot "skills\skills"
+if (-not (Test-Path -LiteralPath $BuiltInSkillsDir -PathType Container)) {
+    throw "Cannot find the built-in Skills directory: $BuiltInSkillsDir"
+}
+$env:SYSTEM_SKILLS_DIR = $BuiltInSkillsDir
 Remove-Item Env:HEPAI_API_KEY, Env:OPENAI_API_KEY, Env:OPENAI_ADMIN_KEY -ErrorAction SilentlyContinue
+
+# A fresh, isolated developer profile must not stall on an unreachable public
+# PyPI mirror.  The caller can override this with -PipIndexUrl (or the
+# OPENDRSAI_DEV_PIP_INDEX_URL environment variable) for an internal mirror.
+$PipIndexUrl = if ($env:OPENDRSAI_DEV_PIP_INDEX_URL) { $env:OPENDRSAI_DEV_PIP_INDEX_URL } else { $PipIndexUrl }
+if ($PipIndexUrl -notmatch '^https://[^\s/]+(?:/.*)?$') { throw "PipIndexUrl must be an HTTPS simple-index URL." }
+$PipIndexUrl = $PipIndexUrl.TrimEnd('/')
+$env:PIP_INDEX_URL = if ($PipIndexUrl.EndsWith('/simple')) { $PipIndexUrl } else { "$PipIndexUrl/simple" }
+$env:PIP_DEFAULT_TIMEOUT = "60"
 
 $DevLogDir = Join-Path $DrsaiHome "logs\desktop-dev"
 $DevCacheDir = Join-Path $DrsaiHome "cache\desktop-dev"
@@ -645,6 +670,8 @@ Write-Host "  Repository:  $RepoRoot" -ForegroundColor Green
 Write-Host "  DrSai home:  $DrsaiHome" -ForegroundColor Green
 Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
 Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
+Write-Host "  Skills:      $BuiltInSkillsDir" -ForegroundColor Green
+Write-Host "  Pip index:   $($env:PIP_INDEX_URL)" -ForegroundColor Green
 Write-Host "  Desktop app: $DesktopDir" -ForegroundColor Green
 Write-Host ""
 
@@ -725,7 +752,11 @@ try {
         Assert-DesktopNodeVersion
         $workspaceDependenciesReady = (Test-Path "node_modules\react\jsx-dev-runtime.js") -and
             (Test-Path "node_modules\electron") -and
-            (Test-Path "node_modules\vite")
+            (Test-Path "node_modules\vite") -and
+            ((Test-Path "node_modules\@electron-toolkit\utils\package.json") -or
+                (Test-Path (Join-Path $DesktopDir "node_modules\@electron-toolkit\utils\package.json"))) -and
+            ((Test-Path "node_modules\@electron-toolkit\preload\package.json") -or
+                (Test-Path (Join-Path $DesktopDir "node_modules\@electron-toolkit\preload\package.json")))
         if ($workspaceDependenciesReady) {
             Write-Host "    OK desktop workspace dependencies already installed." -ForegroundColor Green
         } else {

@@ -26,6 +26,7 @@ import { getActivePlatformConfig } from "./platformConfig";
 import { saveApiKeyAndSync } from "./settings";
 import { sanitizeDiagnosticUrl } from "./secretRedaction";
 import { getOrCreateStableLocalUserId, rememberUserIdAlias } from "./userIdentity";
+import { registerAuthContextProvider, syncCoordinatedGatewayIdentity } from "./authGatewayCoordination";
 
 const IS_DESKTOP_DEV = isDesktopDevelopment();
 let credentialService: DesktopCredentialService | null = null;
@@ -148,6 +149,8 @@ export async function requireAuthContext(): Promise<AuthContext> {
     issuer: refreshed.issuer,
   };
 }
+
+registerAuthContextProvider(requireAuthContext);
 
 export async function login(rawRequest: unknown): Promise<LoginResult> {
   const request = normalizeLoginRequest(rawRequest);
@@ -776,9 +779,10 @@ async function propagateAuthIdentityToGateway(userId: string): Promise<void> {
   // so we do not thrash Gateway identity APIs during chat.
   if (lastPropagatedAuthUserId === trimmed) return;
   try {
-    const { syncAuthIdentityToGateway } = await import("./gateway");
-    await syncAuthIdentityToGateway(trimmed);
-    lastPropagatedAuthUserId = trimmed;
+    const propagated = await syncCoordinatedGatewayIdentity(trimmed);
+    // A bridge without a registered Gateway returns null. Do not cache that
+    // as success or a Gateway loaded later would never receive the identity.
+    if (propagated) lastPropagatedAuthUserId = trimmed;
   } catch {
     // Login must succeed even if Gateway is offline; bootstrap/startGateway retries.
   }
