@@ -91,6 +91,19 @@ from .knowledge_registry import (
     put_knowledge_resource,
     search_local_knowledge,
 )
+from .perceptor_registry import (
+    PERCEPTOR_SECRET_PLACEHOLDER,
+    PerceptorResource,
+    canonical_perceptor_id,
+    delete_perceptor_resource,
+    get_perceptor_resource,
+    list_perceptor_resources,
+    merge_perceptor_secret_placeholders,
+    perceptor_revision,
+    public_perceptor_payload,
+    put_perceptor_resource,
+    resolve_perceptor_config,
+)
 
 __all__ = [
     "ConfigError",
@@ -191,4 +204,15 @@ __all__ = [
     "knowledge_status",
     "index_local_files",
     "search_local_knowledge",
+    "PERCEPTOR_SECRET_PLACEHOLDER",
+    "PerceptorResource",
+    "canonical_perceptor_id",
+    "delete_perceptor_resource",
+    "get_perceptor_resource",
+    "list_perceptor_resources",
+    "merge_perceptor_secret_placeholders",
+    "perceptor_revision",
+    "public_perceptor_payload",
+    "put_perceptor_resource",
+    "resolve_perceptor_config",
 ]

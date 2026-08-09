@@ -92,6 +92,7 @@ class WebSearchResult:
     snippet: str = ""
     content: str = ""
     content_sha256: str = ""
+    score: float | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -121,6 +122,20 @@ class WebSearchCandidate:
 
 
 @dataclass(frozen=True)
+class ProviderReceipt:
+    request_id: str = ""
+    latency_ms: int | None = None
+    usage_units: float | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            **({"request_id": self.request_id} if self.request_id else {}),
+            **({"latency_ms": self.latency_ms} if self.latency_ms is not None else {}),
+            **({"usage_units": self.usage_units} if self.usage_units is not None else {}),
+        }
+
+
+@dataclass(frozen=True)
 class WebSearchResponse:
     query: str
     results: tuple[WebSearchResult, ...]
@@ -133,6 +148,7 @@ class WebSearchResponse:
     partial: bool = False
     warnings: tuple[str, ...] = ()
     candidates: tuple[WebSearchCandidate, ...] = ()
+    receipt: ProviderReceipt | None = None
     version: int = 1
 
     def public_dict(self) -> dict[str, Any]:
@@ -146,6 +162,7 @@ class WebSearchResponse:
             "results": [result.public_dict() for result in self.results],
             "partial": self.partial,
             "warnings": list(self.warnings),
+            **({"receipt": self.receipt.public_dict()} if self.receipt else {}),
         }
 
     def inspection_dict(self) -> dict[str, Any]:
@@ -158,6 +175,7 @@ class WebSearchResponse:
             "effective_query": self.query,
             "rewrite_reason": self.rewrite_reason,
             "provider": self.provider,
+            **({"receipt": self.receipt.public_dict()} if self.receipt else {}),
             "candidate_count": len(self.candidates),
             "accepted_count": accepted,
             "rejected_count": len(self.candidates) - accepted,

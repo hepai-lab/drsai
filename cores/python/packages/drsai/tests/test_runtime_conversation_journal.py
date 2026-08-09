@@ -1190,7 +1190,7 @@ def test_opendrsai_backend_events_project_tool_commands_and_failures_to_oaep(
     assert failure["type"] == "notice"
     assert failure["status"] == "failed"
     assert failure["content"]["code"] == "model_rate_limited"
-    assert failure["content"]["message"] == "[REDACTED]"
+    assert failure["content"]["message"] == "Retry after token=[REDACTED]"
     assert failure["content"]["details"] == {"retryable": True}
     assert failure["content"]["error"]["retryable"] is True
 

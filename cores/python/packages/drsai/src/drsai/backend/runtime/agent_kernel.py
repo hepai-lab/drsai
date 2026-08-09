@@ -8,11 +8,13 @@ decisions stay here.
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
 import re
+from urllib.parse import urlsplit, urlunsplit
 import unicodedata
 from typing import Any, Mapping, Sequence
 
@@ -588,6 +590,19 @@ def production_capability_manifest(surface: str) -> dict[str, Any]:
 _PUBLIC_URL_PATTERN = re.compile(r"https://[^\s<>\]\[(){}\"']+")
 
 
+def _normalize_public_citation_url(value: str) -> str:
+    """Canonicalize only syntax-equivalent HTTPS root URLs for evidence matching."""
+    cleaned = value.rstrip(".,;:!?")
+    try:
+        parsed = urlsplit(cleaned)
+    except ValueError:
+        return cleaned
+    if parsed.scheme != "https" or not parsed.netloc:
+        return cleaned
+    path = "" if parsed.path == "/" else parsed.path
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+
 def build_citation_evidence(
     messages: Sequence[Mapping[str, Any]], final_content: str, *, retrieval_required: bool,
 ) -> dict[str, Any]:
@@ -608,8 +623,19 @@ def build_citation_evidence(
         elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
             for child in value:
                 collect(child, key)
-        elif isinstance(value, str) and key in {"url", "final_url"} and value.startswith("https://"):
-            source_urls.add(value.rstrip(".,;:!?"))
+        elif isinstance(value, str):
+            if key in {"url", "final_url"} and value.startswith("https://"):
+                source_urls.add(_normalize_public_citation_url(value))
+            elif key in {"content", "result"} and value.lstrip().startswith("{"):
+                try:
+                    decoded = json.loads(value)
+                except (TypeError, json.JSONDecodeError):
+                    try:
+                        decoded = ast.literal_eval(value)
+                    except (SyntaxError, ValueError):
+                        decoded = None
+                if isinstance(decoded, Mapping):
+                    collect(decoded)
 
     for message in messages:
         if message.get("role") != "tool" or message.get("succeeded") is False:
@@ -649,7 +675,7 @@ def build_citation_evidence(
         if isinstance(call_id, str) and call_id:
             source_call_ids.add(call_id)
 
-    answer_urls = {value.rstrip(".,;:!?") for value in _PUBLIC_URL_PATTERN.findall(final_content)}
+    answer_urls = {_normalize_public_citation_url(value) for value in _PUBLIC_URL_PATTERN.findall(final_content)}
     cited = answer_urls.intersection(source_urls)
     fabricated = answer_urls.difference(source_urls)
     # Once a successful retrieval result contributed public source URLs, the

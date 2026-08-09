@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from drsai.backend.runtime.agent_kernel import build_citation_evidence, normalize_citation_evidence
@@ -96,11 +98,22 @@ def test_knowledge_evidence_is_bound_by_hash_and_requires_source_label() -> None
     assert normalize_citation_evidence(cited) == cited
 
 
+def test_https_root_url_trailing_slash_is_citation_equivalent() -> None:
+    evidence = build_citation_evidence([{
+        "role": "tool", "tool_call_id": "search-root", "name": "web.search", "succeeded": True,
+        "content": {"results": [{"url": "https://www.hepix.org"}]},
+    }], "Source: https://www.hepix.org/", retrieval_required=True)
+
+    assert evidence["valid"] is True
+    assert evidence["fabricated_url_sha256"] == []
+
+
 def test_missing_citation_is_buffered_and_retried_then_exact_source_completes() -> None:
     core = searched_core()
     retry = core.handle(command(MessageType.MODEL_COMPLETED, 3, {"content": "HEPiX 2026 is a conference."}))
     assert kinds(retry) == ["tool.decision", "citation.required"]
     assert retry[-1].message_type is MessageType.MODEL_REQUEST
+    assert retry[-1].payload["tools"] == []
     assert "HEPiX 2026 is a conference." not in str(retry)
     assert core.snapshot("run-cite")["citation_retry_count"] == 1
 
@@ -114,7 +127,7 @@ def test_missing_citation_is_buffered_and_retried_then_exact_source_completes() 
     assert SOURCE not in str(citation)
 
 
-def test_fabricated_url_is_rejected_and_second_invalid_answer_fails_closed() -> None:
+def test_second_invalid_answer_removes_fabricated_url_and_attaches_trusted_source() -> None:
     core = searched_core()
     first = core.handle(command(MessageType.MODEL_COMPLETED, 3, {
         "content": f"Source {SOURCE} and https://fabricated.example/claim",
@@ -123,12 +136,95 @@ def test_fabricated_url_is_rejected_and_second_invalid_answer_fails_closed() -> 
     checkpoint = next(item for item in first if item.message_type is MessageType.CHECKPOINT_REQUEST)
     recovered = create_mobile_agent_core()
     recovered.handle(command(MessageType.RESUME_RUN, 4, {"state": checkpoint.payload["state"]}, "resume"))
-    failed = recovered.handle(command(MessageType.MODEL_COMPLETED, 5, {
-        "content": "Still no source URL",
+    completed = recovered.handle(command(MessageType.MODEL_COMPLETED, 5, {
+        "content": "Still cites https://fabricated.example/claim",
     }, "invalid-again"))
-    assert kinds(failed) == ["tool.decision", "run.failed"]
-    failure = next(item.payload for item in failed if item.payload.get("kind") == "run.failed")
-    assert failure["code"] == "citation_evidence_invalid"
+    assert kinds(completed) == ["tool.decision", "citation.verified", "message.completed", "run.completed"]
+    message = next(item.payload for item in completed if item.payload.get("kind") == "message.completed")
+    assert "fabricated.example" not in message["text"]
+    assert SOURCE in message["text"]
+
+
+def test_second_missing_citation_is_repaired_from_trusted_tool_result() -> None:
+    core = searched_core()
+    first = core.handle(command(MessageType.MODEL_COMPLETED, 3, {
+        "content": "HEPiX 2026 is a scientific computing forum.",
+    }))
+    assert kinds(first) == ["tool.decision", "citation.required"]
+
+    completed = core.handle(command(MessageType.MODEL_COMPLETED, 4, {
+        "content": "HEPiX 2026 is a scientific computing forum.",
+    }, "still-missing"))
+
+    assert kinds(completed) == ["tool.decision", "citation.verified", "message.completed", "run.completed"]
+    message = next(item.payload for item in completed if item.payload.get("kind") == "message.completed")
+    assert SOURCE in message["text"]
+    assert core.snapshot("run-cite")["phase"] == "completed"
+
+
+def test_second_missing_citation_decodes_tavily_string_wrappers() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "What is HEPiX 2026?", "model_id": "model", "tools": [tool()],
+    }))
+    core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "search-1", "name": "web.search", "arguments": {"query": "HEPiX 2026"}},
+    ]}))
+    tavily_result = {
+        "content": repr({
+            "version": 1,
+            "requested_url": SOURCE,
+            "final_url": SOURCE,
+            "provider": "tavily",
+        }),
+    }
+    core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "search-1", "succeeded": True,
+        "content": {"content": json.dumps(tavily_result)},
+        "artifact_ids": [], "artifacts": [],
+    }))
+    first = core.handle(command(MessageType.MODEL_COMPLETED, 3, {
+        "content": "HEPiX 2026 is a scientific computing forum.",
+    }))
+    assert kinds(first) == ["tool.decision", "citation.required"]
+
+    completed = core.handle(command(MessageType.MODEL_COMPLETED, 4, {
+        "content": "HEPiX 2026 is a scientific computing forum.",
+    }, "still-missing-tavily"))
+
+    assert kinds(completed) == ["tool.decision", "citation.verified", "message.completed", "run.completed"]
+    message = next(item.payload for item in completed if item.payload.get("kind") == "message.completed")
+    assert SOURCE in message["text"]
+
+
+def test_unverifiable_retrieval_preserves_answer_and_completes_with_warning() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "Verify HEPiX 2026.", "model_id": "model", "tools": [tool()],
+    }))
+    core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "search-1", "name": "web.search", "arguments": {"query": "HEPiX 2026"}},
+    ]}))
+    core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "search-1", "succeeded": True,
+        "content": {"status": "ok", "results": [{"title": "HEPiX", "snippet": "No public URL"}]},
+        "artifact_ids": [], "artifacts": [],
+    }))
+    first = core.handle(command(MessageType.MODEL_COMPLETED, 3, {"content": "HEPiX is a forum. https://untrusted.example/one"}))
+    assert kinds(first) == ["tool.decision", "citation.required"]
+
+    completed = core.handle(command(MessageType.MODEL_COMPLETED, 4, {
+        "content": "HEPiX is a scientific computing forum. https://untrusted.example/two",
+    }, "unverifiable"))
+
+    assert kinds(completed) == ["tool.decision", "citation.warning", "message.completed", "run.completed"]
+    warning = next(item.payload for item in completed if item.payload.get("kind") == "citation.warning")
+    assert warning["code"] == "citation_evidence_incomplete"
+    message = next(item.payload for item in completed if item.payload.get("kind") == "message.completed")
+    assert "HEPiX is a scientific computing forum." in message["text"]
+    terminal = next(item.payload for item in completed if item.payload.get("kind") == "run.completed")
+    assert terminal["status"] == "completed_with_warning"
+    assert core.snapshot("run-cite")["phase"] == "completed"
 
 
 def test_proactive_retrieval_still_requires_an_exact_source_url() -> None:

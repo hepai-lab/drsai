@@ -64,6 +64,7 @@ def test_web_search_contract_is_bounded_and_stable() -> None:
             "snippet": "source",
             "content": "",
             "content_sha256": "",
+            "score": None,
         }],
         "partial": False,
         "warnings": [],

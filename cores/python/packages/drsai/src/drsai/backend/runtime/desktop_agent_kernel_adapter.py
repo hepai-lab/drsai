@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import base64
 from dataclasses import dataclass
@@ -28,7 +29,6 @@ from .desktop_kernel_coordinator import (
 )
 from .desktop_kernel_run_stream import DesktopKernelRunStream, build_desktop_start_envelope
 from .desktop_manager_ports import DesktopAgentManagerPorts
-from .web_search.bing_playwright import WebSearchRuntimeError, search_bing_with_playwright
 
 
 @dataclass(frozen=True)
@@ -213,20 +213,33 @@ async def run_agent_through_kernel(
             arguments = payload.get("arguments")
             if not isinstance(arguments, Mapping):
                 raise ValueError("desktop_web_search_arguments_invalid")
-            task = asyncio.create_task(search_bing_with_playwright(
-                str(arguments.get("query") or ""),
-                int(arguments.get("max_results", 8)),
-            ))
-            loop = asyncio.get_running_loop()
-            cancellation_token.add_callback(lambda: loop.call_soon_threadsafe(task.cancel))
             try:
-                response = await task
-            except WebSearchRuntimeError as exc:
-                return DesktopToolResult(
-                    call_id, False, {"content": str(exc)}, exc.code,
+                result = await agent._workbench.call_tool(
+                    name="web_search", arguments=dict(arguments), cancellation_token=cancellation_token,
                 )
-            content = response.public_dict()
-            return DesktopToolResult(call_id, True, content, inspection=response.inspection_dict())
+                text = result.to_text()
+                try:
+                    decoded = json.loads(text)
+                except json.JSONDecodeError:
+                    try:
+                        decoded = ast.literal_eval(text)
+                    except (SyntaxError, ValueError):
+                        decoded = {"content": text}
+                content = decoded if isinstance(decoded, Mapping) else {"content": decoded}
+                if bool(result.is_error):
+                    return DesktopToolResult(
+                        call_id, False, content, "web_search_failed",
+                    )
+            except Exception as exc:
+                return DesktopToolResult(
+                    call_id, False, {"content": str(exc)}, str(getattr(exc, "code", "web_search_failed")),
+                )
+            inspection = {
+                "version": 1, "kind": "web_search", "query": content.get("query", ""),
+                "requested_query": content.get("requested_query", content.get("query", "")),
+                "provider": content.get("provider", ""), "result_count": len(content.get("results", [])),
+            } if isinstance(content, Mapping) else None
+            return DesktopToolResult(call_id, True, content, inspection=inspection)
 
         special["web_search"] = desktop_web_search
     approval_handler = getattr(agent, "_tool_approval_handler", None)

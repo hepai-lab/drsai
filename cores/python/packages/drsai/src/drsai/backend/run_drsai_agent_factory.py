@@ -1127,7 +1127,7 @@ def create_agent(
     kernel_identity = agent_kernel_identity(surface="desktop")
     desktop_host_capabilities = [
         "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
-        "web_search", "network.public_https",
+        "web_search", "web_fetch", "network.public_https",
     ]
     kernel_host_port = normalize_kernel_host_port({
         "schema_version": 1,

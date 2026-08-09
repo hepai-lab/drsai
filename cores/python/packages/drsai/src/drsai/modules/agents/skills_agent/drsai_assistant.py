@@ -114,7 +114,7 @@ from drsai.backend.runtime.agent_kernel import DEFAULT_MAX_PARALLEL_TOOL_CALLS, 
 _DESKTOP_READ_ONLY_TOOLS = {
     "run_read", "run_grep", "run_glob", "get_bash_task", "list_bash_tasks",
     "get_powershell_task", "list_powershell_tasks", "Skill",
-    "retrieve_from_memory", "read_session_memory_by_index", "web_search",
+    "retrieve_from_memory", "read_session_memory_by_index", "web_search", "web_fetch",
 }
 _DESKTOP_LOCAL_WRITE_TOOLS = {"run_write", "run_edit", "TodoWrite", "UpdateUserConfig"}
 _DESKTOP_CONDITIONAL_TOOLS = {
@@ -144,7 +144,9 @@ def _desktop_execution_metadata(name: str, executor_id: str) -> dict[str, Any]:
         # Dynamically loaded MCP/HepAI tools can have external side effects.
         # They remain visible for compatibility but may not claim no-approval safety.
         risk, approval = "external_write", "required"
-    required_capabilities = ["web_search", "network.public_https"] if name == "web_search" else []
+    required_capabilities = ["network.public_https"] if name in {"web_search", "web_fetch"} else []
+    if name == "web_search": required_capabilities.insert(0, "web_search")
+    if name == "web_fetch": required_capabilities.insert(0, "web_fetch")
     return {
         "version": 1,
         "source": "desktop-host",

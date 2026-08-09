@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+import ast
 import base64
 import copy
 import hashlib
@@ -35,6 +36,53 @@ class RunPhase(StrEnum):
 
 TERMINAL_PHASES = {RunPhase.COMPLETED, RunPhase.CANCELLED, RunPhase.FAILED}
 WEB_SEARCH_MAX_ATTEMPTS = 3
+
+
+def _public_retrieval_source_urls(messages: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return exact public URLs already supplied by successful Web retrieval tools."""
+    candidates: dict[str, tuple[float, int]] = {}
+    order = 0
+
+    def collect(value: Any, key: str = "", parent_score: float = 0.0) -> None:
+        nonlocal order
+        if isinstance(value, Mapping):
+            try:
+                local_score = float(value.get("score", parent_score) or parent_score)
+            except (TypeError, ValueError):
+                local_score = parent_score
+            for child_key, child in value.items():
+                collect(child, str(child_key), local_score)
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for child in value:
+                collect(child, key, parent_score)
+        elif isinstance(value, str):
+            if key in {"url", "final_url"} and value.startswith("https://"):
+                url = value.rstrip(".,;:!?")
+                priority = 2.0 if key == "final_url" else parent_score
+                previous = candidates.get(url)
+                if previous is None:
+                    candidates[url] = (priority, order)
+                    order += 1
+                elif priority > previous[0]:
+                    candidates[url] = (priority, previous[1])
+            elif key in {"content", "result"} and value.lstrip().startswith("{"):
+                try:
+                    decoded = json.loads(value)
+                except (TypeError, json.JSONDecodeError):
+                    try:
+                        decoded = ast.literal_eval(value)
+                    except (SyntaxError, ValueError):
+                        decoded = None
+                if isinstance(decoded, Mapping):
+                    collect(decoded)
+
+    for message in messages:
+        if message.get("role") != "tool" or message.get("succeeded") is False:
+            continue
+        if str(message.get("name", "")).casefold() not in {"web.search", "web_search", "web.fetch", "web_fetch"}:
+            continue
+        collect(message.get("content", {}), "content")
+    return [url for url, _ in sorted(candidates.items(), key=lambda item: (-item[1][0], item[1][1]))]
 
 
 def _web_search_query_terms(query: str) -> frozenset[str]:
@@ -832,35 +880,74 @@ class DrSaiAgentKernel:
             state.citation_evidence = citation
             if not citation["valid"]:
                 if state.citation_retry_count >= 1:
-                    state.phase = RunPhase.FAILED
-                    self._active_run_by_session.pop(state.session_id, None)
+                    # The retrieval itself succeeded, so a model formatting miss
+                    # must not discard an otherwise useful answer. When the only
+                    # problem is a missing citation, append an exact URL from the
+                    # trusted Tool result and validate the repaired answer again.
+                    source_urls = _public_retrieval_source_urls(state.messages)
+                    if source_urls:
+                        # Remove every model-authored URL before attaching trusted
+                        # Tool URLs. This also safely handles subtly altered paths,
+                        # tracking parameters, or genuinely fabricated citations.
+                        content = re.sub(r"https://[^\s<>\]\[(){}\"']+", "", content).rstrip()
+                        content = re.sub(r"\[([^\]]+)\]\(\s*\)", r"\1", content)
+                        content += "\n\nSources:\n" + "\n".join(
+                            f"- {url}" for url in source_urls[:3]
+                        )
+                        citation = build_citation_evidence(
+                            state.messages, content,
+                            retrieval_required="retrieval" in state.tool_decision_requirement.get("required_domains", ()),
+                        )
+                        state.citation_evidence = citation
+                    if not citation["valid"]:
+                        warning = (
+                            "\n\n> Note: Web information was retrieved successfully, but some source citations "
+                            "could not be fully verified. Review the listed sources before relying on sensitive details."
+                        )
+                        content = f"{content.rstrip()}{warning}"
+                        state.messages.append({"role": "assistant", "content": content})
+                        state.phase = RunPhase.COMPLETED
+                        self._active_run_by_session.pop(state.session_id, None)
+                        return (*reasoning_events, decision_event,
+                            self._event(state, "citation.warning", {
+                                "code": "citation_evidence_incomplete",
+                                "message": "Web information was retrieved, but some source citations could not be fully verified.",
+                                "citation_sha256": citation["sha256"],
+                            }),
+                            self._event(state, "message.completed", {
+                                "item_id": f"{state.run_id}:assistant",
+                                "role": "assistant",
+                                "text": content,
+                                "phase": "final",
+                                "warning_code": "citation_evidence_incomplete",
+                            }),
+                            self._event(state, "run.completed", {
+                                "status": "completed_with_warning",
+                                "warning_code": "citation_evidence_incomplete",
+                            }),
+                            self._checkpoint(state, "terminal"),
+                        )
+                else:
+                    state.citation_retry_count += 1
+                    state.messages.append({
+                        "role": "system",
+                        "content": "Your answer must cite at least one exact HTTPS source URL from the successful retrieval "
+                                   "tool results and must not include URLs absent from those results. Revise the answer now.",
+                    })
+                    state.phase = RunPhase.WAITING_MODEL
                     return (*reasoning_events, decision_event,
-                        self._event(state, "run.failed", {
-                            "code": "citation_evidence_invalid", "retryable": True,
-                            "citation_sha256": citation["sha256"],
+                        self._event(state, "citation.required", {
+                            "citation_sha256": citation["sha256"], "missing": citation["missing"],
+                            "fabricated_count": len(citation["fabricated_url_sha256"]),
+                            "source_call_ids": citation["source_call_ids"],
+                            "retry_count": state.citation_retry_count,
                         }),
-                        self._checkpoint(state, "terminal"),
+                        self._checkpoint(state, "before_citation_retry"),
+                        self._request(state, MessageType.MODEL_REQUEST, {
+                            "model_id": state.model_id, "messages": state.messages, "tools": [], "skills": state.skills,
+                            "capability_snapshot_sha256": state.capability_snapshot["sha256"],
+                        }, "citation_retry"),
                     )
-                state.citation_retry_count += 1
-                state.messages.append({
-                    "role": "system",
-                    "content": "Your answer must cite at least one exact HTTPS source URL from the successful retrieval "
-                               "tool results and must not include URLs absent from those results. Revise the answer now.",
-                })
-                state.phase = RunPhase.WAITING_MODEL
-                return (*reasoning_events, decision_event,
-                    self._event(state, "citation.required", {
-                        "citation_sha256": citation["sha256"], "missing": citation["missing"],
-                        "fabricated_count": len(citation["fabricated_url_sha256"]),
-                        "source_call_ids": citation["source_call_ids"],
-                        "retry_count": state.citation_retry_count,
-                    }),
-                    self._checkpoint(state, "before_citation_retry"),
-                    self._request(state, MessageType.MODEL_REQUEST, {
-                        "model_id": state.model_id, "messages": state.messages, "tools": state.tools, "skills": state.skills,
-                        "capability_snapshot_sha256": state.capability_snapshot["sha256"],
-                    }, "citation_retry"),
-                )
             if citation["required"] or citation["source_url_sha256"]:
                 citation_event = (self._event(state, "citation.verified", {
                     "citation_sha256": citation["sha256"],
@@ -887,6 +974,12 @@ class DrSaiAgentKernel:
         if search_calls:
             if len(search_calls) != len(tool_calls):
                 raise ValueError("web_search_mixed_batch_not_allowed")
+            # Search is intentionally serialized. Some model providers emit several
+            # alternative queries in one response even when parallel tool use is
+            # disabled. Execute the first deterministic query instead of rejecting
+            # the entire batch and losing the required retrieval round.
+            search_calls = search_calls[:1]
+            tool_calls = search_calls
             raw_queries = [str(value.get("arguments", {}).get("query", "")).strip() for value in search_calls]
             repeated = any(
                 _web_search_queries_are_near_duplicates(query, previous)
@@ -895,8 +988,7 @@ class DrSaiAgentKernel:
             )
             state.web_search_queries.extend(raw_queries)
             reason = (
-                "parallel_search_not_allowed" if len(search_calls) > 1
-                else "duplicate_query" if repeated
+                "duplicate_query" if repeated
                 else "search_attempt_limit" if len(state.web_search_queries) > WEB_SEARCH_MAX_ATTEMPTS
                 else None
             )

@@ -129,7 +129,7 @@ from drsai.owop.runtime_terminal import RuntimeTerminalOWOPOperations
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.runtime.input_resources import inspect_native_image_resources
 from drsai.backend.runtime.image_operations import RuntimeImageOperationAdapter
-from drsai.backend.runtime.web_search import create_web_search_tool, web_search_runtime_status
+from drsai.backend.runtime.web_search import create_web_fetch_tool, create_web_search_tool, web_search_runtime_status
 from drsai.backend.runtime.journal import SessionCursorExpired
 from drsai.backend.runtime.artifacts import RuntimeArtifactStore
 from drsai.backend.runtime.agent import (
@@ -267,6 +267,16 @@ from drsai.config import (
     resolve_credential,
     store_credential,
     delete_credential,
+    PerceptorResource,
+    canonical_perceptor_id,
+    delete_perceptor_resource,
+    get_perceptor_resource,
+    list_perceptor_resources,
+    merge_perceptor_secret_placeholders,
+    perceptor_revision,
+    public_perceptor_payload,
+    put_perceptor_resource,
+    resolve_perceptor_config,
 )
 from drsai.backend.runtime.goals import propose_goal_from_request, render_goal_execution_prompt
 from drsai.config.schema import DrSaiConfig, ProviderInput
@@ -595,6 +605,17 @@ class ToolEntry(BaseModel):
     enabled: bool = Field(default=True, description="UI-only flag; disabled entries are skipped on load")
 
 
+class PerceptorRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    perceptor_id: str = Field(..., min_length=1, max_length=128)
+    name: str | None = Field(default=None, max_length=160)
+    kind: Literal["public_web", "large_facility_data"] = "public_web"
+    adapter: Literal["tavily", "facility_gateway"]
+    capabilities: list[str] = Field(default_factory=list)
+    config: dict[str, object] = Field(default_factory=dict)
+    enabled: bool = True
+
+
 class KnowledgeResourceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     knowledge_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -755,8 +776,11 @@ def _resolved_agent_resource_snapshot(
         *tuple(dynamic_tool_resources),
         _builtin_web_search_resource(),
     )
+    enabled_tool_ids = runtime_policy.tools.enabled
+    if _active_tavily_config_for_dir(config_dir) is not None and "builtin.web-search" not in runtime_policy.tools.disabled:
+        enabled_tool_ids = tuple(dict.fromkeys((*enabled_tool_ids, "builtin.web-search")))
     tools = resolve_tool_set(
-        mode=runtime_policy.tools.mode, enabled=runtime_policy.tools.enabled,
+        mode=runtime_policy.tools.mode, enabled=enabled_tool_ids,
         disabled=runtime_policy.tools.disabled, resources=tool_resources,
         builtin_ids=("builtin.image_generation", "builtin.image_edit"),
     )
@@ -769,6 +793,7 @@ def _resolved_agent_resource_snapshot(
     )
     knowledge_resources = list_knowledge_resources(config_dir)
     knowledge = _selected_knowledge_resources(runtime_policy.knowledge, knowledge_resources)
+    perceptors = tuple(resource for resource in list_perceptor_resources(config_dir) if resource.enabled)
     payload = {
         "schema_version": 1, "agent_id": agent_name, "agent_revision": runtime_policy.revision,
         "model": {"provider_id": model_provider, "model_id": model_id},
@@ -786,6 +811,15 @@ def _resolved_agent_resource_snapshot(
             "top_k": runtime_policy.knowledge.top_k,
             "score_threshold": runtime_policy.knowledge.score_threshold,
             "require_citations": runtime_policy.knowledge.require_citations,
+        },
+        "perception": {
+            "resources": [
+                {
+                    "perceptor_id": resource.perceptor_id, "kind": resource.kind, "adapter": resource.adapter,
+                    "capabilities": list(resource.capabilities), "revision": perceptor_revision(resource),
+                }
+                for resource in perceptors
+            ],
         },
     }
     canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -1143,6 +1177,17 @@ class AgentManager:
 
         key = self._make_key(uid, tid)
         resolved_agent_name = canonical_agent_name(agent_name or current_agent_name())
+        # Preserve the legacy explicit alias path for callers that already
+        # selected a model.  Resolve the Agent policy only when the request
+        # supplies neither a concrete binding nor an alias.
+        if (model_provider is None or model_id is None) and not model_alias:
+            configured_models = await asyncio.to_thread(load_model_provider_config)
+            primary_model = await asyncio.to_thread(
+                _resolve_agent_primary_model, configured_models, resolved_agent_name
+            )
+            model_provider = primary_model.provider.name
+            model_id = primary_model.model_id or primary_model.model
+            config_revision_binding = config_revision_binding or model_config_revision()
         runtime_policy = await asyncio.to_thread(load_agent_runtime_policy, resolved_agent_name)
         tool_resources = await asyncio.to_thread(list_tool_resources, _get_config_dir(uid))
         remote_tools: list[Any] = []
@@ -1156,7 +1201,7 @@ class AgentManager:
         )
         resolved_tools = resolve_tool_set(
             mode=runtime_policy.tools.mode,
-            enabled=runtime_policy.tools.enabled,
+            enabled=tuple(dict.fromkeys((*runtime_policy.tools.enabled, "builtin.web-search"))) if _active_tavily_config(uid) is not None and "builtin.web-search" not in runtime_policy.tools.disabled else runtime_policy.tools.enabled,
             disabled=runtime_policy.tools.disabled,
             resources=(*tool_resources, *dynamic_resources, _builtin_web_search_resource()),
             builtin_ids=("builtin.image_generation", "builtin.image_edit"),
@@ -1240,7 +1285,10 @@ class AgentManager:
                 if "builtin.image_edit" in resolved_tools.enabled_ids:
                     core_tools.append(image_edit)
                 if "builtin.web-search" in resolved_tools.enabled_ids:
-                    core_tools.append(create_web_search_tool())
+                    tavily_config = _active_tavily_config(uid)
+                    core_tools.append(create_web_search_tool(tavily_config))
+                    if tavily_config is not None:
+                        core_tools.append(create_web_fetch_tool(tavily_config))
                 for remote_tool in remote_tools:
                     name = str(getattr(remote_tool, "name", "")).strip()
                     if name in resolved_tools.enabled_ids or f"hepai.{name}" in resolved_tools.enabled_ids:
@@ -7756,9 +7804,11 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
             while current_error is not None and id(current_error) not in seen_errors and len(diagnostic_parts) < 4:
                 seen_errors.add(id(current_error))
                 status_code = getattr(current_error, "status_code", None)
+                safe_message = str(redact_sensitive(str(current_error))).strip()[:240]
                 diagnostic_parts.append(
                     f"{type(current_error).__name__}"
                     + (f"(HTTP {status_code})" if status_code is not None else "")
+                    + (f": {safe_message}" if safe_message else "")
                 )
                 current_error = current_error.__cause__ or current_error.__context__
             diagnostic = " <- ".join(diagnostic_parts)
@@ -8493,6 +8543,74 @@ async def put_user_md(
     return {"status": "ok"}
 
 
+# ── Perceptors (BAMS sensing resources) ──────────────────────────────────────
+
+@app.get("/v1/config/perceptors")
+async def list_perceptors(user_id: str | None = Query(default=None)):
+    resources = list_perceptor_resources(_get_config_dir(user_id))
+    return {"object": "list", "data": [public_perceptor_payload(item) for item in resources]}
+
+
+@app.post("/v1/config/perceptors")
+async def create_perceptor(req: PerceptorRequest, user_id: str | None = Query(default=None)):
+    capabilities = tuple(req.capabilities or (["web.search", "web.extract"] if req.adapter == "tavily" else []))
+    resource = put_perceptor_resource(_get_config_dir(user_id), PerceptorResource(
+        canonical_perceptor_id(req.perceptor_id), req.kind, req.adapter, capabilities,
+        dict(req.config), req.name, req.enabled,
+    ))
+    await manager.evict_user(_effective_user_id(user_id))
+    return public_perceptor_payload(resource)
+
+
+@app.put("/v1/config/perceptors/{perceptor_id}")
+async def update_perceptor(perceptor_id: str, req: PerceptorRequest, user_id: str | None = Query(default=None)):
+    config_dir = _get_config_dir(user_id)
+    try: existing = get_perceptor_resource(config_dir, perceptor_id)
+    except ModelProviderConfigError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
+    config = merge_perceptor_secret_placeholders(req.config, existing.config)
+    resource = put_perceptor_resource(config_dir, PerceptorResource(
+        canonical_perceptor_id(req.perceptor_id or perceptor_id), req.kind, req.adapter,
+        tuple(req.capabilities or existing.capabilities), config, req.name, req.enabled,
+    ))
+    if resource.perceptor_id != existing.perceptor_id: delete_perceptor_resource(config_dir, existing.perceptor_id)
+    await manager.evict_user(_effective_user_id(user_id))
+    return public_perceptor_payload(resource)
+
+
+@app.delete("/v1/config/perceptors/{perceptor_id}")
+async def delete_perceptor(perceptor_id: str, user_id: str | None = Query(default=None)):
+    try: resource = delete_perceptor_resource(_get_config_dir(user_id), perceptor_id)
+    except ModelProviderConfigError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await manager.evict_user(_effective_user_id(user_id))
+    return {"status": "deleted", "perceptor_id": resource.perceptor_id}
+
+
+@app.post("/v1/config/perceptors/{perceptor_id}/test")
+async def test_perceptor(
+    perceptor_id: str,
+    capability: str = Query(default="search", pattern="^(search|extract)$"),
+    user_id: str | None = Query(default=None),
+):
+    config_dir = _get_config_dir(user_id)
+    try:
+        resource = get_perceptor_resource(config_dir, perceptor_id)
+        config = resolve_perceptor_config(resource, config_dir)
+        if resource.adapter != "tavily":
+            return {**public_perceptor_payload(resource), "ok": False, "status": "unsupported_platform"}
+        from drsai.backend.runtime.web_search.tavily import TavilyClient, TavilyConfig
+        client = TavilyClient(TavilyConfig.from_mapping(config))
+        if capability == "extract":
+            document = await client.extract("https://www.hepix.org/", max_chars=2_000)
+            ok = bool(document.get("content"))
+            return {**public_perceptor_payload(resource), "ok": ok, "status": "available" if ok else "degraded", "tested": "extract", "provider": document.get("provider"), "final_url": document.get("final_url"), "content_chars": len(str(document.get("content") or "")), "receipt": document.get("receipt", {})}
+        response = await client.search("HEPiX 2026", 3)
+        return {**public_perceptor_payload(resource), "ok": bool(response.results), "status": "available" if response.results else "degraded", "tested": "search", "result_count": len(response.results), "provider": response.provider, "results": [{"title": item.title, "url": item.url, "snippet": item.snippet[:600]} for item in response.results], "receipt": response.receipt.public_dict() if response.receipt else {}}
+    except ModelProviderConfigError as exc:
+        return {"perceptor_id": perceptor_id, "ok": False, "status": "credential_required", "error": str(exc)}
+    except Exception as exc:
+        return {"perceptor_id": perceptor_id, "ok": False, "status": "runtime_unavailable", "error": getattr(exc, "code", type(exc).__name__)}
+
+
 # ── Tools (TOOLS_CONFIG.json — MCP servers + local tool descriptions) ────────
 
 def _tools_config_path(user_id: str | None = None) -> Path:
@@ -8516,7 +8634,7 @@ def _runtime_execution_capabilities(entries: list[dict]) -> frozenset[str]:
 
 
 def _builtin_web_search_resource() -> ToolResource:
-    runtime = web_search_runtime_status()
+    runtime = _web_search_status()
     return ToolResource(
         tool_id="builtin.web-search",
         type="builtin",
@@ -8525,6 +8643,33 @@ def _builtin_web_search_resource() -> ToolResource:
         enabled=runtime["status"] == "available",
         source="builtin",
     )
+
+
+def _web_search_status(user_id: str | None = None) -> dict[str, object]:
+    user_id = user_id if isinstance(user_id, str) else None
+    if _active_tavily_config(user_id) is not None:
+        return {"status": "available", "provider": "tavily", "error": None, "capabilities": ["web.search", "web.extract", "network.public_https"]}
+    return web_search_runtime_status()
+
+
+def _active_tavily_config(user_id: str | None = None) -> dict[str, object] | None:
+    return _active_tavily_config_for_dir(_get_config_dir(user_id))
+
+
+def _active_tavily_config_for_dir(config_dir: Path) -> dict[str, object] | None:
+    for resource in list_perceptor_resources(config_dir):
+        if resource.enabled and resource.kind == "public_web" and resource.adapter == "tavily" and "web.search" in resource.capabilities:
+            try:
+                config = resolve_perceptor_config(resource, config_dir)
+            except ModelProviderConfigError:
+                return None
+            return {
+                "api_key": config.get("api_key", ""), "base_url": config.get("base_url", "https://api.tavily.com"),
+                "project_id": config.get("project_id", ""), "search_depth": config.get("search_depth", "basic"),
+                "extract_depth": config.get("extract_depth", "basic"), "timeout_seconds": config.get("timeout_seconds", 15),
+                "max_document_chars": config.get("max_document_chars", 20000),
+            }
+    return None
 
 
 def _write_tools_config(entries: list[dict], user_id: str | None = None) -> None:
@@ -8555,7 +8700,7 @@ async def list_tools(user_id: str | None = Query(default=None)):
 @app.get("/v1/config/tools/{tool_id}/capabilities")
 async def get_tool_capabilities(tool_id: str, user_id: str | None = Query(default=None)):
     if tool_id == "builtin.web-search":
-        runtime = web_search_runtime_status()
+        runtime = _web_search_status(user_id)
         return {"tool_id": tool_id, **runtime, "capabilities": ["tool.call", "builtin", "network.public_https"], "references": _tool_agent_references(tool_id)}
     if tool_id in {"builtin.image_generation", "builtin.image_edit"}:
         return {"tool_id": tool_id, "status": "available", "capabilities": ["tool.call", "builtin"], "error": None, "references": _tool_agent_references(tool_id)}
@@ -8569,7 +8714,7 @@ async def get_tool_capabilities(tool_id: str, user_id: str | None = Query(defaul
 @app.post("/v1/config/tools/{tool_id}/test")
 async def test_tool_connection(tool_id: str, user_id: str | None = Query(default=None)):
     if tool_id == "builtin.web-search":
-        runtime = web_search_runtime_status()
+        runtime = _web_search_status(user_id)
         return {"tool_id": tool_id, **runtime, "capabilities": ["tool.call", "builtin", "network.public_https"], "ok": runtime["status"] == "available", "tested": "runtime-registration"}
     if tool_id in {"builtin.image_generation", "builtin.image_edit"}:
         return {"tool_id": tool_id, "status": "available", "capabilities": ["tool.call", "builtin"], "error": None, "ok": True, "tested": "runtime-registration"}
@@ -10162,7 +10307,7 @@ async def preview_agent_tools(agent_id: str):
         if tool_id == "builtin.web-search":
             rows.append({
                 "tool_id": tool_id,
-                **web_search_runtime_status(),
+                **_web_search_status(),
                 "capabilities": ["tool.call", "builtin", "network.public_https"],
                 "selected": selected,
             })

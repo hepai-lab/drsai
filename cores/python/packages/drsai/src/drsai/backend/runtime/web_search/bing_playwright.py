@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 import hashlib
 import importlib.util
 import os
@@ -324,38 +325,13 @@ async def _search_once(query: str, max_results: int, config: PlaywrightSearchCon
                         candidates=tuple(candidates),
                     )
 
-                read_rows = rows[: min(config.max_pages, len(rows))]
-                page_reads = await asyncio.gather(
-                    *(_read_result_page(context, row, config) for row in read_rows),
-                    return_exceptions=True,
-                )
-                content_by_url: dict[str, str] = {}
-                remaining = config.max_total_content_chars
-                for row, outcome in zip(read_rows, page_reads):
-                    if isinstance(outcome, Exception):
-                        warnings.append(f"result_unavailable:{urlsplit(row['url']).hostname or 'unknown'}")
-                        continue
-                    final_url, content = outcome
-                    content = content[:remaining]
-                    remaining -= len(content)
-                    content_by_url[row["url"]] = content
-                    if final_url != row["url"]:
-                        content_by_url[final_url] = content
-                    if remaining <= 0:
-                        warnings.append("content_limit_reached")
-                        break
-
                 results: list[WebSearchResult] = []
                 for rank, row in enumerate(rows, 1):
-                    content = content_by_url.get(row["url"], "")
-                    digest = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest() if content else ""
                     results.append(WebSearchResult(
                         rank=rank,
                         title=row["title"],
                         url=row["url"],
                         snippet=row["snippet"],
-                        content=content,
-                        content_sha256=digest,
                     ))
                 return WebSearchResponse(
                     query=query,
@@ -403,3 +379,38 @@ async def search_bing_with_playwright(
             else "Web search failed before a usable response was produced."
         )
         raise WebSearchRuntimeError(code, message) from exc
+
+
+async def fetch_with_playwright(url: str, max_chars: int = 20_000) -> dict[str, Any]:
+    """Read one explicitly selected dynamic page; search never calls this implicitly."""
+    await ensure_public_url(url)
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise WebSearchRuntimeError("browser_runtime_unavailable", "Web fetch requires Playwright.") from exc
+    playwright = await async_playwright().start()
+    try:
+        browser = await _launch_browser(playwright)
+        try:
+            context = await browser.new_context(accept_downloads=False, permissions=[], java_script_enabled=True)
+            try:
+                page = await context.new_page()
+                try:
+                    response = await page.goto(url, wait_until="domcontentloaded", timeout=15_000)
+                    final_url = _canonical_result_url(page.url)
+                    await ensure_public_url(final_url)
+                    if response is not None and int(response.status) >= 400:
+                        raise WebSearchRuntimeError("result_http_error", f"Result page returned HTTP {response.status}")
+                    complete = await _extract_page_text(page, 50_000)
+                    limit = max(1000, min(max_chars, 50_000))
+                    return {
+                        "version": 1, "requested_url": url, "final_url": final_url, "title": await page.title(),
+                        "content": complete[:limit], "content_type": "text/plain", "format": "text",
+                        "provider": "playwright", "retrieved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "content_sha256": hashlib.sha256(complete.encode("utf-8")).hexdigest(),
+                        "truncated": len(complete) > limit, "warnings": ["dynamic_browser_fallback"],
+                    }
+                finally: await _close_quietly(page)
+            finally: await _close_quietly(context)
+        finally: await _close_quietly(browser)
+    finally: await _stop_playwright_quietly(playwright)

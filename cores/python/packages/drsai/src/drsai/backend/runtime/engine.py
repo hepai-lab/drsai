@@ -2761,11 +2761,24 @@ class RuntimeEngine:
             payload["status"] = phase if phase in {"completed", "failed", "cancelled"} else "running"
         elif event_type == "agent.failed":
             error = data.get("error") if isinstance(data.get("error"), dict) else {}
+            message = str(error.get("message") or data.get("message") or "Agent execution failed.")
+            if message == "[REDACTED]":
+                redacted_details = error.get("redacted_details")
+                if not isinstance(redacted_details, dict):
+                    redacted_details = data.get("redacted_details")
+                detail = error.get("detail")
+                if not isinstance(detail, dict):
+                    detail = data.get("detail")
+                safe_reason = (
+                    redacted_details.get("reason") if isinstance(redacted_details, dict) else None
+                ) or (detail.get("reason") if isinstance(detail, dict) else None)
+                if safe_reason:
+                    message = f"Agent execution failed: {safe_reason}"
             payload = {
                 "event_type": event_type,
                 "level": "error",
                 "code": str(error.get("code") or data.get("code") or "agent_execution_failed"),
-                "message": str(error.get("message") or data.get("message") or "Agent execution failed."),
+                "message": message,
                 "details": {
                     "retryable": bool(error.get("retryable") or data.get("retryable")),
                 },

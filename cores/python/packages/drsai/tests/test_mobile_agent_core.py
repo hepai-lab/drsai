@@ -706,6 +706,25 @@ def test_web_search_duplicate_query_is_short_circuited_and_hidden_from_model() -
     assert not any(item.payload.get("kind") == "run.failed" for item in ignored)
 
 
+def test_parallel_web_search_batch_executes_only_the_first_query() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "Hepix2026是什么", "model_id": "model-1", "tools": [tool_schema("web_search")],
+    }))
+
+    started = core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "search-primary", "name": "web_search", "arguments": {"query": "Hepix2026 是什么"}},
+        {"call_id": "search-alternative", "name": "web_search", "arguments": {"query": "Hepix2026 含义"}},
+    ]}))
+
+    requests = [item for item in started if item.message_type is MessageType.TOOL_CALL_REQUEST]
+    assert len(requests) == 1
+    assert requests[0].payload["call_id"] == "search-primary"
+    snapshot = core.snapshot("run-1")
+    assert list(snapshot["pending_tool_calls"]) == ["search-primary"]
+    assert snapshot["web_search_queries"] == ["Hepix2026 是什么"]
+
+
 def test_web_search_stops_after_three_distinct_attempts() -> None:
     core = create_mobile_agent_core()
     core.handle(command(MessageType.START_RUN, 0, {
