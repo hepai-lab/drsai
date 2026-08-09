@@ -313,7 +313,7 @@ function finishVoiceTask(requestId: string, task: ActiveVoiceTask, event: Deskto
   void task.diagnostic.then((diagnostic) => {
     if (event.type === "completed") return diagnostic.complete("Voice transcription completed", { runtime: event.result.runtimeId });
     if (event.type === "cancelled") return diagnostic.cancel("Voice transcription cancelled");
-    if (event.type === "failed") return diagnostic.fail(new Error("Voice transcription failed"), event.error.code);
+    if (event.type === "failed") return diagnostic.fail(new Error(event.error.message), event.error.code);
     return undefined;
   }).catch(() => undefined);
 }

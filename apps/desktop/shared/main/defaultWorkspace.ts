@@ -1,7 +1,6 @@
 import { mkdir, realpath } from "fs/promises";
 import { dirname, isAbsolute, join, relative } from "path";
-
-export const DEFAULT_WORKSPACE_FOLDER_NAME = "OpenDrSai Workspace";
+import { DEFAULT_WORKSPACE_FOLDER_NAME } from "../api/workspaceDefaults";
 
 /** Resolve and create the one app-managed workspace without following a
  * pre-existing link outside the user's Documents folder. */

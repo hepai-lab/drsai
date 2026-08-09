@@ -38,6 +38,9 @@ import type {
   InteractiveDebugStartRequest,
   AgentRunEvent,
   AgentRunRequest,
+  RegressionAttachRunRequest,
+  RegressionBeginRequest,
+  RegressionTransitionRequest,
   AuthSession,
   ChatEvent,
   ChatRequest,
@@ -600,6 +603,11 @@ const api: DesktopApi = {
   testKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:test-knowledge-base", knowledgeId),
   searchKnowledgeBase: (knowledgeId, query) => ipcRenderer.invoke("desktop:search-knowledge-base", knowledgeId, query),
   listKnowledgeBases: () => ipcRenderer.invoke("desktop:list-knowledge-bases"),
+  listPerceptors: () => ipcRenderer.invoke("desktop:list-perceptors"),
+  savePerceptor: (request) => ipcRenderer.invoke("desktop:save-perceptor", request),
+  updatePerceptor: (perceptorId, request) => ipcRenderer.invoke("desktop:update-perceptor", perceptorId, request),
+  testPerceptor: (perceptorId, capability) => ipcRenderer.invoke("desktop:test-perceptor", perceptorId, capability),
+  deletePerceptor: (perceptorId) => ipcRenderer.invoke("desktop:delete-perceptor", perceptorId),
   createKnowledgeBase: (request) => ipcRenderer.invoke("desktop:create-knowledge-base", request),
   deleteKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:delete-knowledge-base", knowledgeId),
   getMyDrSaiAgentModelCapabilityStatus: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-capability-status", agentId),
@@ -865,6 +873,25 @@ const api: DesktopApi = {
     request: AgentRunRequest,
   ): Promise<{ requestId: string; sessionId: string; runId: string }> =>
     ipcRenderer.invoke("desktop:start-agent-run", request),
+  isRegressionTestingEnabled: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:regression-enabled"),
+  listRegressionSuites: () => ipcRenderer.invoke("desktop:regression-suites"),
+  listRegressionCases: (suiteId: string) =>
+    ipcRenderer.invoke("desktop:regression-cases", suiteId),
+  getRegressionCase: (caseId: string) =>
+    ipcRenderer.invoke("desktop:regression-case", caseId),
+  beginRegressionEvaluation: (request: RegressionBeginRequest) =>
+    ipcRenderer.invoke("desktop:regression-begin", request),
+  transitionRegressionEvaluation: (request: RegressionTransitionRequest) =>
+    ipcRenderer.invoke("desktop:regression-transition", request),
+  attachRegressionRun: (request: RegressionAttachRunRequest) =>
+    ipcRenderer.invoke("desktop:regression-attach-run", request),
+  getRegressionEvaluation: (evaluationId: string) =>
+    ipcRenderer.invoke("desktop:regression-get", evaluationId),
+  cancelRegressionEvaluation: (evaluationId: string) =>
+    ipcRenderer.invoke("desktop:regression-cancel", evaluationId),
+  listRegressionHistory: (limit?: number) =>
+    ipcRenderer.invoke("desktop:regression-history", limit),
   abortAgentRun: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:abort-agent-run", requestId),
   recoverAgentRun: (threadId: string): Promise<AgentRunEvent[]> =>

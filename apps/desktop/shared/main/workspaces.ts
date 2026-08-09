@@ -11,12 +11,17 @@ import type {
   WorkspaceProject,
   RemoteSshWorkspaceDescriptor,
 } from "../api/desktopApi";
+import {
+  DEFAULT_WORKSPACE_DISPLAY_NAME,
+  DEFAULT_WORKSPACE_VERSION,
+  resolveDefaultWorkspaceDisplayName,
+} from "../api/workspaceDefaults";
 import { DRSAI_HOME } from "./paths";
 import { backupLegacyWorkspaceDataOnce, migrateLegacyWorkspaceRecords, migrateWorkspaceToAuthoritativeId, recordWorkspaceIdMigration } from "./workspaceMigrations";
 import { LocalRuntimeClient } from "./runtimeClient";
 import { isRemoteAcceptanceWorkspace } from "./remoteWorkspaceRestorePolicy";
 import { replaceFileSafely } from "./atomicFileReplace";
-import { DEFAULT_WORKSPACE_FOLDER_NAME, ensureDefaultWorkspaceDirectory } from "./defaultWorkspace";
+import { ensureDefaultWorkspaceDirectory } from "./defaultWorkspace";
 
 const WORKSPACES_FILE = join(DRSAI_HOME, "desktop", "workspaces.json");
 const WORKSPACES_LEGACY_BACKUP_FILE = join(DRSAI_HOME, "desktop", "workspaces.legacy-v1.backup.json");
@@ -55,7 +60,7 @@ export async function ensureDefaultWorkspace(): Promise<WorkspaceProject[]> {
   const created = await createWorkspace({
     source: "existing",
     path: workspacePath,
-    name: "Default",
+    name: DEFAULT_WORKSPACE_DISPLAY_NAME,
     description: "Auto-created on first launch",
     trusted: true,
     pinned: true,
@@ -102,30 +107,53 @@ export async function createDefaultWorkspace(documentsPath: string): Promise<Wor
 
 async function performDefaultWorkspaceCreation(documentsPath: string): Promise<WorkspaceProject> {
   const canonicalWorkspacePath = await ensureDefaultWorkspaceDirectory(documentsPath);
-
-  const existing = (await readWorkspaces()).find((workspace) =>
+  const workspaces = await readWorkspaces();
+  const existing = workspaces.find((workspace) =>
     workspace.location !== "remote" && samePath(workspace.path, canonicalWorkspacePath));
   const metadata = {
     ...(existing?.metadata || {}),
     managedDefault: true,
-    defaultWorkspaceVersion: 1,
+    defaultWorkspaceVersion: DEFAULT_WORKSPACE_VERSION,
   };
   if (existing) {
-    return updateWorkspace({
+    const displayName = resolveDefaultWorkspaceDisplayName(
+      existing.name,
+      existing.metadata?.defaultWorkspaceVersion,
+    );
+    const updated = await updateWorkspace({
       id: existing.id,
+      name: displayName,
       trusted: true,
       lastOpenedAt: new Date().toISOString(),
       metadata,
     });
+    const refreshed = await readWorkspaces();
+    const staleManagedDefaults = refreshed.filter((workspace) =>
+      workspace.id !== updated.id && workspace.metadata?.managedDefault === true);
+    if (staleManagedDefaults.length > 0) {
+      await writeWorkspaces([
+        updated,
+        ...refreshed.filter((workspace) =>
+          workspace.id !== updated.id && workspace.metadata?.managedDefault !== true),
+      ]);
+    }
+    return updated;
   }
-  return createWorkspace({
+  const created = await createWorkspace({
     source: "existing",
     path: canonicalWorkspacePath,
-    name: DEFAULT_WORKSPACE_FOLDER_NAME,
+    name: DEFAULT_WORKSPACE_DISPLAY_NAME,
     description: "OpenDrSai managed default workspace",
     trusted: true,
     metadata,
   });
+  const refreshed = await readWorkspaces();
+  await writeWorkspaces([
+    created,
+    ...refreshed.filter((workspace) =>
+      workspace.id !== created.id && workspace.metadata?.managedDefault !== true),
+  ]);
+  return created;
 }
 
 export async function updateWorkspace(rawRequest: unknown): Promise<WorkspaceProject> {
@@ -171,7 +199,8 @@ async function synchronizeRuntimeWorkspaceNames(workspaces: WorkspaceProject[]):
   const remote = workspaces.filter((workspace) => workspace.location === "remote");
   if (!local.length) return workspaces;
   try {
-    const client = await LocalRuntimeClient.connect();
+    const client = await LocalRuntimeClient.connectIfAvailable();
+    if (!client) return workspaces;
     const runtimeWorkspaces = new Map((await client.listWorkspaces(true)).map((workspace) => [workspace.workspace_id, workspace]));
     let changed = false;
     const syncedLocal = await Promise.all(local.map(async (workspace) => {
@@ -211,7 +240,9 @@ async function openWorkspaceInRuntime(
   displayName: string,
 ): Promise<{ workspace_id: string; path: string }> {
   try {
-    const opened = await (await LocalRuntimeClient.connect()).openWorkspace(workspacePath, displayName);
+    const client = await LocalRuntimeClient.connectIfAvailable();
+    if (!client) throw new Error("Local Runtime is not running.");
+    const opened = await client.openWorkspace(workspacePath, displayName);
     return { workspace_id: opened.workspace_id, path: opened.path };
   } catch {
     // Persist a local registration even when Runtime health is racing at startup.

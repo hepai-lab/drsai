@@ -30,6 +30,7 @@ import {
   Smartphone,
   Sparkles,
   Terminal as TerminalIcon,
+  TestTube2,
   Trash2,
   Type,
   Video,
@@ -105,6 +106,7 @@ import type {
 } from "@shared/desktopApi";
 import { desktopApi } from "./desktopApi";
 import { copyTextSafely } from "./clipboard";
+import { PerceptorSettingsPanel } from "./components/PerceptorSettingsPanel";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
 import { userFacingFailureMessage } from "./userFacingLanguage";
 import { isSelectableModelAvailability, modelCatalogRecoveryCopy } from "./modelCatalogRecovery";
@@ -130,6 +132,8 @@ import { MobilePairingDialog, mobilePairingErrorText } from "./components/Mobile
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { RunInspectorPanel } from "./components/RunInspectorPanel";
+import { RegressionPanel } from "./components/RegressionPanel";
+import type { RegressionCaseDetail, RegressionEvaluation } from "@shared/regression";
 import { AppDecisionDialogHost, requestAppDecision, showAppNotice } from "./components/AppDecisionDialog";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
 import {
@@ -201,6 +205,7 @@ interface TerminalCommandProposal {
 
 const rightTabIcons: Record<RightTab, LucideIcon> = {
   run: ListTree,
+  regression: TestTube2,
   files: FileText,
   templates: Sparkles,
   browser: Globe2,
@@ -252,6 +257,7 @@ interface SidebarComponentVisibility {
 }
 interface RightSidebarComponentVisibility {
   run: boolean;
+  regression: boolean;
   files: boolean;
   browser: boolean;
   terminal: boolean;
@@ -353,12 +359,13 @@ function AuthenticatedApp({
   ]);
   const [navHistoryIndex, setNavHistoryIndex] = useState(0);
   const [activeRightTab, setActiveRightTab] = useState<RightTab>("files");
-  const [debugViewRequest, setDebugViewRequest] = useState<{ view: "activity"; nonce: number } | null>(null);
+  const [debugViewRequest, setDebugViewRequest] = useState<{ view: "activity" | "app-errors"; nonce: number; runId?: string } | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadRestoredWorkspaceId());
   const [storedWorkspaces, setStoredWorkspaces] = useState<WorkspaceProject[]>(
     [],
   );
   const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
+  const defaultWorkspaceRegistrationRef = useRef<Promise<WorkspaceProject> | null>(null);
   const workspaceRefreshPromiseRef = useRef<Promise<WorkspaceProject[]> | null>(null);
   const chatChoicesPromiseRef = useRef(new Map<string, Promise<{
     agents: DesktopAgent[];
@@ -479,6 +486,7 @@ function AuthenticatedApp({
   const [appearance, setAppearance] = useState<AppearanceMode>(() => loadAppearance());
   const [sidebarComponents, setSidebarComponents] = useState<SidebarComponentVisibility>(() => loadSidebarComponents());
   const [rightSidebarComponents, setRightSidebarComponents] = useState<RightSidebarComponentVisibility>(() => loadRightSidebarComponents());
+  const [regressionTestingEnabled, setRegressionTestingEnabled] = useState(false);
   const [myDrSaiConfig, setMyDrSaiConfig] = useState<MyDrSaiConfig | null>(null);
   const [myDrSaiAgentModelPolicy, setMyDrSaiAgentModelPolicy] = useState<MyDrSaiAgentModelPolicy | null>(null);
   const myDrSaiConfigRef = useRef<MyDrSaiConfig | null>(null);
@@ -521,9 +529,10 @@ function AuthenticatedApp({
         : id === "browser" && platformDescriptor?.capabilities.features.browser !== true ? false
         : id === "debug" && platformDescriptor?.capabilities.features.debugger !== true ? false
         : id === "terminal" && platformDescriptor?.capabilities.features.terminal !== true ? false
+        : id === "regression" && !regressionTestingEnabled ? false
         : rightSidebarComponents[id],
     ),
-    [language, platformDescriptor, rightSidebarComponents],
+    [language, platformDescriptor, regressionTestingEnabled, rightSidebarComponents],
   );
   const firstVisibleRightTab = rightTabs[0]?.id;
   const title =
@@ -675,6 +684,9 @@ function AuthenticatedApp({
     && selectedChatAgent.available !== false
     && selectedChatAgent.status === "running",
   );
+  // Keep Runtime-backed adapter prefetches dormant until bootstrap succeeds.
+  // The composer has a separate on-demand gate below so the first send can
+  // bootstrap and continue without requiring a second click.
   const servicePreparing = !remotePlatformChatAvailable && (auth.serviceBusy || !auth.serviceReady);
   const runtimeAvailable = remotePlatformChatAvailable || Boolean(health?.installed || health?.gateway?.externalReady);
   const chatUnavailableReason = remotePlatformChatAvailable
@@ -761,6 +773,41 @@ function AuthenticatedApp({
     workspaceName: effectiveWorkspace.name,
     workspacePath: effectiveWorkspacePath,
   });
+  const chatRef = useRef(chat);
+  chatRef.current = chat;
+
+  const runRegressionCase = useCallback(async (detail: RegressionCaseDetail, evaluation: RegressionEvaluation): Promise<void> => {
+    const evaluationId = evaluation.evaluation_id;
+    try {
+      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "preparing_session" });
+      const thread = await desktopApi.createThread({ kind: "agent_run", title: `[Regression] ${detail.id}`, workspacePath: effectiveWorkspacePath });
+      setThreads((current) => sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]));
+      setActiveThreadId(thread.id);
+      navigateTo(MENU_IDS.currentSession);
+      setRightPanelCollapsed(false);
+      setActiveRightTab("regression");
+      const preparedText = detail.input.messages.filter((message) => message.role === "user").flatMap((message) => message.parts)
+        .map((part) => part.text ?? (part.asset_name ? `[asset: ${part.asset_name}]` : part.resource_ref ? `[resource: ${part.resource_ref}]` : ""))
+        .filter(Boolean).join("\n\n");
+      if (!preparedText) throw new Error("regression_case_has_no_user_input");
+      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "filling_composer", updates: { thread_id: thread.id } });
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
+      chatRef.current.setInput(preparedText);
+      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "ready_to_send", updates: { thread_id: thread.id } });
+      await new Promise((resolve) => window.setTimeout(resolve, 650));
+      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "sending", updates: { thread_id: thread.id } });
+      const inputHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(preparedText))))
+        .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      const sent = await chatRef.current.submit([], { onStarted: ({ requestId }) => {
+        void desktopApi.attachRegressionRun({ evaluationId, threadId: thread.id, runId: requestId, inputSha256: inputHash })
+          .then(() => desktopApi.transitionRegressionEvaluation({ evaluationId, status: "running", updates: { thread_id: thread.id, run_id: requestId, input_sha256: inputHash } }));
+      } }, preparedText);
+      if (!sent) throw new Error("regression_chat_submission_rejected");
+    } catch (reason) {
+      await desktopApi.transitionRegressionEvaluation({ evaluationId, status: "blocked", updates: { error_code: "desktop_execution_failed", error_message: reason instanceof Error ? reason.message : String(reason) } }).catch(() => undefined);
+      throw reason;
+    }
+  }, [effectiveWorkspacePath]);
 
   const proposeTerminalCommand = useCallback((
     command: string,
@@ -814,7 +861,7 @@ function AuthenticatedApp({
 
   const canChat = Boolean(
     !sessionRestoring &&
-    !servicePreparing &&
+    (remotePlatformChatAvailable || !auth.serviceBusy) &&
     runtimeAvailable &&
     effectiveWorkspacePath &&
     workspaceTrusted &&
@@ -835,16 +882,15 @@ function AuthenticatedApp({
     void refreshWorkspaces();
   }, []);
 
-  // Cold start / empty list: retry after the gateway is ready so Runtime can
-  // create or rebind the user-writable default workspace.
+  // Rebind locally registered Workspace ids after an on-demand Runtime starts.
   useEffect(() => {
-    if (!workspacesLoaded || !health?.gatewayReady || storedWorkspaces.length > 0) return;
+    if (!workspacesLoaded || !health?.gatewayReady) return;
     let cancelled = false;
     void refreshWorkspaces().then(() => {
       if (cancelled) return;
     });
     return () => { cancelled = true; };
-  }, [health?.gatewayReady, storedWorkspaces.length, workspacesLoaded]);
+  }, [health?.gatewayReady, workspacesLoaded]);
 
   // Selection must always reference an id returned by listWorkspaces().
   useEffect(() => {
@@ -1095,6 +1141,16 @@ function AuthenticatedApp({
   }, [rightSidebarComponents]);
 
   useEffect(() => {
+    let active = true;
+    void desktopApi.isRegressionTestingEnabled().then((enabled) => {
+      if (active) setRegressionTestingEnabled(enabled);
+    }).catch(() => {
+      if (active) setRegressionTestingEnabled(false);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     if (rightTabs.some(({ id }) => id === activeRightTab)) return;
     if (firstVisibleRightTab) {
       setActiveRightTab(firstVisibleRightTab);
@@ -1189,6 +1245,10 @@ function AuthenticatedApp({
     let retryTimer: number | undefined;
     const generation = chatChoicesGenerationRef.current;
     if (!myDrSaiConfigRef.current) setMyDrSaiConfigLoaded(false);
+    if (!workspacesLoaded || !effectiveWorkspacePath || !health?.gatewayReady) {
+      setMyDrSaiConfigLoaded(myDrSaiConfigRef.current !== null);
+      return undefined;
+    }
     const scheduleRetry = (): void => {
       if (cancelled || retryTimer !== undefined) return;
       retryTimer = window.setTimeout(() => {
@@ -1285,7 +1345,7 @@ function AuthenticatedApp({
       cancelled = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [activeWorkspaceId, chatChoicesRefreshNonce, effectiveWorkspacePath, health?.gatewayReady, user?.id]);
+  }, [activeWorkspaceId, chatChoicesRefreshNonce, effectiveWorkspacePath, health?.gatewayReady, user?.id, workspacesLoaded]);
 
   useEffect(() => {
     if (selectedChatAgentId !== myDrSaiAgentModelPolicy?.agent_id || !myDrSaiAgentModelPolicy?.effective_ref?.model_id) return;
@@ -1563,7 +1623,25 @@ function AuthenticatedApp({
   async function refreshWorkspaces(): Promise<void> {
     let request = workspaceRefreshPromiseRef.current;
     if (!request) {
-      request = desktopApi.listWorkspaces();
+      request = (async () => {
+        let registration = defaultWorkspaceRegistrationRef.current;
+        if (!registration) {
+          registration = desktopApi.createDefaultWorkspace();
+          defaultWorkspaceRegistrationRef.current = registration;
+          void registration.catch(() => {
+            if (defaultWorkspaceRegistrationRef.current === registration) {
+              defaultWorkspaceRegistrationRef.current = null;
+            }
+          });
+        }
+        try {
+          await registration;
+        } catch {
+          // listWorkspaces has a profile-local fallback when Documents cannot
+          // host the managed default Workspace.
+        }
+        return desktopApi.listWorkspaces();
+      })();
       workspaceRefreshPromiseRef.current = request;
     }
     try {
@@ -2505,8 +2583,9 @@ function AuthenticatedApp({
           onSelectWorkspace={(workspaceId) => void handleEmptyChatWorkspaceSelect(workspaceId)}
           onSelectModel={handleChatModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
-          onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : () => {
-            setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
+          onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : (runId, view = "activity") => {
+            setDebugViewRequest((current) => ({ view, nonce: (current?.nonce ?? 0) + 1, ...(runId ? { runId } : {}) }));
+            setRightSidebarComponents((current) => current.debug ? current : { ...current, debug: true });
             setActiveRightTab("debug");
             setRightPanelCollapsed(false);
           }}
@@ -2570,7 +2649,14 @@ function AuthenticatedApp({
                   setActiveThreadWorkspaceContextAttachments,
                 )
           }
-          onSubmit={chat.submit}
+          onSubmit={async (attachments, options) => {
+            if (!remotePlatformChatAvailable && !auth.serviceReady) {
+              const ready = await auth.retryBootstrap();
+              await desktop.refreshHealth();
+              if (!ready) return false;
+            }
+            return chat.submit(attachments, options);
+          }}
         />
       </section>
       )
@@ -2866,6 +2952,8 @@ function AuthenticatedApp({
           setActiveRightTab("debug");
         }}
       />
+    ) : activeRightTab === "regression" ? (
+      <RegressionPanel language={language} onRunCase={runRegressionCase} />
     ) : activeRightTab === "debug" ? (
       <DebugPanel
         language={language}
@@ -3593,6 +3681,7 @@ function loadSidebarComponents(): SidebarComponentVisibility {
 function loadRightSidebarComponents(): RightSidebarComponentVisibility {
   const defaults: RightSidebarComponentVisibility = {
     run: true,
+    regression: true,
     files: true,
     browser: true,
     terminal: true,
@@ -3603,6 +3692,7 @@ function loadRightSidebarComponents(): RightSidebarComponentVisibility {
     if (!value || typeof value !== "object") return defaults;
     return {
       run: typeof value.run === "boolean" ? value.run : defaults.run,
+      regression: typeof value.regression === "boolean" ? value.regression : defaults.regression,
       files: typeof value.files === "boolean" ? value.files : defaults.files,
       browser: typeof value.browser === "boolean" ? value.browser : defaults.browser,
       terminal: typeof value.terminal === "boolean" ? value.terminal : defaults.terminal,
@@ -6502,7 +6592,7 @@ function formatUpdateStatus(
   return zh ? "未检查" : "not checked";
 }
 
-type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "agent-task" | "approvals" | "analytics" | "integrations" | "remote-workspace" | "channels" | "archived-sessions" | "other";
+type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "agent-task" | "approvals" | "analytics" | "integrations" | "remote-workspace" | "channels" | "archived-sessions" | "other";
 
 function modelProviderRuntimeSummary(connection: MyDrSaiModelConnection, zh: boolean): string | undefined {
   switch (connection.runtime?.runtime_status) {
@@ -6746,8 +6836,9 @@ function agentToolStatusLabel(status: string, zh: boolean): string {
   } as Record<string, string>)[status] ?? status;
 }
 
-function AgentResourcesSettings({ agentId, zh }: { agentId: string; zh: boolean }) {
-  const [tab, setTab] = useState<"tools" | "skills" | "knowledge">("tools");
+function AgentResourcesSettings({ agentId, zh, onManagePerceptors }: { agentId: string; zh: boolean; onManagePerceptors: () => void }) {
+  const [tab, setTab] = useState<"perception" | "tools" | "skills" | "knowledge">("perception");
+  const [perceptors, setPerceptors] = useState<Awaited<ReturnType<typeof desktopApi.listPerceptors>>>([]);
   const [toolPolicy, setToolPolicy] = useState<AgentToolPolicy | null>(null);
   const [toolPreview, setToolPreview] = useState<AgentToolPreview | null>(null);
   const [skillPolicy, setSkillPolicy] = useState<AgentSkillPolicy | null>(null);
@@ -6763,7 +6854,8 @@ function AgentResourcesSettings({ agentId, zh }: { agentId: string; zh: boolean 
   const refresh = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [tools, toolsPreview, skills, skillsPreview, knowledge, knowledgePreviewResult] = await Promise.all([
+      const [perceptorRows, tools, toolsPreview, skills, skillsPreview, knowledge, knowledgePreviewResult] = await Promise.all([
+        desktopApi.listPerceptors(),
         desktopApi.getMyDrSaiAgentToolPolicy(agentId),
         desktopApi.previewMyDrSaiAgentTools(agentId),
         desktopApi.getMyDrSaiAgentSkillPolicy(agentId),
@@ -6771,7 +6863,7 @@ function AgentResourcesSettings({ agentId, zh }: { agentId: string; zh: boolean 
         desktopApi.getMyDrSaiAgentKnowledgePolicy(agentId),
         desktopApi.previewMyDrSaiAgentKnowledge(agentId),
       ]);
-      setToolPolicy(tools); setToolPreview(toolsPreview); setSkillPolicy(skills); setSkillPreview(skillsPreview);
+      setPerceptors(perceptorRows); setToolPolicy(tools); setToolPreview(toolsPreview); setSkillPolicy(skills); setSkillPreview(skillsPreview);
       setKnowledgePolicy(knowledge); setKnowledgePreview(knowledgePreviewResult);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
@@ -6813,14 +6905,29 @@ function AgentResourcesSettings({ agentId, zh }: { agentId: string; zh: boolean 
   };
 
   return <section className="settings-section agent-resource-settings" data-testid="agent-resource-settings">
-    <div><h2>{zh ? "工具、技能与知识库" : "Tools, skills, and knowledge"}</h2><p>{zh ? "按智能体选择真正进入运行时的工具、技能和知识库。" : "Choose the tools, skills, and knowledge bases that enter this Agent's runtime."}</p></div>
+    <div><h2>{zh ? "感知、工具、技能与知识库" : "Perception, tools, skills, and knowledge"}</h2><p>{zh ? "配置智能体感知外部世界并真正进入运行时的资源。" : "Configure external perception and the resources that enter this Agent's runtime."}</p></div>
     <div className="agent-configuration-tabs" role="tablist">
+      <button type="button" role="tab" aria-selected={tab === "perception"} className={tab === "perception" ? "active" : ""} onClick={() => setTab("perception")}>{zh ? "感知" : "Perception"}</button>
       <button type="button" role="tab" aria-selected={tab === "tools"} className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")}>{zh ? "工具" : "Tools"}</button>
       <button type="button" role="tab" aria-selected={tab === "skills"} className={tab === "skills" ? "active" : ""} onClick={() => setTab("skills")}>{zh ? "技能" : "Skills"}</button>
       <button type="button" role="tab" aria-selected={tab === "knowledge"} className={tab === "knowledge" ? "active" : ""} onClick={() => setTab("knowledge")}>{zh ? "知识库" : "Knowledge"}</button>
       <button type="button" onClick={() => void refresh()} disabled={busy}><RefreshCw size={14} />{zh ? "刷新" : "Refresh"}</button>
     </div>
     {error && <p role="alert">{error}</p>}
+    {tab === "perception" && <div role="tabpanel" data-testid="agent-perception-settings">
+      <div className="settings-row">
+        <span><strong>{zh ? "可用感知器资源" : "Available perceptor resources"}</strong><small>{zh ? "连接地址和凭据由全局感知器配置管理；这里仅展示当前智能体可引用的资源和运行时能力。" : "Global Perceptor configuration owns endpoints and credentials; this view only shows resources and runtime capabilities available for Agent binding."}</small></span>
+        <button type="button" onClick={onManagePerceptors}>{zh ? "管理感知器资源" : "Manage perceptors"}</button>
+      </div>
+      {perceptors.map((perceptor) => <div className="settings-row" key={perceptor.perceptor_id} data-testid={`perceptor-${perceptor.perceptor_id}`}>
+        <span><strong>{perceptor.name || perceptor.perceptor_id}</strong><small>{perceptor.adapter} · {perceptor.capabilities.join(", ")}</small><span className="perceptor-runtime-status">
+          <em className={perceptor.config.api_key ? "ok" : "warning"}>{perceptor.config.api_key ? (zh ? "已配置" : "Configured") : (zh ? "缺少凭据" : "Credential required")}</em>
+          <em className={perceptor.enabled ? "ok" : "muted"}>{perceptor.enabled ? (zh ? "已启用" : "Enabled") : (zh ? "已禁用" : "Disabled")}</em>
+          <em className={(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "web_search" && tool.selected && tool.status === "available") ? "ok" : "warning"}>{(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "web_search" && tool.selected && tool.status === "available") ? (zh ? "当前智能体可用" : "Available to this Agent") : (zh ? "当前智能体未加载" : "Not loaded by this Agent")}</em>
+        </span></span>
+      </div>)}
+      {!busy && perceptors.length === 0 && <p>{zh ? "尚未配置感知器，请前往全局感知器配置创建资源。" : "No perceptor is configured. Create one in global Perceptor configuration."}</p>}
+    </div>}
     {tab === "tools" && <div role="tabpanel">
       {(toolPreview?.tools ?? []).map((tool) => <div className="settings-toggle" key={tool.tool_id} data-testid={`agent-tool-${tool.tool_id}`}>
         <span><strong>{agentToolLabel(tool.tool_id, zh)}</strong><small>{agentToolStatusLabel(tool.status, zh)}{tool.error ? ` · ${tool.error}` : ""}</small></span>
@@ -7136,6 +7243,9 @@ function SettingsPanel({
 
   const modelConnectionRevision = myDrSaiConfig?.modelConnection?.revision;
   const configuredModelProvider = myDrSaiConfig?.modelConnection?.model_provider;
+  const modelProviderInventory = myDrSaiConfig?.modelConnection?.providers
+    ?? myDrSaiConfig?.modelProviders
+    ?? [];
   useEffect(() => {
     const connection = myDrSaiConfig?.modelConnection;
     if (!connection) return;
@@ -7174,13 +7284,12 @@ function SettingsPanel({
   useEffect(() => {
     if (activePane !== "model-providers") return;
     const connection = myDrSaiConfig?.modelConnection;
-    if (!connection) return;
-    const provider = (connection.providers ?? []).find((item) => item.name === activeModelProviderTab)
-      ?? (connection.provider.name === activeModelProviderTab ? connection.provider : undefined);
+    const provider = modelProviderInventory.find((item) => item.name === activeModelProviderTab)
+      ?? (connection?.provider.name === activeModelProviderTab ? connection.provider : undefined);
     if (!provider) return;
     const configuredModels = provider.models?.length
       ? provider.models
-      : connection.model_provider === provider.name ? [connection.model] : [];
+      : connection?.model_provider === provider.name ? [connection.model] : [];
     setProviderDraft(provider.name);
     setBaseUrlDraft(provider.base_url);
     setAnthropicBaseUrlDraft(provider.anthropic_base_url ?? "");
@@ -7196,7 +7305,7 @@ function SettingsPanel({
     setProviderModelConfigsDraft(providerModelConfigsFor(configuredModels, provider));
     setModelDraft((current) => configuredModels.includes(current) ? current : configuredModels[0] ?? "");
     setNewProviderModelDraft(null);
-  }, [activePane, activeModelProviderTab, modelConnectionRevision]);
+  }, [activePane, activeModelProviderTab, modelConnectionRevision, modelProviderInventory]);
 
   function applyModelProviderPreset(presetId: string): void {
     const preset = effectiveModelProviderPresets.find((item) => item.id === presetId);
@@ -7246,7 +7355,7 @@ function SettingsPanel({
       setProviderModelConfigsDraft(providerModelConfigsFor(configuredModels, connection.provider));
       return;
     }
-    const configuredProvider = connection?.providers?.find((provider) => provider.name === presetId);
+    const configuredProvider = modelProviderInventory.find((provider) => provider.name === presetId);
     if (configuredProvider) {
       const configuredModels = configuredProvider.models?.length ? configuredProvider.models : preset?.default_model ? [preset.default_model] : [];
       setModelDraft(configuredModels[0] ?? "");
@@ -7977,6 +8086,9 @@ function SettingsPanel({
       items: [
         { id: "agent-defaults", label: zh ? "智能体配置" : "Agent configuration", icon: Settings },
         { id: "model-providers", label: zh ? "模型提供方" : "Model providers", icon: PackageOpen },
+        { id: "perceptors", label: zh ? "感知器配置" : "Perceptors", icon: Globe2 },
+        { id: "executors", label: zh ? "执行器配置" : "Executors", icon: TerminalIcon },
+        { id: "memories", label: zh ? "记忆器配置" : "Memories", icon: History },
         { id: "agent-task", label: zh ? "智能体任务" : "Agent tasks", icon: Bot },
         { id: "approvals", label: zh ? "审批中心" : "Approval Center", icon: ShieldCheck },
         { id: "analytics", label: zh ? "使用分析" : "Usage analytics", icon: History },
@@ -8002,7 +8114,7 @@ function SettingsPanel({
     ...group,
     items: group.items.filter((item) => {
       if (item.id === "voice") return featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true;
-      if (item.id === "agent-defaults" || item.id === "model-providers" || item.id === "agent-task") return featureCapabilities?.agents === true;
+      if (item.id === "agent-defaults" || item.id === "model-providers" || item.id === "perceptors" || item.id === "executors" || item.id === "memories" || item.id === "agent-task") return featureCapabilities?.agents === true;
       if (item.id === "approvals") return featureCapabilities?.approvals === true;
       if (item.id === "analytics") return featureCapabilities?.diagnostics === true;
       if (item.id === "remote-workspace") return featureCapabilities?.remoteWorkspace === true;
@@ -8023,7 +8135,7 @@ function SettingsPanel({
       return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
     });
   const presetModelProviderIds = new Set(presetModelProviderTabs.map((preset) => preset.id));
-  const customModelProviderTabs = (myDrSaiConfig?.modelConnection?.providers ?? [])
+  const customModelProviderTabs = modelProviderInventory
     .filter((provider) => !presetModelProviderIds.has(provider.name))
     .map((provider) => ({ id: provider.name, label: provider.name }));
   const modelProviderTabs: Array<{ id: string; label: string }> = [...presetModelProviderTabs, ...customModelProviderTabs];
@@ -8042,9 +8154,9 @@ function SettingsPanel({
   const visibleModelProviderIds = new Set(visibleModelProviderTabs.map((provider) => provider.id));
   const overflowModelProviderTabs = compactModelProviderTabs.filter((provider) => !primaryModelProviderIds.has(provider.id) && !visibleModelProviderIds.has(provider.id));
   const activeModelProviderPreset = effectiveModelProviderPresets.find((preset) => preset.id === activeModelProviderTab);
-  const providersWithConfiguredKeys = new Set((myDrSaiConfig?.modelConnection?.providers ?? []).filter((provider) => provider.has_api_key).map((provider) => provider.name));
+  const providersWithConfiguredKeys = new Set(modelProviderInventory.filter((provider) => provider.has_api_key).map((provider) => provider.name));
   if (myDrSaiConfig?.modelConnection?.provider.has_api_key) providersWithConfiguredKeys.add(myDrSaiConfig.modelConnection.provider.name);
-  const selectedProviderConfig = (myDrSaiConfig?.modelConnection?.providers ?? []).find((provider) => provider.name === providerDraft)
+  const selectedProviderConfig = modelProviderInventory.find((provider) => provider.name === providerDraft)
     ?? (myDrSaiConfig?.modelConnection?.provider.name === providerDraft ? myDrSaiConfig.modelConnection.provider : undefined);
   const selectedProviderConfigured = Boolean(selectedProviderConfig);
   const selectedProviderHasSavedKey = Boolean(selectedProviderConfig?.has_api_key);
@@ -8382,7 +8494,7 @@ function SettingsPanel({
               </div>
               <div className="settings-component-list">
                 <strong>{zh ? "右侧栏组件" : "Right sidebar components"}</strong>
-                {(["run", "files", "browser", "terminal", "debug"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
+                {(["run", "regression", "files", "browser", "terminal", "debug"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
                   const label = component === "run"
                     ? (zh ? "运行" : "Run")
                     : component === "files"
@@ -8463,6 +8575,21 @@ function SettingsPanel({
                 <strong>{zh ? "流式模式状态" : "Streaming mode status"}</strong>
                 <p>{streamingVoiceAvailability.available ? (zh ? "当前环境支持流式输入与输出。" : "The current environment supports streaming input and output.") : (zh ? "流式运行链路尚未完成；串行模式继续正常可用。" : "The streaming runtime path is not complete yet; serial mode remains fully available.")}</p>
               </div>
+            </section>
+            <section className="settings-section">
+              <div>
+                <h2>{zh ? "语音发送" : "Voice sending"}</h2>
+                <p>{zh ? "串行语音识别完成后默认填入输入框，由你检查并发送。" : "Serial voice input fills the composer by default for you to review and send."}</p>
+              </div>
+              <label className="settings-toggle">
+                <span><strong>{zh ? "发送前确认转写" : "Review transcript before sending"}</strong><small>{zh ? "关闭时，停止录音后会自动识别并发送。" : "When off, stopping a recording transcribes and sends it automatically."}</small></span>
+                <input
+                  type="checkbox"
+                  data-testid="voice-confirm-before-send"
+                  checked={voicePreferences.confirmBeforeSend}
+                  onChange={(event) => updateVoicePreferences({ confirmBeforeSend: event.target.checked })}
+                />
+              </label>
             </section>
             <section className="settings-section">
               <div>
@@ -8681,7 +8808,23 @@ function SettingsPanel({
               <label className="settings-toggle"><span><strong>{zh ? "限制在当前工作区" : "Restrict to current workspace"}</strong><small>{zh ? "文件操作优先限制在当前工作区，越界操作继续走审批。" : "Prefer file operations inside the current workspace; out-of-scope actions still require approval."}</small></span><input type="checkbox" checked={myDrSaiConfig?.config.workspace_enabled !== false} disabled={agentConfigSaving || !myDrSaiConfig?.ready} onChange={(event) => void updateAgentConfig({ workspace_enabled: event.target.checked })} /></label>
               {agentConfigMessage && <div className="settings-message">{agentConfigMessage}</div>}
             </section>}
-            {activeAgentConfigurationTab === "opendrsai" && activeConfigurationAgent && <AgentResourcesSettings agentId={activeConfigurationAgent.id} zh={zh} />}
+            {activeAgentConfigurationTab === "opendrsai" && activeConfigurationAgent && <AgentResourcesSettings agentId={activeConfigurationAgent.id} zh={zh} onManagePerceptors={() => setActivePane("perceptors")} />}
+          </>
+        )}
+
+        {activePane === "perceptors" && <PerceptorSettingsPanel language={language} />}
+
+        {activePane === "executors" && (
+          <>
+            <header className="settings-content-header"><h2>{zh ? "执行器配置" : "Executor configuration"}</h2><p>{zh ? "管理会运行操作或改变外部状态的可复用执行环境。执行权限和审批策略仍由具体智能体绑定决定。" : "Manage reusable execution environments that run operations or change external state. Agent bindings still own permissions and approval policy."}</p></header>
+            <section className="settings-section settings-empty-state"><TerminalIcon size={25} /><strong>{zh ? "执行器注册表将在下一阶段开放" : "Executor registry is coming next"}</strong><span>{zh ? "本地 Shell、沙箱、远程 Runtime、浏览器控制和大装置控制将作为独立执行器接入；感知与控制不会混用授权。" : "Local shell, sandboxes, remote runtimes, browser control, and facility control will be registered independently; sensing and control never share authorization."}</span></section>
+          </>
+        )}
+
+        {activePane === "memories" && (
+          <>
+            <header className="settings-content-header"><h2>{zh ? "记忆器配置" : "Memory configuration"}</h2><p>{zh ? "管理交互形成的用户、任务与情境状态。知识库继续保存外部事实与文档，两者生命周期相互独立。" : "Manage user, task, and situational state formed through interaction. Knowledge bases continue to hold external facts and documents with a separate lifecycle."}</p></header>
+            <section className="settings-section settings-empty-state"><History size={25} /><strong>{zh ? "记忆器注册表将在下一阶段开放" : "Memory registry is coming next"}</strong><span>{zh ? "后续将提供存储范围、保留周期、自动召回、显式写入和加密状态；默认不会把大装置数据自动写入长期记忆。" : "The next stage adds storage scope, retention, automatic recall, explicit writes, and encryption status; facility data is never written to long-term memory by default."}</span></section>
           </>
         )}
 

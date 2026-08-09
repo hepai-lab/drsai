@@ -82,6 +82,11 @@ import type {
   WorkspaceProject,
   GatewaySkill,
 } from "@shared/desktopApi";
+import {
+  DEFAULT_WORKSPACE_DISPLAY_NAME,
+  DEFAULT_WORKSPACE_VERSION,
+  resolveDefaultWorkspaceDisplayName,
+} from "@shared/workspaceDefaults";
 import { canonicalResultInput, canonicalResultProvenance, RESULT_PROVENANCE_SCHEMA, sha256Web } from "../../api/resultProvenance";
 import type { StructuredActivityEvent, StructuredConversationEvent, StructuredTurnState } from "@shared/structuredConversation";
 import { FULL_DESKTOP_FEATURE_CAPABILITIES } from "@shared/platform";
@@ -1332,6 +1337,11 @@ export function installMockDesktopApi(): void {
   let mockInstalledSkills: MockSkill[] = [];
 
   const api: DesktopApi = {
+    listPerceptors: async () => [],
+    savePerceptor: async (request) => ({ ...request, revision: "sha256:mock" }),
+    updatePerceptor: async (_perceptorId, request) => ({ ...request, revision: "sha256:mock-updated" }),
+    testPerceptor: async (perceptorId, capability = "search") => ({ ok: true, perceptor_id: perceptorId, status: "available", tested: capability, result_count: capability === "search" ? 3 : undefined }),
+    deletePerceptor: async (perceptorId) => ({ status: "deleted", perceptor_id: perceptorId }),
     isAppDialogE2eEnabled: () => false,
     isOperationalStateE2eEnabled: () => operationalStateFixture,
     getPlatformDescriptor: async () => ({
@@ -2083,14 +2093,28 @@ export function installMockDesktopApi(): void {
     },
     createDefaultWorkspace: async () => {
       const existing = workspaces.find((workspace) => workspace.metadata?.managedDefault === true);
-      if (existing) return existing;
+      if (existing) {
+        return api.updateWorkspace({
+          id: existing.id,
+          name: resolveDefaultWorkspaceDisplayName(
+            existing.name,
+            existing.metadata?.defaultWorkspaceVersion,
+          ),
+          trusted: true,
+          metadata: {
+            ...(existing.metadata || {}),
+            managedDefault: true,
+            defaultWorkspaceVersion: DEFAULT_WORKSPACE_VERSION,
+          },
+        });
+      }
       return api.createWorkspace({
         source: "existing",
         path: "C:\\Users\\Demo\\Documents\\OpenDrSai Workspace",
-        name: "OpenDrSai Workspace",
+        name: DEFAULT_WORKSPACE_DISPLAY_NAME,
         description: "OpenDrSai managed default workspace",
         trusted: true,
-        metadata: { managedDefault: true, defaultWorkspaceVersion: 1 },
+        metadata: { managedDefault: true, defaultWorkspaceVersion: DEFAULT_WORKSPACE_VERSION },
       });
     },
     updateWorkspace: async (request) => {
@@ -2121,6 +2145,21 @@ export function installMockDesktopApi(): void {
       return deleted;
     },
     listThreads: async () => threads,
+    isRegressionTestingEnabled: async () => false,
+    listRegressionSuites: async () => ({ schema_version: "opendrsai.regression-catalog/1", suites: [] }),
+    listRegressionCases: async (suiteId) => ({
+      schema_version: "opendrsai.regression-catalog/1",
+      suite: { id: suiteId, title: suiteId, description: "" },
+      catalog_revision: "0".repeat(64),
+      cases: [],
+    }),
+    getRegressionCase: async () => { throw new Error("regression_feature_disabled"); },
+    beginRegressionEvaluation: async () => { throw new Error("regression_feature_disabled"); },
+    transitionRegressionEvaluation: async () => { throw new Error("regression_feature_disabled"); },
+    attachRegressionRun: async () => { throw new Error("regression_feature_disabled"); },
+    getRegressionEvaluation: async () => { throw new Error("regression_feature_disabled"); },
+    cancelRegressionEvaluation: async () => { throw new Error("regression_feature_disabled"); },
+    listRegressionHistory: async () => [],
     listAgents: async (): Promise<DesktopAgent[]> => [
       {
         id: "opendrsai",
@@ -3020,7 +3059,10 @@ export function installMockDesktopApi(): void {
           requestId,
           type: "completed",
           result: {
-            audioData: new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 87, 65, 86, 69]),
+            audioData: Uint8Array.from(
+              { length: 46 },
+              (_value, index) => [82, 73, 70, 70, 38, 0, 0, 0, 87, 65, 86, 69][index] ?? 0,
+            ),
             mimeType: "audio/wav",
             runtimeId: "mock-local",
             createdAt: new Date().toISOString(),

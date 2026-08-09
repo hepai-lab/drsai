@@ -17,6 +17,7 @@ for (const symbol of [
   "getMyDrSaiAgentSkillPolicy", "updateMyDrSaiAgentSkillPolicy", "previewMyDrSaiAgentSkills",
   "getMyDrSaiAgentKnowledgePolicy", "updateMyDrSaiAgentKnowledgePolicy", "previewMyDrSaiAgentKnowledge",
   "testKnowledgeBase", "indexKnowledgeBase", "searchKnowledgeBase",
+  "listPerceptors", "savePerceptor", "testPerceptor", "deletePerceptor",
 ]) {
   assert(api.includes(`${symbol}(`), `Desktop API is missing ${symbol}`);
   assert(main.includes(`function ${symbol}(`), `Desktop main adapter is missing ${symbol}`);
@@ -26,9 +27,11 @@ for (const symbol of [
 for (const channel of [
   "desktop:test-agent-tool", "desktop:test-knowledge-base", "desktop:search-knowledge-base",
   "desktop:preview-my-drsai-agent-tools", "desktop:preview-my-drsai-agent-skills", "desktop:preview-my-drsai-agent-knowledge",
+  "desktop:list-perceptors", "desktop:save-perceptor", "desktop:test-perceptor", "desktop:delete-perceptor",
 ]) assert(windowsMain.includes(channel), `IPC registration is missing ${channel}`);
 
-assert(app.includes('useState<"tools" | "skills" | "knowledge">'), "Agent resources tabs are missing");
+assert(app.includes('useState<"perception" | "tools" | "skills" | "knowledge">'), "BAMS perception and Agent resources tabs are missing");
+assert(app.includes("Tavily API Key") && app.includes("savePerceptor"), "Tavily perceptor configuration UI is missing");
 assert(app.includes("allow_thread_override"), "Per-task skill override control is missing");
 assert(app.includes("require_citations"), "Knowledge citation control is missing");
 assert(app.includes("searchKnowledgeBase"), "Knowledge search preview UI is missing");

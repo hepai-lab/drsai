@@ -59,6 +59,7 @@ assert.ok(renderer.includes("StructuredActivityDetails") && renderer.includes("�
 assert.ok(renderer.includes("respondedRequestIds") && renderer.includes("onRespondInteraction"), "Interaction parts must be actionable and idempotent.");
 assert.ok(renderer.includes("onOpenArtifact") && renderer.includes("onOpenCitation"), "Artifacts and citations must route to contextual panels.");
 assert.ok(renderer.includes("part.citationIds.map") && renderer.includes("focusPart(citation.id)"), "Markdown citations must locate stable citation cards.");
+assert.ok(renderer.includes("stripTrailingSourceList(part.markdown)"), "A trailing generated Sources URL list must be hidden when compact source cards are available.");
 assert.ok(renderer.includes("part.markdownPartId") && renderer.includes("structured-citation-back"), "Citation cards must navigate back to the related markdown part.");
 assert.ok(renderer.includes("data-artifact-id={part.artifactId}") && renderer.includes("data-status={part.status}"), "Artifact cards must expose stable identity and status.");
 assert.ok(renderer.includes("<StructuredActivitySummary") && renderer.includes('activity.status === "pending" || activity.status === "running"'), "Active work must have a compact transcript footer.");
@@ -70,7 +71,7 @@ assert.equal(renderer.includes('className="structured-run-stop"'), false, "The t
 
 assert.ok(workspace.includes('message.role === "assistant" && message.structuredTurn'), "ChatWorkspace must prefer the V2 document.");
 assert.ok(workspace.includes("<StructuredMessageParts"), "ChatWorkspace must render V2 parts directly.");
-assert.ok(workspace.includes("onOpenDebug={onOpenDebug}"), "Compact activity must route details to the Debug panel.");
+assert.ok(workspace.includes("onOpenDebug={onOpenDebug ? () => onOpenDebug(message.runtimeRunId) : undefined}"), "Compact activity must route details to the Debug panel with the selected Runtime Run identity.");
 assert.ok(workspace.includes('messages.some((message) => message.streaming)'), "Elapsed duration must refresh for the entire streaming turn.");
 assert.ok(workspace.includes("<StreamingStatus") && workspace.includes("已执行"), "Pre-output streaming state must expose elapsed time without a duplicate stop action.");
 assert.ok(adapter.includes("desktopApi.cancelChatTurn") && adapter.includes('event.type === "aborted" ? "cancelled" : "completed"'), "Composer cancellation must use the single Turn cancellation contract and settle structured streaming state.");

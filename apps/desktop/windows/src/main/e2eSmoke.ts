@@ -6979,6 +6979,7 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
 
       const preferences = {
         autoReadResponses: true,
+        confirmBeforeSend: false,
         inputDeviceId: '',
         inputLanguage: 'en-US',
         interactionMode: 'serial',
@@ -6988,7 +6989,7 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
         synthesisMode: 'provider',
         voiceName: 'alloy',
       };
-      localStorage.setItem('opendrsai.voicePreferences.v1', JSON.stringify({ version: 3, preferences }));
+      localStorage.setItem('opendrsai.voicePreferences.v1', JSON.stringify({ version: 4, preferences }));
       window.dispatchEvent(new CustomEvent('opendrsai:voice-preferences-changed', { detail: preferences }));
 
       stage('login:start');
@@ -7008,6 +7009,7 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       if (composer) observer?.observe(composer, { attributes: true, attributeFilter: ['data-voice-turn-phase'] });
 
       const baselineAssistantIds = new Set([...document.querySelectorAll('.message.assistant')].map((node) => node.getAttribute('data-message-id')));
+      const baselineUserIds = new Set([...document.querySelectorAll('.message.user')].map((node) => node.getAttribute('data-message-id')));
       const baselineVoiceDiagnostics = await api.getDiagnosticSnapshot({ module: 'voice', limit: 100 });
       const baselineTtsCompleted = (baselineVoiceDiagnostics.events || []).filter((event) => event.component === 'tts' && event.status === 'completed').length;
       const voiceButton = await waitFor(() => {
@@ -7029,38 +7031,22 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       stopButton?.click();
 
       const transcriptionTerminal = await waitFor(() => {
-        const review = document.querySelector('textarea[aria-label="Review voice transcript"]');
+        const userMessage = [...document.querySelectorAll('.message.user')].find((node) => {
+          const id = node.getAttribute('data-message-id');
+          return id && !baselineUserIds.has(id) && (node.querySelector('.message-body')?.textContent || '').trim().length > 0;
+        });
         const failed = document.querySelector('form.composer[data-voice-turn-phase="failed"]');
-        return review || failed;
+        return userMessage || failed;
       }, 60000);
-      const review = transcriptionTerminal?.matches?.('textarea[aria-label="Review voice transcript"]')
+      const userMessage = transcriptionTerminal?.matches?.('.message.user')
         ? transcriptionTerminal
         : null;
-      const transcript = review?.value?.trim() || '';
+      const transcript = userMessage?.querySelector('.message-body')?.textContent?.trim() || '';
       checks.fullRoundTranscribed = transcript.length > 0;
+      checks.fullRoundAutoSubmitted = Boolean(userMessage);
       details.transcriptChars = transcript.length;
-      stage('transcript:ready');
-      if (!checks.fullRoundTranscribed) { observer?.disconnect(); return await finish(); }
-      const insert = await waitFor(() => [...document.querySelectorAll('.composer-voice-review button')].find((button) => button.textContent?.trim() === 'Insert' && !button.disabled), 5000);
-      checks.fullRoundInsertReady = Boolean(insert);
-      if (!insert) { observer?.disconnect(); return await finish(); }
-      insert?.click();
-      const input = await waitFor(() => {
-        const node = document.querySelector('[data-testid="composer-input"]');
-        return node?.value?.trim() ? node : null;
-      }, 5000);
-      checks.fullRoundReviewInserted = Boolean(input) && input.value.trim() === transcript;
-      stage('transcript:inserted');
-      if (!checks.fullRoundReviewInserted) { observer?.disconnect(); return await finish(); }
-      const submit = await waitFor(() => {
-        const button = document.querySelector('button.composer-submit');
-        return button && !button.disabled ? button : null;
-      }, 5000);
-      checks.fullRoundSendReady = Boolean(submit);
-      stage('send:ready');
-      if (!submit) { observer?.disconnect(); return await finish(); }
-      submit?.click();
-      stage('send:clicked');
+      stage('transcript:auto-submitted');
+      if (!checks.fullRoundTranscribed || !checks.fullRoundAutoSubmitted) { observer?.disconnect(); return await finish(); }
 
       const assistant = await waitFor(() => [...document.querySelectorAll('.message.assistant')].find((node) => {
         const id = node.getAttribute('data-message-id');
@@ -7076,7 +7062,7 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       observer?.disconnect();
       rememberPhase();
 
-      const requiredPhases = ['requesting_permission', 'recording', 'transcribing', 'reviewing', 'ready_to_send', 'submitting', 'awaiting_response', 'response_ready', 'synthesizing', 'playing', 'completed'];
+      const requiredPhases = ['requesting_permission', 'recording', 'preparing_audio', 'transcribing', 'ready_to_send', 'submitting', 'awaiting_response', 'response_ready', 'synthesizing', 'playing', 'completed'];
       checks.fullRoundPhases = requiredPhases.every((phase) => phases.includes(phase));
       checks.fullRoundPlayback = playback.played > 0 && playback.ended > 0;
       const voiceDiagnostics = await api.getDiagnosticSnapshot({ module: 'voice', limit: 100 });

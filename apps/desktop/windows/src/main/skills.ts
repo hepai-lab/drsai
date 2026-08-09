@@ -6,8 +6,9 @@ import type {
 } from "../shared/desktopApi";
 import { getAuthSession } from "./auth";
 import { getGatewayRequestHeaders } from "./gateway";
+import { resolveGatewayPort } from "../../../shared/main/gatewayEnvironment";
 
-const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
+const GATEWAY_BASE_URL = `http://127.0.0.1:${resolveGatewayPort()}`;
 
 /**
  * Skills must use the same user_id as chat/agent creation.
@@ -141,10 +142,4 @@ export async function reloadSkills(
     thread_id: threadId,
     user_id: uid,
   });
-}
-
-function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
-  const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
 }

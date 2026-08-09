@@ -10,7 +10,7 @@ const requirements = [
     validate: (report) => {
       const serialTurn = report.results?.find((item) => item.name === "serial-turn");
       const requiredPhases = [
-        "requesting_permission", "recording", "transcribing", "reviewing", "ready_to_send",
+        "requesting_permission", "recording", "preparing_audio", "transcribing", "ready_to_send",
         "submitting", "awaiting_response", "response_ready", "completed",
       ];
       return report.ok === true
@@ -40,13 +40,13 @@ const requirements = [
     validate: (report) => {
       const requiredChecks = [
         "sttCompleted", "ttsCompleted", "fullRoundLoginBootstrap", "fullRoundCaptureStarted",
-        "fullRoundTranscribed", "fullRoundReviewInserted", "fullRoundSendReady", "fullRoundLlmReplied",
+        "fullRoundTranscribed", "fullRoundAutoSubmitted", "fullRoundLlmReplied",
         "fullRoundProviderTts", "fullRoundPlayback", "fullRoundCompleted", "fullRoundPhases",
         "fullRoundDiagnosticsPrivate",
       ];
       const requiredPhases = [
-        "requesting_permission", "recording", "preparing_audio", "transcribing", "reviewing",
-        "ready_to_send", "submitting", "awaiting_response", "response_ready", "synthesizing",
+        "requesting_permission", "recording", "preparing_audio", "transcribing", "ready_to_send",
+        "submitting", "awaiting_response", "response_ready", "synthesizing",
         "playing", "completed",
       ];
       return report.ok === true

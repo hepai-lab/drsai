@@ -228,6 +228,80 @@ function Get-InstallTarget {
     return $null
 }
 
+function Remove-LegacyProductionDeveloperInstall {
+    param(
+        [string]$DeveloperHome,
+        [string]$RepositoryRoot
+    )
+
+    $productionHome = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE ".drsai"))
+    if ($productionHome.TrimEnd("\") -ieq $DeveloperHome.TrimEnd("\")) { return }
+    $legacyInstall = Join-Path $productionHome "drsai-agent"
+    if (-not (Test-Path -LiteralPath $legacyInstall)) { return }
+    $legacyTarget = Get-InstallTarget $legacyInstall
+    if (-not $legacyTarget -or $legacyTarget.TrimEnd("\") -ine $RepositoryRoot.TrimEnd("\")) { return }
+
+    $item = Get-Item -LiteralPath $legacyInstall -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        [System.IO.Directory]::Delete($item.FullName)
+        Write-Host "    Removed legacy production developer link: $legacyInstall" -ForegroundColor Yellow
+        return
+    }
+
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $backup = Join-Path $productionHome "drsai-agent.legacy-dev-backup-$stamp"
+    Move-Item -LiteralPath $legacyInstall -Destination $backup
+    Write-Host "    Detached legacy production developer install." -ForegroundColor Yellow
+    Write-Host "      Previous: $legacyInstall" -ForegroundColor DarkGray
+    Write-Host "      Backup:   $backup" -ForegroundColor DarkGray
+}
+
+function Remove-LegacySourceWorkspaceRegistration {
+    param(
+        [string]$DeveloperHome,
+        [string]$RepositoryRoot
+    )
+
+    $migrationMarker = Join-Path $DeveloperHome "cache\desktop-dev\legacy-source-workspace-cleanup-v1"
+    if (Test-Path -LiteralPath $migrationMarker) { return }
+    $workspacesFile = Join-Path $DeveloperHome "desktop\workspaces.json"
+    if (Test-Path -LiteralPath $workspacesFile) {
+        try {
+            $parsedRecords = [IO.File]::ReadAllText($workspacesFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            $records = @()
+            foreach ($record in $parsedRecords) { $records += $record }
+            $filtered = @($records | Where-Object {
+                $keep = $true
+                if ($_.path) {
+                    try {
+                        $keep = [IO.Path]::GetFullPath([string]$_.path).TrimEnd("\") -ine $RepositoryRoot.TrimEnd("\")
+                    } catch {
+                        $keep = $true
+                    }
+                }
+                $keep
+            })
+            if ($filtered.Count -ne $records.Count) {
+                $temporary = "$workspacesFile.$PID.tmp"
+                $serializedRecords = @($filtered | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 32 -Compress })
+                $payload = if ($serializedRecords.Count -eq 0) {
+                    "[]`n"
+                } else {
+                    "[`n" + ($serializedRecords -join ",`n") + "`n]`n"
+                }
+                [IO.File]::WriteAllText($temporary, $payload, (New-Object Text.UTF8Encoding($false)))
+                Move-Item -LiteralPath $temporary -Destination $workspacesFile -Force
+                Write-Host "    Removed the legacy source-repository default Workspace registration." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Warning "Could not migrate legacy developer Workspace registrations: $($_.Exception.Message)"
+            return
+        }
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $migrationMarker) | Out-Null
+    [IO.File]::WriteAllText($migrationMarker, "complete`n", (New-Object Text.UTF8Encoding($false)))
+}
+
 function Test-DeveloperBackendReady {
     param(
         [string]$InstallPath,
@@ -628,6 +702,9 @@ $DevLogDir = Join-Path $DrsaiHome "logs\desktop-dev"
 $DevCacheDir = Join-Path $DrsaiHome "cache\desktop-dev"
 $BackendValidationStamp = Join-Path $DevCacheDir "backend-validation.txt"
 $FrontendValidationStamp = Join-Path $DevCacheDir "frontend-validation.txt"
+
+Remove-LegacyProductionDeveloperInstall -DeveloperHome $DrsaiHome -RepositoryRoot $RepoRoot
+Remove-LegacySourceWorkspaceRegistration -DeveloperHome $DrsaiHome -RepositoryRoot $RepoRoot
 
 function Get-ValidationFingerprint {
     param([string[]]$Paths)

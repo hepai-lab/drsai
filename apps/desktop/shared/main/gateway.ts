@@ -15,6 +15,7 @@ import {
   registerGatewayIdentitySynchronizer,
   requireCoordinatedAuthContext,
 } from "./authGatewayCoordination";
+import { resolveGatewayPort } from "./gatewayEnvironment";
 
 let processService: DesktopProcessService | null = null;
 let desktopAppRuntime = {
@@ -31,7 +32,7 @@ export function configureGatewayPlatform(input: {
 }
 
 const GATEWAY_HOST = "127.0.0.1";
-const GATEWAY_PORT = getGatewayPort();
+const GATEWAY_PORT = resolveGatewayPort();
 const GATEWAY_BASE_URL = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 const DEV_MANAGED_EXTERNAL_GATEWAY = process.env.DRSAI_GATEWAY_DEV_MANAGED === "1";
 const HOT_RELOAD_GATEWAY = process.env.DRSAI_GATEWAY_HOT_RELOAD === "1";
@@ -551,7 +552,6 @@ function findCommandOnPath(command: string): Promise<string | null> {
     });
   });
 }
-
 function isManagedGatewayRunning(): boolean {
   return Boolean(gatewayProcess && gatewayProcess.pid && !gatewayProcess.killed);
 }
@@ -845,10 +845,4 @@ function waitForProcessExit(proc: ChildProcess, timeoutMs: number): Promise<bool
     const timer = setTimeout(() => finish(!isProcessRunning(proc)), timeoutMs);
     proc.once("exit", onExit);
   });
-}
-
-function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
-  const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
 }

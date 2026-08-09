@@ -41,7 +41,7 @@ interface DebugPanelProps {
   language: AppLanguage;
   onSelectTurn?: (turnId: string) => void;
   onPrepareRerun?: (runId: string) => boolean;
-  requestedView?: { view: DebugView; nonce: number } | null;
+  requestedView?: { view: DebugView; nonce: number; runId?: string } | null;
 }
 
 export function DebugPanel({ language, onSelectTurn, onPrepareRerun, requestedView }: DebugPanelProps): React.JSX.Element {
@@ -80,7 +80,11 @@ export function DebugPanel({ language, onSelectTurn, onPrepareRerun, requestedVi
     return () => { cancelled = true; };
   }, [logs.length, paused]);
 
-  const activeRun = snapshot?.agentRuns?.find((item) => !["completed", "failed", "cancelled"].includes(item.status)) ?? snapshot?.agentRuns?.[0];
+  const activeRun = requestedView?.runId ? (
+    snapshot?.agentRuns?.find((item) => item.runId === requestedView.runId || item.id === requestedView.runId)
+  ) : (
+    snapshot?.agentRuns?.find((item) => !["completed", "failed", "cancelled"].includes(item.status)) ?? snapshot?.agentRuns?.[0]
+  );
   const filtered = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return visible.filter((entry) => {
@@ -178,7 +182,7 @@ export function DebugPanel({ language, onSelectTurn, onPrepareRerun, requestedVi
       </div>
 
       <div className={`debug-output ${view}`} ref={outputRef} role="log">
-        {view === "agent" && <AgentDiagnosticView snapshot={snapshot} activityGroups={activityGroups} runtimeLogs={visible} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} onSelectTurn={onSelectTurn} onPrepareRerun={onPrepareRerun} onMessage={setActionMessage} />}
+        {view === "agent" && <AgentDiagnosticView snapshot={snapshot} requestedRunId={requestedView?.runId} activityGroups={activityGroups} runtimeLogs={visible} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} onSelectTurn={onSelectTurn} onPrepareRerun={onPrepareRerun} onMessage={setActionMessage} />}
         {view === "app-errors" && <AppErrorView snapshot={snapshot} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} />}
         {view === "overview" && <DiagnosticOverview snapshot={snapshot} traces={traces} zh={zh} />}
         {view === "traces" && (traces.length ? traces.map((trace) => <TraceCard key={trace.traceId} trace={trace} zh={zh} onOpenSource={(source, workspaceId) => setSourceRequest({ source, workspaceId })} />) : <DebugEmpty zh={zh} />)}
@@ -438,8 +442,9 @@ function RawDebugEntry({ entry, zh }: { entry: DebugLogEntry; zh: boolean }): Re
   return <article className={`debug-entry ${entry.level}`}><time>{new Date(entry.timestamp).toLocaleTimeString()}</time><span>{entry.module || entry.source}</span><pre>{body}</pre><button type="button" className="debug-entry-copy" onClick={() => void copyTextSafely(body)} title={zh ? "复制" : "Copy"} aria-label={zh ? "复制此诊断记录" : "Copy diagnostic record"}><Clipboard size={14} /></button></article>;
 }
 
-function AgentDiagnosticView({ snapshot, activityGroups, runtimeLogs, zh, onOpenSource, onSelectTurn, onPrepareRerun, onMessage }: {
+function AgentDiagnosticView({ snapshot, requestedRunId, activityGroups, runtimeLogs, zh, onOpenSource, onSelectTurn, onPrepareRerun, onMessage }: {
   snapshot: DiagnosticSnapshot | null;
+  requestedRunId?: string;
   activityGroups: ActivityGroupModel[];
   runtimeLogs: DebugLogEntry[];
   zh: boolean;
@@ -454,7 +459,10 @@ function AgentDiagnosticView({ snapshot, activityGroups, runtimeLogs, zh, onOpen
     return () => window.clearInterval(timer);
   }, []);
   const runs = snapshot?.agentRuns ?? [];
-  const run = runs.find((item) => !["completed", "failed", "cancelled"].includes(item.status)) ?? runs[0];
+  const run = requestedRunId
+    ? runs.find((item) => item.runId === requestedRunId || item.id === requestedRunId)
+    : runs.find((item) => !["completed", "failed", "cancelled"].includes(item.status)) ?? runs[0];
+  if (requestedRunId && snapshot && !run) return <div className="agent-diagnostic-empty"><AlertTriangle size={22} /><strong>{zh ? "这条消息的调试记录不可用" : "Diagnostics for this message are unavailable"}</strong><span>{zh ? "运行记录可能由旧版本生成、已过期，或尚未同步。你可以在消息中重新运行任务。" : "The run may be from an older version, expired, or not yet synchronized. You can rerun the task from the message."}</span></div>;
   if (!run) return <div className="agent-diagnostic-empty"><Activity size={22} /><strong>{zh ? "当前没有 Agent 运行记录" : "No Agent run is available"}</strong><span>{zh ? "启动任务后，这里会显示阶段、动作、耗时和错误。" : "Start a task to see its phase, action, timing, and failures."}</span></div>;
   const terminal = ["completed", "failed", "cancelled"].includes(run.status);
   const elapsed = terminal ? run.elapsedMs : Math.max(run.elapsedMs, now - Date.parse(run.startedAt));
@@ -501,9 +509,14 @@ function AgentDiagnosticView({ snapshot, activityGroups, runtimeLogs, zh, onOpen
 
 function AppErrorView({ snapshot, zh, onOpenSource }: { snapshot: DiagnosticSnapshot | null; zh: boolean; onOpenSource: (source: DiagnosticSourceLocation, workspaceId?: string) => void }): React.JSX.Element {
   const incidents = (snapshot?.incidents ?? []).filter((incident) => incident.domain === "app");
+  const directErrors = (snapshot?.events ?? []).filter((event) => event.domain === "app" && (event.status === "failed" || event.level === "error")).reverse();
   return <div className="app-error-view">
-    <header><span><strong>{incidents.length}</strong><small>{zh ? "类 App 错误" : "App error groups"}</small></span><p>{zh ? "这里只显示 Desktop、Runtime、网络、存储和权限等应用自身问题。" : "Only Desktop, Runtime, network, storage, and permission failures appear here."}</p></header>
-    {incidents.length ? incidents.map((incident) => <IncidentCard key={incident.id} incident={incident} zh={zh} onOpenSource={onOpenSource} />) : <div className="app-error-empty"><ShieldCheck size={22} /><strong>{zh ? "未发现 App 错误" : "No App errors detected"}</strong></div>}
+    <header><span><strong>{incidents.length || directErrors.length}</strong><small>{zh ? "类 App 错误" : "App error groups"}</small></span><p>{zh ? "这里只显示 Desktop、Runtime、网络、存储和权限等应用自身问题。" : "Only Desktop, Runtime, network, storage, and permission failures appear here."}</p></header>
+    {incidents.length
+      ? incidents.map((incident) => <IncidentCard key={incident.id} incident={incident} zh={zh} onOpenSource={onOpenSource} />)
+      : directErrors.length
+        ? directErrors.map((event) => <DiagnosticErrorCard key={event.id} event={event} zh={zh} onOpenSource={(source) => onOpenSource(source, event.workspaceId)} />)
+        : <div className="app-error-empty"><ShieldCheck size={22} /><strong>{zh ? "未发现 App 错误" : "No App errors detected"}</strong></div>}
   </div>;
 }
 

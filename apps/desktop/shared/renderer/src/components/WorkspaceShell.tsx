@@ -479,14 +479,17 @@ export function WorkspaceShell({
   }
 
   useEffect(() => {
+    if (!worktreeOpen) return;
     worktreeEventCursor.current = 0;
     void refreshWorktrees();
-  // The active Workspace identity is the authoritative refresh boundary.
+  // Opening the Worktree view or changing its authoritative Workspace is the
+  // refresh boundary. Keeping this dormant while the view is closed prevents
+  // a read-only sidebar feature from starting the Runtime during app startup.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspace?.id, activeWorkspace?.path]);
+  }, [activeWorkspace?.id, activeWorkspace?.path, worktreeOpen]);
 
   useEffect(() => {
-    if (!activeWorkspace?.path) return;
+    if (!worktreeOpen || !activeWorkspace?.path) return;
     let disposed = false;
     let reading = false;
     let consecutiveFailures = 0;
@@ -533,9 +536,10 @@ export function WorkspaceShell({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  // Event cursors are reset only when the authoritative Workspace changes.
+  // Event cursors are reset only when the Worktree view opens or its
+  // authoritative Workspace changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspace?.id, activeWorkspace?.path]);
+  }, [activeWorkspace?.id, activeWorkspace?.path, worktreeOpen]);
   const isRightPanelExpanded = rightPanelExpanded && !rightPanelCollapsed;
   const rightPanelExpandLabel = isRightPanelExpanded
     ? zh ? "还原聊天视图" : "Restore chat view"

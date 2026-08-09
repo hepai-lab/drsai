@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowUpRight,
@@ -93,6 +93,8 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   const interactionParts = turn.parts.filter((part): part is InteractionPart => part.kind === "interaction" && (part.status === "running" || part.status === "pending"));
   const resultParts = turn.parts.filter((part) => part.kind === "markdown" || part.kind === "artifact" || part.kind === "citation");
   const noticeParts = turn.parts.filter((part): part is NoticePart => part.kind === "notice");
+  const publicSources = useMemo(() => extractPublicSources(turn), [turn]);
+  const hasUserWarning = noticeParts.some((part) => part.level === "warning") || turn.parts.some((part) => part.kind === "markdown" && /could not be fully verified|citation_evidence_incomplete/i.test(part.markdown));
   const hasProcess = progressParts.length > 0 || reasoningParts.length > 0 || subtaskParts.length > 0 || turn.activities.length > 0 || noticeParts.length > 0;
   const waitingApproval = turn.parts.some((part) => part.kind === "interaction" && part.interactionType === "approval" && (part.status === "pending" || part.status === "running"));
   const turnStatusLabel = waitingApproval
@@ -100,6 +102,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     : turn.status === "pending" ? (language === "zh" ? "排队中" : "Queued")
     : turn.status === "running" && !hasProcess ? (language === "zh" ? "已发送" : "Sent")
     : turn.status === "running" ? (language === "zh" ? "生成中" : "Generating")
+    : turn.status === "completed" && hasUserWarning ? (language === "zh" ? "已完成 · 有警告" : "Completed · Warning")
     : turn.status === "completed" ? (language === "zh" ? "已完成" : "Completed")
     : turn.status === "error" ? (language === "zh" ? "失败" : "Failed")
     : (language === "zh" ? "已停止" : "Stopped");
@@ -129,8 +132,8 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
 
   useEffect(() => {
     if (turn.status === "running" || turn.status === "error") setProcessOpen(true);
-    else if (turn.status === "completed") setProcessOpen(false);
-  }, [turn.status]);
+    else if (turn.status === "completed") setProcessOpen(hasUserWarning);
+  }, [hasUserWarning, turn.status]);
 
   function focusPart(partId: string): void {
     setFocusedPartId(partId);
@@ -144,9 +147,10 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
 
   function renderPart(part: StructuredAssistantPart): React.JSX.Element | null {
     if (part.kind === "markdown") {
-      return part.markdown ? (
+      const displayedMarkdown = publicSources.length ? stripTrailingSourceList(part.markdown) : part.markdown;
+      return displayedMarkdown ? (
         <div key={part.id} className={`structured-markdown-part ${focusedPartId === part.id ? "relation-focus" : ""}`} data-structured-part-id={part.id}>
-          <ChatMessageContent content={part.markdown} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
+          <ChatMessageContent content={displayedMarkdown} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
           {part.citationIds?.length ? <div className="structured-inline-citations" aria-label={language === "zh" ? "本段引用" : "Citations for this section"}>
             {part.citationIds.map((citationId) => {
               const citation = citationParts.find((candidate) => candidate.citationId === citationId);
@@ -168,7 +172,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
     if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} />;
     if (part.kind === "subtask") return <div className={`structured-subtask ${part.status}`} key={part.id}><ListChecks size={14} aria-hidden="true" /><span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span></div>;
-    return <NoticeItem key={part.id} part={part} />;
+    return <NoticeItem key={part.id} part={part} language={language} onOpenDebug={onOpenDebug} />;
   }
 
   return (
@@ -187,6 +191,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
         {processOpen ? <div className="structured-process-content" data-testid="structured-process-content">
           {onOpenRun && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onOpenRun(runId)}>{language === "zh" ? "查看运行" : "View run"}<ArrowUpRight size={13} aria-hidden /></button> : null}
           {onCreateRunExperiment && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onCreateRunExperiment(runId)}>{language === "zh" ? "创建实验" : "Create experiment"}<FlaskConical size={13} aria-hidden /></button> : null}
+          <RetrievalStageSummary turn={turn} language={language} />
           <StructuredActivityTimeline turn={turn} language={language} onOpenDebug={onOpenDebug} />
           <BoundedProcessSection title={language === "zh" ? "过程记录" : "Progress"} items={progressParts} language={language} renderPart={renderPart} />
           <BoundedProcessSection title={language === "zh" ? "分析摘要" : "Analysis summary"} items={reasoningParts} language={language} renderPart={renderPart} />
@@ -205,9 +210,67 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       </header>}
       {interactionParts.length ? <section className="structured-interaction-layer" aria-label={language === "zh" ? "待用户交互" : "User action required"}>{interactionParts.map(renderPart)}</section> : null}
       {resultParts.length ? <section className="structured-result-layer"><h3>{language === "zh" ? "最终回答" : "Final answer"}</h3>{resultParts.map(renderPart)}</section> : null}
+      {publicSources.length ? <section className="structured-source-list" aria-label={language === "zh" ? "回答来源" : "Answer sources"}>
+        <h3>{language === "zh" ? `来源 · ${publicSources.length}` : `Sources · ${publicSources.length}`}</h3>
+        {publicSources.map((source, index) => <button type="button" key={source.url} onClick={() => onOpenLink(source.url)}>
+          <span><small>{index + 1}</small><strong>{source.label}</strong></span>
+          <em>{language === "zh" ? "已获取" : "Retrieved"}</em><ArrowUpRight size={13} aria-hidden />
+        </button>)}
+      </section> : null}
     </div>
   );
 });
+
+function extractPublicSources(turn: StructuredTurnState): Array<{ url: string; label: string }> {
+  const urls: string[] = [];
+  for (const part of turn.parts) {
+    if (part.kind === "citation" && part.url?.startsWith("https://")) urls.push(part.url);
+    if (part.kind !== "markdown") continue;
+    urls.push(...(part.markdown.match(/https:\/\/[^\s<>\]\[(){}"']+/g) ?? []).map((url) => url.replace(/[.,;:!?]+$/, "")));
+  }
+  return [...new Set(urls)].slice(0, 8).map((url) => {
+    try { return { url, label: new URL(url).hostname.replace(/^www\./, "") }; }
+    catch { return { url, label: url }; }
+  });
+}
+
+export function stripTrailingSourceList(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (!/^\s*(?:sources?|来源)\s*[:：]\s*$/i.test(lines[index])) continue;
+    const trailing = lines.slice(index + 1).filter((line) => line.trim());
+    if (trailing.length > 0 && trailing.every((line) => /^\s*(?:[-*+]\s*)?(?:\[[^\]]+\]\()?https:\/\//i.test(line))) {
+      return lines.slice(0, index).join("\n").trimEnd();
+    }
+  }
+  return markdown;
+}
+
+function RetrievalStageSummary({ turn, language }: { turn: StructuredTurnState; language: "en" | "zh" }): React.JSX.Element | null {
+  const retrieval = turn.activities.filter((activity): activity is Extract<StructuredActivityEvent, { kind: "tool" }> => activity.kind === "tool" && /web[._](search|fetch)/i.test(activity.toolName));
+  if (!retrieval.length) return null;
+  const search = retrieval.filter((activity) => /search/i.test(activity.toolName));
+  const fetch = retrieval.filter((activity) => /fetch/i.test(activity.toolName));
+  const text = turn.parts.filter((part) => part.kind === "markdown").map((part) => part.markdown).join("\n");
+  const warning = /could not be fully verified|citation_evidence_incomplete/i.test(text)
+    || turn.parts.some((part) => part.kind === "notice" && /citation|source|引用|来源/i.test(part.message) && part.level !== "success");
+  const stages = [
+    { label: language === "zh" ? "搜索网络" : "Search web", values: search },
+    { label: language === "zh" ? "读取网页" : "Read pages", values: fetch },
+    { label: language === "zh" ? "整理回答" : "Compose answer", values: [], complete: Boolean(text.trim()) },
+    { label: language === "zh" ? "验证来源" : "Verify sources", values: [], complete: turn.status === "completed", warning },
+  ];
+  return <section className="structured-retrieval-stages" aria-label={language === "zh" ? "网络感知阶段" : "Web perception stages"}>
+    <h4>{language === "zh" ? "运行阶段" : "Run stages"}</h4>
+    <div>{stages.map((stage) => {
+      const failed = stage.values.some((value) => value.status === "error");
+      const running = stage.values.some((value) => value.status === "running" || value.status === "pending");
+      const complete = stage.complete || (stage.values.length > 0 && !failed && !running);
+      const status = stage.warning ? "warning" : failed ? "error" : complete ? "completed" : "running";
+      return <span className={status} key={stage.label}>{status === "completed" ? <CheckCircle2 size={13} /> : status === "warning" || status === "error" ? <TriangleAlert size={13} /> : <CircleEllipsis size={13} />}<strong>{stage.label}</strong>{stage.values.length ? <small>{stage.values.length}</small> : null}</span>;
+    })}</div>
+  </section>;
+}
 
 function BoundedProcessSection({
   title,
@@ -656,7 +719,7 @@ function InteractionItem({
   );
 }
 
-function NoticeItem({ part }: { part: NoticePart }): React.JSX.Element {
+function NoticeItem({ part, language, onOpenDebug }: { part: NoticePart; language: "en" | "zh"; onOpenDebug?: () => void }): React.JSX.Element {
   const Icon = part.level === "error"
     ? AlertCircle
     : part.level === "warning"
@@ -667,7 +730,22 @@ function NoticeItem({ part }: { part: NoticePart }): React.JSX.Element {
   return (
     <div className={`structured-notice ${part.level}`} role={part.level === "error" ? "alert" : "status"}>
       <Icon size={14} aria-hidden="true" />
-      <span>{part.message}</span>
+      <span>{userFacingNotice(part.message, language)}</span>
+      {(part.level === "error" || part.level === "warning") && onOpenDebug ? <button type="button" onClick={onOpenDebug}>{language === "zh" ? "技术详情" : "Technical details"}</button> : null}
     </div>
   );
+}
+
+function userFacingNotice(message: string, language: "en" | "zh"): string {
+  if (!message || message === "[REDACTED]") {
+    return language === "zh"
+      ? "本次运行未能完成，旧版本没有保存可显示的详细原因。你可以重试，或查看技术详情。"
+      : "This run did not finish, and the older record has no displayable reason. Retry or view technical details.";
+  }
+  if (/citation_evidence_(invalid|incomplete)/i.test(message)) {
+    return language === "zh"
+      ? "已获取网页信息，但部分来源引用未能完整验证。回答和已找到的来源仍然保留。"
+      : "Web information was retrieved, but some citations could not be fully verified. The answer and retrieved sources were preserved.";
+  }
+  return message;
 }

@@ -32,6 +32,7 @@ import { recordAgentTelemetry } from "./agentTelemetry";
 import { analyzeMaterialRoles } from "./workspaceContext";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
+import { resolveGatewayPort } from "./gatewayEnvironment";
 import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, type OaepEvent, type OaepItem, type RuntimeClient, type RuntimeGoal } from "./runtimeClient";
 import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import {
@@ -2605,9 +2606,7 @@ function getPositiveIntEnv(name: string, fallback: number): number {
 }
 
 export function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
-  const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
+  return resolveGatewayPort();
 }
 
 function writeChatDiagnostic(requestId: string, error: string): void {

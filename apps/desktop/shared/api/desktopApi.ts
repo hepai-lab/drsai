@@ -11,6 +11,27 @@ import type { ExecutionActionKind } from "./executionPolicy";
 import type { DesktopPlatformDescriptor } from "./platform";
 import type { InteractionOption, StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
 import type { OaepEvent } from "./oaep.generated";
+import type {
+  RegressionAttachRunRequest,
+  RegressionBeginRequest,
+  RegressionCaseDetail,
+  RegressionEvaluation,
+  RegressionSuiteCatalog,
+  RegressionSuiteSummary,
+  RegressionTransitionRequest,
+} from "./regression";
+export type {
+  RegressionAttachRunRequest,
+  RegressionBeginRequest,
+  RegressionCaseDetail,
+  RegressionEvaluation,
+  RegressionEvaluationStatus,
+  RegressionExpectationSummary,
+  RegressionInputPart,
+  RegressionSuiteCatalog,
+  RegressionSuiteSummary,
+  RegressionTransitionRequest,
+} from "./regression";
 export type { InteractionOption } from "./structuredConversation";
 import type {
   RunInspection,
@@ -3247,6 +3268,27 @@ export interface KnowledgeBaseResource {
   selected?: boolean;
 }
 
+export interface PerceptorResource {
+  perceptor_id: string;
+  name?: string | null;
+  kind: "public_web" | "large_facility_data";
+  adapter: "tavily" | "facility_gateway";
+  enabled: boolean;
+  capabilities: string[];
+  config: Record<string, unknown>;
+  revision: string;
+}
+
+export interface SavePerceptorRequest {
+  perceptor_id: string;
+  name?: string;
+  kind: "public_web" | "large_facility_data";
+  adapter: "tavily" | "facility_gateway";
+  enabled: boolean;
+  capabilities: string[];
+  config: Record<string, unknown>;
+}
+
 export interface SaveKnowledgeBaseRequest {
   knowledge_id: string;
   display_name: string;
@@ -3338,6 +3380,9 @@ export interface MyDrSaiConfig {
   cliPath?: string;
   config: MyDrSaiCliConfig;
   models: MyDrSaiModelConfig[];
+  /** Provider definitions and their persisted local model catalogs. This is
+   * intentionally independent from the currently effective Agent model. */
+  modelProviders?: MyDrSaiModelProvider[];
   modelConnection?: MyDrSaiModelConnection;
   modelCatalog?: {
     state: RuntimeModelCatalogState | "unconfigured" | "empty" | "timeout";
@@ -5291,6 +5336,16 @@ export interface DesktopApi {
     request: WorkspaceCheckpointRestoreRequest,
   ): Promise<WorkspaceCheckpointRestoreResult>;
   listThreads(): Promise<DesktopThread[]>;
+  isRegressionTestingEnabled(): Promise<boolean>;
+  listRegressionSuites(): Promise<{ schema_version: string; suites: RegressionSuiteSummary[] }>;
+  listRegressionCases(suiteId: string): Promise<RegressionSuiteCatalog>;
+  getRegressionCase(caseId: string): Promise<RegressionCaseDetail>;
+  beginRegressionEvaluation(request: RegressionBeginRequest): Promise<RegressionEvaluation>;
+  transitionRegressionEvaluation(request: RegressionTransitionRequest): Promise<RegressionEvaluation>;
+  attachRegressionRun(request: RegressionAttachRunRequest): Promise<RegressionEvaluation>;
+  getRegressionEvaluation(evaluationId: string): Promise<RegressionEvaluation>;
+  cancelRegressionEvaluation(evaluationId: string): Promise<RegressionEvaluation>;
+  listRegressionHistory(limit?: number): Promise<RegressionEvaluation[]>;
   listAgents(options?: DesktopAgentListOptions): Promise<DesktopAgent[]>;
   getAgentCatalogSnapshot(options?: DesktopAgentListOptions): Promise<DesktopAgentCatalogSnapshot>;
   setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult>;
@@ -5313,6 +5368,11 @@ export interface DesktopApi {
   testKnowledgeBase(knowledgeId: string): Promise<{ ok: boolean; knowledge_id: string; type: string; status?: string; dataset_count?: number }>;
   searchKnowledgeBase(knowledgeId: string, query: string): Promise<{ knowledge_id: string; query: string; evidence: KnowledgeSearchEvidence[] }>;
   listKnowledgeBases(): Promise<KnowledgeBaseResource[]>;
+  listPerceptors(): Promise<PerceptorResource[]>;
+  savePerceptor(request: SavePerceptorRequest): Promise<PerceptorResource>;
+  updatePerceptor(perceptorId: string, request: SavePerceptorRequest): Promise<PerceptorResource>;
+  testPerceptor(perceptorId: string, capability?: "search" | "extract"): Promise<{ ok: boolean; perceptor_id: string; status: string; tested?: string; result_count?: number; error?: string }>;
+  deletePerceptor(perceptorId: string): Promise<{ status: string; perceptor_id: string }>;
   createKnowledgeBase(request: SaveKnowledgeBaseRequest): Promise<KnowledgeBaseResource>;
   deleteKnowledgeBase(knowledgeId: string): Promise<{ status: string }>;
   getMyDrSaiAgentModelCapabilityStatus(agentId?: string): Promise<AgentModelCapabilityStatus>;

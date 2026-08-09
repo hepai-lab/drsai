@@ -17,6 +17,7 @@ import {
   dialog,
   ipcMain,
   protocol,
+  screen,
   session as electronSession,
   shell,
   type IpcMainInvokeEvent,
@@ -31,6 +32,12 @@ import { hostname } from "os";
 import { isIP } from "net";
 import { pathToFileURL } from "url";
 import { is } from "@electron-toolkit/utils";
+import {
+  MAIN_WINDOW_STATE_VERSION,
+  loadMainWindowState,
+  resolveMainWindowState,
+  saveMainWindowState,
+} from "./windowState";
 import { cancelInstall, startInstall } from "./install";
 import {
   getGatewayStatus,
@@ -91,6 +98,8 @@ import { isTrustedDesktopIpcSender } from "../../../shared/main/secureIpc";
 import { InteractiveDebuggerService } from "./interactiveDebugger";
 import { InteractiveDebugPolicyStore } from "../../../shared/main/interactiveDebugPolicy";
 import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../../../shared/api/diagnostics";
+import type { RegressionAttachRunRequest, RegressionBeginRequest, RegressionTransitionRequest } from "../../../shared/api/regression";
+import { DesktopRegressionControl } from "../../../shared/main/regressionControl";
 
 process.setSourceMapsEnabled?.(true);
 let experimentReleaseGatePromise: ReturnType<typeof readExperimentReleaseGate> | null = null;
@@ -162,7 +171,7 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection } from "../../../shared/main/myDrSaiConfig";
+import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
@@ -2794,12 +2803,34 @@ if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
 function createWindow(): void {
   recordE2eStartupTrace("createWindow:start", { appPath: app.getAppPath() });
   const windowIcon = getWindowIconPath();
+  const windowStatePath = join(app.getPath("userData"), "main-window-state.json");
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const displayWorkAreas = [
+    primaryDisplay,
+    ...screen.getAllDisplays().filter((display) => display.id !== primaryDisplay.id),
+  ].map((display) => display.workArea);
+  const restoredWindowState = resolveMainWindowState(
+    loadMainWindowState(windowStatePath),
+    displayWorkAreas,
+    { width: 1280, height: 820, minWidth: 1100, minHeight: 720 },
+  );
+  const effectiveMinWidth = Math.min(
+    1100,
+    restoredWindowState.bounds?.width ?? primaryDisplay.workArea.width,
+  );
+  const effectiveMinHeight = Math.min(
+    720,
+    restoredWindowState.bounds?.height ?? primaryDisplay.workArea.height,
+  );
 
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 1100,
-    minHeight: 720,
+    width: restoredWindowState.bounds?.width ?? 1280,
+    height: restoredWindowState.bounds?.height ?? 820,
+    ...(restoredWindowState.bounds
+      ? { x: restoredWindowState.bounds.x, y: restoredWindowState.bounds.y }
+      : {}),
+    minWidth: effectiveMinWidth,
+    minHeight: effectiveMinHeight,
     title: "OpenDrSai",
     titleBarStyle: "hidden",
     titleBarOverlay: {
@@ -2820,7 +2851,42 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.on("close", (event) => {
+  const createdWindow = mainWindow;
+  let windowStateSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  const persistWindowState = () => {
+    if (createdWindow.isDestroyed()) return;
+    if (windowStateSaveTimer) {
+      clearTimeout(windowStateSaveTimer);
+      windowStateSaveTimer = null;
+    }
+    try {
+      saveMainWindowState(windowStatePath, {
+        version: MAIN_WINDOW_STATE_VERSION,
+        bounds: createdWindow.getNormalBounds(),
+        maximized: createdWindow.isMaximized(),
+        fullScreen: createdWindow.isFullScreen(),
+      });
+    } catch (error) {
+      console.warn("[desktop] Failed to persist main window state.", error);
+    }
+  };
+  const scheduleWindowStateSave = () => {
+    if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+    windowStateSaveTimer = setTimeout(persistWindowState, 250);
+  };
+  createdWindow.on("move", scheduleWindowStateSave);
+  createdWindow.on("resize", scheduleWindowStateSave);
+  createdWindow.on("maximize", scheduleWindowStateSave);
+  createdWindow.on("unmaximize", scheduleWindowStateSave);
+  createdWindow.on("enter-full-screen", scheduleWindowStateSave);
+  createdWindow.on("leave-full-screen", scheduleWindowStateSave);
+  createdWindow.on("closed", () => {
+    if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+    windowStateSaveTimer = null;
+  });
+
+  createdWindow.on("close", (event) => {
+    persistWindowState();
     console.info(
       `[desktop] Window close requested (quit=${appQuitRequested}, presentations=${managerPresentationRuns.size}, chats=${hasActiveChats()}, agents=${hasActiveAgentRuns()}).`,
     );
@@ -2830,8 +2896,10 @@ function createWindow(): void {
     console.info("[desktop] Window hidden while active work continues in the background.");
   });
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
+  createdWindow.once("ready-to-show", () => {
+    if (restoredWindowState.fullScreen) createdWindow.setFullScreen(true);
+    else if (restoredWindowState.maximized) createdWindow.maximize();
+    createdWindow.show();
   });
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     recordE2eStartupTrace("createWindow:did-fail-load", {
@@ -4110,6 +4178,7 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
 }
 
 function registerIpc(): void {
+  const regressionControl = new DesktopRegressionControl(DRSAI_REPO, app.getPath("userData"));
   secureHandle("desktop:platform-descriptor", () => WINDOWS_PLATFORM_DESCRIPTOR);
   secureHandle("desktop:system-permissions-get", () => [
     { kind: "microphone", state: "unknown", canRequest: false, canOpenSettings: true, message: "Microphone access is controlled by Windows Settings." },
@@ -5138,6 +5207,11 @@ function registerIpc(): void {
   secureHandle("desktop:test-knowledge-base", (_event, knowledgeId: string) => testKnowledgeBase(knowledgeId));
   secureHandle("desktop:search-knowledge-base", (_event, knowledgeId: string, query: string) => searchKnowledgeBase(knowledgeId, query));
   secureHandle("desktop:list-knowledge-bases", () => listKnowledgeBases());
+  secureHandle("desktop:list-perceptors", () => listPerceptors());
+  secureHandle("desktop:save-perceptor", (_event, request) => savePerceptor(request));
+  secureHandle("desktop:update-perceptor", (_event, perceptorId, request) => updatePerceptor(perceptorId, request));
+  secureHandle("desktop:test-perceptor", (_event, perceptorId, capability) => testPerceptor(perceptorId, capability));
+  secureHandle("desktop:delete-perceptor", (_event, perceptorId) => deletePerceptor(perceptorId));
   secureHandle("desktop:create-knowledge-base", (_event, request: Parameters<typeof createKnowledgeBase>[0]) => createKnowledgeBase(request));
   secureHandle("desktop:delete-knowledge-base", (_event, knowledgeId: string) => deleteKnowledgeBase(knowledgeId));
   secureHandle("desktop:get-my-drsai-agent-model-capability-status", (_event, agentId?: string) => getMyDrSaiAgentModelCapabilityStatus(agentId));
@@ -5817,6 +5891,16 @@ function registerIpc(): void {
     }
     return startAgentRun(event.sender, request);
   });
+  secureHandle("desktop:regression-enabled", () => regressionControl.isEnabled());
+  secureHandle("desktop:regression-suites", () => regressionControl.listSuites());
+  secureHandle("desktop:regression-cases", (_event, suiteId: string) => regressionControl.listCases(suiteId));
+  secureHandle("desktop:regression-case", (_event, caseId: string) => regressionControl.getCase(caseId));
+  secureHandle("desktop:regression-begin", (_event, request: RegressionBeginRequest) => regressionControl.begin(request));
+  secureHandle("desktop:regression-transition", (_event, request: RegressionTransitionRequest) => regressionControl.transition(request));
+  secureHandle("desktop:regression-attach-run", (_event, request: RegressionAttachRunRequest) => regressionControl.attachRun(request));
+  secureHandle("desktop:regression-get", (_event, evaluationId: string) => regressionControl.get(evaluationId));
+  secureHandle("desktop:regression-cancel", (_event, evaluationId: string) => regressionControl.cancel(evaluationId));
+  secureHandle("desktop:regression-history", (_event, limit?: number) => regressionControl.history(limit));
   secureHandle("desktop:abort-agent-run", (_event, requestId: string) =>
     abortAgentRun(requestId),
   );

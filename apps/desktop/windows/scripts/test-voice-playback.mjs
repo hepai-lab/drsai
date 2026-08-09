@@ -189,6 +189,7 @@ const systemRequest = {
   await Promise.resolve();
   assert.equal(harness.system.speakCount, 0, "provider failure must not silently cross the user's runtime choice");
   assert.equal(harness.snapshots.at(-1).phase, "failed");
+  assert.equal(harness.snapshots.at(-1).activeMessageId, "message-1");
   assert.equal(harness.snapshots.at(-1).error, "fixture");
 }
 
@@ -237,6 +238,7 @@ const systemRequest = {
   await Promise.resolve();
   harness.emit({ requestId: "tts-1", type: "failed", error: { code: "provider_error", message: "TTS failed", retryable: true } });
   assert.equal(harness.snapshots.at(-1).phase, "failed");
+  assert.equal(harness.snapshots.at(-1).activeMessageId, "message-1");
   assert.equal(harness.snapshots.at(-1).error, "TTS failed");
   assert.equal(harness.providerListeners.size, 0);
 }

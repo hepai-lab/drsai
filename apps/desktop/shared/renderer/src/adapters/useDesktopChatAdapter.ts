@@ -83,6 +83,7 @@ export interface DesktopChatAdapter {
   submit: (
     attachments?: ChatAttachment[],
     options?: ChatSubmitOptions,
+    preparedText?: string,
   ) => Promise<boolean>;
   abort: () => Promise<void>;
 }
@@ -410,6 +411,7 @@ export function useDesktopChatAdapter({
   async function submit(
     attachments: ChatAttachment[] = [],
     options?: ChatSubmitOptions,
+    preparedText?: string,
   ): Promise<boolean> {
     const skillName = options?.skillName?.trim();
     const skillPrefix = skillName
@@ -417,7 +419,7 @@ export function useDesktopChatAdapter({
         ? `用 ${skillName} `
         : `Use ${skillName} skill to `
       : "";
-    const rawInput = input.trim();
+    const rawInput = (preparedText ?? input).trim();
     const alreadyPrefixed = Boolean(
       skillName &&
         (languageRef.current === "zh"
@@ -549,6 +551,11 @@ export function useDesktopChatAdapter({
     };
     const assistantId = crypto.randomUUID();
     const requestId = crypto.randomUUID();
+    options?.onStarted?.({
+      assistantMessageId: assistantId,
+      requestId,
+      userMessageId: userMessage.id,
+    });
     setCancellingRequestId(null);
     activeRequestIdRef.current = requestId;
     const nextMessages: UiMessage[] = [

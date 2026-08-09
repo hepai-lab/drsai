@@ -1303,6 +1303,18 @@ abstract class HttpRuntimeClient implements RuntimeClient {
 export class LocalRuntimeClient extends HttpRuntimeClient {
   readonly location = "local" as const;
 
+  /** Connect only when a Runtime is already healthy; never spawn one as a
+   * side effect of read-only startup discovery. */
+  static async connectIfAvailable(): Promise<LocalRuntimeClient | null> {
+    const status = await getGatewayStatus();
+    if (!status.ready && !status.externalReady) return null;
+    try {
+      return await LocalRuntimeClient.connect();
+    } catch {
+      return null;
+    }
+  }
+
   static async connect(): Promise<LocalRuntimeClient> {
     const started = await startGateway();
     let status = await getGatewayStatus();
@@ -1611,6 +1623,42 @@ export async function connectRuntimeClientForWorkspace(
   // Runtime owns a distinct authoritative Workspace ID, so resolve it by path.
   // A non-persisted ID is already a Runtime execution identity (for example a
   // Worktree Workspace selected by a Thread) and must remain unchanged.
+  if (workspaceId && workspaceId !== "current" && !persisted) return { client, workspaceId };
+  const opened = await client.openWorkspace(workspacePath, persisted?.name ?? workspaceName);
+  return { client, workspaceId: opened.workspace_id };
+}
+
+/** Resolve an already-running Runtime for read-only restoration work without
+ * spawning the local Gateway. Callers can fall back to persisted Desktop data
+ * when this returns null. */
+export async function connectRuntimeClientForWorkspaceIfAvailable(
+  workspacePath: string,
+  workspaceId?: string,
+  workspaceName?: string,
+): Promise<{ client: RuntimeClient; workspaceId: string } | null> {
+  const access = workspaceRouting.getRemoteGatewayAccess(workspacePath, workspaceId);
+  if (access) {
+    const runtimeAccess = {
+      baseUrl: access.baseUrl,
+      headers: { "X-OpenDrSai-Gateway-Token": access.token },
+      identity: { location: "remote" as const, routeId: access.workspaceId, authGeneration: access.authGeneration },
+    };
+    return {
+      client: await connectAuthoritativeRuntimeClient(runtimeAccess, (resolvedAccess) => new RemoteRuntimeClient(
+        access.baseUrl,
+        access.token,
+        access.workspaceId,
+        resolvedAccess.identity?.runtimeId,
+        resolvedAccess.identity?.instanceId,
+        resolvedAccess.identity?.authGeneration,
+      )),
+      workspaceId: access.workspaceId,
+    };
+  }
+  const persisted = workspaceId ? await workspaceRouting.findWorkspaceById(workspaceId) : undefined;
+  if (persisted?.location === "remote") return null;
+  const client = await LocalRuntimeClient.connectIfAvailable();
+  if (!client) return null;
   if (workspaceId && workspaceId !== "current" && !persisted) return { client, workspaceId };
   const opened = await client.openWorkspace(workspacePath, persisted?.name ?? workspaceName);
   return { client, workspaceId: opened.workspace_id };

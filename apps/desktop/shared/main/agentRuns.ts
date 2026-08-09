@@ -9,6 +9,7 @@ import type { AgentRunEvent, AgentRunFileEvent, AgentRunRequest, ChatAttachment,
 import { buildAgentTaskDepthContract, isAgentTaskDepth } from "../api/agentTaskDepth";
 import { invalidateAuthSession, requireAuthContext, type AuthContext } from "./auth";
 import { getGatewayRequestHeaders, startGateway } from "./gateway";
+import { resolveGatewayPort } from "./gatewayEnvironment";
 import { getCurrentAgentName } from "./myDrSaiConfig";
 import {
   ChatSseError,
@@ -841,7 +842,5 @@ function getPositiveIntEnv(name: string, fallback: number): number {
 }
 
 function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
-  const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
+  return resolveGatewayPort();
 }
