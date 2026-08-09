@@ -12316,29 +12316,27 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const api = window.openDrSai;
       checks.bridge = Boolean(api);
       checks.domReady = await waitForDomReady();
-      async function waitForFirstRunSetup() {
+      async function waitForAnonymousLogin() {
         const deadline = Date.now() + 10000;
         while (Date.now() < deadline) {
-          const setup = document.querySelector('[data-testid="first-run-setup"]');
+          const setup = document.querySelector('.login-screen');
           if (setup) return setup;
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
         return null;
       }
-      const firstRunSetup = await waitForFirstRunSetup();
-      const firstRunText = firstRunSetup ? firstRunSetup.innerText : "";
-      checks.firstRunSetupVisible = Boolean(firstRunSetup);
-      checks.firstRunExplainsOwnRuntime = firstRunText.includes("Full Agent Runtime");
-      checks.firstRunExplainsCodexIndependence = firstRunText.includes("其他智能体后端")
-        || firstRunText.includes("needs no additional agent backend")
-        || firstRunText.includes("does not require Codex");
-      checks.firstRunHasSingleRecoveryAction = Boolean(firstRunSetup && firstRunSetup.querySelectorAll('[data-testid^="first-run-action-"]').length === 1);
-      const firstRunTaskInput = firstRunSetup && firstRunSetup.querySelector('[data-testid="first-run-task-input"]');
-      checks.firstRunHasPrimaryTaskEntry = Boolean(firstRunTaskInput);
-      checks.firstRunTaskEntryFocused = document.activeElement === firstRunTaskInput;
+      const anonymousLogin = await waitForAnonymousLogin();
+      const anonymousLoginText = anonymousLogin ? anonymousLogin.innerText : "";
+      checks.anonymousLoginVisible = Boolean(anonymousLogin);
+      checks.anonymousLoginRequiresOidc = anonymousLoginText.includes("HepAI");
+      checks.anonymousLoginHasSinglePrimaryAction = Boolean(anonymousLogin && anonymousLogin.querySelectorAll('[data-testid="a5-login-action"]').length === 1);
+      const oidcLoginAction = anonymousLogin && anonymousLogin.querySelector('[data-testid="a5-login-action"]');
+      checks.anonymousLoginHasPrimaryAction = Boolean(oidcLoginAction);
+      checks.anonymousLoginHasNoApiKeyFallback = !anonymousLogin?.querySelector('input[name*="api" i], input[placeholder*="api" i]');
       details.firstRun = {
-        text: firstRunText.slice(0, 1000),
-        action: firstRunSetup && firstRunSetup.querySelector('[data-testid^="first-run-action-"]')?.getAttribute("data-testid"),
+        text: anonymousLoginText.slice(0, 1000),
+        stage: "oidc_login_required",
+        action: oidcLoginAction?.getAttribute("data-testid") || null,
       };
       details.domTextSample = document.body.innerText.slice(0, 300);
       if (!api) return { checks, details };
