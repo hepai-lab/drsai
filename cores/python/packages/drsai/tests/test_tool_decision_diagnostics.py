@@ -62,6 +62,15 @@ def test_required_missing_capability_and_no_tool_task_have_distinct_categories()
     assert direct["reason"] == "tool_not_required"
 
 
+def test_unavailable_required_capability_beats_an_unrelated_selected_tool() -> None:
+    decision = _decision("Verify the latest AI news with sources", [_tool("image_generation")], [
+        {"call_id": "image-1", "name": "image_generation", "arguments": {}},
+    ])
+
+    assert decision["category"] == "required_tool_unavailable"
+    assert decision["reason"] == "required_capability_not_available"
+
+
 def test_requirement_and_resolution_are_deterministic_and_redacted() -> None:
     first = build_tool_decision_requirement("现在几点？", ["get_current_time"])
     second = build_tool_decision_requirement("现在几点？", ["get_current_time"])

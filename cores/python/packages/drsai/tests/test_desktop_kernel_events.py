@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from drsai.backend.runtime.desktop_kernel_events import DesktopKernelTurnState, translate_kernel_event
 from drsai.backend.runtime.mobile_core import MessageType, RuntimeEnvelope
 
@@ -35,6 +37,18 @@ def test_tool_events_preserve_call_identity_and_structured_result() -> None:
     assert started.content[0].id == completed.content[0].call_id == "call-1"
     assert started.content[0].name == completed.content[0].name == "clock"
     assert completed.content[0].is_error is False
+
+
+def test_tool_inspection_survives_desktop_projection_as_ui_only_envelope() -> None:
+    state = DesktopKernelTurnState("OpenDrSai")
+    completed = translate_kernel_event(_event(
+        1, "tool.result", call_id="search-1", name="web_search", result={"results": []},
+        inspection={"kind": "web_search", "candidates": [{"title": "Candidate"}]},
+    ), state)[0]
+
+    content = json.loads(completed.content[0].content)
+    assert content["result"] == {"results": []}
+    assert content["_inspection"]["candidates"][0]["title"] == "Candidate"
 
 
 def test_verification_and_unknown_oaep_events_remain_observable_logs() -> None:

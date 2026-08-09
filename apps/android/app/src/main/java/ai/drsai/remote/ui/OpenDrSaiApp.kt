@@ -892,6 +892,42 @@ private fun ChatDiagnosticTab(state: AppState) {
                 state.error?.let { DiagnosticMessage(it, true) }
             }
         }
+        item {
+            HorizontalDivider()
+            Spacer(Modifier.height(14.dp))
+            Text("OAEP 原始事件", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            if (state.oaepDiagnosticEvents.isEmpty()) {
+                Text("等待当前 Run 的第一个 OAEP 事件。", style = MaterialTheme.typography.bodySmall)
+            } else {
+                state.oaepDiagnosticEvents.forEach { event ->
+                    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                        Text(
+                            "#${event.sequence}  ${event.type}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (event.errorCode != null) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            listOfNotNull(
+                                event.runId?.let { "run=${it.takeLast(12)}" },
+                                event.itemId?.let { "item=${it.takeLast(16)}" },
+                                "source=${event.source}",
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        event.errorCode?.let { code ->
+                            Text(
+                                listOf(code, event.errorMessage.orEmpty()).filter(String::isNotBlank).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

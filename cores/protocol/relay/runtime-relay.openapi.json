@@ -2885,7 +2885,7 @@
           }
         },
         "summary": "Protocol Usage Deletion Decision",
-        "x-p5-platform-contract-sha256": "f29e5ed662e51eb61afcf31b1f2d21f56c8e5f1ed262928e648e15026d17be62"
+        "x-p5-platform-contract-sha256": "490afae079e65acf2344f8a5a0bdd662f13a1cd175177f3e7dd57a35fdc77050"
       }
     },
     "/v1/runtime-connections/{runtime_id}/heartbeat": {

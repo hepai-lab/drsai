@@ -24,6 +24,15 @@ class ModelToolChoiceProtocolAdapterTest {
     }
 
     @Test
+    fun `OAEP null specified tool remains absent for automatic modes`() {
+        val automatic = policy("auto").put("specified_tool", JSONObject.NULL)
+        val none = policy("none").put("specified_tool", JSONObject.NULL)
+
+        assertEquals("auto", ModelToolChoiceProtocolAdapter.openAi(automatic))
+        assertEquals("none", ModelToolChoiceProtocolAdapter.openAi(none))
+    }
+
+    @Test
     fun `Anthropic maps auto any omitted tools and named tool`() {
         assertEquals("auto", ModelToolChoiceProtocolAdapter.anthropic(policy("auto"))!!.getString("type"))
         assertEquals("any", ModelToolChoiceProtocolAdapter.anthropic(policy("required"))!!.getString("type"))

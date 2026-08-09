@@ -14,6 +14,7 @@ from drsai.backend.gateway import GatewayOpenDrSaiAgentBackend
 from drsai.backend.runtime.agent import AgentDefinition, RuntimeRunContext
 from drsai.platform_auth import PlatformAuthContext, platform_auth_scope
 from drsai.backend.runtime.agent import RuntimeExecutionError
+from drsai.config.knowledge_registry import KnowledgeResource, index_local_files, put_knowledge_resource
 
 
 class RecordingServices:
@@ -153,7 +154,41 @@ def test_gateway_backend_preserves_secret_free_failure_type(tmp_path: Path) -> N
             _context(tmp_path), _definition(), "hello", RecordingServices(),
         ))
     assert caught.value.code == "upstream_unavailable"
+    assert caught.value.message == "TypeError: provider payload rejected"
     assert caught.value.as_dict()["redacted_details"] == {"reason": "TypeError"}
+
+
+def test_gateway_backend_redacts_credentials_from_diagnostic_message(tmp_path: Path) -> None:
+    async def runner(**_kwargs):
+        raise RuntimeError("request failed with api_key=super-secret-value")
+        if False:
+            yield SimpleNamespace()
+
+    with platform_auth_scope(_auth()), pytest.raises(RuntimeExecutionError) as caught:
+        asyncio.run(GatewayOpenDrSaiAgentBackend(runner).execute(
+            _context(tmp_path), _definition(), "hello", RecordingServices(),
+        ))
+
+    assert caught.value.message == "RuntimeError: request failed with api_key=[REDACTED]"
+    assert "super-secret-value" not in str(caught.value.as_dict())
+
+
+def test_gateway_backend_preserves_complete_provider_response_body(tmp_path: Path) -> None:
+    response_body = "provider response: " + ("x" * 6_000) + " access_token=private-token tail"
+
+    async def runner(**_kwargs):
+        raise RuntimeError(response_body)
+        if False:
+            yield SimpleNamespace()
+
+    with platform_auth_scope(_auth()), pytest.raises(RuntimeExecutionError) as caught:
+        asyncio.run(GatewayOpenDrSaiAgentBackend(runner).execute(
+            _context(tmp_path), _definition(), "hello", RecordingServices(),
+        ))
+
+    assert caught.value.message.endswith(" access_token=[REDACTED] tail")
+    assert "x" * 6_000 in caught.value.message
+    assert "private-token" not in caught.value.message
 
 
 def test_gateway_backend_preserves_allowlisted_kernel_failure_code(tmp_path: Path) -> None:
@@ -168,6 +203,7 @@ def test_gateway_backend_preserves_allowlisted_kernel_failure_code(tmp_path: Pat
         asyncio.run(backend.execute(_context(tmp_path), _definition(), "hello", services))
 
     assert caught.value.code == "upstream_unavailable"
+    assert caught.value.message == "RuntimeError: APIStatusError"
     assert caught.value.as_dict()["redacted_details"] == {"reason": "APIStatusError"}
 
 
@@ -310,6 +346,12 @@ def test_agent_manager_always_injects_native_image_tools(monkeypatch, tmp_path: 
     monkeypatch.setattr(gateway, "_get_db", lambda: object())
     monkeypatch.setattr(gateway, "_model_config_stamp", lambda: None)
     monkeypatch.setattr(gateway, "model_config_revision", lambda: "sha256:" + "a" * 64)
+    monkeypatch.setattr(gateway, "current_agent_name", lambda: "opendrsai")
+    monkeypatch.setattr(gateway, "load_agent_runtime_policy", lambda _name: gateway.AgentRuntimePolicySnapshot(
+        "opendrsai", gateway.AgentToolPolicy(), gateway.AgentSkillPolicy(), gateway.AgentKnowledgePolicy(),
+        "sha256:" + "b" * 64,
+    ))
+    monkeypatch.setattr(gateway, "list_tool_resources", lambda _path: ())
     monkeypatch.setattr(manager, "_load_thread_state", no_state)
     monkeypatch.setattr(manager, "_get_or_create_thread", no_thread)
 
@@ -317,3 +359,162 @@ def test_agent_manager_always_injects_native_image_tools(monkeypatch, tmp_path: 
 
     tools = captured["extra_tools"]
     assert [tool.__name__ for tool in tools[:2]] == ["image_generation", "image_edit"]
+
+
+def test_agent_manager_applies_explicit_agent_tool_policy(monkeypatch, tmp_path: Path) -> None:
+    captured = {}
+
+    class FakeAgent:
+        async def lazy_init(self):
+            return None
+
+    async def no_state(*_args):
+        return None
+
+    async def no_thread(*_args):
+        return None
+
+    async def remote_tools():
+        return [SimpleNamespace(name="web.search"), SimpleNamespace(name="other")], []
+
+    manager = gateway.AgentManager()
+    monkeypatch.setattr(gateway, "create_agent", lambda **kwargs: captured.update(kwargs) or FakeAgent())
+    monkeypatch.setattr(gateway, "_load_remote_hepai_tools", remote_tools)
+    monkeypatch.setattr(gateway, "_get_db", lambda: object())
+    monkeypatch.setattr(gateway, "_model_config_stamp", lambda: None)
+    monkeypatch.setattr(gateway, "model_config_revision", lambda: "sha256:" + "a" * 64)
+    monkeypatch.setattr(gateway, "current_agent_name", lambda: "opendrsai")
+    monkeypatch.setattr(gateway, "load_agent_runtime_policy", lambda _name: gateway.AgentRuntimePolicySnapshot(
+        "opendrsai",
+        gateway.AgentToolPolicy("explicit", ("builtin.image_edit", "web.search")),
+        gateway.AgentSkillPolicy(), gateway.AgentKnowledgePolicy(), "sha256:" + "b" * 64,
+    ))
+    monkeypatch.setattr(gateway, "list_tool_resources", lambda _path: ())
+    monkeypatch.setattr(manager, "_load_thread_state", no_state)
+    monkeypatch.setattr(manager, "_get_or_create_thread", no_thread)
+
+    asyncio.run(manager.get_or_create("thread", "user", work_dir=str(tmp_path)))
+
+    assert captured["tool_resource_ids"] == ["builtin.image_edit", "web.search"]
+    assert [getattr(tool, "__name__", getattr(tool, "name", "")) for tool in captured["extra_tools"]] == [
+        "image_edit", "web.search",
+    ]
+
+
+def test_agent_knowledge_tool_returns_auditable_local_evidence(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"; docs.mkdir()
+    (docs / "guide.md").write_text("OpenDrSai knowledge search uses cited chunks.", encoding="utf-8")
+    config_dir = tmp_path / "config"
+    resource = put_knowledge_resource(config_dir, KnowledgeResource(
+        "guide", "Guide", "local-files", True,
+        {"root_path": str(docs), "paths": ["."], "chunk_size": 200, "chunk_overlap": 20},
+    ))
+    index_local_files(config_dir, resource)
+    policy = gateway.AgentKnowledgePolicy("explicit", ("guide",), "always", 4, 0.0, True)
+    tool = gateway._build_agent_knowledge_tool(config_dir=config_dir, resources=(resource,), policy=policy)
+
+    payload = __import__("json").loads(asyncio.run(tool("knowledge search")))
+
+    assert payload["require_citations"] is True
+    assert payload["evidence"][0]["knowledge_id"] == "guide"
+    assert payload["evidence"][0]["source"] == "guide.md"
+    assert payload["evidence"][0]["content_sha256"]
+
+
+def test_legacy_ragflow_environment_migrates_without_plaintext_secret(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MEMORY_DATASET_ID", "dataset-one")
+    monkeypatch.setenv("RAGFLOW_URL", "https://rag.example.invalid/")
+    monkeypatch.setenv("RAGFLOW_TOKEN", "legacy-secret")
+    monkeypatch.setattr(gateway, "store_credential", lambda secret: "drsai-credential:" + "1" * 36 if secret == "legacy-secret" else "")
+
+    gateway._migrate_legacy_knowledge_config(tmp_path)
+    resource = gateway.get_knowledge_resource(tmp_path, "legacy-ragflow")
+
+    assert resource.config["credential_ref"].startswith("drsai-credential:")
+    assert "legacy-secret" not in (tmp_path / "knowledge" / "knowledge_legacy-ragflow.toml").read_text(encoding="utf-8")
+
+
+def test_gateway_backend_preserves_kernel_verification_failure(tmp_path: Path) -> None:
+    async def runner(**_kwargs):
+        raise RuntimeError("verification_required_tool_omitted")
+        yield  # pragma: no cover
+
+    with platform_auth_scope(_auth()):
+        with pytest.raises(RuntimeExecutionError) as caught:
+            asyncio.run(GatewayOpenDrSaiAgentBackend(runner).execute(
+                _context(tmp_path), _definition(), "verify", RecordingServices(),
+            ))
+
+    assert caught.value.code == "verification_required_tool_omitted"
+    assert "verification tool" in str(caught.value)
+
+
+def test_agent_resource_snapshots_are_isolated_immutable_and_secret_free(tmp_path: Path) -> None:
+    put_knowledge_resource(tmp_path, KnowledgeResource(
+        "alpha-kb", "Alpha", "local-files", True,
+        {"root_path": str(tmp_path), "paths": ["."], "chunk_size": 200, "chunk_overlap": 20},
+    ))
+    alpha = gateway.AgentRuntimePolicySnapshot(
+        "alpha", gateway.AgentToolPolicy("explicit", ("builtin.image_edit",)),
+        gateway.AgentSkillPolicy("explicit", ("alpha-skill",), (), True),
+        gateway.AgentKnowledgePolicy("explicit", ("alpha-kb",), "always", 3, 0.2, True), "rev-alpha",
+    )
+    beta = gateway.AgentRuntimePolicySnapshot(
+        "beta", gateway.AgentToolPolicy("explicit", ("builtin.image_generation",)),
+        gateway.AgentSkillPolicy("explicit", ("beta-skill",), (), False),
+        gateway.AgentKnowledgePolicy("explicit", (), "never", 5, 0.5, False), "rev-beta",
+    )
+
+    first = gateway._resolved_agent_resource_snapshot(
+        agent_name="alpha", runtime_policy=alpha, model_provider="openai", model_id="gpt-alpha",
+        config_dir=tmp_path, installed_skill_ids=("alpha-skill", "beta-skill"),
+    )
+    second = gateway._resolved_agent_resource_snapshot(
+        agent_name="beta", runtime_policy=beta, model_provider="local", model_id="model-beta",
+        config_dir=tmp_path, installed_skill_ids=("alpha-skill", "beta-skill"),
+    )
+
+    assert first["tools"]["enabled_ids"] == ["builtin.image_edit"]
+    assert second["tools"]["enabled_ids"] == ["builtin.image_generation"]
+    assert first["skills"]["enabled_ids"] == ["alpha-skill"]
+    assert second["skills"]["enabled_ids"] == ["beta-skill"]
+    assert first["knowledge"]["source_ids"] == ["alpha-kb"]
+    assert second["knowledge"]["source_ids"] == []
+    assert first["sha256"] != second["sha256"]
+    assert "secret" not in __import__("json").dumps(first).lower()
+
+
+def test_thread_skill_override_policy_is_enforced() -> None:
+    denied = gateway.AgentRuntimePolicySnapshot(
+        "locked", gateway.AgentToolPolicy(), gateway.AgentSkillPolicy("explicit", ("review",), (), False),
+        gateway.AgentKnowledgePolicy(), "revision",
+    )
+    with pytest.raises(RuntimeExecutionError) as caught:
+        gateway._validate_thread_skill_selection("review", denied, ("review",))
+    assert caught.value.code == "thread_skill_override_disabled"
+
+    allowed = gateway.AgentRuntimePolicySnapshot(
+        "open", gateway.AgentToolPolicy(), gateway.AgentSkillPolicy("explicit", ("review",), (), True),
+        gateway.AgentKnowledgePolicy(), "revision",
+    )
+    assert gateway._validate_thread_skill_selection("review", allowed, ("review",)) == "review"
+    with pytest.raises(RuntimeExecutionError) as unavailable:
+        gateway._validate_thread_skill_selection("missing", allowed, ("review",))
+    assert unavailable.value.code == "thread_skill_unavailable"
+
+
+def test_skills_registry_revision_changes_with_skill_content(monkeypatch, tmp_path: Path) -> None:
+    user_skills = tmp_path / "skills"
+    skill_dir = user_skills / "review"
+    skill_dir.mkdir(parents=True)
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text("# Review\nFirst version", encoding="utf-8")
+    monkeypatch.setattr(gateway, "_get_skills_dir", lambda _user_id=None: user_skills)
+    monkeypatch.setattr(gateway, "_get_available_skills_dirs", lambda: [])
+
+    first = gateway._skills_registry_revision("user")
+    skill_file.write_text("# Review\nSecond version", encoding="utf-8")
+    second = gateway._skills_registry_revision("user")
+
+    assert first.startswith("sha256:")
+    assert first != second

@@ -115,7 +115,6 @@ def test_start_run_freezes_exact_capability_snapshot_in_event_model_request_and_
     started = core.handle(command(MessageType.START_RUN, 0, {
         "input": "time", "model_id": "model-1",
         "tools": [tool_schema("clock")],
-        "host_capabilities": ["chat", "safe_device_info"],
         "capability_diagnostics": {
             "blocked": [{"id": "tool.workspace.write", "reason": "saf_permission_missing"}],
             "remote_available": ["tool.shell"],
@@ -156,6 +155,20 @@ def test_start_run_freezes_exact_capability_snapshot_in_event_model_request_and_
     assert event.payload["execution_tool_registry_sha256"] == registry_digest
     assert checkpoint.payload["state"]["execution_tool_registry"]["sha256"] == registry_digest
     assert model.payload["tools"] == [tool_schema("clock")]
+
+
+def test_versioned_host_port_rejects_conflicting_legacy_capability_input() -> None:
+    core = create_mobile_agent_core()
+
+    with pytest.raises(ValueError, match="run_host_capabilities_conflict"):
+        core.handle(command(MessageType.START_RUN, 0, {
+            "input": "hello", "model_id": "model-1",
+            "host_capabilities": ["chat", "shell"],
+            "host_port": {
+                "schema_version": 1, "protocol_version": "p9-host-port-v1", "surface": "android",
+                "capabilities": [{"id": "chat", "version": 1, "required": True}],
+            },
+        }))
 
 
 def test_model_cannot_call_a_tool_outside_the_frozen_snapshot() -> None:
@@ -382,6 +395,28 @@ def test_tool_loop_returns_to_model_and_never_reexecutes_completed_call() -> Non
     assert core.snapshot("run-1")["completed_side_effects"] == ["call-1"]
 
 
+def test_tool_inspection_is_visible_in_event_but_excluded_from_model_context() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "search", "model_id": "model-1", "tools": [tool_schema("web_search")],
+    }))
+    core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [{
+        "call_id": "search-1", "name": "web_search", "arguments": {"query": "HEPiX"},
+    }]}))
+    output = core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "search-1", "succeeded": True,
+        "content": {"results": []},
+        "inspection": {"kind": "web_search", "candidates": [{"title": "Rejected"}]},
+    }))
+
+    result_event = next(item for item in output if item.payload.get("kind") == "tool.result")
+    model_request = next(item for item in output if item.message_type is MessageType.MODEL_REQUEST)
+    assert result_event.payload["inspection"]["candidates"][0]["title"] == "Rejected"
+    assert result_event.payload["result"] == {"results": []}
+    assert "_inspection" not in str(model_request.payload["messages"])
+    assert "Rejected" not in str(model_request.payload["messages"])
+
+
 @pytest.mark.parametrize(
     ("name", "output_type", "arguments", "expected_kind"),
     [
@@ -467,10 +502,11 @@ def test_cancel_releases_session_and_model_failure_is_terminal() -> None:
     failed = core.handle(
         RuntimeEnvelope(
             MessageType.MODEL_FAILED, "request-failed", "run-2", "session-1", 1, "failed-new",
-            {"code": "timeout", "retryable": True},
+            {"code": "timeout", "message": "provider timed out after 30s", "retryable": True},
         )
     )
     assert failed[0].payload["kind"] == "run.failed"
+    assert failed[0].payload["message"] == "provider timed out after 30s"
 
 
 def test_invalid_phase_and_parallel_session_run_are_rejected() -> None:
@@ -620,6 +656,134 @@ def test_tool_round_limit_is_checkpointed_and_fails_before_next_executor_call() 
     assert limited[1].payload["kind"] == "run.failed"
     assert limited[1].payload["code"] == "tool_round_limit"
     assert recovered.snapshot("run-1")["pending_tool_calls"] == {}
+
+
+def test_web_search_duplicate_query_is_short_circuited_and_hidden_from_model() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "What is HEPiX 2026?", "model_id": "model-1", "tools": [tool_schema("web_search")],
+    }))
+    first = core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "search-1", "name": "web_search", "arguments": {"query": "HEPiX2026"}},
+    ]}))
+    assert any(item.message_type is MessageType.TOOL_CALL_REQUEST for item in first)
+    core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "search-1", "succeeded": True,
+        "content": {
+            "version": 1,
+            "query": "HEPiX2026",
+            "results": [{"title": "HEPiX", "url": "https://www.hepix.org/"}],
+            "partial": False,
+            "warnings": [],
+        },
+    }))
+
+    repeated = core.handle(command(MessageType.MODEL_COMPLETED, 3, {"tool_calls": [
+        {"call_id": "search-2", "name": "web_search", "arguments": {"query": "HEPiX 2026"}},
+    ]}))
+
+    assert not any(item.message_type is MessageType.TOOL_CALL_REQUEST for item in repeated)
+    exhausted = next(item for item in repeated if item.payload.get("kind") == "web_search.exhausted")
+    assert exhausted.payload["reason"] == "duplicate_query"
+    request = next(item for item in repeated if item.message_type is MessageType.MODEL_REQUEST)
+    assert request.payload["tools"] == []
+    snapshot = core.snapshot("run-1")
+    assert snapshot["web_search_exhausted"] is True
+    assert snapshot["web_search_queries"] == ["HEPiX2026", "HEPiX 2026"]
+    checkpoint = next(item for item in repeated if item.message_type is MessageType.CHECKPOINT_REQUEST)
+    recovered = create_mobile_agent_core()
+    resumed = recovered.handle(RuntimeEnvelope(
+        MessageType.RESUME_RUN, "resume-search-budget", "run-1", "session-1", 4,
+        "resume:search-budget", {"state": checkpoint.payload["state"]},
+    ))
+    resumed_request = next(item for item in resumed if item.message_type is MessageType.MODEL_REQUEST)
+    assert resumed_request.payload["tools"] == []
+    ignored = recovered.handle(command(MessageType.MODEL_COMPLETED, 5, {"tool_calls": [
+        {"call_id": "search-ignored", "name": "web_search", "arguments": {"query": "HEPiX event"}},
+    ]}))
+    assert any(item.payload.get("kind") == "web_search.exhausted_tool_ignored" for item in ignored)
+    assert any(item.payload.get("kind") == "run.completed" for item in ignored)
+    assert not any(item.payload.get("kind") == "run.failed" for item in ignored)
+
+
+def test_web_search_stops_after_three_distinct_attempts() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "What is HEPiX 2026?", "model_id": "model-1", "tools": [tool_schema("web_search")],
+    }))
+    queries = ["HEPiX 2026", "HEPiX forum computing", "HEPiX organization infrastructure"]
+    final_output = ()
+    sequence = 1
+    for index, query in enumerate(queries, 1):
+        requested = core.handle(command(MessageType.MODEL_COMPLETED, sequence, {"tool_calls": [
+            {"call_id": f"search-{index}", "name": "web_search", "arguments": {"query": query}},
+        ]}))
+        sequence += 1
+        assert any(item.message_type is MessageType.TOOL_CALL_REQUEST for item in requested)
+        final_output = core.handle(command(MessageType.TOOL_RESULT, sequence, {
+            "call_id": f"search-{index}", "succeeded": True,
+            "content": {"version": 1, "query": query, "results": [], "partial": True, "warnings": ["no_results"]},
+        }))
+        sequence += 1
+
+    exhausted = next(item for item in final_output if item.payload.get("kind") == "web_search.exhausted")
+    assert exhausted.payload["attempt_count"] == 3
+    assert not any(item.message_type is MessageType.MODEL_REQUEST for item in final_output)
+    assert any(item.payload.get("kind") == "run.completed" for item in final_output)
+    assert core.snapshot("run-1")["web_search_exhausted"] is True
+
+
+def test_parallel_empty_web_search_batch_completes_without_another_model_call() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "hepix2026 是什么", "model_id": "model-1", "tools": [tool_schema("web_search")],
+    }))
+    core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "search-1", "name": "web_search", "arguments": {"query": "hepix2026"}},
+    ]}))
+    core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "search-1", "succeeded": True,
+        "content": {"version": 1, "query": "hepix2026", "results": [], "partial": True, "warnings": ["no_results"]},
+    }))
+
+    stopped = core.handle(command(MessageType.MODEL_COMPLETED, 3, {"tool_calls": [
+        {"call_id": "search-2", "name": "web_search", "arguments": {"query": "\"hepix\" 2026"}},
+        {"call_id": "search-3", "name": "web_search", "arguments": {"query": "HEPiX conference 2026"}},
+    ]}))
+
+    assert not any(item.message_type is MessageType.MODEL_REQUEST for item in stopped)
+    assert any(item.payload.get("kind") == "web_search.exhausted" for item in stopped)
+    assert any(item.payload.get("kind") == "run.completed" for item in stopped)
+    assert not any(item.payload.get("kind") == "run.failed" for item in stopped)
+
+
+def test_tool_context_budget_completes_with_limitation_before_overflow() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "loop safely", "model_id": "model-1", "tools": [tool_schema("clock")],
+        "context_budget": {
+            "policy_version": "p9-context-budget-v1",
+            "context_window_tokens": 4096,
+            "reserved_output_tokens": 1024,
+            "max_messages": 6,
+            "summary_tokens": 128,
+        },
+    }))
+    core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "clock-1", "name": "clock", "arguments": {}},
+    ]}))
+    core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "clock-1", "succeeded": True, "content": {"time": "12:00"},
+    }))
+
+    limited = core.handle(command(MessageType.MODEL_COMPLETED, 3, {"tool_calls": [
+        {"call_id": "clock-2", "name": "clock", "arguments": {}},
+    ]}))
+
+    assert any(item.payload.get("kind") == "tool.budget_exhausted" for item in limited)
+    assert any(item.payload.get("kind") == "run.completed" for item in limited)
+    assert not any(item.payload.get("kind") == "run.failed" for item in limited)
+    assert core.snapshot("run-1")["phase"] == RunPhase.COMPLETED.value
 
 
 @pytest.mark.parametrize(

@@ -72,6 +72,30 @@ def test_evidence_contains_only_call_ids_and_url_digests() -> None:
         normalize_citation_evidence({**evidence, "missing": True})
 
 
+def test_knowledge_evidence_is_bound_by_hash_and_requires_source_label() -> None:
+    content = {
+        "require_citations": True,
+        "evidence": [{
+            "knowledge_id": "product-docs", "document_id": "doc-1", "chunk_id": "doc-1:0",
+            "source": "guide.md", "score": 0.9, "content": "private knowledge text",
+            "content_sha256": "a" * 64,
+        }],
+    }
+    missing = build_citation_evidence([
+        {"role": "tool", "tool_call_id": "kb-1", "name": "knowledge_search", "succeeded": True, "content": content},
+    ], "The product supports knowledge.", retrieval_required=True)
+    cited = build_citation_evidence([
+        {"role": "tool", "tool_call_id": "kb-1", "name": "knowledge_search", "succeeded": True, "content": content},
+    ], "The product supports knowledge (guide.md).", retrieval_required=True)
+
+    assert missing["missing"] is True
+    assert cited["valid"] is True
+    assert cited["knowledge_evidence_sha256"]
+    assert "guide.md" not in str(cited)
+    assert "private knowledge text" not in str(cited)
+    assert normalize_citation_evidence(cited) == cited
+
+
 def test_missing_citation_is_buffered_and_retried_then_exact_source_completes() -> None:
     core = searched_core()
     retry = core.handle(command(MessageType.MODEL_COMPLETED, 3, {"content": "HEPiX 2026 is a conference."}))

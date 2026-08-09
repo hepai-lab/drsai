@@ -39,7 +39,7 @@ EXECUTION_TOOL_REGISTRY_VERSION = "p9-execution-tools-v1"
 TOOL_LOOP_POLICY_SCHEMA_VERSION = 1
 TOOL_LOOP_POLICY_VERSION = "p9-tool-loop-v1"
 TOOL_DECISION_POLICY_VERSION = "p9-tool-decision-v2"
-CITATION_POLICY_VERSION = "p9-citation-policy-v1"
+CITATION_POLICY_VERSION = "p9-citation-policy-v2"
 SKILL_MANIFEST_VERSION = "p9-skill-manifest-v1"
 DEFAULT_MAX_TOOL_ROUNDS = 24
 DEFAULT_MAX_PARALLEL_TOOL_CALLS = 8
@@ -91,6 +91,7 @@ KNOWN_HOST_CAPABILITIES = frozenset({
     "chat", "streaming", "local_memory", "attachment_input", "safe_device_info",
     "saf_read", "saf_write", "approvals", "artifacts", "project_files", "shell",
     "git", "pty", "worktree", "codex", "mcp", "background_runs", "web_search", "web_fetch", "browser_session",
+    "network.public_https",
 })
 
 CAPABILITY_CLASSIFICATIONS = frozenset({
@@ -129,7 +130,7 @@ def _build_tool_decision_requirement_v1(input_text: str, available_tools: Sequen
     patterns = {
         "retrieval": (
             "latest", "today", "current news", "verify", "source", "citation", "cite",
-            "最新", "今天", "新闻", "核实", "查证", "来源", "引用", "hepix 2026",
+            "最新", "今天", "新闻", "核实", "查证", "来源", "引用",
         ),
         "workspace": (
             "read file", "open file", "list files", "find file", "write file", "edit file",
@@ -185,7 +186,7 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
             "latest", "today", "current news", "breaking", "recent", "as of", "verify", "source",
             "citation", "cite", "look up", "search for", "最新", "今天", "今日", "新闻", "当前",
             "最近", "今年", "截至", "刚刚", "核实", "查证", "验证", "来源", "引用", "搜索",
-            "查一下", "联网", "hepix 2026", "hepix2026",
+            "查一下", "联网",
         ),
         "workspace": (
             "read file", "open file", "list files", "find file", "write file", "edit file",
@@ -198,6 +199,22 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
     for domain, needles in patterns.items():
         if any(needle in folded for needle in needles):
             domains.add(domain)
+
+    # “Current” is not intrinsically a web-fact request. In particular,
+    # workspace-exploration phrasing must select local workspace tools rather
+    # than being rejected as an unavailable retrieval request.
+    workspace_exploration = (
+        "explore workspace" in folded
+        or "understand workspace" in folded
+        or "current workspace" in folded
+        or "explore the project" in folded
+        or any(value in normalized for value in (
+            "探索工作区", "理解工作区", "当前工作区", "探索并理解当前工作区",
+        ))
+    )
+    if workspace_exploration:
+        domains.add("workspace")
+        domains.discard("retrieval")
 
     # An explicit request to use an available named tool is authoritative
     # evidence for that tool's capability domain. This matters for local
@@ -219,11 +236,6 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
     )
     if entity_question and (re.search(r"20\d{2}", folded) or unfamiliar_identifier):
         domains.add("retrieval")
-    # Keep a deterministic compatibility signal for the original P9 incident
-    # fixtures while real Chinese text is now handled by the Unicode rules.
-    if "hepix" in folded:
-        domains.add("retrieval")
-
     reason = "task_requires_external_or_host_fact" if domains else "stable_or_transformational_request"
     available_domains = sorted({domain for name in names if (domain := _tool_decision_domain(name)) is not None})
     unsigned = {
@@ -247,7 +259,13 @@ def resolve_tool_decision(
     selected = [str(value) for value in selected_tools if isinstance(value, str) and value]
     selected_domains = {_tool_decision_domain(value) for value in selected}
     selected_domains.discard(None)
-    if prior_tool_use and required:
+    # If the required capability is absent from the executable surface, do not
+    # blame a model for selecting an unrelated optional Tool.  The Host must
+    # return the explicit capability limitation instead of spending a retry
+    # and eventually reporting a misleading model failure.
+    if required and required.isdisjoint(available):
+        category, reason = "required_tool_unavailable", "required_capability_not_available"
+    elif prior_tool_use and required:
         category, reason = "required_tool_satisfied", "prior_tool_result_available"
     elif selected and required and not required.isdisjoint(selected_domains):
         category, reason = "required_tool_selected", "model_selected_tool_for_required_task"
@@ -255,8 +273,6 @@ def resolve_tool_decision(
         category, reason = "wrong_tool_selected", "selected_tool_does_not_satisfy_required_capability"
     elif selected:
         category, reason = "optional_tool_selected", "model_selected_optional_tool"
-    elif required and required.isdisjoint(available):
-        category, reason = "required_tool_unavailable", "required_capability_not_available"
     elif required:
         category, reason = "required_tool_omitted", "model_answered_without_required_tool"
     else:
@@ -304,6 +320,9 @@ def build_tool_choice_policy(
         "reason": reason,
         "available_tool_count": len(names),
         "matching_tool_count": len(matching),
+        # This is a Tool-name-only contract.  It lets a Host enforce a
+        # required capability without re-classifying or receiving task text.
+        "matching_tools": matching,
         "requirement_sha256": requirement.get("sha256"),
     }
     return {**unsigned, "sha256": _canonical_digest(unsigned)}
@@ -578,6 +597,9 @@ def build_citation_evidence(
         raise ValueError("citation_content_invalid")
     source_urls: set[str] = set()
     source_call_ids: set[str] = set()
+    knowledge_sources: set[str] = set()
+    knowledge_evidence_digests: set[str] = set()
+    knowledge_citations_required = False
 
     def collect(value: Any, key: str = "") -> None:
         if isinstance(value, Mapping):
@@ -595,7 +617,34 @@ def build_citation_evidence(
         name = str(message.get("name", ""))
         if _tool_decision_domain(name) != "retrieval":
             continue
-        collect(message.get("content", {}))
+        content = message.get("content", {})
+        collect(content)
+        if name.casefold() == "knowledge_search":
+            if isinstance(content, str):
+                try:
+                    content = json.loads(content)
+                except (TypeError, json.JSONDecodeError):
+                    content = {}
+            if isinstance(content, Mapping):
+                knowledge_citations_required = knowledge_citations_required or content.get("require_citations") is True
+                rows = content.get("evidence", [])
+                if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes)):
+                    for row in rows:
+                        if not isinstance(row, Mapping) or row.get("error"):
+                            continue
+                        source = str(row.get("source") or "").strip()
+                        content_digest = str(row.get("content_sha256") or "").strip()
+                        if source:
+                            knowledge_sources.add(source)
+                        receipt = {
+                            "knowledge_id": str(row.get("knowledge_id") or ""),
+                            "document_id": str(row.get("document_id") or ""),
+                            "chunk_id": str(row.get("chunk_id") or ""),
+                            "source_sha256": hashlib.sha256(source.encode()).hexdigest() if source else "",
+                            "content_sha256": content_digest,
+                            "score": float(row.get("score") or 0),
+                        }
+                        knowledge_evidence_digests.add(_canonical_digest(receipt))
         call_id = message.get("tool_call_id")
         if isinstance(call_id, str) and call_id:
             source_call_ids.add(call_id)
@@ -606,8 +655,9 @@ def build_citation_evidence(
     # Once a successful retrieval result contributed public source URLs, the
     # final answer must cite one of those exact URLs even when the model chose
     # to retrieve proactively rather than because the classifier required it.
-    required = bool(source_urls)
-    missing = bool(required and not cited)
+    cited_knowledge = {source for source in knowledge_sources if source in final_content}
+    required = bool(source_urls) or bool(knowledge_sources and knowledge_citations_required)
+    missing = bool(source_urls and not cited) or bool(knowledge_sources and knowledge_citations_required and not cited_knowledge)
     unsigned = {
         "policy_version": CITATION_POLICY_VERSION,
         "required": required,
@@ -617,6 +667,9 @@ def build_citation_evidence(
         "source_url_sha256": sorted(hashlib.sha256(value.encode()).hexdigest() for value in source_urls),
         "cited_url_sha256": sorted(hashlib.sha256(value.encode()).hexdigest() for value in cited),
         "fabricated_url_sha256": sorted(hashlib.sha256(value.encode()).hexdigest() for value in fabricated),
+        "knowledge_source_sha256": sorted(hashlib.sha256(value.encode()).hexdigest() for value in knowledge_sources),
+        "knowledge_cited_sha256": sorted(hashlib.sha256(value.encode()).hexdigest() for value in cited_knowledge),
+        "knowledge_evidence_sha256": sorted(knowledge_evidence_digests),
     }
     return {**unsigned, "sha256": _canonical_digest(unsigned)}
 
@@ -624,12 +677,16 @@ def build_citation_evidence(
 def normalize_citation_evidence(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     if not raw:
         return {}
-    if raw.get("policy_version") != CITATION_POLICY_VERSION:
+    version = raw.get("policy_version")
+    if version not in {"p9-citation-policy-v1", CITATION_POLICY_VERSION}:
         raise ValueError("citation_policy_invalid")
-    unsigned = {key: raw.get(key) for key in (
+    keys = [
         "policy_version", "required", "valid", "missing", "source_call_ids",
         "source_url_sha256", "cited_url_sha256", "fabricated_url_sha256",
-    )}
+    ]
+    if version == CITATION_POLICY_VERSION:
+        keys.extend(("knowledge_source_sha256", "knowledge_cited_sha256", "knowledge_evidence_sha256"))
+    unsigned = {key: raw.get(key) for key in keys}
     if raw.get("sha256") != _canonical_digest(unsigned):
         raise ValueError("citation_evidence_digest_mismatch")
     return {**unsigned, "sha256": raw["sha256"]}
@@ -1022,6 +1079,23 @@ def normalize_kernel_host_port(
     values = raw.get("capabilities")
     if not isinstance(values, Sequence) or isinstance(values, (str, bytes)) or len(values) > MAX_HOST_CAPABILITIES:
         raise ValueError("kernel_host_capabilities_invalid")
+    # A normalized Host Port is also its canonical transfer representation.
+    # Accept it idempotently only when its digest is intact; untrusted host
+    # advertisements continue to use versioned capability records below.
+    if (values and all(isinstance(value, str) for value in values)) or (not values and "sha256" in raw):
+        names = sorted(_validated_capability_names(values, "kernel_host_capability_invalid"))
+        if not set(names).issubset(KNOWN_HOST_CAPABILITIES):
+            raise ValueError("kernel_host_capability_unknown")
+        unsigned = {
+            "schema_version": KERNEL_HOST_PORT_SCHEMA_VERSION,
+            "protocol_version": KERNEL_HOST_PORT_PROTOCOL_VERSION,
+            "surface": surface,
+            "capabilities": names,
+        }
+        digest = _canonical_digest(unsigned)
+        if raw.get("sha256") != digest:
+            raise ValueError("kernel_host_port_digest_mismatch")
+        return {**unsigned, "sha256": digest}
     understood: list[str] = []
     seen: set[str] = set()
     for value in values:

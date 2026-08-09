@@ -466,8 +466,20 @@ You can update one or multiple fields at once. Only provide the fields that need
             logger.error(f"Failed to sync AGENTS.md profile: {e}")
 
     def load_user_tools_config(self) -> dict:
-        tools_config_data = json.loads(self.tools_config_path.read_text(encoding='utf-8'))
-        return tools_config_data
+        from drsai.config.tool_registry import list_tool_resources, public_tool_config, resolve_tool_config
+
+        return [
+            {
+                "tool_id": resource.tool_id, "type": resource.type,
+                "config": (
+                    resolve_tool_config(resource.config, self.config_path)
+                    if resource.type in {"mcp-std", "mcp-sse", "mcp-http"}
+                    else public_tool_config(resource.config)
+                ),
+                "name": resource.name, "enabled": resource.enabled, "source": resource.source,
+            }
+            for resource in list_tool_resources(self.config_path)
+        ]
     
     def save_learned_skill(self, skill_name: str, skill_content: str) -> str:
         """

@@ -65,7 +65,7 @@ from .device_audit import DeviceActionAudit, DeviceActionKey
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
-P5_PLATFORM_CONTRACT_SHA256 = "f29e5ed662e51eb61afcf31b1f2d21f56c8e5f1ed262928e648e15026d17be62"
+P5_PLATFORM_CONTRACT_SHA256 = "490afae079e65acf2344f8a5a0bdd662f13a1cd175177f3e7dd57a35fdc77050"
 
 
 class _StrictBody(BaseModel):

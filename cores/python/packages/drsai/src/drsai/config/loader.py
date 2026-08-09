@@ -35,6 +35,18 @@ def load_user_config(path: str | Path | None = None) -> DrSaiConfig:
 
 
 def parse_user_config(raw: Mapping[str, Any], *, source_path: str | None = None) -> DrSaiConfig:
+    current_agent = _optional_nonempty_string(raw, "current_agent")
+    agent_config_file = _optional_nonempty_string(raw, "agent_config_file")
+    if (current_agent is None) != (agent_config_file is None):
+        raise ConfigError("current_agent and agent_config_file must be configured together")
+    if current_agent is not None:
+        import re
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", current_agent):
+            raise ConfigError("current_agent is invalid")
+        normalized_agent_file = agent_config_file.replace("\\", "/") if agent_config_file else ""
+        expected_agent_file = f"configs/agents/agent_{current_agent}.toml"
+        if normalized_agent_file != expected_agent_file:
+            raise ConfigError(f"agent_config_file must be '{expected_agent_file}'")
     model = _optional_nonempty_string(raw, "model")
     provider_name = _optional_nonempty_string(raw, "model_provider")
     config_version = raw.get("config_version")
@@ -53,6 +65,8 @@ def parse_user_config(raw: Mapping[str, Any], *, source_path: str | None = None)
         providers[name] = _parse_provider(name, value, source_path=source_path)
 
     return DrSaiConfig(
+        current_agent=current_agent,
+        agent_config_file=agent_config_file,
         model=model,
         model_provider=provider_name,
         config_version=config_version,

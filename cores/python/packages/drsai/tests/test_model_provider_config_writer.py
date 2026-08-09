@@ -7,6 +7,7 @@ import pytest
 
 from drsai.config import ConfigError, delete_provider, load_user_config, remove_legacy_model_selection, update_model_selection, upsert_provider
 from drsai.config import writer as writer_module
+from drsai.config.defaults import CURRENT_CONFIG_VERSION
 
 
 def test_update_preserves_platform_tables_and_comments(tmp_path: Path) -> None:
@@ -29,7 +30,7 @@ base_url = "https://api.example.test"
     assert parsed["active_platform"] == "production"
     assert parsed["model"] == "deepseek-chat"
     assert parsed["model_provider"] == "custom"
-    assert parsed["config_version"] == 2
+    assert parsed["config_version"] == CURRENT_CONFIG_VERSION
     assert path.with_suffix(".toml.bak").exists()
 
 

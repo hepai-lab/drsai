@@ -41,6 +41,7 @@ from drsai.modules.components.model_client.anthropic import (
     _MODEL_INFO,
 )
 from drsai.modules.components.model_client.gemini_client import GeminiNativeChatCompletionClient
+from drsai.modules.components.skills import resolve_builtin_skills_dir
 from drsai.modules.managers.database import DatabaseManager
 from drsai.platform_auth import get_platform_auth
 
@@ -704,6 +705,13 @@ def create_agent(
     extra_tools: Optional[list] = None,
     enable_security: bool = False,
     kernel_surface: str = "desktop",
+    tool_resource_ids: Optional[list[str]] = None,
+    tool_policy_revision: Optional[str] = None,
+    skill_policy_mode: str = "inherit",
+    skill_resource_ids: Optional[list[str]] = None,
+    disabled_skill_ids: Optional[list[str]] = None,
+    allow_thread_skill_override: bool = True,
+    skill_policy_revision: Optional[str] = None,
 ) -> DrSaiAssistant:
     """Build a local OpenDrSai assistant from CLI config.
 
@@ -757,7 +765,18 @@ def create_agent(
     resolved_user_model: ResolvedModelConfig | None = None
     if unified_model_config_active:
         compatibility_environ = dict(os.environ)
-        selected_provider = user_model_config.model_provider or "hepai"
+        # Use the same provider precedence as resolve_model_config().  The
+        # desktop runtime supplies an explicit external provider through the
+        # request/environment even when config.toml has no global
+        # model_provider selection.  Previously this check defaulted to hepai,
+        # made credentials optional under OIDC, then the resolver selected the
+        # external provider and constructed it with an empty API key.
+        selected_provider = (
+            model_provider
+            or os.environ.get("DRSAI_MODEL_PROVIDER")
+            or user_model_config.model_provider
+            or "hepai"
+        )
         if selected_provider in {"hepai", "hepai-anthropic"}:
             compatibility_environ.setdefault(
                 "HEPAI_API_KEY",
@@ -773,7 +792,7 @@ def create_agent(
                 "ANTHROPIC_API_KEY",
                 str(cli_cfg.get("anthropic_api_key") or api_key or ""),
             )
-        requested_provider = model_provider or selected_provider
+        requested_provider = selected_provider
         require_static_credentials = not (
             requested_provider in {"hepai", "hepai-anthropic"}
             and get_platform_auth() is not None
@@ -877,7 +896,12 @@ def create_agent(
         else None
     )
 
-    skills_dir = _resolve(cli_cfg, "skills_dir", "SYSTEM_SKILLS_DIR") or None
+    configured_skills_dir = _resolve(cli_cfg, "skills_dir", "SYSTEM_SKILLS_DIR") or None
+    builtin_skills_dir = resolve_builtin_skills_dir(
+        configured_skills_dir,
+        search_from=(Path(__file__), Path.cwd()),
+    )
+    skills_dir = str(builtin_skills_dir) if builtin_skills_dir is not None else None
     rag_flow_url = _resolve(
         cli_cfg, "ragflow_url", "RAGFLOW_URL", default=_DEFAULT_RAGFLOW_URL,
     )
@@ -1038,6 +1062,14 @@ def create_agent(
         needs_max_completion = any(
             model_suffix.startswith(prefix) for prefix in _OPENAI_NEW_MODEL_PREFIXES
         )
+        use_responses_api = bool(
+            active_user_model is not None
+            and active_user_model.provider.name == "zhizengzeng"
+        )
+        allow_deferred_oidc = bool(
+            active_user_model is None
+            or active_user_model.provider.name in {"hepai", "hepai-anthropic"}
+        )
 
         if needs_max_completion:
             return HepAIChatCompletionClient(
@@ -1047,6 +1079,8 @@ def create_agent(
                 model_info=model_info,
                 max_completion_tokens=max_tokens,
                 timeout=openai_timeout,
+                use_responses_api=use_responses_api,
+                allow_deferred_oidc=allow_deferred_oidc,
             )
         else:
             return HepAIChatCompletionClient(
@@ -1056,6 +1090,8 @@ def create_agent(
                 model_info=model_info,
                 max_tokens=max_tokens,
                 timeout=openai_timeout,
+                use_responses_api=use_responses_api,
+                allow_deferred_oidc=allow_deferred_oidc,
             )
 
     entry = llm_mode_config.get(resolved_config_name)
@@ -1091,6 +1127,7 @@ def create_agent(
     kernel_identity = agent_kernel_identity(surface="desktop")
     desktop_host_capabilities = [
         "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+        "web_search", "network.public_https",
     ]
     kernel_host_port = normalize_kernel_host_port({
         "schema_version": 1,
@@ -1145,6 +1182,13 @@ def create_agent(
         rag_flow_token=rag_flow_token,
         memory_dataset_id=memory_dataset_id,
         context_type=context_type,  # "ragflow" or "sqlite", from env DRSAI_CONTEXT_TYPE
+        tool_resource_ids=tool_resource_ids,
+        tool_policy_revision=tool_policy_revision,
+        skill_policy_mode=skill_policy_mode,
+        skill_resource_ids=skill_resource_ids,
+        disabled_skill_ids=disabled_skill_ids,
+        allow_thread_skill_override=allow_thread_skill_override,
+        skill_policy_revision=skill_policy_revision,
     )
     exporter = getattr(assistant, "export_production_parity_manifest", None)
     parity_manifest = exporter() if callable(exporter) else desktop_production_parity_manifest(assistant)

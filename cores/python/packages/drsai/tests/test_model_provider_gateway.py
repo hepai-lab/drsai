@@ -200,8 +200,8 @@ def test_provider_delete_preflight_lists_active_reference_without_mutation(monke
         "references": [
             {
                 "kind": "agent_model_policy",
-                "id": "my-drsai",
-                "label": "Local OpenDrSai Agent model",
+                    "id": "opendrsai",
+                    "label": "opendrsai primary model",
                 "model_id": "custom-model",
             },
         ],
@@ -246,8 +246,8 @@ def test_provider_delete_preflight_finds_explicit_agent_policy(monkeypatch) -> N
     assert result["can_delete"] is False
     assert result["references"] == [{
         "kind": "agent_model_policy",
-        "id": "my-drsai",
-            "label": "Local OpenDrSai Agent model",
+        "id": "opendrsai",
+            "label": "opendrsai primary model",
         "model_id": "selected",
     }]
 

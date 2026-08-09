@@ -11,6 +11,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
+from drsai.relay.security import redact_credentials
+
 from .mobile_core import DrSaiAgentKernel, MessageType, RuntimeEnvelope
 
 
@@ -31,6 +33,7 @@ class DesktopToolResult:
     error_code: str | None = None
     artifact_ids: tuple[str, ...] = ()
     artifacts: tuple[Mapping[str, Any], ...] = ()
+    inspection: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,8 +111,14 @@ class DesktopKernelCoordinator:
                 try:
                     result = await self._model(outbound.payload)
                 except Exception as error:
+                    # The model port is the last layer that still owns the SDK
+                    # exception (including HTTP status and provider response
+                    # body). Preserve that diagnostic text across the compact
+                    # Kernel protocol, redacting credential values only.
                     send(response(MessageType.MODEL_FAILED, {
-                        "code": type(error).__name__, "retryable": False,
+                        "code": type(error).__name__,
+                        "message": redact_credentials(str(error)).strip() or type(error).__name__,
+                        "retryable": False,
                     }, "model-failed"))
                     continue
                 for delta in result.deltas:
@@ -131,6 +140,7 @@ class DesktopKernelCoordinator:
                     "error_code": result.error_code,
                     "artifact_ids": list(result.artifact_ids),
                     "artifacts": [dict(value) for value in result.artifacts],
+                    **({"inspection": dict(result.inspection)} if result.inspection is not None else {}),
                 }, f"tool-result:{result.call_id}"))
             elif outbound.message_type is MessageType.APPROVAL_REQUEST:
                 if self._approval is None:

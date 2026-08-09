@@ -137,6 +137,26 @@ class AndroidPythonHostAdaptersTest {
     }
 
     @Test
+    fun `required tool domain follows Desktop filtering and provider auto choice`() = runTest {
+        val gateway = FakeModelGateway()
+        val choice = JSONObject().put("policy_version", "p9-tool-choice-v1")
+            .put("mode", "required")
+            .put("specified_tool", JSONObject.NULL)
+            .put("matching_tools", JSONArray().put("clock"))
+        val tools = JSONArray()
+            .put(JSONObject().put("name", "clock"))
+            .put(JSONObject().put("name", "workspace.read"))
+
+        HaiPythonModelHostPort(gateway).stream(
+            HostModelRequest("required", "model-1", JSONArray(), tools, choice),
+        ).toList()
+
+        assertEquals("auto", gateway.toolChoice?.getString("mode"))
+        assertEquals(1, gateway.toolSchemas.length())
+        assertEquals("clock", gateway.toolSchemas.getJSONObject(0).getString("name"))
+    }
+
+    @Test
     fun `pinned model route reaches gateway unchanged`() = runTest {
         val gateway = FakeModelGateway()
         val route = PinnedModelRoute.create(

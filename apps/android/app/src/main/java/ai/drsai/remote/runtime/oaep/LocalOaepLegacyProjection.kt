@@ -5,6 +5,7 @@ import ai.drsai.remote.data.ChatMessage
 import ai.drsai.remote.data.Conversation
 import ai.drsai.remote.data.ConversationEntity
 import ai.drsai.remote.data.MessageAttachment
+import ai.drsai.remote.data.OaepDiagnosticEventUi
 import ai.drsai.remote.remote.generated.OaepMessageContent
 import ai.drsai.remote.remote.data.OaepJsonCodec
 import ai.drsai.remote.remote.model.RemoteTranscriptMessage
@@ -25,6 +26,7 @@ class LocalOaepLegacyProjection(
         val runStatus: String?,
         val activeRunId: String?,
         val snapshotSequence: Long,
+        val diagnosticEvents: List<OaepDiagnosticEventUi>,
         val waitingReason: String?,
         val runtimeStatus: String?,
         val errorMessage: String?,
@@ -123,6 +125,19 @@ class LocalOaepLegacyProjection(
             runStatus = latest?.status,
             activeRunId = latest?.id,
             snapshotSequence = snapshot.snapshotSequence,
+            diagnosticEvents = latestEvents.map { event ->
+                OaepDiagnosticEventUi(
+                    eventId = event.eventId,
+                    sequence = event.sequence,
+                    type = event.type,
+                    timestamp = event.timestamp,
+                    runId = event.runId,
+                    itemId = event.itemId,
+                    source = event.source.backend,
+                    errorCode = event.data.error?.code,
+                    errorMessage = event.data.error?.message,
+                )
+            },
             waitingReason = waitingReason,
             runtimeStatus = runtimeStatus,
             errorMessage = errorMessage,

@@ -38,7 +38,7 @@ from drsai.backend.runtime.run_inspection import (
 )
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from drsai.relay.device_identity import WindowsDpapiProtector
-from drsai.relay.security import redact_secrets
+from drsai.relay.security import redact_credentials, redact_secrets
 
 
 RUN_TRANSITIONS = {
@@ -1824,7 +1824,7 @@ class RuntimeEngine:
             if message and str(message) != "[REDACTED]":
                 error_summary = {
                     "code": str(error.get("code") or content.get("code") or "run.item_failed")[:120],
-                    "message": str(redact_sensitive(redact_secrets(str(message))))[:500],
+                    "message": redact_credentials(str(message)),
                     "retryable": bool(error.get("retryable", False)),
                 }
         manifest_view = self.get_run_manifest(run_id, safe=True)
@@ -1849,7 +1849,7 @@ class RuntimeEngine:
             if message:
                 error_summary = {
                     "code": str(outcome_error.get("code") or "run.failed")[:120],
-                    "message": str(redact_sensitive(redact_secrets(str(message))))[:500],
+                    "message": redact_credentials(str(message)),
                     "retryable": bool(outcome_error.get("retryable", False)),
                 }
         if usage["total_tokens"] == 0:

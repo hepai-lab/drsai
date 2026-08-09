@@ -18,6 +18,7 @@ PYTHON_PACKAGE = ROOT / "cores/python/packages/drsai/src"
 SUITE_PATH = ROOT / "cores/protocol/android-runtime/fixtures/p9-natural-tool-selection-v1.json"
 POLICY_PATH = ROOT / "cores/protocol/android-runtime/fixtures/p9-real-model-statistical-gate-v1.json"
 DEFAULT_OUTPUT = ROOT / "docs/android/reports/evidence/p9/m09-f06-real-model-statistics.json"
+DEFAULT_M04_OUTPUT = ROOT / "docs/android/reports/evidence/p9/m04-f06-natural-tool-selection.json"
 PACKAGE = "ai.drsai.remote.debug"
 RUNNER = f"{PACKAGE}.test/androidx.test.runner.AndroidJUnitRunner"
 TEST_CLASS = "ai.drsai.remote.P9NaturalToolSelectionInstrumentedTest"
@@ -28,7 +29,11 @@ from drsai.backend.runtime.real_model_statistics import (  # noqa: E402
     evaluate_real_model_statistics,
     load_real_model_policy,
 )
-from drsai.backend.runtime.tool_selection_eval import load_tool_selection_suite  # noqa: E402
+from drsai.backend.runtime.tool_selection_eval import (  # noqa: E402
+    evaluate_tool_selection_gate,
+    load_tool_selection_suite,
+    score_tool_selection_attempt,
+)
 
 
 def run(command: list[str], *, timeout: int = 300) -> str:
@@ -75,6 +80,23 @@ def device_identity(adb_path: Path, serial: str) -> dict[str, object]:
     }
 
 
+def score_m04_observations(suite: dict, document: dict) -> dict:
+    """Score M04 from the flash subset already collected for M09."""
+    cases = {case["id"]: case for case in suite["cases"]}
+    scored = []
+    for row in document["observations"]:
+        case_id = row.get("case_id")
+        if case_id not in cases:
+            raise RuntimeError(f"m04_observation_unknown_case:{case_id}")
+        scored.append(score_tool_selection_attempt(
+            cases[case_id], int(row["attempt"]), list(row.get("selected_tools", [])), row.get("provider_error"),
+        ))
+    expected_count = len(cases) * int(suite["minimum_attempts_per_case"])
+    if len(scored) != expected_count:
+        raise RuntimeError(f"m04_observation_count_invalid:{len(scored)}:{expected_count}")
+    return evaluate_tool_selection_gate(suite, scored)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sdk_default = Path(os.environ.get("ANDROID_HOME", Path.home() / "AppData/Local/Android/Sdk"))
@@ -83,6 +105,7 @@ def main() -> int:
     parser.add_argument("--app-apk", type=Path)
     parser.add_argument("--test-apk", type=Path)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--m04-output", type=Path, default=DEFAULT_M04_OUTPUT)
     parser.add_argument("--skip-install", action="store_true")
     parser.add_argument("--timeout-seconds-per-model", type=int, default=7200)
     options = parser.parse_args()
@@ -151,12 +174,42 @@ def main() -> int:
     }
     options.output.parent.mkdir(parents=True, exist_ok=True)
     options.output.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    # M09 includes the exact 90 deepseek-v4-flash attempts required by M04.
+    # Re-score those same raw observations instead of issuing 90 duplicate paid
+    # requests. Both reports remain bound to the same APK, fixture and runtime.
+    flash_model = "deepseek-v4-flash"
+    flash_document = observations_by_model[flash_model]
+    m04_gate = score_m04_observations(suite, flash_document)
+    m04_report = {
+        **m04_gate,
+        "feature_id": "M04-F06",
+        "generated_at": completed_at,
+        "passed": bool(m04_gate["passed"]),
+        "provenance": {
+            **report["provenance"],
+            "reused_from_feature": "M09-F06",
+            "fixture": str(SUITE_PATH.relative_to(ROOT)).replace("\\", "/"),
+            "fixture_sha256": suite["sha256"],
+        },
+        "environment": environment,
+        "runtime": report["runtime_by_model"][flash_model],
+        "raw_observations": flash_document["observations"],
+        "instrumentation_tests": 1,
+        "instrumentation_failures": 0,
+        "source_sha256": report["source_sha256"],
+    }
+    options.m04_output.parent.mkdir(parents=True, exist_ok=True)
+    options.m04_output.write_text(
+        json.dumps(m04_report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8",
+    )
     print(json.dumps({
         "feature_id": report["feature_id"], "passed": report["passed"],
         "raw_counts": report["raw_counts"], "aggregate": report["aggregate"],
-        "output": str(options.output),
+        "output": str(options.output), "m04_passed": m04_report["passed"],
+        "m04_output": str(options.m04_output),
     }, ensure_ascii=False, indent=2))
-    return 0 if report["passed"] else 1
+    return 0 if report["passed"] and m04_report["passed"] else 1
 
 
 if __name__ == "__main__":

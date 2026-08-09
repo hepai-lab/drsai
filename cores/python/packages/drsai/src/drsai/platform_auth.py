@@ -83,18 +83,33 @@ _BYPASS_PLATFORM = os.environ.get("DRSAI_BYPASS_PLATFORM_AUTH", "").strip() == "
 def get_model_credential_provider(
     fallback_token: str | None = None,
     fallback_base_url: str | None = None,
+    *,
+    configured_provider: bool = False,
 ) -> ModelCredentialProvider | None:
+    # An Agent-selected external Provider is an explicit security boundary:
+    # use only its own resolved credential and URL. Never replace a missing
+    # third-party key with the HepAI OIDC token or a development bypass key.
+    if configured_provider:
+        return (
+            StaticModelCredentialProvider(fallback_token, fallback_base_url)
+            if fallback_token and fallback_base_url
+            else None
+        )
     if _BYPASS_PLATFORM:
         direct_key = os.environ.get("DRSAI_DIRECT_API_KEY", "").strip()
         direct_url = os.environ.get("OPENDRSAI_MODEL_BASE_URL", "").strip().rstrip("/")
         if direct_key and direct_url:
             return StaticModelCredentialProvider(access_token=direct_key, openai_base_url=direct_url)
 
+    # An explicitly resolved Provider from Settings / Agent configuration is
+    # authoritative.  A signed-in platform session identifies the user, but it
+    # must not silently reroute a configured third-party model to HepAI or send
+    # the HepAI bearer token to that third party.
+    if static_model_credentials_allowed() and fallback_token and fallback_base_url:
+        return StaticModelCredentialProvider(fallback_token, fallback_base_url)
     context = get_platform_auth()
     if context:
         return OidcModelCredentialProvider(context)
-    if static_model_credentials_allowed() and fallback_token and fallback_base_url:
-        return StaticModelCredentialProvider(fallback_token, fallback_base_url)
     return None
 
 
@@ -228,6 +243,27 @@ def revoke_gateway_instance_token(token: str) -> None:
 def classify_model_error(error: Exception) -> dict[str, object]:
     status_code = getattr(error, "status_code", None)
     message = str(error).lower()
+    if "context_active_chain_budget_overflow" in message or "context_budget_invariant_failed" in message:
+        return {
+            "code": "context_budget_exhausted",
+            "message": "The local agent context budget was exhausted.",
+            "retryable": False,
+        }
+    if "model_tool_not_in_snapshot" in message:
+        return {
+            "code": "model_tool_contract_violation",
+            "message": "The model requested a tool that was not available for this turn.",
+            "retryable": False,
+        }
+    if (
+        "credential context is unavailable" in message
+        or "provider api credential is unavailable" in message
+    ):
+        return {
+            "code": "model_credential_unavailable",
+            "message": "The selected model provider credential is unavailable.",
+            "retryable": False,
+        }
     if "token_expired" in message or "token expired" in message or "expired token" in message:
         return {"code": "token_expired", "message": "Your HepAI session expired.", "retryable": True}
     if (

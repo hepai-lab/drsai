@@ -6,7 +6,9 @@ from autogen_core.models import CreateResult, RequestUsage, SystemMessage
 from PIL import Image as PILImage
 import pytest
 
+from drsai.backend.runtime.agent_kernel import normalize_kernel_host_port
 from drsai.backend.runtime.agent_kernel_factory import create_agent_kernel
+from drsai.backend.runtime.web_search import create_web_search_tool
 from drsai.backend.runtime.desktop_agent_kernel_adapter import (
     _desktop_default_subagent_profile,
     _desktop_input_artifact,
@@ -36,6 +38,11 @@ class _Workbench:
         raise AssertionError
 
 
+class _WebSearchWorkbench(_Workbench):
+    async def list_tools(self):
+        return [create_web_search_tool()]
+
+
 class _Context:
     async def get_messages(self):
         return []
@@ -58,6 +65,21 @@ class _Agent:
 
     def __init__(self):
         self._shared_agent_kernel = create_agent_kernel(surface="desktop")
+        self._kernel_host_port = _host_port(
+            ["chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts"]
+        )
+
+
+def _host_port(capabilities):
+    return normalize_kernel_host_port({
+        "schema_version": 1,
+        "protocol_version": "p9-host-port-v1",
+        "surface": "desktop",
+        "capabilities": [
+            {"id": capability, "version": 1, "required": capability == "chat"}
+            for capability in capabilities
+        ],
+    }, surface="desktop")
 
 
 def _policy(name, executor):
@@ -84,6 +106,33 @@ async def test_production_shaped_agent_pilot_is_actually_driven_by_shared_kernel
     assert output[-1].messages[0].source == "user"
     assert output[-1].messages[0].content == "hello"
     assert agent._agent_kernel_checkpoint["reason"] == "terminal"
+
+
+@pytest.mark.asyncio
+async def test_plain_chat_preserves_negotiated_capabilities_when_web_search_is_available() -> None:
+    """Regression: merely exposing WebSearch must not make a plain `hello` Run fail."""
+    agent = _Agent()
+    agent._workbench = _WebSearchWorkbench()
+    agent._kernel_host_port = _host_port([
+            "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+            "web_search", "network.public_https",
+    ])
+
+    def web_policy(name, executor):
+        policy = _policy(name, executor)
+        if name == "web_search":
+            policy["required_capabilities"] = ["web_search", "network.public_https"]
+        return policy
+
+    output = [value async for value in run_agent_through_kernel(
+        agent, task="hello", cancellation_token=__import__("autogen_core").CancellationToken(),
+        policy_resolver=web_policy,
+    )]
+
+    assert output[-1].stop_reason == "run.completed"
+    assert agent._agent_kernel_checkpoint["state"]["host_capabilities"] == sorted(
+        agent._kernel_host_port["capabilities"]
+    )
 
 
 @pytest.mark.asyncio

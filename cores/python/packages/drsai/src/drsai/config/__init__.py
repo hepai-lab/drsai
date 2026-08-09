@@ -19,13 +19,23 @@ from .model_operation_routing import (
     resolve_agent_operation,
 )
 from .agent_model_policy import (
+    AgentKnowledgePolicy,
     AgentModelPolicyConflict,
     AgentModelPolicySnapshot,
+    AgentRuntimePolicySnapshot,
+    AgentSkillPolicy,
+    AgentToolPolicy,
     agent_model_policy_path,
+    canonical_agent_name,
     commit_agent_model_policy,
+    commit_agent_runtime_policy,
+    current_agent_name,
+    list_agent_names,
+    load_agent_descriptor,
     load_agent_model_policy,
+    load_agent_runtime_policy,
 )
-from .probe_history import clear_probe_history, latest_probe_result
+from .probe_history import clear_probe_history, latest_probe_result, probe_fingerprint, reload_probe_history
 from .telemetry import clear_telemetry, telemetry_snapshot
 from .doctor import diagnose_model_config
 from .guidance import guidance_for
@@ -44,7 +54,7 @@ from .service import (
 )
 from .migration import MigrationResult, migrate_legacy_model_config
 from .resolver import resolve_model_config, resolve_model_ref
-from .writer import delete_provider, remove_legacy_model_selection, update_model_selection, upsert_provider
+from .writer import delete_provider, remove_legacy_model_selection, update_current_agent, update_model_selection, upsert_provider
 from .schema import (
     DrSaiConfig,
     ModelCapabilities,
@@ -52,6 +62,34 @@ from .schema import (
     ReasoningCapabilities,
     ResolvedModelConfig,
     SecretValue,
+)
+from .tool_registry import (
+    ToolResource,
+    ResolvedToolSet,
+    canonical_tool_id,
+    delete_tool_resource,
+    get_tool_resource,
+    legacy_tool_id,
+    list_tool_resources,
+    put_tool_resource,
+    merge_tool_secret_placeholders,
+    resolve_tool_config,
+    resolve_tool_set,
+    tool_resource_payload,
+)
+from .knowledge_registry import (
+    KnowledgeEvidence,
+    KnowledgeResource,
+    canonical_knowledge_id,
+    delete_knowledge_resource,
+    get_knowledge_resource,
+    index_local_files,
+    knowledge_resource_payload,
+    knowledge_registry_revision,
+    knowledge_status,
+    list_knowledge_resources,
+    put_knowledge_resource,
+    search_local_knowledge,
 )
 
 __all__ = [
@@ -107,13 +145,50 @@ __all__ = [
     "resolve_agent_operation",
     "AgentModelPolicyConflict",
     "AgentModelPolicySnapshot",
+    "AgentToolPolicy",
+    "AgentSkillPolicy",
+    "AgentKnowledgePolicy",
+    "AgentRuntimePolicySnapshot",
     "agent_model_policy_path",
+    "canonical_agent_name",
     "commit_agent_model_policy",
+    "commit_agent_runtime_policy",
+    "current_agent_name",
+    "list_agent_names",
+    "load_agent_descriptor",
     "load_agent_model_policy",
+    "load_agent_runtime_policy",
+    "update_current_agent",
     "scan_orphaned_credentials",
     "cleanup_orphaned_credentials",
     "latest_probe_result",
+    "probe_fingerprint",
+    "reload_probe_history",
     "clear_probe_history",
     "telemetry_snapshot",
     "clear_telemetry",
+    "ToolResource",
+    "ResolvedToolSet",
+    "canonical_tool_id",
+    "legacy_tool_id",
+    "list_tool_resources",
+    "get_tool_resource",
+    "put_tool_resource",
+    "merge_tool_secret_placeholders",
+    "resolve_tool_config",
+    "resolve_tool_set",
+    "delete_tool_resource",
+    "tool_resource_payload",
+    "KnowledgeEvidence",
+    "KnowledgeResource",
+    "canonical_knowledge_id",
+    "list_knowledge_resources",
+    "get_knowledge_resource",
+    "put_knowledge_resource",
+    "delete_knowledge_resource",
+    "knowledge_resource_payload",
+    "knowledge_registry_revision",
+    "knowledge_status",
+    "index_local_files",
+    "search_local_knowledge",
 ]

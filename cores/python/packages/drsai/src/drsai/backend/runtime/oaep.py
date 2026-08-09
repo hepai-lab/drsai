@@ -6,7 +6,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from drsai.backend.runtime.security import redact_sensitive
-from drsai.relay.security import redact_secrets
+from drsai.relay.security import redact_credentials, redact_secrets
 
 
 OAEP_VERSION = "1.0"
@@ -50,21 +50,13 @@ def _safe_value(value: Any, *, key: str = "") -> Any:
 
 
 def safe_error(value: Any) -> dict[str, Any]:
-    """Project a backend error without exposing credential-bearing prose.
-
-    Error messages are diagnostic rather than conversation content.  If a
-    backend embeds a credential marker in free-form prose (for example
-    ``failed with token <value>``), redact the complete message instead of
-    attempting to preserve a potentially incomplete fragment.
-    """
+    """Project a backend error with credentials redacted and prose preserved."""
     result = _safe_mapping(value)
     raw_message = value.get("message") if isinstance(value, dict) else None
-    if isinstance(raw_message, str) and re.search(
-        r"\b(?:token|password|secret|private.?key|authorization|api.?key|credential|cookie)\b",
-        raw_message,
-        re.I,
-    ):
-        result["message"] = "[REDACTED]"
+    if isinstance(raw_message, str):
+        # Error response bodies are the primary debugging evidence.  Preserve
+        # them in full while replacing only credential values.
+        result["message"] = redact_credentials(raw_message)
     return result
 
 

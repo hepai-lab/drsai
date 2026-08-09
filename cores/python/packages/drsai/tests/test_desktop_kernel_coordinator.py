@@ -206,5 +206,32 @@ async def test_desktop_coordinator_converts_exhausted_model_failure_to_kernel_te
 
     assert [event.payload["kind"] for event in events] == ["run.started", "run.failed"]
     assert events[-1].payload["code"] == "TimeoutError"
+    assert events[-1].payload["message"] == "provider unavailable"
     assert checkpoints[-1]["reason"] == "terminal"
     assert checkpoints[-1]["state"]["phase"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_desktop_coordinator_preserves_provider_body_but_redacts_credentials() -> None:
+    async def model(_payload):
+        raise RuntimeError(
+            'Error code: 400 - {"error":{"message":"unsupported field"}} '
+            'access_token=private-token tail'
+        )
+
+    async def unused(_payload):
+        raise AssertionError
+
+    async def checkpoint(_payload):
+        return None
+
+    coordinator = DesktopKernelCoordinator(
+        create_agent_kernel(surface="desktop"), model=model, tool=unused, checkpoint=checkpoint,
+    )
+    events = [event async for event in coordinator.execute(_start())]
+    failure = events[-1].payload
+
+    assert failure["code"] == "RuntimeError"
+    assert failure["message"].endswith("access_token=[REDACTED] tail")
+    assert "unsupported field" in failure["message"]
+    assert "private-token" not in failure["message"]

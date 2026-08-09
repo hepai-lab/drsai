@@ -173,6 +173,25 @@ class AutogenDesktopModelPort:
         if not isinstance(messages, list) or not all(isinstance(value, Mapping) for value in messages):
             raise ValueError("desktop_model_messages_invalid")
         attempt = 0
+        tool_choice = payload.get("tool_choice")
+        extra_create_args: dict[str, Any] = {}
+        active_tools = list(self._tools)
+        if isinstance(tool_choice, Mapping) and tool_choice.get("mode") == "required":
+            matching_tools = tool_choice.get("matching_tools")
+            if isinstance(matching_tools, list):
+                matching_names = [value for value in matching_tools if isinstance(value, str) and value]
+                if matching_names:
+                    # Some OpenAI-compatible providers reject the explicit
+                    # ``tool_choice`` request field. Limit the model-visible
+                    # Tool surface instead: it is provider-neutral and still
+                    # prevents unrelated image/file Tools satisfying a
+                    # retrieval or workspace requirement by accident.
+                    def tool_name(tool: Any) -> str:
+                        if isinstance(tool, Mapping):
+                            return str(tool.get("name") or "")
+                        return str(getattr(tool, "name", "") or "")
+
+                    active_tools = [tool for tool in self._tools if tool_name(tool) in matching_names]
         while True:
             deltas: list[str] = []
             completed: CreateResult | None = None
@@ -188,7 +207,8 @@ class AutogenDesktopModelPort:
                     )
                 async for chunk in self._model_client.create_stream(
                     converted,
-                    tools=list(self._tools),
+                    tools=active_tools,
+                    extra_create_args=extra_create_args,
                     cancellation_token=self._cancellation_token,
                 ):
                     if isinstance(chunk, str):
@@ -234,6 +254,26 @@ class AutogenDesktopModelPort:
 
 
 SpecialToolPort = Callable[[Mapping[str, Any]], Awaitable[DesktopToolResult]]
+
+
+def _structured_tool_error_code(name: str, text: str) -> str:
+    if name != "web_search":
+        return "tool_failed"
+    lowered = text.casefold()
+    mappings = (
+        ("browser_runtime_unavailable", "browser_unavailable"),
+        ("browser_unavailable", "browser_unavailable"),
+        ("search_timeout", "search_timeout"),
+        ("search_no_results", "no_results"),
+        ("search_http_error", "network_unavailable"),
+        ("web_search_url_dns_failed", "network_unavailable"),
+        ("web_search_url_private_denied", "url_blocked_by_policy"),
+        ("web_search_url_scheme_denied", "url_blocked_by_policy"),
+    )
+    for marker, code in mappings:
+        if marker in lowered:
+            return code
+    return "web_search_failed"
 
 
 class AutogenDesktopToolPort:
@@ -282,9 +322,10 @@ class AutogenDesktopToolPort:
         result = await self._workbench.call_tool(
             name=name, arguments=dict(arguments), cancellation_token=self._cancellation_token,
         )
+        text = result.to_text()
         return await self._artifactize(DesktopToolResult(
-            call_id, not bool(result.is_error), {"content": result.to_text()},
-            None if not result.is_error else "tool_failed",
+            call_id, not bool(result.is_error), {"content": text},
+            None if not result.is_error else _structured_tool_error_code(name, text),
         ), name)
 
     async def _artifactize(self, result: DesktopToolResult, name: str) -> DesktopToolResult:
@@ -295,7 +336,7 @@ class AutogenDesktopToolPort:
             return DesktopToolResult(
                 result.call_id, False,
                 {"content": "tool_output_artifact_channel_unavailable: complete tool output was not exposed"},
-                "artifact_channel_unavailable",
+                "artifact_channel_unavailable", inspection=result.inspection,
             )
         descriptor = dict(await self._output_artifact_handler({
             "tool_name": name,
@@ -307,7 +348,7 @@ class AutogenDesktopToolPort:
             raise RuntimeError("desktop_tool_artifact_identity_invalid")
         return DesktopToolResult(
             result.call_id, result.succeeded, result.content, result.error_code,
-            (artifact_id,), (descriptor,),
+            (artifact_id,), (descriptor,), result.inspection,
         )
 
 

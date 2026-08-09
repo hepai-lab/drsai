@@ -1373,7 +1373,7 @@ def test_oaep_stage2_run_terminal_events_carry_safe_reason_and_error(
     assert failed["data"]["reason"] == "agent_execution_failed"
     assert failed["data"]["error"] == {
         "code": "agent_execution_failed",
-        "message": "[REDACTED]",
+        "message": "failed with token [REDACTED]",
         "retryable": True,
         "path": "traceback.py",
     }

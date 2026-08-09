@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 from pathlib import Path
 
 from drsai.backend.runtime.real_model_statistics import (
@@ -13,6 +14,11 @@ from drsai.backend.runtime.tool_selection_eval import load_tool_selection_suite
 ROOT = Path(__file__).resolve().parents[5]
 SUITE_PATH = ROOT / "cores/protocol/android-runtime/fixtures/p9-natural-tool-selection-v1.json"
 POLICY_PATH = ROOT / "cores/protocol/android-runtime/fixtures/p9-real-model-statistical-gate-v1.json"
+RUNNER_PATH = ROOT / "scripts/accept_android_p9_real_model_statistics.py"
+RUNNER_SPEC = importlib.util.spec_from_file_location("p9_real_model_runner", RUNNER_PATH)
+assert RUNNER_SPEC and RUNNER_SPEC.loader
+RUNNER = importlib.util.module_from_spec(RUNNER_SPEC)
+RUNNER_SPEC.loader.exec_module(RUNNER)
 
 
 def _arguments(case_id: str, tool: str) -> dict:
@@ -103,3 +109,27 @@ def test_provider_error_and_missing_terminal_are_separate_raw_failures():
     counts = result["models"][0]["raw_counts"]
     assert counts["provider_errors"] == 1
     assert counts["final_passed"] == 88
+
+
+def test_m04_reuses_the_exact_90_flash_observations_from_m09():
+    suite, _, documents = _documents()
+
+    result = RUNNER.score_m04_observations(suite, documents["deepseek-v4-flash"])
+
+    assert result["passed"] is True
+    assert result["behavior_attempts"] == 90
+
+
+def test_m04_reuse_rejects_missing_or_unknown_observations():
+    import pytest
+
+    suite, _, documents = _documents()
+    missing = copy.deepcopy(documents["deepseek-v4-flash"])
+    missing["observations"].pop()
+    unknown = copy.deepcopy(documents["deepseek-v4-flash"])
+    unknown["observations"][0]["case_id"] = "unknown-case"
+
+    with pytest.raises(RuntimeError, match="m04_observation_count_invalid"):
+        RUNNER.score_m04_observations(suite, missing)
+    with pytest.raises(RuntimeError, match="m04_observation_unknown_case"):
+        RUNNER.score_m04_observations(suite, unknown)

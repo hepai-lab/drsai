@@ -46,6 +46,17 @@ class PythonRuntimeEventMapperTest {
     }
 
     @Test
+    fun `blank runtime failure fields receive valid OAEP fallbacks`() {
+        val normalized = PythonRuntimeEventMapper.decode(event(
+            "run.failed",
+            JSONObject().put("code", "_unknown_error").put("message", "").put("actionable", ""),
+        )) as NormalizedAgentEvent.RunFailed
+
+        assertEquals("_unknown_error", normalized.error.code)
+        assertEquals("_unknown_error", normalized.error.message)
+    }
+
+    @Test
     fun `run start exposes frozen capability categories as OAEP diagnostic notice`() {
         val diagnostic = JSONObject()
             .put("available", JSONArray().put("model.chat"))

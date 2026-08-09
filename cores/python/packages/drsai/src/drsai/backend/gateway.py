@@ -80,6 +80,7 @@ import os
 import re
 import sqlite3
 import signal
+import shutil
 
 import subprocess
 
@@ -100,7 +101,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from typing import Annotated, Any, Literal, Mapping, Optional
+from typing import Annotated, Any, Iterable, Literal, Mapping, Optional
 
 from urllib.parse import unquote, urlparse
 
@@ -114,7 +115,7 @@ from fastapi.responses import JSONResponse, Response as FastAPIResponse, Streami
 
 from loguru import logger
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from drsai.backend.remote_ssh.workspace import PROTOCOL_VERSION, canonical_workspace, ensure_protocol, workspace_child
 from drsai.backend.remote_ssh.checkpoints import accept_checkpoint, create_checkpoint, list_checkpoints, preview_checkpoint, restore_checkpoint
@@ -128,6 +129,7 @@ from drsai.owop.runtime_terminal import RuntimeTerminalOWOPOperations
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.runtime.input_resources import inspect_native_image_resources
 from drsai.backend.runtime.image_operations import RuntimeImageOperationAdapter
+from drsai.backend.runtime.web_search import create_web_search_tool, web_search_runtime_status
 from drsai.backend.runtime.journal import SessionCursorExpired
 from drsai.backend.runtime.artifacts import RuntimeArtifactStore
 from drsai.backend.runtime.agent import (
@@ -161,6 +163,7 @@ from drsai.backend.runtime.security import (
     WorkspacePermissionStore,
     redact_sensitive,
 )
+from drsai.relay.security import redact_credentials
 
 
 
@@ -203,8 +206,19 @@ from drsai.config import (
     ConfigConflict as ModelProviderConfigConflict,
     ConfigUpdateRequest,
     AgentModelPolicyConflict,
+    AgentKnowledgePolicy,
+    AgentRuntimePolicySnapshot,
+    AgentSkillPolicy,
+    AgentToolPolicy,
+    canonical_agent_name,
     commit_agent_model_policy,
+    commit_agent_runtime_policy,
+    current_agent_name,
+    list_agent_names,
+    load_agent_descriptor,
     load_agent_model_policy,
+    load_agent_runtime_policy,
+    update_current_agent,
     clear_model_discovery_cache,
     cached_provider_model_catalog,
     ProviderDraft,
@@ -214,6 +228,7 @@ from drsai.config import (
     last_known_good_path,
     list_provider_presets,
     latest_probe_result,
+    probe_fingerprint,
     probe_provider_draft,
     preview_update as preview_model_config_update,
     restore_last_known_good,
@@ -227,6 +242,31 @@ from drsai.config import (
     builtin_provider_names,
     test_provider_connection,
     telemetry_snapshot,
+    ToolResource,
+    canonical_tool_id,
+    delete_tool_resource,
+    get_tool_resource,
+    legacy_tool_id,
+    list_tool_resources,
+    put_tool_resource,
+    merge_tool_secret_placeholders,
+    resolve_tool_config,
+    resolve_tool_set,
+    tool_resource_payload,
+    KnowledgeResource,
+    canonical_knowledge_id,
+    delete_knowledge_resource,
+    get_knowledge_resource,
+    index_local_files,
+    knowledge_resource_payload,
+    knowledge_registry_revision,
+    knowledge_status,
+    list_knowledge_resources,
+    put_knowledge_resource,
+    search_local_knowledge,
+    resolve_credential,
+    store_credential,
+    delete_credential,
 )
 from drsai.backend.runtime.goals import propose_goal_from_request, render_goal_execution_prompt
 from drsai.config.schema import DrSaiConfig, ProviderInput
@@ -536,7 +576,7 @@ class ContentRequest(BaseModel):
 
 
 class SkillInstallRequest(BaseModel):
-    name: str = Field(..., description="Skill name (directory name)")
+    name: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$", description="Skill name (directory name)")
     content: str = Field(default="", description="SKILL.md content (optional if source is provided)")
     source: str | None = Field(default=None, description="Source collection name for installing from bundled skills")
 
@@ -548,10 +588,28 @@ class ToolEntry(BaseModel):
     as a free-form local-tool description that the agent surfaces to the LLM
     via tool prompts but does not invoke directly.
     """
+    tool_id: str | None = Field(default=None, description="Stable Tool resource ID")
     type: str = Field(..., description="Tool type: mcp-std | mcp-sse | <local>")
     config: dict = Field(default_factory=dict, description="Tool-specific config payload")
     name: str | None = Field(default=None, description="Optional display name (UI only)")
     enabled: bool = Field(default=True, description="UI-only flag; disabled entries are skipped on load")
+
+
+class KnowledgeResourceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    knowledge_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    display_name: str = Field(..., min_length=1, max_length=160)
+    type: Literal["local-files", "ragflow"]
+    enabled: bool = True
+    config: dict[str, object] = Field(default_factory=dict)
+    credential: SecretStr | None = Field(default=None, exclude=True)
+
+
+class KnowledgeSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(..., min_length=1, max_length=8000)
+    top_k: int = Field(default=6, ge=1, le=50)
+    score_threshold: float = Field(default=0.0, ge=0, le=1)
 
 
 
@@ -650,6 +708,158 @@ async def _load_remote_hepai_tools(force: bool = False) -> tuple[list[Any], list
     tools, rows = await discover_enabled_worker_tools(model_rows, load, Path.home()/".local"/"share"/"opendrsai"/"remote"/"hepai-workers.json", timeout=5)
     _remote_hepai_cache = (time.time(), list(tools), [dict(row) for row in rows])
     return tools, rows
+
+
+def _selected_knowledge_resources(
+    policy: AgentKnowledgePolicy, resources: tuple[KnowledgeResource, ...],
+) -> tuple[KnowledgeResource, ...]:
+    if policy.retrieval_policy == "never":
+        return ()
+    if policy.mode == "explicit":
+        selected = set(policy.sources)
+        return tuple(resource for resource in resources if resource.enabled and resource.knowledge_id in selected)
+    return tuple(resource for resource in resources if resource.enabled)
+
+
+def _skills_registry_revision(user_id: str | None = None) -> str:
+    """Digest installed Skill identities/content metadata for Agent cache binding."""
+    roots = [_get_skills_dir(user_id), *_get_available_skills_dirs()]
+    rows: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.glob("*/SKILL.md")):
+            identity = f"{root.resolve()}::{path.parent.name}"
+            if identity in seen:
+                continue
+            seen.add(identity)
+            try:
+                stat = path.stat()
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            rows.append({"identity": identity, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "sha256": digest})
+    canonical = json.dumps(rows, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _resolved_agent_resource_snapshot(
+    *, agent_name: str, runtime_policy: Any, model_provider: str, model_id: str,
+    config_dir: Path, installed_skill_ids: Iterable[str] = (), skills_revision: str | None = None,
+    dynamic_tool_resources: Iterable[ToolResource] = (),
+) -> dict[str, Any]:
+    """Build the secret-free, immutable Agent resource binding stored with a Run."""
+    tool_resources = (
+        *list_tool_resources(config_dir),
+        *tuple(dynamic_tool_resources),
+        _builtin_web_search_resource(),
+    )
+    tools = resolve_tool_set(
+        mode=runtime_policy.tools.mode, enabled=runtime_policy.tools.enabled,
+        disabled=runtime_policy.tools.disabled, resources=tool_resources,
+        builtin_ids=("builtin.image_generation", "builtin.image_edit"),
+    )
+    installed = set(installed_skill_ids)
+    disabled = set(runtime_policy.skills.disabled)
+    skills = (
+        [value for value in runtime_policy.skills.enabled if value in installed and value not in disabled]
+        if runtime_policy.skills.mode == "explicit"
+        else [value for value in sorted(installed) if value not in disabled]
+    )
+    knowledge_resources = list_knowledge_resources(config_dir)
+    knowledge = _selected_knowledge_resources(runtime_policy.knowledge, knowledge_resources)
+    payload = {
+        "schema_version": 1, "agent_id": agent_name, "agent_revision": runtime_policy.revision,
+        "model": {"provider_id": model_provider, "model_id": model_id},
+        "tools": {"mode": runtime_policy.tools.mode, "enabled_ids": list(tools.enabled_ids), "registry_revision": tools.registry_revision},
+        "skills": {
+            "mode": runtime_policy.skills.mode, "enabled_ids": skills,
+            "allow_thread_override": runtime_policy.skills.allow_thread_override,
+            "registry_revision": skills_revision or "sha256:" + hashlib.sha256("[]".encode()).hexdigest(),
+        },
+        "knowledge": {
+            "mode": runtime_policy.knowledge.mode,
+            "source_ids": [resource.knowledge_id for resource in knowledge],
+            "registry_revision": knowledge_registry_revision(knowledge_resources),
+            "retrieval_policy": runtime_policy.knowledge.retrieval_policy,
+            "top_k": runtime_policy.knowledge.top_k,
+            "score_threshold": runtime_policy.knowledge.score_threshold,
+            "require_citations": runtime_policy.knowledge.require_citations,
+        },
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return {**payload, "sha256": "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+
+
+def _validate_thread_skill_selection(selected_skill_id: Any, runtime_policy: Any, enabled_skill_ids: Iterable[str]) -> str | None:
+    if selected_skill_id in (None, ""):
+        return None
+    if not isinstance(selected_skill_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", selected_skill_id):
+        raise RuntimeExecutionError("thread_skill_invalid", "The selected temporary skill id is invalid.")
+    if not runtime_policy.skills.allow_thread_override:
+        raise RuntimeExecutionError(
+            "thread_skill_override_disabled", "This Agent does not allow a temporary skill selection for a Run.",
+            detail={"agent_id": runtime_policy.agent_id, "skill_id": selected_skill_id},
+        )
+    if selected_skill_id not in set(enabled_skill_ids):
+        raise RuntimeExecutionError(
+            "thread_skill_unavailable", "The selected skill is not enabled for this Agent.",
+            detail={"agent_id": runtime_policy.agent_id, "skill_id": selected_skill_id},
+        )
+    return selected_skill_id
+
+
+def _build_agent_knowledge_tool(
+    *, config_dir: Path, resources: tuple[KnowledgeResource, ...], policy: AgentKnowledgePolicy,
+):
+    async def knowledge_search(query: str) -> str:
+        """Search the knowledge bases configured for this Agent and return cited evidence."""
+        if not isinstance(query, str) or not query.strip():
+            return json.dumps({"error": "query_required", "evidence": []})
+        evidence_rows: list[dict[str, object]] = []
+        for resource in resources:
+            try:
+                if resource.type == "local-files":
+                    rows = await asyncio.to_thread(
+                        search_local_knowledge, config_dir, resource, query,
+                        top_k=policy.top_k, score_threshold=policy.score_threshold,
+                    )
+                    evidence_rows.extend(_knowledge_evidence_payload(row) for row in rows)
+                else:
+                    config = dict(resource.config or {})
+                    token = resolve_credential(str(config.get("credential_ref") or ""))
+                    if not token:
+                        evidence_rows.append({"knowledge_id": resource.knowledge_id, "error": "credential_required"})
+                        continue
+                    from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
+                    raw = await RAGFlowMemoryManager(str(config["base_url"]), token).retrieve_chunks_by_content(
+                        question=query, dataset_ids=list(config.get("dataset_ids") or []),
+                        page_size=policy.top_k, top_k=policy.top_k,
+                        similarity_threshold=policy.score_threshold,
+                    )
+                    chunks = raw.get("chunks", []) if isinstance(raw, dict) else []
+                    for index, chunk in enumerate(chunks[:policy.top_k] if isinstance(chunks, list) else []):
+                        if not isinstance(chunk, dict): continue
+                        content = str(chunk.get("content_with_weight") or chunk.get("content") or "")
+                        document_id = str(chunk.get("document_id") or chunk.get("doc_id") or "unknown")
+                        evidence_rows.append({
+                            "knowledge_id": resource.knowledge_id, "document_id": document_id,
+                            "title": str(chunk.get("document_keyword") or chunk.get("document_name") or document_id),
+                            "source": str(chunk.get("document_name") or document_id),
+                            "chunk_id": str(chunk.get("id") or f"{document_id}:{index}"),
+                            "score": float(chunk.get("similarity") or chunk.get("score") or 0),
+                            "content": content, "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+                        })
+            except Exception as exc:
+                evidence_rows.append({"knowledge_id": resource.knowledge_id, "error": type(exc).__name__})
+        evidence_rows.sort(key=lambda row: -float(row.get("score") or 0))
+        return json.dumps({
+            "query": query, "require_citations": policy.require_citations,
+            "evidence": evidence_rows[:policy.top_k],
+        }, ensure_ascii=False)
+
+    return knowledge_search
 
 
 def _model_config_stamp() -> tuple[int, int] | None:
@@ -907,6 +1117,7 @@ class AgentManager:
         model_catalog_revision: str | None = None,
 
         work_dir: str | None = None,
+        agent_name: str | None = None,
 
     ) -> Any:
 
@@ -931,6 +1142,30 @@ class AgentManager:
         tid = thread_id or "__default__"
 
         key = self._make_key(uid, tid)
+        resolved_agent_name = canonical_agent_name(agent_name or current_agent_name())
+        runtime_policy = await asyncio.to_thread(load_agent_runtime_policy, resolved_agent_name)
+        tool_resources = await asyncio.to_thread(list_tool_resources, _get_config_dir(uid))
+        remote_tools: list[Any] = []
+        try:
+            remote_tools, _ = await _load_remote_hepai_tools()
+        except Exception as exc:
+            logger.warning(f"HepAI remote tools unavailable during Agent tool resolution: {type(exc).__name__}")
+        dynamic_resources = tuple(
+            ToolResource(str(getattr(tool, "name", "")).strip(), "function", {}, str(getattr(tool, "name", "")).strip(), True, "hepai")
+            for tool in remote_tools if str(getattr(tool, "name", "")).strip()
+        )
+        resolved_tools = resolve_tool_set(
+            mode=runtime_policy.tools.mode,
+            enabled=runtime_policy.tools.enabled,
+            disabled=runtime_policy.tools.disabled,
+            resources=(*tool_resources, *dynamic_resources, _builtin_web_search_resource()),
+            builtin_ids=("builtin.image_generation", "builtin.image_edit"),
+        )
+        await asyncio.to_thread(_migrate_legacy_knowledge_config, _get_config_dir(uid))
+        knowledge_resources = await asyncio.to_thread(list_knowledge_resources, _get_config_dir(uid))
+        selected_knowledge = _selected_knowledge_resources(runtime_policy.knowledge, knowledge_resources)
+        knowledge_revision = knowledge_registry_revision(knowledge_resources)
+        skills_revision = await asyncio.to_thread(_skills_registry_revision, uid)
 
 
 
@@ -948,7 +1183,11 @@ class AgentManager:
 
             agent_config_stamp = self._agent_config_stamps.get(key)
 
-            requested_binding = (model_provider, model_id, config_revision_binding, model_catalog_revision)
+            requested_binding = (
+                model_provider, model_id, config_revision_binding, model_catalog_revision,
+                resolved_agent_name, runtime_policy.revision, resolved_tools.registry_revision,
+                skills_revision, knowledge_revision,
+            )
 
             current_binding = self._model_bindings.get(key)
 
@@ -987,14 +1226,30 @@ class AgentManager:
                     model_provider=model_provider,
                     model_id=model_id,
                     work_dir=work_dir or os.getcwd(),
+                    tool_resource_ids=list(resolved_tools.enabled_ids),
+                    tool_policy_revision=runtime_policy.revision,
+                    skill_policy_mode=runtime_policy.skills.mode,
+                    skill_resource_ids=list(runtime_policy.skills.enabled),
+                    disabled_skill_ids=list(runtime_policy.skills.disabled),
+                    allow_thread_skill_override=runtime_policy.skills.allow_thread_override,
+                    skill_policy_revision=skills_revision,
                 )
-                core_tools = [image_generation, image_edit]
-                try:
-                    remote_tools, _ = await _load_remote_hepai_tools()
-                    if remote_tools:
-                        core_tools.extend(remote_tools)
-                except Exception as exc:
-                    logger.warning(f"HepAI remote tools unavailable; creating core agent without them: {type(exc).__name__}")
+                core_tools = []
+                if "builtin.image_generation" in resolved_tools.enabled_ids:
+                    core_tools.append(image_generation)
+                if "builtin.image_edit" in resolved_tools.enabled_ids:
+                    core_tools.append(image_edit)
+                if "builtin.web-search" in resolved_tools.enabled_ids:
+                    core_tools.append(create_web_search_tool())
+                for remote_tool in remote_tools:
+                    name = str(getattr(remote_tool, "name", "")).strip()
+                    if name in resolved_tools.enabled_ids or f"hepai.{name}" in resolved_tools.enabled_ids:
+                        core_tools.append(remote_tool)
+                if selected_knowledge:
+                    core_tools.append(_build_agent_knowledge_tool(
+                        config_dir=_get_config_dir(uid), resources=selected_knowledge,
+                        policy=runtime_policy.knowledge,
+                    ))
                 create_agent_kwargs["extra_tools"] = core_tools
                 if inspect.iscoroutinefunction(create_agent):
                     agent = await create_agent(**create_agent_kwargs)
@@ -1077,6 +1332,7 @@ class AgentManager:
         reasoning_effort: str | None = None,
 
         work_dir: str | None = None,
+        agent_name: str | None = None,
 
         cancellation_token: CancellationToken | None = None,
 
@@ -1134,6 +1390,7 @@ class AgentManager:
                 model_catalog_revision=model_catalog_revision,
 
                 work_dir=work_dir,
+                agent_name=agent_name,
 
             )
 
@@ -2117,6 +2374,7 @@ class GatewayOpenDrSaiAgentBackend:
                 config_revision_binding=definition.model_config_revision,
                 model_catalog_revision=definition.model_catalog_revision,
                 work_dir=str(context.workspace_path),
+                agent_name=definition.asset_id,
                 cancellation_token=cancellation,
             )
             if definition.reasoning_effort is not None:
@@ -2258,9 +2516,42 @@ class GatewayOpenDrSaiAgentBackend:
         except RuntimeExecutionError:
             raise
         except Exception as exc:
+            # The shared Desktop Kernel deliberately terminates a Run with a
+            # compact RuntimeError code.  These are local policy outcomes, not
+            # upstream model failures; mapping them through classify_model_error
+            # used to show users the false "model service unavailable" message.
+            kernel_code = str(exc) if isinstance(exc, RuntimeError) else ""
+            kernel_failures = {
+                "verification_required_tool_omitted": (
+                    "verification_required_tool_omitted",
+                    "This task requires a matching verification tool before it can be answered.",
+                    True,
+                ),
+                "required_capability_unavailable": (
+                    "required_capability_unavailable",
+                    "This task requires a capability that is not available in the current Agent session.",
+                    False,
+                ),
+            }
+            if kernel_code in kernel_failures:
+                code, user_message, retryable = kernel_failures[kernel_code]
+                raise RuntimeExecutionError(code, user_message, retryable=retryable) from exc
             error = classify_model_error(exc)
             message = str(exc).casefold()
             runtime_code = str(exc)
+            # Preserve the actionable exception text for Run diagnostics.  The
+            # classifier intentionally returns stable, user-facing categories,
+            # but using its generic message here used to collapse every unknown
+            # SDK/local failure into "The model service is temporarily
+            # unavailable." and made the recorded Run impossible to diagnose.
+            # Apply the Runtime redactor before the text crosses the backend
+            # boundary and keep it bounded for manifests and structured events.
+            safe_exception_text = redact_credentials(runtime_code).strip()
+            diagnostic_message = (
+                f"{type(exc).__name__}: {safe_exception_text}"
+                if safe_exception_text
+                else type(exc).__name__
+            )
             safe_runtime_code = (
                 runtime_code
                 if isinstance(exc, RuntimeError) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,119}", runtime_code)
@@ -2279,9 +2570,10 @@ class GatewayOpenDrSaiAgentBackend:
                     "message": "The selected model cannot process the supplied image input.",
                     "retryable": False,
                 }
+                diagnostic_message = str(error["message"])
             raise RuntimeExecutionError(
                 str(error.get("code") or "agent_execution_failed"),
-                str(error.get("message") or "Agent execution failed."),
+                diagnostic_message,
                 retryable=bool(error.get("retryable")),
                 detail={"reason": failure_reason},
             ) from exc
@@ -5268,6 +5560,7 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
         is_codex_run = str(run_record.get("backend_id") or "") == "codex"
         model_snapshot = load_model_config_snapshot()
         configured = model_snapshot.config
+        agent_resource_snapshot: dict[str, Any] | None = None
         if is_codex_run:
             # Codex App Server owns its model catalog. Resolving an omitted
             # Codex model through the OpenDrSai-wide default Provider can turn
@@ -5301,9 +5594,13 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                 raise RuntimeExecutionError(
                     "legacy_model_selection_rejected",
                     "OpenDrSai Runs resolve models from the selected Agent policy, not from a global model field.",
-                    detail={"agent_id": "my-drsai", "recovery_actions": ["configure_agent_model", "select_model"]},
+                    detail={"agent_id": current_agent_name(), "recovery_actions": ["configure_agent_model", "select_model"]},
                 )
-            policy_snapshot = load_agent_model_policy("my-drsai")
+            active_agent_name = canonical_agent_name(
+                str(metadata.get("agent_name") or current_agent_name())
+            )
+            _require_local_opendrsai_agent(active_agent_name)
+            policy_snapshot = load_agent_model_policy(active_agent_name)
             policy_payload = _agent_model_policy_payload(
                 policy_snapshot.policy, policy_snapshot.revision, configured,
             )
@@ -5312,7 +5609,7 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                 raise RuntimeExecutionError(
                     "agent_model_policy_required",
                     str(policy_payload.get("error") or "The selected OpenDrSai Agent has no valid primary model configuration."),
-                    detail={"agent_id": "my-drsai", "recovery_actions": ["configure_agent_model", "select_model"]},
+                    detail={"agent_id": active_agent_name, "recovery_actions": ["configure_agent_model", "select_model"]},
                 )
             authoritative_provider = str(policy_ref.get("provider_id") or "")
             authoritative_model = str(policy_ref.get("model_id") or "")
@@ -5323,7 +5620,7 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                 raise RuntimeExecutionError(
                     "agent_model_policy_conflict",
                     "The requested model does not match the selected Agent's current model policy.",
-                    detail={"agent_id": "my-drsai", "recovery_actions": ["refresh_models", "select_model"]},
+                    detail={"agent_id": active_agent_name, "recovery_actions": ["refresh_models", "select_model"]},
                 )
             request = request.model_copy(update={
                 "model": None,
@@ -5352,6 +5649,37 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
             )
             reasoning_effort = _validate_runtime_reasoning_effort(request, resolved_model)
             canonical_model_id = resolved_model.model_id or resolved_model.model
+            runtime_policy = load_agent_runtime_policy(active_agent_name)
+            installed_skill_rows = (await list_skills(None))["data"]
+            installed_skill_ids = [str(row.get("name") or "") for row in installed_skill_rows]
+            snapshot_remote_tools: list[Any] = []
+            try:
+                snapshot_remote_tools, _ = await _load_remote_hepai_tools()
+            except Exception:
+                pass
+            snapshot_dynamic_tools = tuple(
+                ToolResource(str(getattr(tool, "name", "")).strip(), "function", {}, str(getattr(tool, "name", "")).strip(), True, "hepai")
+                for tool in snapshot_remote_tools if str(getattr(tool, "name", "")).strip()
+            )
+            agent_resource_snapshot = _resolved_agent_resource_snapshot(
+                agent_name=active_agent_name,
+                runtime_policy=runtime_policy,
+                model_provider=authoritative_provider,
+                model_id=authoritative_model,
+                config_dir=_get_config_dir(),
+                installed_skill_ids=installed_skill_ids,
+                skills_revision=_skills_registry_revision(),
+                dynamic_tool_resources=snapshot_dynamic_tools,
+            )
+            selected_skill_id = _validate_thread_skill_selection(
+                metadata.get("selected_skill_id"), runtime_policy,
+                agent_resource_snapshot["skills"]["enabled_ids"],
+            )
+            if selected_skill_id:
+                agent_resource_snapshot["thread_override"] = {"skill_id": selected_skill_id}
+                unsigned = {key: value for key, value in agent_resource_snapshot.items() if key != "sha256"}
+                canonical = json.dumps(unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+                agent_resource_snapshot["sha256"] = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         workspace_record = _runtime_registry().get_workspace(str(run_record["workspace_id"]), include_closed=True)
         if workspace_record is None:
             raise RuntimeExecutionError("workspace_unavailable", "The Run Workspace is no longer available.")
@@ -5395,6 +5723,7 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                 else None
             ),
             model=canonical_model_id,
+            evidence=({"agent_config_snapshot": agent_resource_snapshot} if agent_resource_snapshot else None),
         )
         _runtime_engine().append_event(run_id, "trace.request.accepted", {
             "correlation_id": correlation_id,
@@ -6642,7 +6971,7 @@ async def audio_transcriptions(
         raise HTTPException(status_code=413, detail="The uploaded audio exceeds the 10 MB limit.")
     try:
         config = await asyncio.to_thread(load_model_provider_config)
-        policy = (await asyncio.to_thread(load_agent_model_policy, "my-drsai")).policy
+        policy = (await asyncio.to_thread(load_agent_model_policy, current_agent_name())).policy
         resolved = await asyncio.to_thread(
             resolve_agent_operation, config, policy,
             role="speech_to_text_model", operation="speech_to_text", require_credentials=True,
@@ -6718,7 +7047,7 @@ async def audio_speech(request: AudioSpeechRequest):
         raise HTTPException(status_code=400, detail="Unsupported speech synthesis format.")
     try:
         config = await asyncio.to_thread(load_model_provider_config)
-        policy = (await asyncio.to_thread(load_agent_model_policy, "my-drsai")).policy
+        policy = (await asyncio.to_thread(load_agent_model_policy, current_agent_name())).policy
         resolved = await asyncio.to_thread(
             resolve_agent_operation, config, policy,
             role="text_to_speech_model", operation="text_to_speech", require_credentials=True,
@@ -7754,38 +8083,11 @@ def _get_config_dir(user_id: str | None = None) -> Path:
 
 
 def _get_available_skills_dirs() -> list[Path]:
-    """Find all available/bundled skill collection directories.
+    """Return only the product's single built-in ``skills/skills`` catalog."""
+    from drsai.modules.components.skills import resolve_builtin_skills_dir
 
-    Searches:
-      1. ``SYSTEM_SKILLS_DIR`` env var (colon-separated list)
-      2. ``AGENT_SKILLS_DIR`` env var (colon-separated list)
-      3. Project-root ``agent_skills/`` collections
-    """
-    dirs: list[Path] = []
-
-    for env_name in ("SYSTEM_SKILLS_DIR", "AGENT_SKILLS_DIR"):
-        env_val = os.environ.get(env_name)
-        if env_val:
-            for d in env_val.split(":"):
-                p = Path(d).expanduser()
-                if p.exists() and p.is_dir():
-                    dirs.append(p.resolve())
-
-    # Also scan project-root agent_skills/ collections
-    project_root_candidates = [
-        Path(__file__).resolve().parents[6],  # gateway → backend → drsai → src → pkg → python → project
-        Path.cwd(),
-    ]
-    for root in project_root_candidates:
-        agent_skills_root = root / "agent_skills"
-        if agent_skills_root.exists() and agent_skills_root.is_dir():
-            for collection in sorted(agent_skills_root.iterdir()):
-                if collection.is_dir() and not collection.name.startswith("."):
-                    resolved = collection.resolve()
-                    if resolved not in dirs:
-                        dirs.append(resolved)
-
-    return dirs
+    root = resolve_builtin_skills_dir(search_from=(Path(__file__), Path.cwd()))
+    return [root] if root is not None else []
 
 
 def _find_bundled_skill_md(name: str, source: str | None = None) -> Path | None:
@@ -7882,7 +8184,7 @@ async def list_skills(
 async def list_available_skills(
     user_id: str | None = Query(default=None),
 ):
-    """List bundled/available skills from agent_skills collections.
+    """List bundled/available skills from the single built-in collection.
 
     Returns all skills from system collections with an ``installed`` flag
     indicating whether the skill already exists in the user's skills dir.
@@ -7976,7 +8278,7 @@ async def install_skill(
     """Install a skill by writing SKILL.md to the user's skills directory.
 
     If ``source`` is provided, the backend reads SKILL.md from the
-    bundled ``agent_skills/{source}/{name}/`` directory and copies it.
+    built-in ``skills/skills/{name}/`` directory and copies it.
     Otherwise, ``content`` is written directly.
     """
     skills_dir = _get_skills_dir(user_id)
@@ -8009,6 +8311,20 @@ async def uninstall_skill(
 ):
     """Uninstall a skill by removing its directory."""
     import shutil
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", skill_name):
+        raise HTTPException(status_code=400, detail="Skill name is invalid")
+    references = []
+    for agent_name in list_agent_names():
+        policy = load_agent_runtime_policy(agent_name)
+        if (
+            skill_name in policy.skills.enabled or skill_name in policy.skills.disabled
+            or (policy.skills.mode in {"inherit", "all_enabled"} and skill_name not in policy.skills.disabled)
+        ):
+            references.append({"kind": "agent_skill_reference", "agent_name": agent_name, "skill_id": skill_name})
+    if references:
+        raise HTTPException(status_code=409, detail={
+            "code": "skill_in_use", "message": "Skill is referenced by one or more Agents", "references": references,
+        })
     skills_dir = _get_skills_dir(user_id)
     skill_dir = skills_dir / skill_name
     if not skill_dir.exists():
@@ -8184,16 +8500,10 @@ def _tools_config_path(user_id: str | None = None) -> Path:
 
 
 def _read_tools_config(user_id: str | None = None) -> list[dict]:
-    p = _tools_config_path(user_id)
-    if not p.exists():
-        return []
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        if isinstance(data, list):
-            return data
-        return []
+        return [tool_resource_payload(item) for item in list_tool_resources(_get_config_dir(user_id))]
     except Exception as e:
-        logger.warning(f"Failed to parse TOOLS_CONFIG.json: {e}")
+        logger.warning(f"Failed to load Tool Registry: {e}")
         return []
 
 
@@ -8205,10 +8515,34 @@ def _runtime_execution_capabilities(entries: list[dict]) -> frozenset[str]:
     ) else frozenset()
 
 
+def _builtin_web_search_resource() -> ToolResource:
+    runtime = web_search_runtime_status()
+    return ToolResource(
+        tool_id="builtin.web-search",
+        type="builtin",
+        config={},
+        name="Web search",
+        enabled=runtime["status"] == "available",
+        source="builtin",
+    )
+
+
 def _write_tools_config(entries: list[dict], user_id: str | None = None) -> None:
-    p = _tools_config_path(user_id)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(entries, indent=4, ensure_ascii=False), encoding="utf-8")
+    config_dir = _get_config_dir(user_id)
+    wanted: set[str] = set()
+    for entry in entries:
+        tool_id = canonical_tool_id(str(entry.get("tool_id") or legacy_tool_id(entry)))
+        wanted.add(tool_id)
+        put_tool_resource(config_dir, ToolResource(
+            tool_id=tool_id,
+            type=str(entry.get("type") or "local"),
+            config=dict(entry.get("config") or {}),
+            name=str(entry["name"]) if entry.get("name") else None,
+            enabled=bool(entry.get("enabled", True)),
+        ))
+    for existing in list_tool_resources(config_dir):
+        if existing.tool_id not in wanted:
+            delete_tool_resource(config_dir, existing.tool_id)
 
 
 @app.get("/v1/config/tools")
@@ -8218,45 +8552,320 @@ async def list_tools(user_id: str | None = Query(default=None)):
     return {"object": "list", "data": entries}
 
 
+@app.get("/v1/config/tools/{tool_id}/capabilities")
+async def get_tool_capabilities(tool_id: str, user_id: str | None = Query(default=None)):
+    if tool_id == "builtin.web-search":
+        runtime = web_search_runtime_status()
+        return {"tool_id": tool_id, **runtime, "capabilities": ["tool.call", "builtin", "network.public_https"], "references": _tool_agent_references(tool_id)}
+    if tool_id in {"builtin.image_generation", "builtin.image_edit"}:
+        return {"tool_id": tool_id, "status": "available", "capabilities": ["tool.call", "builtin"], "error": None, "references": _tool_agent_references(tool_id)}
+    try:
+        resource = get_tool_resource(_get_config_dir(user_id), tool_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {**_tool_status(resource), "references": _tool_agent_references(resource.tool_id)}
+
+
+@app.post("/v1/config/tools/{tool_id}/test")
+async def test_tool_connection(tool_id: str, user_id: str | None = Query(default=None)):
+    if tool_id == "builtin.web-search":
+        runtime = web_search_runtime_status()
+        return {"tool_id": tool_id, **runtime, "capabilities": ["tool.call", "builtin", "network.public_https"], "ok": runtime["status"] == "available", "tested": "runtime-registration"}
+    if tool_id in {"builtin.image_generation", "builtin.image_edit"}:
+        return {"tool_id": tool_id, "status": "available", "capabilities": ["tool.call", "builtin"], "error": None, "ok": True, "tested": "runtime-registration"}
+    try:
+        resource = get_tool_resource(_get_config_dir(user_id), tool_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    result = _tool_status(resource)
+    if result["status"] not in {"available", "disabled"}:
+        return {**result, "ok": False, "tested": "configuration"}
+    if resource.type in {"mcp-sse", "mcp-http"} and resource.enabled:
+        try:
+            runtime_config = resolve_tool_config(resource.config, _get_config_dir(user_id))
+            async with httpx.AsyncClient(timeout=5, follow_redirects=False) as client:
+                headers = {"accept": "text/event-stream", **dict(runtime_config.get("headers") or {})}
+                response = await client.get(str(runtime_config["url"]), headers=headers)
+            ok = response.status_code < 500
+            return {**result, "ok": ok, "tested": "connection", "http_status": response.status_code}
+        except httpx.HTTPError as exc:
+            return {**result, "ok": False, "status": "runtime_unavailable", "tested": "connection", "error": type(exc).__name__}
+        except ModelProviderConfigError:
+            return {**result, "ok": False, "status": "credential_unavailable", "tested": "configuration"}
+    return {**result, "ok": resource.enabled, "tested": "configuration"}
+
+
 @app.post("/v1/config/tools")
 async def create_tool(
     req: ToolEntry,
     user_id: str | None = Query(default=None),
 ):
     """Append a new tool entry to TOOLS_CONFIG.json."""
-    entries = _read_tools_config(user_id)
-    entries.append(req.model_dump())
-    _write_tools_config(entries, user_id)
-    return {"index": len(entries) - 1, **req.model_dump()}
+    raw = req.model_dump()
+    config_dir = _get_config_dir(user_id)
+    resource = put_tool_resource(config_dir, ToolResource(
+        tool_id=canonical_tool_id(req.tool_id or legacy_tool_id(raw)),
+        type=req.type, config=dict(req.config), name=req.name, enabled=req.enabled,
+    ))
+    await manager.evict_user(_effective_user_id(user_id))
+    return tool_resource_payload(resource)
 
 
-@app.put("/v1/config/tools/{index}")
+@app.put("/v1/config/tools/{tool_id}")
 async def update_tool(
-    index: int,
+    tool_id: str,
     req: ToolEntry,
     user_id: str | None = Query(default=None),
 ):
     """Replace the tool entry at ``index``."""
     entries = _read_tools_config(user_id)
-    if index < 0 or index >= len(entries):
-        raise HTTPException(status_code=404, detail=f"Tool index {index} not found")
-    entries[index] = req.model_dump()
-    _write_tools_config(entries, user_id)
-    return {"index": index, **entries[index]}
+    resolved_id = entries[int(tool_id)]["tool_id"] if tool_id.isdigit() and int(tool_id) < len(entries) else tool_id
+    try:
+        existing = get_tool_resource(_get_config_dir(user_id), resolved_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    merged_config = merge_tool_secret_placeholders(req.config, existing.config)
+    resource = put_tool_resource(_get_config_dir(user_id), ToolResource(
+        tool_id=canonical_tool_id(req.tool_id or resolved_id), type=req.type,
+        config=merged_config, name=req.name, enabled=req.enabled,
+    ))
+    if resource.tool_id != resolved_id:
+        delete_tool_resource(_get_config_dir(user_id), resolved_id)
+    await manager.evict_user(_effective_user_id(user_id))
+    return tool_resource_payload(resource)
 
 
-@app.delete("/v1/config/tools/{index}")
+@app.delete("/v1/config/tools/{tool_id}")
 async def delete_tool(
-    index: int,
+    tool_id: str,
     user_id: str | None = Query(default=None),
 ):
     """Remove the tool entry at ``index``."""
     entries = _read_tools_config(user_id)
-    if index < 0 or index >= len(entries):
-        raise HTTPException(status_code=404, detail=f"Tool index {index} not found")
-    removed = entries.pop(index)
-    _write_tools_config(entries, user_id)
-    return {"status": "ok", "removed": removed}
+    resolved_id = entries[int(tool_id)]["tool_id"] if tool_id.isdigit() and int(tool_id) < len(entries) else tool_id
+    references = _tool_agent_references(canonical_tool_id(str(resolved_id)))
+    if references:
+        raise HTTPException(status_code=409, detail={
+            "code": "tool_in_use",
+            "message": "Tool is referenced by one or more Agents",
+            "references": references,
+        })
+    try:
+        removed = delete_tool_resource(_get_config_dir(user_id), resolved_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await manager.evict_user(_effective_user_id(user_id))
+    return {"status": "ok", "removed": tool_resource_payload(removed)}
+
+
+def _knowledge_agent_references(knowledge_id: str) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    for agent_name in list_agent_names():
+        policy = load_agent_runtime_policy(agent_name)
+        if knowledge_id in policy.knowledge.sources or (
+            policy.knowledge.mode in {"inherit", "all_enabled"}
+            and policy.knowledge.retrieval_policy != "never"
+        ):
+            references.append({"kind": "agent_knowledge_reference", "agent_name": agent_name, "knowledge_id": knowledge_id})
+    return references
+
+
+def _migrate_legacy_knowledge_config(config_dir: Path) -> None:
+    if list_knowledge_resources(config_dir):
+        return
+    dataset_id = str(os.environ.get("MEMORY_DATASET_ID") or "").strip()
+    if not dataset_id:
+        return
+    token = str(os.environ.get("RAGFLOW_TOKEN") or "").strip()
+    credential_ref = store_credential(token) if token else ""
+    config: dict[str, object] = {
+        "base_url": str(os.environ.get("RAGFLOW_URL") or "https://ragflow.ihep.ac.cn").rstrip("/"),
+        "dataset_ids": [dataset_id],
+    }
+    if credential_ref:
+        config["credential_ref"] = credential_ref
+    put_knowledge_resource(config_dir, KnowledgeResource("legacy-ragflow", "Legacy RAGFlow", "ragflow", True, config))
+
+
+@app.get("/v1/config/knowledge-bases")
+async def list_knowledge_bases(user_id: str | None = Query(default=None)):
+    config_dir = _get_config_dir(user_id)
+    await asyncio.to_thread(_migrate_legacy_knowledge_config, config_dir)
+    resources = list_knowledge_resources(config_dir)
+    return {"object": "list", "data": [
+        {**knowledge_resource_payload(resource), **knowledge_status(config_dir, resource), "references": _knowledge_agent_references(resource.knowledge_id)}
+        for resource in resources
+    ]}
+
+
+@app.post("/v1/config/knowledge-bases")
+async def create_knowledge_base(req: KnowledgeResourceRequest, user_id: str | None = Query(default=None)):
+    config_dir = _get_config_dir(user_id)
+    try:
+        get_knowledge_resource(config_dir, req.knowledge_id)
+    except ModelProviderConfigError:
+        pass
+    else:
+        raise HTTPException(status_code=409, detail={"code": "knowledge_base_exists", "message": "Knowledge Base already exists"})
+    try:
+        config = dict(req.config)
+        if req.credential is not None:
+            if req.type != "ragflow":
+                raise ModelProviderConfigError("Only RAGFlow Knowledge Bases accept credentials")
+            config["credential_ref"] = store_credential(req.credential.get_secret_value())
+        resource = put_knowledge_resource(config_dir, KnowledgeResource(req.knowledge_id, req.display_name, req.type, req.enabled, config))
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {**knowledge_resource_payload(resource), **knowledge_status(config_dir, resource)}
+
+
+@app.get("/v1/config/knowledge-bases/{knowledge_id}")
+async def get_knowledge_base(knowledge_id: str, user_id: str | None = Query(default=None)):
+    try:
+        resource = get_knowledge_resource(_get_config_dir(user_id), knowledge_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {**knowledge_resource_payload(resource), **knowledge_status(_get_config_dir(user_id), resource), "references": _knowledge_agent_references(resource.knowledge_id)}
+
+
+@app.put("/v1/config/knowledge-bases/{knowledge_id}")
+async def update_knowledge_base(knowledge_id: str, req: KnowledgeResourceRequest, user_id: str | None = Query(default=None)):
+    if canonical_knowledge_id(knowledge_id) != canonical_knowledge_id(req.knowledge_id):
+        raise HTTPException(status_code=400, detail="Knowledge Base identity cannot be changed")
+    try:
+        existing = get_knowledge_resource(_get_config_dir(user_id), knowledge_id)
+        config = dict(req.config)
+        if req.credential is not None:
+            if req.type != "ragflow":
+                raise ModelProviderConfigError("Only RAGFlow Knowledge Bases accept credentials")
+            config["credential_ref"] = store_credential(req.credential.get_secret_value())
+        elif req.type == "ragflow" and "credential_ref" not in config and existing.type == "ragflow":
+            existing_ref = (existing.config or {}).get("credential_ref")
+            if existing_ref: config["credential_ref"] = existing_ref
+        resource = put_knowledge_resource(_get_config_dir(user_id), KnowledgeResource(req.knowledge_id, req.display_name, req.type, req.enabled, config))
+        old_reference = str((existing.config or {}).get("credential_ref") or "")
+        new_reference = str((resource.config or {}).get("credential_ref") or "")
+        if old_reference and old_reference != new_reference:
+            delete_credential(old_reference)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await manager.evict_user(_effective_user_id(user_id))
+    return {**knowledge_resource_payload(resource), **knowledge_status(_get_config_dir(user_id), resource)}
+
+
+@app.delete("/v1/config/knowledge-bases/{knowledge_id}")
+async def delete_knowledge_base(knowledge_id: str, user_id: str | None = Query(default=None)):
+    resolved = canonical_knowledge_id(knowledge_id)
+    references = _knowledge_agent_references(resolved)
+    if references:
+        raise HTTPException(status_code=409, detail={"code": "knowledge_base_in_use", "message": "Knowledge Base is referenced by one or more Agents", "references": references})
+    try:
+        resource = delete_knowledge_resource(_get_config_dir(user_id), resolved)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    reference = str((resource.config or {}).get("credential_ref") or "")
+    if reference:
+        delete_credential(reference)
+    await manager.evict_user(_effective_user_id(user_id))
+    return {"status": "ok", "removed": knowledge_resource_payload(resource)}
+
+
+@app.get("/v1/config/knowledge-bases/{knowledge_id}/status")
+async def get_knowledge_base_status(knowledge_id: str, user_id: str | None = Query(default=None)):
+    try:
+        resource = get_knowledge_resource(_get_config_dir(user_id), knowledge_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    status = knowledge_status(_get_config_dir(user_id), resource)
+    if resource.type == "ragflow" and status["status"] == "configured":
+        reference = str((resource.config or {}).get("credential_ref") or "")
+        status["status"] = "configured" if resolve_credential(reference) else "credential_required"
+    return status
+
+
+@app.post("/v1/config/knowledge-bases/{knowledge_id}/test")
+async def test_knowledge_base(knowledge_id: str, user_id: str | None = Query(default=None)):
+    """Verify a Knowledge Base connection without returning credentials or document contents."""
+    config_dir = _get_config_dir(user_id)
+    try:
+        resource = get_knowledge_resource(config_dir, knowledge_id)
+        if resource.type == "local-files":
+            status = knowledge_status(config_dir, resource)
+            root = Path(str((resource.config or {}).get("root_path") or "")).expanduser()
+            if not root.is_dir():
+                raise ModelProviderConfigError("Local Knowledge Base root directory is unavailable")
+            return {"ok": True, "knowledge_id": knowledge_id, "type": resource.type, "status": status["status"]}
+        config = dict(resource.config or {})
+        token = resolve_credential(str(config.get("credential_ref") or ""))
+        if not token:
+            raise ModelProviderConfigError("RAGFlow Knowledge Base credential is unavailable")
+        from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
+        datasets = await RAGFlowMemoryManager(str(config["base_url"]), token).list_datasets()
+        available = {str(row.get("id") or "") for row in datasets if isinstance(row, Mapping)}
+        configured = set(config.get("dataset_ids") or [])
+        missing = sorted(configured - available)
+        if missing:
+            raise ModelProviderConfigError("Configured RAGFlow datasets are unavailable: " + ", ".join(missing))
+        return {"ok": True, "knowledge_id": knowledge_id, "type": resource.type, "dataset_count": len(configured)}
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/v1/config/knowledge-bases/{knowledge_id}/index")
+async def index_knowledge_base(knowledge_id: str, user_id: str | None = Query(default=None)):
+    try:
+        resource = get_knowledge_resource(_get_config_dir(user_id), knowledge_id)
+        if resource.type != "local-files":
+            raise ModelProviderConfigError("RAGFlow indexing is managed by the configured RAGFlow service")
+        return await asyncio.to_thread(index_local_files, _get_config_dir(user_id), resource)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _knowledge_evidence_payload(evidence: Any) -> dict[str, object]:
+    if hasattr(evidence, "__dataclass_fields__"):
+        return {name: getattr(evidence, name) for name in evidence.__dataclass_fields__}
+    return dict(evidence) if isinstance(evidence, Mapping) else {}
+
+
+@app.post("/v1/config/knowledge-bases/{knowledge_id}/search-preview")
+async def search_knowledge_base(knowledge_id: str, req: KnowledgeSearchRequest, user_id: str | None = Query(default=None)):
+    try:
+        resource = get_knowledge_resource(_get_config_dir(user_id), knowledge_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if resource.type == "local-files":
+        try:
+            evidence = await asyncio.to_thread(search_local_knowledge, _get_config_dir(user_id), resource, req.query, top_k=req.top_k, score_threshold=req.score_threshold)
+        except ModelProviderConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"knowledge_id": resource.knowledge_id, "query": req.query, "evidence": [_knowledge_evidence_payload(item) for item in evidence]}
+    config = dict(resource.config or {})
+    token = resolve_credential(str(config.get("credential_ref") or ""))
+    if not token:
+        raise HTTPException(status_code=400, detail="RAGFlow Knowledge Base credential is unavailable")
+    from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
+    manager_instance = RAGFlowMemoryManager(str(config["base_url"]), token)
+    raw = await manager_instance.retrieve_chunks_by_content(
+        question=req.query, dataset_ids=list(config.get("dataset_ids") or []),
+        page_size=req.top_k, top_k=req.top_k, similarity_threshold=req.score_threshold,
+    )
+    chunks = raw.get("chunks", []) if isinstance(raw, dict) else []
+    evidence = []
+    for index, chunk in enumerate(chunks[:req.top_k] if isinstance(chunks, list) else []):
+        if not isinstance(chunk, dict):
+            continue
+        content = str(chunk.get("content_with_weight") or chunk.get("content") or "")
+        document_id = str(chunk.get("document_id") or chunk.get("doc_id") or "unknown")
+        chunk_id = str(chunk.get("id") or f"{document_id}:{index}")
+        evidence.append({
+            "knowledge_id": resource.knowledge_id, "document_id": document_id,
+            "title": str(chunk.get("document_keyword") or chunk.get("document_name") or document_id),
+            "source": str(chunk.get("document_name") or document_id), "chunk_id": chunk_id,
+            "score": float(chunk.get("similarity") or chunk.get("score") or 0), "content": content,
+            "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+        })
+    return {"knowledge_id": resource.knowledge_id, "query": req.query, "evidence": evidence}
 
 
 
@@ -8861,7 +9470,7 @@ class ModelProviderTestRequest(BaseModel):
 
 class ModelCapabilityProbeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    agent_id: str = Field(default="my-drsai", min_length=1, max_length=240)
+    agent_id: Optional[str] = Field(default=None, min_length=1, max_length=240)
     role: Literal["primary_model", "image_understanding_model", "image_generation_model", "text_to_speech_model", "speech_to_text_model"]
     operation: Literal["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "text_to_speech", "speech_to_text"]
     protocol: Literal["auto", "openai_responses", "openai_chat_completions", "gemini_generate_content", "openai_images_generation", "openai_images_edits", "openai_audio_speech", "openai_audio_transcriptions"] = "auto"
@@ -8988,8 +9597,8 @@ async def _activate_model_config_commit() -> int:
     return await manager.mark_user_config_stale(_get_user_id())
 
 
-def _resolve_agent_primary_model(config: DrSaiConfig):
-    policy = load_agent_model_policy("my-drsai").policy
+def _resolve_agent_primary_model(config: DrSaiConfig, agent_name: str | None = None):
+    policy = load_agent_model_policy(agent_name or current_agent_name()).policy
     selection = policy.primary_model
     if selection.mode != "explicit" or selection.ref is None:
         raise ModelProviderConfigError(
@@ -9037,7 +9646,17 @@ async def get_model_config_state():
             "effective": resolved.public_dict(),
             "providers": configured_providers,
             "runtime": runtime,
-            "last_test": latest_probe_result(resolved.provider.name),
+            "last_test": latest_probe_result(
+                resolved.provider.name,
+                resolved.model_id or resolved.model,
+                probe_fingerprint(
+                    resolved.provider.name,
+                    resolved.model_id or resolved.model,
+                    resolved.provider.base_url,
+                    resolved.provider.wire_api,
+                    resolved.provider.api_key.reveal() if resolved.provider.api_key is not None else "",
+                ),
+            ),
             "telemetry": telemetry_snapshot(),
         }
     except ModelProviderConfigError as exc:
@@ -9332,8 +9951,347 @@ def _descriptor_supports_agent_role(descriptor: Mapping[str, object], role: str)
 
 
 def _require_local_opendrsai_agent(agent_id: str) -> None:
-    if agent_id != "my-drsai":
+    try:
+        canonical = canonical_agent_name(agent_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail="Local Agent configuration not found") from exc
+    if canonical not in list_agent_names():
         raise HTTPException(status_code=404, detail="Local OpenDrSai Agent model policy not found")
+
+
+class CurrentAgentUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    agent_name: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+
+
+class AgentToolPolicyUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["inherit", "explicit", "all_enabled"] = "inherit"
+    enabled: list[str] = Field(default_factory=list)
+    disabled: list[str] = Field(default_factory=list)
+    require_approval: list[str] = Field(default_factory=list)
+    expected_revision: str | None = None
+
+
+class AgentSkillPolicyUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["inherit", "explicit", "all_enabled"] = "inherit"
+    enabled: list[str] = Field(default_factory=list)
+    disabled: list[str] = Field(default_factory=list)
+    allow_thread_override: bool = True
+    expected_revision: str | None = None
+
+
+class AgentKnowledgePolicyUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["inherit", "explicit", "all_enabled"] = "inherit"
+    sources: list[str] = Field(default_factory=list)
+    retrieval_policy: Literal["auto", "always", "never"] = "auto"
+    top_k: int = Field(default=6, ge=1, le=50)
+    score_threshold: float = Field(default=0.35, ge=0, le=1)
+    require_citations: bool = True
+    expected_revision: str | None = None
+
+
+def _agent_runtime_policy_payload(snapshot: AgentRuntimePolicySnapshot) -> dict[str, object]:
+    return {
+        "agent_id": snapshot.agent_id,
+        "tools": {
+            "mode": snapshot.tools.mode,
+            "enabled": list(snapshot.tools.enabled),
+            "disabled": list(snapshot.tools.disabled),
+            "require_approval": list(snapshot.tools.require_approval),
+        },
+        "skills": {
+            "mode": snapshot.skills.mode,
+            "enabled": list(snapshot.skills.enabled),
+            "disabled": list(snapshot.skills.disabled),
+            "allow_thread_override": snapshot.skills.allow_thread_override,
+        },
+        "knowledge": {
+            "mode": snapshot.knowledge.mode,
+            "sources": list(snapshot.knowledge.sources),
+            "retrieval_policy": snapshot.knowledge.retrieval_policy,
+            "top_k": snapshot.knowledge.top_k,
+            "score_threshold": snapshot.knowledge.score_threshold,
+            "require_citations": snapshot.knowledge.require_citations,
+        },
+        "revision": snapshot.revision,
+    }
+
+
+async def _commit_agent_runtime_section(
+    agent_id: str, *, tools: AgentToolPolicy | None = None,
+    skills: AgentSkillPolicy | None = None, knowledge: AgentKnowledgePolicy | None = None,
+    expected_revision: str | None,
+) -> AgentRuntimePolicySnapshot:
+    _require_local_opendrsai_agent(agent_id)
+    current = await asyncio.to_thread(load_agent_runtime_policy, agent_id)
+    candidate = AgentRuntimePolicySnapshot(
+        agent_id=agent_id,
+        tools=tools or current.tools,
+        skills=skills or current.skills,
+        knowledge=knowledge or current.knowledge,
+        revision=current.revision,
+    )
+    try:
+        committed = await asyncio.to_thread(
+            commit_agent_runtime_policy, candidate, expected_revision=expected_revision,
+        )
+    except AgentModelPolicyConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": "agent_config_conflict", "message": str(exc)}) from exc
+    await manager.evict_user(_get_user_id())
+    return committed
+
+
+@app.get("/v1/config/agents")
+async def list_configured_agents():
+    active = current_agent_name()
+    return {
+        "current_agent": active,
+        "agents": [
+            {**load_agent_descriptor(name), "current": name == active}
+            for name in list_agent_names()
+        ],
+    }
+
+
+@app.get("/v1/config/agents/current")
+async def get_current_agent_config():
+    name = current_agent_name()
+    return {**load_agent_descriptor(name), "current": True}
+
+
+@app.put("/v1/config/agents/current")
+async def put_current_agent_config(req: CurrentAgentUpdateRequest):
+    name = canonical_agent_name(req.agent_name)
+    _require_local_opendrsai_agent(name)
+    await asyncio.to_thread(
+        update_current_agent,
+        agent_name=name,
+        agent_config_file=f"configs/agents/agent_{name}.toml",
+    )
+    await _activate_model_config_commit()
+    return {**load_agent_descriptor(name), "current": True}
+
+
+@app.get("/v1/config/agents/{agent_id}/runtime-policy")
+async def get_agent_runtime_policy(agent_id: str):
+    _require_local_opendrsai_agent(agent_id)
+    return _agent_runtime_policy_payload(await asyncio.to_thread(load_agent_runtime_policy, agent_id))
+
+
+@app.get("/v1/config/agents/{agent_id}/tools")
+async def get_agent_tool_policy(agent_id: str):
+    payload = await get_agent_runtime_policy(agent_id)
+    return {"agent_id": agent_id, **payload["tools"], "revision": payload["revision"]}
+
+
+def _tool_agent_references(tool_id: str) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    for agent_name in list_agent_names():
+        policy = load_agent_runtime_policy(agent_name)
+        if (
+            tool_id in policy.tools.enabled or tool_id in policy.tools.disabled or tool_id in policy.tools.require_approval
+            or (policy.tools.mode in {"inherit", "all_enabled"} and tool_id not in policy.tools.disabled)
+        ):
+            references.append({
+                "kind": "agent_tool_reference",
+                "agent_name": agent_name,
+                "tool_id": tool_id,
+            })
+    return references
+
+
+def _tool_status(resource: ToolResource) -> dict[str, object]:
+    status = "available" if resource.enabled else "disabled"
+    error: str | None = None
+    capabilities: list[str] = ["tool.call"]
+    if resource.type == "mcp-std":
+        capabilities.append("mcp.stdio")
+        command = str(resource.config.get("command") or "").strip()
+        if not command:
+            status, error = "degraded", "MCP stdio command is missing"
+        elif shutil.which(command) is None and not Path(command).is_file():
+            status, error = "runtime_unavailable", f"Command '{command}' was not found"
+    elif resource.type in {"mcp-sse", "mcp-http"}:
+        capabilities.append("mcp.remote")
+        raw_url = str(resource.config.get("url") or "").strip()
+        try:
+            parsed = urlparse(raw_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+                raise ValueError
+        except ValueError:
+            status, error = "degraded", "MCP URL must be an HTTP(S) URL without embedded credentials"
+    elif resource.type in {"local", "builtin", "function"}:
+        capabilities.append("local")
+    else:
+        status, error = "unsupported_platform", f"Tool type '{resource.type}' is unsupported"
+    return {
+        "tool_id": resource.tool_id,
+        "status": status,
+        "error": error,
+        "capabilities": capabilities,
+    }
+
+
+@app.post("/v1/config/agents/{agent_id}/tools/preview")
+async def preview_agent_tools(agent_id: str):
+    _require_local_opendrsai_agent(agent_id)
+    policy = await asyncio.to_thread(load_agent_runtime_policy, agent_id)
+    resources = await asyncio.to_thread(list_tool_resources, _get_config_dir())
+    remote_tools: list[Any] = []
+    try:
+        remote_tools, _ = await _load_remote_hepai_tools()
+    except Exception:
+        pass
+    dynamic = tuple(
+        ToolResource(str(getattr(tool, "name", "")).strip(), "function", {}, str(getattr(tool, "name", "")).strip(), True, "hepai")
+        for tool in remote_tools if str(getattr(tool, "name", "")).strip()
+    )
+    all_resources = (*resources, *dynamic, _builtin_web_search_resource())
+    resolved = resolve_tool_set(
+        mode=policy.tools.mode, enabled=policy.tools.enabled, disabled=policy.tools.disabled,
+        resources=all_resources, builtin_ids=("builtin.image_generation", "builtin.image_edit"),
+    )
+    rows = []
+    by_id = {resource.tool_id: resource for resource in all_resources}
+    catalog_ids = list(dict.fromkeys((*resolved.enabled_ids, *by_id.keys(), "builtin.image_generation", "builtin.image_edit", "builtin.web-search")))
+    for tool_id in catalog_ids:
+        selected = tool_id in resolved.enabled_ids
+        if tool_id == "builtin.web-search":
+            rows.append({
+                "tool_id": tool_id,
+                **web_search_runtime_status(),
+                "capabilities": ["tool.call", "builtin", "network.public_https"],
+                "selected": selected,
+            })
+        elif tool_id in by_id:
+            rows.append({**_tool_status(by_id[tool_id]), "selected": selected})
+        elif tool_id.startswith("builtin."):
+            rows.append({"tool_id": tool_id, "status": "available", "error": None, "capabilities": ["tool.call", "builtin"], "selected": selected})
+        else:
+            rows.append({"tool_id": tool_id, "status": "runtime_unavailable", "error": f"Tool resource '{tool_id}' is not currently available", "capabilities": [], "selected": selected})
+    return {
+        "agent_id": agent_id,
+        "mode": policy.tools.mode,
+        "tools": rows,
+        "missing_ids": list(resolved.missing_ids),
+        "disabled_ids": list(resolved.disabled_ids),
+        "agent_revision": policy.revision,
+        "registry_revision": resolved.registry_revision,
+    }
+
+
+@app.put("/v1/config/agents/{agent_id}/tools")
+async def put_agent_tool_policy(agent_id: str, req: AgentToolPolicyUpdateRequest):
+    snapshot = await _commit_agent_runtime_section(
+        agent_id,
+        tools=AgentToolPolicy(req.mode, tuple(req.enabled), tuple(req.disabled), tuple(req.require_approval)),
+        expected_revision=req.expected_revision,
+    )
+    return {"agent_id": agent_id, **_agent_runtime_policy_payload(snapshot)["tools"], "revision": snapshot.revision}
+
+
+@app.get("/v1/config/agents/{agent_id}/skills")
+async def get_agent_skill_policy(agent_id: str):
+    payload = await get_agent_runtime_policy(agent_id)
+    return {"agent_id": agent_id, **payload["skills"], "revision": payload["revision"]}
+
+
+@app.put("/v1/config/agents/{agent_id}/skills")
+async def put_agent_skill_policy(agent_id: str, req: AgentSkillPolicyUpdateRequest):
+    snapshot = await _commit_agent_runtime_section(
+        agent_id,
+        skills=AgentSkillPolicy(req.mode, tuple(req.enabled), tuple(req.disabled), req.allow_thread_override),
+        expected_revision=req.expected_revision,
+    )
+    return {"agent_id": agent_id, **_agent_runtime_policy_payload(snapshot)["skills"], "revision": snapshot.revision}
+
+
+@app.post("/v1/config/agents/{agent_id}/skills/preview")
+async def preview_agent_skills(agent_id: str):
+    _require_local_opendrsai_agent(agent_id)
+    policy = await asyncio.to_thread(load_agent_runtime_policy, agent_id)
+    installed_rows = (await list_skills(None))["data"]
+    installed = {str(row.get("name") or "") for row in installed_rows}
+    disabled = set(policy.skills.disabled)
+    selected = (
+        [name for name in policy.skills.enabled if name in installed and name not in disabled]
+        if policy.skills.mode == "explicit"
+        else [name for name in sorted(installed) if name not in disabled]
+    )
+    missing = [name for name in policy.skills.enabled if name not in installed]
+    return {
+        "agent_id": agent_id,
+        "mode": policy.skills.mode,
+        "skills": [
+            {**row, "enabled_for_agent": str(row.get("name") or "") in selected}
+            for row in installed_rows
+        ],
+        "enabled_ids": selected,
+        "missing_ids": missing,
+        "allow_thread_override": policy.skills.allow_thread_override,
+        "revision": policy.revision,
+    }
+
+
+@app.post("/v1/config/agents/{agent_id}/skills/reload")
+async def reload_agent_skills(agent_id: str):
+    _require_local_opendrsai_agent(agent_id)
+    await manager.evict_user(_get_user_id())
+    return {"ok": True, "reloaded": True, "agent_id": agent_id}
+
+
+@app.get("/v1/config/agents/{agent_id}/knowledge")
+async def get_agent_knowledge_policy(agent_id: str):
+    payload = await get_agent_runtime_policy(agent_id)
+    return {"agent_id": agent_id, **payload["knowledge"], "revision": payload["revision"]}
+
+
+@app.put("/v1/config/agents/{agent_id}/knowledge")
+async def put_agent_knowledge_policy(agent_id: str, req: AgentKnowledgePolicyUpdateRequest):
+    snapshot = await _commit_agent_runtime_section(
+        agent_id,
+        knowledge=AgentKnowledgePolicy(
+            req.mode, tuple(req.sources), req.retrieval_policy, req.top_k,
+            req.score_threshold, req.require_citations,
+        ),
+        expected_revision=req.expected_revision,
+    )
+    return {"agent_id": agent_id, **_agent_runtime_policy_payload(snapshot)["knowledge"], "revision": snapshot.revision}
+
+
+@app.post("/v1/config/agents/{agent_id}/knowledge/preview")
+async def preview_agent_knowledge(agent_id: str):
+    _require_local_opendrsai_agent(agent_id)
+    policy = await asyncio.to_thread(load_agent_runtime_policy, agent_id)
+    config_dir = _get_config_dir()
+    resources = await asyncio.to_thread(list_knowledge_resources, config_dir)
+    by_id = {resource.knowledge_id: resource for resource in resources}
+    disabled = set()
+    if policy.knowledge.mode == "explicit":
+        selected = [source for source in policy.knowledge.sources if source in by_id and by_id[source].enabled]
+        missing = [source for source in policy.knowledge.sources if source not in by_id]
+    else:
+        selected = [resource.knowledge_id for resource in resources if resource.enabled]
+        missing = []
+    rows = [
+        {**knowledge_resource_payload(resource), **knowledge_status(config_dir, resource), "selected": resource.knowledge_id in selected}
+        for resource in resources
+    ]
+    return {
+        "agent_id": agent_id,
+        "mode": policy.knowledge.mode,
+        "sources": selected,
+        "missing_ids": missing,
+        "knowledge_bases": rows,
+        "retrieval_policy": policy.knowledge.retrieval_policy,
+        "top_k": policy.knowledge.top_k,
+        "score_threshold": policy.knowledge.score_threshold,
+        "require_citations": policy.knowledge.require_citations,
+        "revision": policy.revision,
+    }
 
 
 @app.get("/v1/config/agents/{agent_id}/models")
@@ -9476,6 +10434,8 @@ async def discover_model_provider_models(req: ModelDiscoveryRequest):
             oidc_base_url = auth.model_base_url if auth is not None else None
             oidc_access_token = auth.access_token if auth is not None else None
             config = DrSaiConfig(
+                current_agent=config.current_agent,
+                agent_config_file=config.agent_config_file,
                 model=config.model,
                 model_provider=req.provider,
                 config_version=config.config_version,
@@ -9570,16 +10530,17 @@ def _model_provider_references(config: DrSaiConfig, name: str) -> list[dict[str,
     one helper ensures DELETE remains fail-closed as new reference kinds appear.
     """
     references: list[dict[str, str]] = []
-    policy = load_agent_model_policy("my-drsai").policy
-    policy_ref = policy.primary_model.ref
-    if policy_ref is not None and policy_ref.provider_id == name:
-        references.append({
-            "kind": "agent_model_policy",
-            "id": "my-drsai",
-            "label": "Local OpenDrSai Agent model",
-            "model_id": policy_ref.model_id,
-        })
-    capability_policies = (
+    for agent_name in list_agent_names():
+        policy = load_agent_model_policy(agent_name).policy
+        policy_ref = policy.primary_model.ref
+        if policy_ref is not None and policy_ref.provider_id == name:
+            references.append({
+                "kind": "agent_model_policy",
+                "id": agent_name,
+                "label": f"{agent_name} primary model",
+                "model_id": policy_ref.model_id,
+            })
+        capability_policies = (
         (
             "agent_image_model_policy",
             "Local OpenDrSai Agent image generation model",
@@ -9600,16 +10561,16 @@ def _model_provider_references(config: DrSaiConfig, name: str) -> list[dict[str,
             "Local OpenDrSai Agent speech-to-text model",
             policy.speech_to_text_model,
         ),
-    )
-    for kind, label, selection in capability_policies:
-        capability_ref = selection.ref if selection is not None else None
-        if capability_ref is not None and capability_ref.provider_id == name:
-            references.append({
-                "kind": kind,
-                "id": "my-drsai",
-                "label": label,
-                "model_id": capability_ref.model_id,
-            })
+        )
+        for kind, label, selection in capability_policies:
+            capability_ref = selection.ref if selection is not None else None
+            if capability_ref is not None and capability_ref.provider_id == name:
+                references.append({
+                    "kind": kind,
+                    "id": agent_name,
+                    "label": label,
+                    "model_id": capability_ref.model_id,
+                })
     return references
 
 
@@ -9690,7 +10651,7 @@ async def probe_model_provider_capability(name: str, req: ModelCapabilityProbeRe
     policy_snapshot = None
     try:
         config = await asyncio.to_thread(load_model_provider_config)
-        policy_snapshot = await asyncio.to_thread(load_agent_model_policy, req.agent_id)
+        policy_snapshot = await asyncio.to_thread(load_agent_model_policy, req.agent_id or current_agent_name())
         resolved = await asyncio.to_thread(
             resolve_agent_operation,
             config,

@@ -2522,6 +2522,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             oaepRunStatus = projection.runStatus,
             oaepActiveRunId = projection.activeRunId,
             oaepSnapshotSequence = projection.snapshotSequence,
+            oaepDiagnosticEvents = projection.diagnosticEvents,
             streaming = active,
             recovering = projection.recovering,
             runtimeStatus = projection.runtimeStatus,

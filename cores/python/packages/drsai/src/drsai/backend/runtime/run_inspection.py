@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 from drsai.backend.runtime.oaep import OAEP_VERSION
 from drsai.version import __version__ as DRS_AI_VERSION
+from drsai.relay.security import redact_credentials
 from .security import redact_sensitive
 
 
@@ -148,7 +149,7 @@ def safe_manifest(value: Mapping[str, Any]) -> dict[str, Any]:
     if error.get("message"):
         safe_outcome["error"] = {
             "code": str(redact_sensitive(error.get("code")))[:120],
-            "message": str(redact_sensitive(error.get("message")))[:500],
+            "message": redact_credentials(str(error.get("message"))),
             "retryable": bool(error.get("retryable", False)),
         }
     if safe_outcome:
@@ -332,6 +333,8 @@ def merge_manifest(base: Mapping[str, Any], update: Mapping[str, Any]) -> dict[s
             if key in result and result[key] != value:
                 raise ValueError(f"Run manifest {key} is immutable")
             continue
+        if key == "agent_config_snapshot" and key in result and result[key] not in ({}, None) and result[key] != value:
+            raise ValueError("Run manifest agent_config_snapshot is immutable")
         if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
             result[key] = merge_manifest(result[key], value)
         else:

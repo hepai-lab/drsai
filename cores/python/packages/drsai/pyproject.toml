@@ -53,6 +53,7 @@ dependencies = [
 
     # ── async networking ──────────────────────────────────────────────────
     "aiohttp",
+    "playwright==1.51",
 
     # ── scheduling & tasks ────────────────────────────────────────────────
     "schedule",

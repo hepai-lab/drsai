@@ -70,8 +70,13 @@ def translate_kernel_event(
         )], source=state.assistant_name),)
     if kind in {"tool.result", "tool.error"}:
         result = payload.get("result")
+        public_result = (
+            {"result": result, "_inspection": payload["inspection"]}
+            if isinstance(payload.get("inspection"), dict)
+            else result
+        )
         return (ToolCallExecutionEvent(content=[FunctionExecutionResult(
-            content=json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+            content=json.dumps(public_result, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
             name=str(payload.get("name") or "tool"),
             call_id=str(payload.get("call_id") or ""),
             is_error=kind == "tool.error",
