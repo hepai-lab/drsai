@@ -109,7 +109,7 @@ def desktop_digest(snapshot: dict[str, Any]) -> str:
     completed = subprocess.run(
         [
             "node",
-            "--experimental-strip-types",
+            str(ROOT / "apps/desktop/shared/test-kit/run-bundled-test.mjs"),
             str(
                 ROOT
                 / "apps/desktop/windows/scripts/"

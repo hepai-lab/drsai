@@ -36,7 +36,7 @@ environment:
     history: empty
   workspace:
     fixture: ../../assets/workspaces/readonly_diagnosis_v1
-    fixture_sha256: 380b85516f42c2b693c561eb90339182502d8d5f83c88b345f80a186f7130ebc
+    fixture_sha256: 1b5e588ea393b89b1ab78f7862c2398f8cc2152209a24ee9b8c4e7d328060966
     digest_algorithm: sorted-relative-path-null-file-sha256-null-v1
     isolation: required
     permission: read_only

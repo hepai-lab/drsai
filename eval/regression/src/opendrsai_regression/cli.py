@@ -22,6 +22,8 @@ from .result_store import ResultStore
 from .runtime_executor import FixtureRuntimeAdapter, GatewayRuntimeAdapter, RuntimeAdapterError, RuntimeConfig
 from .semantic_evaluator import SemanticEvaluator
 from .model_capability_runner import ModelCapabilityError, bind_runtime_run_evidence, evaluate_case_model_preflight, evaluate_model_capability_gate, run_profile, verify_audio_product_runtime
+from .desktop_p3 import DesktopAutomationError, ElectronE2eTransport, input_text, summarize_runtime_evidence_for_persistence, validate_evidence, write_case_evidence
+from .evidence import collect_evidence
 
 
 def default_root() -> Path:
@@ -79,6 +81,11 @@ def parser() -> argparse.ArgumentParser:
     model_audio.add_argument("--snapshot", type=Path, required=True)
     model_audio.add_argument("--gateway-url", default=os.getenv("OPENDRSAI_REGRESSION_GATEWAY_URL"))
     model_audio.add_argument("--gateway-token", default=os.getenv("OPENDRSAI_REGRESSION_GATEWAY_TOKEN"))
+    desktop = commands.add_parser("desktop-run", help="Run P3 cases through a real Electron Desktop UI transport")
+    _selection(desktop)
+    desktop.add_argument("--output", type=Path, default=Path("tmp/eval-results/regression"))
+    desktop.add_argument("--execution-id")
+    desktop.add_argument("--transport-command", nargs=argparse.REMAINDER, required=True, help="Electron E2E command; must be last and __P3_CASE_ID__ is expanded per case")
     return value
 
 
@@ -105,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "run":
             return _run(args, catalog)
+        if args.command == "desktop-run":
+            return _desktop_run(args, catalog)
         if args.command == "gate":
             results = _read_jsonl(args.results)
             policy = args.policy or catalog.root / "policies" / "p1-release-gate.yaml"
@@ -159,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"runtime_verified\t{speech.get('model_id')}\t{speech.get('operation')}")
             print(f"runtime_verified\t{transcription.get('model_id')}\t{transcription.get('operation')}")
             return 0
-    except (DefinitionError, RuntimeAdapterError, ModelCapabilityError, OSError, ValueError) as exc:
+    except (DefinitionError, RuntimeAdapterError, ModelCapabilityError, DesktopAutomationError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 2
@@ -204,6 +213,69 @@ def _run(args: argparse.Namespace, catalog: CaseCatalog) -> int:
     write_reports(args.output, execution_id, results)
     print(store.root)
     return 0 if results and all(item["status"] == "passed" for item in results) else 1
+
+
+def _desktop_run(args: argparse.Namespace, catalog: CaseCatalog) -> int:
+    execution_id = args.execution_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-desktop-" + uuid.uuid4().hex[:8]
+    cases = catalog.resolve(suite=args.suite, case_ids=args.case, tags=args.tag)
+    if not cases:
+        raise ValueError("desktop-run selected no cases")
+    store = ResultStore(args.output, execution_id)
+    store.initialize({"schema_version": "opendrsai.desktop-p3-execution/1", "execution_id": execution_id, "adapter": "desktop", "suite": args.suite, "case_ids": [case.id for case in cases], "created_at": datetime.now(timezone.utc).isoformat()}, cases)
+    for case in cases:
+        started = time.monotonic(); started_at = datetime.now(timezone.utc).isoformat()
+        digest = hashlib.sha256(Path(case.path).read_bytes()).hexdigest()
+        case_root = store.root / "desktop-evidence" / case.id
+        try:
+            result_path = case_root / "electron-result.json"
+            command = [part.replace("__P3_CASE_ID__", case.id).replace("{case_id}", case.id) for part in args.transport_command]
+            transport = ElectronE2eTransport(command, result_path, case_root)
+            ui = transport.send_and_wait(text=input_text(case.data), timeout_seconds=max(120, int(case.data["execution"]["timeout_seconds"])))
+            ui_evidence = validate_evidence(case.data, ui, case_root)
+            # A UI run without a Run association is evidence-incomplete, never a pass.
+            if not ui_evidence.get("run_id"):
+                raise DesktopAutomationError("desktop_ui_run_association_missing")
+            summary_path = write_case_evidence(case_root, case.id, ui, case.data)
+            evaluation_evidence = {
+                "adapter": "desktop", "desktop_ui": ui_evidence, "output": ui.final_response_text,
+                # UI proof is necessary but cannot establish the P1 Runtime,
+                # behavior, artifact, or OAEP assertions by itself.
+                "evidence_complete": False,
+                "evidence_missing": ["run_manifest", "run_inspection", "oaep_snapshot"],
+                "desktop_summary": summary_path.name,
+            }
+            if ui.runtime_payload:
+                runtime = ui.runtime_payload
+                runtime_evidence = collect_evidence(
+                    run=runtime.get("run") if isinstance(runtime.get("run"), dict) else {},
+                    inspection=runtime.get("inspection") if isinstance(runtime.get("inspection"), dict) else {},
+                    snapshot=runtime.get("snapshot") if isinstance(runtime.get("snapshot"), dict) else {},
+                    manifest=runtime.get("manifest") if isinstance(runtime.get("manifest"), dict) else {},
+                )
+                # The user-visible final text is the authoritative output for
+                # Desktop acceptance, never a copied Gateway response.
+                evaluation_evidence = {
+                    **runtime_evidence, **evaluation_evidence, "output": ui.final_response_text,
+                    "evidence_complete": runtime_evidence.get("evidence_complete", False),
+                    "evidence_missing": runtime_evidence.get("missing", []),
+                }
+                assertions = evaluate(case, evaluation_evidence)
+                status = verdict(assertions)
+            else:
+                assertions = [item for item in evaluate(case, evaluation_evidence) if item.path.startswith("output.")]
+                status = "inconclusive" if all(item.passed for item in assertions) else "failed"
+            evidence = {
+                **summarize_runtime_evidence_for_persistence(evaluation_evidence),
+                "adapter": "desktop", "desktop_ui": ui_evidence,
+                "desktop_summary": summary_path.name,
+            }
+            result = CaseResult(execution_id, case.id, case.revision, status=status, run_id=ui.run_id, session_id=ui.session_id, output=None, evidence=evidence, assertions=[item.to_dict() for item in assertions])
+        except DesktopAutomationError as exc:
+            result = CaseResult(execution_id, case.id, case.revision, status="error", error_category=str(exc), error=str(exc), evidence={"adapter": "desktop", "evidence_complete": False})
+        result.started_at = started_at; result.completed_at = datetime.now(timezone.utc).isoformat(); result.duration_seconds = time.monotonic() - started; result.case_snapshot_sha256 = digest
+        store.append(result.to_dict())
+    results = store.load(); write_reports(args.output, execution_id, results); print(store.root)
+    return 0 if all(item["status"] == "passed" for item in results) else 1
 
 
 def _execute_attempts(execution_id: str, case: RegressionCase, adapter: Any, provisioner: EnvironmentProvisioner, semantic_evaluator: SemanticEvaluator | None = None) -> list[dict[str, Any]]:

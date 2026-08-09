@@ -2,6 +2,8 @@ import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import pytest
+
 from opendrsai_regression.cli import main
 
 
@@ -27,3 +29,10 @@ def test_gateway_cli_preflight_is_clear(tmp_path: Path, capsys) -> None:
     exit_code = main(["--root", str(ROOT), "run", "--case", "qa.greeting.hello", "--output", str(tmp_path)])
     assert exit_code == 2
     assert "gateway run requires --gateway-url" in capsys.readouterr().err
+
+
+def test_desktop_cli_requires_a_real_transport_command(tmp_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(["--root", str(ROOT), "desktop-run", "--case", "qa.greeting.hello", "--output", str(tmp_path)])
+    assert raised.value.code == 2
+    assert "--transport-command" in capsys.readouterr().err
