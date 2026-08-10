@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import ReactDOM from "react-dom";
 import { Run, Message, RunLogEntry, FilesEvent } from "../../components/types/datamodel";
 import { RenderMessage, messageUtils, FilesEventCard } from "./rendermessage";
-import TypewriterMessage from "./TypewriterMessage";
 import MarkdownRenderer from "../../components/common/markdownrender";
 import QuestionNavRail from "./QuestionNavRail";
 import { getStatusIcon } from "../../components/views/statusicon";
@@ -24,22 +23,40 @@ import {
   formatApiDateTimeZhCN,
   formatUnixForDisplayZhCN,
 } from "../../utils/apiDatetime";
+import {
+  chatRenderLog,
+  collapseMessagesForDisplay,
+  classifyMessage,
+} from "./chatMessagePipeline";
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
-// Module-level set — survives component unmount/remount (e.g. tab switches).
-// Burst keys added here are never re-animated on subsequent renders.
-const animatedBurstKeys = new Set<string>();
-
-/** Lightweight renderer for the active streaming chunk. Memoized on content so
- *  parent re-renders that don't touch the chunk content skip re-parsing markdown. */
+/** Stable live reply: ThinkBubble + answer in one tree so thinking never remounts away. */
 const StreamingChunkRender = React.memo(
-  ({ content }: { content: string }) => (
-    <div className="w-full py-2 px-1 text-sm leading-relaxed">
-      <MarkdownRenderer content={content} />
-    </div>
-  ),
-  (prev, next) => prev.content === next.content
+  ({
+    content,
+    thought,
+    thoughtDone,
+  }: {
+    content: string;
+    thought?: string;
+    thoughtDone?: boolean;
+  }) => {
+    const composed = thought
+      ? thoughtDone
+        ? `<think>${thought}</think>\n\n${content || ""}`
+        : `<think>${thought}`
+      : content;
+    return (
+      <div className="w-full py-2 px-1 text-sm leading-relaxed">
+        <MarkdownRenderer content={composed} />
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.content === next.content &&
+    prev.thought === next.thought &&
+    prev.thoughtDone === next.thoughtDone
 );
 StreamingChunkRender.displayName = "StreamingChunkRender";
 
@@ -248,18 +265,6 @@ const RunView: React.FC<RunViewProps> = ({
 
   /** Step indices where the user explicitly expanded; auto-collapse skips these. */
   const userPinnedExpandedStepIndicesRef = useRef<Set<number>>(new Set());
-
-  // Tracks which final TextMessage indices have already appeared in localMessages so
-  // once a message has been seen, it won't be re-animated on subsequent renders.
-  // A newly-arrived final TextMessage triggers the typewriter; after its content
-  // stabilises we mark it seen and downstream renders use plain markdown.
-  const seenFinalTextIdxRef = useRef<Set<string>>(new Set());
-  // Tick bumped when a typewriter finishes so the tree re-renders and the
-  // completed message falls through to the plain RenderMessage path.
-  const [, setTypewriterCompleteTick] = useState(0);
-  // Tracks the last displayed chunk length per source so the final TextMessage
-  // TypewriterMessage can start from where the chunk left off instead of pos 0.
-  const lastChunkLengthRef = useRef<Map<string, number>>(new Map());
 
   const isTogglingRef = useRef(false);
 
@@ -809,7 +814,10 @@ const RunView: React.FC<RunViewProps> = ({
       // Keep streaming chunks with start_flag as "active" (render outside the box).
       // Any older chunk got sealed by useChatWebSocket (start_flag removed) so it
       // renders inside the box as static content — those don't hit this branch.
-      if (updatedMessages[mi].config.metadata?.start_flag !== undefined) {
+      if (
+        updatedMessages[mi].config.metadata?.start_flag !== undefined ||
+        updatedMessages[mi].config.metadata?._stream_draft === true
+      ) {
         // If a final TextMessage from the same source has already arrived AFTER
         // this specific chunk, drop it — the real message replaces it.
         const chunkSource = updatedMessages[mi].config.source;
@@ -824,43 +832,45 @@ const RunView: React.FC<RunViewProps> = ({
 
         const chunk = updatedMessages[mi];
         let chunkContent = typeof chunk.config.content === "string" ? chunk.config.content : "";
-        // If a <think> block is still open (no closing tag yet), extract the thought
-        // text and render it as a streaming ThoughtEvent annotation inside the box
-        // instead of suppressing entirely — gives live visibility into reasoning.
-        if (/<think>/.test(chunkContent) && !/<\/(?:think|redacted_thinking)>/.test(chunkContent)) {
-          const thinkContent = chunkContent.replace(/^<think>\s*/, "");
-          if (thinkContent.trim()) {
-            mergedMessages.push({
-              ...chunk,
-              config: {
-                ...chunk.config,
-                content: thinkContent,
-                metadata: {
-                  ...(chunk.config.metadata || {}),
-                  _is_streaming_think: true,
-                  type: "ThoughtEvent",
-                },
-              } as any,
-            });
-          }
-          continue;
+        const meta = (chunk.config.metadata || {}) as any;
+        // Prefer the live thought plane kept on the draft (stable ThinkBubble).
+        // Fall back to open <think> extraction for older payloads.
+        let liveThought =
+          typeof meta._live_thought === "string" ? meta._live_thought : "";
+        let thoughtDone =
+          meta._thought_done === true || meta._thought_done === "yes";
+        if (!liveThought && /<think>/i.test(chunkContent) && !/<\/(?:think|redacted_thinking)>/i.test(chunkContent)) {
+          liveThought = chunkContent.replace(/^[\s\S]*?<think>\s*/i, "");
+          thoughtDone = false;
+          chunkContent = "";
+        } else {
+          chunkContent = chunkContent.replace(
+            /<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/gi,
+            ""
+          );
         }
-        // Strip any fully-closed <think>...</think> blocks, keep only real content after them.
-        chunkContent = chunkContent.replace(/<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/g, "");
-        if (chunkContent.trim() === "") continue; // nothing real after stripping
         // Strip ThoughtEvent content from the chunk — the raw LLM stream begins with
         // the thought text, so the chunk starts with the same content as the ThoughtEvent.
-        // ThoughtEvents arrive after the chunk in the array, so we use the pre-collected
-        // allThoughtTexts list built before this loop.
         for (const thoughtText of allThoughtTexts) {
           if (thoughtText && chunkContent.trimStart().startsWith(thoughtText)) {
             chunkContent = chunkContent.trimStart().slice(thoughtText.length).trimStart();
+            if (!liveThought) {
+              liveThought = thoughtText;
+              thoughtDone = true;
+            }
           }
         }
-        if (chunkContent.trim() === "") continue; // entire chunk was thought content
-        // Track chunk length so the final TextMessage's typewriter can start from
-        // where the chunk left off (skips already-seen content).
-        lastChunkLengthRef.current.set(chunk.config.source || "assistant", chunkContent.length);
+        if (chunkContent.trim() === "" && !liveThought.trim()) continue;
+        // Only the latest start_flag/_stream_draft chunk per source is live.
+        const hasLaterStreamChunk = updatedMessages
+          .slice(mi + 1)
+          .some(
+            (m) =>
+              m.config.source === chunkSource &&
+              (m.config.metadata?.start_flag !== undefined ||
+                m.config.metadata?._stream_draft === true)
+          );
+        if (hasLaterStreamChunk) continue;
         const tagged = {
           ...chunk,
           config: {
@@ -869,6 +879,8 @@ const RunView: React.FC<RunViewProps> = ({
             metadata: {
               ...(chunk.config.metadata || {}),
               _is_streaming_chunk: true,
+              _live_thought: liveThought || undefined,
+              _thought_done: thoughtDone,
             },
           } as any,
         };
@@ -876,31 +888,28 @@ const RunView: React.FC<RunViewProps> = ({
         continue;
       }
 
-      // Sealed chunks: strip <think> blocks + any ThoughtEvent content already
-      // shown as a separate annotation, so we don't render the same reasoning
-      // twice inside the process box. Also capture length for typewriter tracking.
+      // Legacy sealed marker: keep content (now classified as reply via pipeline).
+      // Do not drop — that previously erased tool-interrupted narration on reload.
       if (updatedMessages[mi].config.metadata?._sealed_chunk) {
         const sealed = updatedMessages[mi];
-        let sealedContent = typeof sealed.config.content === "string" ? sealed.config.content : "";
-        // Strip fully-closed <think>...</think> blocks
+        let sealedContent =
+          typeof sealed.config.content === "string" ? sealed.config.content : "";
         sealedContent = sealedContent.replace(
           /<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/g,
           ""
         );
-        // Strip any ThoughtEvent content that leads the chunk (the raw LLM stream
-        // starts with the thought text, which is already emitted as a ThoughtEvent).
-        for (const thoughtText of allThoughtTexts) {
-          if (thoughtText && sealedContent.trimStart().startsWith(thoughtText)) {
-            sealedContent = sealedContent.trimStart().slice(thoughtText.length).trimStart();
-          }
-        }
-        if (sealedContent.trim() === "") continue; // entire sealed chunk was thought — drop
-        lastChunkLengthRef.current.set(sealed.config.source || "assistant", sealedContent.length);
+        if (sealedContent.trim() === "") continue;
         mergedMessages.push({
           ...sealed,
           config: {
             ...sealed.config,
             content: sealedContent,
+            type: (sealed.config as any).type || "TextMessage",
+            metadata: {
+              ...(sealed.config.metadata || {}),
+              _is_final_reply: true,
+              _sealed_from_stream: true,
+            },
           } as any,
         });
         continue;
@@ -909,30 +918,41 @@ const RunView: React.FC<RunViewProps> = ({
       let msg = updatedMessages[mi];
       const cfg = msg.config as any;
 
-      // Strip <think>...</think> prefix from TextMessage content.
-      // If nothing remains after stripping, drop it — the ThoughtEvent carries it.
-      // Also drop if the stripped content is identical to the preceding ThoughtEvent
-      // (DeepSeek echoes the thought as the response body).
+      // Keep embedded <think>…</think> on TextMessage — ThinkBubble must render
+      // ABOVE the reply in the same bubble. Do not strip the think prefix here
+      // (old path assumed a separate ThoughtEvent carried reasoning).
+      // Drop only when the body is think-only (ThoughtEvent / duplicate of prev).
       if (
         cfg.type === "TextMessage" &&
         typeof msg.config.content === "string"
       ) {
         let content = msg.config.content;
-        if (/^<think>[\s\S]*?<\/(?:think|redacted_thinking)>/.test(content)) {
-          content = content.replace(
-            /^<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/,
-            ""
-          );
+        const thinkOnly = content
+          .replace(/^<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/i, "")
+          .trim();
+        if (thinkOnly === "" && /<think>/i.test(content)) {
+          // Pure thought TextMessage — drop if a ThoughtEvent already carries it.
+          const prev = mergedMessages[mergedMessages.length - 1];
+          if (
+            prev &&
+            ((prev.config as any).type === "ThoughtEvent" ||
+              (prev.config.metadata as any)?.type === "ThoughtEvent")
+          ) {
+            continue;
+          }
         }
-        if (content.trim() === "") continue;
         // Drop if content duplicates the immediately preceding ThoughtEvent
         const prev = mergedMessages[mergedMessages.length - 1];
         if (
           prev &&
-          (prev.config as any).type === "ThoughtEvent" &&
+          ((prev.config as any).type === "ThoughtEvent" ||
+            (prev.config.metadata as any)?.type === "ThoughtEvent") &&
           typeof prev.config.content === "string" &&
-          prev.config.content.trim() === content.trim()
-        ) continue;
+          prev.config.content.trim() === thinkOnly.trim() &&
+          thinkOnly.trim() !== ""
+        ) {
+          continue;
+        }
         msg = { ...msg, config: { ...msg.config, content } as any };
       }
 
@@ -962,8 +982,20 @@ const RunView: React.FC<RunViewProps> = ({
       mergedMessages.push(msg);
     }
 
-    return mergedMessages;
-  }, [run.messages]);
+    const { messages: collapsed } = collapseMessagesForDisplay(mergedMessages);
+    chatRenderLog("localMessages", {
+      runId: run.id,
+      raw: run.messages.length,
+      merged: mergedMessages.length,
+      collapsed: collapsed.length,
+      kinds: collapsed.map((m, i) => ({
+        i,
+        kind: classifyMessage(m),
+        source: m.config.source,
+      })),
+    });
+    return collapsed;
+  }, [run.messages, run.id]);
 
   const userQuestions = useMemo(() => {
     let questionNumber = 0;
@@ -985,13 +1017,6 @@ const RunView: React.FC<RunViewProps> = ({
 
   useEffect(() => {
     userPinnedExpandedStepIndicesRef.current = new Set();
-    // On session switch or run change, treat everything already present as historical
-    // so we don't re-animate old messages. New messages arriving after this reset
-    // won't be in the set yet, so they'll get the typewriter treatment.
-    seenFinalTextIdxRef.current = new Set();
-    for (let i = 0; i < run.messages.length; i++) {
-      seenFinalTextIdxRef.current.add(`${run.id}-${i}`);
-    }
   }, [run.id]);
 
   // Effect to handle browser_address message (for VNC panel)
@@ -1518,35 +1543,71 @@ const RunView: React.FC<RunViewProps> = ({
               ) {
                 const chunkContent =
                   typeof msg.config.content === "string" ? msg.config.content : "";
+                const liveThought =
+                  typeof chunkMeta._live_thought === "string"
+                    ? chunkMeta._live_thought
+                    : "";
+                const sourceKey = String(msg.config.source || "assistant");
                 return (
                   <StreamingChunkRender
-                    key={`stream-${idx}-${run.id}`}
+                    key={`stream-${run.id}-${sourceKey}`}
                     content={chunkContent}
+                    thought={liveThought || undefined}
+                    thoughtDone={
+                      chunkMeta._thought_done === true ||
+                      chunkMeta._thought_done === "yes"
+                    }
                   />
                 );
               }
 
-              // Final burst from backend: animate with typewriter so the content
-              // appears smoothly outside the box (like streaming but post-classification).
-              if (chunkMeta._is_burst && chunkMeta._is_final_reply) {
-                const burstKey = `burst-final-${idx}-${run.id}`;
-                const burstContent = typeof msg.config.content === "string" ? msg.config.content : "";
-                if (animatedBurstKeys.has(burstKey)) {
+              // ThoughtEvent: skip if the live stream for this source already shows
+              // the same reasoning (avoids think appearing → vanishing → reappearing).
+              const cfgAny = msg.config as any;
+              if (
+                cfgAny.type === "ThoughtEvent" ||
+                chunkMeta.type === "ThoughtEvent" ||
+                chunkMeta._is_streaming_think
+              ) {
+                const thoughtContent =
+                  typeof msg.config.content === "string" ? msg.config.content : "";
+                if (!thoughtContent.trim()) return null;
+                const sourceKey = String(msg.config.source || "assistant");
+                const coveredByLiveStream = localMessages.some((m) => {
+                  const meta = (m.config.metadata || {}) as any;
+                  if (m.config.source !== msg.config.source) return false;
+                  if (!meta._is_streaming_chunk) return false;
+                  const live =
+                    typeof meta._live_thought === "string" ? meta._live_thought : "";
+                  if (!live) return false;
                   return (
-                    <div key={burstKey} className="w-full py-2 px-1 text-sm leading-relaxed">
-                      <MarkdownRenderer content={burstContent} />
-                    </div>
+                    live.includes(thoughtContent.slice(0, 80)) ||
+                    thoughtContent.includes(live.slice(0, 80))
                   );
-                }
-                // Mark immediately — re-mounts (tab switches mid-stream) skip animation
-                animatedBurstKeys.add(burstKey);
+                });
+                if (coveredByLiveStream) return null;
+                // Same reasoning already embedded as <think> on a TextMessage —
+                // skip so we never render a second ThinkBubble under the answer.
+                const coveredByEmbedded = localMessages.some((m) => {
+                  if (m.config.source !== msg.config.source) return false;
+                  const c =
+                    typeof m.config.content === "string" ? m.config.content : "";
+                  if (!/<think>/i.test(c)) return false;
+                  return (
+                    c.includes(thoughtContent.slice(0, 80)) ||
+                    thoughtContent.includes(
+                      c.replace(/[\s\S]*?<think>/i, "").slice(0, 80)
+                    )
+                  );
+                });
+                if (coveredByEmbedded) return null;
+                // Render via ThinkBubble path (same as streaming) for consistent UX.
                 return (
-                  <TypewriterMessage
-                    key={burstKey}
-                    content={burstContent}
-                    speed={600}
-                    onComplete={() => setTypewriterCompleteTick((t) => t + 1)}
-                  />
+                  <div key={`thought-${run.id}-${sourceKey}`} className="w-full py-2 px-1">
+                    <MarkdownRenderer
+                      content={`<think>${thoughtContent}</think>`}
+                    />
+                  </div>
                 );
               }
 

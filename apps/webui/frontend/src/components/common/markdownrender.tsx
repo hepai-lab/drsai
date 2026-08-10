@@ -646,6 +646,14 @@ const parseThinkTags = (
     });
   }
 
+  // Always render ThinkBubble above answer text, even if the payload had
+  // reply-then-<think> order (e.g. trailing monologue wrapped late).
+  const thinkParts = parts.filter((p) => p.type === "think");
+  const textParts = parts.filter((p) => p.type === "text");
+  if (thinkParts.length > 0 && textParts.length > 0) {
+    return { parts: [...thinkParts, ...textParts] };
+  }
+
   return { parts };
 };
 
@@ -723,7 +731,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             if (part.type === "think") {
               return (
                 <ThinkBubble
-                  key={index}
+                  key="reasoning-bubble"
                   content={part.content}
                   attributes={part.attributes}
                 />
@@ -731,7 +739,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             } else {
               return (
                 <div
-                  key={index}
+                  key={`html-text-${index}`}
                   dangerouslySetInnerHTML={{
                     __html: toHtmlWithLineBreaks(
                       part.content.replace(/<think>(.*?)<\/think>/gs, "")
@@ -802,7 +810,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           if (part.type === "think") {
             return (
               <ThinkBubble
-                key={index}
+                key="reasoning-bubble"
                 content={part.content}
                 attributes={part.attributes}
               />
@@ -811,7 +819,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             // Render regular text content with markdown
             return (
               <ReactMarkdown
-                key={index}
+                key={`md-text-${index}`}
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[]}
                 components={{

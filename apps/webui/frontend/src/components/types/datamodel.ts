@@ -115,7 +115,6 @@ export interface WebSocketMessage {
   | "message"
   | "message_task"
   | "message_chunk"
-  | "message_burst"
   | "message_log"
   | "message_files"
   | "message_thinking"

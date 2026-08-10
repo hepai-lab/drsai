@@ -28,6 +28,7 @@ from ....input_func import InputFuncType, InputRequestType
 from autogen_core import CancellationToken
 from fastapi import WebSocket, WebSocketDisconnect
 from pathlib import Path
+from .content_plane import split_agent_visible_content
 from ....types import CheckpointEvent
 from ...database import DatabaseManager
 from ...datamodel import (
@@ -385,27 +386,73 @@ class WebSocketManager:
                         await self._save_message(run_id, message)
                     continue
 
-                # ── Accumulate streaming chunks ──
+                # ── Accumulate streaming chunks (+ ensure start_flag on first) ──
                 if isinstance(message, ModelClientStreamingChunkEvent):
                     chunk_source = message.source or "assistant"
                     chunk_content = message.content or ""
                     if run_id not in self._chunk_buffers:
                         self._chunk_buffers[run_id] = {}
                     prev = self._chunk_buffers[run_id].get(chunk_source, "")
+                    # First token of a new burst: mark start_flag so the client can
+                    # replace the draft when a TextMessage later arrives.
+                    if not prev:
+                        if message.metadata is None:
+                            message.metadata = {}
+                        if not message.metadata.get("start_flag"):
+                            message.metadata["start_flag"] = "yes"
                     self._chunk_buffers[run_id][chunk_source] = prev + chunk_content
 
-                # ── Flush chunks BEFORE tool/thought events for correct ordering ──
-                if isinstance(message, (ToolCallRequestEvent, AgentLogEvent, ThoughtEvent,
-                                        ToolCallExecutionEvent, ToolCallSummaryMessage)):
+                # ── Flush chunk buffer before tool/thought events ──
+                # Tool / log events interrupt the stream → SAVE + SEND so the UI
+                # keeps narration even if it drops the live draft.
+                # ThoughtEvent usually arrives AFTER the full answer was already
+                # streamed → SAVE only (sending again duplicates the answer live).
+                if isinstance(
+                    message,
+                    (
+                        ToolCallRequestEvent,
+                        AgentLogEvent,
+                        ThoughtEvent,
+                        ToolCallExecutionEvent,
+                        ToolCallSummaryMessage,
+                    ),
+                ):
                     buf = self._chunk_buffers.get(run_id, {})
+                    send_flush = not isinstance(message, ThoughtEvent)
                     for source in list(buf.keys()):
                         text = buf[source].strip()
                         if text and len(text) > 10:
+                            split = split_agent_visible_content(text)
+                            # Persist reply plane only; peel monologue/control tokens.
+                            persist_text = split.reply or text
                             flush_msg = TextMessage(
-                                source=source, content=text,
-                                metadata={"internal": "yes", "is_save": "yes"},
+                                source=source,
+                                content=persist_text,
+                                metadata={
+                                    "internal": "no" if send_flush else "yes",
+                                    "is_save": "yes",
+                                    "flushed_before_tool": "yes",
+                                    **(
+                                        {"_peeled_thought": split.thought[:2000]}
+                                        if split.thought
+                                        else {}
+                                    ),
+                                },
                             )
                             await self._save_message(run_id, flush_msg)
+                            if send_flush:
+                                formatted_flush = self._format_message(flush_msg)
+                                if formatted_flush:
+                                    await self._send_message(run_id, formatted_flush)
+                                    logger.info(
+                                        f"[CHUNK_FLUSH_SEND] run={run_id} source={source} "
+                                        f"chars={len(text)} before={type(message).__name__}"
+                                    )
+                            else:
+                                logger.info(
+                                    f"[CHUNK_FLUSH_SAVE] run={run_id} source={source} "
+                                    f"chars={len(text)} before=ThoughtEvent (no live re-send)"
+                                )
                         buf[source] = ""
 
                 formatted_message = self._format_message(message)
@@ -594,6 +641,26 @@ class WebSocketManager:
             # Dedup: skip if same source + content already saved for this run
             should_save = True
             if isinstance(message, TextMessage):
+                # Persist reply plane only — never store control tokens / monologue
+                # as the canonical TextMessage body.
+                if isinstance(message.content, str) and message.content.strip():
+                    split = split_agent_visible_content(message.content)
+                    if split.reply != message.content:
+                        if not split.reply.strip():
+                            return
+                        message = message.model_copy(
+                            update={
+                                "content": split.reply,
+                                "metadata": {
+                                    **(message.metadata or {}),
+                                    **(
+                                        {"_peeled_thought": split.thought[:2000]}
+                                        if split.thought
+                                        else {}
+                                    ),
+                                },
+                            }
+                        )
                 new_content = getattr(message, "content", None)
                 new_source = getattr(message, "source", "")
                 if new_content and isinstance(new_content, str) and len(new_content) > 20:
@@ -1038,6 +1105,27 @@ class WebSocketManager:
                 md = getattr(message, "metadata", None) or {}
                 if isinstance(md, dict) and ("error_message" in md):
                     return None
+                # Project mixed agent text onto the reply plane before live/history send.
+                if isinstance(message.content, str) and message.content.strip():
+                    split = split_agent_visible_content(message.content)
+                    if split.reply != message.content:
+                        if not split.reply.strip():
+                            # Control/monologue-only — do not emit an empty bubble.
+                            return None
+                        message = message.model_copy(
+                            update={
+                                "content": split.reply,
+                                "metadata": {
+                                    **(message.metadata or {}),
+                                    **(
+                                        {"_peeled_thought": split.thought[:2000]}
+                                        if split.thought
+                                        else {}
+                                    ),
+                                },
+                            }
+                        )
+                return {"type": "message", "data": message.model_dump()}
             if isinstance(message, MultiModalMessage):
                 message_dump = message.model_dump()
 
