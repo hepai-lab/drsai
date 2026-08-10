@@ -165,6 +165,21 @@ def test_android_relay_uses_real_windows_full_runtime_opendrsai_backend(tmp_path
     monkeypatch.setenv("DRSAI_HOME", str(home))
     monkeypatch.setenv("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", token)
     monkeypatch.setenv("DRSAI_RUNTIME_CONTROLLED_MODEL", "1")
+    (home / "configs" / "agents").mkdir(parents=True)
+    (home / "configs" / "models").mkdir(parents=True)
+    (home / "config.toml").write_text(
+        'config_version = 2\ncurrent_agent = "opendrsai"\nagent_config_file = "configs/agents/agent_opendrsai.toml"\n\n'
+        '[model_providers.hepai]\nbase_url = "https://controlled.invalid/v1"\nrequires_api_key = false\n'
+        'models_file = "configs/models/provider_hepai.toml"\n', encoding="utf-8",
+    )
+    (home / "configs" / "agents" / "agent_opendrsai.toml").write_text(
+        'schema_version = 2\nagent_name = "opendrsai"\n[models.primary]\nmode = "explicit"\n'
+        'provider_id = "hepai"\nmodel_id = "controlled"\n', encoding="utf-8",
+    )
+    (home / "configs" / "models" / "provider_hepai.toml").write_text(
+        '[models."controlled"]\ninput_modalities = ["text"]\noutput_modalities = ["text"]\n'
+        'api_protocol = "openai"\nenabled = true\ncapabilities = ["chat", "tool_calling"]\n', encoding="utf-8",
+    )
 
     # This is the same Full Runtime module launched by apps/desktop/windows/src/main/gateway.ts.
     from drsai.backend import gateway

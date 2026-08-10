@@ -216,7 +216,10 @@ def test_restart_fails_inflight_replay_without_automatic_retry(
     assert len(notices) == 1
     assert notices[0]["status"] == "failed"
     assert notices[0]["content"]["code"] == "replay_interrupted"
-    assert notices[0]["content"]["message"] == "[REDACTED]"
+    assert notices[0]["content"]["message"] == (
+        "Replay was interrupted because the Runtime process restarted. "
+        "Automatic retry was not attempted."
+    )
     assert recovered.replay_executions.claim_execution(plan["replay_plan_id"]) is False
 
 

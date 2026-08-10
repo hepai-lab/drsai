@@ -348,6 +348,18 @@ data class RuntimeDiagnosticUi(
     }
 }
 
+data class OaepDiagnosticEventUi(
+    val eventId: String,
+    val sequence: Long,
+    val type: String,
+    val timestamp: String,
+    val runId: String?,
+    val itemId: String?,
+    val source: String,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+)
+
 /** Keeps the current model when it is still enabled, otherwise chooses the first enabled model. */
 internal fun selectAvailableConfiguredModel(models: List<ModelInfo>, currentModelId: String?): ModelInfo? =
     currentModelId?.let { id -> models.firstOrNull { model ->
@@ -464,6 +476,7 @@ data class AppState(
     val oaepRunStatus: String? = null,
     val oaepActiveRunId: String? = null,
     val oaepSnapshotSequence: Long = 0,
+    val oaepDiagnosticEvents: List<OaepDiagnosticEventUi> = emptyList(),
     val streaming: Boolean = false,
     val recovering: Boolean = false,
     val loading: Boolean = false,

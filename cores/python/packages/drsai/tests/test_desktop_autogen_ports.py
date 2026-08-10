@@ -112,6 +112,26 @@ async def test_autogen_model_port_normalizes_stream_and_tool_calls_for_kernel() 
 
 
 @pytest.mark.asyncio
+async def test_autogen_model_port_forces_a_matching_tool_for_required_capability() -> None:
+    client = _Client([_result([
+        FunctionCall(id="call-1", name="web_search", arguments='{"query":"HEPiX"}'),
+    ])])
+    tools = [
+        {"name": "image_generation", "parameters": {"type": "object", "properties": {}}},
+        {"name": "web_search", "parameters": {"type": "object", "properties": {}}},
+    ]
+    port = AutogenDesktopModelPort(client, tools, assistant_name="OpenDrSai")
+
+    await port({
+        "messages": [{"role": "user", "content": "Find current sources."}],
+        "tool_choice": {"mode": "required", "matching_tools": ["web_search"]},
+    })
+
+    assert client.requests[0][1]["extra_create_args"] == {}
+    assert [tool["name"] for tool in client.requests[0][1]["tools"]] == ["web_search"]
+
+
+@pytest.mark.asyncio
 async def test_autogen_model_port_attaches_input_image_to_last_user_message() -> None:
     image = Image.from_pil(PILImage.new("RGB", (2, 2), color="blue"))
     client = _Client([_result("seen")])
@@ -162,6 +182,26 @@ async def test_autogen_tool_port_executes_kernel_request_through_workbench() -> 
     assert result == DesktopToolResult("clock-1", True, {"content": "12:00"})
     assert workbench.calls[0]["name"] == "clock"
     assert workbench.calls[0]["arguments"] == {"zone": "UTC"}
+
+
+@pytest.mark.asyncio
+async def test_web_search_tool_failure_preserves_actionable_error_code() -> None:
+    class FailedWorkbench(_Workbench):
+        async def call_tool(self, **kwargs):
+            self.calls.append(kwargs)
+            return _ToolResult(
+                "WebSearchRuntimeError: browser_unavailable: Install Microsoft Edge.",
+                is_error=True,
+            )
+
+    result = await AutogenDesktopToolPort(FailedWorkbench())({
+        "call_id": "search-1",
+        "name": "web_search",
+        "arguments": {"query": "HEPiX 2026"},
+    })
+
+    assert result.succeeded is False
+    assert result.error_code == "browser_unavailable"
 
 
 @pytest.mark.asyncio

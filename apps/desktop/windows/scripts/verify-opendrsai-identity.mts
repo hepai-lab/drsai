@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
 import {
-  LOCAL_OPENDRSAI_AGENT_ID,
+  LEGACY_MY_DRSAI_AGENT_ID,
   LOCAL_OPENDRSAI_AGENT_NAME,
   type DesktopThread,
 } from "../../shared/api/desktopApi";
 import { validateMyDrSaiConfigUpdate } from "../../shared/main/myDrSaiConfig";
 import { migrateLocalAgentDisplayName } from "../../shared/main/threads";
 
-assert.equal(LOCAL_OPENDRSAI_AGENT_ID, "my-drsai", "the persisted local agent ID must remain stable");
+assert.equal(LEGACY_MY_DRSAI_AGENT_ID, "my-drsai", "the legacy persisted ID must remain migratable");
 assert.equal(LOCAL_OPENDRSAI_AGENT_NAME, "OpenDrSai", "the product display name must be OpenDrSai");
 
 const legacy: DesktopThread = {
   id: "thread-identity-migration",
   kind: "chat",
   title: "Existing conversation",
-  boundAgentId: LOCAL_OPENDRSAI_AGENT_ID,
+  boundAgentId: LEGACY_MY_DRSAI_AGENT_ID,
   boundAgentName: "My DrSai",
   createdAt: "2026-08-01T00:00:00.000Z",
   updatedAt: "2026-08-01T00:00:00.000Z",

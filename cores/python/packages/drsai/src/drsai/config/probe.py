@@ -56,7 +56,9 @@ async def probe_provider_draft(
         "model_providers": {draft.name: values},
     })
     resolved = resolve_model_config(config, environ=os.environ if environ is None else environ)
-    result = await test_provider_connection(resolved, timeout=timeout, mode=mode)
+    # Draft probes must never mutate the verification state of the saved
+    # Provider, even when provider and model names happen to match.
+    result = await test_provider_connection(resolved, timeout=timeout, mode=mode, record_history=False)
     return {
         **result,
         "persisted": False,

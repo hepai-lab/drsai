@@ -44,7 +44,9 @@ def test_tool_choice_auto_for_stable_ordinary_request() -> None:
 
 def test_tool_choice_required_for_unverified_host_fact_but_auto_after_tool_result() -> None:
     requirement = build_tool_decision_requirement("HEPiX2026是什么", ["web.search", "workspace.read"])
-    assert build_tool_choice_policy(requirement, ["web.search", "workspace.read"])["mode"] == "required"
+    required = build_tool_choice_policy(requirement, ["web.search", "workspace.read"])
+    assert required["mode"] == "required"
+    assert required["matching_tools"] == ["web.search"]
     assert build_tool_choice_policy(requirement, ["web.search", "workspace.read"], prior_tool_use=True)["mode"] == "auto"
 
 

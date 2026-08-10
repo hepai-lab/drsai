@@ -4,10 +4,11 @@ import { dirname } from "path";
 import type { SaveApiKeyResult } from "../api/desktopApi";
 import { DRSAI_ENV_FILE } from "./paths";
 import { getGatewayRequestHeaders } from "./gateway";
+import { resolveGatewayPort } from "./gatewayEnvironment";
 
 const API_KEY_NAME = "HEPAI_API_KEY";
 const MAX_API_KEY_CHARS = 4096;
-const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
+const GATEWAY_BASE_URL = `http://127.0.0.1:${resolveGatewayPort()}`;
 
 export function saveApiKey(rawApiKey: unknown): SaveApiKeyResult {
   if (typeof rawApiKey !== "string") {
@@ -123,9 +124,4 @@ function putGatewayConfig(path: string, body: Record<string, unknown>): Promise<
     });
     req.end(payload);
   });
-}
-
-function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
-  return /^\d+$/.test(rawPort) ? rawPort : "18642";
 }

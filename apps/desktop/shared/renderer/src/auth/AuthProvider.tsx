@@ -82,7 +82,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
           setMessage("Developer workspace unlocked.");
           return;
         }
-        void retryBootstrap();
+        // Restoring identity must stay cheap. Runtime bootstrap is deferred
+        // until the user sends a task or explicitly requests recovery.
+        setServiceReady(false);
+        setServiceBlocker(null);
       }
     })();
     refreshPromiseRef.current = operation;
@@ -160,7 +163,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       session.authMode === "offline" ||
       serviceReady ||
       serviceBusy ||
-      (serviceBlocker && serviceBlocker.kind !== "service_unavailable")
+      !serviceBlocker ||
+      serviceBlocker.kind !== "service_unavailable"
     ) {
       return undefined;
     }
@@ -221,7 +225,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       if (result.ok && result.session) {
         setLoginFailed(false);
         setSession(result.session);
-        void retryBootstrap();
+        setServiceReady(false);
+        setServiceBlocker(null);
         return true;
       }
       const cancelled = /cancel/i.test(result.message);

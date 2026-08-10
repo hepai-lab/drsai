@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import type { DesktopVoiceInteractionMode } from "@shared/desktopApi";
 
 export const VOICE_PREFERENCES_STORAGE_KEY = "opendrsai.voicePreferences.v1";
-export const VOICE_PREFERENCES_SCHEMA_VERSION = 3;
+export const VOICE_PREFERENCES_SCHEMA_VERSION = 5;
 const VOICE_PREFERENCES_CHANGED_EVENT = "opendrsai:voice-preferences-changed";
 
 export interface VoicePreferences {
   autoReadResponses: boolean;
+  confirmBeforeSend: boolean;
   inputDeviceId: string;
   inputLanguage: "auto" | "zh-CN" | "en-US";
   interactionMode: DesktopVoiceInteractionMode;
@@ -19,6 +20,7 @@ export interface VoicePreferences {
 
 export const defaultVoicePreferences: VoicePreferences = {
   autoReadResponses: false,
+  confirmBeforeSend: true,
   inputDeviceId: "",
   inputLanguage: "auto",
   interactionMode: "serial",
@@ -56,6 +58,9 @@ export function loadVoicePreferences(): VoicePreferences {
       : 1;
     return {
       autoReadResponses: value.autoReadResponses === true,
+      confirmBeforeSend: typeof value.confirmBeforeSend === "boolean"
+        ? value.confirmBeforeSend
+        : defaultVoicePreferences.confirmBeforeSend,
       inputDeviceId: typeof value.inputDeviceId === "string" ? value.inputDeviceId : "",
       inputLanguage,
       interactionMode: value.interactionMode === "streaming" ? "streaming" : "serial",
@@ -74,10 +79,13 @@ function parseStoredVoicePreferences(value: unknown): Partial<VoicePreferences> 
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const stored = value as Record<string, unknown>;
   if ("version" in stored) {
-    if (stored.version !== VOICE_PREFERENCES_SCHEMA_VERSION && stored.version !== 2 && stored.version !== 1) return null;
-    return stored.preferences && typeof stored.preferences === "object" && !Array.isArray(stored.preferences)
-      ? stored.preferences as Partial<VoicePreferences>
-      : null;
+    const version = Number(stored.version);
+    if (![VOICE_PREFERENCES_SCHEMA_VERSION, 4, 3, 2, 1].includes(version)) return null;
+    if (!stored.preferences || typeof stored.preferences !== "object" || Array.isArray(stored.preferences)) return null;
+    const preferences = stored.preferences as Partial<VoicePreferences>;
+    return version < VOICE_PREFERENCES_SCHEMA_VERSION
+      ? { ...preferences, confirmBeforeSend: true }
+      : preferences;
   }
   return stored as Partial<VoicePreferences>;
 }

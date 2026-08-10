@@ -26,9 +26,8 @@ def build_desktop_start_envelope(
     agent: Mapping[str, Any] | None = None,
     context_budget: Mapping[str, Any] | None = None,
     memory_candidates: Sequence[Mapping[str, Any]] = (),
-    host_capabilities: Sequence[str] = ("chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts"),
+    host_port: Mapping[str, Any],
 ) -> RuntimeEnvelope:
-    capabilities = sorted(set(host_capabilities))
     return RuntimeEnvelope(
         MessageType.START_RUN,
         f"{run_id}:desktop:start",
@@ -46,16 +45,7 @@ def build_desktop_start_envelope(
             "agent": None if agent is None else dict(agent),
             "context_budget": None if context_budget is None else dict(context_budget),
             "memory_candidates": [dict(value) for value in memory_candidates],
-            "host_capabilities": capabilities,
-            "host_port": {
-                "schema_version": 1,
-                "protocol_version": "p9-host-port-v1",
-                "surface": "desktop",
-                "capabilities": [
-                    {"id": capability, "version": 1, "required": capability == "chat"}
-                    for capability in capabilities
-                ],
-            },
+            "host_port": dict(host_port),
         },
     )
 
@@ -83,7 +73,8 @@ class DesktopKernelRunStream:
             raise RuntimeError("desktop_kernel_terminal_event_missing")
         if state.terminal_kind == "run.failed":
             code = str(state.terminal_payload.get("code") or "kernel_run_failed")
-            raise RuntimeError(code)
+            message = str(state.terminal_payload.get("message") or "").strip()
+            raise RuntimeError(message or code)
         if state.final_text and not final_message_emitted:
             final = TextMessage(
                 content=state.final_text,

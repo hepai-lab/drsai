@@ -34,7 +34,9 @@ export interface VoiceTurnState {
   phase: VoiceTurnPhase;
   sttRequestId: string | null;
   ttsRequestId: string | null;
+  chatRequestId: string | null;
   sourceMessageId: string | null;
+  expectedResponseMessageId: string | null;
   responseMessageId: string | null;
   error: VoiceTurnError | null;
 }
@@ -44,9 +46,11 @@ export type VoiceTurnEvent =
   | { type: "permission_granted" }
   | { type: "recording_stopped" }
   | { type: "stt_started"; requestId: string }
-  | { type: "stt_completed"; requestId: string }
+  | { type: "stt_completed"; requestId: string; requiresReview?: boolean }
   | { type: "review_accepted" }
+  | { type: "transcript_inserted"; requestId: string }
   | { type: "submit_started"; messageId: string }
+  | { type: "submission_linked"; requestId: string; sourceMessageId: string; responseMessageId: string }
   | { type: "response_started" }
   | { type: "response_completed"; messageId: string }
   | { type: "tts_started"; requestId: string }
@@ -66,7 +70,9 @@ export const initialVoiceTurnState: VoiceTurnState = {
   phase: "idle",
   sttRequestId: null,
   ttsRequestId: null,
+  chatRequestId: null,
   sourceMessageId: null,
+  expectedResponseMessageId: null,
   responseMessageId: null,
   error: null,
 };
@@ -80,7 +86,7 @@ const TRANSITIONS: Readonly<Record<VoiceTurnPhase, readonly VoiceTurnPhase[]>> =
   requesting_permission: ["recording", "cancelling", "failed"],
   recording: ["preparing_audio", "cancelling", "failed"],
   preparing_audio: ["transcribing", "cancelling", "failed"],
-  transcribing: ["reviewing", "cancelling", "failed"],
+  transcribing: ["reviewing", "ready_to_send", "cancelling", "failed"],
   reviewing: ["ready_to_send", "transcribing", "cancelling", "failed"],
   ready_to_send: ["submitting", "cancelling", "failed"],
   submitting: ["awaiting_response", "cancelling", "failed"],
@@ -92,7 +98,7 @@ const TRANSITIONS: Readonly<Record<VoiceTurnPhase, readonly VoiceTurnPhase[]>> =
   paused: ["playing", "completed", "cancelling", "failed"],
   completed: ["idle", "requesting_permission"],
   cancelling: ["idle", "failed"],
-  failed: ["requesting_permission", "transcribing", "synthesizing", "idle"],
+  failed: ["requesting_permission", "transcribing", "ready_to_send", "synthesizing", "idle"],
 };
 
 export function canTransitionVoiceTurn(from: VoiceTurnPhase, to: VoiceTurnPhase): boolean {
@@ -118,16 +124,32 @@ export function reduceVoiceTurn(state: VoiceTurnState, event: VoiceTurnEvent): V
       return { ...state, phase: "transcribing", sttRequestId: event.requestId, error: null };
     }
     case "stt_completed":
-      return event.requestId === state.sttRequestId ? transition(state, "reviewing") : state;
+      return event.requestId === state.sttRequestId
+        ? transition(state, event.requiresReview ? "reviewing" : "ready_to_send")
+        : state;
     case "review_accepted":
       return transition(state, "ready_to_send");
+    case "transcript_inserted":
+      return event.requestId === state.sttRequestId && (state.phase === "reviewing" || state.phase === "ready_to_send")
+        ? initialVoiceTurnState
+        : state;
     case "submit_started": {
       if (!canTransitionVoiceTurn(state.phase, "submitting")) return state;
       return { ...state, phase: "submitting", sourceMessageId: event.messageId, error: null };
     }
+    case "submission_linked":
+      return state.phase === "submitting" || state.phase === "awaiting_response"
+        ? {
+            ...state,
+            chatRequestId: event.requestId,
+            sourceMessageId: event.sourceMessageId,
+            expectedResponseMessageId: event.responseMessageId,
+          }
+        : state;
     case "response_started":
       return transition(state, "awaiting_response");
     case "response_completed": {
+      if (state.expectedResponseMessageId && event.messageId !== state.expectedResponseMessageId) return state;
       if (!canTransitionVoiceTurn(state.phase, "response_ready")) return state;
       return { ...state, phase: "response_ready", responseMessageId: event.messageId, error: null };
     }
@@ -156,6 +178,8 @@ export function reduceVoiceTurn(state: VoiceTurnState, event: VoiceTurnEvent): V
       if (state.phase !== "failed" || !state.error?.retryable) return state;
       const retryPhase = state.error.stage === "transcribing"
         ? "transcribing"
+        : state.error.stage === "submitting"
+          ? "ready_to_send"
         : state.error.stage === "synthesizing"
           ? "synthesizing"
           : "requesting_permission";

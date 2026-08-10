@@ -2,7 +2,7 @@ import type { IpcMain } from "electron";
 import { abortAgentRun, recoverAgentRun, startAgentRun } from "../../../../shared/main/agentRuns";
 import { getA5ServiceGuidanceScenario } from "../../../../shared/main/a5ServiceGuidanceScenario";
 import { applyAnomalyDecision } from "../../../../shared/main/anomalyDecision";
-import { abortChat, recoverChatRun, respondChatInput, startChat } from "../../../../shared/main/chat";
+import { cancelChatTurn, recoverChatRun, respondChatInput, startChat } from "../../../../shared/main/chat";
 import { analyzeMaterialConsistency, analyzeMaterialRoles, queryMaterials } from "../../../../shared/main/workspaceContext";
 import type { MacosServiceContainer } from "../serviceContainer";
 
@@ -15,7 +15,7 @@ export function registerMacosExecutionIpc(ipcMain: Pick<IpcMain, "handle">, serv
   ipcMain.handle("desktop:abort-agent-run", (_event, requestId) => abortAgentRun(requestId));
   ipcMain.handle("desktop:recover-agent-run", (event, threadId) => recoverAgentRun(threadId, event.sender));
   ipcMain.handle("desktop:start-chat", (event, request) => { if (getA5ServiceGuidanceScenario()) throw new Error("A5 service guidance blocks chat until the service is available."); return startChat(event.sender, request); });
-  ipcMain.handle("desktop:abort-chat", (_event, requestId) => abortChat(requestId));
+  ipcMain.handle("desktop:cancel-chat-turn", (_event, request) => cancelChatTurn(request));
   ipcMain.handle("desktop:recover-chat-run", (event, request) => recoverChatRun(request, event.sender));
   ipcMain.handle("desktop:respond-chat-input", (_event, requestId, response) => respondChatInput(requestId, response));
 }

@@ -7,6 +7,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const packageVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const port = Number(process.env.OPENDRSAI_PACKAGED_SMOKE_PORT || "18645");
 const e2eTimeoutMs = Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "30000");
@@ -82,7 +83,7 @@ function writePackagedEvidence(result) {
   writeFileSync(resolve(evidencePath), JSON.stringify({
     schema_version: "opendrsai.windows.packaged-smoke-evidence/1",
     captured_at: new Date().toISOString(),
-    package: { version: "1.5.5", platform: "windows", arch: "x64" },
+    package: { version: packageVersion, platform: "windows", arch: "x64" },
     checks: result.checks,
     first_run: result.details?.firstRun,
     artifacts: {
@@ -102,7 +103,7 @@ function startFakeGateway() {
       res.end(JSON.stringify({
         runtime_id: "runtime-packaged-smoke",
         instance_id: "instance-packaged-smoke",
-        version: "1.5.5",
+        version: packageVersion,
         protocol_version: 1,
         platform: "windows",
         dev_managed: true,

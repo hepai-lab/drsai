@@ -355,6 +355,43 @@ class AndroidOaepStoreTest {
     }
 
     @Test
+    fun blank_model_failure_is_terminal_and_visible_in_event_diagnostics() = runBlocking {
+        database.dao().saveConversation(ConversationEntity(
+            "failure-session", "alice", "Failure", "local:opendrsai", modelId = "m", createdAt = 1, updatedAt = 2,
+        ))
+        val request = ChatRunRequest(
+            "alice", RuntimeAuthority.LOCAL_DEVICE, Conversation("failure-session", "Failure"), "Hello",
+            emptyList(), "failure-run", "failure-user", "failure-assistant",
+        )
+        val sink = RoomAndroidOaepRuntimeSink(
+            RoomAndroidOaepStore(database), clock = { "2026-08-08T00:00:00Z" },
+        )
+        suspend fun deliver(sequence: Long, kind: String, payload: JSONObject = JSONObject()) {
+            val envelope = PythonRuntimeEnvelope(
+                PythonRuntimeMessageType.RUNTIME_EVENT, "failure-$sequence", request.runId,
+                request.conversation.id, sequence, "failure-key-$sequence", payload.put("kind", kind),
+            )
+            sink.accept(request, envelope, PythonRuntimeEventMapper.decodeAll(envelope))
+        }
+
+        deliver(1, "run.started")
+        deliver(2, "run.failed", JSONObject()
+            .put("code", "_unknown_error").put("message", "").put("actionable", "").put("retryable", false))
+
+        val projection = LocalOaepLegacyProjection(database).uiProjection(
+            "alice", "", database.dao().conversationSnapshot("alice").single(),
+        )!!
+        assertEquals("failed", projection.runStatus)
+        assertEquals("_unknown_error", projection.errorMessage)
+        assertTrue(projection.diagnosticEvents.map { it.type }.containsAll(
+            listOf("event.run.created", "event.run.started", "event.run.failed"),
+        ))
+        assertEquals("event.run.failed", projection.diagnosticEvents.last().type)
+        assertEquals("_unknown_error", projection.diagnosticEvents.last().errorCode)
+        assertEquals("_unknown_error", projection.diagnosticEvents.last().errorMessage)
+    }
+
+    @Test
     fun journal_pages_without_gaps_and_expired_cursor_returns_authoritative_snapshot() = runBlocking {
         val store = RoomAndroidOaepStore(database)
         val writer = AndroidOaepWriter(scope, "2026-08-04T00:00:00Z")

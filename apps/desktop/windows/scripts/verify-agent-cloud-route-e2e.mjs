@@ -166,7 +166,9 @@ try {
     messages: [{ role: "user", content: "Cancel this cloud run." }],
   });
   await waitFor(() => cancelEvents.some((event) => event.type === "chunk"), 3000);
-  assert.equal(chat.abortChat(cancelRequestId), true);
+  const cancelStartedAt = performance.now();
+  assert.equal((await chat.cancelChatTurn({ requestId: cancelRequestId, sessionId: "thread-cloud-2" })).accepted, true);
+  assert(performance.now() - cancelStartedAt < 100, "queued cancellation acknowledgement must stay on the local control path");
   await waitFor(() => cancelEvents.some((event) => event.type === "aborted"), 3000);
   assert.equal(state.stopRequests, 0, "DDF cancellation must not call the unrelated Portal Native stop endpoint");
   assert(cancelEvents.some((event) => event.type === "aborted"));

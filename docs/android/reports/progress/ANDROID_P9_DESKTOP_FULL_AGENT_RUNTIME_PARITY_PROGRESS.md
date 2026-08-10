@@ -1616,3 +1616,56 @@ Real model calls issued: 0
 Strict acceptance: unchanged at 69/72 (95.83%)
 Next input: save Zhizengzeng + API Key + both enabled models in current OpenDrSai.Dev
 ```
+
+## 第107轮实施记录（未计分）
+
+### 真实模型验收恢复准备
+
+- ADB 短超时核查返回空设备列表，当前直接阻塞条件为 API 36 arm64 真机离线。
+- `accept_android_p9_real_model_statistics.py` 现复用 M09-F06 中 `deepseek-v4-flash` 的 90 次原始观测，同时生成 M04-F06 报告；不再重复发起额外 90 次付费模型请求。
+- 两份报告仍分别执行各自冻结评分门禁，并绑定同一 APK、测试 APK、fixture、Kernel/Prompt/Tool manifest 与物理设备身份。
+- runner 编译检查通过；真实模型统计与自然工具选择评分回归 9/9 通过。
+
+```text
+ADB devices: 0
+Duplicate paid model calls removed: 90
+Focused scoring regression: 9/9 passed
+Strict acceptance: unchanged at 69/72 (95.83%)
+Next external state: reconnect SM-X936C, then verify saved model metadata
+```
+
+## 第108轮实施记录（未计分）
+
+### 真实模型与最终发布门禁收口
+
+- 真机仍未出现在 ADB 列表中；真实模型调用保持为 0。
+- 抽取 `score_m04_observations` 并新增机器测试，证明 M04 精确复用 M09 的 90 条 flash 观测；缺失观测和未知 case 均 fail closed，聚焦回归 11/11 通过。
+- 新增 `accept_android_p9_final_go_no_go.py`，冻结 11 项最终门禁：72项账本、71项前置、干净构建、180次真实模型、90次复用、四API/双ABI、同一APK、安全/恢复/性能/迁移、生产 parity 和自然任务。
+- 新增 `build_android_p9_clean_candidate.py`；当前工作区预检正确拒绝 108 项变更，未把脏工作区伪装成干净候选。
+- 最终聚合预检为 NO-GO 5/11；缺失项精确为 M04/M09、干净候选及其 APK 绑定，和当前 69/72 状态一致。
+
+```text
+ADB devices: 0
+Real-model reuse/scoring regression: 11/11 passed
+Final Go/No-Go preflight: NO-GO, 5/11 gates passed
+Clean-build preflight: rejected dirty checkout (108 changes)
+Strict acceptance: unchanged at 69/72 (95.83%)
+```
+
+## 第112轮实施记录（未计分）
+
+### Android OAEP 事件诊断与错误正文对齐 Desktop
+
+- 对照 Windows 当前实现，Android 诊断侧栏现按权威 `event_id` 对当前 Run 的每条 OAEP Event 展示类型、序号、Run/Item、来源；失败 Event 同时展示稳定错误码和错误正文。
+- 修复 `run.failed` 中空 `message`/`actionable` 导致 `OaepJsonCodec` 再抛 `oaep_message_required` 的二次故障；现在以非空 `code`/默认码收口，终止事件能够持久化，Run 不再永久停在 `running`。
+- 修复模型 Host 捕获时丢弃 `ApiException` 正文、稳定码和 `retryable` 的问题；正文先脱敏再有界传入 `MODEL_FAILED`，由共享 Kernel 写入 `event.run.failed`。
+- API 35 x86_64 模拟器安装当前 62,292,237-byte Debug APK；干净 AVD 没有真机登录态或智增增加密凭据，因此没有把模拟器真实服务商 UI 调用伪报为通过。
+- 模拟器正式 Runtime instrumentation 已覆盖 `Hello` 文本闭环、工具/审批/Artifact/Skill/Subagent、多步自然任务、Desktop production behavior fixture，以及空错误正文的终止持久化和诊断投影。
+
+```text
+Focused Android JVM regression: 2 suites passed
+API 35 emulator Runtime/OAEP instrumentation: 4/4 passed
+Debug APK assemble/install: passed
+Real Zhizengzeng UI call on emulator: not run (clean AVD has no credential)
+Strict acceptance: unchanged at 69/72 (95.83%)
+```

@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from drsai.config.agent_model_policy import canonical_agent_name, current_agent_name
+
 
 _MAX_THREADS_BYTES = 8 * 1024 * 1024
 _MAX_SNAPSHOTS_BYTES = 64 * 1024 * 1024
@@ -42,8 +44,14 @@ def _agent_binding(bound_agent_id: Any) -> tuple[str | None, str | None]:
     """Map only built-in Desktop agents to immutable Runtime definitions."""
     if bound_agent_id == "my-codex":
         return "codex@1", "codex"
-    if bound_agent_id in {None, "", "my-drsai"}:
+    if bound_agent_id in {None, "", "my-drsai", current_agent_name()}:
         return "opendrsai@1", "opendrsai"
+    if isinstance(bound_agent_id, str):
+        try:
+            canonical_agent_name(bound_agent_id.removeprefix("agent:"))
+            return "opendrsai@1", "opendrsai"
+        except Exception:
+            pass
     return None, None
 
 

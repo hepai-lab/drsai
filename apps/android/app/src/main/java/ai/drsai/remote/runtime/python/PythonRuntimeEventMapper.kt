@@ -543,9 +543,11 @@ object PythonRuntimeEventMapper {
         (0 until length()).map { getString(it) }
 
     private fun error(payload: org.json.JSONObject, fallbackCode: String): OaepError = OaepError(
-        code = payload.optString("code", fallbackCode),
+        code = payload.optString("code").ifBlank { fallbackCode },
         message = payload.optString("actionable").ifBlank {
-            payload.optString("message", payload.optString("code", fallbackCode))
+            payload.optString("message").ifBlank {
+                payload.optString("code").ifBlank { fallbackCode }
+            }
         },
         retryable = payload.optBoolean("retryable", true),
     )

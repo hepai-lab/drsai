@@ -487,7 +487,8 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
       if (event.type === "done" || event.type === "error" || event.type === "aborted") resolveChatTerminal?.(event.type);
     });
     const startedChatId = await api.startChat({ requestId: chatRequestId, threadId: chatThreadId, sessionId: chatThreadId, runId: "packaged-chat-run-001", agentId: "my-drsai", workspacePath: workspace.path, messages: [{ role: "user", content: "Hold this packaged Chat until explicit cancellation." }] });
-    if (startedChatId !== chatRequestId || !(await api.abortChat(chatRequestId))) throw new Error("packaged Chat did not start and accept explicit cancellation");
+    const cancelled = await api.cancelChatTurn({ requestId: chatRequestId, sessionId: chatThreadId });
+    if (startedChatId !== chatRequestId || !cancelled.accepted) throw new Error("packaged Chat did not start and accept explicit cancellation");
     const chatTerminalType = await Promise.race([chatTerminal, new Promise<string>((_, reject) => setTimeout(() => reject(new Error("packaged Chat cancellation timed out")), 10_000))]);
     offChat();
     if (chatTerminalType !== "aborted" || !chatEvents.some((item) => item.type === "start") || chatEvents.some((item) => item.type === "done") || chatEvents.some((item, index) => index > 0 && Number(item.seq) <= Number(chatEvents[index - 1]?.seq))) throw new Error("packaged Chat event stream did not terminate once in monotonic aborted state");

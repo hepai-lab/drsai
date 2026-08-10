@@ -575,13 +575,7 @@ class DrSaiSQLiteChatCompletionContext(
         Args:
             new_model_client: The new ChatCompletionClient to use.
         """
-        # Close old internal client to release resources
-        if self._model_client is not new_model_client:
-            try:
-                await self._model_client.close()
-            except Exception as e:
-                logger.warning(f"Failed to close old context model_client: {e}")
-
+        # The context borrows the root agent's shared client.
         self._model_client = new_model_client
 
         # Recount tokens with the new model's tokenizer

@@ -17,7 +17,7 @@ environment:
       revision: 1
       documents:
         - path: ../../assets/knowledge_bases/opendrsai_runtime_overview_v1.md
-          sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
+          sha256: 45c54de9e509c6eceb3f50acd590ff2c2418be9c1f15e032328f0897f4d6b553
   tool_fixtures:
     knowledge_search:
       successful_result:
@@ -25,7 +25,7 @@ environment:
           - knowledge_base_id: regression.opendrsai-runtime
             knowledge_base_revision: 1
             document_path: opendrsai_runtime_overview_v1.md
-            sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
+            sha256: 45c54de9e509c6eceb3f50acd590ff2c2418be9c1f15e032328f0897f4d6b553
   session: {type: new, history: empty}
 expect:
   run: {status: completed}

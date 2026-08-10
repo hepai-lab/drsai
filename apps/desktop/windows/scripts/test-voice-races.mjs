@@ -73,7 +73,7 @@ for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
       start: async () => {
         for (const listener of [...listeners]) listener({ requestId, type: "accepted", runtimeId: "mock-local" });
         for (const listener of [...listeners]) listener({ requestId, type: "completed", result: {
-          audioData: new Uint8Array([82, 73, 70, 70]),
+          audioData: new Uint8Array(46),
           mimeType: "audio/wav",
           runtimeId: "mock-local",
           createdAt: new Date(0).toISOString(),

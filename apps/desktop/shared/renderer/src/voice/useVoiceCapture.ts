@@ -10,6 +10,7 @@ import { useVoiceLevelMeter } from "./useVoiceLevelMeter";
 export interface UseVoiceCaptureOptions {
   beforeStart: () => Promise<void>;
   deviceId: string;
+  onCaptureError?: (error: unknown, message: string) => void;
   onDeviceUnavailable?: () => void;
   onRecorded: (result: VoiceCaptureResult) => void;
 }
@@ -39,8 +40,9 @@ export function useVoiceCapture(options: UseVoiceCaptureOptions): VoiceCaptureHo
   meterRef.current = levelMeter;
   const controllerRef = useRef<VoiceCaptureController | null>(null);
 
-  if (!controllerRef.current && typeof navigator !== "undefined" && navigator.mediaDevices && typeof MediaRecorder !== "undefined") {
-    controllerRef.current = new VoiceCaptureController({
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices || typeof MediaRecorder === "undefined") return;
+    const controller = new VoiceCaptureController({
       clearInterval: (timer) => window.clearInterval(timer),
       createRecorder: (stream, mimeType) => mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream),
       getPreferredMimeType: getPreferredVoiceMimeType,
@@ -52,16 +54,23 @@ export function useVoiceCapture(options: UseVoiceCaptureOptions): VoiceCaptureHo
       onDeviceUnavailable: () => optionsRef.current.onDeviceUnavailable?.(),
       onDevices: setDevices,
       onElapsed: setElapsedSeconds,
-      onError: (captureError) => setError(captureError ? getVoicePermissionError(captureError) : null),
+      onError: (captureError) => {
+        const message = captureError ? getVoicePermissionError(captureError) : null;
+        setError(message);
+        if (captureError && message) optionsRef.current.onCaptureError?.(captureError, message);
+      },
       onLevelsReset: () => meterRef.current.reset(),
       onRecorded: (result) => optionsRef.current.onRecorded(result),
       onState: setState,
       onStreamStarted: (stream) => meterRef.current.start(stream),
       onStreamStopped: () => meterRef.current.stop(),
     });
-  }
-
-  useEffect(() => () => controllerRef.current?.dispose(), []);
+    controllerRef.current = controller;
+    return () => {
+      if (controllerRef.current === controller) controllerRef.current = null;
+      controller.dispose();
+    };
+  }, []);
 
   useEffect(() => {
     const mediaDevices = navigator.mediaDevices;
@@ -82,8 +91,10 @@ export function useVoiceCapture(options: UseVoiceCaptureOptions): VoiceCaptureHo
 
   const start = useCallback(async () => {
     if (!controllerRef.current) {
+      const unavailable = new Error("Voice recording is unavailable in this desktop runtime.");
       setState("failed");
-      setError("Voice recording is unavailable in this desktop runtime.");
+      setError(unavailable.message);
+      optionsRef.current.onCaptureError?.(unavailable, unavailable.message);
       return false;
     }
     return controllerRef.current.start(optionsRef.current.deviceId);

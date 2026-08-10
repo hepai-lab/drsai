@@ -124,6 +124,7 @@ const remoteWorkspace = readFileSync(resolve(root, "apps/desktop/windows/src/mai
 assert.match(app, /cancelThreadSnapshotHydration\(active\.requestId\)/);
 assert.match(preload, /desktop:cancel-thread-snapshot-hydration/);
 assert.match(windowsMain, /controller\.abort\(new DOMException\("Hydration cancelled\./);
+assert.match(windowsMain, /controller\.signal\.aborted && error instanceof Error && error\.name === "AbortError"\) return null/);
 assert.match(remoteWorkspace, /authGeneration: `\$\{host\.alias\}:\$\{host\.createdAt\}:\$\{host\.reconnectCount\}:\$\{host\.instanceTracker\.generation\}`/);
 
 console.log(JSON.stringify({ passed: true, handshakes, authoritativeIdentity: first.streamIdentity,

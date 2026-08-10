@@ -115,7 +115,7 @@ export function useSystemVoicePlayback(): SystemVoicePlayback {
     if (!text) {
       controllerRef.current?.stop();
       setSnapshot({
-        activeMessageId: null,
+        activeMessageId: messageId,
         error: language === "zh" ? "这条回复没有可朗读的文本。" : "This response has no readable text.",
         phase: "failed",
       });
@@ -124,7 +124,7 @@ export function useSystemVoicePlayback(): SystemVoicePlayback {
     const controller = controllerRef.current;
     if (!controller) {
       setSnapshot({
-        activeMessageId: null,
+        activeMessageId: messageId,
         error: language === "zh" ? "朗读引擎尚未就绪，请稍后再试。" : "Speech playback is not ready yet. Try again.",
         phase: "failed",
       });

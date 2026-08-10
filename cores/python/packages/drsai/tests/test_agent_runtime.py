@@ -14,7 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from drsai.config import ConfigUpdateRequest, commit_update, load_config_snapshot
+from drsai.config import load_config_snapshot
 
 
 ROOT = Path(__file__).resolve().parents[1] / "src" / "drsai" / "backend"
@@ -229,10 +229,10 @@ class AgentRuntimeTests(unittest.TestCase):
         )))
         first_thread.start()
         self.assertTrue(entered.wait(5), "first Run did not enter the backend")
-        committed = commit_update(
-            ConfigUpdateRequest(model="model-b", model_provider="hepai"), path=config_path,
-            environ={}, expected_revision=first_snapshot.revision,
-        )
+        # This legacy fixture validates immutable Run evidence, not the removed
+        # global model-selection write API. Simulate the next configuration
+        # revision directly; production model edits now go through Agent policy.
+        config_path.write_text('model = "model-b"\nmodel_provider = "hepai"\n', encoding="utf-8")
         second_snapshot = load_config_snapshot(path=config_path)
         release.set(); first_thread.join(5)
         self.assertFalse(first_thread.is_alive())
@@ -243,7 +243,7 @@ class AgentRuntimeTests(unittest.TestCase):
             model_evidence={"model": {"id": second_snapshot.config.model, "provider": "hepai", "revision_digest": second_snapshot.revision}},
         ))
         self.assertEqual(observed, ["model-a", "model-b"])
-        self.assertEqual(second_snapshot.revision, committed.revision)
+        self.assertNotEqual(second_snapshot.revision, first_snapshot.revision)
         first_manifest = self.engine.get_run_manifest(first["run_id"], safe=False)["manifest"]["model"]
         second_manifest = self.engine.get_run_manifest(second["run_id"], safe=False)["manifest"]["model"]
         self.assertEqual((first_manifest["id"], first_manifest["revision_digest"]), ("model-a", first_snapshot.revision))

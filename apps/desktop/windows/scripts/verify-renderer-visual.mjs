@@ -1605,7 +1605,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
     setTimeout(() => emit(chatListeners, { requestId, seq: 6, type: "done" }), 1900);
     return requestId;
   },
-  abortChat: async () => true,
+  cancelChatTurn: async () => ({ accepted: true, state: "cancelling" }),
   listSessionRuns: async () => ({ schema_version: "opendrsai.run-inspection/1", object: "list", data: [], next_cursor: null, has_more: false }),
   getRunInspection: async (request) => {
     const pageIndex = Number(request.timelineCursor || 0);

@@ -7,7 +7,7 @@ import type {
   DesktopThreadSnapshotRequest,
   DesktopThreadSnapshotPatchEvent,
 } from "../api/desktopApi";
-import { connectRuntimeClientForWorkspace, type OaepEvent } from "./runtimeClient";
+import { connectRuntimeClientForWorkspaceIfAvailable, type OaepEvent } from "./runtimeClient";
 import { selectRuntimeConversationProtocol } from "./runtimeProtocolSelection";
 import { projectOaepThreadSnapshot, projectRuntimeThreadSnapshot } from "./threadRuntimeProjection";
 import {
@@ -187,11 +187,13 @@ export { projectRuntimeThreadSnapshot } from "./threadRuntimeProjection";
 
 async function runtimeForThread(thread: DesktopThread) {
   if (!thread.runtimeSessionId || !thread.workspacePath) return null;
+  const resolved = await connectRuntimeClientForWorkspaceIfAvailable(
+    thread.workspacePath,
+    thread.execution?.workspaceId,
+  );
+  if (!resolved) return null;
   return {
-    resolved: await connectRuntimeClientForWorkspace(
-      thread.workspacePath,
-      thread.execution?.workspaceId,
-    ),
+    resolved,
     runtimeSessionId: thread.runtimeSessionId,
   };
 }

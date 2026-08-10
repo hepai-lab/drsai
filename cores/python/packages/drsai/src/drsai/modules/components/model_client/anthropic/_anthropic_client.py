@@ -67,7 +67,7 @@ from autogen_ext.models.anthropic._anthropic_client import (
     normalize_stop_reason,
     _add_usage
     )
-from drsai.platform_auth import get_model_credential_provider, static_model_credentials_allowed
+from drsai.platform_auth import OidcModelCredentialProvider, get_model_credential_provider, static_model_credentials_allowed
 
 class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
 
@@ -75,6 +75,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
 
     def __init__(self, **kwargs: Any):
         self._oidc_credential_pending = False
+        self._uses_platform_auth = False
         if not static_model_credentials_allowed():
             kwargs["api_key"] = None
         credential = get_model_credential_provider(
@@ -84,12 +85,16 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         if credential:
             kwargs["api_key"] = credential.access_token
             kwargs["base_url"] = credential.anthropic_base_url
+            self._uses_platform_auth = isinstance(credential, OidcModelCredentialProvider)
         elif not kwargs.get("api_key"):
             kwargs["api_key"] = "opendrsai-oidc-pending"
             self._oidc_credential_pending = True
+            self._uses_platform_auth = True
         super().__init__(**kwargs)
 
     def _bind_platform_auth(self) -> None:
+        if not getattr(self, "_uses_platform_auth", True) and not getattr(self, "_oidc_credential_pending", False):
+            return
         credential = get_model_credential_provider()
         if not credential:
             if getattr(self, "_oidc_credential_pending", False):

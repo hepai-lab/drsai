@@ -84,7 +84,7 @@ WORKDIR /app
 RUN mkdir -p workspace/dataset workspace/runs
 
 # 设置环境变量
-ENV SYSTEM_SKILLS_DIR=/app/agent_skills/skills
+ENV SYSTEM_SKILLS_DIR=/app/skills/skills
 
 # 暴露端口（根据 run_drsai_agent.py 中的配置，加上 code-server 的 8080 端口）
 EXPOSE 22 42858 8086 8080

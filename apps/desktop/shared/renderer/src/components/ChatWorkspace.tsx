@@ -92,6 +92,7 @@ import {
   type ChatRuntimeMode,
 } from "../chatCommands";
 import { ChatMessageContent } from "./ChatMessageContent";
+import { ThreadActivityBubble } from "./ThreadActivityBubble";
 import { StructuredMessageParts, type InteractionResponse } from "./StructuredMessageParts";
 import { getReasoningChatText, getVisibleChatText } from "../chatOutputModel";
 import { VoiceCaptureBar } from "./voice/VoiceCaptureBar";
@@ -137,6 +138,7 @@ export type UiMessage = ChatMessage & {
   toolTimeline?: ChatToolTimelineEvent[];
   parts?: ChatMessagePart[];
   structuredTurn?: StructuredTurnState;
+  queuedAt?: number;
   startedAt?: number;
   lastEventAt?: number;
   firstFeedbackAt?: number;
@@ -162,6 +164,20 @@ async function recordVoiceDiagnostic(input: Omit<DiagnosticEventInput, "module">
   } catch {
     // Diagnostics must never interrupt voice interaction.
   }
+}
+
+function voiceDiagnosticStack(error: unknown): NonNullable<DiagnosticEventInput["stack"]> {
+  const value = error instanceof Error ? error : new Error(String(error));
+  return (value.stack || `${value.name}: ${value.message}`).split(/\r?\n/).slice(0, 50).map((raw) => ({
+    raw,
+    language: "javascript" as const,
+  }));
+}
+
+function voiceCaptureErrorCode(error: unknown): string {
+  if (error instanceof DOMException && error.name) return `capture_${error.name.toLowerCase()}`;
+  if (error instanceof Error && error.name && error.name !== "Error") return `capture_${error.name.toLowerCase()}`;
+  return "capture_error";
 }
 
 type ComposerAttachment = ChatAttachment & {
@@ -211,6 +227,11 @@ export interface ChatSubmitOptions {
   runtimeMode?: ChatRuntimeMode | null;
   skillName?: string | null;
   thinkingEffort?: ThinkingEffort;
+  onStarted?: (submission: {
+    assistantMessageId: string;
+    requestId: string;
+    userMessageId: string;
+  }) => void;
 }
 
 interface GoalConfirmationDraft {
@@ -241,6 +262,7 @@ function splitGoalConfirmationList(value: string): string[] {
 
 interface ChatWorkspaceProps {
   activeRequestId: string | null;
+  cancellingRequestId?: string | null;
   canChat: boolean;
   chatUnavailableReason?: string;
   conversationId: string;
@@ -281,7 +303,7 @@ interface ChatWorkspaceProps {
   onSelectWorkspace?: (workspaceId: string) => void;
   onSelectModel?: (model: string, providerId?: string) => void;
   onOpenExternal: (url: string) => void;
-  onOpenDebug?: () => void;
+  onOpenDebug?: (runId?: string, view?: "activity" | "app-errors") => void;
   onOpenRun?: (runId: string, itemId?: string) => void;
   onCreateRunExperiment?: (runId: string, itemId?: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
@@ -306,6 +328,7 @@ interface ChatWorkspaceProps {
 
 function ChatWorkspaceImpl({
   activeRequestId,
+  cancellingRequestId = null,
   canChat,
   chatUnavailableReason,
   conversationId,
@@ -369,7 +392,10 @@ function ChatWorkspaceImpl({
     if (!workspacePath || typeof desktopApi.getRunReproductionManifest !== "function") return;
     const runIds = [...new Set(messages
       .map((message) => message.runtimeRunId)
-      .filter((runId): runId is string => Boolean(runId)))]
+      // RuntimeEngine owns the `run-` namespace. Request IDs and platform-run
+      // IDs may also travel through ChatEvent.runId, but they have no Runtime
+      // manifest and must never be sent to a run-scoped Runtime endpoint.
+      .filter((runId): runId is string => Boolean(runId?.startsWith("run-"))))]
       .slice(-50);
     if (!runIds.length) return;
     let active = true;
@@ -429,6 +455,7 @@ function ChatWorkspaceImpl({
   const [voiceConsentRequired, setVoiceConsentRequired] = useState(false);
   const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
   const [voiceTurnState, dispatchVoiceTurnBase] = useReducer(reduceVoiceTurn, initialVoiceTurnState);
+  const voiceRecordingProcessTimerRef = useRef<number | null>(null);
   const voiceTurnStateRef = useRef(voiceTurnState);
   voiceTurnStateRef.current = voiceTurnState;
   const dispatchVoiceTurn = useCallback((event: VoiceTurnEvent): void => {
@@ -482,30 +509,21 @@ function ChatWorkspaceImpl({
     beforeStart: async () => {
       voicePlayback.stop();
       setVoiceConsentRequired(false);
-      if (hasDesktopApi() && typeof desktopApi.getVoiceRuntimeStatus === "function") {
-        const [runtime, streamingCapabilities] = await Promise.all([
-          desktopApi.getVoiceRuntimeStatus(),
-          desktopApi.getStreamingVoiceCapabilities().catch(() => null),
-        ]);
-        setVoiceRuntimeStatus(runtime);
-        setStreamingVoiceCapabilities(streamingCapabilities);
-        setVoiceRuntimeDisclosure(runtime.providerDisclosure);
-        if (runtime.state !== "ready") throw new Error(runtime.message);
-        if (runtime.runtimeId === "gateway-provider" && !voicePreferences.remoteSttConsent) {
-          setVoiceConsentRequired(true);
-          throw new Error(zh
-            ? "使用在线语音识别前，需要允许将录音发送给当前语音服务提供方。"
-            : "Allow sending recordings to the configured speech provider before using online transcription.");
-        }
-      }
     },
     deviceId: voiceDeviceId,
+    onCaptureError: (error, message) => {
+      reportVoiceCaptureFailure(error, message, "capture_initialization");
+    },
     onDeviceUnavailable: () => {
       updateVoicePreferences({ inputDeviceId: "" });
       setVoiceError("The selected microphone is no longer available. The default microphone will be used.");
     },
     onRecorded: ({ blob, durationSeconds }) => {
-      void processVoiceRecording(blob, durationSeconds);
+      if (voiceRecordingProcessTimerRef.current !== null) window.clearTimeout(voiceRecordingProcessTimerRef.current);
+      voiceRecordingProcessTimerRef.current = window.setTimeout(() => {
+        voiceRecordingProcessTimerRef.current = null;
+        void processVoiceRecording(blob, durationSeconds);
+      }, 0);
     },
   });
   const streamingVoiceInput = useStreamingVoiceInput({
@@ -701,8 +719,8 @@ function ChatWorkspaceImpl({
   }, [conversationId]);
 
   useEffect(() => {
-    if (selectedAgentId !== "my-drsai") setTaskInteractionMode("normal");
-  }, [selectedAgentId]);
+    if (!agentOptions.some((agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex")) setTaskInteractionMode("normal");
+  }, [agentOptions, selectedAgentId]);
 
   async function respondToAgentInput(
     request: NonNullable<UiMessage["inputRequest"]>,
@@ -745,10 +763,11 @@ function ChatWorkspaceImpl({
   const voiceRetryBlobRef = useRef<Blob | null>(null);
   const voiceRetryDurationRef = useRef(0);
   const voiceSelectionRef = useRef<{ start: number; end: number } | null>(null);
-  const voiceCaptureDiagnosticRef = useRef<{ startedAt: number; traceId: string } | null>(null);
+  const voiceCaptureDiagnosticRef = useRef<{ failureRecorded: boolean; startedAt: number; traceId: string } | null>(null);
   const voicePlaybackDiagnosticRef = useRef<{ messageId: string; startedAt: number; traceId: string } | null>(null);
   const voiceResponseBaselineRef = useRef<Set<string>>(new Set());
   const voiceTtsRequestIdRef = useRef<string | null>(null);
+  const voiceAutoSubmitRequestRef = useRef<string | null>(null);
   const autoReadInitializedRef = useRef(false);
   const lastAutoReadMessageIdRef = useRef<string | null>(null);
   const zh = language === "zh";
@@ -798,6 +817,9 @@ function ChatWorkspaceImpl({
     ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
     : "";
   const activeAgentName = selectedAgentName?.trim() || "OpenDrSai";
+  const isLocalOpenDrSaiAgent = agentOptions.some(
+    (agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex",
+  );
   const workspaceLocationLabel =
     workspaceLocation === "remote"
       ? zh
@@ -819,11 +841,11 @@ function ChatWorkspaceImpl({
     [modelOptions, selectedModelName, selectedModelProviderId],
   );
   const supportedThinkingEfforts = useMemo<ThinkingEffort[]>(() => {
-    if (selectedAgentId !== "my-drsai") return THINKING_EFFORTS;
+    if (!isLocalOpenDrSaiAgent) return THINKING_EFFORTS;
     if (!activeModelConfig?.operations?.includes("reasoning")) return [];
     const configured = activeModelConfig.reasoning_efforts ?? [];
     return THINKING_EFFORTS.filter((effort) => configured.includes(effort));
-  }, [activeModelConfig, selectedAgentId]);
+  }, [activeModelConfig, isLocalOpenDrSaiAgent]);
   useEffect(() => {
     if (supportedThinkingEfforts.length > 0 && !supportedThinkingEfforts.includes(thinkingEffort)) {
       setThinkingEffort(supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0]);
@@ -933,10 +955,9 @@ function ChatWorkspaceImpl({
     "MediaRecorder" in window;
   const showVoiceCaptureBar =
     voiceState === "requesting_permission" ||
-    voiceState === "recording" ||
-    voiceState === "processing";
+    voiceState === "recording";
   const showStreamingVoiceCaptureBar = ["starting", "streaming", "stopping", "cancelling"].includes(streamingVoiceInput.phase);
-  const showAnyVoiceCaptureBar = showVoiceCaptureBar || showStreamingVoiceCaptureBar;
+  const showAnyVoiceCaptureBar = showVoiceCaptureBar || voiceState === "processing" || showStreamingVoiceCaptureBar;
   const displayedVoicePhase = voicePreferences.interactionMode === "streaming"
     ? streamingVoiceInput.phase
     : voiceTurnState.phase;
@@ -958,6 +979,11 @@ function ChatWorkspaceImpl({
     setVoiceConsentRequired(false);
     voiceRetryBlobRef.current = null;
     voiceRetryDurationRef.current = 0;
+    voiceAutoSubmitRequestRef.current = null;
+    if (voiceRecordingProcessTimerRef.current !== null) {
+      window.clearTimeout(voiceRecordingProcessTimerRef.current);
+      voiceRecordingProcessTimerRef.current = null;
+    }
     autoReadInitializedRef.current = !conversationHistoryPending;
     lastAutoReadMessageIdRef.current = conversationHistoryPending ? null : latestCompletedAssistantMessage?.id ?? null;
     dispatchVoiceTurn({ type: "cancel" });
@@ -990,7 +1016,7 @@ function ChatWorkspaceImpl({
   useEffect(() => {
     if (voiceState === "recording" && !voiceCaptureDiagnosticRef.current) {
       const traceId = crypto.randomUUID();
-      voiceCaptureDiagnosticRef.current = { startedAt: Date.now(), traceId };
+      voiceCaptureDiagnosticRef.current = { failureRecorded: false, startedAt: Date.now(), traceId };
       void recordVoiceDiagnostic({
         traceId,
         component: "capture",
@@ -1004,16 +1030,21 @@ function ChatWorkspaceImpl({
     const active = voiceCaptureDiagnosticRef.current;
     if (!active || voiceState === "recording" || voiceState === "requesting_permission") return;
     voiceCaptureDiagnosticRef.current = null;
+    if (voiceState === "failed" && active.failureRecorded) return;
     void recordVoiceDiagnostic({
       traceId: active.traceId,
       component: "capture",
       operation: "voice.capture",
-      message: voiceState === "failed" ? "Voice capture failed" : "Voice capture completed",
+      message: voiceState === "failed" ? (voiceError || "Voice capture failed") : "Voice capture completed",
+      domain: "app",
+      kind: voiceState === "failed" ? "error" : "operation",
+      level: voiceState === "failed" ? "error" : "info",
       status: voiceState === "failed" ? "failed" : "completed",
       errorCode: voiceState === "failed" ? "capture_error" : undefined,
       durationMs: Date.now() - active.startedAt,
     });
-  }, [voiceDeviceId, voiceState]);
+    if (voiceState === "failed") onOpenDebug?.(undefined, "app-errors");
+  }, [onOpenDebug, voiceDeviceId, voiceError, voiceState]);
 
   useEffect(() => {
     const activeMessageId = voicePlayback.activeMessageId;
@@ -1086,16 +1117,27 @@ function ChatWorkspaceImpl({
       message.role === "assistant"
       && !message.streaming
       && !message.error
+      && (!voiceTurnState.expectedResponseMessageId || message.id === voiceTurnState.expectedResponseMessageId)
       && !voiceResponseBaselineRef.current.has(message.id)
       && Boolean(getAssistantDisplayContent(message)));
     if (response) dispatchVoiceTurn({ type: "response_completed", messageId: response.id });
-  }, [messages, voiceTurnState.phase]);
+  }, [messages, voiceTurnState.expectedResponseMessageId, voiceTurnState.phase]);
+
+  useEffect(() => {
+    if (voiceTurnState.phase !== "ready_to_send") return;
+    if (!voiceTurnState.sttRequestId || voiceAutoSubmitRequestRef.current !== voiceTurnState.sttRequestId) return;
+    const timer = window.setTimeout(() => {
+      voiceAutoSubmitRequestRef.current = null;
+      void submitWithAttachments();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [input, voiceTurnState.phase, voiceTurnState.sttRequestId]);
 
   useEffect(() => {
     const phase = voiceTurnState.phase;
     if (phase === "response_ready" && !voicePreferences.autoReadResponses) {
-      dispatchVoiceTurn({ type: "finish" });
-      return;
+      const timer = window.setTimeout(() => dispatchVoiceTurn({ type: "finish" }), 0);
+      return () => window.clearTimeout(timer);
     }
     const isOwnedPlayback = Boolean(
       voiceTurnState.responseMessageId
@@ -1136,6 +1178,7 @@ function ChatWorkspaceImpl({
         },
       });
     }
+    return undefined;
   }, [
     voicePlayback.activeMessageId,
     voicePlayback.error,
@@ -1546,11 +1589,19 @@ function ChatWorkspaceImpl({
           forkQueueAgentSelections,
           agentOptions,
         ),
-        goalConfirmationRequired: selectedAgentId === "my-drsai" && taskInteractionMode === "confirm_goal",
+        goalConfirmationRequired: isLocalOpenDrSaiAgent && taskInteractionMode === "confirm_goal",
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
         skillName: selectedSkillName,
-        thinkingEffort: selectedAgentId !== "my-drsai" || thinkingEffortSupported ? thinkingEffort : undefined,
+        thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
+        onStarted: isVoiceSubmission
+          ? ({ assistantMessageId, requestId, userMessageId }) => dispatchVoiceTurn({
+              type: "submission_linked",
+              requestId,
+              sourceMessageId: userMessageId,
+              responseMessageId: assistantMessageId,
+            })
+          : undefined,
       },
     );
     if (submitted) {
@@ -1565,16 +1616,28 @@ function ChatWorkspaceImpl({
         setStreamingVoiceResponseArmed(true);
       }
     } else if (isVoiceSubmission) {
+      const message = zh ? "语音消息发送失败，转写文本和附件已保留。" : "The voice message could not be sent. The transcript and attachments were preserved.";
       dispatchVoiceTurn({
         type: "fail",
         error: {
           stage: "submitting",
           code: "chat_error",
-          message: zh ? "语音消息发送失败，请重试。" : "The voice message could not be sent. Try again.",
+          message,
           retryable: true,
         },
       });
+      setVoiceState("failed");
+      setVoiceError(message);
     }
+  }
+
+  function retryVoiceChatSubmission(): void {
+    const requestId = voiceTurnState.sttRequestId;
+    if (voiceTurnState.phase !== "failed" || voiceTurnState.error?.stage !== "submitting" || !requestId) return;
+    voiceAutoSubmitRequestRef.current = requestId;
+    setVoiceState("idle");
+    setVoiceError(null);
+    dispatchVoiceTurn({ type: "retry" });
   }
 
   function clearInput(): void {
@@ -1583,6 +1646,23 @@ function ChatWorkspaceImpl({
   }
 
   async function toggleVoiceRecording(): Promise<void> {
+    void recordVoiceDiagnostic({
+      traceId: voiceCaptureDiagnosticRef.current?.traceId ?? crypto.randomUUID(),
+      component: "composer",
+      operation: "voice.button.click",
+      message: "Voice input button clicked",
+      domain: "app",
+      kind: "log",
+      level: "info",
+      status: "completed",
+      visibility: "detail",
+      attributes: {
+        interactionMode: voicePreferences.interactionMode,
+        serialCaptureState: voiceState,
+        streamingCapturePhase: streamingVoiceInput.phase,
+        voiceApiAvailable,
+      },
+    });
     if (voicePreferences.interactionMode === "streaming") {
       if (streamingVoiceInput.phase === "streaming") {
         await streamingVoiceInput.stop();
@@ -1615,9 +1695,29 @@ function ChatWorkspaceImpl({
   }
 
   async function startVoiceRecording(): Promise<void> {
+    const traceId = crypto.randomUUID();
+    voiceCaptureDiagnosticRef.current = { failureRecorded: false, startedAt: Date.now(), traceId };
+    void recordVoiceDiagnostic({
+      traceId,
+      component: "capture",
+      operation: "voice.capture",
+      message: "Voice capture requested",
+      domain: "app",
+      kind: "operation",
+      level: "info",
+      status: "started",
+      visibility: "milestone",
+      attributes: {
+        mediaDevicesAvailable: Boolean(navigator.mediaDevices?.getUserMedia),
+        mediaRecorderAvailable: typeof MediaRecorder !== "undefined",
+        selectedDevice: Boolean(voiceDeviceId),
+      },
+    });
     if (!voiceApiAvailable) {
+      const error = new Error("Voice recording is unavailable in this desktop runtime.");
       setVoiceState("failed");
-      setVoiceError("Voice recording is unavailable in this desktop runtime.");
+      setVoiceError(error.message);
+      reportVoiceCaptureFailure(error, error.message, "runtime_api_check");
       return;
     }
     dispatchVoiceTurn({ type: "begin_capture", turnId: createVoiceTurnId() });
@@ -1628,6 +1728,17 @@ function ChatWorkspaceImpl({
     if (started) {
       dispatchVoiceTurn({ type: "permission_granted" });
     } else {
+      const active = voiceCaptureDiagnosticRef.current;
+      if (active && !active.failureRecorded) {
+        const message = voiceError || "Microphone capture could not be started.";
+        setVoiceState("failed");
+        setVoiceError(message);
+        reportVoiceCaptureFailure(
+          new Error(message),
+          message,
+          "capture_start",
+        );
+      }
       dispatchVoiceTurn({
         type: "fail",
         error: {
@@ -1638,6 +1749,38 @@ function ChatWorkspaceImpl({
         },
       });
     }
+  }
+
+  function reportVoiceCaptureFailure(error: unknown, message: string, stage: string): void {
+    const active = voiceCaptureDiagnosticRef.current ?? {
+      failureRecorded: false,
+      startedAt: Date.now(),
+      traceId: crypto.randomUUID(),
+    };
+    active.failureRecorded = true;
+    voiceCaptureDiagnosticRef.current = active;
+    void recordVoiceDiagnostic({
+      traceId: active.traceId,
+      component: "capture",
+      operation: "voice.capture",
+      message,
+      domain: "app",
+      kind: "error",
+      level: "error",
+      status: "failed",
+      visibility: "milestone",
+      errorCode: voiceCaptureErrorCode(error),
+      durationMs: Date.now() - active.startedAt,
+      stack: voiceDiagnosticStack(error),
+      attributes: {
+        stage,
+        errorName: error instanceof Error ? error.name : typeof error,
+        mediaDevicesAvailable: Boolean(navigator.mediaDevices?.getUserMedia),
+        mediaRecorderAvailable: typeof MediaRecorder !== "undefined",
+        selectedDevice: Boolean(voiceDeviceId),
+      },
+    });
+    onOpenDebug?.(undefined, "app-errors");
   }
 
   function stopVoiceRecording(mode: "transcribe" | "discard"): void {
@@ -1652,23 +1795,18 @@ function ChatWorkspaceImpl({
 
   async function processVoiceRecording(blob: Blob, durationSeconds: number): Promise<void> {
     const requestId = `voice-stt-${crypto.randomUUID()}`;
-    dispatchVoiceTurn({ type: "stt_started", requestId });
     setVoiceState("processing");
     setVoiceProgressMessage("Preparing audio...");
     voiceRetryBlobRef.current = blob;
     voiceRetryDurationRef.current = durationSeconds;
+    if (!await prepareSerialVoiceTranscription()) return;
+    dispatchVoiceTurn({ type: "stt_started", requestId });
     try {
       const result = await transcribeVoiceRecordingAsync(
         blob,
         durationSeconds,
       );
-      setVoiceReviewSource("serial");
-      setVoiceReviewText(result.transcript);
-      dispatchVoiceTurn({ type: "stt_completed", requestId });
-      setVoiceRuntimeDisclosure(result.providerDisclosure);
-      setVoiceState("idle");
-      setVoiceError(null);
-      setVoiceElapsedSeconds(0);
+      completeSerialVoiceTranscription(result, requestId);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         dispatchVoiceTurn({ type: "cancel" });
@@ -1676,17 +1814,19 @@ function ChatWorkspaceImpl({
         setVoiceState("idle");
         setVoiceError(null);
       } else {
+        const message = error instanceof Error ? error.message : "Voice transcription failed.";
         dispatchVoiceTurn({
           type: "fail",
           error: {
             stage: "transcribing",
             code: "provider_error",
-            message: error instanceof Error ? error.message : "Voice transcription failed.",
+            message,
             retryable: true,
           },
         });
         setVoiceState("failed");
-        setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
+        setVoiceError(message);
+        reportVoiceTranscriptionFailure(error, message, "transcribing", "transcription_error");
       }
     }
   }
@@ -1735,22 +1875,19 @@ function ChatWorkspaceImpl({
     cancelVoiceTranscriptionTask();
   }
 
-  async function retryVoiceTranscription(): Promise<void> {
+  async function retryVoiceTranscription(skipRemoteConsent = false): Promise<void> {
     const blob = voiceRetryBlobRef.current;
     if (!blob) return;
     setVoiceError(null);
     setVoiceProgressMessage("Preparing audio...");
     setVoiceReviewText(null);
     setVoiceState("processing");
+    if (!await prepareSerialVoiceTranscription(skipRemoteConsent)) return;
     const requestId = `voice-stt-${crypto.randomUUID()}`;
     dispatchVoiceTurn({ type: "stt_started", requestId });
     try {
       const result = await transcribeVoiceRecordingAsync(blob, voiceRetryDurationRef.current);
-      setVoiceReviewSource("serial");
-      setVoiceReviewText(result.transcript);
-      dispatchVoiceTurn({ type: "stt_completed", requestId });
-      setVoiceRuntimeDisclosure(result.providerDisclosure);
-      setVoiceState("idle");
+      completeSerialVoiceTranscription(result, requestId);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         dispatchVoiceTurn({ type: "cancel" });
@@ -1758,19 +1895,126 @@ function ChatWorkspaceImpl({
         setVoiceState("idle");
         setVoiceError(null);
       } else {
+        const message = error instanceof Error ? error.message : "Voice transcription failed.";
         dispatchVoiceTurn({
           type: "fail",
           error: {
             stage: "transcribing",
             code: "provider_error",
-            message: error instanceof Error ? error.message : "Voice transcription failed.",
+            message,
             retryable: true,
           },
         });
         setVoiceState("failed");
-        setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
+        setVoiceError(message);
+        reportVoiceTranscriptionFailure(error, message, "transcribing", "transcription_error");
       }
     }
+  }
+
+  async function prepareSerialVoiceTranscription(skipRemoteConsent = false): Promise<boolean> {
+    if (!hasDesktopApi() || typeof desktopApi.getVoiceRuntimeStatus !== "function") return true;
+    try {
+      const runtime = await desktopApi.getVoiceRuntimeStatus();
+      setVoiceRuntimeStatus(runtime);
+      setVoiceRuntimeDisclosure(runtime.providerDisclosure);
+      setVoiceRuntimeLabel(runtime.runtimeId === "gateway-provider" ? "Online STT" : "Fixture STT");
+      if (runtime.runtimeId === "gateway-provider" && !skipRemoteConsent && !voicePreferences.remoteSttConsent) {
+        setVoiceConsentRequired(true);
+        failVoiceTranscriptionPreparation(
+          "permission_denied",
+          zh
+            ? "录音已保留。允许在线语音识别后将继续识别，不需要重新录音。"
+            : "The recording is preserved. Allow online transcription to continue without recording again.",
+          true,
+        );
+        return false;
+      }
+      setVoiceConsentRequired(false);
+      return true;
+    } catch (error) {
+      failVoiceTranscriptionPreparation(
+        "runtime_unavailable",
+        error instanceof Error
+          ? error.message
+          : (zh ? "无法检查语音识别服务。" : "Voice transcription readiness could not be checked."),
+        true,
+      );
+      return false;
+    }
+  }
+
+  function failVoiceTranscriptionPreparation(
+    code: "runtime_unavailable" | "permission_denied",
+    message: string,
+    retryable: boolean,
+  ): void {
+    dispatchVoiceTurn({
+      type: "fail",
+      error: { stage: "preparing_audio", code, message, retryable },
+    });
+    setVoiceState("failed");
+    setVoiceError(message);
+    if (code === "runtime_unavailable") {
+      reportVoiceTranscriptionFailure(new Error(message), message, "preparing_audio", code);
+    }
+  }
+
+  function reportVoiceTranscriptionFailure(
+    error: unknown,
+    message: string,
+    stage: "preparing_audio" | "transcribing",
+    errorCode: string,
+  ): void {
+    void recordVoiceDiagnostic({
+      traceId: voiceTurnStateRef.current.turnId ?? crypto.randomUUID(),
+      component: "stt",
+      operation: "voice.transcription",
+      message,
+      domain: "app",
+      kind: "error",
+      level: "error",
+      status: "failed",
+      visibility: "milestone",
+      errorCode,
+      stack: voiceDiagnosticStack(error),
+      attributes: { stage },
+    });
+    onOpenDebug?.(undefined, "app-errors");
+  }
+
+  function completeSerialVoiceTranscription(
+    result: DesktopVoiceTranscriptionResult,
+    requestId: string,
+  ): void {
+    const transcript = result.transcript.trim();
+    setVoiceRuntimeDisclosure(result.providerDisclosure);
+    setVoiceState("idle");
+    setVoiceError(null);
+    setVoiceElapsedSeconds(0);
+    if (voicePreferences.confirmBeforeSend) {
+      const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
+      const insertion = insertVoiceTranscript(input, transcript, selection);
+      onInputChange(insertion.value);
+      setVoiceReviewSource(null);
+      setVoiceReviewText(null);
+      voiceRetryBlobRef.current = null;
+      voiceRetryDurationRef.current = 0;
+      dispatchVoiceTurn({ type: "stt_completed", requestId, requiresReview: true });
+      dispatchVoiceTurn({ type: "transcript_inserted", requestId });
+      restoreComposerFocus(insertion.cursor);
+      return;
+    }
+
+    const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
+    const insertion = insertVoiceTranscript(input, transcript, selection);
+    onInputChange(insertion.value);
+    setVoiceReviewSource(null);
+    setVoiceReviewText(null);
+    voiceAutoSubmitRequestRef.current = requestId;
+    voiceRetryBlobRef.current = null;
+    voiceRetryDurationRef.current = 0;
+    dispatchVoiceTurn({ type: "stt_completed", requestId });
   }
 
   function acceptVoiceReview(): void {
@@ -1803,6 +2047,7 @@ function ChatWorkspaceImpl({
   }
 
   function discardVoiceReview(): void {
+    voiceAutoSubmitRequestRef.current = null;
     if (voiceReviewSource === "serial") {
       dispatchVoiceTurn({ type: "cancel" });
       dispatchVoiceTurn({ type: "cancelled" });
@@ -2324,7 +2569,7 @@ function ChatWorkspaceImpl({
               ) : null}
               {message.role === "assistant" && message.replyFailed ? (
                 <div className="chat-reply-failed">
-                  <button type="button" onClick={onOpenDebug}><Bug size={14} aria-hidden /><span>{zh ? "回复未完成 · 查看调试" : "Reply incomplete · View debug"}</span></button>
+                  <button type="button" onClick={() => onOpenDebug?.(message.runtimeRunId)}><Bug size={14} aria-hidden /><span>{zh ? "回复未完成 · 查看调试" : "Reply incomplete · View debug"}</span></button>
                   {onRetryMessage ? <span className="chat-retry-actions">
                     <button type="button" onClick={() => void onRetryMessage(message.id, "same_session")}>{zh ? "在当前会话重试" : "Retry in this session"}</button>
                     <button type="button" onClick={() => void onRetryMessage(message.id, "new_session")}>{zh ? "分支到新会话" : "Branch to a new session"}</button>
@@ -2344,7 +2589,7 @@ function ChatWorkspaceImpl({
                     onOpenCitation={openStructuredCitation}
                     onRespondInteraction={(part, response) => respondToStructuredInteraction(message.structuredTurn!.turnId, part, response)}
                     onRequestTextInteraction={(part) => requestStructuredTextInput(message.structuredTurn!.turnId, part)}
-                      onOpenDebug={onOpenDebug}
+                      onOpenDebug={onOpenDebug ? () => onOpenDebug(message.runtimeRunId) : undefined}
                       onOpenRun={onOpenRun}
                       onCreateRunExperiment={onCreateRunExperiment}
                       reproducibilityLevel={message.runtimeRunId ? runReproducibility[message.runtimeRunId] : undefined}
@@ -3073,7 +3318,7 @@ function ChatWorkspaceImpl({
                   elapsedSeconds={voiceElapsedSeconds}
                   levels={voiceLevels}
                   state={voiceState}
-                  onStop={voiceState === "processing" ? cancelVoiceTranscription : () => stopVoiceRecording("transcribe")}
+                  onStop={() => stopVoiceRecording("transcribe")}
                 />
               ) : (
                 <div className="composer-editor">
@@ -3114,15 +3359,13 @@ function ChatWorkspaceImpl({
 
             </div>
 
-            {voiceError || streamingVoiceInput.error || voiceState === "processing" ? (
+            {voiceError || streamingVoiceInput.error ? (
               <div
                 className={`composer-voice-status ${voiceState === "failed" || streamingVoiceInput.phase === "failed" ? "error" : ""}`}
                 aria-live="polite"
               >
                 <span>
-                  {voiceState === "processing" && voiceProgressMessage
-                    ? voiceProgressMessage
-                    : getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
+                  {getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
                 </span>
                 {voiceError || streamingVoiceInput.error ? <small>{voiceError ?? streamingVoiceInput.error}</small> : null}
                 {voiceConsentRequired ? (
@@ -3133,10 +3376,10 @@ function ChatWorkspaceImpl({
                         updateVoicePreferences({ remoteSttConsent: true });
                         setVoiceConsentRequired(false);
                         setVoiceError(null);
-                        setVoiceState("idle");
+                        void retryVoiceTranscription(true);
                       }}
                     >
-                      {zh ? "允许在线识别" : "Allow online transcription"}
+                      {zh ? "允许并识别" : "Allow and transcribe"}
                     </button>
                     <button
                       type="button"
@@ -3144,16 +3387,29 @@ function ChatWorkspaceImpl({
                         setVoiceConsentRequired(false);
                         setVoiceError(null);
                         setVoiceState("idle");
+                        voiceRetryBlobRef.current = null;
+                        voiceRetryDurationRef.current = 0;
+                        dispatchVoiceTurn({ type: "reset" });
                       }}
                     >
                       {zh ? "暂不使用" : "Not now"}
                     </button>
                   </span>
                 ) : null}
-                {voiceError && voiceRetryBlobRef.current ? (
+                {voiceError && voiceRetryBlobRef.current && !voiceConsentRequired ? (
                   <span className="composer-voice-error-actions">
                     <button type="button" onClick={() => void retryVoiceTranscription()}>Retry</button>
                     <button type="button" onClick={discardVoiceReview}>Discard</button>
+                  </span>
+                ) : null}
+                {voiceTurnState.phase === "failed" && voiceTurnState.error?.stage === "submitting" ? (
+                  <span className="composer-voice-error-actions">
+                    <button type="button" onClick={retryVoiceChatSubmission}>{zh ? "重试发送" : "Retry sending"}</button>
+                    <button type="button" onClick={() => {
+                      setVoiceState("idle");
+                      setVoiceError(null);
+                      dispatchVoiceTurn({ type: "reset" });
+                    }}>{zh ? "保留文本" : "Keep transcript"}</button>
                   </span>
                 ) : null}
                 {streamingVoiceInput.phase === "failed" ? (
@@ -3223,7 +3479,7 @@ function ChatWorkspaceImpl({
                       <button type="button" disabled={!hasAgentOptions} aria-expanded={configurationSection === "agent"} onMouseEnter={(event) => revealConfigurationSection("agent", event.currentTarget)} onFocus={(event) => revealConfigurationSection("agent", event.currentTarget)} onClick={(event) => revealConfigurationSection("agent", event.currentTarget)}><span><strong>{zh ? "智能体" : "Agent"}</strong><small>{activeAgentName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "模型" : "Model"}</strong><small>{activeModelName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" disabled={!showThinkingEffort} aria-expanded={configurationSection === "thinking"} onMouseEnter={(event) => revealConfigurationSection("thinking", event.currentTarget)} onFocus={(event) => revealConfigurationSection("thinking", event.currentTarget)} onClick={(event) => revealConfigurationSection("thinking", event.currentTarget)}><span><strong>{zh ? "推理强度" : "Reasoning effort"}</strong><small>{thinkingEffortMenuLabel}</small></span><ChevronRight size={14} /></button>
-                      <button type="button" data-testid="composer-task-mode" disabled={selectedAgentId !== "my-drsai" || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "任务模式" : "Task mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-task-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "任务模式" : "Task mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
                     </div>
                     {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "agent" ? (zh ? "选择智能体" : "Choose agent") : configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择任务模式" : "Choose task mode")}>
                       <div className="composer-configuration-options">
@@ -3243,7 +3499,7 @@ function ChatWorkspaceImpl({
                             {effort === thinkingEffort ? <Check size={14} aria-hidden /> : null}
                           </button>
                         )) : (["normal", "confirm_goal"] as const).map((mode) => (
-                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-task-mode-${mode}`} disabled={selectedAgentId !== "my-drsai" || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
+                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-task-mode-${mode}`} disabled={!isLocalOpenDrSaiAgent || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
                             <span><strong>{mode === "normal" ? (zh ? "常规" : "Normal") : (zh ? "目标" : "Goal")}</strong><small>{mode === "normal" ? (zh ? "适合日常问答和简单任务，立即开始" : "Best for everyday questions and simple tasks; starts right away") : (zh ? "适合复杂任务，开始前与你核对需求和预期结果" : "Best for complex tasks; reviews your needs and expected result first")}</small></span>
                             {mode === taskInteractionMode ? <Check size={14} aria-hidden /> : null}
                           </button>
@@ -3352,15 +3608,19 @@ function ChatWorkspaceImpl({
                 <button
                   type="button"
                   className={`composer-icon-button composer-voice-button ${voiceState === "recording" ? "recording" : ""}`}
-                  disabled={showStop || voiceState === "requesting_permission" || voiceState === "processing"}
+                  disabled={voiceState === "requesting_permission" || voiceState === "processing"}
                   aria-pressed={voiceState === "recording"}
                   aria-label={
-                    voiceState === "recording" || streamingVoiceInput.phase === "streaming"
+                    voiceState === "processing"
+                      ? "Transcribing voice input"
+                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming"
                       ? "Stop voice recording"
                       : "Start voice recording"
                   }
                   title={
-                    voiceState === "recording" || streamingVoiceInput.phase === "streaming"
+                    voiceState === "processing"
+                      ? "Transcribing voice input"
+                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming"
                       ? "Stop voice recording"
                       : "Start voice recording"
                   }
@@ -3368,7 +3628,9 @@ function ChatWorkspaceImpl({
                     void toggleVoiceRecording();
                   }}
                 >
-                  {voiceState === "recording" || streamingVoiceInput.phase === "streaming" ? <MicOff size={16} /> : <Mic size={16} />}
+                  {voiceState === "processing" ? (
+                    <ThreadActivityBubble state={{ kind: "running" }} language={zh ? "zh" : "en"} />
+                  ) : voiceState === "recording" || streamingVoiceInput.phase === "streaming" ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
                 {showStop ? (
                   <>
@@ -3380,9 +3642,11 @@ function ChatWorkspaceImpl({
                       title={zh ? "明确停止当前任务并改为执行这条消息" : "Explicitly stop the active task and run this message"}>
                       {zh ? "停止并替换" : "Stop & replace"}
                     </button> : null}
-                    <button className="composer-submit stop" type="button" onClick={() => void onAbort()}>
+                    <button className="composer-submit stop" type="button" disabled={cancellingRequestId === activeRequestId} onClick={() => void onAbort()}>
                       <Square size={16} />
-                      {messages.some((message) => message.structuredTurn?.turnId === activeRequestId && message.structuredTurn.status === "pending")
+                      {cancellingRequestId === activeRequestId
+                        ? (zh ? "正在取消…" : "Cancelling…")
+                        : messages.some((message) => message.structuredTurn?.turnId === activeRequestId && message.structuredTurn.status === "pending")
                         ? (zh ? "取消排队" : "Cancel queued") : (zh ? "停止" : "Stop")}
                     </button>
                   </>
@@ -3520,6 +3784,7 @@ function VirtualizedMessage({
       className={`${className} ${renderContent ? "virtual-message-rendered" : "virtual-message-placeholder"}`}
       data-message-id={message.id}
       data-structured-turn-id={message.structuredTurn?.turnId}
+      data-run-id={message.structuredTurn?.turnId ?? (message.role === "assistant" ? message.id : undefined)}
       style={renderContent ? undefined : { height: placeholderHeight }}
       aria-hidden={renderContent ? undefined : true}
     >
@@ -3739,7 +4004,18 @@ function StreamingStatus({
     return null;
   }
 
-  const startedAt = message.startedAt ?? now;
+  if (!message.startedAt) {
+    const queuedSeconds = Math.max(0, Math.floor((now - (message.queuedAt ?? now)) / 1000));
+    return (
+      <div className="streaming-status">
+        <span className="streaming-dot" aria-hidden />
+        <span>{zh ? "正在排队" : "Queued"}</span>
+        <time>{zh ? `已等待 ${queuedSeconds} 秒` : `Waiting ${queuedSeconds}s`}</time>
+      </div>
+    );
+  }
+
+  const startedAt = message.startedAt;
   const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
   const lastEventAt = message.lastEventAt ?? startedAt;
   const idleSeconds = Math.max(0, Math.floor((now - lastEventAt) / 1000));
@@ -3791,6 +4067,7 @@ function MessageActions({
   const isPlaying = isActive && playback.phase === "playing";
   const isPaused = isActive && playback.phase === "paused";
   const isSynthesizing = localPending || (isActive && playback.phase === "synthesizing");
+  const playbackError = isActive && playback.phase === "failed" ? playback.error : null;
 
   useEffect(() => {
     if (!localPending) return;
@@ -3828,7 +4105,7 @@ function MessageActions({
   }
 
   return (
-    <div className={`message-actions ${isActive || isSynthesizing || playback.error ? "active" : ""}`}>
+    <div className={`message-actions ${isActive || isSynthesizing || playbackError ? "active" : ""}`} aria-live="polite">
       <button type="button" onClick={() => void handleCopy()} title={zh ? "复制回答" : "Copy response"}>
         {copied ? "✓" : <ClipboardList size={13} />}
         <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
@@ -3878,8 +4155,28 @@ function MessageActions({
           <span>{zh ? "停止" : "Stop"}</span>
         </button>
       ) : null}
-      {playback.error ? (
-        <span className="message-action-error" role="status">{playback.error}</span>
+      {playbackError ? (
+        <>
+          <span className="message-action-error" role="status">{playbackError}</span>
+          <button type="button" onClick={handleReadAloud} title={zh ? "重试朗读" : "Retry reading"}>
+            <RefreshCw size={13} />
+            <span>{zh ? "重试" : "Retry"}</span>
+          </button>
+          {synthesisMode === "provider" ? (
+            <button
+              type="button"
+              onClick={() => playback.play(messageId, content, zh ? "zh" : "en", {
+                mode: "system",
+                rate: playbackRate,
+                voiceName,
+              })}
+              title={zh ? "改用 Windows 本地朗读" : "Use Windows system speech"}
+            >
+              <Volume2 size={13} />
+              <span>{zh ? "Windows 朗读" : "Windows speech"}</span>
+            </button>
+          ) : null}
+        </>
       ) : null}
     </div>
   );

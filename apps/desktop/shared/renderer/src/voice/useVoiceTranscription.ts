@@ -17,15 +17,20 @@ export function useVoiceTranscription(onProgress: (message: string) => void): {
   const progressRef = useRef(onProgress);
   progressRef.current = onProgress;
   const controllerRef = useRef<VoiceTranscriptionController | null>(null);
-  if (!controllerRef.current && hasDesktopApi()) {
-    controllerRef.current = new VoiceTranscriptionController({
+
+  useEffect(() => {
+    if (!hasDesktopApi()) return;
+    const controller = new VoiceTranscriptionController({
       cancel: (requestId) => desktopApi.cancelVoiceTranscription(requestId),
       start: (request) => desktopApi.startVoiceTranscription(request),
       subscribe: (callback) => desktopApi.onVoiceTranscriptionEvent(callback),
     }, (message) => progressRef.current(message));
-  }
-
-  useEffect(() => () => controllerRef.current?.dispose(), []);
+    controllerRef.current = controller;
+    return () => {
+      if (controllerRef.current === controller) controllerRef.current = null;
+      controller.dispose();
+    };
+  }, []);
 
   const transcribe = useCallback(async (input: VoiceTranscriptionInput) => {
     const controller = controllerRef.current;

@@ -58,6 +58,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -90,8 +91,16 @@ class P9NaturalToolSelectionInstrumentedTest {
             .bufferedReader(Charsets.UTF_8).use { JSONObject(it.readText()) }
         val cases = suite.getJSONArray("cases")
         assertEquals(30, cases.length())
-        val attemptsPerCase = suite.getInt("minimum_attempts_per_case")
-        assertTrue(attemptsPerCase >= 3)
+        val arguments = InstrumentationRegistry.getArguments()
+        val caseFilter = arguments.getString(ARG_CASE)?.takeIf(String::isNotBlank)
+        val selectedCases = (0 until cases.length())
+            .map(cases::getJSONObject)
+            .filter { caseFilter == null || it.getString("id") == caseFilter }
+        check(selectedCases.isNotEmpty()) { "p9_case_not_found:$caseFilter" }
+        val attemptsPerCase = arguments.getString(ARG_ATTEMPTS)?.toIntOrNull()
+            ?: suite.getInt("minimum_attempts_per_case")
+        val toolLimit = arguments.getString(ARG_TOOL_LIMIT)?.toIntOrNull()
+        assertTrue(attemptsPerCase >= if (caseFilter == null && toolLimit == null) 3 else 1)
 
         val database = Room.databaseBuilder(context, ChatDatabase::class.java, "opendrsai.db")
             .addMigrations(
@@ -128,10 +137,21 @@ class P9NaturalToolSelectionInstrumentedTest {
                     SafWorkspaceGateway(context, SafWorkspaceStore(context)),
                 )
             }
-            val runtimeCapabilities = RuntimeCapability.entries.toSet()
-            val tools = FullRuntimeToolCatalog.schemas(
+            // The model-visible schemas and the Run declaration must describe
+            // the same executable capability set. Using every enum value here
+            // exposed network tools while this frozen suite intentionally
+            // declares web access unavailable, causing Core to reject START_RUN
+            // before any model request was made.
+            val runtimeCapabilities = HOST_CAPABILITIES.mapTo(linkedSetOf()) { capability ->
+                RuntimeCapability.valueOf(capability.uppercase())
+            }
+            val allTools = FullRuntimeToolCatalog.schemas(
                 registry.toModelSchemas(ToolExecutionContext(EVALUATION_SUBJECT, runtimeCapabilities)),
             )
+            val tools = if (toolLimit == null) allTools else JSONArray().apply {
+                require(toolLimit in 1..allTools.length()) { "p9_tool_limit_invalid:$toolLimit" }
+                repeat(toolLimit) { index -> put(JSONObject(allTools.getJSONObject(index).toString())) }
+            }
             val hostCapabilities = JSONArray(HOST_CAPABILITIES)
             val hostPortCapabilities = JSONArray(HOST_CAPABILITIES.map { capability ->
                 JSONObject().put("id", capability).put("version", 1).put("required", false)
@@ -140,18 +160,20 @@ class P9NaturalToolSelectionInstrumentedTest {
             runtime.bind()
             val identity = requireNotNull(runtime.runtimeIdentity()) { "p9_runtime_identity_missing" }
             val observations = JSONArray()
-            repeat(cases.length()) { caseIndex ->
-                val testCase = cases.getJSONObject(caseIndex)
+            selectedCases.forEach { testCase ->
                 repeat(attemptsPerCase) { attempt ->
                     val selectedTools = mutableListOf<String>()
                     val selectedToolCalls = JSONArray()
                     var terminal = "unknown"
                     var errorCode: String? = null
+                    var errorDetail: String? = null
                     val runId = "p9-m04-f06-${UUID.randomUUID()}"
                     val stateStore = InMemoryCheckpointStore()
                     val recordingModel = RecordingModelPort(
                         HaiPythonModelHostPort(gateway), selectedTools, selectedToolCalls,
-                    )
+                    ) { error ->
+                        errorDetail = "${error.javaClass.simpleName}:${error.message}".take(240)
+                    }
                     val ports = PythonRuntimeHostPorts(
                         model = recordingModel,
                         stateStore = stateStore,
@@ -186,17 +208,23 @@ class P9NaturalToolSelectionInstrumentedTest {
                                 modelId = model.id,
                                 modelRouteSnapshot = modelRouteSnapshot,
                                 tools = tools,
-                                hostCapabilities = hostCapabilities,
                                 hostPortCapabilities = hostPortCapabilities,
                             )
                         ).toList()
-                        terminal = events.lastOrNull { it.messageType == PythonRuntimeMessageType.RUNTIME_EVENT }
-                            ?.payload?.optString("kind").orEmpty().ifBlank { "missing_terminal" }
+                        val terminalEvent = events.lastOrNull {
+                            it.messageType == PythonRuntimeMessageType.RUNTIME_EVENT
+                        }
+                        terminal = terminalEvent?.payload?.optString("kind").orEmpty()
+                            .ifBlank { "missing_terminal" }
+                        if (terminal != "run.completed" && errorDetail == null) {
+                            errorDetail = terminalEvent?.payload?.toString()?.take(240)
+                        }
                     } catch (error: Throwable) {
                         errorCode = when (error) {
                             is ApiException -> error.code ?: "provider_http_${error.status}"
                             else -> "runtime_${error.javaClass.simpleName}"
                         }
+                        errorDetail = error.message?.take(240)
                     }
                     observations.put(JSONObject()
                         .put("case_id", testCase.getString("id"))
@@ -204,7 +232,8 @@ class P9NaturalToolSelectionInstrumentedTest {
                         .put("selected_tools", JSONArray(selectedTools))
                         .put("selected_tool_calls", selectedToolCalls)
                         .put("terminal", terminal)
-                        .putOpt("provider_error", errorCode))
+                        .putOpt("provider_error", errorCode)
+                        .putOpt("error_detail", errorDetail))
                 }
             }
 
@@ -233,7 +262,7 @@ class P9NaturalToolSelectionInstrumentedTest {
                 .put("observations", observations)
             val output = File(context.filesDir, OUTPUT_FILE)
             output.writeText(evidence.toString(2), Charsets.UTF_8)
-            assertEquals(cases.length() * attemptsPerCase, observations.length())
+            assertEquals(selectedCases.size * attemptsPerCase, observations.length())
             assertTrue(output.isFile && output.length() > 0)
         } finally {
             runtime.close()
@@ -247,7 +276,6 @@ class P9NaturalToolSelectionInstrumentedTest {
         modelId: String,
         modelRouteSnapshot: JSONObject,
         tools: JSONArray,
-        hostCapabilities: JSONArray,
         hostPortCapabilities: JSONArray,
     ) = PythonRuntimeEnvelope(
         messageType = PythonRuntimeMessageType.START_RUN,
@@ -264,7 +292,6 @@ class P9NaturalToolSelectionInstrumentedTest {
             .put("history", JSONArray())
             .put("tools", JSONArray(tools.toString()))
             .put("skills", JSONArray())
-            .put("host_capabilities", JSONArray(hostCapabilities.toString()))
             .put("capability_diagnostics", JSONObject())
             .put("host_port", JSONObject()
                 .put("schema_version", 1)
@@ -278,15 +305,24 @@ class P9NaturalToolSelectionInstrumentedTest {
         private val delegate: PythonModelHostPort,
         private val selectedTools: MutableList<String>,
         private val selectedToolCalls: JSONArray,
+        private val onError: (Throwable) -> Unit,
     ) : PythonModelHostPort {
-        override fun stream(request: HostModelRequest): Flow<HostModelChunk> = delegate.stream(request).onEach { chunk ->
-            repeat(chunk.toolCalls.length()) { index ->
-                chunk.toolCalls.optJSONObject(index)?.let { call ->
-                    call.optString("name").takeIf(String::isNotBlank)?.let(selectedTools::add)
-                    selectedToolCalls.put(JSONObject(call.toString()))
+        override fun stream(request: HostModelRequest): Flow<HostModelChunk> = delegate.stream(request)
+            .catch { error ->
+                onError(IllegalStateException(
+                    "tool_choice=${request.toolChoice};cause=${error.javaClass.simpleName}:${error.message}",
+                    error,
+                ))
+                throw error
+            }
+            .onEach { chunk ->
+                repeat(chunk.toolCalls.length()) { index ->
+                    chunk.toolCalls.optJSONObject(index)?.let { call ->
+                        call.optString("name").takeIf(String::isNotBlank)?.let(selectedTools::add)
+                        selectedToolCalls.put(JSONObject(call.toString()))
+                    }
                 }
             }
-        }
     }
 
     private class InMemoryCheckpointStore : PythonStateStoreHostPort {
@@ -322,6 +358,9 @@ class P9NaturalToolSelectionInstrumentedTest {
     companion object {
         private const val ARG_ENABLE = "runP9NaturalToolSelection"
         private const val ARG_MODEL = "p9Model"
+        private const val ARG_CASE = "p9Case"
+        private const val ARG_ATTEMPTS = "p9Attempts"
+        private const val ARG_TOOL_LIMIT = "p9ToolLimit"
         private const val DEFAULT_MODEL = "deepseek-v4-flash"
         private const val TEMPERATURE = 0.0
         private const val FIXTURE = "p9-natural-tool-selection-v1.json"

@@ -200,7 +200,6 @@ internal class PythonSharedCoreChatEngine(
                 }))
                 .put("tools", currentToolSchemas)
                 .put("skills", operationalPolicy.skillSchemas(skillSchemas(request)))
-                .put("host_capabilities", runHostCapabilities)
                 .put("capability_diagnostics", capabilityDiagnostics(request))
                 .put("host_port", JSONObject()
                     .put("schema_version", 1)

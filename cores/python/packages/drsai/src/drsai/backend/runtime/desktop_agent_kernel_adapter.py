@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import ast
 import json
 import base64
 from dataclasses import dataclass
@@ -23,6 +25,7 @@ from .desktop_autogen_ports import (
 from .desktop_kernel_coordinator import (
     DesktopApprovalResult,
     DesktopKernelCoordinator,
+    DesktopToolResult,
 )
 from .desktop_kernel_run_stream import DesktopKernelRunStream, build_desktop_start_envelope
 from .desktop_manager_ports import DesktopAgentManagerPorts
@@ -204,6 +207,41 @@ async def run_agent_through_kernel(
     schemas = autogen_tools_to_kernel_schemas(all_tools, metadata)
 
     special = DesktopAgentManagerPorts(agent, cancellation_token).ports(unsupported_manager_names)
+    if "web_search" in normal_names:
+        async def desktop_web_search(payload: Mapping[str, Any]) -> DesktopToolResult:
+            call_id = str(payload["call_id"])
+            arguments = payload.get("arguments")
+            if not isinstance(arguments, Mapping):
+                raise ValueError("desktop_web_search_arguments_invalid")
+            try:
+                result = await agent._workbench.call_tool(
+                    name="web_search", arguments=dict(arguments), cancellation_token=cancellation_token,
+                )
+                text = result.to_text()
+                try:
+                    decoded = json.loads(text)
+                except json.JSONDecodeError:
+                    try:
+                        decoded = ast.literal_eval(text)
+                    except (SyntaxError, ValueError):
+                        decoded = {"content": text}
+                content = decoded if isinstance(decoded, Mapping) else {"content": decoded}
+                if bool(result.is_error):
+                    return DesktopToolResult(
+                        call_id, False, content, "web_search_failed",
+                    )
+            except Exception as exc:
+                return DesktopToolResult(
+                    call_id, False, {"content": str(exc)}, str(getattr(exc, "code", "web_search_failed")),
+                )
+            inspection = {
+                "version": 1, "kind": "web_search", "query": content.get("query", ""),
+                "requested_query": content.get("requested_query", content.get("query", "")),
+                "provider": content.get("provider", ""), "result_count": len(content.get("results", [])),
+            } if isinstance(content, Mapping) else None
+            return DesktopToolResult(call_id, True, content, inspection=inspection)
+
+        special["web_search"] = desktop_web_search
     approval_handler = getattr(agent, "_tool_approval_handler", None)
 
     async def approval(payload: Mapping[str, Any]) -> DesktopApprovalResult:
@@ -259,6 +297,12 @@ async def run_agent_through_kernel(
     memory_block = memory_store.system_prompt_block() if memory_store is not None and hasattr(memory_store, "system_prompt_block") else ""
     if memory_block:
         system_prompt = system_prompt.replace(memory_block, "").strip()
+    kernel_host_port = getattr(agent, "_kernel_host_port", None)
+    if not isinstance(kernel_host_port, Mapping):
+        raise RuntimeError("desktop_kernel_host_port_missing")
+    host_capabilities = kernel_host_port.get("capabilities")
+    if not isinstance(host_capabilities, Sequence) or isinstance(host_capabilities, (str, bytes)):
+        raise RuntimeError("desktop_kernel_host_capabilities_missing")
     run_id = f"desktop-{uuid.uuid4()}"
     start = build_desktop_start_envelope(
         run_id=run_id,
@@ -266,6 +310,7 @@ async def run_agent_through_kernel(
         input_text=normalized_task.input_text,
         model_id=model_id,
         tools=schemas,
+        host_port=kernel_host_port,
         artifacts=list(normalized_task.artifacts),
         history=history,
         context_budget=getattr(agent, "_p9_context_budget", None),

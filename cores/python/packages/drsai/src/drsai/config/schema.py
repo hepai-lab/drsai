@@ -143,6 +143,8 @@ class ProviderInput:
 
 @dataclass(frozen=True)
 class DrSaiConfig:
+    current_agent: str | None = None
+    agent_config_file: str | None = None
     model: str | None = None
     model_provider: str | None = None
     config_version: int | None = None

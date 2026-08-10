@@ -109,9 +109,30 @@ _SECRET = re.compile(
 _QUERY_SECRET = re.compile(
     r"(?i)([?&](?:code|state|token|access_token|refresh_token|id_token|client_secret)=)[^&#\s]+"
 )
+_SPACE_SEPARATED_CREDENTIAL = re.compile(
+    r"(?i)(?<![\w-])((?:access[_-]?|refresh[_-]?|id[_-]?)?token|api[_-]?key|access[_-]?key)\s+(?!\[REDACTED\])([^\s\"',;&}\]]+)"
+)
+_CREDENTIAL_SECRET = re.compile(
+    r'''(?ix)(
+      ["']?
+      (?:authorization|cookie|token|secret|api[_-]?key|access[_-]?key|
+         access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|
+         registration[_-]?token|access[_-]?grant[_-]?code|password|private[_-]?key)
+      ["']?\s*[:=]\s*["']?
+    )([^\s"',;&}\]]+)'''
+)
 
 
 def redact_secrets(value: str) -> str:
     redacted = _BEARER.sub(r"\1[REDACTED]", value)
     redacted = _QUERY_SECRET.sub(r"\1[REDACTED]", redacted)
+    redacted = _SPACE_SEPARATED_CREDENTIAL.sub(r"\1 [REDACTED]", redacted)
     return _SECRET.sub(r"\1[REDACTED]", redacted)
+
+
+def redact_credentials(value: str) -> str:
+    """Redact credential values while preserving diagnostic response fields."""
+    redacted = _BEARER.sub(r"\1[REDACTED]", value)
+    redacted = _QUERY_SECRET.sub(r"\1[REDACTED]", redacted)
+    redacted = _SPACE_SEPARATED_CREDENTIAL.sub(r"\1 [REDACTED]", redacted)
+    return _CREDENTIAL_SECRET.sub(r"\1[REDACTED]", redacted)

@@ -1,0 +1,19 @@
+schema_version: opendrsai.agent-regression-suite/1
+id: p3-desktop
+title: OpenDrSai P3 Desktop end-to-end acceptance
+description: All P1 representative cases, accepted only with real Desktop UI evidence.
+cases:
+  - qa.greeting.hello
+  - qa.constraints.json
+  - tool.web.hepix
+  - tool.failure.recovery
+  - knowledge.grounded
+  - knowledge.absent
+  - skill.presentation
+  - image.input.ui_error
+  - image.output.simple
+  - workspace.readonly.diagnose
+  - safety.write_approval
+  - run.inspect_compare
+defaults:
+  concurrency: 1

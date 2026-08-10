@@ -193,7 +193,7 @@ Host opendrsai-packaged-e2e
   await api.startChat({ requestId, threadId: thread.id, workspacePath: remote.path, workspaceId: remote.id, model: 'drsai', messages: [{ role: 'user', content: 'Reply with REMOTE_WORKSPACE_RESULT.' }] });
   for (let i = 0; i < 40 && !events.some(e => e.requestId === requestId && e.type === 'start'); i++) await wait(250);
   await wait(1000);
-  checks.chatAbortRequested = await api.abortChat(requestId);
+  checks.chatAbortRequested = (await api.cancelChatTurn({ requestId })).accepted;
   for (let i = 0; i < 80 && !events.some(e => e.requestId === requestId && (e.type === 'done' || e.type === 'error' || e.type === 'aborted')); i++) await wait(250);
   stopEvents();
   checks.sessionRunEvents = events.some(e => e.requestId === requestId && e.type === 'start') && events.some(e => e.requestId === requestId && (e.type === 'done' || e.type === 'error' || e.type === 'aborted'));

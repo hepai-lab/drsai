@@ -94,6 +94,51 @@ def test_model_discovery_sorts_deduplicates_and_caches(monkeypatch) -> None:
     assert snapshot["availability"] == "available"
 
 
+def test_large_model_catalog_preserves_configured_models_returned_by_provider(monkeypatch) -> None:
+    class LargeResponse:
+        status_code = 200
+
+        def json(self):
+            rows = [{"id": f"catalog-{index:04d}"} for index in range(600)]
+            return {"data": [*rows, {"id": "tts-1"}, {"id": "whisper-1"}]}
+
+    class LargeClient(_Client):
+        async def get(self, _url, *, headers):
+            return LargeResponse()
+
+    resolved = resolve_model_config(parse_user_config({
+        "model": "tts-1",
+        "model_provider": "custom",
+        "model_providers": {"custom": {
+            "base_url": "https://provider.example/v1",
+            "api_key": "discovery-secret",
+            "models": {
+                "tts-1": {
+                    "input_modalities": ["text"],
+                    "output_modalities": ["audio"],
+                    "capabilities": ["text_to_speech"],
+                },
+                "whisper-1": {
+                    "input_modalities": ["audio"],
+                    "output_modalities": ["text"],
+                    "capabilities": ["speech_to_text"],
+                },
+            },
+        }},
+    }))
+    model_discovery.clear_model_discovery_cache()
+    monkeypatch.setattr(model_discovery.httpx, "AsyncClient", LargeClient)
+
+    result = asyncio.run(model_discovery.discover_provider_models(resolved, refresh=True))
+    snapshot = model_discovery.cached_provider_model_catalog("custom", "https://provider.example/v1")
+
+    assert len(result["models"]) == 500
+    assert result["models"][:2] == ["tts-1", "whisper-1"]
+    assert snapshot is not None
+    assert {"tts-1", "whisper-1"}.issubset(snapshot["models"])
+    assert snapshot["availability"] == "available"
+
+
 def test_model_discovery_failure_keeps_manual_configuration_available(monkeypatch) -> None:
     model_discovery.clear_model_discovery_cache()
     monkeypatch.setattr(model_discovery.httpx, "AsyncClient", _Client)

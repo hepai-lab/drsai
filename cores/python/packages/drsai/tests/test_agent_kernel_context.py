@@ -300,6 +300,10 @@ def test_kernel_host_port_supports_legacy_and_versioned_negotiation() -> None:
     assert legacy["protocol_version"] == "v1.5.6-legacy"
     assert current["capabilities"] == ["chat"]
     assert len(current["sha256"]) == 64
+    assert normalize_kernel_host_port(current, surface="android") == current
+
+    with pytest.raises(ValueError, match="kernel_host_port_digest_mismatch"):
+        normalize_kernel_host_port({**current, "capabilities": ["chat", "shell"]}, surface="android")
 
 
 @pytest.mark.parametrize(

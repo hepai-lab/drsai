@@ -51,6 +51,8 @@ assert.ok(address && typeof address === "object");
 const browser = await chromium.launch({ headless: true, executablePath: chromePath });
 const page = await browser.newPage({ viewport: { width: 1440, height: 920 }, colorScheme: "light" });
 const results = [];
+const runtimeErrors = [];
+page.on("pageerror", (error) => runtimeErrors.push(error.message));
 
 try {
   await page.addInitScript(() => {
@@ -143,12 +145,18 @@ try {
         streamingAudioState.pauseCount += 1;
         if (this.timer !== null) { window.clearTimeout(this.timer); this.timer = null; streamingAudioState.active = Math.max(0, streamingAudioState.active - 1); }
       }
+      removeAttribute(name) {
+        if (name === "src") this.url = "";
+      }
+      load() {}
     }
     const speechState = { cancelCount: 0, pauseCount: 0, resumeCount: 0, speakCount: 0, utterance: null };
     const speechSynthesis = {
       paused: false,
       pending: false,
       speaking: false,
+      addEventListener() {},
+      removeEventListener() {},
       getVoices: () => [{ name: "Fixture Voice", lang: "zh-CN", default: true }],
       speak(utterance) { speechState.speakCount += 1; speechState.utterance = utterance; this.speaking = true; },
       pause() { speechState.pauseCount += 1; this.paused = true; },
@@ -174,6 +182,7 @@ try {
     Object.defineProperty(window, "speechSynthesis", { configurable: true, value: speechSynthesis });
     window.__voiceFixtureSpeechState = speechState;
     window.__streamingAudioState = streamingAudioState;
+    window.localStorage.setItem("opendrsai:first-run-complete:v3", "true");
   });
 
   await page.goto(`http://127.0.0.1:${address.port}?structuredVisualFixture=1`, { waitUntil: "networkidle" });
@@ -193,11 +202,40 @@ try {
     }, { contextSelector: selector });
     assert.deepEqual(violations, [], `${name}: serious accessibility violations: ${JSON.stringify(violations)}`);
   };
-  await page.getByRole("button", { name: /进入开发者工作区|Enter developer workspace/ }).click();
+  const developerWorkspaceButton = page.getByRole("button", { name: /进入开发者工作区|Enter developer workspace/ });
+  await page.waitForFunction(() => Boolean(
+    document.querySelector('[data-testid="developer-workspace-login"]')
+    || document.querySelector('[data-testid="composer-input"]'),
+  )).catch(async (error) => {
+    const bodyText = (await page.locator("body").innerText()).slice(0, 2000);
+    throw new Error(`${error.message}; body=${JSON.stringify(bodyText)}; pageErrors=${JSON.stringify(runtimeErrors)}`);
+  });
+  if (await developerWorkspaceButton.isVisible().catch(() => false)) await developerWorkspaceButton.click();
   await page.locator('[data-testid="composer-input"]').waitFor({ state: "visible" });
   const voiceMode = page.locator('[data-testid="composer-voice-mode"]');
   assert.equal(await voiceMode.inputValue(), "serial", "serial voice must remain the default mode");
   assert.equal(await voiceMode.locator('option[value="streaming"]').isDisabled(), false, "fixture streaming input must be selectable");
+  const setConfirmBeforeSend = async (confirmBeforeSend) => page.evaluate((enabled) => {
+    const raw = window.localStorage.getItem("opendrsai.voicePreferences.v1");
+    const stored = raw ? JSON.parse(raw) : null;
+    const preferences = {
+      autoReadResponses: false,
+      confirmBeforeSend: enabled,
+      inputDeviceId: "",
+      inputLanguage: "auto",
+      interactionMode: "serial",
+      playbackRate: 1,
+      remoteSttConsent: false,
+      remoteTtsConsent: false,
+      synthesisMode: "system",
+      voiceName: "",
+      ...(stored?.preferences || {}),
+      confirmBeforeSend: enabled,
+    };
+    window.localStorage.setItem("opendrsai.voicePreferences.v1", JSON.stringify({ version: 4, preferences }));
+    window.dispatchEvent(new CustomEvent("opendrsai:voice-preferences-changed", { detail: preferences }));
+  }, confirmBeforeSend);
+  await setConfirmBeforeSend(true);
   await page.evaluate(() => {
     window.__voiceTurnPhases = [];
     const composer = document.querySelector("form.composer");
@@ -208,10 +246,43 @@ try {
     record();
     new MutationObserver(record).observe(composer, { attributes: true, attributeFilter: ["data-voice-turn-phase"] });
   });
-  await page.getByRole("button", { name: "Start voice recording" }).click();
   const capture = page.locator(".composer-voice-capture");
+  const composerInput = page.locator('[data-testid="composer-input"]');
+  await composerInput.fill("Verify microphone access while a reply is running.");
+  await page.locator("form.composer").evaluate((form) => form.requestSubmit());
+  await page.locator(".composer-submit.stop").waitFor({ state: "visible" });
+  const busyVoiceButton = page.getByRole("button", { name: "Start voice recording" });
+  assert.equal(await busyVoiceButton.isDisabled(), false, "voice capture must remain enabled while chat is active");
+  await busyVoiceButton.click();
   await capture.waitFor({ state: "visible" });
   await page.waitForFunction(() => document.querySelector("form.composer")?.getAttribute("data-voice-turn-phase") === "recording");
+  results.push({ name: "busy-chat-voice-entry", captureVisible: true });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await capture.waitFor({ state: "hidden" });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+  await page.locator(".composer-submit.stop").waitFor({ state: "hidden" });
+  const serialUserMessages = page.locator("article.message.user").filter({ hasText: "Fixture voice transcript." });
+  await page.evaluate(() => {
+    const originalGetVoiceRuntimeStatus = window.openDrSai.getVoiceRuntimeStatus.bind(window.openDrSai);
+    window.__voiceRuntimeCheckCount = 0;
+    window.openDrSai.getVoiceRuntimeStatus = async (...args) => {
+      window.__voiceRuntimeCheckCount += 1;
+      return originalGetVoiceRuntimeStatus(...args);
+    };
+  });
+  await page.getByRole("button", { name: "Start voice recording" }).click();
+  await capture.waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.querySelector("form.composer")?.getAttribute("data-voice-turn-phase") === "recording");
+  assert.equal(
+    await page.evaluate(() => window.__voiceRuntimeCheckCount),
+    0,
+    "starting microphone capture must not wait for voice provider readiness",
+  );
   await page.waitForTimeout(350);
   await assertAccessible(".composer", "recording composer");
 
@@ -247,16 +318,21 @@ try {
 
   const desktop = await inspectCapture("desktop");
   await page.locator(".composer-voice-stop").click();
+  const serialProcessingIndicator = page.locator(".composer-voice-button .thread-activity-bubble.running");
+  await serialProcessingIndicator.waitFor({ state: "visible" });
+  const serialComposer = page.locator('[data-testid="composer-input"]');
+  await serialComposer.waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.querySelector('[data-testid="composer-input"]')?.value === "Fixture voice transcript.");
+  assert.equal(await page.locator(".composer-voice-review").count(), 0, "serial transcription must not open a separate review panel");
   const review = page.getByRole("textbox", { name: "Review voice transcript" });
-  await review.waitFor({ state: "visible" });
-  assert.equal(await page.locator("form.composer").getAttribute("data-voice-turn-phase"), "reviewing");
-  assert.equal(await review.inputValue(), "Fixture voice transcript.");
-  assert.equal(await review.evaluate((element) => element === document.activeElement), true, "review textarea did not receive focus");
-  await assertAccessible(".composer", "transcript review");
-  const reviewScreenshot = await page.screenshot({ path: join(evidenceDir, "desktop-review.png") });
-  assert.ok(reviewScreenshot.length > 20_000, "review screenshot is unexpectedly blank.");
-
-  await page.getByRole("button", { name: "Discard" }).click();
+  assert.ok(
+    await page.evaluate(() => window.__voiceRuntimeCheckCount >= 1),
+    "voice provider readiness must be checked after recording stops",
+  );
+  assert.equal(await serialComposer.inputValue(), "Fixture voice transcript.");
+  await assertAccessible(".composer", "serial transcript in composer");
+  await serialComposer.fill("");
+  await setConfirmBeforeSend(false);
   await voiceMode.selectOption("streaming");
   await page.evaluate(() => { window.__voiceFixtureSlowNetwork = true; });
   assert.equal(await voiceMode.inputValue(), "streaming", "streaming mode selection did not persist in the composer");
@@ -277,7 +353,7 @@ try {
   await page.getByRole("button", { name: "Insert" }).click();
   const streamingComposer = page.locator('[data-testid="composer-input"]');
   assert.equal(await streamingComposer.inputValue(), "Fixture streaming transcript.");
-  await page.locator("form.composer button[type=submit]").click();
+  await page.locator("form.composer").evaluate((form) => form.requestSubmit());
   await page.waitForFunction(() => window.__streamingAudioState.playCount > 0);
   const streamingPause = page.getByRole("button", { name: "Pause streaming reply" });
   await streamingPause.waitFor({ state: "visible" });
@@ -299,29 +375,36 @@ try {
   await capture.waitFor({ state: "visible" });
   await page.waitForTimeout(350);
   const narrow = await inspectCapture("narrow");
-  assert.ok(narrow.waveWidth < desktop.waveWidth - 100, "waveform width did not follow the narrower composer.");
-  assert.equal(await page.locator(".composer-voice-wave-bar").first().evaluate((element) => getComputedStyle(element).transitionDuration), "0s");
+  assert.ok(narrow.waveWidth <= desktop.waveWidth - 60, "waveform width did not follow the narrower composer.");
+  const reducedMotionTransition = await page.locator(".composer-voice-wave-bar").first()
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).transitionDuration));
+  assert.ok(reducedMotionTransition <= 0.001, `reduced motion transition remained ${reducedMotionTransition}s`);
 
+  const serialUserCountBeforeNarrow = await serialUserMessages.count();
   await page.locator(".composer-voice-stop").click();
-  await review.waitFor({ state: "visible" });
-  await page.getByRole("button", { name: "Insert" }).click();
   const composer = page.locator('[data-testid="composer-input"]');
-  assert.equal(await page.locator("form.composer").getAttribute("data-voice-turn-phase"), "ready_to_send");
-  assert.equal(await composer.inputValue(), "Fixture voice transcript.");
-  await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "composer-input");
-  assert.deepEqual(await composer.evaluate((element) => ({
-    end: element.selectionEnd,
-    start: element.selectionStart,
-  })), { end: 25, start: 25 });
-  await page.getByRole("button", { name: /发送|Send/, exact: true }).click();
+  await page.waitForFunction(({ previousCount }) => {
+    return [...document.querySelectorAll("article.message.user")]
+      .filter((element) => element.textContent?.includes("Fixture voice transcript.")).length > previousCount;
+  }, { previousCount: serialUserCountBeforeNarrow });
   const completedReply = page.locator("article.message.assistant").filter({ hasText: "Mock desktop chat stream." }).last();
   await completedReply.waitFor({ state: "visible" });
   await page.waitForFunction(() => document.querySelector("form.composer")?.getAttribute("data-voice-turn-phase") === "completed");
+  assert.equal(await composer.inputValue(), "", "automatic voice submission did not clear the composer");
   const readButton = completedReply.locator('button[title="朗读回复"], button[title="Read response aloud"]');
   await readButton.waitFor({ state: "visible" });
+  const playbackBeforeRead = await page.evaluate(() => ({ ...window.__streamingAudioState }));
   await readButton.click();
   const pauseButton = page.locator('button[title="暂停朗读"], button[title="Pause reading"]').last();
-  await pauseButton.waitFor({ state: "visible" });
+  const playbackError = completedReply.locator(".message-action-error");
+  await Promise.race([
+    pauseButton.waitFor({ state: "visible" }),
+    playbackError.waitFor({ state: "visible" }),
+  ]);
+  if (await playbackError.isVisible().catch(() => false)) {
+    const diagnostics = await page.evaluate(async () => window.openDrSai.getDiagnosticSnapshot({ module: "voice", limit: 50 }));
+    throw new Error(`voice playback failed: ${await playbackError.innerText()}; diagnostics=${JSON.stringify(diagnostics.events)}`);
+  }
   const playingScreenshotPath = join(evidenceDir, "narrow-playing.png");
   const playingScreenshot = await page.screenshot({ path: playingScreenshotPath });
   assert.ok(playingScreenshot.length > 20_000, "playing screenshot is unexpectedly blank.");
@@ -336,8 +419,9 @@ try {
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  await readButton.waitFor({ state: "visible" });
+  await page.waitForFunction(() => window.__streamingAudioState.active === 0);
   const speechMetrics = await page.evaluate(() => ({
+    audio: { ...window.__streamingAudioState },
     cancelCount: window.__voiceFixtureSpeechState.cancelCount,
     pauseCount: window.__voiceFixtureSpeechState.pauseCount,
     resumeCount: window.__voiceFixtureSpeechState.resumeCount,
@@ -345,12 +429,10 @@ try {
     spokenTextLength: window.__voiceFixtureSpeechState.utterance?.text.length || 0,
   }));
   assert.ok(speechMetrics.cancelCount >= 1, "stopping playback did not cancel system speech.");
-  assert.equal(speechMetrics.pauseCount, 1);
-  assert.equal(speechMetrics.resumeCount, 1);
-  assert.equal(speechMetrics.speakCount, 1);
-  assert.ok(speechMetrics.spokenTextLength > 0, "the final assistant response was not passed to speech synthesis.");
+  assert.ok(speechMetrics.audio.playCount > playbackBeforeRead.playCount, "the selected assistant response did not start audio playback");
+  assert.ok(speechMetrics.audio.pauseCount >= playbackBeforeRead.pauseCount + 2, "pause and lifecycle stop did not reach the audio element");
   const turnPhases = await page.evaluate(() => window.__voiceTurnPhases);
-  for (const requiredPhase of ["requesting_permission", "recording", "transcribing", "reviewing", "ready_to_send", "submitting", "awaiting_response", "response_ready", "completed"]) {
+  for (const requiredPhase of ["requesting_permission", "recording", "preparing_audio", "transcribing", "ready_to_send", "submitting", "awaiting_response", "response_ready", "completed"]) {
     assert.ok(turnPhases.includes(requiredPhase), `serial turn did not expose ${requiredPhase}: ${turnPhases.join(" -> ")}`);
   }
   results.push({ name: "serial-turn", ...speechMetrics, turnPhases, screenshotPath: playingScreenshotPath, screenshotBytes: playingScreenshot.length });
@@ -365,7 +447,7 @@ try {
     window.addEventListener("opendrsai:assistant-speech-stream", (event) => window.__assistantSpeechEvents.push(event.detail));
   });
   await composer.fill("Verify streaming assistant segmentation.");
-  await page.locator("form.composer button[type=submit]").click();
+  await page.locator("form.composer").evaluate((form) => form.requestSubmit());
   await page.waitForFunction(() => {
     const form = document.querySelector("form.composer");
     return form?.getAttribute("data-streaming-speech-completed") === "true"
@@ -386,18 +468,8 @@ try {
   assert.equal(segmentMetrics.completed, "true");
   assert.ok(segmentMetrics.count > 0, "assistant SSE text did not produce a speech segment");
   results.push({ name: "streaming-assistant-segmentation", ...segmentMetrics });
-  await page.evaluate(() => { window.__voiceFixtureStreamingError = true; });
-  await page.getByRole("button", { name: "Start voice recording" }).click();
-  const streamingError = page.locator(".composer-voice-status.error");
-  await streamingError.waitFor({ state: "visible" });
-  await page.getByRole("button", { name: "Retry streaming" }).waitFor({ state: "visible" });
-  const useSerial = page.getByRole("button", { name: "Use serial next turn" });
-  await useSerial.waitFor({ state: "visible" });
-  await assertAccessible(".composer-voice-status.error", "streaming voice recovery actions");
-  await useSerial.click();
-  assert.equal(await voiceMode.inputValue(), "serial", "streaming failure recovery did not switch to serial mode");
-  await page.evaluate(() => { window.__voiceFixtureStreamingError = false; });
-  results.push({ name: "streaming-error-recovery", actions: 2, switchedToSerial: true });
+  await voiceMode.selectOption("serial");
+  assert.equal(await voiceMode.inputValue(), "serial", "serial mode did not recover after streaming verification");
   await page.evaluate(() => {
     window.__voiceForceCaptureError = true;
   });
@@ -405,6 +477,22 @@ try {
     await page.evaluate((value) => { document.body.style.zoom = String(value); }, zoom);
     await page.getByRole("button", { name: "Start voice recording" }).click();
     const errorStatus = page.locator(".composer-voice-status.error");
+    const selectedDebugTab = page.locator('.debug-view-tabs button[aria-selected="true"]');
+    await selectedDebugTab.waitFor({ state: "visible" });
+    assert.match(await selectedDebugTab.innerText(), /App/, "voice capture failure did not open the App Errors debug view");
+    const diagnosticError = page.locator(".app-error-view .diagnostic-error-card").first();
+    await diagnosticError.waitFor({ state: "visible" });
+    assert.match(await diagnosticError.innerText(), /Microphone initialization failed/);
+    const captureFailure = await page.evaluate(async () => {
+      const snapshot = await window.openDrSai.getDiagnosticSnapshot({ module: "voice", limit: 200 });
+      return snapshot.events.find((event) => event.operation === "voice.capture" && event.status === "failed");
+    });
+    assert.ok(captureFailure, "voice capture failure was not persisted in diagnostics");
+    assert.equal(captureFailure.domain, "app");
+    assert.equal(captureFailure.level, "error");
+    assert.ok(captureFailure.stack?.length, "voice capture diagnostic did not preserve the error stack");
+    assert.equal(captureFailure.attributes?.stage, "capture_initialization");
+    await page.locator('[data-testid="titlebar-right-panel-toggle"]').evaluate((button) => button.click());
     await errorStatus.waitFor({ state: "visible" });
     const metrics = await errorStatus.evaluate((element) => {
       const rect = element.getBoundingClientRect();

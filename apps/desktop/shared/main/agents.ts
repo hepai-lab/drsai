@@ -8,10 +8,7 @@ import type {
   DesktopAgentPreferenceResult,
   PlatformAgentStatus,
 } from "../api/desktopApi";
-import {
-  LOCAL_OPENDRSAI_AGENT_ID,
-  LOCAL_OPENDRSAI_AGENT_NAME,
-} from "../api/desktopApi";
+import { getMyDrSaiAgentModelPolicy, listConfiguredAgents } from "./myDrSaiConfig";
 import {
   invalidateAuthSession,
   getAuthSession,
@@ -39,7 +36,6 @@ import {
 } from "./agentCatalog";
 import { recordAgentTelemetry } from "./agentTelemetry";
 import { LocalRuntimeClient } from "./runtimeClient";
-import { getMyDrSaiAgentModelPolicy } from "./myDrSaiConfig";
 
 const ACTIVE_PLATFORM = getActivePlatformConfig();
 const PLATFORM_BASE_URL = ACTIVE_PLATFORM.portalUrl;
@@ -133,7 +129,7 @@ export function isPlatformAgentExecutionAvailable(agentId: string): boolean {
 }
 
 export async function setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult> {
-  if (agentId === LOCAL_OPENDRSAI_AGENT_ID) {
+  if ((await listLocalAgents()).some((agent) => agent.id === agentId && agent.source === "local")) {
     recordAgentTelemetry({ event: "agent_selected", agentId, source: "local", status: "default" });
     return { agentId, saved: true, message: "Local agent selected as the desktop default." };
   }
@@ -143,7 +139,7 @@ export async function setDefaultAgent(agentId: string): Promise<DesktopAgentPref
 }
 
 export async function recordAgentUsage(agentId: string): Promise<DesktopAgentPreferenceResult> {
-  if (agentId === LOCAL_OPENDRSAI_AGENT_ID) {
+  if ((await listLocalAgents()).some((agent) => agent.id === agentId && agent.source === "local")) {
     return { agentId, saved: true, message: "Local agent usage recorded on this device." };
   }
   const descriptor = getPlatformAgentExecutionDescriptor(agentId);
@@ -204,32 +200,25 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
   // Catalog discovery is read-only. It must never start Python, Gateway, or
   // Codex merely because the user opened the Agent Square.
   const gateway = getGatewaySnapshot();
-  const agents: DesktopAgent[] = [{
-    id: LOCAL_OPENDRSAI_AGENT_ID,
-    name: LOCAL_OPENDRSAI_AGENT_NAME,
-    description: "An agent running on this computer.",
-    owner: "Local",
-    source: "local",
-    status: gateway.ready ? "running" : "stopped",
-    mode: "local",
-    // OpenDrSai starts its Runtime lazily when the user sends a task. A cold
-    // Runtime is therefore not an unavailable agent.
-    available: true,
-    capabilities: ["chat", "workspace", "tools"],
-    catalogGroup: "local",
-    url: gateway.baseUrl,
-    error: gateway.externalConflict
-      ? "The local Runtime port is already used by another service."
-      : undefined,
-  }];
+  const configured = gateway.ready
+    ? await listConfiguredAgents().catch(() => ({ current_agent: "", agents: [] }))
+    : { current_agent: "", agents: [] };
+  const descriptors = configured.agents;
+  const agents: DesktopAgent[] = descriptors.map((descriptor) => ({
+    id: descriptor.agent_name,
+    name: descriptor.display_name,
+    description: "An agent running on this computer.", owner: "Local", source: "local",
+    status: gateway.ready ? "running" : "stopped", mode: "local", available: descriptor.enabled,
+    capabilities: ["chat", "workspace", "tools"], catalogGroup: "local", url: gateway.baseUrl,
+    error: gateway.externalConflict ? "The local Runtime port is already used by another service." : undefined,
+  }));
   if (!gateway.ready) return agents;
   try {
-    const policy = await getMyDrSaiAgentModelPolicy("my-drsai");
-    agents[0] = {
-      ...agents[0],
-      model: policy.effective_ref?.model_id,
-      error: policy.valid ? agents[0].error : policy.error || "The configured OpenDrSai model is unavailable.",
-    };
+    await Promise.all(agents.map(async (agent, index) => {
+      const policy = await getMyDrSaiAgentModelPolicy(agent.id);
+      agents[index] = { ...agent, model: policy.effective_ref?.model_id,
+        error: policy.valid ? agent.error : policy.error || "The configured Agent model is unavailable." };
+    }));
   } catch {
     // Keep local Agent discovery available while policy diagnostics recover.
   }

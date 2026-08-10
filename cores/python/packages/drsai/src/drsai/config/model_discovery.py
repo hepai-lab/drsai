@@ -115,10 +115,16 @@ async def discover_provider_models(
         rows = payload.get("models") if provider.wire_api == "gemini" and isinstance(payload, dict) else payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
             raise ValueError
-        models = tuple(sorted({
+        discovered_models = sorted({
             (item.get("name", "").removeprefix("models/") if provider.wire_api == "gemini" else item.get("id", "")) for item in rows
             if isinstance(item, dict) and isinstance(item.get("name" if provider.wire_api == "gemini" else "id"), str) and item.get("name" if provider.wire_api == "gemini" else "id", "").strip()
-        }))[:500]
+        })
+        discovered_set = set(discovered_models)
+        # Preserve configured models that the Provider really returned before
+        # bounding a large catalog. Otherwise late-sorting IDs such as tts-1
+        # and whisper-1 can be misreported as unverified.
+        configured_models = [model_id for model_id in provider.models if model_id in discovered_set]
+        models = tuple(dict.fromkeys((*configured_models, *discovered_models)))[:500]
     except (TypeError, ValueError):
         return _remember_failure(cache_key, generation, "invalid_response", "error", cache_ttl)
     updated_at = datetime.now(timezone.utc).isoformat()

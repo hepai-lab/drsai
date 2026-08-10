@@ -677,7 +677,7 @@ def test_inspection_aggregates_usage_error_and_hides_private_reasoning(
         "input_tokens": 7, "output_tokens": 5, "total_tokens": 12,
     }
     assert inspection["summary"]["error"] == {
-        "code": "provider.failed", "message": "[REDACTED]", "retryable": True,
+        "code": "provider.failed", "message": "Bearer [REDACTED]", "retryable": True,
     }
     reasoning = next(item for item in inspection["timeline"] if item["type"] == "reasoning")
     assert reasoning["content"] == {"segments": []}
@@ -874,3 +874,21 @@ def test_inspection_truncates_a_10mb_tool_output_before_serialization(engine: Ru
     serialized = json.dumps(inspection)
     assert len(serialized) < 100_000
     assert "TRUNCATED sha256=" in serialized
+
+
+def test_agent_config_snapshot_cannot_drift_after_run_binding() -> None:
+    base = initial_manifest(
+        run_id="run-one", runtime_id="runtime", instance_id="instance", backend_id="opendrsai",
+        agent_definition="alpha", workspace_id="workspace", worktree_id=None,
+    )
+    manifest = merge_manifest(base, {
+        "agent_config_snapshot": {"agent_id": "alpha", "sha256": "sha256:first"},
+    })
+    unchanged = merge_manifest(manifest, {
+        "agent_config_snapshot": {"agent_id": "alpha", "sha256": "sha256:first"},
+    })
+    assert unchanged["agent_config_snapshot"]["agent_id"] == "alpha"
+    with pytest.raises(ValueError, match="agent_config_snapshot is immutable"):
+        merge_manifest(manifest, {
+            "agent_config_snapshot": {"agent_id": "beta", "sha256": "sha256:second"},
+        })

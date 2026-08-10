@@ -240,7 +240,7 @@ class RuntimeSecurity:
 
 _SENSITIVE_KEY = re.compile(
     r"(?:token|password|secret|private.?key|authorization|api.?key|credential|"
-    r"file.?content|message|prompt|command|arguments|cookie)",
+    r"file.?content|prompt|command|arguments|cookie)",
     re.I,
 )
 _BEARER = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+")

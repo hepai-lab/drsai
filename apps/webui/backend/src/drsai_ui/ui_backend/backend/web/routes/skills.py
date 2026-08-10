@@ -21,25 +21,13 @@ _SLUG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 _MAX_UPLOAD_BYTES = 32 * 1024 * 1024  # 32 MiB
 
 
-def _find_repo_agent_skills_skills(start: Path) -> Path | None:
-    """Walk parents from `start` until `agent_skills/skills` exists."""
-    p = start.resolve()
-    for _ in range(16):
-        cand = p / "agent_skills" / "skills"
-        if cand.is_dir():
-            return cand.resolve()
-        if p.parent == p:
-            break
-        p = p.parent
-    return None
-
-
 def get_catalog_root() -> Path | None:
-    raw = settings.AGENT_SKILLS_CATALOG_DIR
-    if raw:
-        p = Path(raw).expanduser().resolve()
-        return p if p.is_dir() else None
-    return _find_repo_agent_skills_skills(Path(__file__).resolve().parent)
+    from drsai.modules.components.skills import resolve_builtin_skills_dir
+
+    return resolve_builtin_skills_dir(
+        settings.AGENT_SKILLS_CATALOG_DIR,
+        search_from=(Path(__file__), Path.cwd()),
+    )
 
 
 def _parse_skill_md(skill_md: Path) -> dict | None:

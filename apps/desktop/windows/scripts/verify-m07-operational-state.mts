@@ -14,13 +14,15 @@ for (const identity of identities) for (const runtime of runtimes) for (const mo
   const facts = { identity, runtime, model, workspace, run };
   const decision = deriveOperationalState(facts);
   combinations += 1;
-  const expectedLayer = identity !== "authenticated" ? "identity" : runtime !== "ready" ? "runtime" : model !== "ready" ? "model" : workspace !== "trusted" ? "workspace" : "run";
+  const runNeedsAttention = ["queued", "running", "waiting_approval", "recovering", "failed"].includes(run);
+  const expectedLayer = identity !== "authenticated" ? "identity" : runtime !== "ready" ? "runtime" : model === "unknown" || model === "unconfigured" ? "model" : workspace !== "trusted" ? "workspace" : runNeedsAttention ? "run" : model === "untested" ? "model" : "run";
   assert.equal(decision.currentLayer, expectedLayer, JSON.stringify(facts));
   assert.equal(decision.state, facts[expectedLayer], JSON.stringify(facts));
   assert.equal(decision.layers.length, 5);
   assert.equal(decision.layers.filter((item) => item.status === "current").length, 1);
-  assert.equal(decision.readyForRun, expectedLayer === "run");
-  const expectedBlocker = expectedLayer !== "run" ? expectedLayer : (["waiting_approval", "failed"].includes(run) ? "run" : null);
+  const hardBlocked = expectedLayer !== "run" && !(expectedLayer === "model" && model === "untested");
+  assert.equal(decision.readyForRun, !hardBlocked);
+  const expectedBlocker = hardBlocked ? expectedLayer : ["waiting_approval", "failed"].includes(run) ? "run" : null;
   assert.equal(decision.blockingLayer, expectedBlocker);
 }
 assert.equal(combinations, 1152);
@@ -45,6 +47,13 @@ assert.equal(shouldShowOperationalStateBar(deriveOperationalState({
   workspace: "trusted",
   run: "idle",
 })), true, "a blocking prerequisite should remain globally visible");
+assert.equal(shouldShowOperationalStateBar(deriveOperationalState({
+  identity: "authenticated",
+  runtime: "ready",
+  model: "untested",
+  workspace: "trusted",
+  run: "idle",
+})), true, "untested models should remain visible without blocking useful work");
 
 const task = (status: string, updatedAt: string, recoveredAt?: string) => ({ status, updatedAt, ...(recoveredAt ? { recoveredAt } : {}) }) as never;
 assert.equal(deriveOperationalRunState([], null), "idle");
@@ -69,6 +78,9 @@ assert.match(component, /data-current-state=\{decision\.state\}/);
 assert.match(component, /aria-current=\{item\.status === "current" \? "step"/);
 assert.match(component, /aria-label=\{zh \? "OpenDrSai 当前状态"/);
 assert.match(component, /AUTO_OPEN_STATES/);
+assert.doesNotMatch(component, /AUTO_OPEN_STATES[\s\S]{0,180}"untested"/);
+assert.doesNotMatch(diagnosticsContainer, /autoRecoverKey|completedAutomaticRecoveries/);
+assert.match(app, /automaticAgentModelVerificationsRef[\s\S]{0,1200}testMyDrSaiModelProvider\(ref\.provider_id, ref\.model_id\)/);
 assert.match(styles, /\.operational-state-popover\s*\{\s*position:\s*absolute/);
 assert.doesNotMatch(styles, /\.operational-state-(?:bar|control)\s*\{[^}]*position:\s*fixed/s);
 assert.doesNotMatch(component, /Codex/i);

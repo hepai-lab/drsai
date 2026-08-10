@@ -14,8 +14,9 @@ import type {
   DesktopVoiceSynthesisStartResult,
 } from "../api/desktopApi";
 import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
-import { hasSavedApiKey, syncSavedApiKeyToGateway } from "./settings";
+import { syncSavedApiKeyToGateway } from "./settings";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
+import { getVoiceProviderReadiness } from "./voiceProviderReadiness";
 import {
   MAX_TTS_TEXT_CHARS,
   normalizeAndValidateTtsAudio,
@@ -77,12 +78,16 @@ export async function getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynt
     };
   }
   const status = await getGatewayStatus();
-  const hasCredential = Boolean(
-    process.env.HEPAI_API_KEY?.trim()
-    || process.env.OPENAI_API_KEY?.trim()
-    || hasSavedApiKey(),
-  );
-  const state = !status.ready ? "unavailable" : hasCredential ? "ready" : "auth_required";
+  const readiness = status.ready
+    ? await getVoiceProviderReadiness(status.baseUrl, getGatewayRequestHeaders(), "text_to_speech").catch(() => ({ state: "unconfigured" as const }))
+    : { state: "unconfigured" as const };
+  const state = !status.ready
+    ? "unavailable"
+    : readiness.state === "ready"
+      ? "ready"
+      : readiness.state === "auth_required"
+        ? "auth_required"
+        : "unavailable";
   return {
     runtimeId,
     state,
@@ -94,7 +99,9 @@ export async function getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynt
       ? "Voice synthesis runtime is ready."
       : state === "auth_required"
         ? "Configure a speech synthesis provider API key."
-        : "Start the local gateway and configure a speech synthesis provider.",
+        : status.ready
+          ? "Assign a text-to-speech model in Agent settings."
+          : "Start the local gateway and configure a speech synthesis provider.",
   };
 }
 

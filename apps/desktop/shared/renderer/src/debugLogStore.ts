@@ -187,7 +187,10 @@ export function appendRuntimeLogEvent(event: DesktopRuntimeLogEvent): void {
     runtime: safeEvent,
     raw: serializeBounded(safeEvent),
   };
-  if (isRuntimeDelta(safeEvent)) {
+  // Direct Chat OAEP events carry their canonical event_id. Keep every one of
+  // those immutable journal records; only coalesce high-frequency diagnostic
+  // delta summaries that do not contain the authoritative event envelope.
+  if (isRuntimeDelta(safeEvent) && typeof safeEvent.details?.event_id !== "string") {
     const previous = entries.at(-1);
     if (previous?.runtime && runtimeCoalesceKey(previous.runtime) === runtimeCoalesceKey(safeEvent)
       && next.timestamp - previous.timestamp <= 250) {

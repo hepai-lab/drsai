@@ -28,7 +28,14 @@ internal object ModelToolChoiceProtocolAdapter {
         if (policy.optString("policy_version") != VERSION) throw policyError("version")
         val mode = policy.optString("mode")
         if (mode !in setOf("auto", "required", "none", "specified")) throw policyError("mode")
-        val specified = policy.optString("specified_tool")
+        // Python/OAEP serializes an absent optional field as JSON null. Android
+        // org.json's optString(JSONObject.NULL) returns the literal "null",
+        // which previously made auto/none look like a named-tool request.
+        val specified = if (!policy.has("specified_tool") || policy.isNull("specified_tool")) {
+            ""
+        } else {
+            policy.optString("specified_tool")
+        }
         if (mode == "specified" && specified.isBlank()) throw policyError("specified_tool_missing")
         if (mode != "specified" && specified.isNotBlank()) throw policyError("specified_tool_unexpected")
         return mode

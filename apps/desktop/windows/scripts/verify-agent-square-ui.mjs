@@ -34,7 +34,7 @@ assert(view.includes("getAgentCatalogSnapshot") && view.includes("preferCache: t
 assert(view.includes("AgentConfigDialog") && view.includes('event.key === "Escape"'), "configuration/details dialogs are not separated or Escape-accessible");
 assert(preload.includes('ipcRenderer.invoke("desktop:get-agent-catalog-snapshot"'), "atomic catalog snapshot IPC is missing");
 assert(shared.includes("agentId?: string;") && adapter.includes("agentId: options?.agentId?.trim()"), "D1 explicit agentId is missing from chat requests");
-assert(chat.includes("request.agentId !== LOCAL_OPENDRSAI_AGENT_ID") && chat.includes('isCodexBackend ? "codex@1" : "opendrsai@1"'), "D3 local Runtime routing compatibility is missing");
+assert(chat.includes("listConfiguredAgents()") && chat.includes("localAgent?.agent_name") && chat.includes('isCodexBackend ? "codex@1" : "opendrsai@1"'), "D3 configured local Runtime routing is missing");
 assert(chat.includes("getPlatformAgentChatUrl(platformDescriptor.platformId)") && chat.includes("readSse(webContents"), "D4 platform routing does not reuse the SSE reader");
 assert(
   chat.includes("model: platformDescriptor.platformId"),

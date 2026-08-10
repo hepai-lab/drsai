@@ -2,13 +2,11 @@ import com.android.build.api.variant.impl.VariantOutputImpl
 import groovy.json.JsonSlurper
 
 val systemVersionFile = rootProject.file(
-    "../webui/backend/src/drsai_ui/ui_backend/version.py"
+    "../../cores/VERSION"
 )
-val systemVersion = Regex("""(?m)^VERSION\s*=\s*[\"']([^\"']+)[\"']""")
-    .find(systemVersionFile.readText())
-    ?.groupValues
-    ?.get(1)
-    ?: error("Unable to read OpenDrSai VERSION from $systemVersionFile")
+val systemVersion = systemVersionFile.readText().trim()
+    .takeIf { Regex("""^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$""").matches(it) }
+    ?: error("Unable to read a valid OpenDrSai VERSION from $systemVersionFile")
 fun versionCodeFor(version: String): Int {
     val parts = version.split(".").map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
     return (parts.getOrElse(0) { 0 } * 10_000) +

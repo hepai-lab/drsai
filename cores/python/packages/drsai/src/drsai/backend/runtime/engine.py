@@ -38,7 +38,7 @@ from drsai.backend.runtime.run_inspection import (
 )
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from drsai.relay.device_identity import WindowsDpapiProtector
-from drsai.relay.security import redact_secrets
+from drsai.relay.security import redact_credentials, redact_secrets
 
 
 RUN_TRANSITIONS = {
@@ -1824,7 +1824,7 @@ class RuntimeEngine:
             if message and str(message) != "[REDACTED]":
                 error_summary = {
                     "code": str(error.get("code") or content.get("code") or "run.item_failed")[:120],
-                    "message": str(redact_sensitive(redact_secrets(str(message))))[:500],
+                    "message": redact_credentials(str(message)),
                     "retryable": bool(error.get("retryable", False)),
                 }
         manifest_view = self.get_run_manifest(run_id, safe=True)
@@ -1849,7 +1849,7 @@ class RuntimeEngine:
             if message:
                 error_summary = {
                     "code": str(outcome_error.get("code") or "run.failed")[:120],
-                    "message": str(redact_sensitive(redact_secrets(str(message))))[:500],
+                    "message": redact_credentials(str(message)),
                     "retryable": bool(outcome_error.get("retryable", False)),
                 }
         if usage["total_tokens"] == 0:
@@ -2761,11 +2761,24 @@ class RuntimeEngine:
             payload["status"] = phase if phase in {"completed", "failed", "cancelled"} else "running"
         elif event_type == "agent.failed":
             error = data.get("error") if isinstance(data.get("error"), dict) else {}
+            message = str(error.get("message") or data.get("message") or "Agent execution failed.")
+            if message == "[REDACTED]":
+                redacted_details = error.get("redacted_details")
+                if not isinstance(redacted_details, dict):
+                    redacted_details = data.get("redacted_details")
+                detail = error.get("detail")
+                if not isinstance(detail, dict):
+                    detail = data.get("detail")
+                safe_reason = (
+                    redacted_details.get("reason") if isinstance(redacted_details, dict) else None
+                ) or (detail.get("reason") if isinstance(detail, dict) else None)
+                if safe_reason:
+                    message = f"Agent execution failed: {safe_reason}"
             payload = {
                 "event_type": event_type,
                 "level": "error",
                 "code": str(error.get("code") or data.get("code") or "agent_execution_failed"),
-                "message": str(error.get("message") or data.get("message") or "Agent execution failed."),
+                "message": message,
                 "details": {
                     "retryable": bool(error.get("retryable") or data.get("retryable")),
                 },

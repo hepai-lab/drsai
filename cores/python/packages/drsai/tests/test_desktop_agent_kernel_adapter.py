@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from autogen_agentchat.messages import MultiModalMessage, TextMessage
-from autogen_core import Image
+from autogen_core import FunctionCall, Image
 from autogen_core.models import CreateResult, RequestUsage, SystemMessage
 from PIL import Image as PILImage
 import pytest
 
+from drsai.backend.runtime.agent_kernel import normalize_kernel_host_port
 from drsai.backend.runtime.agent_kernel_factory import create_agent_kernel
+from drsai.backend.runtime.web_search import create_web_search_tool
 from drsai.backend.runtime.desktop_agent_kernel_adapter import (
     _desktop_default_subagent_profile,
     _desktop_input_artifact,
@@ -36,6 +38,42 @@ class _Workbench:
         raise AssertionError
 
 
+class _WebSearchWorkbench(_Workbench):
+    called = False
+
+    async def list_tools(self):
+        return [create_web_search_tool().schema]
+
+    async def call_tool(self, **kwargs):
+        assert kwargs["name"] == "web_search"
+        self.called = True
+        return type("Result", (), {
+            "is_error": False,
+            # Autogen's FunctionExecutionResult serializes mapping values with
+            # Python repr rather than JSON in the production workbench path.
+            "to_text": staticmethod(lambda: "{'provider':'tavily','query':'Hepix 2026','results':[{'title':'HEPiX','url':'https://www.hepix.org','snippet':'Global scientific IT forum'}]}"),
+        })()
+
+
+class _WebSearchClient(_Client):
+    def __init__(self):
+        self.calls = 0
+
+    async def create_stream(self, _messages, **_kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            yield CreateResult(
+                finish_reason="function_calls",
+                content=[FunctionCall(id="call-search", name="web_search", arguments='{"query":"Hepix2026"}')],
+                usage=RequestUsage(prompt_tokens=1, completion_tokens=1), cached=False,
+            )
+            return
+        yield CreateResult(
+            finish_reason="stop", content="HEPiX is a global scientific IT forum: https://www.hepix.org",
+            usage=RequestUsage(prompt_tokens=1, completion_tokens=1), cached=False,
+        )
+
+
 class _Context:
     async def get_messages(self):
         return []
@@ -58,6 +96,21 @@ class _Agent:
 
     def __init__(self):
         self._shared_agent_kernel = create_agent_kernel(surface="desktop")
+        self._kernel_host_port = _host_port(
+            ["chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts"]
+        )
+
+
+def _host_port(capabilities):
+    return normalize_kernel_host_port({
+        "schema_version": 1,
+        "protocol_version": "p9-host-port-v1",
+        "surface": "desktop",
+        "capabilities": [
+            {"id": capability, "version": 1, "required": capability == "chat"}
+            for capability in capabilities
+        ],
+    }, surface="desktop")
 
 
 def _policy(name, executor):
@@ -84,6 +137,64 @@ async def test_production_shaped_agent_pilot_is_actually_driven_by_shared_kernel
     assert output[-1].messages[0].source == "user"
     assert output[-1].messages[0].content == "hello"
     assert agent._agent_kernel_checkpoint["reason"] == "terminal"
+
+
+@pytest.mark.asyncio
+async def test_plain_chat_preserves_negotiated_capabilities_when_web_search_is_available() -> None:
+    """Regression: merely exposing WebSearch must not make a plain `hello` Run fail."""
+    agent = _Agent()
+    agent._workbench = _WebSearchWorkbench()
+    agent._kernel_host_port = _host_port([
+            "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+            "web_search", "network.public_https",
+    ])
+
+    def web_policy(name, executor):
+        policy = _policy(name, executor)
+        if name == "web_search":
+            policy["required_capabilities"] = ["web_search", "network.public_https"]
+        return policy
+
+    output = [value async for value in run_agent_through_kernel(
+        agent, task="hello", cancellation_token=__import__("autogen_core").CancellationToken(),
+        policy_resolver=web_policy,
+    )]
+
+    assert output[-1].stop_reason == "run.completed"
+    assert agent._agent_kernel_checkpoint["state"]["host_capabilities"] == sorted(
+        agent._kernel_host_port["capabilities"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_web_search_executes_the_registered_workbench_tool() -> None:
+    agent = _Agent()
+    agent._model_client = _WebSearchClient()
+    agent._workbench = _WebSearchWorkbench()
+    agent._kernel_host_port = _host_port([
+        "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+        "web_search", "network.public_https",
+    ])
+
+    def web_policy(name, executor):
+        policy = _policy(name, executor)
+        if name == "web_search":
+            policy["required_capabilities"] = ["web_search", "network.public_https"]
+        return policy
+
+    output = [value async for value in run_agent_through_kernel(
+        agent, task="Hepix2026是什么", cancellation_token=__import__("autogen_core").CancellationToken(),
+        policy_resolver=web_policy,
+    )]
+
+    assert agent._workbench.called is True
+    assert any(isinstance(value, TextMessage) and "HEPiX" in str(value.content) for value in output)
+    tool_messages = [
+        value for value in agent._agent_kernel_checkpoint["state"]["messages"]
+        if value.get("role") == "tool"
+    ]
+    assert tool_messages[0]["content"]["provider"] == "tavily"
+    assert tool_messages[0]["content"]["results"][0]["url"] == "https://www.hepix.org"
 
 
 @pytest.mark.asyncio

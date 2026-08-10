@@ -11,6 +11,11 @@ import { collectMigrationAliases, getCliConfigUserId, rememberUserIdAlias, setCl
 import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
 import { redactDesktopSecrets } from "./secretRedaction";
 import { redactSensitiveData } from "../api/sensitiveData";
+import {
+  registerGatewayIdentitySynchronizer,
+  requireCoordinatedAuthContext,
+} from "./authGatewayCoordination";
+import { resolveGatewayPort } from "./gatewayEnvironment";
 
 let processService: DesktopProcessService | null = null;
 let desktopAppRuntime = {
@@ -27,7 +32,7 @@ export function configureGatewayPlatform(input: {
 }
 
 const GATEWAY_HOST = "127.0.0.1";
-const GATEWAY_PORT = getGatewayPort();
+const GATEWAY_PORT = resolveGatewayPort();
 const GATEWAY_BASE_URL = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 const DEV_MANAGED_EXTERNAL_GATEWAY = process.env.DRSAI_GATEWAY_DEV_MANAGED === "1";
 const HOT_RELOAD_GATEWAY = process.env.DRSAI_GATEWAY_HOT_RELOAD === "1";
@@ -193,14 +198,15 @@ export async function syncAuthIdentityToGateway(explicitUserId?: string): Promis
   return userId;
 }
 
+registerGatewayIdentitySynchronizer(syncAuthIdentityToGateway);
+
 async function canonicalizeHistoricalUserIds(
   canonicalUserId: string,
   previousCliUserId: string | null,
 ): Promise<void> {
   let email: string | null = null;
   try {
-    const { requireAuthContext } = await import("./auth");
-    email = (await requireAuthContext()).session.user?.email ?? null;
+    email = (await requireCoordinatedAuthContext()).session.user?.email ?? null;
   } catch {
     email = null;
   }
@@ -468,8 +474,7 @@ function normalizeDesktopUserId(value: unknown): string | null {
 
 async function resolveAuthenticatedUserId(): Promise<string | null> {
   try {
-    const { requireAuthContext } = await import("./auth");
-    return normalizeDesktopUserId((await requireAuthContext()).userId);
+    return normalizeDesktopUserId((await requireCoordinatedAuthContext()).userId);
   } catch {
     return null;
   }
@@ -547,7 +552,6 @@ function findCommandOnPath(command: string): Promise<string | null> {
     });
   });
 }
-
 function isManagedGatewayRunning(): boolean {
   return Boolean(gatewayProcess && gatewayProcess.pid && !gatewayProcess.killed);
 }
@@ -841,10 +845,4 @@ function waitForProcessExit(proc: ChildProcess, timeoutMs: number): Promise<bool
     const timer = setTimeout(() => finish(!isProcessRunning(proc)), timeoutMs);
     proc.once("exit", onExit);
   });
-}
-
-function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
-  const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
 }

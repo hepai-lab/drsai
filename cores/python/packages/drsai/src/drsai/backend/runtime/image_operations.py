@@ -18,7 +18,7 @@ from drsai.backend.runtime.input_resources import (
     inspect_native_image_resources,
 )
 from drsai.backend.workspace.paths import WorkspacePathError, resolve_workspace_path
-from drsai.config.agent_model_policy import load_agent_model_policy
+from drsai.config.agent_model_policy import current_agent_name, load_agent_model_policy
 from drsai.config.loader import ConfigError as ModelProviderConfigError, load_user_config
 from drsai.config.resolver import resolve_model_ref
 from drsai.config.gemini_operation_adapter import GeminiGenerateContentAdapter
@@ -187,7 +187,7 @@ class RuntimeImageOperationAdapter:
     @staticmethod
     def _resolve_declared_model(operation: str):
         config = load_user_config()
-        policy = load_agent_model_policy("my-drsai").policy
+        policy = load_agent_model_policy(current_agent_name()).policy
         selection = policy.image_generation_model or policy.image_model
         if selection is None or selection.ref is None:
             raise RuntimeExecutionError("image_model_unconfigured", "Select a declared image model before using this tool.")

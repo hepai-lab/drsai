@@ -318,8 +318,15 @@ class _LocalMatrixHandler(BaseHTTPRequestHandler):
             self._json(200, {"id": "minimal-completion", "content": [{"type": "text", "text": "pong"}], "stop_reason": "end_turn"})
             return
         elif segment == "chat-only":
+            if self.path.endswith("/responses"):
+                self._json(404, {"error": "route not found"})
+                return
             assert body.get("max_tokens") == 256
-        self._json(200, {"id": "minimal-completion", "choices": [{"message": {"content": "pong"}, "finish_reason": "stop"}]})
+        if self.path.endswith("/responses"):
+            assert body.get("max_output_tokens") == 256
+            self._json(200, {"id": "minimal-response", "output": [{"type": "message", "content": [{"type": "output_text", "text": "pong"}]}]})
+        else:
+            self._json(200, {"id": "minimal-completion", "choices": [{"message": {"content": "pong"}, "finish_reason": "stop"}]})
 
     def log_message(self, _format: str, *_args: object) -> None:
         return

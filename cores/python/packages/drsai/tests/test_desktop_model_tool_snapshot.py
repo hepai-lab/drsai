@@ -132,6 +132,9 @@ def test_desktop_production_model_request_freezes_exact_visible_tool_set() -> No
             return [{
                 "name": "run_read",
                 "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            }, {
+                "name": "web.search",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
             }]
 
     assistant._get_messages_with_compression_notification = messages
@@ -149,11 +152,11 @@ def test_desktop_production_model_request_freezes_exact_visible_tool_set() -> No
 
     output = asyncio.run(consume())
     assert output[0].content == "done"
-    assert [tool["name"] for tool in captured["tools"]] == ["run_read", "TodoWrite"]
-    assert [item["name"] for item in assistant._active_model_tool_snapshot["tools"]] == ["TodoWrite", "run_read"]
+    assert [tool["name"] for tool in captured["tools"]] == ["run_read", "web.search", "TodoWrite"]
+    assert [item["name"] for item in assistant._active_model_tool_snapshot["tools"]] == ["TodoWrite", "run_read", "web.search"]
     assert assistant._metadata["model_tool_snapshot_version"] == "p9-model-tools-v1"
     assert len(assistant._metadata["model_tool_snapshot_sha256"]) == 64
-    assert assistant._metadata["model_tool_count"] == "2"
+    assert assistant._metadata["model_tool_count"] == "3"
     assert assistant._metadata["execution_tool_registry_version"] == "p9-execution-tools-v1"
     assert len(assistant._metadata["execution_tool_registry_sha256"]) == 64
     records = {item["name"]: item for item in assistant._active_execution_tool_registry["tools"]}
@@ -161,6 +164,8 @@ def test_desktop_production_model_request_freezes_exact_visible_tool_set() -> No
     assert records["run_read"]["risk"] == "read_only"
     assert records["TodoWrite"]["executor_id"] == "manager:TodoWrite"
     assert records["TodoWrite"]["risk"] == "local_write"
+    assert records["web.search"]["executor_id"] == "workbench:web.search"
+    assert records["web.search"]["risk"] == "external_write"
 
 
 def test_desktop_required_approval_tool_fails_closed_before_executor_dispatch() -> None:

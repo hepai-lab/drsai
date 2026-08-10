@@ -11,6 +11,8 @@ const experimentContract = read("../shared/api/runExperiment.ts");
 const planReview = read("../shared/renderer/src/components/ReplayPlanReview.tsx");
 const comparison = read("../shared/renderer/src/components/RunComparisonView.tsx");
 const structured = read("../shared/renderer/src/components/StructuredMessageParts.tsx");
+const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const chatMain = read("../shared/main/chat.ts");
 const app = read("../shared/renderer/src/App.tsx");
 const navigation = read("../shared/renderer/src/navigation.ts");
 const windowsMain = read("src/main/index.ts");
@@ -129,6 +131,21 @@ assert.ok(app.includes("detail.createExperiment === true"), "Run inspection deep
 assert.ok(component.includes("data-run-id={inspection.run.run_id}"));
 assert.ok(structured.includes("reproducibilityLevel"));
 assert.ok(structured.includes("structured-reproducibility"));
+assert.ok(
+  chatWorkspace.includes('runId?.startsWith("run-")'),
+  "Manifest hydration must reject request IDs and non-Runtime run IDs",
+);
+const createRuntimeRun = chatMain.indexOf("run = await client.createAgentRun(");
+const bindAuthoritativeRun = chatMain.indexOf("runId: run.run_id,\n    type: \"start\",");
+assert.ok(createRuntimeRun >= 0, "Runtime chat must create an authoritative Run");
+assert.ok(
+  bindAuthoritativeRun > createRuntimeRun,
+  "Renderer must only receive its Runtime Run ID after createAgentRun succeeds",
+);
+assert.ok(
+  !chatMain.includes('emit(webContents, { requestId, sessionId, runId, type: "start" });\n  await upsertThreadFromRun'),
+  "Runtime chat must not publish the provisional request ID as a Runtime Run ID",
+);
 assert.ok(app.includes('setActiveRightTab("run")'));
 assert.ok(app.includes("<RunInspectorPanel"));
 assert.ok(navigation.includes('["run", "files", "browser", "terminal", "debug"]'));
