@@ -3,6 +3,7 @@ import ReactMarkdown, { type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism, SyntaxHighlighterProps } from "react-syntax-highlighter";
 import { tomorrow } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { useLang } from "../../i18n/useLang";
 
 /** Fenced ``` blocks become hast <pre><code>; inline `x` is only <code>. Used to pick CodeBlock vs chip. */
 const MarkdownCodeInFenceContext = createContext(false);
@@ -369,25 +370,27 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
     ? "var(--color-magenta-600)"
     : "var(--color-border-secondary)";
 
+  const { t } = useLang();
+
   const getReasoningTitle = () => {
-    if (!isDone) return "Thinking...";
-    if (cleanContent.length === 0) return "Thought";
-    if (durationSeconds < 1) return "Thought Completed";
-    if (durationSeconds < 60) return `Thought for ${durationSeconds} seconds`;
+    if (!isDone) return t("thinkBubble.reasoning.thinking");
+    if (cleanContent.length === 0) return t("thinkBubble.reasoning.thought");
+    if (durationSeconds < 1) return t("thinkBubble.reasoning.thoughtCompleted");
+    if (durationSeconds < 60) return t("thinkBubble.reasoning.forSeconds", durationSeconds);
     const minutes = Math.floor(durationSeconds / 60);
     const seconds = durationSeconds % 60;
-    if (seconds === 0) return `Thought for ${minutes}m`;
-    return `Thought for ${minutes}m ${seconds}s`;
+    if (seconds === 0) return t("thinkBubble.reasoning.forMinutes", minutes);
+    return t("thinkBubble.reasoning.forMinSec", minutes, seconds);
   };
 
   const getTitle = () => {
     if (type === "reasoning") return getReasoningTitle();
-    if (type === "code_interpreter") return isDone ? "Analysis complete" : "Analyzing...";
+    if (type === "code_interpreter") return isDone ? t("thinkBubble.codeInterpreter.complete") : t("thinkBubble.codeInterpreter.analyzing");
     if (type === "tool_calls") {
-      const toolName = attributes.name || "Tool";
-      return isDone ? `Result ready: ${toolName}` : `Executing ${toolName}...`;
+      const toolName = attributes.name || t("thinkBubble.default.done");
+      return isDone ? t("thinkBubble.toolCalls.resultReady", toolName) : t("thinkBubble.toolCalls.executing", toolName);
     }
-    return isDone ? "Done" : "Working...";
+    return isDone ? t("thinkBubble.default.done") : t("thinkBubble.default.working");
   };
 
 
@@ -399,7 +402,7 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
           <span aria-hidden className="text-magenta-600/80">
             ✓
           </span>
-          <span>Thought</span>
+          <span>{t("thinkBubble.reasoning.thought")}</span>
         </span>
       );
     }

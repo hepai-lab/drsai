@@ -49,6 +49,22 @@ const resolveSamePathTarget = (to: string): HistoryTarget | null => {
 
 export const LOCATION_CHANGE_EVENT = "drsai:locationchange";
 
+/** Gatsby 当前应展示的 pathname；query-only 的 pushState 不会更新它 */
+let gatsbySyncedPathname =
+    typeof window !== "undefined" ? window.location.pathname : "/";
+
+const syncGatsbyPathnameFromTarget = (to: string) => {
+    if (typeof window === "undefined") return;
+    try {
+        const url = new URL(to, window.location.origin);
+        if (url.origin === window.location.origin) {
+            gatsbySyncedPathname = url.pathname;
+        }
+    } catch {
+        // ignore malformed targets
+    }
+};
+
 const notifyLocationChange = () => {
     // Do not dispatch PopStateEvent: Gatsby/@reach/router listens to it and will
     // attempt a full client route transition (dev 404 on menu query changes).
@@ -94,7 +110,20 @@ export const useLocation = () => {
             });
         };
 
-        window.addEventListener("popstate", handleLocationChange);
+        const handlePopState = () => {
+            const nextPathname = window.location.pathname;
+            const href = `${nextPathname}${window.location.search}${window.location.hash}`;
+
+            // 从 /welcome 等跨页后退时，浏览器 URL 已变但 Gatsby 仍停留在旧页面
+            if (nextPathname !== gatsbySyncedPathname) {
+                gatsbySyncedPathname = nextPathname;
+                void gatsbyNavigate(href, { replace: true });
+            }
+
+            handleLocationChange();
+        };
+
+        window.addEventListener("popstate", handlePopState);
         window.addEventListener(LOCATION_CHANGE_EVENT, handleLocationChange);
 
         const originalPushState = window.history.pushState;
@@ -111,7 +140,7 @@ export const useLocation = () => {
         };
 
         return () => {
-            window.removeEventListener("popstate", handleLocationChange);
+            window.removeEventListener("popstate", handlePopState);
             window.removeEventListener(LOCATION_CHANGE_EVENT, handleLocationChange);
             window.history.pushState = originalPushState;
             window.history.replaceState = originalReplaceState;
@@ -151,5 +180,6 @@ export const useNavigate = (): ((
         }
 
         gatsbyNavigate(to, { replace: options?.replace });
+        syncGatsbyPathnameFromTarget(to);
     }, []);
 };

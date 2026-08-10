@@ -866,12 +866,12 @@ export const SessionManager: React.FC = () => {
 
   // Templates tab (DocMaster only) ------------------------------------------------
   const isDocMaster = useMemo(() => {
-    const name =
-      (agentInfo as { name?: string } | null | undefined)?.name ||
-      selectedAgent?.name ||
-      "";
+    // 只依赖 agentInfo（后端实时数据），不使用 selectedAgent 作为 fallback：
+    // selectedAgent 来自 zustand persist，刷新后会从 localStorage 恢复旧值，
+    // 而此时 agentInfo 还为 null（异步请求未完成），会导致非 DocMaster 时也显示"专属功能"。
+    const name = (agentInfo as { name?: string } | null | undefined)?.name || "";
     return name === "DocMaster";
-  }, [agentInfo, selectedAgent]);
+  }, [agentInfo]);
 
   // Auto-open right panel when DocMaster agent is selected, close when switching away.
   useEffect(() => {

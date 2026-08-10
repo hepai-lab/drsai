@@ -86,29 +86,28 @@ export type AuthVerifyResult =
 
 /** Use httpOnly refresh-token cookie to obtain a new access token (SSO production). */
 export async function refreshAccessToken(): Promise<AuthVerifyResult> {
-  let response: Response;
-  try {
-    response = await fetch(`${getServerUrl()}/auth/refresh`, {
+try {
+    const response = await fetch(`${getServerUrl()}/auth/refresh`, {
       method: "POST",
       credentials: "include",
     });
-  } catch {
+    if (!response.ok) {
+      return { ok: false };
+    }
+
+    const payload = await response.json();
+    const accessToken = payload?.data?.access_token as string | undefined;
+    const userEmail = payload?.data?.user_id as string | undefined;
+    if (!accessToken || !userEmail) {
+      return { ok: false };
+    }
+
+    saveAuthSession(accessToken, userEmail);
+    return { ok: true, userEmail, accessToken };
+  } catch (err) {
+    console.warn("refreshAccessToken: network error, skipping refresh", err);
     return { ok: false };
   }
-
-  if (!response.ok) {
-    return { ok: false };
-  }
-
-  const payload = await response.json();
-  const accessToken = payload?.data?.access_token as string | undefined;
-  const userEmail = payload?.data?.user_id as string | undefined;
-  if (!accessToken || !userEmail) {
-    return { ok: false };
-  }
-
-  saveAuthSession(accessToken, userEmail);
-  return { ok: true, userEmail, accessToken };
 }
 
 /** Validate Bearer token; refresh via cookie when expired or missing access token. */
@@ -128,8 +127,9 @@ export async function verifyAuthSession(): Promise<AuthVerifyResult> {
       credentials: "include",
     });
   } catch {
-    clearAuthSession();
-    return { ok: false };
+    // Network error — try a full refresh instead of giving up
+    const refreshed = await refreshAccessToken();
+    return refreshed.ok ? refreshed : { ok: false };
   }
 
   if (meResponse.ok) {

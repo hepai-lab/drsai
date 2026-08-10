@@ -4,13 +4,14 @@ import {
   ChartColumn,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  Cloud,
   Grid2X2,
-  Library,
   MessageSquare,
+  ChevronDown,
   Settings,
   UserCog,
   Users,
-  ChevronDown,
   Wrench,
 } from "lucide-react";
 import React, { useContext, useEffect, useState } from "react";
@@ -24,13 +25,18 @@ interface LeftMenuProps {
   onClose: () => void;
   /** Platform admin only: settings → 使用分析 / 用户管理 */
   showAdminNav?: boolean;
+  /** 历史会话列表（从 manager.tsx 传入） */
+  historyContent?: React.ReactNode;
+  /** 点击“开始聊天”创建新会话 */
+  onNewSession?: () => void;
 }
 
-type SectionId = "chat" | "agents" | "settings";
+type SectionId = "chat" | "agents" | "settings" | "history";
 
 const SECTIONS: { id: SectionId; icon: React.ReactNode; label: string; defaultItem: string }[] = [
   { id: "chat", icon: <MessageSquare className="w-3.5 h-3.5" />, label: "Chat", defaultItem: "current_session" },
-  { id: "agents", icon: <Bot className="w-3.5 h-3.5" />, label: "Agents", defaultItem: "my_agents" },
+  { id: "agents", icon: <Bot className="w-3.5 h-3.5" />, label: "Agents", defaultItem: "agent_square" },
+  { id: "history", icon: <Clock className="w-3.5 h-3.5" />, label: "History", defaultItem: "" },
   { id: "settings", icon: <Settings className="w-3.5 h-3.5" />, label: "Settings", defaultItem: "profile" },
 ];
 
@@ -40,6 +46,8 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   onSubMenuChange,
   onClose,
   showAdminNav = false,
+  historyContent,
+  onNewSession,
 }) => {
   const { darkMode } = useContext(appContext);
   const { t } = useLang();
@@ -49,19 +57,17 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
     chat: true,
     agents: false,
     settings: false,
+    history: true,
   });
 
   useEffect(() => {
     if (["current_session"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, chat: true }));
-    } else if (["my_agents", "agent_square", "skills_square", "library"].includes(activeSubMenuItem)) {
+    } else if (["my_agents", "agent_square", "skills_square"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, agents: true }));
-    } else if (
-      ["profile", "channels", "logs", "usage_analytics", "user_management", "agent_management"].includes(
-        activeSubMenuItem
-      )
-    ) {
-      setExpanded((e) => ({ ...e, settings: true }));
+    } else if (historyContent) {
+      // 历史会话默认展开
+      setExpanded((e) => ({ ...e, history: true }));
     }
   }, [activeSubMenuItem]);
 
@@ -76,7 +82,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
     >
       <div className="flex items-center gap-2">
         {icon}
-        <span>{t("leftmenu.section." + id)}</span>
+        <span>{t(("leftmenu.section." + id) as Parameters<typeof t>[0])}</span>
       </div>
       {expanded[id] ? (
         <ChevronDown className="w-3.5 h-3.5" />
@@ -118,7 +124,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   // Map each section to the items it contains, for active highlight detection
   const SECTION_ITEMS: Record<SectionId, string[]> = {
     chat: ["current_session"],
-    agents: ["my_agents", "agent_square", "skills_square", "library"],
+    agents: ["my_agents", "agent_square", "skills_square"],
     settings: [
       "profile",
       "channels",
@@ -126,6 +132,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
       ...(showAdminNav ? ["usage_analytics", "user_management"] : []),
       "agent_management",
     ],
+    history: [],
   };
 
   if (!isSidebarOpen) {
@@ -144,12 +151,49 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
           <ChevronRight className="w-3.5 h-3.5" />
         </button>
 
-        {/* Section icons */}
+        {/* Section icons — same order as expanded: chat, agents, cloud, history, settings */}
         <div className="flex flex-col items-center gap-1 mt-2">
-          {SECTIONS.map((s) => {
+          {(["chat", "agents"] as SectionId[]).map((id) => {
+            const s = SECTIONS.find((x) => x.id === id)!;
             const isSectionActive = SECTION_ITEMS[s.id].includes(activeSubMenuItem);
             return (
-              <Tooltip key={s.id} title={t("leftmenu.section." + s.id)} placement="right">
+              <Tooltip key={s.id} title={t(("leftmenu.section." + s.id) as Parameters<typeof t>[0])} placement="right">
+                <button
+                  type="button"
+                  onClick={() => { onSubMenuChange(s.defaultItem); onClose(); }}
+                  className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${isSectionActive
+                    ? "text-accent bg-accent/10"
+                    : isDark
+                      ? "text-secondary hover:text-primary hover:bg-white/5"
+                      : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+                    }`}
+                >
+                  {s.icon}
+                </button>
+              </Tooltip>
+            );
+          })}
+
+          <Tooltip title={t("leftmenu.section.files")} placement="right">
+            <button
+              type="button"
+              onClick={() => { onSubMenuChange("cloud"); onClose(); }}
+              className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${activeSubMenuItem === "cloud"
+                ? "text-accent bg-accent/10"
+                : isDark
+                  ? "text-secondary hover:text-primary hover:bg-white/5"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+                }`}
+            >
+              <Cloud className="w-3.5 h-3.5" />
+            </button>
+          </Tooltip>
+
+          {(["history", "settings"] as SectionId[]).map((id) => {
+            const s = SECTIONS.find((x) => x.id === id)!;
+            const isSectionActive = SECTION_ITEMS[s.id].includes(activeSubMenuItem);
+            return (
+              <Tooltip key={s.id} title={t(("leftmenu.section." + s.id) as Parameters<typeof t>[0])} placement="right">
                 <button
                   type="button"
                   onClick={() => { onSubMenuChange(s.defaultItem); onClose(); }}
@@ -188,22 +232,19 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
         </button>
       </div>
 
-      {/* Nav */}
-      <div className="flex-1 overflow-y-auto px-2 pt-2 pb-4 sidebar-scroll space-y-1">
-        {/* ── 聊天 ── */}
-        <div>
-          <SectionHeader id="chat" icon={<MessageSquare className="w-3.5 h-3.5" />} />
-          {expanded.chat && (
-            <div className="mt-0.5 space-y-0.5">
-              <NavItem
-                id="current_session"
-                icon={<MessageSquare className="w-3.5 h-3.5" />}
-                label={t("leftmenu.section.chat")}
-                onClick={() => onSubMenuChange("current_session")}
-              />
-            </div>
-          )}
-        </div>
+      {/* Nav — scrollable upper area */}
+      <div className="flex-1 overflow-y-auto px-2 pt-2 sidebar-scroll space-y-1">
+        {/* ── 开始聊天 ── */}
+        <button
+          type="button"
+          onClick={() => {
+            if (onNewSession) onNewSession();
+          }}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold tracking-wide transition-colors text-secondary hover:text-primary hover:bg-tertiary/25"
+        >
+          <MessageSquare className="w-3.5 h-3.5" />
+          <span>{t("leftmenu.nav.startChat")}</span>
+        </button>
 
         <div className="h-px bg-border-primary/25 my-1.5" />
 
@@ -212,12 +253,6 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
           <SectionHeader id="agents" icon={<Bot className="w-3.5 h-3.5" />} />
           {expanded.agents && (
             <div className="mt-0.5 space-y-0.5">
-              {/* <NavItem
-                id="my_agents"
-                icon={<User className="w-3.5 h-3.5" />}
-                label="我的智能体"
-                onClick={() => onSubMenuChange("my_agents")}
-              /> */}
               <NavItem
                 id="agent_square"
                 icon={<Grid2X2 className="w-3.5 h-3.5" />}
@@ -230,19 +265,42 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                 label={t("leftmenu.nav.skillsSquare")}
                 onClick={() => onSubMenuChange("skills_square")}
               />
-              <NavItem
-                id="library"
-                icon={<Library className="w-3.5 h-3.5" />}
-                label={t("leftmenu.nav.library")}
-                onClick={() => onSubMenuChange("library")}
-              />
             </div>
           )}
         </div>
 
         <div className="h-px bg-border-primary/25 my-1.5" />
 
-        {/* ── 设置 ── */}
+        {/* ── 云盘 ── */}
+        <div>
+          <button
+            type="button"
+            onClick={() => onSubMenuChange("cloud")}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold tracking-wide transition-colors ${activeSubMenuItem === "cloud"
+              ? "bg-accent/15 text-accent shadow-sm"
+              : "text-secondary hover:text-primary hover:bg-tertiary/25"
+              }`}
+          >
+            <Cloud className="w-3.5 h-3.5" />
+            <span>{t("leftmenu.section.files")}</span>
+          </button>
+        </div>
+
+        <div className="h-px bg-border-primary/25 my-1.5" />
+
+        {/* ── 历史会话 ── */}
+        <div className="pb-2">
+          <SectionHeader id="history" icon={<Clock className="w-3.5 h-3.5" />} />
+          {expanded.history && historyContent && (
+            <div className="mt-0.5 space-y-0.5">
+              {historyContent}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── 设置 — fixed bottom ── */}
+      <div className="flex-shrink-0  px-2 pt-1 pb-2">
         <div>
           <SectionHeader id="settings" icon={<Settings className="w-3.5 h-3.5" />} />
           {expanded.settings && (
@@ -253,8 +311,21 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                 label={t("leftmenu.nav.profile")}
                 onClick={() => onSubMenuChange("profile")}
               />
-              {showAdminNav ? (
+              {/* <NavItem
+                id="channels"
+                icon={<Radio className="w-3.5 h-3.5" />}
+                label={t("leftmenu.nav.channels")}
+                onClick={() => onSubMenuChange("channels")}
+              />
+              <NavItem
+                id="logs"
+                icon={<FileText className="w-3.5 h-3.5" />}
+                label={t("leftmenu.nav.logs")}
+                onClick={() => onSubMenuChange("logs")}
+              /> */}
+              {showAdminNav && (
                 <>
+                  <div className="h-px bg-border-primary/15 my-1" />
                   <NavItem
                     id="usage_analytics"
                     icon={<ChartColumn className="w-3.5 h-3.5" />}
@@ -268,19 +339,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                     onClick={() => onSubMenuChange("user_management")}
                   />
                 </>
-              ) : null}
-              {/* <NavItem
-                id="channels"
-                icon={<Radio className="w-3.5 h-3.5" />}
-                label="频道"
-                onClick={() => onSubMenuChange("channels")}
-              /> */}
-              {/* <NavItem
-                id="logs"
-                icon={<FileText className="w-3.5 h-3.5" />}
-                label="日志"
-                onClick={() => onSubMenuChange("logs")}
-              /> */}
+              )}
             </div>
           )}
         </div>

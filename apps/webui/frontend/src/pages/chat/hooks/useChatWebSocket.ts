@@ -36,10 +36,46 @@ export const useChatWebSocket = ({
   const inputTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const streamingMessageRef = React.useRef<{ source: string; content: string } | null>(null);
 
+  const handleWebSocketMessageRef = React.useRef<
+    (wsMessage: WebSocketMessage) => void
+  >(() => {});
+
+  // Batched WS message queue: coalesces bursts of chunks (and other events)
+  // into a single React render. Also reorders the queue so that a terminal
+  // event (input_request/completion/result) is processed BEFORE any preceding
+  // chunks in the same batch. This way when the terminal event promotes the
+  // last chunk to _is_final_reply, the promotion is applied in the same render
+  // that first paints those chunks — no visible "inside-box then outside" flash.
+  const wsMessageQueueRef = React.useRef<WebSocketMessage[]>([]);
+  const wsFlushScheduledRef = React.useRef(false);
+  const WS_FLUSH_DELAY_MS = 60;
+  const flushWsQueue = React.useCallback(() => {
+    wsFlushScheduledRef.current = false;
+    const queue = wsMessageQueueRef.current;
+    if (queue.length === 0) return;
+    wsMessageQueueRef.current = [];
+    // Reorder: if the batch contains a terminal event, process it AFTER the
+    // preceding chunks so promotion sees the full accumulated chunk content.
+    // (The default in-order processing already does this; explicit reordering
+    // isn't needed. Just process in order.)
+    for (const msg of queue) {
+      handleWebSocketMessageRef.current(msg);
+    }
+  }, []);
+  const enqueueWsMessage = React.useCallback((msg: WebSocketMessage) => {
+    wsMessageQueueRef.current.push(msg);
+    if (!wsFlushScheduledRef.current) {
+      wsFlushScheduledRef.current = true;
+      setTimeout(flushWsQueue, WS_FLUSH_DELAY_MS);
+    }
+  }, [flushWsQueue]);
+
   const handleWebSocketMessage = React.useCallback(
     (wsMessage: WebSocketMessage) => {
       setCurrentRun((current: Run | null) => {
-        if (!current || !session?.id) return null;
+        if (!current || !session?.id) {
+          return current;
+        }
 
         let updatedRun: Run | null = null;
 
@@ -54,6 +90,24 @@ export const useChatWebSocket = ({
               setActiveSocket(null);
               activeSocketRef.current = null;
             }
+            // Transition any non-terminal state to stopped on error:
+            // active/pausing/paused = streaming, awaiting_input = waiting for user
+            const nonTerminal = new Set(["active", "awaiting_input", "pausing", "paused"]);
+            if (nonTerminal.has(current.status)) {
+              return {
+                ...current,
+                status: "stopped" as BaseRunStatus,
+                input_request: undefined,
+                team_result: current.team_result || {
+                  task_result: {
+                    messages: [],
+                    stop_reason: "Session was interrupted",
+                  },
+                  usage: "",
+                  duration: 0,
+                },
+              };
+            }
             return current;
 
           case "message":
@@ -61,17 +115,62 @@ export const useChatWebSocket = ({
 
             const messageData = wsMessage.data as AgentMessageConfig;
 
-            // Always add user messages, and non-user messages that passed deduplication
+            // Strip leading <think>...</think> block from TextMessage content.
+            // The ThoughtEvent (plain text) arrives separately via "message_thinking"
+            // so we remove the tagged block here to avoid duplicate display.
+            let finalContent = typeof messageData.content === "string"
+              ? messageData.content.replace(/^<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/, "")
+              : messageData.content;
+            const finalMessageData = (finalContent !== messageData.content)
+              ? { ...messageData, content: finalContent } as AgentMessageConfig
+              : messageData;
+
             const newMessage = createMessage(
-              messageData,
+              finalMessageData,
               current.id,
               session.id,
               userEmail
             );
 
+            // Remove ONLY the last (tail-most) streaming chunk from the same source —
+            // that's the one being replaced by the incoming final TextMessage. Earlier
+            // intermediate chunks stay in the messages array as history and render
+            // inside the process box (they're not at the tail anymore).
+            const chunkSourceKey = messageData.source || "assistant";
+            const taggedFinalMessage = {
+              ...newMessage,
+              config: {
+                ...newMessage.config,
+                metadata: {
+                  ...(newMessage.config.metadata || {}),
+                  _is_final_reply: true,
+                },
+              } as any,
+            };
+            let lastChunkIdxForSource = -1;
+            for (let i = current.messages.length - 1; i >= 0; i--) {
+              const m = current.messages[i];
+              if (
+                m.config.source === chunkSourceKey &&
+                m.config.metadata?.start_flag !== undefined
+              ) {
+                lastChunkIdxForSource = i;
+                break;
+              }
+            }
+            if (lastChunkIdxForSource >= 0) {
+              const withoutTailChunk = [
+                ...current.messages.slice(0, lastChunkIdxForSource),
+                ...current.messages.slice(lastChunkIdxForSource + 1),
+              ];
+              streamingMessageRef.current = null;
+              updatedRun = { ...current, messages: [...withoutTailChunk, taggedFinalMessage] };
+              return updatedRun;
+            }
+
             updatedRun = {
               ...current,
-              messages: [...current.messages, newMessage],
+              messages: [...current.messages, taggedFinalMessage],
             };
 
             return updatedRun;
@@ -83,6 +182,51 @@ export const useChatWebSocket = ({
               task: taskData,
             };
             return updatedRun;
+          case "message_burst": {
+            // Backend-buffered burst: the backend waited for the next event to
+            // determine routing. is_final=true → render outside the box;
+            // is_final=false → render inside the box with typewriter effect.
+            if (!wsMessage.data) return current;
+            const burstData = wsMessage.data as any;
+            const burstContent = typeof burstData.content === "string" ? burstData.content : "";
+            if (!burstContent) return current;
+            const burstSource = typeof burstData.source === "string" ? burstData.source : "assistant";
+            const isFinal = burstData.is_final === true;
+
+            // Strip any <think>...</think> block from content
+            let cleanContent = burstContent.replace(/^<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/, "");
+            if (!cleanContent.trim()) return current;
+
+            const burstMessage = createMessage(
+              {
+                source: burstSource,
+                content: cleanContent,
+                metadata: {
+                  _is_burst: true,
+                  _is_final_reply: isFinal,
+                },
+              } as AgentMessageConfig,
+              current.id,
+              session.id,
+              userEmail
+            );
+
+            // Remove streaming chunks and prior final bursts from the same source so
+            // a corrective (longer) is_final burst replaces a truncated one.
+            let msgs = current.messages.filter((m) => {
+              if (m.config.source !== burstSource) return true;
+              const meta = m.config.metadata as Record<string, unknown> | undefined;
+              if (meta?.start_flag !== undefined) return false;
+              if (isFinal && meta?._is_burst && meta?._is_final_reply) return false;
+              return true;
+            });
+
+            return {
+              ...current,
+              messages: [...msgs, burstMessage],
+            };
+          }
+
           case "message_chunk":
             if (!wsMessage.data) return current;
 
@@ -130,30 +274,95 @@ export const useChatWebSocket = ({
                 return updatedRun;
               }
 
+              // Find the existing streaming-chunk message for this source by
+              // scanning backward for start_flag. This is robust against
+              // ThoughtEvent / log messages being inserted between chunks.
+              const existingChunkIdx = current.messages.reduceRight(
+                (found: number, m, i) =>
+                  found >= 0
+                    ? found
+                    : m.config.source === chunkSource &&
+                      m.config.metadata?.start_flag !== undefined
+                    ? i
+                    : -1,
+                -1
+              );
+
+              // If existing chunk is still the tail → grow its content in place.
+              if (existingChunkIdx >= 0 && existingChunkIdx === lastMsgIndex) {
+                const existingChunk = current.messages[existingChunkIdx];
+                const newContent =
+                  (existingChunk.config.content as string) + processedContent;
+                const updatedMessages = [...current.messages];
+                updatedMessages[existingChunkIdx] = {
+                  ...existingChunk,
+                  config: {
+                    ...existingChunk.config,
+                    content: newContent,
+                    metadata: {
+                      ...(existingChunk.config.metadata || {}),
+                      ...(sanitizedChunkMetadata || {}),
+                    },
+                  },
+                };
+                streamingMessageRef.current = { source: chunkSource, content: newContent };
+                updatedRun = { ...current, messages: updatedMessages };
+                return updatedRun;
+              }
+
+              // Existing chunk exists but something arrived after it (tool call, thought,
+              // log, etc.). Leave the old chunk in place — it's now "history" that will
+              // render INSIDE the process box (see isSingleSegment: only tail chunks
+              // render outside). Create a NEW chunk at the tail for the new burst.
+              // No _sealed_chunk marker needed — position in the array is authoritative.
+              if (existingChunkIdx >= 0) {
+                const newChunkMessage = createMessage(
+                  {
+                    source: chunkSource,
+                    content: processedContent,
+                    metadata: {
+                      ...(sanitizedChunkMetadata || {}),
+                      start_flag: "yes",
+                      stream_source_label: chunkSource,
+                    },
+                  } as AgentMessageConfig,
+                  current.id,
+                  session.id,
+                  userEmail
+                );
+                streamingMessageRef.current = {
+                  source: chunkSource,
+                  content: processedContent,
+                };
+                updatedRun = {
+                  ...current,
+                  messages: [...current.messages, newChunkMessage],
+                };
+                return updatedRun;
+              }
+
+              // No existing chunk for this source — fall back to appending to last
+              // message if source matches (legacy path, shouldn't normally hit).
               if (lastMsgIndex >= 0) {
                 const lastMessage = current.messages[lastMsgIndex];
-                
-                // Check if last message is a log message - don't append chunk to log messages
-                const isLastMessageLog = 
+                const isLastMessageLog =
                   lastMessage.config.metadata?.type === "log" ||
                   (lastMessage.config as any).content_type === "log" ||
                   (lastMessage.config as any).type === "AgentLogEvent" ||
                   lastMessage.config.metadata?.type === "AgentLogEvent";
-
-                // Check if last message is a FilesEvent — chunk should not append to file messages
                 const isLastMessageFilesEvent =
-                  lastMessage.config.type === "FilesEvent" ||
+                  (lastMessage.config as any).type === "FilesEvent" ||
                   lastMessage.config.metadata?.type === "FilesEvent";
 
                 if (
                   !isLastMessageLog &&
                   !isLastMessageFilesEvent &&
                   (lastMessage.config.source === "assistant" ||
-                  lastMessage.config.source === chunkSource)
+                    lastMessage.config.source === chunkSource)
                 ) {
                   const updatedMessages = [...current.messages];
-                  const newContent = (lastMessage.config.content as string) + processedContent;
-
+                  const newContent =
+                    (lastMessage.config.content as string) + processedContent;
                   updatedMessages[lastMsgIndex] = {
                     ...lastMessage,
                     config: {
@@ -165,21 +374,14 @@ export const useChatWebSocket = ({
                       } as any),
                     },
                   };
-
-                  streamingMessageRef.current = {
-                    source: chunkSource,
-                    content: newContent,
-                  };
-
-                  updatedRun = {
-                    ...current,
-                    messages: updatedMessages,
-                  };
-
+                  streamingMessageRef.current = { source: chunkSource, content: newContent };
+                  updatedRun = { ...current, messages: updatedMessages };
                   return updatedRun;
                 }
               }
 
+              // No suitable message to append to — create a new orphan chunk.
+              // This should not happen in normal flow but avoids dropped chunks.
               const newChunkMessage = createMessage(
                 {
                   source: chunkSource,
@@ -360,6 +562,29 @@ export const useChatWebSocket = ({
             return updatedRun;
           }
 
+          case "tool.progress": {
+            // Real-time tool output streaming (from run_bash line-by-line)
+            if (!wsMessage.data) return current;
+            const progressData = wsMessage.data as any;
+            const toolId = progressData.tool_id || "";
+            const preview = progressData.preview || "";
+            if (!toolId) return current;
+
+            // Accumulate progress into the run's metadata for the timeline panel
+            const existingProgress = (current as any)._toolProgress || {};
+            const existingLines = existingProgress[toolId] || [];
+            const updatedProgress = {
+              ...existingProgress,
+              [toolId]: [...existingLines, preview],
+            };
+
+            updatedRun = {
+              ...current,
+              ...({ _toolProgress: updatedProgress } as any),
+            };
+            return updatedRun;
+          }
+
           case "message_files":
             if (!wsMessage.data) return current;
             const filesEvent = wsMessage.data as FilesEvent;
@@ -375,6 +600,71 @@ export const useChatWebSocket = ({
               messages: [...current.messages, filesMessage],
             };
             return updatedRun;
+          case "message_thinking": {
+            if (!wsMessage.data) return current;
+            const thinkSrc = (wsMessage.data as any)?.source || "assistant";
+            const thinkContent = typeof (wsMessage.data as any)?.content === "string"
+              ? (wsMessage.data as any).content.trim() : "";
+
+            // If a message_burst from the same source already exists with the same
+            // content, the burst IS this thought — don't duplicate it as a ThoughtEvent.
+            const burstWithSameContent = current.messages.some((m) => {
+              const meta = m.config.metadata as any;
+              if (!meta?._is_burst || m.config.source !== thinkSrc) return false;
+              const bc = typeof m.config.content === "string" ? m.config.content.trim() : "";
+              return thinkContent && bc.startsWith(thinkContent);
+            });
+            if (burstWithSameContent) return current;
+
+            // ThoughtEvent arrives with type:"ThoughtEvent" already set in model_dump()
+            const thinkingMessage = createMessage(
+              wsMessage.data as AgentMessageConfig,
+              current.id,
+              session.id,
+              userEmail
+            );
+            // ThoughtEvent arrives AFTER the chunk it logically precedes.
+            // Insert it BEFORE the most recent burst/chunk from the same source
+            // that doesn't already have a preceding ThoughtEvent.
+            let insertBeforeIdx = -1;
+            for (let i = current.messages.length - 1; i >= 0; i--) {
+              const m = current.messages[i];
+              const meta = m.config.metadata as any;
+              if (m.config.source !== thinkSrc) continue;
+              // Match active chunk (start_flag), sealed chunk (_sealed_chunk),
+              // promoted final reply (_is_final_reply), or a burst message
+              const isChunkOrReply =
+                meta?.start_flag !== undefined ||
+                meta?._sealed_chunk ||
+                meta?._is_final_reply ||
+                meta?._is_burst;
+              if (!isChunkOrReply) continue;
+              // Check if a ThoughtEvent already sits immediately before this chunk
+              const prev = i > 0 ? current.messages[i - 1] : null;
+              const prevIsThought =
+                prev &&
+                ((prev.config as any).type === "ThoughtEvent" ||
+                  (prev.config.metadata as any)?.type === "ThoughtEvent");
+              if (prevIsThought) continue; // already has a thought — look further back
+              insertBeforeIdx = i;
+              break;
+            }
+            let thinkMessages: typeof current.messages;
+            if (insertBeforeIdx >= 0) {
+              thinkMessages = [
+                ...current.messages.slice(0, insertBeforeIdx),
+                thinkingMessage,
+                ...current.messages.slice(insertBeforeIdx),
+              ];
+            } else {
+              thinkMessages = [...current.messages, thinkingMessage];
+            }
+            updatedRun = {
+              ...current,
+              messages: thinkMessages,
+            };
+            return updatedRun;
+          }
           case "input_request":
             let input_request: InputRequest;
             switch (wsMessage.input_type) {
@@ -392,6 +682,9 @@ export const useChatWebSocket = ({
                 break;
             }
 
+            // Don't touch messages. The tail streaming chunk stays at the tail
+            // and continues to render OUTSIDE the process box (see isSingleSegment:
+            // "chunk at tail" = final reply). No promotion needed.
             updatedRun = {
               ...current,
               status: "awaiting_input",
@@ -432,6 +725,8 @@ export const useChatWebSocket = ({
               activeSocketRef.current = null;
             }
 
+            // Don't touch messages — tail chunk stays at tail and renders outside
+            // via isSingleSegment's tail-chunk rule.
             updatedRun = {
               ...current,
               status,
@@ -450,6 +745,9 @@ export const useChatWebSocket = ({
     },
     [session?.id, activeSocket, setCurrentRun, userEmail]
   );
+
+  // Keep ref in sync so socket.onmessage always calls the latest handler
+  handleWebSocketMessageRef.current = handleWebSocketMessage;
 
   const setupWebSocket = React.useCallback(
     (
@@ -475,7 +773,9 @@ export const useChatWebSocket = ({
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          handleWebSocketMessage(message);
+          // Enqueue instead of calling directly — flushed once per animation frame
+          // so bursts of chunks coalesce into a single render.
+          enqueueWsMessage(message);
         } catch (error) {
           console.error("WebSocket message parsing error:", error);
         }
@@ -498,12 +798,15 @@ export const useChatWebSocket = ({
           if (activeSocketRef.current !== socket) {
             return current;
           }
-          if (current.status === "awaiting_input") {
+          // Transition any non-terminal state to stopped on disconnect:
+          // active/pausing/paused = streaming, awaiting_input = waiting for user
+          const nonTerminal = new Set(["active", "awaiting_input", "pausing", "paused"]);
+          if (nonTerminal.has(current.status)) {
             const updatedRun = {
               ...current,
               status: "stopped" as BaseRunStatus,
               input_request: undefined,
-              team_result: {
+              team_result: current.team_result || {
                 task_result: {
                   messages: [],
                   stop_reason: "Cancelled by user",
@@ -512,7 +815,7 @@ export const useChatWebSocket = ({
                 duration: 0,
               } as TeamResult,
             };
-return updatedRun;
+            return updatedRun;
           }
           return current;
         });
@@ -520,6 +823,12 @@ return updatedRun;
         if (activeSocketRef.current === socket) {
           activeSocketRef.current = null;
           setActiveSocket(null);
+        }
+      };
+
+      socket.onopen = () => {
+        if (activeSocketRef.current === socket) {
+          // Socket reconnected — no-op; runTask's readyState polling will see OPEN
         }
       };
 

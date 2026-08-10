@@ -17,6 +17,7 @@ import {
 } from "@/utils/agent";
 import { messageUtils } from "../rendermessage";
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
+import { appContext } from "../../../hooks/provider";
 
 type SelectedLlm = { label: string; value: string };
 
@@ -72,6 +73,7 @@ export const useTaskActions = ({
 }: UseTaskActionsProps) => {
 
   const { agentInfo } = useAgentInfo(userEmail);
+  const { lang } = React.useContext(appContext);
   // IMPORTANT: outbound messages must stick to the session's original agent.
   // After switching sessions, the global selected agent can differ; using it here
   // causes "crossed" agent attribution when continuing a previous session.
@@ -82,15 +84,9 @@ export const useTaskActions = ({
   const handleError = React.useCallback(
     (error: any) => {
       console.error("Error:", error);
-      antdMessage.error("Error during request processing");
-
-      setError({
-        status: false,
-        message:
-          error instanceof Error ? error.message : "Unknown error occurred",
-      });
+      // Errors are handled silently — no user-visible messages
     },
-    [setError]
+    []
   );
 
   const handleInputResponse = React.useCallback(
@@ -406,15 +402,21 @@ export const useTaskActions = ({
           throw new Error("WebSocket connection not available");
         }
 
-        // Wait for socket to be ready
+        // Wait for socket to be ready (timeout after 10s to avoid hanging on "Processing")
         await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error("WebSocket connection timeout"));
+          }, 10000);
+
           const checkState = () => {
             if (socket.readyState === WebSocket.OPEN) {
+              clearTimeout(timeout);
               resolve();
             } else if (
               socket.readyState === WebSocket.CLOSED ||
               socket.readyState === WebSocket.CLOSING
             ) {
+              clearTimeout(timeout);
               reject(new Error("Socket failed to connect"));
             } else {
               setTimeout(checkState, 100);
@@ -461,6 +463,7 @@ export const useTaskActions = ({
             files: processedFiles,
             team_config: teamConfig,
             settings_config,
+            lang,
           },
         };
 
@@ -472,11 +475,7 @@ export const useTaskActions = ({
         };
         onSessionNameChange(sessionData);
       } catch (error) {
-        setError({
-          status: false,
-          message:
-            error instanceof Error ? error.message : "Failed to start task",
-        });
+        console.error("Failed to start task:", error);
       }
     },
     [

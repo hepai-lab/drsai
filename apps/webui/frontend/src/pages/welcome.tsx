@@ -14,10 +14,10 @@ import { appContext } from "../hooks/provider";
 
 const WINDOWS_DOWNLOAD_URL =
   process.env.GATSBY_WINDOWS_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.5/windows/OpenDrSai-Windows-Installer-x64.msi";
+  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.2/windows/OpenDrSai-Windows-Installer-x64.msi";
 const ANDROID_DOWNLOAD_URL =
   process.env.GATSBY_ANDROID_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.5/android/OpenDrSai-Android-v1.5.5.apk";
+  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.1/android/OpenDrSai-Android-v1.5.1.apk";
 const TUI_COMMAND = "pip install -U drsai";
 type ClientTab = "windows" | "android" | "terminal" | "macos";
 
@@ -166,7 +166,7 @@ const WelcomePage = () => {
             href="/login"
             className="group inline-flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-2.5 text-sm font-extrabold text-white no-underline shadow-lg shadow-violet-500/20 transition hover:-translate-y-0.5"
           >
-            <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-2 text-white transition group-hover:drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">
               {isZh ? "直接开始对话" : "Start chatting"}
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </span>
@@ -613,23 +613,23 @@ const ClientDetails = ({
     windows: {
       icon: <WindowsLogo />,
       title: "OpenDrSai for Windows",
-      version: "v1.5.5 Beta",
+      version: "v1.5.2",
       file: "OpenDrSai-Windows-Installer-x64.msi",
       size: "632 KB",
       sha256:
-        "fd0c5bbe268ba599f69f6f83a8ed40a4016a77afc60e0b42b539ee31976087cb",
-      programFile: "OpenDrSai-Windows-v1.5.5-x64.zip",
-      programSize: "242 MB",
+        "4dc7618f26c05cca4d467ec27a653aa9ac6d461585a0053f43bbd97499734853",
+      programFile: "OpenDrSai-Windows-v1.5.2-x64.zip",
+      programSize: "223 MB",
       href: WINDOWS_DOWNLOAD_URL,
     },
     android: {
       icon: <AndroidLogo />,
       title: "OpenDrSai for Android",
-      version: "v1.5.5 Beta",
-      file: "OpenDrSai-Android-v1.5.5.apk",
-      size: "25.1 MB",
+      version: "v1.5.1",
+      file: "OpenDrSai-Android-v1.5.1.apk",
+      size: "2.89 MB",
       sha256:
-        "d52b7df0cee4fab11fa817e0ba25be4db7e67a2ca3e3a4596c205e1a641321a6",
+        "5ad72a12e6a9abb18bba35510bbabd9547dfc077839ff172fd508e98099a117b",
       href: ANDROID_DOWNLOAD_URL,
     },
   };

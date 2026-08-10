@@ -20,6 +20,12 @@ interface FilePreviewPageProps {
   onFileEvent?: (event: FilesEvent) => void;
   /** Hide all edit/save affordances. Used by the DocMaster 模板库 preview flow. */
   readOnly?: boolean;
+  /** Called after docx-preview finishes rendering. */
+  onDocxReady?: () => void;
+  /** Called after pptx-preview finishes rendering. */
+  onPptReady?: () => void;
+  /** Called after PDF finishes rendering. */
+  onPdfReady?: () => void;
 }
 
 export interface FilePreviewPageHandle {
@@ -491,7 +497,7 @@ const normalizeMarkdownForPreview = (raw: string): string => {
 };
 
 const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageProps>(
-  ({ file = null, sessionId, onFileEvent, readOnly = false }, ref) => {
+  ({ file = null, sessionId, onFileEvent, readOnly = false, onDocxReady, onPptReady, onPdfReady }, ref) => {
   const { darkMode } = React.useContext(appContext);
   const isDark = darkMode === "dark";
   const location = useLocation();
@@ -537,8 +543,8 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
   const [wordLoading, setWordLoading] = React.useState(false);
   const [wordError, setWordError] = React.useState<string | null>(null);
 
-  // PPTX: fast-path uses backend-rendered slide images (`preview_slides`);
-  // otherwise we render the .pptx in-browser via pptx-preview into pptContainerRef.
+  // Use backend-rendered slide images when available (correct for all slide counts).
+  // Fall back to in-browser pptx-preview only when no backend images are provided.
   const pptSlides = React.useMemo(() => {
     const candidate = file as ((MessageFileItem & { preview_slides?: Array<{ index: number; name: string; url: string }> }) | null);
     const raw = candidate?.preview_slides || (candidate as { previewSlides?: Array<{ index: number; name: string; url: string }> } | null)?.previewSlides;
@@ -550,6 +556,10 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
   const pptContainerRef = React.useRef<HTMLDivElement>(null);
   const [pptLoading, setPptLoading] = React.useState(false);
   const [pptError, setPptError] = React.useState<string | null>(null);
+
+  const pdfContainerRef = React.useRef<HTMLDivElement>(null);
+  const [pdfLoading, setPdfLoading] = React.useState(false);
+  const [pdfError, setPdfError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -581,6 +591,9 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
         container.innerHTML = "";
         const { renderAsync } = await import("docx-preview");
         await renderAsync(arrayBuffer, container);
+        if (!cancelled && onDocxReady) {
+          onDocxReady();
+        }
       } catch (e) {
         if (cancelled) return;
         const message = e instanceof Error ? e.message : "加载失败";
@@ -627,11 +640,18 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
         if (!container) return;
         container.innerHTML = "";
         const { init } = await import("pptx-preview");
-        // Scale slides to the container's width while keeping 16:9.
-        const width = Math.max(container.clientWidth || 960, 480);
+        // Render at a fixed width; the parent scales to fit via transform.
+        const width = 960;
         const height = Math.round((width * 9) / 16);
-        const previewer = init(container, { width, height });
+        const previewer = init(container, { width, height, mode: "scroll" });
         await previewer.preview(arrayBuffer);
+        // pptx-preview sets height/overflow as inline styles — override after render
+        const wrapper = container.querySelector('.pptx-preview-wrapper') as HTMLElement | null;
+        if (wrapper) {
+          wrapper.style.height = "auto";
+          wrapper.style.overflow = "visible";
+        }
+        if (!cancelled && onPptReady) onPptReady();
       } catch (e) {
         if (cancelled) return;
         const message = e instanceof Error ? e.message : "加载失败";
@@ -646,6 +666,84 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
       cancelled = true;
     };
   }, [file, pptMode, pptSlides.length]);
+
+  // Render PDF pages to canvas using pdfjs-dist
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!file || !pdfMode) return;
+
+    const loadPdf = async () => {
+      setPdfLoading(true);
+      setPdfError(null);
+      try {
+        const pdfjsLib = await import("pdfjs-dist");
+        // Point worker at the bundled worker file
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+          "pdfjs-dist/build/pdf.worker.min.mjs",
+          import.meta.url,
+        ).href;
+
+        let data: ArrayBuffer;
+        if (file.download_method === "base64" && file.base64_content) {
+          const binary = atob(file.base64_content);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          data = bytes.buffer;
+        } else if (file.download_method === "url" && file.url) {
+          const res = await fetch(file.url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          data = await res.arrayBuffer();
+        } else {
+          throw new Error("当前文件没有可用内容");
+        }
+
+        if (cancelled) return;
+        const pdf = await pdfjsLib.getDocument({ data }).promise;
+        if (cancelled) return;
+
+        const container = pdfContainerRef.current;
+        if (!container) return;
+        container.innerHTML = "";
+
+        // Render all pages at a fixed viewport width of 960px
+        const TARGET_WIDTH = 960;
+        for (let i = 1; i <= pdf.numPages; i++) {
+          if (cancelled) return;
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 1 });
+          const scale = TARGET_WIDTH / viewport.width;
+          const scaled = page.getViewport({ scale });
+
+          const canvas = document.createElement("canvas");
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = scaled.width * dpr;
+          canvas.height = scaled.height * dpr;
+          canvas.style.width = `${scaled.width}px`;
+          canvas.style.height = `${scaled.height}px`;
+          canvas.style.display = "block";
+          canvas.style.marginBottom = "12px";
+          canvas.style.boxShadow = "0 1px 4px rgba(0,0,0,0.15)";
+
+          const ctx = canvas.getContext("2d");
+          if (!ctx) continue;
+          ctx.scale(dpr, dpr);
+          await page.render({ canvas, viewport: scaled }).promise;
+          if (cancelled) return;
+          container.appendChild(canvas);
+        }
+
+        if (!cancelled && onPdfReady) onPdfReady();
+      } catch (e) {
+        if (cancelled) return;
+        setPdfError(`PDF 加载失败：${e instanceof Error ? e.message : "未知错误"}`);
+      } finally {
+        if (!cancelled) setPdfLoading(false);
+      }
+    };
+
+    void loadPdf();
+    return () => { cancelled = true; };
+  }, [file, pdfMode, onPdfReady]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -723,9 +821,9 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
       )}
       */}
 
-      <div className="h-full min-h-0 flex flex-col">
-        <div className="flex-shrink-0 px-4 py-3 border-b border-border-primary/30 flex items-center justify-between gap-3">
-          {wordMode && !readOnly && (
+      <div className="flex flex-col">
+        {wordMode && !readOnly && (
+          <div className="flex-shrink-0 px-4 py-3 border-b border-border-primary/30 flex items-center justify-between gap-3">
             <div className="flex flex-shrink-0 items-center gap-2">
               {/* 在线编辑功能暂时注释
               <button
@@ -738,10 +836,10 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
               </button>
               */}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        <div className="flex-1 min-h-0 overflow-auto p-4">
+        <div className="p-4">
           {loading && <div className="text-sm text-secondary">正在加载文件内容...</div>}
           {error && <div className="text-sm text-red-500">{error}</div>}
 
@@ -769,8 +867,12 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
             </div>
           )}
 
-          {!loading && !error && pdfMode && dataUrl && (
-            <iframe src={dataUrl} title={file.name} className="w-full h-full min-h-[500px] rounded-md border border-border-primary/30" />
+          {!loading && !error && pdfMode && (
+            <div>
+              {pdfLoading && <div className="text-sm text-secondary">正在加载 PDF...</div>}
+              {pdfError && <div className="text-sm text-red-500">{pdfError}</div>}
+              <div ref={pdfContainerRef} className={`overflow-visible${pdfLoading || pdfError ? " hidden" : ""}`} />
+            </div>
           )}
 
           {!loading && !error && wordMode && (
@@ -783,7 +885,7 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
               `}</style>
               <div
                 ref={wordContainerRef}
-                className={`h-full overflow-auto rounded-md border border-border-primary/30${wordLoading || wordError ? " hidden" : ""}`}
+                className={`overflow-visible${wordLoading || wordError ? " hidden" : ""}`}
               />
             </div>
           )}
@@ -792,8 +894,7 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
             <div className="space-y-4">
               {pptSlides.length > 0 ? (
                 pptSlides.map((slide) => (
-                  <div key={slide.name} className="rounded-lg border border-border-primary/30 bg-white p-3">
-                    <div className="mb-2 text-xs text-secondary">第 {slide.index} 页</div>
+                  <div key={slide.name}>
                     <img src={slide.url} alt={`Slide ${slide.index}`} className="w-full rounded-md border border-border-primary/20" />
                   </div>
                 ))
@@ -801,9 +902,13 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
                 <>
                   {pptLoading && <div className="text-sm text-secondary">正在加载幻灯片...</div>}
                   {pptError && <div className="text-sm text-red-500">{pptError}</div>}
+                  <style>{`
+                    .pptx-preview-wrapper { overflow: visible !important; height: auto !important; }
+                    .pptx-preview-slide-wrapper { overflow: hidden; }
+                  `}</style>
                   <div
                     ref={pptContainerRef}
-                    className={`overflow-auto bg-white rounded-md border border-border-primary/30 p-2${pptLoading || pptError ? " hidden" : ""}`}
+                    className={`overflow-visible${pptLoading || pptError ? " hidden" : ""}`}
                   />
                 </>
               )}
