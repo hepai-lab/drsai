@@ -1730,9 +1730,12 @@ async function runRuntimeBackendChat(
   // proves the same Run completed, do not turn a successful task into an
   // error and never re-execute it to obtain another acknowledgement.
   if (failure && runtimeTerminalStatus === "completed" && isRecoverableNetworkError(failure)) failure = undefined;
+  // Also clear outbox on Runtime terminal (failed/cancelled): the Run is
+  // resolved, the next user message is a new semantic entry, not a retry.
+  const runtimeReachedTerminal = runtimeTerminalStatus !== undefined;
   try {
-    if (!failure && sourceMessageObserved) {
-      await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId);
+    if ((!failure && sourceMessageObserved) || runtimeReachedTerminal) {
+      await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
     }
   } finally {
     liveSubscription.stop();

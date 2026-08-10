@@ -59,6 +59,11 @@ try {
   assert(chatSource.includes('sourceClient: "windows"'));
   assert(chatSource.includes("sessionSyncState.beginOutbox"));
   assert(
+    chatSource.includes("runtimeTerminalStatus !== undefined")
+      && /runtimeReachedTerminal[\s\S]{0,200}completeOutbox\(runtimeSessionId, sourceMessageId\)/.test(chatSource),
+    "runRuntimeBackendChat must clear the outbox once the Runtime reports a Run terminal, or subsequent messages get blocked as 'awaiting Runtime acknowledgement'",
+  );
+  assert(
     !chatSource.includes('/v1/chat/completions'),
     "local Desktop agents must not bypass Runtime create_run semantics",
   );
