@@ -19,6 +19,17 @@ class Settings(BaseSettings):
     # Optional absolute path to skills root (folders with SKILL.md). If unset, server walks up from package to find agent_skills/skills.
     AGENT_SKILLS_CATALOG_DIR: str | None = None
 
+    # ── Skills GFS (unified — public + user share one bucket) ─────────────────
+    # Single bucket 20294-skills-square with two folder prefixes:
+    #   public_skills/{slug}.zip   and   user_skills/{user_id}/{source}/{slug}.zip
+    GFS_SKILLS_AK: str = ""
+    GFS_SKILLS_SK: str = ""
+    GFS_SKILLS_BUCKET: str = "20294-skills-square"
+    GFS_SKILLS_ENDPOINT: str = "https://fgws3-gfs.ihep.ac.cn"
+
+    # URL for the API key → user_id verification service.
+    API_KEY_VERIFY_URL: str = "https://aiapi.ihep.ac.cn/apiv2/user"
+
     model_config = {"env_prefix": "DRSAI_UI_"}
 
 # TODO: 通过.env设置Settings

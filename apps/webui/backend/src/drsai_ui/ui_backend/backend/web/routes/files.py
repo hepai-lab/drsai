@@ -4,6 +4,7 @@ from fastapi import (
     APIRouter, 
     File, 
     UploadFile, 
+    Form,
     Depends, 
     Request,
     HTTPException,
@@ -159,6 +160,13 @@ def _skill_md_description_from_zip_path(zip_path: str) -> Optional[str]:
 async def upload_file_to_hepai(
     user_id: str,
     file: UploadFile = File(...),
+    display_name: str | None = Form(None),
+    slug: str | None = Form(None),
+    icon: str | None = Form(None),
+    description: str | None = Form(None),
+    version: str | None = Form(None),
+    changelog: str | None = Form(None),
+    source: str | None = Form(None),
     db=Depends(get_db),
 ) -> Dict:
     """
@@ -196,6 +204,23 @@ async def upload_file_to_hepai(
 
         # Persist hepai file info into DB for refresh/reload
         try:
+            # Build user-supplied metadata from form fields
+            user_meta: Dict[str, Any] = {}
+            if display_name and display_name.strip():
+                user_meta["display_name"] = display_name.strip()
+            if slug and slug.strip():
+                user_meta["slug"] = slug.strip()
+            if icon and icon.strip():
+                user_meta["icon"] = icon.strip()
+            if description and description.strip():
+                user_meta["description"] = description.strip()
+            if version and version.strip():
+                user_meta["version"] = version.strip()
+            if changelog and changelog.strip():
+                user_meta["changelog"] = changelog.strip()
+            if source and source.strip():
+                user_meta["source"] = source.strip()
+
             response = db.get(UserFiles, filters={"user_id": user_id})
             if not response.status or not response.data:
                 userfiles = UserFiles(user_id=user_id, files={})
@@ -212,9 +237,8 @@ async def upload_file_to_hepai(
                 "filename": file.filename,
                 "url": file_obj.get("url"),
                 "createdAtMs": int(__import__("time").time() * 1000),
-                "source": "hepai",
                 "uploadedBy": user_id,
-                "metadata": api_metadata,
+                "metadata": user_meta,
                 **({"description": resolved_description} if resolved_description else {}),
             }
             userfiles.files["hepai_files"] = hepai_files
@@ -249,6 +273,108 @@ async def list_hepai_files(user_id: str, db=Depends(get_db)) -> Dict:
     # newest first when createdAtMs exists
     rows.sort(key=lambda x: x.get("createdAtMs", 0), reverse=True)
     return {"status": True, "data": rows}
+
+
+@router.put("/hepai/{file_id}")
+async def update_hepai_file(
+    file_id: str,
+    user_id: str,
+    file: UploadFile | None = File(None),
+    display_name: str | None = Form(None),
+    icon: str | None = Form(None),
+    description: str | None = Form(None),
+    version: str | None = Form(None),
+    changelog: str | None = Form(None),
+    source: str | None = Form(None),
+    db=Depends(get_db),
+) -> Dict:
+    """Update a HepAI file. All fields optional — only provided fields are changed.
+
+    If a new zip file is provided, it replaces the HepAI blob and the entry's
+    id/url/filename are updated, but the dict key stays the same so the frontend
+    can still reference the file by the original file_id.
+    """
+    if not user_id:
+        raise HTTPException(status_code=400, detail="missing user_id")
+    if not file_id:
+        raise HTTPException(status_code=400, detail="missing file_id")
+
+    response = db.get(UserFiles, filters={"user_id": user_id})
+    if not response.status or not response.data:
+        raise HTTPException(status_code=404, detail="No files for user")
+    userfiles: UserFiles = response.data[0]
+    if not userfiles.files:
+        raise HTTPException(status_code=404, detail="No files for user")
+    hepai_files = userfiles.files.get("hepai_files")
+    if not isinstance(hepai_files, dict) or file_id not in hepai_files:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    entry = hepai_files[file_id]
+
+    # ── Handle new zip file if provided ──
+    if file is not None and file.filename:
+        if not file.filename.lower().endswith(".zip"):
+            raise HTTPException(status_code=400, detail="Only .zip files are supported")
+
+        tmp_dir = tempfile.mkdtemp(prefix="hepai-update-")
+        try:
+            tmp_path = os.path.join(tmp_dir, file.filename)
+            with open(tmp_path, "wb") as out:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+
+            file_obj = upload_to_filesystem(tmp_path, user_id)
+            entry["id"] = file_obj["id"]
+            entry["url"] = file_obj.get("url", entry.get("url", ""))
+            if file.filename:
+                entry["filename"] = file.filename
+
+            # Re-extract description from new SKILL.md if not being overridden
+            if description is None:
+                skill_md_desc = _skill_md_description_from_zip_path(tmp_path)
+                if skill_md_desc:
+                    entry["description"] = skill_md_desc
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # ── Apply metadata overrides ──
+    metadata = entry.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if display_name is not None and display_name.strip():
+        metadata["display_name"] = display_name.strip()
+    if icon is not None and icon.strip():
+        metadata["icon"] = icon.strip()
+    if description is not None and description.strip():
+        metadata["description"] = description.strip()
+        entry["description"] = description.strip()
+    if version is not None and version.strip():
+        metadata["version"] = version.strip()
+    if changelog is not None and changelog.strip():
+        metadata["changelog"] = changelog.strip()
+    if source is not None and source.strip():
+        metadata["source"] = source.strip()
+    entry["metadata"] = metadata
+
+    userfiles.files["hepai_files"] = hepai_files
+    db.upsert(userfiles)
+
+    return {
+        "status": True,
+        "message": "Update successful",
+        "data": {
+            "id": entry["id"],
+            "filename": entry.get("filename", ""),
+            "url": entry.get("url", ""),
+            "createdAtMs": entry.get("createdAtMs", 0),
+            "description": entry.get("description", ""),
+            "uploadedBy": entry.get("uploadedBy", ""),
+            "metadata": metadata,
+        },
+    }
 
 
 @router.get("/hepai/skill-md/{file_id}")

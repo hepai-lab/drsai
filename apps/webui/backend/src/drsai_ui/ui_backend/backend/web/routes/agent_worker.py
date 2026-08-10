@@ -73,6 +73,7 @@ async def test_remote_agent(
                 asyncio.to_thread(worker.get_info),
                 timeout=float(os.getenv("DRSAI_REMOTE_AGENT_TEST_TIMEOUT", "12")),
             )
+            logger.info(f"[test_remote_agent] model={request.model_name}, get_info keys: {list(agent_info.keys())}, announcements: {agent_info.get('announcements')}")
         except asyncio.TimeoutError as e:
             raise HTTPException(
                 status_code=504,
@@ -222,8 +223,12 @@ async def remove_remote_agent(
 async def get_user_agents_route(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
 
     try:
+        logger.info("[user_agents/list] Request: user_id=%s, is_refresh=%s", user_id, is_refresh)
         user_source = get_user_source(db, user_id)
-        return await get_user_agents(user_id, authorization, is_refresh, db, user_source=user_source)
+        result = await get_user_agents(user_id, authorization, is_refresh, db, user_source=user_source)
+        logger.info("[user_agents/list] Response: count=%d, agents=%s", 
+                     len(result.get("data", [])), result.get("data"))
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 @router.get("/user_agents/{agent_id}")

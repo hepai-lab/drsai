@@ -3,7 +3,6 @@ from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, Header
 from ..deps import get_db
 from hepai import HepAI
-from drsai_ui.platform_config import get_active_platform
 
 router = APIRouter()
 
@@ -20,7 +19,7 @@ async def get_llm_models(user_id: str, authorization: str = Header(...), db=Depe
 
         client = HepAI(
             api_key=apikey,
-            base_url=get_active_platform().base_url,
+            base_url="https://aiapi.ihep.ac.cn/apiv2"
         )
 
         models = client.models.list()

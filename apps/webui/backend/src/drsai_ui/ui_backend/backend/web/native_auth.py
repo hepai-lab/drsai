@@ -10,8 +10,11 @@ import httpx
 from fastapi import Header, HTTPException, status
 from jose import JWTError, jwt
 
-from drsai_ui.platform_config import get_active_platform
 
+DEFAULT_ALLOWED_ISSUERS = {
+    "https://ai-dev.ihep.ac.cn/api",
+    "https://ai.ihep.ac.cn/api",
+}
 OIDC_AUDIENCE = os.getenv("OPENDRSAI_NATIVE_OIDC_AUDIENCE", "hai-api")
 OIDC_CACHE_TTL_SECONDS = 15 * 60
 
@@ -93,7 +96,7 @@ def _unverified_claims(token: str) -> dict[str, Any]:
 def _allowed_issuers() -> set[str]:
     configured = os.getenv("OPENDRSAI_NATIVE_OIDC_ISSUERS", "")
     if not configured.strip():
-        return {get_active_platform().oidc_issuer}
+        return DEFAULT_ALLOWED_ISSUERS
     return {item.strip().rstrip("/") for item in configured.split(",") if item.strip()}
 
 

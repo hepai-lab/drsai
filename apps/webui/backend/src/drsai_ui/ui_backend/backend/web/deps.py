@@ -4,7 +4,7 @@ import logging
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
 from pathlib import Path
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status, Depends
 
 from ..database import DatabaseManager
 from .config import settings
@@ -120,6 +120,7 @@ async def init_managers(
         )
         logger.info("Connection manager initialized")
 
+
     except Exception as e:
         logger.error(f"Failed to initialize managers: {str(e)}")
         await cleanup_managers()  # Cleanup any partially initialized managers
@@ -131,6 +132,7 @@ async def cleanup_managers() -> None:
     global _db_manager, _websocket_manager, _team_manager
 
     logger.info("Cleaning up managers...")
+
 
     # Cleanup connection manager first to ensure all active connections are closed
     if _websocket_manager:
@@ -170,3 +172,161 @@ class ManagerOperationError(Exception):
         self.operation = operation
         self.detail = detail
         super().__init__(f"{manager_name} failed during {operation}: {detail}")
+
+
+# ── skill auth dependencies ───────────────────────────────────────────────────
+
+from functools import wraps
+
+from fastapi import Request
+
+
+def require_skill_role(*roles: str):
+    """Require the caller to have one of the given skill_roles.
+
+    Injects ``request.state.user_id`` if not already set by a prior dependency,
+    then checks ``Userinfo.meta.skill_role``.
+
+    Usage::
+
+        @router.post("/upload")
+        async def upload(..., user_id: str = Depends(require_skill_role("admin", "contributor"))):
+            ...
+    """
+    from .auth_source import get_skill_role
+    from .deps import get_db as _raw_get_db
+
+    async def dependency(request: Request, db=Depends(_raw_get_db)) -> str:
+        user_id = getattr(request.state, "user_id", None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        skill_role = get_skill_role(db, user_id)
+        if skill_role not in roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Insufficient permissions: need {', '.join(roles)}, got {skill_role}",
+            )
+        return user_id
+
+    return dependency
+
+
+async def resolve_user_from_apikey(
+    request: Request,
+    db: "DatabaseManager | None" = None,
+) -> str | None:
+    """Resolve user_id from API key in Authorization header or ?api_key query param.
+
+    Calls the external API key verification service. The service requires:
+    - api_key query param: the user's API key (to look up)
+    - Authorization header: the admin API key from HEPAI_APP_ADMIN_API_KEY env var
+    """
+    import os
+
+    verify_url = os.getenv("DRSAI_UI_API_KEY_VERIFY_URL", "http://localhost:42551/apiv2/user")
+    admin_api_key = os.getenv("HEPAI_APP_ADMIN_API_KEY", "")
+
+    # Extract user's API key from Authorization header or query param
+    auth = request.headers.get("Authorization", "")
+    api_key: str | None = None
+
+    if auth.startswith("bearer ") or auth.startswith("Bearer "):
+        api_key = auth.split(" ", 1)[1]
+    if not api_key:
+        api_key = request.query_params.get("api_key")
+
+    if not api_key:
+        return None  # No API key present, caller decides whether that's ok
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{verify_url}/get_user_info_by_key",
+                params={"api_key": api_key},
+                headers={"Authorization": f"Bearer {admin_api_key}"} if admin_api_key else {},
+            )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+        body = resp.json()
+        user_id = None
+        if isinstance(body, dict):
+            user_id = body.get("email") or body.get("user_id") or body.get("userId")
+
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Cannot resolve user from API key")
+
+        # Store on request.state for downstream use
+        request.state.user_id = user_id
+        if db is not None:
+            request.state.skill_role = None  # will be resolved by require_skill_role
+        return user_id
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"API key verification failed: {e}")
+        raise HTTPException(status_code=502, detail="API key verification service unavailable")
+
+
+async def get_user_or_none(
+    request: Request,
+    db=Depends(get_db),
+) -> str | None:
+    """Resolve user_id from JWT or API key. Returns None if neither is present.
+
+    Use this for endpoints that are optionally authenticated (e.g. public reads
+    that may show extra info to logged-in users)."""
+    # Try API key first (query param or header), then JWT
+    try:
+        uid = await resolve_user_from_apikey(request, db)
+        if uid:
+            return uid
+    except HTTPException:
+        pass  # Invalid API key, fall through
+
+    # Try JWT Bearer token
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        from ..drsai_adapter.sso.jwt import decode_jwt_token
+        try:
+            token = auth.split(" ", 1)[1]
+            data = decode_jwt_token(token)
+            if data.user_id:
+                request.state.user_id = data.user_id
+                return data.user_id
+        except Exception:
+            pass
+
+    return None
+
+
+def require_auth(*roles: str):
+    """Require auth (API key or JWT) AND optionally a skill_role.
+
+    Usage::
+
+        @router.post("/upload")
+        async def upload(..., user_id: str = Depends(require_auth("admin", "contributor"))):
+            ...
+    """
+    from .auth_source import get_skill_role
+
+    async def dependency(request: Request, db=Depends(get_db)) -> str:
+        user_id = await resolve_user_from_apikey(request, db)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        if roles:
+            skill_role = get_skill_role(db, user_id)
+            if skill_role not in roles:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Insufficient permissions: need {', '.join(roles)}, got {skill_role}",
+                )
+        return user_id
+
+    return dependency

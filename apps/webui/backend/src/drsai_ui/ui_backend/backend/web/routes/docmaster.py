@@ -20,11 +20,15 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional
 
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 
 from ..deps import get_db
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 router = APIRouter()
 
 _TEMPLATE_MEDIA_TYPES = {
@@ -50,8 +54,12 @@ def _resolve_docmaster_dir() -> Path | None:
     env = os.environ.get("DOCMASTER_DIR")
     if env:
         p = Path(env).expanduser().resolve()
-        return p if p.is_dir() else None
-    return _find_docmaster_dir(Path(__file__).resolve().parent)
+        result = p if p.is_dir() else None
+        logger.info("[templates] DOCMASTER_DIR env=%s resolved=%s", env, result)
+        return result
+    result = _find_docmaster_dir(Path(__file__).resolve().parent)
+    logger.info("[templates] auto-detected docmaster_dir=%s (search start=%s)", result, Path(__file__).resolve().parent)
+    return result
 
 
 def _load_template_library_skill():
@@ -183,16 +191,21 @@ async def list_templates(
     standard `{status, message, data}` envelope used by the rest of this
     API.
     """
+    logger.info("[templates] list_templates request: user_id=%s category=%s query=%s", user_id, category, query)
     cls, docmaster_dir = _load_template_library_skill()
     if cls is None or docmaster_dir is None:
+        logger.error("[templates] list_templates: docmaster_dir not found")
         raise HTTPException(
             status_code=404,
             detail="DocMaster workspace not found; set DOCMASTER_DIR env var to override.",
         )
 
     workspace_dir = str(docmaster_dir / "workspace")
+    logger.info("[templates] list_templates: workspace_dir=%s", workspace_dir)
     skill = cls(workspace_dir=workspace_dir, user_id=user_id)
+    logger.info("[templates] list_templates: _user_storage=%s", type(skill._user_storage).__name__ if skill._user_storage is not None else "None (local FS)")
     result = skill.list(user_id=user_id, category=category, query=query)
+    logger.info("[templates] list_templates: shared=%d mine=%d", len(result.get("shared", [])), len(result.get("mine", [])))
     return {
         "status": bool(result.get("success", True)),
         "message": result.get("message", ""),
@@ -247,7 +260,7 @@ async def get_template_pptx_preview(
             "url": str(request.url_for("get_template_pptx_preview_image", image_name=path.name)).replace(
                 str(request.base_url).rstrip("/"),
                 str(request.base_url).rstrip("/"),
-            ) + f"?{base_qs}",
+            ) + f"?{base_qs}&_={int(path.stat().st_mtime)}",
         }
         for index, path in enumerate(images)
     ]
@@ -277,7 +290,12 @@ async def get_template_pptx_preview_image(
     image_path = (preview_dir / image_name).resolve()
     if image_path.parent != preview_dir.resolve() or not image_path.is_file():
         raise HTTPException(status_code=404, detail="Preview image not found")
-    return FileResponse(str(image_path), media_type="image/png", filename=image_path.name)
+    return FileResponse(
+        str(image_path),
+        media_type="image/png",
+        filename=image_path.name,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 def _parse_json_list(raw: Optional[str]) -> List[str]:
@@ -307,8 +325,10 @@ async def save_template(
     file: UploadFile = File(..., description="The .docx or .pptx file to register"),
 ) -> dict:
     """Upload a template into the calling user's template library."""
+    logger.info("[templates] save_template request: user_id=%s name=%s file=%s", user_id, name, file.filename)
     cls, docmaster_dir = _load_template_library_skill()
     if cls is None or docmaster_dir is None:
+        logger.error("[templates] save_template: docmaster_dir not found")
         raise HTTPException(
             status_code=404,
             detail="DocMaster workspace not found; set DOCMASTER_DIR env var to override.",
@@ -325,7 +345,9 @@ async def save_template(
         with open(tmp_name, "wb") as f:
             f.write(contents)
         workspace_dir = str(docmaster_dir / "workspace")
+        logger.info("[templates] save_template: docmaster_dir=%s workspace_dir=%s", docmaster_dir, workspace_dir)
         skill = cls(workspace_dir=workspace_dir, user_id=user_id)
+        logger.info("[templates] save_template: _user_storage=%s", type(skill._user_storage).__name__ if skill._user_storage is not None else "None (local FS)")
         result = skill.save(
             source_path=tmp_name,
             user_id=user_id,
@@ -342,6 +364,8 @@ async def save_template(
         except OSError:
             pass
 
+    logger.info("[templates] save_template result: success=%s template_id=%s path=%s message=%s",
+                result.get("success"), result.get("template_id"), result.get("template_path"), result.get("message"))
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("message", "保存模板失败"))
     return {
