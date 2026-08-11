@@ -1,7 +1,109 @@
 import { appContext } from "@/hooks/provider";
 import { useLang } from "@/i18n/useLang";
 import { Dropdown, Input, message, Modal, Popconfirm, Spin, Button } from "antd";
-import React, { Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, memo } from "react";
+
+// ── 会话历史项（memo 避免列表滚动时全量重渲染）──
+interface SessionHistoryItemProps {
+  s: Session;
+  isCurrent: boolean;
+  isSessionLoading: boolean;
+  onSelect: (s: Session) => void;
+  onShare: (sid: number) => void;
+  onDelete: (sid: number) => void;
+  t: (key: string) => string;
+}
+
+const SessionHistoryItem = memo<SessionHistoryItemProps>(function SessionHistoryItem({
+  s,
+  isCurrent,
+  isSessionLoading,
+  onSelect,
+  onShare,
+  onDelete,
+  t,
+}) {
+  const lastTime = s.updated_at || s.created_at;
+  const sid = s.id;
+  return (
+    <div
+      className={`group relative flex items-center gap-0.5 rounded-lg transition-colors ${isCurrent ? "bg-accent/10" : "hover:bg-tertiary/15"
+        }`}
+    >
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onSelect(s)}
+        className={`flex-1 min-w-0 text-left rounded-lg px-3 py-2 pr-1 transition-colors ${isCurrent ? "text-accent" : "text-primary"
+          }`}
+      >
+        <div className="text-sm font-medium truncate">
+          {s.name || `Session ${sid ?? ""}`}
+        </div>
+        <div className="text-xs text-secondary mt-1">
+          {lastTime ? formatApiDateTimeZhCN(lastTime) : "-"}
+        </div>
+      </button>
+      {sid != null && (
+        <div className="flex-shrink-0 pr-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <Dropdown
+            trigger={["click"]}
+            placement="bottomRight"
+            menu={{
+              items: [
+                {
+                  key: "share",
+                  disabled: isSessionLoading,
+                  label: (
+                    <>
+                      <Share2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5 align-middle" />
+                      {t("sidebar.share")}
+                    </>
+                  ),
+                  onClick: (e) => {
+                    e.domEvent.stopPropagation();
+                    onShare(sid);
+                  },
+                },
+                {
+                  key: "delete",
+                  danger: true,
+                  disabled: isSessionLoading,
+                  label: (
+                    <>
+                      <Trash2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5 align-middle" />
+                      {t("sidebar.deleteSession")}
+                    </>
+                  ),
+                  onClick: (e) => {
+                    e.domEvent.stopPropagation();
+                    onDelete(sid);
+                  },
+                },
+              ],
+            }}
+          >
+            <button
+              type="button"
+              title="更多"
+              aria-haspopup="menu"
+              aria-label="会话操作"
+              disabled={isSessionLoading}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={`flex items-center justify-center w-7 h-7 rounded-lg outline-none border-0 bg-transparent shadow-none ring-0 transition-colors ${isSessionLoading
+                ? "opacity-40 cursor-not-allowed"
+                : "text-secondary hover:text-primary hover:bg-tertiary/30"
+                }`}
+            >
+              <MoreVertical className="w-3.5 h-3.5" strokeWidth={2} />
+            </button>
+          </Dropdown>
+        </div>
+      )}
+    </div>
+  );
+});
 import { flushSync } from "react-dom";
 import { MoreVertical, Search, Share2, Trash2, Plus, Upload, X, ChevronDown, ChevronRight, Library } from "lucide-react";
 import { parse } from "yaml";
@@ -14,10 +116,12 @@ import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
 import { sessionAPI, settingsAPI, userAPI, docmasterAPI, fileAPI, cloudAPI, type DocMasterTemplateEntry, type DocMasterPptxPreviewSlide } from "./api";
 import { getServerUrl } from "../utils";
-import GuanlianyewuPanel, { type UploadedFile, buildAuditPrompt } from "../../pages/guanlianyewu/GuanlianyewuPanel";
-import ZongheCailiaoPanel, { buildZongheCailiaoPrompt } from "../../pages/guanlianyewu/ZongheCailiaoPanel";
-import ChatView from "../../pages/chat/chat";
-import NewChatView from "../../pages/chat/NewChatView";
+import GuanlianyewuPanel, { type UploadedFile } from "../../pages/guanlianyewu/GuanlianyewuPanel";
+import ZongheCailiaoPanel from "../../pages/guanlianyewu/ZongheCailiaoPanel";
+// buildAuditPrompt / buildZongheCailiaoPrompt 仅用于 demo 试用按钮，改为动态导入
+// ── 核心聊天组件懒加载（减少首屏 bundle，按需加载 Prism.js 等重依赖）──
+const ChatView = React.lazy(() => import("../../pages/chat/chat"));
+const NewChatView = React.lazy(() => import("../../pages/chat/NewChatView"));
 import { useAgentManager } from "./hooks/useAgentManager";
 import { useLocation, useNavigate } from "../../hooks/useRouter";
 import { useSessionManager } from "./hooks/useSessionManager";
@@ -1394,6 +1498,7 @@ export const SessionManager: React.FC = () => {
         sizeMb: 0,
       }));
       setGlyFiles(seeded);
+      const { buildAuditPrompt } = await import("../../pages/guanlianyewu/GuanlianyewuPanel");
       handleGlySubmitAudit(buildAuditPrompt(seeded));
     } catch (err) {
       messageApi.error(err instanceof Error ? err.message : "演示文件加载失败");
@@ -1431,6 +1536,7 @@ export const SessionManager: React.FC = () => {
       // Use defaults for the form fields (empty field query, no applicant
       // dept hint, top-5 experts) — matches what the panel would dispatch
       // if the user clicked submit without filling anything in.
+      const { buildZongheCailiaoPrompt } = await import("../../pages/guanlianyewu/ZongheCailiaoPanel");
       handleGlySubmitAudit(buildZongheCailiaoPrompt(seeded, "", "", 5));
     } catch (err) {
       messageApi.error(err instanceof Error ? err.message : "演示文件加载失败");
@@ -1534,86 +1640,18 @@ export const SessionManager: React.FC = () => {
           ) : (
             filteredSessions.map((historySession) => {
               const isCurrent = session?.id === historySession.id;
-              const lastTime = historySession.updated_at || historySession.created_at;
               const sid = historySession.id;
               return (
-                <div
+                <SessionHistoryItem
                   key={sid ?? historySession.name}
-                  className={`group relative flex items-center gap-0.5 rounded-lg transition-colors ${isCurrent ? "bg-accent/10" : "hover:bg-tertiary/15"
-                    }`}
-                >
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => void handleSelectSession(historySession)}
-                    className={`flex-1 min-w-0 text-left rounded-lg px-3 py-2 pr-1 transition-colors ${isCurrent ? "text-accent" : "text-primary"
-                      }`}
-                  >
-                    <div className="text-sm font-medium truncate">
-                      {historySession.name || `Session ${sid ?? ""}`}
-                    </div>
-                    <div className="text-xs text-secondary mt-1">
-                      {lastTime ? formatApiDateTimeZhCN(lastTime) : "-"}
-                    </div>
-                  </button>
-                  {sid != null && (
-                    <div className="flex-shrink-0 pr-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                      <Dropdown
-                        trigger={["click"]}
-                        placement="bottomRight"
-                        menu={{
-                          items: [
-                            {
-                              key: "share",
-                              disabled: isSessionLoading,
-                              label: (
-                                <>
-                                  <Share2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5 align-middle" />
-                                  {t("sidebar.share")}
-                                </>
-                              ),
-                              onClick: (e) => {
-                                e.domEvent.stopPropagation();
-                                void handleCopyShareLink(sid);
-                              },
-                            },
-                            {
-                              key: "delete",
-                              danger: true,
-                              disabled: isSessionLoading,
-                              label: (
-                                <>
-                                  <Trash2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5 align-middle" />
-                                  {t("sidebar.deleteSession")}
-                                </>
-                              ),
-                              onClick: (e) => {
-                                e.domEvent.stopPropagation();
-                                void handleDeleteSession(sid);
-                              },
-                            },
-                          ],
-                        }}
-                      >
-                        <button
-                          type="button"
-                          title="更多"
-                          aria-haspopup="menu"
-                          aria-label="会话操作"
-                          disabled={isSessionLoading}
-                          onClick={(e) => e.stopPropagation()}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          className={`flex items-center justify-center w-7 h-7 rounded-lg outline-none border-0 bg-transparent shadow-none ring-0 transition-colors ${isSessionLoading
-                            ? "opacity-40 cursor-not-allowed"
-                            : "text-secondary hover:text-primary hover:bg-tertiary/30"
-                            }`}
-                        >
-                          <MoreVertical className="w-3.5 h-3.5" strokeWidth={2} />
-                        </button>
-                      </Dropdown>
-                    </div>
-                  )}
-                </div>
+                  s={historySession}
+                  isCurrent={isCurrent}
+                  isSessionLoading={isSessionLoading}
+                  onSelect={handleSelectSession}
+                  onShare={handleCopyShareLink}
+                  onDelete={handleDeleteSession}
+                  t={t}
+                />
               );
             })
           )}
@@ -1664,19 +1702,27 @@ export const SessionManager: React.FC = () => {
         {activeSubMenuItem === MENU_IDS.currentSession ? (
           (() => {
             if (session) {
-              return <div className="h-full min-h-0">{chatViews}</div>;
+              return (
+                <div className="h-full min-h-0">
+                  <Suspense fallback={<div className="flex h-full items-center justify-center text-secondary"><Spin /></div>}>
+                    {chatViews}
+                  </Suspense>
+                </div>
+              );
             } else if (agentInfo || selectedAgent) {
               const chatAgent = (agentInfo || selectedAgent) as Agent;
               return (
-                <NewChatView
-                  agent={chatAgent}
-                  suppressSampleTasks={sampleTasksDismissed}
-                  onDismissSampleTasks={() => setSampleTasksDismissed(true)}
-                  onSubmit={async (agent, query, files, plan, llm) => {
-                    setSampleTasksDismissed(true);
-                    await createNewChatSession(agent, query, files, plan, llm);
-                  }}
-                />
+                <Suspense fallback={<div className="flex items-center justify-center h-full text-secondary"><Spin /></div>}>
+                  <NewChatView
+                    agent={chatAgent}
+                    suppressSampleTasks={sampleTasksDismissed}
+                    onDismissSampleTasks={() => setSampleTasksDismissed(true)}
+                    onSubmit={async (agent, query, files, plan, llm) => {
+                      setSampleTasksDismissed(true);
+                      await createNewChatSession(agent, query, files, plan, llm);
+                    }}
+                  />
+                </Suspense>
               );
             } else if (!user?.email) {
               return (
