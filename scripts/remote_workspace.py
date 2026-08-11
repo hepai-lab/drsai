@@ -16,8 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 PHASES: dict[str, tuple[str, str, str]] = {
     "architecture": ("OAEP/OWOP architecture and legacy isolation", "oaep/1+owop/1", "verify_remote_workspace_p5_architecture.py"),
-    "local": ("local contract and component acceptance", "oaep/1+owop/1", "mobile_remote_workspace_acceptance_v4.py"),
+    "local": ("local contract and component acceptance", "oaep/1+owop/1", "accept_remote_workspace_local_p5.py"),
     "real-device": ("Windows and one physical Android device", "oaep/1+owop/1", "accept_mobile_remote_workspace_real_device_v4.py"),
+    "session-catalog": ("physical Android Session Catalog realtime convergence", "oaep/1+owop/1", "accept_mobile_remote_workspace_session_catalog_p5.py"),
+    "interaction": ("physical Android Approval and response-loss convergence", "oaep/1+owop/1", "accept_mobile_remote_workspace_interaction_p5.py"),
+    "long-session": ("physical Android 100k history and 10k delta performance", "oaep/1+owop/1", "accept_mobile_remote_workspace_long_session_p5.py"),
     "two-device": ("two physical Android devices and revocation isolation", "oaep/1+owop/1", "accept_mobile_remote_workspace_two_device_v4.py"),
     "stability": ("one-hour recovery and stability gate", "oaep/1+owop/1", "monitor_mobile_remote_workspace_stability_v4.py"),
     "secret-scan": ("endpoint-local Android/Windows scan and cross-boundary assembly", "oaep/1+owop/1", "accept_remote_workspace_secret_scan_p5.py"),

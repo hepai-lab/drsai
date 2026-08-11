@@ -9,11 +9,18 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from drsai.oaep.protocol import OAEPStreamValidator, OAEPValidationError
+from drsai.backend.runtime.oaep import _safe_text
 
 
 ROOT = Path(__file__).resolve().parents[5]
 SCHEMA = ROOT / "cores" / "protocol" / "oaep" / "oaep.schema.json"
 EXAMPLES = ROOT / "cores" / "protocol" / "oaep" / "examples.json"
+
+
+def test_runtime_oaep_preserves_public_error_code_but_redacts_credentials() -> None:
+    safe = _safe_text('{"error_code":"service_unavailable","api_key":"secret-value"}')
+    assert "service_unavailable" in safe
+    assert "secret-value" not in safe
 
 
 def _fixture_ref(data: dict[str, Any], ref: str) -> Any:

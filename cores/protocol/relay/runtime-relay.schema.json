@@ -140,8 +140,9 @@
     "runtime_identity": "GET /v1/runtimes/{runtime_id}/runtime",
     "runtime_rename": "PATCH /v1/runtimes/{runtime_id}",
     "runtime_capabilities": "GET /v1/runtimes/{runtime_id}/capabilities",
-    "conversation_latency_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-latency",
-    "conversation_latency_metrics": "GET /v1/metrics/conversation-latency",
+    "conversation_latency_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/{event_id}/latency-observation",
+    "conversation_latency_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/{event_id}/latency-observation",
+    "conversation_latency_metrics": "GET /v1/metrics/relay-latency",
     "workspace_list": "GET /v1/runtimes/{runtime_id}/workspaces",
     "workspace_sync": "POST /v1/runtimes/{runtime_id}/workspaces/sync",
     "session_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
@@ -163,6 +164,7 @@
     "event_stream": "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events/stream",
     "approval_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/approvals",
     "approval_decision": "POST /v1/runtimes/{runtime_id}/approvals/{approval_id}/decision",
+    "approval_decision_recovery": "GET /v1/runtimes/{runtime_id}/idempotency/approval.decide/{idempotency_key}",
     "file_raw": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/files/raw"
   },
   "$defs": {

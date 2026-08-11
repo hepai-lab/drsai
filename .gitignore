@@ -1,6 +1,7 @@
 ########################
 # Cursor IDE（个人配置，不提交）
 ########################
+.tmp-p4-test-home/
 .opendrsai/
 .cursor/
 .uv-cache-browser/

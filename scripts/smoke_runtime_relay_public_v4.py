@@ -19,7 +19,17 @@ OAEP_PATHS = {
     "/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events/stream",
 }
 OAEP_SCHEMA_NAMES = {"OaepSnapshot", "OaepEventPage", "OaepEvent"}
-OAEP_SCHEMA_SHA256 = "c502943a3c0c582aba71d9495abe148738a9ff62aa119359e305f74d04950277"
+LATENCY_OBSERVATION_PATH = (
+    "/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/"
+    "events/{event_id}/latency-observation"
+)
+LATENCY_METRICS_PATH = "/metrics/relay-latency"
+LATENCY_SCHEMA_NAMES = {
+    "LatencyObservationRequest", "LatencyObservationResponse", "LatencyReportResponse",
+}
+ROOT = Path(__file__).parents[1]
+OAEP_SCHEMA = ROOT / "cores/protocol/oaep/oaep.schema.json"
+RELAY_SCHEMA = ROOT / "cores/protocol/relay/runtime-relay.schema.json"
 
 
 class SmokeFailure(RuntimeError):
@@ -33,14 +43,49 @@ def error_code(value: Any) -> str | None:
     return detail.get("code") if isinstance(detail, dict) and isinstance(detail.get("code"), str) else None
 
 
-def validate_schema_hash(openapi: dict[str, Any]) -> str:
+def authoritative_schema_hash() -> str:
+    try:
+        raw = OAEP_SCHEMA.read_bytes()
+        relay = json.loads(RELAY_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SmokeFailure("local OAEP contract is unavailable") from exc
+    digest = hashlib.sha256(raw).hexdigest()
+    if relay.get("x-oaep-schema-sha256") != digest:
+        raise SmokeFailure("local OAEP and Relay schema hashes drift")
+    return digest
+
+
+def validate_schema_hash(openapi: dict[str, Any], expected_hash: str | None = None) -> str:
+    expected = expected_hash or authoritative_schema_hash()
     hashes = {
         openapi.get("paths", {}).get(path, {}).get("get", {}).get("x-oaep-schema-sha256")
         for path in OAEP_PATHS
     }
-    if hashes != {OAEP_SCHEMA_SHA256}:
+    if hashes != {expected}:
         raise SmokeFailure("OAEP OpenAPI schema hash drift")
-    return OAEP_SCHEMA_SHA256
+    return expected
+
+
+def validate_latency_contract(openapi: dict[str, Any]) -> None:
+    paths = openapi.get("paths", {})
+    schemas = openapi.get("components", {}).get("schemas", {})
+    observation = paths.get(LATENCY_OBSERVATION_PATH, {})
+    metrics = paths.get(LATENCY_METRICS_PATH, {})
+    if set(observation) < {"get", "post"} or "get" not in metrics:
+        raise SmokeFailure("latency OpenAPI paths drift")
+    if not LATENCY_SCHEMA_NAMES.issubset(schemas):
+        raise SmokeFailure("latency OpenAPI schemas drift")
+    request = schemas["LatencyObservationRequest"]
+    if request.get("additionalProperties") is not False \
+            or set(request.get("required", [])) != {"client_receive_at_ms", "render_at_ms"} \
+            or set(request.get("properties", {})) != {"client_receive_at_ms", "render_at_ms"}:
+        raise SmokeFailure("latency observation request drift")
+    report = schemas["LatencyReportResponse"]
+    if report.get("additionalProperties") is not False \
+            or not {"sample_count", "ready_count", "ready", "end_to_end_p95_ms"}.issubset(
+                report.get("properties", {})
+            ):
+        raise SmokeFailure("latency report response drift")
 
 
 async def request_json(
@@ -79,6 +124,7 @@ async def run(base_url: str, timeout_seconds: float = 20) -> dict[str, Any]:
                 + ";schemas=" + ",".join(missing_schemas)
             )
         schema_hash = validate_schema_hash(openapi)
+        validate_latency_contract(openapi)
         canonical = json.dumps(
             {"paths": {name: openapi["paths"][name] for name in sorted(OAEP_PATHS)},
              "schemas": {name: openapi["components"]["schemas"][name] for name in sorted(OAEP_SCHEMA_NAMES)}},
@@ -92,6 +138,11 @@ async def run(base_url: str, timeout_seconds: float = 20) -> dict[str, Any]:
             "schema_hash": schema_hash,
             "openapi_contract_hash": openapi_contract_hash,
         })
+        checks.append({
+            "name": "latency_openapi",
+            "status": "passed",
+            "latency_ms": latency,
+        })
         for name, path in (
             ("snapshot_anonymous_401", next(value for value in OAEP_PATHS if value.endswith("oaep-snapshot"))),
             ("events_anonymous_401", next(value for value in OAEP_PATHS if value.endswith("oaep-events"))),
@@ -99,6 +150,20 @@ async def run(base_url: str, timeout_seconds: float = 20) -> dict[str, Any]:
         ):
             concrete = path.format(runtime_id="runtime-public-smoke", workspace_id="workspace-public-smoke", session_id="session-public-smoke")
             payload, latency = await request_json(session, f"{base_url}/v2{concrete}", 401)
+            if error_code(payload) != "invalid_token":
+                raise SmokeFailure(f"{name} did not return invalid_token")
+            checks.append({"name": name, "status": "passed", "latency_ms": latency})
+        latency_concrete = LATENCY_OBSERVATION_PATH.format(
+            runtime_id="runtime-public-smoke",
+            workspace_id="workspace-public-smoke",
+            session_id="session-public-smoke",
+            event_id="event-public-smoke",
+        )
+        for name, path in (
+            ("latency_observation_anonymous_401", latency_concrete),
+            ("latency_metrics_anonymous_401", LATENCY_METRICS_PATH),
+        ):
+            payload, latency = await request_json(session, f"{base_url}/v2{path}", 401)
             if error_code(payload) != "invalid_token":
                 raise SmokeFailure(f"{name} did not return invalid_token")
             checks.append({"name": name, "status": "passed", "latency_ms": latency})

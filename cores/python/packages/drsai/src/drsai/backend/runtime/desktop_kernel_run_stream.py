@@ -26,6 +26,7 @@ def build_desktop_start_envelope(
     agent: Mapping[str, Any] | None = None,
     context_budget: Mapping[str, Any] | None = None,
     memory_candidates: Sequence[Mapping[str, Any]] = (),
+    satisfied_capability_domains: Sequence[str] = (),
     host_port: Mapping[str, Any],
 ) -> RuntimeEnvelope:
     return RuntimeEnvelope(
@@ -45,6 +46,7 @@ def build_desktop_start_envelope(
             "agent": None if agent is None else dict(agent),
             "context_budget": None if context_budget is None else dict(context_budget),
             "memory_candidates": [dict(value) for value in memory_candidates],
+            "satisfied_capability_domains": list(satisfied_capability_domains),
             "host_port": dict(host_port),
         },
     )
@@ -79,7 +81,7 @@ class DesktopKernelRunStream:
             final = TextMessage(
                 content=state.final_text,
                 source=self._assistant_name,
-                metadata={"internal": "no", "kernel_terminal": state.terminal_kind},
+                metadata={**state.message_metadata(state.final_text), "kernel_terminal": state.terminal_kind},
             )
             output.append(final)
             yield final

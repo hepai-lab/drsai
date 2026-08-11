@@ -21,7 +21,7 @@ from drsai.backend.runtime.oaep import (
     project_session,
 )
 from drsai.backend.runtime.observability import ResourceCorrelation, RuntimeObservability
-from drsai.relay.security import redact_secrets
+from drsai.relay.security import redact_credentials
 
 
 SESSION_EVENT_KINDS = {
@@ -73,7 +73,11 @@ def _redact_credentials(value: Any, key: str = "") -> Any:
     if isinstance(value, (list, tuple)):
         return [_redact_credentials(item) for item in value]
     if isinstance(value, str):
-        redacted = redact_secrets(value)
+        # Journal payloads contain diagnostic JSON strings as well as prose.
+        # Credential-only redaction keeps stable protocol fields such as
+        # ``error_code``/``code`` inspectable while the key-aware recursion
+        # above still removes secrets from structured mappings.
+        redacted = redact_credentials(value)
         while "[REDACTED]]" in redacted:
             redacted = redacted.replace("[REDACTED]]", "[REDACTED]")
         return redacted

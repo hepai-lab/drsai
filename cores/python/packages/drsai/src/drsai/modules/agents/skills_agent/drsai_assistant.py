@@ -98,6 +98,7 @@ from .managers.get_managers_tools import (
     get_agent_skills_tool,
     get_subagent_tools,
     get_todo_manager_tool,
+    get_regression_read_tools,
     create_local_venv,
 )
 from .managers.get_scheduled_task_tools import get_scheduled_task_tool
@@ -115,13 +116,21 @@ _DESKTOP_READ_ONLY_TOOLS = {
     "run_read", "run_grep", "run_glob", "get_bash_task", "list_bash_tasks",
     "get_powershell_task", "list_powershell_tasks", "Skill",
     "retrieve_from_memory", "read_session_memory_by_index", "web_search", "web_fetch",
+    "regression_list_suites", "regression_list_cases", "regression_get_case",
+    "regression_preflight", "regression_history", "regression_get", "regression_events",
 }
 _DESKTOP_LOCAL_WRITE_TOOLS = {"run_write", "run_edit", "TodoWrite", "UpdateUserConfig"}
 _DESKTOP_CONDITIONAL_TOOLS = {
     "run_bash", "run_bash_background", "run_powershell", "kill_bash_task",
     "kill_powershell_task",
+    "regression_start", "regression_cancel",
 }
 _DESKTOP_REQUIRED_APPROVAL_TOOLS = {"Delegate", "ScheduledTaskManager"}
+_REGRESSION_READ_TOOL_NAMES = {
+    "regression_list_suites", "regression_list_cases", "regression_get_case",
+    "regression_preflight", "regression_history", "regression_get", "regression_events",
+}
+_REGRESSION_EXECUTION_TOOL_NAMES = {"regression_start", "regression_cancel"}
 
 
 def _tool_schema_name(value: Any) -> str:
@@ -147,6 +156,8 @@ def _desktop_execution_metadata(name: str, executor_id: str) -> dict[str, Any]:
     required_capabilities = ["network.public_https"] if name in {"web_search", "web_fetch"} else []
     if name == "web_search": required_capabilities.insert(0, "web_search")
     if name == "web_fetch": required_capabilities.insert(0, "web_fetch")
+    if name in {"image_generation", "image_edit"}:
+        required_capabilities = [name]
     return {
         "version": 1,
         "source": "desktop-host",
@@ -595,6 +606,9 @@ class DrSaiAssistant(DrSaiAgent):
         # === todo manager ===
         self._todo_manager = TodoManager()
         self._todo_tools = [get_todo_manager_tool()]
+        self._regression_tools = get_regression_read_tools()
+        from .managers.regression_manager import RegressionManager
+        self._regression_manager = RegressionManager(self._work_dir)
 
         # === scheduled task manager ===
         # 注意: task_manager 实例会在 run.py 中创建并注入到 app._task_manager
@@ -1471,7 +1485,7 @@ class DrSaiAssistant(DrSaiAgent):
             skills_loader = self._cached_skills_loader
 
             # manager ToolSchema
-            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools
+            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools+self._regression_tools
 
             # count the number of tools (only for DrSaiChatCompletionContext which has _tool_schema)
             if hasattr(self._model_context, '_tool_schema'):
@@ -2446,6 +2460,30 @@ class DrSaiAssistant(DrSaiAgent):
                     logger.exception(f"Error executing Skill tool: {e}")
                     exec_results.append(FunctionExecutionResult(
                         content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+
+            elif tool_name in _REGRESSION_READ_TOOL_NAMES | _REGRESSION_EXECUTION_TOOL_NAMES:
+                try:
+                    result_content = self._regression_manager.execute(tool_name, arguments)
+                    exec_results.append(FunctionExecutionResult(
+                        content=result_content,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    yield AgentLogEvent(
+                        title=f"Reading regression data: {tool_name}",
+                        source=agent_name,
+                        content=json.dumps(arguments, ensure_ascii=False),
+                        content_type="tools",
+                    )
+                except Exception as e:
+                    logger.exception(f"Error executing {tool_name}: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=json.dumps({"error": {"code": "regression_tool_failed", "message": str(e)}}, ensure_ascii=False),
                         name=tool_name,
                         call_id=call_id,
                         is_error=True,

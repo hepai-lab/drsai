@@ -16,7 +16,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
-from drsai.relay.api import create_relay_app
+from drsai.backend.runtime.observability import ResourceCorrelation
+from drsai.relay.api import create_relay_app, relay_latency_correlation
 from drsai.relay.generated_contract import CAPABILITIES, PROTOCOL_VERSION
 from drsai.relay.models import ResourceLifecycle, Workspace
 from drsai.relay.registry import RelayRegistry, RelayRegistryError
@@ -47,6 +48,69 @@ def control(idempotency: bool = False) -> dict[str, str]:
     if idempotency:
         result["idempotency_key"] = f"idem-{uuid4()}"
     return result
+
+
+def test_latency_correlation_is_scoped_without_exposing_resource_identity() -> None:
+    first = relay_latency_correlation("runtime-a", "workspace", "session", "event")
+    assert first == relay_latency_correlation(
+        "runtime-a", "workspace", "session", "event"
+    )
+    assert first != relay_latency_correlation(
+        "runtime-b", "workspace", "session", "event"
+    )
+    assert len(first) == 64 and set(first) <= set("0123456789abcdef")
+    assert all(value not in first for value in ("runtime-a", "workspace", "session", "event"))
+    with pytest.raises(ValueError, match="identity"):
+        relay_latency_correlation("", "workspace", "session", "event")
+    with pytest.raises(ValueError, match="identity"):
+        relay_latency_correlation("runtime", "workspace", "session", "e" * 501)
+
+
+def test_conversation_latency_shared_database_aggregates_separate_workers(tmp_path) -> None:
+    database = (tmp_path / "shared-conversation-latency.sqlite3").resolve()
+    worker_a = create_relay_app(conversation_latency_database=database)
+    worker_b = create_relay_app(conversation_latency_database=database)
+    for index in range(20):
+        scoped = relay_latency_correlation(
+            "runtime", "workspace", "session", f"event-{index}"
+        )
+        correlation = ResourceCorrelation(scoped, scoped)
+        for stage in ("journal_append", "runtime_wss_send", "relay_fanout"):
+            assert worker_a.state.conversation_latency.record_conversation_latency(
+                stage, 1.0 + index, correlation, {"protocol": "oaep/1"}
+            )
+        for stage in ("client_receive", "client_render"):
+            assert worker_b.state.conversation_latency.record_conversation_latency(
+                stage, 1.0 + index, correlation, {"protocol": "oaep/1"}
+            )
+
+    report = TestClient(worker_a).get("/v1/metrics/relay-latency").json()
+    assert report["aggregation_scope"] == "shared"
+    assert report["complete_sample_count"] == 20
+    assert report["incomplete_sample_count"] == 0
+    assert report["ready"] is True
+    assert report["multi_worker_ready"] is True
+
+    process_report = TestClient(create_relay_app()).get(
+        "/v1/metrics/relay-latency"
+    ).json()
+    assert process_report["aggregation_scope"] == "process"
+    assert process_report["multi_worker_ready"] is False
+
+
+def test_conversation_latency_shared_database_rejects_relative_path() -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        create_relay_app(conversation_latency_database=Path("relative.sqlite3"))
+
+
+def test_conversation_latency_shared_database_can_be_configured_by_environment(
+    tmp_path, monkeypatch
+) -> None:
+    database = (tmp_path / "configured-latency.sqlite3").resolve()
+    monkeypatch.setenv("OPENDRSAI_CONVERSATION_LATENCY_DATABASE", str(database))
+    app = create_relay_app()
+    assert app.state.conversation_latency_shared is True
+    assert app.state.conversation_latency.database == database
 
 
 def association_body(code: str, device_id: str = "android-device-0001") -> dict[str, str]:
@@ -972,17 +1036,23 @@ def test_runtime_oaep_event_cursor_advances_only_after_relay_ack() -> None:
     ])
     latency_url = (
         f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/"
-        f"{event['session_id']}/conversation-latency"
+        f"{event['session_id']}/events/{event['event_id']}/latency-observation"
     )
-    for stage, duration_ms in (("client_receive", 4.0), ("client_render", 5.0)):
-        response = client.post(latency_url, headers={"x-subject": "alice"}, json={
-            "correlation_id": event["event_id"],
-            "operation_id": event["event_id"],
-            "stage": stage,
-            "duration_ms": duration_ms,
-        })
-        assert response.status_code == 204
-    report = client.get("/v1/metrics/conversation-latency").json()
+    response = client.post(latency_url, headers={"x-subject": "alice"}, json={
+        "client_receive_at_ms": 1_000,
+        "render_at_ms": 1_005,
+    })
+    assert response.status_code == 200
+    assert response.json() == {
+        "ready": True,
+        "stages_present": [
+            "client_receive", "client_render", "journal_append",
+            "relay_fanout", "runtime_wss_send",
+        ],
+        "latencies_ms": {"client_receive_to_render": 5},
+    }
+    assert client.get(latency_url, headers={"x-subject": "alice"}).json() == response.json()
+    report = client.get("/v1/metrics/relay-latency").json()
     assert report["complete_sample_count"] == 1
     assert {stage: values["sample_count"] for stage, values in report["stages"].items()} == {
         "journal_append": 1,

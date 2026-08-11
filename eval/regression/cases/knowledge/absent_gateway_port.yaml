@@ -1,7 +1,7 @@
 schema_version: opendrsai.agent-regression-case/1
 
 id: knowledge.absent
-revision: 1
+revision: 2
 title: 知识库不存在默认端口答案
 description: 验证 Agent 在指定知识库缺少答案时完成检索、承认资料不足并拒绝猜测。
 owner: agent-runtime
@@ -35,7 +35,7 @@ environment:
       corpus_complete: true
       documents:
         - path: ../../assets/knowledge_bases/opendrsai_runtime_overview_v1.md
-          sha256: 45c54de9e509c6eceb3f50acd590ff2c2418be9c1f15e032328f0897f4d6b553
+          sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
 
 baseline:
   answer_state: absent
@@ -71,9 +71,9 @@ expect:
 
   output:
     type: text
-    semantic_requirements:
-      - 明确说明提供的知识库没有默认端口信息
-      - 明确说明无法仅根据该知识库确定默认端口
+    required_patterns:
+      - '(?:知识库|文档)[\s\S]{0,80}(?:并未|没有|不包含|未包含)[\s\S]{0,40}端口'
+      - '(?:(?:无法|不能)[\s\S]{0,60}(?:知识库|文档)|(?:知识库|文档)[\s\S]{0,60}(?:无法|不能))'
     allowed_follow_up:
       - 请求提供其他配置资料
       - 请求允许查询其他来源

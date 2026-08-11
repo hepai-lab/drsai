@@ -624,7 +624,7 @@ def test_mixed_approval_batch_is_rejected_without_partial_state_mutation() -> No
     assert snapshot["tool_round_count"] == 0
 
 
-def test_tool_round_limit_is_checkpointed_and_fails_before_next_executor_call() -> None:
+def test_tool_round_limit_is_checkpointed_and_requests_tool_free_finalization() -> None:
     core = create_mobile_agent_core()
     core.handle(command(MessageType.START_RUN, 0, {
         "input": "loop", "model_id": "model-1", "tools": [tool_schema("clock")],
@@ -651,11 +651,33 @@ def test_tool_round_limit_is_checkpointed_and_fails_before_next_executor_call() 
         {"call_id": "clock-2", "name": "clock", "arguments": {}},
     ]}))
     assert [item.message_type for item in limited] == [
-        MessageType.RUNTIME_EVENT, MessageType.RUNTIME_EVENT, MessageType.CHECKPOINT_REQUEST,
+        MessageType.RUNTIME_EVENT, MessageType.RUNTIME_EVENT,
+        MessageType.CHECKPOINT_REQUEST, MessageType.MODEL_REQUEST,
     ]
-    assert limited[1].payload["kind"] == "run.failed"
+    assert limited[1].payload["kind"] == "tool.budget_exhausted"
     assert limited[1].payload["code"] == "tool_round_limit"
+    assert limited[1].payload["action"] == "finalize_without_tools"
+    assert limited[-1].payload["tools"] == []
     assert recovered.snapshot("run-1")["pending_tool_calls"] == {}
+    assert recovered.snapshot("run-1")["tool_execution_disabled"] is True
+
+    budget_checkpoint = next(
+        item for item in limited if item.message_type is MessageType.CHECKPOINT_REQUEST
+    )
+    resumed_finalizer = create_mobile_agent_core()
+    resumed_output = resumed_finalizer.handle(RuntimeEnvelope(
+        MessageType.RESUME_RUN, "resume-budget-finalization", "run-1", "session-1", 5,
+        "resume:budget-finalization", {"state": budget_checkpoint.payload["state"]},
+    ))
+    resumed_request = next(
+        item for item in resumed_output if item.message_type is MessageType.MODEL_REQUEST
+    )
+    assert resumed_request.payload["tools"] == []
+
+    completed = recovered.handle(command(MessageType.MODEL_COMPLETED, 6, {
+        "content": "Completed from the available evidence.",
+    }))
+    assert any(item.payload.get("kind") == "run.completed" for item in completed)
 
 
 def test_web_search_duplicate_query_is_short_circuited_and_hidden_from_model() -> None:
@@ -725,6 +747,23 @@ def test_parallel_web_search_batch_executes_only_the_first_query() -> None:
     assert snapshot["web_search_queries"] == ["Hepix2026 是什么"]
 
 
+def test_web_search_can_share_a_read_only_batch_with_known_url_fetch() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "Research HEPiX", "model_id": "model-1",
+        "tools": [tool_schema("web_search"), tool_schema("web_fetch")],
+    }))
+
+    started = core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "search-1", "name": "web_search", "arguments": {"query": "HEPiX 2026"}},
+        {"call_id": "fetch-1", "name": "web_fetch", "arguments": {"url": "https://www.hepix.org/"}},
+    ]}))
+
+    requests = [item for item in started if item.message_type is MessageType.TOOL_CALL_REQUEST]
+    assert [item.payload["call_id"] for item in requests] == ["search-1", "fetch-1"]
+    assert list(core.snapshot("run-1")["pending_tool_calls"]) == ["search-1", "fetch-1"]
+
+
 def test_web_search_stops_after_three_distinct_attempts() -> None:
     core = create_mobile_agent_core()
     core.handle(command(MessageType.START_RUN, 0, {
@@ -776,7 +815,7 @@ def test_parallel_empty_web_search_batch_completes_without_another_model_call() 
     assert not any(item.payload.get("kind") == "run.failed" for item in stopped)
 
 
-def test_tool_context_budget_completes_with_limitation_before_overflow() -> None:
+def test_tool_context_budget_requests_tool_free_finalization_before_overflow() -> None:
     core = create_mobile_agent_core()
     core.handle(command(MessageType.START_RUN, 0, {
         "input": "loop safely", "model_id": "model-1", "tools": [tool_schema("clock")],
@@ -800,8 +839,17 @@ def test_tool_context_budget_completes_with_limitation_before_overflow() -> None
     ]}))
 
     assert any(item.payload.get("kind") == "tool.budget_exhausted" for item in limited)
-    assert any(item.payload.get("kind") == "run.completed" for item in limited)
+    request = next(item for item in limited if item.message_type is MessageType.MODEL_REQUEST)
+    assert request.payload["tools"] == []
+    assert request.payload["context_budget"]["message_count"] <= 6
     assert not any(item.payload.get("kind") == "run.failed" for item in limited)
+    assert core.snapshot("run-1")["phase"] == RunPhase.WAITING_MODEL.value
+    assert core.snapshot("run-1")["tool_execution_disabled"] is True
+
+    completed = core.handle(command(MessageType.MODEL_COMPLETED, 4, {
+        "content": "Finished without another tool call.",
+    }))
+    assert any(item.payload.get("kind") == "run.completed" for item in completed)
     assert core.snapshot("run-1")["phase"] == RunPhase.COMPLETED.value
 
 

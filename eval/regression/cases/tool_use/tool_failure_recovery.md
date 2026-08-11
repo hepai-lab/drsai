@@ -3,7 +3,7 @@
 ## 身份与目的
 
 - Case ID：`tool.failure.recovery`
-- Revision：1
+- Revision：4
 - 目的：单独验证 Runtime 对可重试 Tool 错误的有限恢复，不重复验证真实互联网。
 
 ## 方案取舍
@@ -11,6 +11,8 @@
 采用受控方案 B。Agent 看到正常的 `web_search` 定义；测试环境在 Tool Dispatcher 与 Handler 之间、仅对当前 Case 注入第一次 `service_unavailable`。Runtime Policy 自动重试一次，第二次返回固定 Fixture，不访问真实网络。
 
 这里是一个逻辑 Tool Call、两个底层 Tool Attempt。不能把 Runtime 重试误记为 Agent 主动调用两次。未来另建案例验证 Agent 面对不可恢复错误时自主改换方案。
+
+输入明确限定一个逻辑搜索请求，因为本案例只隔离验证 Runtime Retry，不评估 Agent 的搜索扩展策略。若 Agent 在已经取得成功 Fixture 后主动改写查询再次搜索，必须按重复逻辑调用失败，不能由回归框架合并或隐藏。
 
 ## 固定结果
 
@@ -22,4 +24,4 @@ Fixture 声明虚构测试活动 OpenDrSai Developer Summit 2026 于 2026-09-10 
 
 ## 验收
 
-Run 完成；一个逻辑调用、两个有序 Attempt；重试发起者为 `runtime_policy`；回答准确使用固定结果；OAEP/Inspection 同时保留失败与成功证据。所有断言为确定性断言。
+Run 完成；一个逻辑调用、两个有序 Attempt；重试发起者为 `runtime_policy`；回答准确使用固定结果；OAEP/Inspection 同时保留失败与成功证据。输出使用固定活动事实的必要文字与允许空格、中文日期分隔符的日期正则做确定性断言，不调用模型裁判；所有断言均为确定性断言。

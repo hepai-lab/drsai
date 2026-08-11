@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import shutil
@@ -77,10 +78,53 @@ class DirectRuntimeChannel:
         # synthetic bearer. It is not an HepAI OIDC token and must not be
         # forwarded into the Full Runtime's separate OIDC boundary.
         local_arguments["kwargs"].pop("_authorization", None)
-        return await self.handler(operation, local_arguments)
+        print(f"P5_LOCAL_RUNTIME_OPERATION_START={operation}", flush=True)
+        try:
+            result = await asyncio.wait_for(
+                self.handler(operation, local_arguments),
+                timeout=30,
+            )
+            print(f"P5_LOCAL_RUNTIME_OPERATION_END={operation}", flush=True)
+            return result
+        except TimeoutError as exc:
+            print(f"P5_LOCAL_RUNTIME_OPERATION_TIMEOUT={operation}", flush=True)
+            raise RuntimeError(
+                f"p5_local_runtime_operation_timeout:{operation}"
+            ) from exc
 
     async def attach(self, *_):
         return "local-e2e"
+
+
+_RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+
+
+def validated_transport_host(
+    transport: str,
+    host_address: str | None,
+    *,
+    allow_insecure_private_lan: bool,
+) -> ipaddress.IPv4Address:
+    if transport != "lan":
+        if host_address:
+            raise ValueError("local_e2e_host_address_requires_lan")
+        if allow_insecure_private_lan:
+            raise ValueError("local_e2e_lan_consent_requires_lan")
+        return ipaddress.IPv4Address("127.0.0.1")
+    if not allow_insecure_private_lan:
+        raise ValueError("local_e2e_insecure_private_lan_consent_required")
+    try:
+        candidate = ipaddress.ip_address(host_address or "")
+    except ValueError as exc:
+        raise ValueError("local_e2e_rfc1918_ipv4_required") from exc
+    if not isinstance(candidate, ipaddress.IPv4Address) or not any(
+        candidate in network for network in _RFC1918_NETWORKS
+    ):
+        raise ValueError("local_e2e_rfc1918_ipv4_required")
+    return candidate
 
     async def detach(self, *_):
         return None
@@ -93,6 +137,16 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Run the local Android Emulator → Relay → Windows Runtime V2 gate.")
     result.add_argument("--serial", default="emulator-5556")
     result.add_argument("--avd", default="OpenDrSai_V2_API35")
+    result.add_argument("--transport", choices=("adb-reverse", "lan"), default="adb-reverse")
+    result.add_argument("--host-address")
+    result.add_argument(
+        "--allow-insecure-private-lan",
+        action="store_true",
+        help=(
+            "Explicitly consent to sending the one-run test bearer and grant over "
+            "unencrypted RFC1918 LAN HTTP. Prefer adb-reverse."
+        ),
+    )
     result.add_argument(
         "--output",
         default=str(ROOT / "release" / "product-evidence" / "mobile-remote-workspace-v2" / "local-emulator-e2e.json"),
@@ -193,6 +247,11 @@ def available_port() -> int:
 
 def main() -> int:
     options = parser().parse_args()
+    host_address = validated_transport_host(
+        options.transport,
+        options.host_address,
+        allow_insecure_private_lan=options.allow_insecure_private_lan,
+    )
     output = Path(options.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(UTC)
@@ -201,6 +260,8 @@ def main() -> int:
     server_thread = None
     windows = None
     temporary_root_cleanup: Path | None = None
+    adb_tool: Path | None = None
+    reverse_port: int | None = None
     report: dict[str, object] = {
         "schema_version": 1,
         "started_at": started_at.isoformat(),
@@ -210,6 +271,7 @@ def main() -> int:
     }
     try:
         adb, emulator, avdmanager, java_home = android_tools()
+        adb_tool = adb
         emulator_process = ensure_emulator(adb, emulator, avdmanager, java_home, options.serial, options.avd)
         app_apk, _ = build_and_install(adb, java_home, options.serial)
 
@@ -277,6 +339,29 @@ def main() -> int:
                     "content": "must-not-complete",
                 },
             }), encoding="utf-8")
+            # The controlled backend still traverses the production model
+            # policy resolver.  Keep this fixture explicit and credential-free
+            # instead of relying on a developer machine's global config.
+            (home / "configs" / "agents").mkdir(parents=True)
+            (home / "configs" / "models").mkdir(parents=True)
+            (home / "config.toml").write_text(
+                'config_version = 2\ncurrent_agent = "opendrsai"\n'
+                'agent_config_file = "configs/agents/agent_opendrsai.toml"\n\n'
+                '[model_providers.hepai]\nbase_url = "https://controlled.invalid/v1"\n'
+                'requires_api_key = false\nmodels_file = "configs/models/provider_hepai.toml"\n',
+                encoding="utf-8",
+            )
+            (home / "configs" / "agents" / "agent_opendrsai.toml").write_text(
+                'schema_version = 2\nagent_name = "opendrsai"\n[models.primary]\n'
+                'mode = "explicit"\nprovider_id = "hepai"\nmodel_id = "controlled"\n',
+                encoding="utf-8",
+            )
+            (home / "configs" / "models" / "provider_hepai.toml").write_text(
+                '[models."controlled"]\ninput_modalities = ["text"]\n'
+                'output_modalities = ["text"]\napi_protocol = "openai"\n'
+                'enabled = true\ncapabilities = ["chat", "tool_calling"]\n',
+                encoding="utf-8",
+            )
             gateway_token = "local-e2e-gateway-token"
             os.environ["DRSAI_HOME"] = str(home)
             os.environ["OPENDRSAI_GATEWAY_INSTANCE_TOKEN"] = gateway_token
@@ -354,7 +439,14 @@ def main() -> int:
                 if request.headers.get("authorization") == f"Bearer {bearer}" else "",
             )
             port = available_port()
-            server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+            listen_host = str(host_address)
+            server = uvicorn.Server(uvicorn.Config(
+                app,
+                host=listen_host,
+                port=port,
+                log_level="warning",
+                timeout_keep_alive=1,
+            ))
             server_thread = threading.Thread(target=server.run, daemon=True)
             server_thread.start()
             deadline = time.monotonic() + 20
@@ -363,13 +455,15 @@ def main() -> int:
             if not server.started:
                 raise RuntimeError("local_relay_start_timeout")
 
-            run([str(adb), "-s", options.serial, "reverse", f"tcp:{port}", f"tcp:{port}"])
+            if options.transport == "adb-reverse":
+                run([str(adb), "-s", options.serial, "reverse", f"tcp:{port}", f"tcp:{port}"])
+                reverse_port = port
             run([str(adb), "-s", options.serial, "logcat", "-c"])
             instrumentation = run([
                 str(adb), "-s", options.serial, "shell", "am", "instrument", "-w", "-r",
                 "-e", "class",
                 "ai.drsai.remote.LocalRemoteWorkspaceE2ETest#registrationAssociationBrowseRunAndApprovalUseTheRealLocalRelay",
-                "-e", "relayBaseUrl", f"http://127.0.0.1:{port}",
+                "-e", "relayBaseUrl", f"http://{host_address}:{port}",
                 "-e", "relayBearer", bearer,
                 "-e", "relayGrantCode", grant_code,
                 "-e", "approveCanary", approve_canary,
@@ -725,6 +819,16 @@ def main() -> int:
     else:
         return_code = 0
     finally:
+        if adb_tool is not None and reverse_port is not None:
+            subprocess.run(
+                [str(adb_tool), "-s", options.serial, "reverse", "--remove", f"tcp:{reverse_port}"],
+                cwd=ROOT,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+                check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
         if server is not None:
             server.should_exit = True
         if server_thread is not None:

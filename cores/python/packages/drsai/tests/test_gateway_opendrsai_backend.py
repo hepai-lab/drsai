@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,11 +11,53 @@ from autogen_agentchat.messages import MultiModalMessage, TextMessage
 from PIL import Image as PILImage
 
 from drsai.backend import gateway
-from drsai.backend.gateway import GatewayOpenDrSaiAgentBackend
+from drsai.backend.gateway import (
+    GatewayOpenDrSaiAgentBackend,
+    _regression_control_enabled,
+    _regression_control_forbids_tool,
+    _regression_control_provides_tool,
+)
 from drsai.backend.runtime.agent import AgentDefinition, RuntimeRunContext
 from drsai.platform_auth import PlatformAuthContext, platform_auth_scope
 from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.config.knowledge_registry import KnowledgeResource, index_local_files, put_knowledge_resource
+
+
+def test_regression_control_is_enabled_only_for_explicit_or_fully_managed_desktop_dev(monkeypatch) -> None:
+    for name in (
+        "OPENDRSAI_ENABLE_REGRESSION_CONTROL", "OPENDRSAI_DESKTOP_DEV", "DRSAI_GATEWAY_DEV_MANAGED",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert _regression_control_enabled() is False
+    monkeypatch.setenv("OPENDRSAI_DESKTOP_DEV", "1")
+    assert _regression_control_enabled() is False
+    monkeypatch.setenv("DRSAI_GATEWAY_DEV_MANAGED", "1")
+    assert _regression_control_enabled() is True
+    monkeypatch.delenv("OPENDRSAI_DESKTOP_DEV")
+    assert _regression_control_enabled() is False
+    monkeypatch.setenv("OPENDRSAI_ENABLE_REGRESSION_CONTROL", "1")
+    assert _regression_control_enabled() is True
+
+
+def test_regression_tool_fixture_bypasses_only_production_capability_setup(monkeypatch) -> None:
+    control = {"network": "disabled", "tool_fixtures": {"web_search": {"successful_result": {}}}}
+
+    monkeypatch.setenv("OPENDRSAI_ENABLE_REGRESSION_CONTROL", "1")
+    assert _regression_control_provides_tool(control, "web_search") is True
+    assert _regression_control_provides_tool(control, "web_fetch") is False
+    assert _regression_control_provides_tool({**control, "network": "enabled"}, "web_search") is False
+
+    monkeypatch.delenv("OPENDRSAI_ENABLE_REGRESSION_CONTROL")
+    assert _regression_control_provides_tool(control, "web_search") is False
+
+
+def test_regression_forbidden_tool_skips_production_setup_without_granting_it(monkeypatch) -> None:
+    control = {"forbidden_capabilities": ["web_search", "image_generation"]}
+    monkeypatch.setenv("OPENDRSAI_ENABLE_REGRESSION_CONTROL", "1")
+    assert _regression_control_forbids_tool(control, "web_search") is True
+    assert _regression_control_forbids_tool(control, "knowledge_search") is False
+    monkeypatch.delenv("OPENDRSAI_ENABLE_REGRESSION_CONTROL")
+    assert _regression_control_forbids_tool(control, "web_search") is False
 
 
 class RecordingServices:
@@ -86,6 +129,30 @@ def test_gateway_backend_reuses_desktop_stream_and_projects_runtime_events(tmp_p
     assert services.events[1][1]["delta"] == "Windows answer"
 
 
+def test_gateway_backend_preserves_desktop_citations_on_completion(tmp_path: Path) -> None:
+    citation = {
+        "citation_id": "citation-1", "title": "HEPiX",
+        "url": "https://www.hepix.org/", "relation": "supports_claim",
+    }
+
+    async def runner(**_kwargs):
+        yield TextMessage(
+            source="assistant", content="Source: https://www.hepix.org/",
+            metadata={"citations_json": json.dumps([citation])},
+        )
+
+    services = RecordingServices()
+    with platform_auth_scope(_auth()):
+        asyncio.run(GatewayOpenDrSaiAgentBackend(runner).execute(
+            _context(tmp_path), _definition(), "hello", services,
+        ))
+
+    assert services.events[-1] == (
+        "agent.completed",
+        {"content": "Source: https://www.hepix.org/", "citations": [citation]},
+    )
+
+
 def test_gateway_backend_forwards_existing_oaep_image_resource_to_real_desktop_stream(tmp_path: Path) -> None:
     PILImage.new("RGB", (2, 2), "white").save(tmp_path / "proof.png")
     image = (tmp_path / "proof.png").read_bytes()
@@ -128,8 +195,9 @@ def test_gateway_backend_requires_forwarded_oidc_identity(tmp_path: Path) -> Non
         raise AssertionError("missing OIDC identity must fail closed")
 
 
-def test_gateway_backend_static_provider_does_not_require_hepai_identity(tmp_path: Path) -> None:
+def test_gateway_backend_static_provider_does_not_require_hepai_identity(tmp_path: Path, monkeypatch) -> None:
     observed = {}
+    monkeypatch.setattr(gateway, "_DEFAULT_USER_ID", "desktop-user")
 
     async def runner(**kwargs):
         observed.update(kwargs)
@@ -140,7 +208,43 @@ def test_gateway_backend_static_provider_does_not_require_hepai_identity(tmp_pat
     ))
     assert result["content"] == "provider answer"
     assert observed["model_provider"] == "zhizengzeng"
-    assert observed["user_id"] == "provider-zhizengzeng"
+    assert observed["user_id"] == "desktop-user"
+
+
+def test_gateway_backend_registers_workspace_artifacts_on_completion(tmp_path: Path, monkeypatch) -> None:
+    published = []
+
+    class ArtifactStore:
+        def list_for_run(self, _workspace_id, _run_id):
+            return []
+
+        def publish(self, context, arguments):
+            path = tmp_path / arguments["path"]
+            item = {
+                "artifact_id": "artifact-1", "workspace_id": context.workspace_id,
+                "session_id": context.session_id, "run_id": context.run_id,
+                "relative_path": arguments["path"], "display_name": path.name,
+                "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "size": path.stat().st_size, "sha256": "a" * 64,
+            }
+            published.append(item)
+            return item
+
+    monkeypatch.setattr(gateway, "_runtime_artifact_store", lambda: ArtifactStore())
+    (tmp_path / "artifacts").mkdir()
+
+    async def runner(**_kwargs):
+        (tmp_path / "artifacts" / "deck.pptx").write_bytes(b"presentation")
+        yield TextMessage(source="assistant", content="created")
+
+    services = RecordingServices()
+    result = asyncio.run(GatewayOpenDrSaiAgentBackend(runner).execute(
+        _context(tmp_path), _definition("zhizengzeng"), "create", services,
+    ))
+
+    assert result["content"] == "created"
+    assert published[0]["relative_path"] == "artifacts/deck.pptx"
+    assert any(event_type == "artifact.created" for event_type, _ in services.events)
 
 
 def test_gateway_backend_preserves_secret_free_failure_type(tmp_path: Path) -> None:
@@ -355,7 +459,10 @@ def test_agent_manager_always_injects_native_image_tools(monkeypatch, tmp_path: 
     monkeypatch.setattr(manager, "_load_thread_state", no_state)
     monkeypatch.setattr(manager, "_get_or_create_thread", no_thread)
 
-    asyncio.run(manager.get_or_create("thread", "user", work_dir=str(tmp_path)))
+    asyncio.run(manager.get_or_create(
+        "thread", "user", model_provider="hepai", model_id="deepseek-v4-pro",
+        work_dir=str(tmp_path),
+    ))
 
     tools = captured["extra_tools"]
     assert [tool.__name__ for tool in tools[:2]] == ["image_generation", "image_edit"]
@@ -393,7 +500,10 @@ def test_agent_manager_applies_explicit_agent_tool_policy(monkeypatch, tmp_path:
     monkeypatch.setattr(manager, "_load_thread_state", no_state)
     monkeypatch.setattr(manager, "_get_or_create_thread", no_thread)
 
-    asyncio.run(manager.get_or_create("thread", "user", work_dir=str(tmp_path)))
+    asyncio.run(manager.get_or_create(
+        "thread", "user", model_provider="hepai", model_id="deepseek-v4-pro",
+        work_dir=str(tmp_path),
+    ))
 
     assert captured["tool_resource_ids"] == ["builtin.image_edit", "web.search"]
     assert [getattr(tool, "__name__", getattr(tool, "name", "")) for tool in captured["extra_tools"]] == [

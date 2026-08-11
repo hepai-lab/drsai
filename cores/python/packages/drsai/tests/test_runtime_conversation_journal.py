@@ -13,6 +13,7 @@ from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.runtime.journal import (
     RuntimeConversationJournal,
     SessionCursorExpired,
+    _redact_credentials,
 )
 from drsai.backend.runtime.oaep import (
     project_openai_chat_completion_chunks,
@@ -22,6 +23,17 @@ from drsai.relay.models import ConversationSnapshot, SessionEvent
 
 ROOT = Path(__file__).resolve().parents[5]
 OAEP_SCHEMA = ROOT / "cores" / "protocol" / "oaep" / "oaep.schema.json"
+
+
+def test_journal_redaction_preserves_diagnostic_codes_and_removes_credentials() -> None:
+    safe = _redact_credentials({
+        "result": '{"error_code":"service_unavailable","api_key":"sk-secret"}',
+        "token": "top-secret",
+    })
+
+    assert "service_unavailable" in safe["result"]
+    assert "sk-secret" not in safe["result"]
+    assert safe["token"] == "[REDACTED]"
 
 
 @pytest.fixture()
@@ -1044,6 +1056,10 @@ def test_oaep_projects_runtime_tool_command_interaction_artifact_and_failure(
             "call_id": "call-1",
             "arguments": {"query": "OAEP"},
             "result": {"count": 1},
+            # Inspection metadata is an internal Runtime concern. OAEP/1
+            # tool-call content is strict and must not grow an unversioned
+            # top-level field when another Runtime feature adds metadata.
+            "inspection": {"kind": "internal-test-metadata"},
             "status": "completed",
         },
     )
@@ -1104,6 +1120,7 @@ def test_oaep_projects_runtime_tool_command_interaction_artifact_and_failure(
     assert items[f"tool:{run['run_id']}:github"]["content"]["tool_name"] == "github.search_code"
     assert items[f"tool:{run['run_id']}:github"]["content"]["arguments"] == {"query": "OAEP"}
     assert items[f"tool:{run['run_id']}:github"]["content"]["result"] == {"count": 1}
+    assert "inspection" not in items[f"tool:{run['run_id']}:github"]["content"]
     assert items[f"approval:{run['run_id']}:pytest"]["type"] == "interaction"
     assert items[f"approval:{run['run_id']}:pytest"]["content"]["response"] == {"id": "accept"}
     assert items["artifact:oaep-report"]["type"] == "artifact"

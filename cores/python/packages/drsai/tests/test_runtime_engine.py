@@ -252,6 +252,48 @@ def test_conversation_projection_uses_authoritative_input_and_stable_cursor(engi
     }]
 
 
+def test_run_input_is_bound_once_and_idempotent_retries_do_not_revise_it(
+    engine: RuntimeEngine,
+) -> None:
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "immutable-input-key")
+    resource = {
+        "protocol": "oaep.input/1", "resource_id": "selection-one", "kind": "selection",
+        "name": "Selected text", "permission": "read", "status": "encoded", "content": "hello",
+        "captured_at": "2026-08-05T00:00:00Z",
+    }
+
+    first = engine.set_run_input(
+        run["run_id"], "original prompt", attachment_refs=["artifact-one"],
+        input_resources=[resource], correlation_id="correlation-one",
+        source_client="windows", source_message_id="message-one",
+    )
+    before = engine.conversation_snapshot(session["session_id"])
+    manifest_before = engine.get_run_manifest(run["run_id"], safe=False)
+    repeated = engine.set_run_input(
+        run["run_id"], "original prompt", attachment_refs=["artifact-one"],
+        input_resources=[resource], correlation_id="correlation-two",
+        source_client="windows", source_message_id="message-two",
+        evidence={"agent_config_snapshot": {"sha256": "sha256:changed-after-preflight"}},
+    )
+    after = engine.conversation_snapshot(session["session_id"])
+    manifest_after = engine.get_run_manifest(run["run_id"], safe=False)
+
+    assert repeated["input_message"] == first["input_message"] == "original prompt"
+    assert repeated["correlation_id"] == "correlation-one"
+    assert after["snapshot_sequence"] == before["snapshot_sequence"]
+    assert manifest_after["manifest_digest"] == manifest_before["manifest_digest"]
+    assert len([item for item in after["items"] if item["item_id"] == f"user:{run['run_id']}"]) == 1
+
+    with pytest.raises(ValueError, match="input is immutable"):
+        engine.set_run_input(run["run_id"], "changed prompt", attachment_refs=["artifact-one"])
+    with pytest.raises(ValueError, match="input is immutable"):
+        engine.set_run_input(
+            run["run_id"], "original prompt", attachment_refs=["artifact-two"],
+            input_resources=[resource],
+        )
+
+
 def test_agent_events_project_to_assistant_message_snapshot(engine: RuntimeEngine) -> None:
     session = engine.create_session(
         "workspace-one",

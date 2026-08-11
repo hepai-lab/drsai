@@ -7,8 +7,26 @@ from pathlib import Path
 
 import pytest
 
+import assemble_remote_workspace_p5_evidence as assembler
+import finalize_remote_workspace_p5 as finalizer
 from assemble_remote_workspace_p5_evidence import assemble
-from test_finalize_remote_workspace_p5 import valid
+from test_finalize_remote_workspace_p5 import LONG_SESSION_FEATURE_SET, valid, valid_long_session_report
+from p5_legacy_rollback import build_rollback_artifact
+
+
+@pytest.fixture(autouse=True)
+def fake_apk_inspection(monkeypatch: pytest.MonkeyPatch) -> None:
+    def inspect(_path: Path, *, expected_package: str,
+                expected_target_package: str | None = None) -> dict:
+        return {
+            "package_name": expected_package, "version_code": 20000,
+            "version_name": "2.0.0", "signing_cert_sha256": "3" * 64,
+            "signer_dn": "CN=OpenDrSai Test Release",
+            "target_package": expected_target_package,
+        }
+    monkeypatch.setattr(assembler, "inspect_android_apk", inspect)
+    monkeypatch.setattr(finalizer, "inspect_android_apk", inspect)
+    monkeypatch.setattr(finalizer, "release_signer_is_trusted", lambda _cert, _dn: True)
 
 
 def materialize(tmp_path: Path) -> dict:
@@ -61,8 +79,9 @@ def materialize(tmp_path: Path) -> dict:
     write(secret_artifact, json.dumps(secret).encode())
 
     legacy = value["legacy_removal"]
-    rollback_raw = b"legacy-rollback"
-    write(legacy["rollback_artifact"], rollback_raw)
+    rollback_path = tmp_path / legacy["rollback_artifact"]
+    build_rollback_artifact(Path(__file__).parents[1], rollback_path, source_revision="1" * 40)
+    rollback_raw = rollback_path.read_bytes()
     rollback_digest = hashlib.sha256(rollback_raw).hexdigest()
     legacy["migration"]["rollback_artifact_sha256"] = rollback_digest
     write(legacy["decision_artifact"], json.dumps(legacy["decision"]).encode())
@@ -73,8 +92,18 @@ def materialize(tmp_path: Path) -> dict:
     ):
         legacy.pop(key)
 
+    build_digest = hashlib.sha256(build_raw).hexdigest()
     for row in value["evidence"]:
-        write(row["artifact"], (row["category"] + "-evidence").encode())
+        if set(row["feature_ids"]) == LONG_SESSION_FEATURE_SET:
+            test_raw = b"release-test-apk"
+            write("artifacts/p5-long-session-test.apk", test_raw)
+            raw = json.dumps(valid_long_session_report(
+                build_digest, test_apk_sha256=hashlib.sha256(test_raw).hexdigest(),
+                test_apk_bytes=len(test_raw),
+            ), sort_keys=True).encode()
+        else:
+            raw = (row["category"] + "-evidence").encode()
+        write(row["artifact"], raw)
         row.pop("bytes")
         row.pop("sha256")
     for feature in value["features"]:
@@ -127,4 +156,23 @@ def test_legacy_removal_artifact_content_is_authoritative(tmp_path: Path) -> Non
     decision.update({"status": "insufficient_window", "eligible": False})
     decision_path.write_text(json.dumps(decision))
     with pytest.raises(RuntimeError, match="p5_legacy_deletion"):
+        assemble(manifest, tmp_path)
+
+
+def test_long_session_artifact_content_is_authoritative(tmp_path: Path) -> None:
+    manifest = materialize(tmp_path)
+    row = next(item for item in manifest["evidence"]
+               if set(item["feature_ids"]) == LONG_SESSION_FEATURE_SET)
+    path = tmp_path / row["artifact"]
+    report = json.loads(path.read_text())
+    report["metrics"]["history"]["cold_start_ms"] = 3001
+    path.write_text(json.dumps(report))
+    with pytest.raises(RuntimeError, match="p5_long_session_gate_failed"):
+        assemble(manifest, tmp_path)
+
+
+def test_manifest_cannot_override_identity_extracted_from_release_apk(tmp_path: Path) -> None:
+    manifest = materialize(tmp_path)
+    manifest["build"]["version_code"] = 1
+    with pytest.raises(RuntimeError, match="p5_manifest_build_version_code_mismatch"):
         assemble(manifest, tmp_path)

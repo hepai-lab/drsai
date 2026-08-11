@@ -32,6 +32,27 @@ def test_agent_policy_get_requires_explicit_primary_model(monkeypatch) -> None:
     assert "no primary model" in result["error"]
 
 
+def test_agent_policy_get_never_rewrites_an_explicit_provider_binding(monkeypatch) -> None:
+    policy = AgentModelPolicy(
+        "my-drsai",
+        primary_model=AgentModelSelection("explicit", ModelRef("provider-b", "same")),
+    )
+    monkeypatch.setattr(
+        gateway, "load_agent_model_policy",
+        lambda _agent_id: SimpleNamespace(policy=policy, revision="sha256:" + "a" * 64),
+    )
+    monkeypatch.setattr(gateway, "load_model_provider_config", config)
+    monkeypatch.setattr(
+        gateway, "commit_agent_model_policy",
+        lambda *_args, **_kwargs: pytest.fail("GET must not mutate an explicit Agent model policy"),
+    )
+
+    result = asyncio.run(gateway.get_agent_model_policy("my-drsai"))
+
+    assert result["primary_model"]["ref"] == {"provider_id": "provider-b", "model_id": "same"}
+    assert result["effective_ref"] == {"provider_id": "provider-b", "model_id": "same"}
+
+
 def test_agent_policy_put_persists_exact_provider_ref(monkeypatch) -> None:
     captured = []
     monkeypatch.setattr(gateway, "load_model_provider_config", config)

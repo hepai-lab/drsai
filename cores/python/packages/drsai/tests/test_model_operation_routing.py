@@ -63,7 +63,7 @@ def _policy() -> AgentModelPolicy:
     ("chat", ["openai_responses", "openai_chat_completions"]),
     ("tool_calling", ["openai_responses", "openai_chat_completions"]),
     ("reasoning", ["openai_responses", "openai_chat_completions"]),
-    ("image_generation", ["gemini_generate_content"]),
+    ("image_generation", ["openai_images_generation"]),
     ("text_to_speech", ["openai_audio_speech"]),
     ("speech_to_text", ["openai_audio_transcriptions"]),
 ])

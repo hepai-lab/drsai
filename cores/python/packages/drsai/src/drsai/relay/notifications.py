@@ -89,6 +89,17 @@ class OpaquePushProvider(Protocol):
     def send(self, device_id: str, payload: dict[str, str]) -> None: ...
 
 
+class PushDeliveryError(RuntimeError):
+    """Provider failure classified without retaining its response body."""
+
+    def __init__(self, code: str, *, retryable: bool) -> None:
+        if not code or len(code) > 64 or not all(ch.islower() or ch.isdigit() or ch == "_" for ch in code):
+            raise ValueError("push_delivery_error_code_invalid")
+        super().__init__(code)
+        self.code = code
+        self.retryable = retryable
+
+
 class NotificationDeliveryQueue:
     """Durable per-device delivery state; device_id is opaque, never a token."""
 
@@ -144,7 +155,8 @@ class NotificationDeliveryQueue:
         return [{"delivery_id": row[0], "event_id": row[1], "device_id": row[2],
                  "payload": json.loads(row[3]), "attempts": row[4]} for row in rows]
 
-    def settle(self, delivery_id: str, *, delivered: bool, now: float | None = None) -> None:
+    def settle(self, delivery_id: str, *, delivered: bool, permanent: bool = False,
+               now: float | None = None) -> None:
         instant = time.time() if now is None else now
         with self._lock, self._connect() as db:
             row = db.execute("SELECT attempts,status FROM notification_delivery WHERE delivery_id=?", (delivery_id,)).fetchone()
@@ -154,7 +166,7 @@ class NotificationDeliveryQueue:
             if delivered:
                 db.execute("UPDATE notification_delivery SET status='delivered',attempts=?,lease_until=NULL WHERE delivery_id=?",
                            (attempts, delivery_id))
-            elif attempts >= self.max_attempts:
+            elif permanent or attempts >= self.max_attempts:
                 db.execute("UPDATE notification_delivery SET status='dead',attempts=?,lease_until=NULL WHERE delivery_id=?",
                            (attempts, delivery_id))
             else:
@@ -164,11 +176,17 @@ class NotificationDeliveryQueue:
 
     def dispatch_once(self, provider: OpaquePushProvider, *, now: float | None = None) -> dict[str, int]:
         rows = self.claim(now=now)
-        result = {"claimed": len(rows), "delivered": 0, "retrying": 0}
+        result = {"claimed": len(rows), "delivered": 0, "retrying": 0, "dead": 0}
         for row in rows:
             try:
                 provider.send(row["device_id"], deepcopy(row["payload"]))
+            except PushDeliveryError as failure:
+                self.settle(row["delivery_id"], delivered=False,
+                            permanent=not failure.retryable, now=now)
+                result["retrying" if failure.retryable else "dead"] += 1
             except Exception:
+                # Unknown transport failures are treated as transient, but the
+                # bounded max_attempts policy still prevents a busy loop.
                 self.settle(row["delivery_id"], delivered=False, now=now)
                 result["retrying"] += 1
             else:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import sqlite3
@@ -25,6 +26,16 @@ from drsai.backend.runtime.observability import ResourceCorrelation, RuntimeObse
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def relay_latency_correlation(
+    runtime_id: str, workspace_id: str, session_id: str, event_id: str
+) -> str:
+    """Scope an opaque Event identity to its Relay tenant and resource boundary."""
+    values = (runtime_id, workspace_id, session_id, event_id)
+    if any(not isinstance(value, str) or not value or len(value) > 500 for value in values):
+        raise ValueError("latency correlation identity is invalid")
+    return hashlib.sha256("\0".join(values).encode("utf-8")).hexdigest()
 
 
 def record_protocol_usage_safely(telemetry: ProtocolUsageTelemetry, protocol: str,
@@ -93,6 +104,7 @@ class _RunCreate(_StrictBody):
     correlation_id: str
     idempotency_key: str
     message: str
+    source_message_id: str | None = None
     attachment_refs: list[str] = []
     retry_of: str | None = None
 
@@ -126,10 +138,15 @@ class _DeviceBoundSubject(str):
 
 
 class _ConversationLatencyClientObservation(_StrictBody):
-    correlation_id: str
-    operation_id: str
-    stage: str
-    duration_ms: float
+    correlation_id: str = Field(min_length=1, max_length=500)
+    operation_id: str = Field(min_length=1, max_length=500)
+    stage: Literal["client_receive", "client_render"]
+    duration_ms: float = Field(ge=0, le=300_000, allow_inf_nan=False)
+
+
+class _LatencyObservationRequest(_StrictBody):
+    client_receive_at_ms: int = Field(ge=0)
+    render_at_ms: int = Field(ge=0)
 
 
 class ProtocolDeletionRequirements(_StrictBody):
@@ -190,7 +207,8 @@ def create_relay_app(registry: RelayRegistry | None = None,
                      runtimes: dict[str, RuntimeAuthority] | None = None,
                      channels: RuntimeChannelHub | None = None,
                      principal_resolver: Callable[[Request], str] | None = None,
-                     release_id: str | None = None) -> FastAPI:
+                     release_id: str | None = None,
+                     conversation_latency_database: Path | None = None) -> FastAPI:
     store = registry or RelayRegistry()
     app = FastAPI(title="OpenDrSai Runtime Relay", version="2.0.0")
     app.state.registry = store
@@ -207,10 +225,20 @@ def create_relay_app(registry: RelayRegistry | None = None,
         path=Path(telemetry_directory.name) / "device-action-audit.sqlite3"
     )
     app.state.device_action_audit = device_action_audit
+    configured_latency_database = conversation_latency_database
+    if configured_latency_database is None:
+        configured_value = os.environ.get("OPENDRSAI_CONVERSATION_LATENCY_DATABASE", "").strip()
+        configured_latency_database = Path(configured_value) if configured_value else None
+    if configured_latency_database is not None and not configured_latency_database.is_absolute():
+        raise ValueError("conversation latency database path must be absolute")
+    conversation_latency_shared = configured_latency_database is not None
     conversation_latency = RuntimeObservability(
-        Path(telemetry_directory.name) / "conversation-latency.sqlite3"
+        configured_latency_database
+        if configured_latency_database is not None
+        else Path(telemetry_directory.name) / "conversation-latency.sqlite3"
     )
     app.state.conversation_latency = conversation_latency
+    app.state.conversation_latency_shared = conversation_latency_shared
     protocol_usage = ProtocolUsageTelemetry(Path(telemetry_directory.name) / "protocol-usage.sqlite3")
     app.state.protocol_usage = protocol_usage
     app.state.protocol_usage_write_failures = 0
@@ -272,9 +300,15 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def oaep_metrics():
         return oaep_replay.metrics()
 
-    @app.get("/v1/metrics/conversation-latency")
+    @app.get("/v1/metrics/conversation-latency", include_in_schema=False)
+    @app.get("/v1/metrics/relay-latency")
     async def conversation_latency_metrics() -> dict:
-        return conversation_latency.conversation_latency_report()
+        report = conversation_latency.conversation_latency_report()
+        return {
+            **report,
+            "aggregation_scope": "shared" if conversation_latency_shared else "process",
+            "multi_worker_ready": conversation_latency_shared and report["ready"],
+        }
 
     @app.get("/v1/metrics/protocol-usage")
     async def protocol_usage_metrics() -> dict:
@@ -368,6 +402,7 @@ def create_relay_app(registry: RelayRegistry | None = None,
         "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/"
         "conversation-latency",
         status_code=204,
+        include_in_schema=False,
     )
     async def record_client_conversation_latency(
         runtime_id: str,
@@ -387,18 +422,99 @@ def create_relay_app(registry: RelayRegistry | None = None,
             raise RelayRegistryError(
                 "latency_event_not_found", "Latency Event was not accepted by Relay"
             )
+        scoped_correlation = relay_latency_correlation(
+            runtime_id, workspace_id, session_id, body.correlation_id
+        )
         conversation_latency.record_conversation_latency(
             body.stage,
             body.duration_ms,
             ResourceCorrelation(
-                body.correlation_id,
-                body.operation_id,
+                scoped_correlation,
+                scoped_correlation,
                 runtime_id=runtime_id,
                 workspace_id=workspace_id,
                 session_id=session_id,
             ),
             {"protocol": "oaep/1", "client": "android"},
         )
+
+    def client_latency_observation(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        event_id: str,
+    ) -> dict:
+        scoped = relay_latency_correlation(runtime_id, workspace_id, session_id, event_id)
+        observations = conversation_latency.conversation_latency_observations(scoped)
+        stages = {str(item["stage"]): item["duration_ms"] for item in observations}
+        required = {"client_receive", "client_render"}
+        ready = required.issubset(stages)
+        return {
+            "ready": ready,
+            "stages_present": sorted(stages),
+            "latencies_ms": {
+                "client_receive_to_render": int(round(stages["client_render"])),
+            } if ready else None,
+        }
+
+    @app.post(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/"
+        "events/{event_id}/latency-observation",
+    )
+    async def record_latency_observation(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        event_id: str,
+        body: _LatencyObservationRequest,
+        x_subject: str = Depends(oidc_subject),
+    ) -> dict:
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        if body.render_at_ms < body.client_receive_at_ms:
+            raise RelayRegistryError(
+                "latency_observation_invalid", "Render timestamp precedes receive timestamp"
+            )
+        if not await oaep_replay.contains_event(runtime_id, session_id, event_id):
+            raise RelayRegistryError(
+                "latency_event_not_found", "Latency Event was not accepted by Relay"
+            )
+        scoped = relay_latency_correlation(runtime_id, workspace_id, session_id, event_id)
+        correlation = ResourceCorrelation(
+            scoped,
+            scoped,
+            runtime_id=runtime_id,
+            workspace_id=workspace_id,
+            session_id=session_id,
+        )
+        dimensions = {"protocol": "oaep/1", "client": "android"}
+        conversation_latency.record_conversation_latency(
+            "client_receive", 0.0, correlation, dimensions
+        )
+        conversation_latency.record_conversation_latency(
+            "client_render",
+            float(body.render_at_ms - body.client_receive_at_ms),
+            correlation,
+            dimensions,
+        )
+        return client_latency_observation(runtime_id, workspace_id, session_id, event_id)
+
+    @app.get(
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/"
+        "events/{event_id}/latency-observation",
+    )
+    async def get_latency_observation(
+        runtime_id: str,
+        workspace_id: str,
+        session_id: str,
+        event_id: str,
+        x_subject: str = Depends(oidc_subject),
+    ) -> dict:
+        authorize_workspace(x_subject, runtime_id, workspace_id)
+        if not await oaep_replay.contains_event(runtime_id, session_id, event_id):
+            raise RelayRegistryError(
+                "latency_event_not_found", "Latency Event was not accepted by Relay"
+            )
+        return client_latency_observation(runtime_id, workspace_id, session_id, event_id)
 
     def json_dataclass(value):
         if isinstance(value, dict):
@@ -425,7 +541,9 @@ def create_relay_app(registry: RelayRegistry | None = None,
             "oidc_auth_invalid", "runtime_auth_invalid", "device_proof_required",
             "device_proof_invalid", "device_proof_expired", "device_proof_replay",
         } else 403 if (
-            exc.code.endswith("forbidden") or exc.code == "association_required"
+            exc.code.endswith("forbidden") or exc.code in {
+                "association_required", "runtime_permission_denied",
+            }
         ) else 404 if exc.code in {
             "runtime_not_found", "access_grant_not_found", "association_not_found",
             "session_not_found", "run_not_found", "approval_not_found", "push_registration_not_found",
@@ -976,6 +1094,8 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def idempotency_result(runtime_id: str, operation: str, idempotency_key: str,
                                  x_subject: str = Depends(oidc_subject)):
         store.identity(x_subject, runtime_id)
+        if operation == "approval.decide":
+            store.authorize_runtime_permission(x_subject, runtime_id, "approve")
         item = await runtime_call(runtime_id, "idempotency_result", x_subject, operation, idempotency_key)
         return {"status": "succeeded", "operation": operation, "resource": json_dataclass(item)}
 
@@ -987,6 +1107,7 @@ def create_relay_app(registry: RelayRegistry | None = None,
         item = await runtime_call(runtime_id, "create_run", x_subject, workspace_id, session_id, message=body.message,
             attachment_refs=body.attachment_refs, idempotency_key=body.idempotency_key,
             correlation_id=body.correlation_id, retry_of=body.retry_of,
+            source_message_id=body.source_message_id,
             _authorization=request.headers.get("authorization"))
         value = json_dataclass(item)
         device_action_audit.record(
@@ -1130,12 +1251,18 @@ def create_relay_app(registry: RelayRegistry | None = None,
                         event = message.get("event") or {}
                         event_id = str(event.get("event_id") or "")
                         if event_id:
+                            scoped_correlation = relay_latency_correlation(
+                                hello["runtime_id"],
+                                str(message.get("workspace_id") or ""),
+                                str(message.get("session_id") or ""),
+                                event_id,
+                            )
                             conversation_latency.record_conversation_latency(
                                 "relay_fanout",
                                 (time.perf_counter() - fanout_started) * 1000,
                                 ResourceCorrelation(
-                                    event_id,
-                                    event_id,
+                                    scoped_correlation,
+                                    scoped_correlation,
                                     runtime_id=hello["runtime_id"],
                                     workspace_id=str(message.get("workspace_id") or ""),
                                     session_id=str(message.get("session_id") or ""),
@@ -1171,12 +1298,18 @@ def create_relay_app(registry: RelayRegistry | None = None,
                     ):
                         await socket.close(code=4400, reason="latency_observation_invalid")
                         return
+                    scoped_correlation = relay_latency_correlation(
+                        hello["runtime_id"],
+                        str(message.get("workspace_id") or ""),
+                        str(message.get("session_id") or ""),
+                        event_id,
+                    )
                     conversation_latency.record_conversation_latency(
                         str(message["stage"]),
                         float(message["duration_ms"]),
                         ResourceCorrelation(
-                            event_id,
-                            event_id,
+                            scoped_correlation,
+                            scoped_correlation,
                             runtime_id=hello["runtime_id"],
                             workspace_id=str(message.get("workspace_id") or ""),
                             session_id=str(message.get("session_id") or ""),

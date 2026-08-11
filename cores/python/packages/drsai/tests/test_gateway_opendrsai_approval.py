@@ -198,6 +198,53 @@ def test_production_manager_registry_approval_uses_runtime_channel(monkeypatch, 
     asyncio.run(scenario())
 
 
+def test_regression_controlled_write_approval_records_only_safe_proposal(monkeypatch, tmp_path) -> None:
+    async def scenario() -> None:
+        content = "OpenDrSai approval regression passed.\n"
+
+        async def run_stream(**kwargs):
+            approved = await kwargs["tool_approval_handler"]({
+                "name": "regression_controlled_write", "executor_id": "desktop-host",
+                "risk": "external_write", "schema_sha256": "b" * 64,
+            }, {
+                "relative_path": "output/approval-proof.txt", "content": content,
+            })
+            assert approved is True
+            yield "start"
+            yield "complete"
+            yield "answer"
+
+        monkeypatch.setattr(gateway, "get_platform_auth", lambda: SimpleNamespace(subject="user"))
+        monkeypatch.setattr(gateway.manager, "run_stream", run_stream)
+        monkeypatch.setattr(
+            gateway, "translate_conversation_event",
+            lambda event, _state: [("tool.start" if event == "start" else "tool.complete", {
+                "tool_id": "call-1", "name": "regression_controlled_write",
+            })] if event in {"start", "complete"} else [("message.delta", {"text": "done"})],
+        )
+        state = _ApprovalState()
+        emitted = []
+        services = SimpleNamespace(state=state, emit=lambda *_args: emitted.append(_args[-2:]))
+        backend = gateway.GatewayOpenDrSaiAgentBackend()
+        task = asyncio.create_task(backend.execute(_context(tmp_path), _definition(), "task", services))
+        await asyncio.wait_for(state.created.wait(), timeout=1)
+        request = state.approvals["approval-1"]["request"]
+        assert request["proposal"] == {
+            "tool": "regression_controlled_write", "effect": "write_local_mutable",
+            "relative_path": "output/approval-proof.txt",
+            "content_sha256": __import__("hashlib").sha256(content.encode()).hexdigest(),
+        }
+        assert content not in str(request)
+        state.resolve_approval("approval-1", "approved", {"idempotency_key": "desktop-approval-1"})
+        await backend.respond_approval("run", "approval-1", "approved")
+        await asyncio.wait_for(task, timeout=1)
+        side_effects = [payload for _kind, payload in emitted if isinstance(payload, dict) and payload.get("side_effect")]
+        assert side_effects
+        assert len(side_effects[-1]["side_effect"]["idempotency_key_digest"]) == 64
+
+    asyncio.run(scenario())
+
+
 def test_real_agent_start_before_approval_binds_side_effect_by_runtime_call_id(monkeypatch, tmp_path) -> None:
     async def scenario() -> None:
         async def run_stream(**kwargs):

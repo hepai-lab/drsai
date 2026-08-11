@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from finalize_remote_workspace_p5 import FEATURE_IDS, _safe_relative_artifact, finalize
+from p5_android_apk import inspect_android_apk
+from p5_android_apk import release_signer_policy_sha256
 
 
 def _path(root: Path, relative: object) -> Path:
@@ -54,11 +56,31 @@ def assemble(manifest: dict[str, Any], root: Path) -> dict[str, Any]:
         raise RuntimeError("p5_manifest_schema_invalid")
     ledger = deepcopy(manifest)
     ledger["schema_version"] = "p5/1"
+    environment = ledger.get("environment")
+    if not isinstance(environment, dict):
+        raise RuntimeError("p5_manifest_environment_missing")
+    signer_policy_digest = release_signer_policy_sha256()
+    if environment.get("android_signer_policy_sha256") not in (None, signer_policy_digest):
+        raise RuntimeError("p5_manifest_android_signer_policy_mismatch")
+    environment["android_signer_policy_sha256"] = signer_policy_digest
 
     build = ledger.get("build")
     if not isinstance(build, dict):
         raise RuntimeError("p5_manifest_build_missing")
     _attest(root, build, "artifact", "bytes", "sha256")
+    build_identity = inspect_android_apk(
+        _path(root, build.get("artifact")), expected_package="ai.drsai.remote"
+    )
+    for key, actual in (
+        ("package_name", build_identity["package_name"]),
+        ("version_code", build_identity["version_code"]),
+        ("signing_cert_sha256", build_identity["signing_cert_sha256"]),
+    ):
+        if build.get(key) not in (None, actual):
+            raise RuntimeError(f"p5_manifest_build_{key}_mismatch")
+        build[key] = actual
+    if build.get("version") != build_identity["version_name"]:
+        raise RuntimeError("p5_manifest_build_version_mismatch")
 
     contract_source = ledger.pop("contract_report_artifact", None)
     contract_report = _json(root, contract_source, "contract_report")

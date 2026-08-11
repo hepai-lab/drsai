@@ -2263,33 +2263,25 @@
         "title": "_ApprovalDecision",
         "type": "object"
       },
-      "_ConversationLatencyClientObservation": {
+      "_LatencyObservationRequest": {
         "additionalProperties": false,
         "properties": {
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
+          "client_receive_at_ms": {
+            "minimum": 0.0,
+            "title": "Client Receive At Ms",
+            "type": "integer"
           },
-          "duration_ms": {
-            "title": "Duration Ms",
-            "type": "number"
-          },
-          "operation_id": {
-            "title": "Operation Id",
-            "type": "string"
-          },
-          "stage": {
-            "title": "Stage",
-            "type": "string"
+          "render_at_ms": {
+            "minimum": 0.0,
+            "title": "Render At Ms",
+            "type": "integer"
           }
         },
         "required": [
-          "correlation_id",
-          "operation_id",
-          "stage",
-          "duration_ms"
+          "client_receive_at_ms",
+          "render_at_ms"
         ],
-        "title": "_ConversationLatencyClientObservation",
+        "title": "_LatencyObservationRequest",
         "type": "object"
       },
       "_OwopRequest": {
@@ -2364,6 +2356,17 @@
               }
             ],
             "title": "Retry Of"
+          },
+          "source_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Message Id"
           }
         },
         "required": [
@@ -2813,26 +2816,6 @@
         "summary": "Upsert User Push Registration"
       }
     },
-    "/v1/metrics/conversation-latency": {
-      "get": {
-        "operationId": "conversation_latency_metrics_v1_metrics_conversation_latency_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Conversation Latency Metrics V1 Metrics Conversation Latency Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Conversation Latency Metrics"
-      }
-    },
     "/v1/metrics/oaep": {
       "get": {
         "operationId": "oaep_metrics_v1_metrics_oaep_get",
@@ -2886,6 +2869,26 @@
         },
         "summary": "Protocol Usage Deletion Decision",
         "x-p5-platform-contract-sha256": "490afae079e65acf2344f8a5a0bdd662f13a1cd175177f3e7dd57a35fdc77050"
+      }
+    },
+    "/v1/metrics/relay-latency": {
+      "get": {
+        "operationId": "conversation_latency_metrics_v1_metrics_relay_latency_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Conversation Latency Metrics V1 Metrics Relay Latency Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Conversation Latency Metrics"
       }
     },
     "/v1/runtime-connections/{runtime_id}/heartbeat": {
@@ -4857,66 +4860,6 @@
         "summary": "Conversation"
       }
     },
-    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-latency": {
-      "post": {
-        "operationId": "record_client_conversation_latency_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__conversation_latency_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runtime_id",
-            "required": true,
-            "schema": {
-              "title": "Runtime Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "workspace_id",
-            "required": true,
-            "schema": {
-              "title": "Workspace Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "session_id",
-            "required": true,
-            "schema": {
-              "title": "Session Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/_ConversationLatencyClientObservation"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Record Client Conversation Latency"
-      }
-    },
     "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot": {
       "get": {
         "operationId": "conversation_snapshot_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__conversation_snapshot_get",
@@ -5114,6 +5057,150 @@
           }
         },
         "summary": "Session Event Stream"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/{event_id}/latency-observation": {
+      "get": {
+        "operationId": "get_latency_observation_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__events__event_id__latency_observation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Latency Observation V1 Runtimes  Runtime Id  Workspaces  Workspace Id  Sessions  Session Id  Events  Event Id  Latency Observation Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Latency Observation"
+      },
+      "post": {
+        "operationId": "record_latency_observation_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__events__event_id__latency_observation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_LatencyObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Record Latency Observation V1 Runtimes  Runtime Id  Workspaces  Workspace Id  Sessions  Session Id  Events  Event Id  Latency Observation Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Latency Observation"
       }
     },
     "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events": {

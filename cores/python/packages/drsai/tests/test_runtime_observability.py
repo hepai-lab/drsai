@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from drsai.backend.runtime.observability import (
+    CONVERSATION_LATENCY_RETENTION_SECONDS,
     CONVERSATION_LATENCY_STAGES,
     METRICS,
     ResourceCorrelation,
@@ -93,3 +96,55 @@ def test_conversation_latency_rejects_unknown_stage_and_payload_dimensions(tmp_p
         )
     with pytest.raises(ValueError):
         metrics.record_conversation_latency("client_render", float("nan"), correlation)
+
+
+def test_conversation_latency_is_capacity_bounded_and_excludes_expired_rows(tmp_path):
+    metrics = RuntimeObservability(
+        tmp_path / "latency.sqlite3",
+        conversation_latency_capacity=5,
+        conversation_latency_trim_interval=1,
+    )
+    for index in range(6):
+        metrics.record_conversation_latency(
+            "journal_append", index, ResourceCorrelation(f"corr-{index}", f"event-{index}")
+        )
+    with metrics._connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM conversation_latency_stages").fetchone()[0] == 5
+        db.execute(
+            "UPDATE conversation_latency_stages SET observed_at=?",
+            (time.time() - CONVERSATION_LATENCY_RETENTION_SECONDS - 1,),
+        )
+    assert metrics.conversation_latency_report()["incomplete_sample_count"] == 0
+    assert metrics.conversation_latency_observations("corr-5") == []
+
+
+def test_conversation_latency_database_uses_wal_for_cross_worker_visibility(tmp_path):
+    database = tmp_path / "latency.sqlite3"
+    first = RuntimeObservability(database)
+    second = RuntimeObservability(database)
+    correlation = ResourceCorrelation("event", "event")
+    assert first.record_conversation_latency("journal_append", 1, correlation)
+    assert second.conversation_latency_observations("event") == [{
+        "correlation_id": "event",
+        "operation_id": "event",
+        "stage": "journal_append",
+        "duration_ms": 1.0,
+    }]
+    with second._connect() as db:
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+@pytest.mark.parametrize("capacity", [0, 4, 1_000_001])
+def test_conversation_latency_rejects_unbounded_capacity(tmp_path, capacity):
+    with pytest.raises(ValueError, match="capacity"):
+        RuntimeObservability(
+            tmp_path / "latency.sqlite3", conversation_latency_capacity=capacity
+        )
+
+
+@pytest.mark.parametrize("interval", [0, 10_001])
+def test_conversation_latency_rejects_unbounded_trim_interval(tmp_path, interval):
+    with pytest.raises(ValueError, match="trim interval"):
+        RuntimeObservability(
+            tmp_path / "latency.sqlite3", conversation_latency_trim_interval=interval
+        )

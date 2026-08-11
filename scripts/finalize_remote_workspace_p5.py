@@ -8,7 +8,19 @@ from urllib.parse import urlparse
 
 import jsonschema
 
+from p5_secret_canary import expected_canary_set_sha256
+from p5_legacy_rollback import RollbackArtifactError, validate_rollback_artifact
+from p5_android_apk import (
+    ApkVerificationError, inspect_android_apk, release_signer_is_trusted,
+    release_signer_policy_sha256,
+)
+from accept_mobile_remote_workspace_long_session_p5 import (
+    LONG_SESSION_FEATURE_IDS,
+    validate_acceptance_report as validate_long_session_acceptance,
+)
+
 FEATURE_IDS = {f"P5-M{module:02d}-F{feature:02d}" for module in range(1, 9) for feature in range(1, 7)}
+LONG_SESSION_FEATURE_SET = set(LONG_SESSION_FEATURE_IDS)
 REQUIRED_EVIDENCE = {"contract", "android", "desktop", "runtime", "relay", "security", "stability", "accessibility"}
 SECRET_SOURCES = {
     "android_apk", "android_logs", "android_room", "android_backup",
@@ -74,13 +86,43 @@ def _finalize(value: object, artifact_root: Path | None = None) -> dict[str, obj
         if not _digest(contract_hash): errors.append("p5_platform_contract_hash_invalid")
         elif not expected_contract_hash or contract_hash != expected_contract_hash:
             errors.append("p5_platform_contract_drift")
+        signer_policy_hash = environment.get("android_signer_policy_sha256")
+        try:
+            expected_signer_policy_hash = release_signer_policy_sha256()
+        except OSError:
+            expected_signer_policy_hash = ""
+        if not _digest(signer_policy_hash): errors.append("p5_android_signer_policy_hash_invalid")
+        elif signer_policy_hash != expected_signer_policy_hash:
+            errors.append("p5_android_signer_policy_drift")
         if not str(environment.get("environment_id", "")).strip(): errors.append("p5_environment_id_missing")
     build = value.get("build")
+    build_identity: dict[str, object] | None = None
     if not isinstance(build, dict): errors.append("p5_build_missing")
     else:
         if build.get("type") != "release": errors.append("p5_release_build_required")
         if not _digest(build.get("sha256")): errors.append("p5_build_sha256_invalid")
+        if build.get("package_name") != "ai.drsai.remote" \
+                or not _positive_int(build.get("version_code")) \
+                or not _digest(build.get("signing_cert_sha256")):
+            errors.append("p5_build_identity_invalid")
         _verify_artifact(errors, "p5_build", build, "artifact", "sha256", "bytes", artifact_root)
+        if artifact_root is not None:
+            try:
+                build_path = _artifact_path(build.get("artifact"), artifact_root)
+                build_identity = inspect_android_apk(
+                    build_path, expected_package="ai.drsai.remote"
+                )
+            except ApkVerificationError:
+                errors.append("p5_build_apk_verification_failed")
+            else:
+                if build_identity["version_name"] != build.get("version") \
+                        or build_identity["version_code"] != build.get("version_code") \
+                        or build_identity["signing_cert_sha256"] != build.get("signing_cert_sha256"):
+                    errors.append("p5_build_apk_identity_mismatch")
+                if not release_signer_is_trusted(
+                    build_identity["signing_cert_sha256"], build_identity["signer_dn"]
+                ):
+                    errors.append("p5_release_signer_untrusted")
     contract_report = value.get("contract_report")
     if not isinstance(contract_report, dict): errors.append("p5_contract_report_missing")
     else:
@@ -150,6 +192,7 @@ def _finalize(value: object, artifact_root: Path | None = None) -> dict[str, obj
         if not all(isinstance(item, str) for item in artifacts) or len(set(artifacts)) != len(artifacts):
             errors.append("p5_evidence_artifact_reused")
         coverage: dict[str, set[str]] = {}
+        long_session_rows: list[dict[str, object]] = []
         for row in evidence:
             if not isinstance(row, dict): continue
             digest = row.get("sha256")
@@ -161,6 +204,8 @@ def _finalize(value: object, artifact_root: Path | None = None) -> dict[str, obj
                 errors.append("p5_evidence_feature_mapping_invalid")
             else:
                 coverage[str(digest)] = set(feature_ids)
+                if set(feature_ids) & LONG_SESSION_FEATURE_SET:
+                    long_session_rows.append(row)
             artifact = row.get("artifact")
             if not isinstance(artifact, str) or not _safe_relative_artifact(artifact):
                 errors.append("p5_evidence_artifact_path_invalid")
@@ -176,6 +221,42 @@ def _finalize(value: object, artifact_root: Path | None = None) -> dict[str, obj
                     errors.append("p5_evidence_artifact_size_mismatch")
                 if hashlib.sha256(raw).hexdigest() != digest:
                     errors.append("p5_evidence_artifact_digest_mismatch")
+        if len(long_session_rows) != 1 \
+                or set(long_session_rows[0].get("feature_ids", [])) != LONG_SESSION_FEATURE_SET \
+                or long_session_rows[0].get("category") != "android":
+            errors.append("p5_long_session_feature_mapping_invalid")
+        elif artifact_root is not None:
+            report = _read_json_artifact(long_session_rows[0].get("artifact"), artifact_root)
+            try:
+                validate_long_session_acceptance(
+                    report,
+                    expected_build_sha256=build.get("sha256") if isinstance(build, dict) else None,
+                    required_build_type="release",
+                )
+            except ValueError as exc:
+                code = str(exc).split(":", 1)[0]
+                errors.append(code if code.startswith("p5_long_session_")
+                              else "p5_long_session_evidence_invalid")
+            else:
+                test_row = report.get("artifacts") if isinstance(report, dict) else None
+                if isinstance(test_row, dict):
+                    _verify_artifact(
+                        errors, "p5_long_session_test_apk", test_row,
+                        "test_apk_artifact", "test_apk_sha256", "test_apk_bytes", artifact_root,
+                    )
+                    try:
+                        test_identity = inspect_android_apk(
+                            _artifact_path(test_row.get("test_apk_artifact"), artifact_root),
+                            expected_package="ai.drsai.remote.test",
+                            expected_target_package="ai.drsai.remote",
+                        )
+                    except ApkVerificationError:
+                        errors.append("p5_long_session_test_apk_verification_failed")
+                    else:
+                        if build_identity is None \
+                                or test_identity["signing_cert_sha256"] \
+                                != build_identity["signing_cert_sha256"]:
+                            errors.append("p5_long_session_test_apk_signer_mismatch")
         if isinstance(features, list):
             for feature in features:
                 if not isinstance(feature, dict): continue
@@ -192,6 +273,13 @@ def _finalize(value: object, artifact_root: Path | None = None) -> dict[str, obj
                          "artifact_bytes", artifact_root)
         if secret_scan.get("schema_version") != "p5-secret/1": errors.append("p5_secret_scan_schema_invalid")
         if secret_scan.get("profile") != "mobile-remote-workspace-p5": errors.append("p5_secret_scan_profile_invalid")
+        try:
+            expected_canary_digest = expected_canary_set_sha256(secret_scan.get("canary_run_id"))
+        except (RuntimeError, TypeError):
+            errors.append("p5_secret_canary_run_invalid")
+        else:
+            if secret_scan.get("canary_set_sha256") != expected_canary_digest:
+                errors.append("p5_secret_canary_set_mismatch")
         if secret_scan.get("passed") is not True or secret_scan.get("matches") != 0:
             errors.append("p5_secret_scan_failed")
         if secret_scan.get("raw_artifacts_crossed_trust_boundary") is not False:
@@ -355,6 +443,16 @@ def _verify_artifact(errors: list[str], prefix: str, row: dict[str, object], art
         errors.append(f"{prefix}_artifact_digest_mismatch")
 
 
+def _artifact_path(relative: object, artifact_root: Path) -> Path:
+    if not isinstance(relative, str) or not _safe_relative_artifact(relative):
+        raise ApkVerificationError("p5_android_apk_artifact_path_invalid")
+    root = artifact_root.resolve()
+    path = (root / relative).resolve()
+    if root not in path.parents or not path.is_file():
+        raise ApkVerificationError("p5_android_apk_artifact_missing")
+    return path
+
+
 def _validate_legacy_removal(errors: list[str], row: dict[str, object],
                              environment: object, artifact_root: Path | None) -> None:
     if row.get("schema_version") != "p5-legacy-removal/1" or row.get("passed") is not True:
@@ -395,6 +493,13 @@ def _validate_legacy_removal(errors: list[str], row: dict[str, object],
         errors.append("p5_legacy_migration_evidence_invalid")
 
     if artifact_root is not None:
+        rollback_relative = row.get("rollback_artifact")
+        if isinstance(rollback_relative, str) and _safe_relative_artifact(rollback_relative):
+            rollback_path = (artifact_root.resolve() / rollback_relative).resolve()
+            try:
+                validate_rollback_artifact(rollback_path)
+            except RollbackArtifactError:
+                errors.append("p5_legacy_rollback_content_invalid")
         for label, embedded in (("decision", decision), ("migration", migration)):
             loaded = _read_json_artifact(row.get(f"{label}_artifact"), artifact_root)
             if loaded is None:

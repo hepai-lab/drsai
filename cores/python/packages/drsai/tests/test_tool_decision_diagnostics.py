@@ -49,6 +49,7 @@ def test_required_available_task_records_selected_or_omitted_without_prompt() ->
     assert set(selected) == {
         "kind", "policy_version", "requirement_sha256", "category", "reason",
         "required_domain_count", "available_domain_count", "selected_tool_count", "tool_round_count",
+        "required_domains",
     }
 
 

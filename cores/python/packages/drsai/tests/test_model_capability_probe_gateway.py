@@ -89,3 +89,32 @@ def test_gateway_matrix_probe_explores_undeclared_operation_with_exact_agent_ref
     assert result["model_id"] == "gemini-3.6-flash"
     assert result["status"] == "verified"
     assert result["evidence_kind"] == "real_provider"
+def test_verified_probe_protocol_is_persisted_without_probe_payload(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DRSAI_HOME", str(tmp_path))
+    result = {
+        "status": "verified", "evidence_kind": "real_provider",
+        "agent_id": "opendrsai", "provider_id": "zhizengzeng",
+        "model_id": "vision", "operation": "chat", "protocol": "openai_chat_completions",
+        "started_at": "2026-08-10T00:00:00Z",
+        "revisions": {"provider_config": "sha256:provider", "agent_policy": "sha256:agent"},
+        "request": "must-not-persist",
+    }
+
+    gateway._record_verified_model_protocol(result)
+
+    assert gateway._preferred_verified_model_protocol("opendrsai", "zhizengzeng", "vision", "chat") == "openai_chat_completions"
+    saved = gateway._model_capability_route_path().read_text(encoding="utf-8")
+    assert "must-not-persist" not in saved
+    assert "request" not in saved
+
+
+def test_failed_or_configuration_probe_does_not_replace_verified_route(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DRSAI_HOME", str(tmp_path))
+    base = {
+        "agent_id": "opendrsai", "provider_id": "zhizengzeng", "model_id": "vision",
+        "operation": "chat", "protocol": "openai_chat_completions", "evidence_kind": "real_provider",
+    }
+    gateway._record_verified_model_protocol({**base, "status": "verified"})
+    gateway._record_verified_model_protocol({**base, "status": "inconclusive", "protocol": "openai_responses"})
+    gateway._record_verified_model_protocol({**base, "status": "verified", "protocol": "openai_responses", "evidence_kind": "configuration"})
+    assert gateway._preferred_verified_model_protocol("opendrsai", "zhizengzeng", "vision", "chat") == "openai_chat_completions"

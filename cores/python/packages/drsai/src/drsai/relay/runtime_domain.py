@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from functools import wraps
 from threading import RLock
 from typing import Any, Callable
 from uuid import uuid4
@@ -11,6 +12,14 @@ from .models import RelayEvent
 from .models import ResourceLifecycle
 from .registry import RelayRegistryError
 from .streaming import RelayEventStore
+
+
+def _serialized_mutation(method):
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return guarded
 
 
 class RunStatus(StrEnum):
@@ -126,6 +135,7 @@ class RuntimeAuthority:
     def list_agent_definitions(self) -> list[AgentDefinition]:
         return sorted(self.agent_definitions.values(), key=lambda item: (item.definition_id, item.version))
 
+    @_serialized_mutation
     def create_session(self, subject: str, workspace_id: str, *, title: str, definition_id: str,
                        definition_version: str, idempotency_key: str) -> Session:
         key = (subject, "session.create", idempotency_key)
@@ -189,16 +199,23 @@ class RuntimeAuthority:
             return session
 
     def idempotency_result(self, subject: str, operation: str, idempotency_key: str) -> Any:
-        if operation not in {"session.create", "run.create"}:
+        if operation not in {"session.create", "run.create", "approval.decide"}:
             raise RelayRegistryError("idempotency_operation_invalid", "Unsupported idempotency operation")
         result = self.idempotency.get((subject, operation, idempotency_key))
         if result is None:
             raise RelayRegistryError("idempotency_result_not_found", "Idempotency result is not available", retryable=True)
+        if operation == "approval.decide":
+            # Approval entries retain request semantics for conflict checks;
+            # the public recovery contract returns only the authoritative
+            # Approval projection.
+            return result[2]
         return result
 
+    @_serialized_mutation
     def create_run(self, subject: str, workspace_id: str, session_id: str, *, message: str,
                    attachment_refs: list[str], idempotency_key: str, correlation_id: str,
-                   retry_of: str | None = None) -> Run:
+                   retry_of: str | None = None, source_message_id: str | None = None,
+                   _authorization: str | None = None) -> Run:
         idempotency_key = f"retry:{retry_of}" if retry_of else idempotency_key
         key = (subject, "run.create", idempotency_key)
         if key in self.idempotency:
@@ -281,6 +298,7 @@ class RuntimeAuthority:
         run = self._run(run_id)
         self.authorize_session(subject, run.workspace_id, run.session_id)
 
+    @_serialized_mutation
     def append_event(self, run_id: str, kind: str, payload: dict[str, Any]) -> RelayEvent:
         run = self._run(run_id)
         existing, _ = self.events.after(self.runtime_id, run_id, 0, 500)
@@ -294,6 +312,7 @@ class RuntimeAuthority:
             self.sessions[run.session_id].last_run_status = run.status
         return event
 
+    @_serialized_mutation
     def cancel_run(self, workspace_id: str, run_id: str) -> Run:
         run = self._run(run_id)
         if run.workspace_id != workspace_id:
@@ -306,6 +325,7 @@ class RuntimeAuthority:
         self.append_event(run_id, "run.cancelled", {"status": "cancelled"})
         return run
 
+    @_serialized_mutation
     def request_approval(self, subject: str, run_id: str, *, operation: str, risk_summary: str,
                          scope: str, correlation_id: str, ttl_seconds: int = 300) -> Approval:
         run = self._run(run_id)
@@ -321,6 +341,7 @@ class RuntimeAuthority:
         self.append_event(run_id, "approval.requested", {"approval_id": approval.approval_id, "status": "waiting_approval"})
         return approval
 
+    @_serialized_mutation
     def decide_approval(
         self, subject: str, approval_id: str, decision: str, idempotency_key: str | None = None
     ) -> Approval:

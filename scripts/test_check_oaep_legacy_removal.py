@@ -6,11 +6,18 @@ from pathlib import Path
 import subprocess
 import sys
 
+from p5_legacy_rollback import REQUIRED_MEMBERS, build_rollback_artifact
+
 
 def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
+    source = tmp_path / "source"
+    for name in REQUIRED_MEMBERS:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"rollback fixture for {name}\n", encoding="utf-8")
     rollback = tmp_path / "rollback.zip"
-    rollback.write_bytes(b"rollback-artifact")
+    build_rollback_artifact(source, rollback, source_revision="1" * 40)
     report = {
         "release_cycles": 0, "observation_days": 0, "oaep_client_ratio": 0.999,
         "migration_ratio": 1.0, "legacy_request_ratio": 0.0009,
@@ -23,10 +30,13 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     report_path = tmp_path / "report.json"
     migration_path = tmp_path / "migration.json"
     report_path.write_text(json.dumps(report), encoding="utf-8")
-    migration_path.write_text(json.dumps({key: report[key] for key in (
-        "database_migration_verified", "migration_transcript_before_sha256",
-        "migration_transcript_after_sha256",
-    )}), encoding="utf-8")
+    migration_path.write_text(json.dumps({
+        "schema_version": "p5-legacy-migration/1",
+        "database_migration_verified": report["database_migration_verified"],
+        "migration_transcript_before_sha256": report["migration_transcript_before_sha256"],
+        "migration_transcript_after_sha256": report["migration_transcript_after_sha256"],
+        "rollback_artifact_sha256": report["rollback_artifact_sha256"],
+    }), encoding="utf-8")
     return report_path, rollback, migration_path
 
 
@@ -50,3 +60,29 @@ def test_digest_mismatch_and_threshold_boundary_fail_closed(tmp_path: Path) -> N
     value["legacy_request_ratio"] = 0.001
     report.write_text(json.dumps(value), encoding="utf-8")
     assert _run(report, rollback, migration).returncode != 0
+
+
+def test_arbitrary_nonempty_rollback_bytes_fail_closed(tmp_path: Path) -> None:
+    report, rollback, migration = _fixture(tmp_path)
+    raw = b"not-a-real-rollback-bundle"
+    rollback.write_bytes(raw)
+    value = json.loads(report.read_text())
+    value["rollback_artifact_sha256"] = hashlib.sha256(raw).hexdigest()
+    report.write_text(json.dumps(value), encoding="utf-8")
+    result = _run(report, rollback, migration)
+    assert result.returncode != 0
+    assert "p5_legacy_rollback_archive_invalid" in result.stderr
+
+
+def test_migration_evidence_must_bind_the_same_rollback_and_preserved_transcript(tmp_path: Path) -> None:
+    report, rollback, migration = _fixture(tmp_path)
+    value = json.loads(migration.read_text())
+    value["rollback_artifact_sha256"] = "0" * 64
+    migration.write_text(json.dumps(value), encoding="utf-8")
+    assert "p5_legacy_migration_evidence_invalid" in _run(report, rollback, migration).stderr
+
+    report, rollback, migration = _fixture(tmp_path / "transcript")
+    value = json.loads(migration.read_text())
+    value["migration_transcript_after_sha256"] = "c" * 64
+    migration.write_text(json.dumps(value), encoding="utf-8")
+    assert "p5_legacy_migration_evidence_invalid" in _run(report, rollback, migration).stderr

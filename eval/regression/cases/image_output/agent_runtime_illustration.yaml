@@ -1,7 +1,7 @@
 schema_version: opendrsai.agent-regression-case/1
 
 id: image.output.simple
-revision: 1
+revision: 7
 title: 生成 OpenDrSai Agent Runtime 科技插图
 description: 验证图片生成能力、16:9 PNG、视觉约束和可交互 Artifact；不使用图片文件基准。
 owner: agent-runtime
@@ -22,19 +22,28 @@ input:
             画面要求：
             - 深蓝色背景；
             - 画面中央是一个发光的智能体核心；
-            - 核心连接五类能力：消息、工具、知识、图片和安全；
+            - 核心连接五个无标签的抽象图标：对话气泡、扳手、打开的书、风景画框和盾牌；
+            - 五个外围图标只允许使用几何图形表达含义，图标旁边和图标内部都必须完全留空，不得添加说明标签；
             - 使用蓝色和青色作为主要强调色；
             - 整体简洁、现代，有科技感；
             - 不要出现人物；
-            - 不要包含任何文字、字母、数字、Logo 或水印；
+            - 不要包含任何文字、字母、数字、Logo 或水印；这是一条硬性要求，即使主题名和能力名也绝对不能画在图片中；
             - 输出 PNG 图片。
 
 environment:
-  network: disabled
+  # This case validates the configured provider's real image-generation
+  # capability. It must not be presented as an offline Fixture run.
+  network: required
   session:
     type: new
     history: empty
   required_capabilities: [image_generation]
+  # The user request already authorizes this exact generation operation. The
+  # harness resolves the Runtime's external-side-effect checkpoint so Desktop
+  # does not stall waiting for a second human confirmation during automation.
+  approval_harness:
+    decision: approved
+    allowed_operations: [image_generation]
   workspace:
     isolation: required
     allowed_write_paths:
@@ -43,7 +52,7 @@ environment:
   forbidden_capabilities:
     - web_search
     - knowledge_search
-    - presentations
+    - pptx
 
 baseline:
   kind: specification_only
@@ -122,6 +131,8 @@ expect:
       require_generation_call_relation: true
 
 execution:
-  timeout_seconds: 180
+  # A real provider generation can consume close to three minutes; reserve a
+  # separate budget for the three independent visual-judge rounds.
+  timeout_seconds: 360
   attempts: 1
   isolation: required

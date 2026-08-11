@@ -168,6 +168,35 @@ async def _extract_page_text(page: Any, limit: int) -> str:
     return _clean_text(str(value or ""), limit)
 
 
+async def _extract_page_links(page: Any, limit: int = 40) -> list[dict[str, str]]:
+    """Return a bounded link inventory so an Agent can follow primary sources.
+
+    Links remain untrusted hints: every subsequent ``web_fetch`` performs its
+    own DNS and public-address admission check before navigation.
+    """
+    values = await page.locator("a[href]").evaluate_all(
+        """(nodes) => nodes.map((node) => ({
+          href: node.href || '', text: (node.textContent || '').trim()
+        }))"""
+    )
+    output: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in values if isinstance(values, list) else []:
+        if not isinstance(value, dict):
+            continue
+        try:
+            href = _canonical_result_url(str(value.get("href") or ""))
+        except (UnsafeWebUrl, ValueError):
+            continue
+        if href in seen:
+            continue
+        seen.add(href)
+        output.append({"href": href[:1_000], "text": _clean_text(str(value.get("text") or ""), 120)})
+        if len(output) >= limit:
+            break
+    return output
+
+
 def _launch_candidates() -> list[dict[str, Any]]:
     explicit = os.environ.get("DRSAI_PLAYWRIGHT_EXECUTABLE_PATH", "").strip()
     candidates: list[dict[str, Any]] = []
@@ -402,13 +431,19 @@ async def fetch_with_playwright(url: str, max_chars: int = 20_000) -> dict[str, 
                     if response is not None and int(response.status) >= 400:
                         raise WebSearchRuntimeError("result_http_error", f"Result page returned HTTP {response.status}")
                     complete = await _extract_page_text(page, 50_000)
-                    limit = max(1000, min(max_chars, 50_000))
+                    links = await _extract_page_links(page)
+                    # Keep the structured result below the Agent Kernel's
+                    # inline-output ceiling. The source can always be fetched
+                    # again with a more specific URL, while the full-page hash
+                    # preserves provenance for the bounded preview.
+                    limit = max(1000, min(max_chars, 6_000))
                     return {
                         "version": 1, "requested_url": url, "final_url": final_url, "title": await page.title(),
                         "content": complete[:limit], "content_type": "text/plain", "format": "text",
                         "provider": "playwright", "retrieved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         "content_sha256": hashlib.sha256(complete.encode("utf-8")).hexdigest(),
                         "truncated": len(complete) > limit, "warnings": ["dynamic_browser_fallback"],
+                        "links": links,
                     }
                 finally: await _close_quietly(page)
             finally: await _close_quietly(context)

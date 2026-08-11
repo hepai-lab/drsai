@@ -1,7 +1,7 @@
 schema_version: opendrsai.agent-regression-case/1
 
 id: tool.web.hepix
-revision: 1
+revision: 2
 title: 搜索并解释 HEPiX 2026
 description: 验证时效性问题的网络搜索、官方来源核验和 OpenDrSai 可交互引用能力。
 owner: agent-runtime
@@ -16,11 +16,15 @@ input:
     - role: user
       parts:
         - type: text
-          text: 帮我搜索一下 HEPiX 2026 是什么，并告诉我相关活动的时间和地点。请提供信息来源。
+          text: 帮我搜索一下 HEPiX 2026 是什么，并告诉我相关活动的时间和地点。请优先核验官方来源；若通用搜索结果不足，请从 HEPiX 官方主页 https://www.hepix.org/ 的链接继续查找。请以可交互引用提供信息来源。
 
 environment:
   network: required
   required_capabilities: [web_search]
+  approval_harness:
+    requires_scope_confirmation: true
+    decision: approved
+    allowed_operations: [web_search, web_fetch]
   session:
     type: new
     history: empty

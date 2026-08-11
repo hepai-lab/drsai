@@ -6,20 +6,40 @@ import json
 from pathlib import Path
 import jsonschema
 import pytest
+from p5_secret_canary import expected_canary_set_sha256
+from p5_legacy_rollback import build_rollback_artifact
 import finalize_remote_workspace_p5 as finalizer
 from finalize_remote_workspace_p5 import (
-    FEATURE_IDS, REQUIRED_EVIDENCE, REQUIRED_FAULTS, REQUIRED_PLATFORM_ENDPOINTS, SECRET_SOURCES, finalize,
+    FEATURE_IDS, LONG_SESSION_FEATURE_SET, REQUIRED_EVIDENCE, REQUIRED_FAULTS,
+    REQUIRED_PLATFORM_ENDPOINTS, SECRET_SOURCES, finalize,
     platform_contract_sha256,
 )
 
 DIGEST = "a" * 64
 
 
+@pytest.fixture(autouse=True)
+def fake_apk_inspection(monkeypatch: pytest.MonkeyPatch) -> None:
+    def inspect(_path: Path, *, expected_package: str,
+                expected_target_package: str | None = None) -> dict:
+        return {
+            "package_name": expected_package,
+            "version_code": 20000,
+            "version_name": "2.0.0",
+            "signing_cert_sha256": "3" * 64,
+            "signer_dn": "CN=OpenDrSai Test Release",
+            "target_package": expected_target_package,
+        }
+    monkeypatch.setattr(finalizer, "inspect_android_apk", inspect)
+    monkeypatch.setattr(finalizer, "release_signer_is_trusted", lambda _cert, _dn: True)
+
+
 def _evidence_rows() -> tuple[list[dict], dict[str, str]]:
     categories = sorted(REQUIRED_EVIDENCE)
     assignments = {category: [] for category in categories}
     feature_digest: dict[str, str] = {}
-    for index, feature_id in enumerate(sorted(FEATURE_IDS)):
+    remaining = sorted(FEATURE_IDS - LONG_SESSION_FEATURE_SET)
+    for index, feature_id in enumerate(remaining):
         assignments[categories[index % len(categories)]].append(feature_id)
     rows = []
     for category in categories:
@@ -28,7 +48,65 @@ def _evidence_rows() -> tuple[list[dict], dict[str, str]]:
                      "sha256": digest, "environment_id": "ai-dev-1",
                      "feature_ids": assignments[category]})
         feature_digest.update({feature_id: digest for feature_id in assignments[category]})
+    digest = hashlib.sha256(b"android-long-session").hexdigest()
+    rows.append({"category": "android", "artifact": "artifacts/android-long-session.json",
+                 "bytes": 1, "sha256": digest, "environment_id": "ai-dev-1",
+                 "feature_ids": sorted(LONG_SESSION_FEATURE_SET)})
+    feature_digest.update({feature_id: digest for feature_id in LONG_SESSION_FEATURE_SET})
     return rows, feature_digest
+
+
+def valid_long_session_report(
+    build_sha256: str = DIGEST, *, test_apk_sha256: str = "8" * 64,
+    test_apk_bytes: int = 8,
+) -> dict:
+    return {
+        "schema_version": "p5-long-session-acceptance/1",
+        "feature_ids": sorted(LONG_SESSION_FEATURE_SET),
+        "generated_at": "2026-08-10T12:00:00+00:00",
+        "passed": True,
+        "environment": {
+            "kind": "physical_device", "device_id_sha256": "9" * 64,
+            "manufacturer": "Vendor", "model": "Physical tablet", "api": 36,
+            "abi": "arm64-v8a",
+        },
+        "artifacts": {
+            "app_build_type": "release", "app_apk_sha256": build_sha256,
+            "test_apk_artifact": "artifacts/p5-long-session-test.apk",
+            "test_apk_bytes": test_apk_bytes, "test_apk_sha256": test_apk_sha256,
+        },
+        "instrumentation": {
+            "runner": "ai.drsai.remote.test/androidx.test.runner.AndroidJUnitRunner",
+            "test_class": "ai.drsai.remote.P5LongSessionPerformanceTest",
+            "tests": 1, "failures": 0,
+        },
+        "gates": {
+            key: True for key in (
+                "checkpoint_item_count", "cold_window_items", "cold_start", "cold_memory",
+                "full_history", "full_history_time", "history_hash", "delta_count",
+                "delta_time", "main_responsive", "delta_hash", "terminal",
+                "worker_bounded", "render_bounded",
+            )
+        },
+        "metrics": {
+            "history": {
+                "checkpoint_item_count": 100_000, "cold_window_items": 500,
+                "cold_start_ms": 100, "cold_pss_delta_kb": 1024,
+                "full_history_items": 100_000, "full_history_ms": 10_000,
+                "history_hash": "7" * 64,
+            },
+            "delta": {
+                "delta_count": 10_000, "duration_ms": 1000, "main_ticks": 40,
+                "worker_starts": 10, "render_cycles": 10, "content_hash": "6" * 64,
+                "terminal_barrier_complete": True,
+            },
+        },
+        "budgets": {
+            "cold_start_max_ms": 3000, "cold_pss_max_kb": 32 * 1024,
+            "history_max_ms": 180_000, "delta_count": 10_000,
+            "delta_duration_max_ms": 5000, "minimum_main_ticks": 20,
+        },
+    }
 
 
 def valid() -> dict:
@@ -37,8 +115,11 @@ def valid() -> dict:
         "schema_version": "p5/1",
         "environment": {"environment_id": "ai-dev-1", "relay_url": "https://ai-dev.example",
                         "runtime_version": "2.0.0", "schema_hash": DIGEST,
-                        "platform_contract_sha256": platform_contract_sha256()},
-        "build": {"type": "release", "version": "2.0.0", "artifact": "build/app.apk",
+                        "platform_contract_sha256": platform_contract_sha256(),
+                        "android_signer_policy_sha256": finalizer.release_signer_policy_sha256()},
+        "build": {"type": "release", "version": "2.0.0",
+                  "package_name": "ai.drsai.remote", "version_code": 20000,
+                  "signing_cert_sha256": "3" * 64, "artifact": "build/app.apk",
                   "bytes": 1, "sha256": DIGEST},
         "contract_report": {
             "schema_version": "p5-contract-evidence/1", "environment_id": "ai-dev-1",
@@ -118,6 +199,7 @@ def valid() -> dict:
             "environment_id": "ai-dev-1",
             "artifact": "reports/secret-scan.json", "artifact_bytes": 1, "artifact_sha256": "e" * 64,
             "canary_run_id": "canary-one", "passed": True, "matches": 0,
+            "canary_set_sha256": expected_canary_set_sha256("canary-one"),
             "raw_artifacts_crossed_trust_boundary": False,
             "sources": [
                 {"name": name, "boundary": name.split("_", 1)[0], "status": "clean",
@@ -153,6 +235,9 @@ def test_missing_mixed_debug_and_emulator_evidence_fail_closed() -> None:
     fixtures.append((secret_missing, "p5_secret_source_set_incomplete"))
     secret_mixed = valid(); secret_mixed["secret_scan"]["environment_id"] = "other"
     fixtures.append((secret_mixed, "p5_secret_scan_mixed_environment"))
+    secret_canary_set_mismatch = valid()
+    secret_canary_set_mismatch["secret_scan"]["canary_set_sha256"] = "0" * 64
+    fixtures.append((secret_canary_set_mismatch, "p5_secret_canary_set_mismatch"))
     short = valid(); short["stability_report"]["observed_duration_seconds"] = 3599
     fixtures.append((short, "p5_stability_duration_incomplete"))
     mismatch = valid(); mismatch["stability_report"]["transcript_hashes"]["desktop"] = "d" * 64
@@ -224,10 +309,12 @@ def test_cli_mode_verifies_physical_artifacts(tmp_path: Path) -> None:
                        if key not in {"artifact", "artifact_bytes", "artifact_sha256"}}
     attest(value["experience_report"], "artifact", "artifact_bytes", "artifact_sha256",
            json.dumps(experience_body, sort_keys=True).encode())
-    rollback_digest = attest(
-        value["legacy_removal"], "rollback_artifact", "rollback_bytes", "rollback_sha256",
-        b"legacy-rollback",
-    )
+    rollback_path = tmp_path / value["legacy_removal"]["rollback_artifact"]
+    build_rollback_artifact(Path(__file__).parents[1], rollback_path, source_revision="1" * 40)
+    rollback_raw = rollback_path.read_bytes()
+    rollback_digest = hashlib.sha256(rollback_raw).hexdigest()
+    value["legacy_removal"]["rollback_bytes"] = len(rollback_raw)
+    value["legacy_removal"]["rollback_sha256"] = rollback_digest
     value["legacy_removal"]["migration"]["rollback_artifact_sha256"] = rollback_digest
     decision_raw = json.dumps(value["legacy_removal"]["decision"], sort_keys=True).encode()
     attest(value["legacy_removal"], "decision_artifact", "decision_bytes", "decision_sha256",
@@ -239,7 +326,17 @@ def test_cli_mode_verifies_physical_artifacts(tmp_path: Path) -> None:
     for row in value["evidence"]:
         path = tmp_path / row["artifact"]
         path.parent.mkdir(parents=True, exist_ok=True)
-        raw = (row["category"] + "-physical-evidence").encode()
+        if set(row["feature_ids"]) == LONG_SESSION_FEATURE_SET:
+            test_raw = b"release-test-apk"
+            test_path = tmp_path / "artifacts/p5-long-session-test.apk"
+            test_path.parent.mkdir(parents=True, exist_ok=True)
+            test_path.write_bytes(test_raw)
+            raw = json.dumps(valid_long_session_report(
+                build_digest, test_apk_sha256=hashlib.sha256(test_raw).hexdigest(),
+                test_apk_bytes=len(test_raw),
+            ), sort_keys=True).encode()
+        else:
+            raw = (row["category"] + "-physical-evidence").encode()
         path.write_bytes(raw)
         digest = hashlib.sha256(raw).hexdigest()
         old_digest = row["sha256"]
@@ -272,11 +369,134 @@ def test_cli_mode_verifies_physical_artifacts(tmp_path: Path) -> None:
         assert f"{prefix}_artifact_digest_mismatch" in result["errors"]
         target.write_bytes(original)
 
+    rollback_target = tmp_path / value["legacy_removal"]["rollback_artifact"]
+    arbitrary = b"nonempty-but-not-a-valid-rollback"
+    rollback_target.write_bytes(arbitrary)
+    value["legacy_removal"]["rollback_bytes"] = len(arbitrary)
+    value["legacy_removal"]["rollback_sha256"] = hashlib.sha256(arbitrary).hexdigest()
+    value["legacy_removal"]["migration"]["rollback_artifact_sha256"] = value["legacy_removal"]["rollback_sha256"]
+    result = finalize(value, tmp_path)
+    assert "p5_legacy_rollback_content_invalid" in result["errors"]
+
     first = tmp_path / value["evidence"][0]["artifact"]
     first.write_bytes(first.read_bytes() + b"tampered")
     result = finalize(value, tmp_path)
     assert "p5_evidence_artifact_size_mismatch" in result["errors"]
     assert "p5_evidence_artifact_digest_mismatch" in result["errors"]
+
+
+def test_long_session_evidence_is_semantically_bound_to_physical_release_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = valid()
+    build_path = tmp_path / value["build"]["artifact"]
+    build_path.parent.mkdir(parents=True, exist_ok=True)
+    build_raw = b"release-apk"
+    build_path.write_bytes(build_raw)
+    value["build"]["bytes"] = len(build_raw)
+    value["build"]["sha256"] = hashlib.sha256(build_raw).hexdigest()
+    row = next(item for item in value["evidence"]
+               if set(item["feature_ids"]) == LONG_SESSION_FEATURE_SET)
+    path = tmp_path / row["artifact"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write(report: dict) -> list[str]:
+        test_path = tmp_path / report["artifacts"]["test_apk_artifact"]
+        test_path.parent.mkdir(parents=True, exist_ok=True)
+        test_raw = b"release-test-apk"
+        test_path.write_bytes(test_raw)
+        report["artifacts"]["test_apk_bytes"] = len(test_raw)
+        report["artifacts"]["test_apk_sha256"] = hashlib.sha256(test_raw).hexdigest()
+        raw = json.dumps(report, sort_keys=True).encode()
+        path.write_bytes(raw)
+        row["bytes"] = len(raw)
+        row["sha256"] = hashlib.sha256(raw).hexdigest()
+        for feature in value["features"]:
+            if feature["id"] in LONG_SESSION_FEATURE_SET:
+                feature["evidence_sha256"] = row["sha256"]
+        return finalize(value, tmp_path)["errors"]
+
+    assert not any(error.startswith("p5_long_session_") for error in write(
+        valid_long_session_report(value["build"]["sha256"])
+    ))
+    report = valid_long_session_report(value["build"]["sha256"])
+    report["environment"]["kind"] = "emulator"
+    assert "p5_long_session_physical_environment_invalid" in write(report)
+    report = valid_long_session_report(value["build"]["sha256"])
+    report["metrics"]["delta"]["duration_ms"] = 5001
+    assert "p5_long_session_gate_failed" in write(report)
+    report = valid_long_session_report("5" * 64)
+    assert "p5_long_session_build_mismatch" in write(report)
+    report = valid_long_session_report(value["build"]["sha256"])
+    report["artifacts"]["app_build_type"] = "debug"
+    report["instrumentation"]["runner"] = (
+        "ai.drsai.remote.debug.test/androidx.test.runner.AndroidJUnitRunner"
+    )
+    assert "p5_long_session_release_build_required" in write(report)
+
+    def mismatched_signer(_path: Path, *, expected_package: str,
+                          expected_target_package: str | None = None) -> dict:
+        return {
+            "package_name": expected_package, "version_code": 20000,
+            "version_name": "2.0.0",
+            "signing_cert_sha256": ("4" if expected_package.endswith(".test") else "3") * 64,
+            "signer_dn": "CN=OpenDrSai Test Release",
+            "target_package": expected_target_package,
+        }
+    monkeypatch.setattr(finalizer, "inspect_android_apk", mismatched_signer)
+    assert "p5_long_session_test_apk_signer_mismatch" in write(
+        valid_long_session_report(value["build"]["sha256"])
+    )
+
+
+def test_release_apk_metadata_is_independently_rechecked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = valid()
+    path = tmp_path / value["build"]["artifact"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = b"release-apk"
+    path.write_bytes(raw)
+    value["build"]["bytes"] = len(raw)
+    value["build"]["sha256"] = hashlib.sha256(raw).hexdigest()
+
+    def drift(_path: Path, *, expected_package: str,
+              expected_target_package: str | None = None) -> dict:
+        return {
+            "package_name": expected_package, "version_code": 99999,
+            "version_name": "9.9.9", "signing_cert_sha256": "5" * 64,
+            "signer_dn": "CN=Unknown Release",
+            "target_package": expected_target_package,
+        }
+    monkeypatch.setattr(finalizer, "inspect_android_apk", drift)
+    assert "p5_build_apk_identity_mismatch" in finalize(value, tmp_path)["errors"]
+
+
+def test_release_signer_policy_is_pinned_and_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = valid()
+    path = tmp_path / value["build"]["artifact"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = b"release-apk"
+    path.write_bytes(raw)
+    value["build"]["bytes"] = len(raw)
+    value["build"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    monkeypatch.setattr(finalizer, "release_signer_is_trusted", lambda _cert, _dn: False)
+    assert "p5_release_signer_untrusted" in finalize(value, tmp_path)["errors"]
+
+    drift = valid()
+    drift["environment"]["android_signer_policy_sha256"] = "0" * 64
+    assert "p5_android_signer_policy_drift" in finalize(drift)["errors"]
+
+
+def test_long_session_features_must_share_one_dedicated_android_report() -> None:
+    value = valid()
+    row = next(item for item in value["evidence"]
+               if set(item["feature_ids"]) == LONG_SESSION_FEATURE_SET)
+    moved = row["feature_ids"].pop()
+    value["evidence"][0]["feature_ids"].append(moved)
+    assert "p5_long_session_feature_mapping_invalid" in finalize(value)["errors"]
 
 
 def test_artifact_path_traversal_fails_closed() -> None:

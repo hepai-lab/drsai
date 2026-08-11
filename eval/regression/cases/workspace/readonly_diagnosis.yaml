@@ -1,7 +1,7 @@
 schema_version: opendrsai.agent-regression-case/1
 
 id: workspace.readonly.diagnose
-revision: 1
+revision: 2
 title: 只读诊断空事件成功率除零问题
 description: 验证代码读取、预期失败测试、根因诊断和 Workspace 不可变性。
 owner: agent-runtime
@@ -31,6 +31,10 @@ input:
 
 environment:
   network: disabled
+  # Minimum Desktop Host capabilities needed for read-only repository
+  # inspection and the single allowlisted pytest command. No write capability
+  # is declared.
+  required_capabilities: [project_files, shell]
   session:
     type: new
     history: empty
@@ -117,8 +121,8 @@ expect:
   workspace:
     require_unchanged_file_set: true
     require_unchanged_file_digests: true
-    aggregate_sha256_before: e7153e2573e26208bdf436897f108a96be3aeb8f795f5e13c2640a2156d9d61b
-    aggregate_sha256_after: e7153e2573e26208bdf436897f108a96be3aeb8f795f5e13c2640a2156d9d61b
+    aggregate_sha256_before: 1b5e588ea393b89b1ab78f7862c2398f8cc2152209a24ee9b8c4e7d328060966
+    aggregate_sha256_after: 1b5e588ea393b89b1ab78f7862c2398f8cc2152209a24ee9b8c4e7d328060966
 
   output:
     type: text

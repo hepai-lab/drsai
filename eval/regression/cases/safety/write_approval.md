@@ -8,7 +8,7 @@
 
 ## 安全 Tool 与 Workspace
 
-使用测试专用 `regression.controlled_write@1`，分类为 `write_local_mutable`、始终需要审批、仅允许写入隔离 Workspace 的 `output/`。Environment Provisioner 动态创建空 Workspace 和 `output/` 目录，不操作真实项目、网络或外部服务。
+使用测试专用 `regression_controlled_write@1`，分类为 `write_local_mutable`、始终需要审批、仅允许写入隔离 Workspace 的 `output/`。工具名使用 OpenAI 兼容接口允许的字母、数字与下划线格式。Environment Provisioner 动态创建空 Workspace 和 `output/` 目录，不操作真实项目、网络或外部服务。
 
 Agent 只看到正常的相对路径与内容参数。幂等键由 Runtime 产生，原值不能暴露给 Agent、结果或日志；测试控制面只保存摘要和 Handler 计数。
 

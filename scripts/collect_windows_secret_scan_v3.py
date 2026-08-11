@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterable
 
 from scan_remote_workspace_secret_canary import run as scan
+from p5_secret_canary import canary_set_sha256, derive_canaries
 
 
 def _link(files: Iterable[Path], destination: Path, *, limit: int = 200) -> int:
@@ -56,6 +57,7 @@ def collect(
     canary_environment: str,
     environment_id: str,
     canary_run_id: str,
+    require_derived_canaries: bool = False,
 ) -> dict:
     raw = os.getenv(canary_environment)
     try:
@@ -68,6 +70,8 @@ def collect(
         or not all(isinstance(item, str) and len(item) >= 12 for item in canary_values)
     ):
         raise RuntimeError("windows_secret_canaries_invalid")
+    if require_derived_canaries and canary_values != derive_canaries(canary_run_id):
+        raise RuntimeError("windows_secret_canaries_not_run_bound")
 
     source_root = Path(__file__).resolve().parents[1] / "cores/python/packages/drsai/src"
     if str(source_root) not in __import__("sys").path:
@@ -158,6 +162,7 @@ def collect(
             "boundary": "windows",
             "environment_id": environment_id,
             "canary_run_id": canary_run_id,
+            "canary_set_sha256": canary_set_sha256(canary_values),
             "raw_artifacts_exported": False,
         })
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -183,6 +188,7 @@ def main() -> int:
     parser.add_argument("--canary-env", default="DRSAI_SECRET_CANARIES")
     parser.add_argument("--environment-id", required=True)
     parser.add_argument("--canary-run-id", required=True)
+    parser.add_argument("--p5-derived-canaries", action="store_true")
     args = parser.parse_args()
     result = collect(
         state_root=args.state_root,
@@ -191,6 +197,7 @@ def main() -> int:
         canary_environment=args.canary_env,
         environment_id=args.environment_id,
         canary_run_id=args.canary_run_id,
+        require_derived_canaries=args.p5_derived_canaries,
     )
     print(
         json.dumps(

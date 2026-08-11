@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from drsai.backend.runtime.agent_kernel import build_tool_choice_policy, build_tool_decision_requirement
+from drsai.backend.runtime.agent_kernel import build_tool_choice_policy, build_tool_decision_requirement, resolve_tool_decision
+
+
+def test_image_request_requires_the_available_generation_tool() -> None:
+    requirement = build_tool_decision_requirement(
+        "请生成一张 16:9 插图并输出 PNG 图片", ["image_generation"],
+    )
+    assert requirement["required_domains"] == ["image_generation"]
+    assert requirement["available_domains"] == ["image_generation"]
 from drsai.backend.runtime.mobile_core import MessageType, RuntimeEnvelope, create_mobile_agent_core
 
 
@@ -45,7 +53,8 @@ def test_tool_choice_auto_for_stable_ordinary_request() -> None:
 def test_tool_choice_required_for_unverified_host_fact_but_auto_after_tool_result() -> None:
     requirement = build_tool_decision_requirement("HEPiX2026是什么", ["web.search", "workspace.read"])
     required = build_tool_choice_policy(requirement, ["web.search", "workspace.read"])
-    assert required["mode"] == "required"
+    assert required["mode"] == "specified"
+    assert required["specified_tool"] == "web.search"
     assert required["matching_tools"] == ["web.search"]
     assert build_tool_choice_policy(requirement, ["web.search", "workspace.read"], prior_tool_use=True)["mode"] == "auto"
 
@@ -66,7 +75,29 @@ def test_tool_choice_specific_tool_is_pinned_and_unavailable_name_fails_closed()
         build_tool_choice_policy(requirement, ["web.search"], specified_tool="workspace.read")
 
 
+def test_wrong_prior_tool_domain_does_not_satisfy_required_process() -> None:
+    requirement = build_tool_decision_requirement(
+        "这个 Workspace 的测试失败了，请诊断根因", ["run_read", "run_powershell"],
+    )
+
+    policy = build_tool_choice_policy(
+        requirement, ["run_read", "run_powershell"],
+        prior_tool_use=True, prior_tool_domains=["workspace"],
+    )
+    decision = resolve_tool_decision(
+        requirement, [], prior_tool_use=True, prior_tool_domains=["workspace"],
+    )
+
+    assert requirement["required_domains"] == ["process"]
+    assert policy["mode"] == "specified"
+    assert policy["specified_tool"] == "run_powershell"
+    assert policy["matching_tools"] == ["run_powershell"]
+    assert decision["category"] == "required_tool_omitted"
+
+
 def test_mobile_kernel_attaches_none_auto_and_required_to_real_model_requests() -> None:
     assert _start("hello", [])["tool_choice"]["mode"] == "none"
     assert _start("Rewrite this paragraph", [_tool("web.search")])["tool_choice"]["mode"] == "auto"
-    assert _start("HEPiX2026是什么", [_tool("web.search")])["tool_choice"]["mode"] == "required"
+    required = _start("HEPiX2026是什么", [_tool("web.search")])["tool_choice"]
+    assert required["mode"] == "specified"
+    assert required["specified_tool"] == "web.search"

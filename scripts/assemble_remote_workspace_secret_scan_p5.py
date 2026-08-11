@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from p5_secret_canary import expected_canary_set_sha256
+
 
 BOUNDARY_SOURCES = {
     "android": {"android_apk", "android_logs", "android_room", "android_backup"},
@@ -19,6 +21,11 @@ BOUNDARY_SOURCES = {
     "relay": {"relay_postgres", "relay_redis", "relay_logs"},
 }
 ALL_SOURCES = set().union(*BOUNDARY_SOURCES.values())
+ANDROID_STORAGE_ASSERTIONS = {
+    "android_logs": "sha256_only",
+    "android_room": "sha256_only",
+    "android_backup": "keystore_encrypted_only",
+}
 
 
 def _read(path: Path, boundary: str) -> tuple[dict[str, Any], str]:
@@ -33,7 +40,7 @@ def _read(path: Path, boundary: str) -> tuple[dict[str, Any], str]:
 
 
 def _validate(value: dict[str, Any], boundary: str, environment_id: str,
-              canary_run_id: str) -> tuple[list[dict[str, Any]], str | None]:
+              canary_run_id: str, canary_set_sha256: str) -> tuple[list[dict[str, Any]], str | None]:
     if value.get("schema_version") != "p5-secret/1":
         raise RuntimeError(f"p5_secret_{boundary}_schema_invalid")
     if value.get("boundary") != boundary:
@@ -42,6 +49,8 @@ def _validate(value: dict[str, Any], boundary: str, environment_id: str,
         raise RuntimeError("p5_secret_mixed_environment")
     if value.get("canary_run_id") != canary_run_id:
         raise RuntimeError("p5_secret_mixed_canary_run")
+    if value.get("canary_set_sha256") != canary_set_sha256:
+        raise RuntimeError("p5_secret_mixed_canary_set")
     if value.get("passed") is not True or value.get("matches") != 0:
         raise RuntimeError(f"p5_secret_{boundary}_failed")
     if value.get("raw_artifacts_exported") is not False:
@@ -78,6 +87,8 @@ def _validate(value: dict[str, Any], boundary: str, environment_id: str,
         if not isinstance(artifact_sha256, str) or len(artifact_sha256) != 64 \
                 or any(ch not in "0123456789abcdef" for ch in artifact_sha256):
             raise RuntimeError("p5_secret_android_artifact_attestation_invalid")
+        if value.get("storage_assertions") != ANDROID_STORAGE_ASSERTIONS:
+            raise RuntimeError("p5_secret_android_storage_assertions_invalid")
     elif artifact_sha256 is not None:
         raise RuntimeError(f"p5_secret_{boundary}_unexpected_artifact_attestation")
     return normalized, artifact_sha256
@@ -89,9 +100,12 @@ def assemble(paths: dict[str, Path], *, environment_id: str,
         raise RuntimeError("p5_secret_identity_required")
     sources: list[dict[str, Any]] = []
     reports = []
+    canary_set_digest = expected_canary_set_sha256(canary_run_id)
     for boundary in ("android", "windows", "relay"):
         value, digest = _read(paths[boundary], boundary)
-        rows, artifact_sha256 = _validate(value, boundary, environment_id, canary_run_id)
+        rows, artifact_sha256 = _validate(
+            value, boundary, environment_id, canary_run_id, canary_set_digest
+        )
         sources.extend(rows)
         report = {"boundary": boundary, "report_sha256": digest, "source_count": len(rows)}
         if artifact_sha256 is not None:
@@ -102,6 +116,7 @@ def assemble(paths: dict[str, Path], *, environment_id: str,
     return {
         "schema_version": "p5-secret/1", "profile": "mobile-remote-workspace-p5",
         "environment_id": environment_id, "canary_run_id": canary_run_id,
+        "canary_set_sha256": canary_set_digest,
         "passed": True, "matches": 0, "raw_artifacts_crossed_trust_boundary": False,
         "sources": sources, "boundary_reports": reports,
     }

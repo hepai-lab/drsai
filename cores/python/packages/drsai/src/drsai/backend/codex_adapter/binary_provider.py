@@ -21,6 +21,7 @@ from drsai.backend.runtime.agent import RuntimeExecutionError
 
 
 _VERSION = re.compile(r"(?:codex-cli\s+)?(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)")
+_WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
 
 def _sha256(path: Path) -> str:
@@ -257,6 +258,7 @@ def _windows_openai_signature_is_valid(path: Path, *, timeout: float = 10) -> bo
         completed = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, timeout=timeout, check=False, env=environment,
+            creationflags=_WINDOWS_NO_WINDOW,
         )
         return completed.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
@@ -292,6 +294,7 @@ def _probe_codex_version(path: Path, *, timeout: float = 5) -> str | None:
             text=True,
             timeout=timeout,
             check=False,
+            creationflags=_WINDOWS_NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired, RuntimeExecutionError):
         return None
@@ -304,7 +307,10 @@ def verify_codex_compatibility(binary: CodexBinary, *, timeout: float = 15) -> s
         raise RuntimeExecutionError("codex_development_override_unverified", "Development Codex override is not release-compatible.")
     command = CodexPlatformLauncher.command(binary.path, ["--version"])
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout, check=False,
+            creationflags=_WINDOWS_NO_WINDOW,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeExecutionError("codex_binary_start_failed", "Codex binary version check could not run.") from exc
     output = f"{completed.stdout}\n{completed.stderr}"

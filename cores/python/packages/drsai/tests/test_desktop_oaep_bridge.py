@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from drsai.backend.runtime.desktop_oaep_bridge import DesktopOaepJournalBridge
+from drsai.backend.runtime.desktop_oaep_bridge import DesktopOaepJournalBridge, _safe
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 
 
@@ -16,6 +16,15 @@ def _runtime(tmp_path: Path):
     )
     session = engine.create_session("workspace-desktop-test", "Desktop OAEP")
     return engine, session
+
+
+def test_desktop_bridge_preserves_diagnostic_codes_and_redacts_credentials() -> None:
+    safe = _safe(
+        '{"error_code":"service_unavailable","authorization":"Bearer secret-token"}'
+    )
+
+    assert "service_unavailable" in safe
+    assert "secret-token" not in safe
 
 
 def test_desktop_turn_is_mirrored_to_one_oaep_run(tmp_path: Path) -> None:

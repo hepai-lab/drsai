@@ -1705,6 +1705,20 @@ class RuntimeEngine:
         encoded_resources = json.dumps(
             serializable_input_resources(normalized_resources), ensure_ascii=False, separators=(",", ":"),
         )
+        # A Run owns exactly one immutable user input. HTTP retries and
+        # recoverable capability configuration may enter this method again,
+        # but they must never revise the user Item or rebind request-scoped
+        # metadata such as a new correlation ID to revision 1.
+        if str(run.get("input_message") or ""):
+            if (
+                str(run["input_message"]) != safe_message
+                or json.dumps(run.get("attachment_refs") or [], separators=(",", ":")) != encoded
+                or json.dumps(
+                    run.get("input_resources") or [], ensure_ascii=False, separators=(",", ":"),
+                ) != encoded_resources
+            ):
+                raise ValueError("Runtime Run input is immutable")
+            return run
         manifest_evidence = dict(evidence or {})
         supplied_input = manifest_evidence.get("input")
         manifest_evidence["input"] = {
@@ -1729,47 +1743,66 @@ class RuntimeEngine:
             "attachments",
             [{"ref": ref, "ref_sha256": text_digest(ref)} for ref in (attachment_refs or [])],
         )
+        already_bound = False
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            db.execute(
-                "UPDATE runtime_runs SET input_message=?, attachment_refs_json=?, input_resources_json=?, "
-                "correlation_id=COALESCE(correlation_id,?) WHERE run_id=?",
-                (safe_message, encoded, encoded_resources, correlation_id, run_id),
-            )
-            self._merge_run_manifest_in_transaction(
-                db,
-                run_id,
-                manifest_evidence,
-            )
-            _, _, journal_created = self.conversation_journal.upsert_item_in_transaction(
-                db,
-                str(run["session_id"]),
-                item_id=f"user:{run_id}",
-                kind="message",
-                role="user",
-                revision=1,
-                source_client=source_client,
-                source_message_id=source_message_id,
-                payload={
-                    "content": safe_message,
-                    "text": safe_message,
-                    "parts": [{"type": "text", "text": safe_message}] if safe_message else [],
-                    "phase": "final",
-                    "status": "completed",
-                    "attachment_refs": json.loads(encoded),
-                    "input_resources": [
-                        {
-                            "resource_id": value["resource_id"], "kind": value["kind"],
-                            "name": value["name"], "status": value["status"],
-                        }
-                        for value in normalized_resources
-                    ],
-                    "correlation_id": correlation_id,
-                },
-                run_id=run_id,
-                created_at=str(run["created_at"]),
-            )
+            current = db.execute(
+                "SELECT input_message,attachment_refs_json,input_resources_json FROM runtime_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if current is None:
+                raise KeyError("Run not found")
+            if str(current["input_message"] or ""):
+                if (
+                    str(current["input_message"]) != safe_message
+                    or str(current["attachment_refs_json"]) != encoded
+                    or str(current["input_resources_json"]) != encoded_resources
+                ):
+                    raise ValueError("Runtime Run input is immutable")
+                already_bound = True
+                journal_created = False
+            else:
+                db.execute(
+                    "UPDATE runtime_runs SET input_message=?, attachment_refs_json=?, input_resources_json=?, "
+                    "correlation_id=COALESCE(correlation_id,?) WHERE run_id=?",
+                    (safe_message, encoded, encoded_resources, correlation_id, run_id),
+                )
+                self._merge_run_manifest_in_transaction(
+                    db,
+                    run_id,
+                    manifest_evidence,
+                )
+                _, _, journal_created = self.conversation_journal.upsert_item_in_transaction(
+                    db,
+                    str(run["session_id"]),
+                    item_id=f"user:{run_id}",
+                    kind="message",
+                    role="user",
+                    revision=1,
+                    source_client=source_client,
+                    source_message_id=source_message_id,
+                    payload={
+                        "content": safe_message,
+                        "text": safe_message,
+                        "parts": [{"type": "text", "text": safe_message}] if safe_message else [],
+                        "phase": "final",
+                        "status": "completed",
+                        "attachment_refs": json.loads(encoded),
+                        "input_resources": [
+                            {
+                                "resource_id": value["resource_id"], "kind": value["kind"],
+                                "name": value["name"], "status": value["status"],
+                            }
+                            for value in normalized_resources
+                        ],
+                        "correlation_id": correlation_id,
+                    },
+                    run_id=run_id,
+                    created_at=str(run["created_at"]),
+                )
             db.commit()
+        if already_bound:
+            return self.get_run(run_id)
         if journal_created:
             self.conversation_journal.notify_committed()
         return self.get_run(run_id)

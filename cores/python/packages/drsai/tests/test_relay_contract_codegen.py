@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 from drsai.relay.generated_contract import (
     CAPABILITIES,
     CAPABILITY_PROFILES,
+    ENDPOINTS,
     MINIMUM_VERSIONS,
     SESSION_EVENT_KINDS,
 )
@@ -56,9 +57,13 @@ def test_v2_schema_defines_resource_lifecycle_and_complete_mobile_control_surfac
     assert {
         "association_create", "runtime_connect", "session_read", "conversation_read",
         "run_list", "event_stream", "approval_list", "approval_decision",
+        "approval_decision_recovery",
         "association_revoke", "runtime_association_list",
         "runtime_association_revoke", "runtime_enrollment_revoke",
     }.issubset(schema["x-relay-endpoints"])
+    assert ENDPOINTS["approval_decision_recovery"] == (
+        "GET /v1/runtimes/{runtime_id}/idempotency/approval.decide/{idempotency_key}"
+    )
     assert {
         "session.read", "conversation.read", "run.list", "event.stream",
         "event.cursor_expired", "approval.list", "approval.decide",

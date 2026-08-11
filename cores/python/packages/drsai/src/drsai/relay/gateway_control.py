@@ -1663,6 +1663,18 @@ class GatewayRuntimeControlHandler:
         )
 
     async def idempotency_result(self, subject: str, operation: str, idempotency_key: str) -> dict[str, Any]:
+        if operation == "approval.decide":
+            with self._connect() as db:
+                row = db.execute(
+                    "SELECT result_json FROM relay_approval_decisions "
+                    "WHERE subject=? AND idempotency_key=?",
+                    (subject, idempotency_key),
+                ).fetchone()
+            if row is None:
+                raise GatewayControlError(
+                    "idempotency_result_not_found", "Idempotency result was not found"
+                )
+            return json.loads(str(row["result_json"]))
         table = {"session.create": "relay_sessions", "run.create": "relay_runs"}.get(operation)
         if table is None:
             raise GatewayControlError("idempotency_operation_invalid", "Idempotency operation is invalid")

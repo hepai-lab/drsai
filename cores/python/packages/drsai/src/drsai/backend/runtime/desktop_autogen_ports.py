@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import asyncio
 import json
-from typing import Any, Awaitable, Callable, Mapping, Sequence
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
 from autogen_core import CancellationToken, FunctionCall, Image
 from autogen_core.models import (
@@ -17,8 +17,16 @@ from autogen_core.models import (
     UserMessage,
 )
 
-from .desktop_kernel_coordinator import DesktopModelResult, DesktopToolResult
+from .desktop_kernel_coordinator import DesktopModelDelta, DesktopModelResult, DesktopToolResult
 from .agent_kernel import MAX_INLINE_TOOL_OUTPUT_CHARS
+
+
+# Provider token boundaries have no product semantics. Persisting and
+# projecting each tiny fragment separately makes the synchronous Runtime Event
+# journal backpressure model generation. Keep TTFT by sending the first visible
+# fragment immediately, then emit throughput-oriented batches without timers or
+# artificial presentation delays.
+DESKTOP_MODEL_TEXT_BATCH_CHARS = 128
 
 
 def kernel_messages_to_autogen(messages: Sequence[Mapping[str, Any]], *, assistant_name: str) -> list[Any]:
@@ -169,15 +177,66 @@ class AutogenDesktopModelPort:
         self._input_images = tuple(input_images)
 
     async def __call__(self, payload: Mapping[str, Any]) -> DesktopModelResult:
+        """Compatibility adapter that collects the incremental ``stream`` API."""
+
+        deltas: list[str] = []
+        result: DesktopModelResult | None = None
+        async for item in self.stream(payload):
+            if isinstance(item, DesktopModelDelta):
+                deltas.append(item.text)
+            elif isinstance(item, DesktopModelResult):
+                result = item
+        if result is None:
+            raise RuntimeError("desktop_model_result_missing")
+        return DesktopModelResult(
+            content=result.content,
+            deltas=tuple(deltas),
+            tool_calls=result.tool_calls,
+            finish_reason=result.finish_reason,
+            reasoning_summary=result.reasoning_summary,
+        )
+
+    async def stream(
+        self,
+        payload: Mapping[str, Any],
+    ) -> AsyncIterator[DesktopModelDelta | DesktopModelResult]:
+        """Yield Provider text fragments immediately, followed by one final result."""
+
         messages = payload.get("messages")
         if not isinstance(messages, list) or not all(isinstance(value, Mapping) for value in messages):
             raise ValueError("desktop_model_messages_invalid")
         attempt = 0
         tool_choice = payload.get("tool_choice")
         extra_create_args: dict[str, Any] = {}
-        active_tools = list(self._tools)
-        if isinstance(tool_choice, Mapping) and tool_choice.get("mode") == "required":
+        def tool_name(tool: Any) -> str:
+            schema = getattr(tool, "schema", tool)
+            if isinstance(schema, Mapping):
+                return str(schema.get("name") or "")
+            return str(getattr(tool, "name", "") or "")
+
+        # The Kernel owns the request-level Tool surface. In particular, its
+        # budget-finalization request deliberately sends ``tools: []``. The
+        # Host adapter must not silently re-add the Run's complete registry or
+        # the model can call a Tool that the same request snapshot forbids.
+        requested_tools = payload.get("tools")
+        if requested_tools is None:
+            active_tools = list(self._tools)
+        else:
+            if not isinstance(requested_tools, list) or not all(isinstance(value, Mapping) for value in requested_tools):
+                raise ValueError("desktop_model_tools_invalid")
+            requested_names = [str(value.get("name") or "") for value in requested_tools]
+            if any(not value for value in requested_names) or len(set(requested_names)) != len(requested_names):
+                raise ValueError("desktop_model_tools_invalid")
+            known = {tool_name(tool): tool for tool in self._tools}
+            unknown = set(requested_names) - set(known)
+            if unknown:
+                raise ValueError(f"desktop_model_tool_unknown:{sorted(unknown)[0]}")
+            active_tools = [known[name] for name in requested_names]
+        if isinstance(tool_choice, Mapping) and tool_choice.get("mode") in {"required", "specified"}:
             matching_tools = tool_choice.get("matching_tools")
+            if tool_choice.get("mode") == "specified":
+                specified_name = tool_choice.get("specified_tool")
+                matching_tools = [specified_name] if isinstance(specified_name, str) and specified_name else []
             if isinstance(matching_tools, list):
                 matching_names = [value for value in matching_tools if isinstance(value, str) and value]
                 if matching_names:
@@ -186,14 +245,17 @@ class AutogenDesktopModelPort:
                     # Tool surface instead: it is provider-neutral and still
                     # prevents unrelated image/file Tools satisfying a
                     # retrieval or workspace requirement by accident.
-                    def tool_name(tool: Any) -> str:
-                        if isinstance(tool, Mapping):
-                            return str(tool.get("name") or "")
-                        return str(getattr(tool, "name", "") or "")
-
-                    active_tools = [tool for tool in self._tools if tool_name(tool) in matching_names]
+                    active_tools = [tool for tool in active_tools if tool_name(tool) in matching_names]
+                    # Do not send a vendor-specific explicit tool_choice field:
+                    # some Responses-compatible Providers return an empty item
+                    # for it. The shared Kernel rejects a direct answer and
+                    # reprompts, while this request-level surface guarantees
+                    # that any selected Tool is the exact matching one.
         while True:
-            deltas: list[str] = []
+            saw_text = False
+            pending_text: list[str] = []
+            pending_chars = 0
+            first_delta_emitted = False
             completed: CreateResult | None = None
             try:
                 converted = kernel_messages_to_autogen(messages, assistant_name=self._assistant_name)
@@ -212,7 +274,19 @@ class AutogenDesktopModelPort:
                     cancellation_token=self._cancellation_token,
                 ):
                     if isinstance(chunk, str):
-                        deltas.append(chunk)
+                        if not chunk:
+                            continue
+                        saw_text = True
+                        if not first_delta_emitted:
+                            first_delta_emitted = True
+                            yield DesktopModelDelta(chunk)
+                            continue
+                        pending_text.append(chunk)
+                        pending_chars += len(chunk)
+                        if pending_chars >= DESKTOP_MODEL_TEXT_BATCH_CHARS:
+                            yield DesktopModelDelta("".join(pending_text))
+                            pending_text = []
+                            pending_chars = 0
                     elif isinstance(chunk, CreateResult):
                         completed = chunk
                     else:
@@ -223,11 +297,21 @@ class AutogenDesktopModelPort:
                     raise RuntimeError("desktop_model_empty_output")
                 break
             except Exception as error:
-                if attempt >= self._max_retries or not self._retryable(error):
+                if pending_text:
+                    # Preserve every Provider fragment already accepted before
+                    # surfacing a terminal stream failure.
+                    yield DesktopModelDelta("".join(pending_text))
+                    pending_text = []
+                    pending_chars = 0
+                # Once visible output escaped this ModelPort, replaying the
+                # request would duplicate text and potentially tool decisions.
+                if saw_text or attempt >= self._max_retries or not self._retryable(error):
                     raise
                 attempt += 1
                 if self._retry_base_delay:
                     await asyncio.sleep(min(self._retry_base_delay * (2 ** (attempt - 1)), 60.0))
+        if pending_text:
+            yield DesktopModelDelta("".join(pending_text))
         content = completed.content
         tool_calls: tuple[dict[str, Any], ...] = ()
         text = content if isinstance(content, str) else ""
@@ -244,9 +328,9 @@ class AutogenDesktopModelPort:
                     raise RuntimeError(f"desktop_model_tool_arguments_invalid:{call.name}")
                 parsed.append({"call_id": call.id, "name": call.name, "arguments": arguments})
             tool_calls = tuple(parsed)
-        return DesktopModelResult(
+        yield DesktopModelResult(
             content=text,
-            deltas=tuple(deltas),
+            deltas=(),
             tool_calls=tool_calls,
             finish_reason=completed.finish_reason,
             reasoning_summary=str(completed.thought or ""),

@@ -143,7 +143,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             if "base_url" not in kwargs:
                 kwargs["base_url"] = os.environ.get(
                     "OPENDRSAI_MODEL_BASE_URL",
-                    "https://ai.ihep.ac.cn/apiv2/v1",
+                    "https://ai-dev.ihep.ac.cn/apiv2/v1",
                 )
             if not kwargs.get("api_key"):
                 if not self._allow_deferred_oidc:
@@ -352,15 +352,27 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
         self._bind_platform_auth()
 
         if self._use_responses_api:
-            async for item in self._create_responses_stream(
-                messages,
-                tools=tools,
-                json_output=json_output,
-                extra_create_args=extra_create_args,
-                cancellation_token=cancellation_token,
-            ):
-                yield item
-            return
+            responses_emitted = False
+            try:
+                async for item in self._create_responses_stream(
+                    messages,
+                    tools=tools,
+                    json_output=json_output,
+                    extra_create_args=extra_create_args,
+                    cancellation_token=cancellation_token,
+                ):
+                    responses_emitted = True
+                    yield item
+                return
+            except Exception as exc:
+                # Unified OpenAI routing prefers Responses. A configured
+                # compatibility endpoint may still expose only Chat
+                # Completions, so fall back solely for a clean endpoint-level
+                # rejection before any output; authentication, quota, model,
+                # and mid-stream failures must remain visible to the caller.
+                if responses_emitted or getattr(exc, "status_code", None) not in {404, 405, 501}:
+                    raise
+                logger.info("Responses endpoint unavailable; using Chat Completions compatibility route.")
 
         create_params = self._process_create_args(
             messages,

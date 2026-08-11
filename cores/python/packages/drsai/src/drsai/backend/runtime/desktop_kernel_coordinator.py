@@ -26,6 +26,13 @@ class DesktopModelResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DesktopModelDelta:
+    """One model text fragment that is ready to cross the Kernel boundary."""
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class DesktopToolResult:
     call_id: str
     succeeded: bool
@@ -109,7 +116,39 @@ class DesktopKernelCoordinator:
                 await self._checkpoint(outbound.payload)
             elif outbound.message_type is MessageType.MODEL_REQUEST:
                 try:
-                    result = await self._model(outbound.payload)
+                    stream = getattr(self._model, "stream", None)
+                    if callable(stream):
+                        result: DesktopModelResult | None = None
+                        async for item in stream(outbound.payload):
+                            if isinstance(item, DesktopModelDelta):
+                                if not item.text:
+                                    continue
+                                # Do not enqueue model chunks behind the still-running
+                                # Provider call. Feed them into the Kernel immediately
+                                # and yield its Runtime Events before requesting the next
+                                # Provider fragment.
+                                commands = self._kernel.handle(response(
+                                    MessageType.MODEL_CHUNK,
+                                    {"delta": item.text},
+                                    "model-chunk",
+                                ))
+                                for command in commands:
+                                    if command.message_type is MessageType.RUNTIME_EVENT:
+                                        yield command
+                                    else:
+                                        queue.append(command)
+                            elif isinstance(item, DesktopModelResult):
+                                if result is not None:
+                                    raise RuntimeError("desktop_model_result_duplicate")
+                                result = item
+                            else:
+                                raise RuntimeError(f"desktop_model_stream_item_invalid:{type(item).__name__}")
+                        if result is None:
+                            raise RuntimeError("desktop_model_result_missing")
+                    else:
+                        # Compatibility for small Host adapters and existing
+                        # extensions that still implement the atomic ModelPort.
+                        result = await self._model(outbound.payload)
                 except Exception as error:
                     # The model port is the last layer that still owns the SDK
                     # exception (including HTTP status and provider response
@@ -121,6 +160,9 @@ class DesktopKernelCoordinator:
                         "retryable": False,
                     }, "model-failed"))
                     continue
+                # Atomic ModelPorts can still return buffered deltas. Production
+                # Desktop uses ``stream`` above and therefore reaches the UI as
+                # each Provider fragment arrives.
                 for delta in result.deltas:
                     send(response(MessageType.MODEL_CHUNK, {"delta": delta}, "model-chunk"))
                 send(response(MessageType.MODEL_COMPLETED, {

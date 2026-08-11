@@ -15,7 +15,11 @@ _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def _safe_text(value: Any, *, limit: int = 4096) -> str:
-    redacted = redact_sensitive(redact_secrets("" if value is None else str(value)))
+    # Preserve stable diagnostic fields such as ``error_code`` inside JSON
+    # text while still removing credentials. ``redact_secrets`` treats every
+    # generic ``code`` value as OAuth-sensitive and corrupts public Runtime
+    # error contracts (for example service_unavailable).
+    redacted = redact_sensitive(redact_credentials("" if value is None else str(value)))
     text = str(redacted)
     return text if len(text) <= limit else f"{text[:limit]}[TRUNCATED {len(text) - limit} CHARS]"
 
@@ -400,7 +404,7 @@ def project_item(item: dict[str, Any]) -> dict[str, Any]:
         request = payload.get("request") if isinstance(payload.get("request"), dict) else payload
         decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else None
         content = {
-            "interaction_type": str(payload.get("interaction_type") or "approval"),
+            "interaction_type": str(payload.get("interaction_type") or request.get("interaction_type") or "approval"),
             "approval_id": payload.get("approval_id"),
             "operation": _safe_text(request.get("operation") or request.get("tool") or request.get("name") or "", limit=256),
             "prompt": _safe_text(

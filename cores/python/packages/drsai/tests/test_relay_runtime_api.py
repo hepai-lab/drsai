@@ -58,7 +58,12 @@ def test_android_http_session_run_event_cancel_and_approval_e2e() -> None:
     )
     assert missing_result.status_code == 400
     assert missing_result.json()["code"] == "idempotency_result_not_found"
-    run_body = {**control("run-idem-1"), "message": "hello", "attachment_refs": ["att_1"]}
+    run_body = {
+        **control("run-idem-1"),
+        "message": "hello",
+        "source_message_id": "android-message-1",
+        "attachment_refs": ["att_1"],
+    }
     created_run = client.post(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions/{session_id}/runs", headers=headers, json=run_body)
     assert created_run.status_code == 200
     run_id = created_run.json()["run_id"]
@@ -73,8 +78,21 @@ def test_android_http_session_run_event_cancel_and_approval_e2e() -> None:
     pending = client.get(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/approvals", headers=headers).json()["items"]
     assert pending[0]["approval_id"] == approval.approval_id
     decision = client.post(f"/v1/runtimes/{runtime_id}/approvals/{approval.approval_id}/decision", headers=headers,
-                           json={**control(), "decision": "deny"})
+                           json={**control("approval-decision-idem"), "decision": "deny"})
     assert decision.json()["status"] == "denied"
+    recovered_decision = client.get(
+        f"/v1/runtimes/{runtime_id}/idempotency/approval.decide/approval-decision-idem",
+        headers=headers,
+    )
+    assert recovered_decision.status_code == 200
+    assert recovered_decision.json()["resource"]["approval_id"] == approval.approval_id
+    assert recovered_decision.json()["resource"]["status"] == "denied"
+    other_subject = client.get(
+        f"/v1/runtimes/{runtime_id}/idempotency/approval.decide/approval-decision-idem",
+        headers={"x-subject": "bob"},
+    )
+    assert other_subject.status_code == 400
+    assert other_subject.json()["code"] == "idempotency_result_not_found"
     cancelled = client.post(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/runs/{run_id}/cancel", headers=headers)
     assert cancelled.json()["status"] == "cancelled"
     audit = client.get(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/audit?run_id={run_id}", headers=headers)

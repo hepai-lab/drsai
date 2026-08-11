@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from drsai.relay.notifications import NotificationDeliveryQueue, NotificationFanoutSink, NotificationOutbox, notification_intent
+from drsai.relay.notifications import (
+    NotificationDeliveryQueue,
+    NotificationFanoutSink,
+    NotificationOutbox,
+    PushDeliveryError,
+    notification_intent,
+)
 
 
 def test_notification_payload_is_opaque_and_content_free() -> None:
@@ -64,11 +70,47 @@ def test_delivery_retries_without_duplicate_success(tmp_path: Path) -> None:
                 raise RuntimeError("temporary")
 
     provider = Provider()
-    assert queue.dispatch_once(provider, now=10) == {"claimed": 1, "delivered": 0, "retrying": 1}
+    assert queue.dispatch_once(provider, now=10) == {"claimed": 1, "delivered": 0, "retrying": 1, "dead": 0}
     assert queue.dispatch_once(provider, now=11)["claimed"] == 0
-    assert queue.dispatch_once(provider, now=12) == {"claimed": 1, "delivered": 1, "retrying": 0}
+    assert queue.dispatch_once(provider, now=12) == {"claimed": 1, "delivered": 1, "retrying": 0, "dead": 0}
     assert queue.dispatch_once(provider, now=20)["claimed"] == 0
     assert queue.status_counts() == {"delivered": 1}
+
+
+def test_delivery_permanent_provider_error_goes_directly_to_dead_letter(tmp_path: Path) -> None:
+    queue = NotificationDeliveryQueue(tmp_path / "push.sqlite3", max_attempts=8)
+    intent = notification_intent("runtime", "workspace", "session", {
+        "event_id": "event", "type": "event.run.failed",
+    })
+    assert intent is not None
+    queue.enqueue(intent, ["device-a"])
+
+    class Provider:
+        def send(self, _device_id, _payload):
+            raise PushDeliveryError("provider_token_invalid", retryable=False)
+
+    assert queue.dispatch_once(Provider(), now=10) == {
+        "claimed": 1, "delivered": 0, "retrying": 0, "dead": 1,
+    }
+    assert queue.status_counts() == {"dead": 1}
+    assert queue.dispatch_once(Provider(), now=20)["claimed"] == 0
+
+
+def test_delivery_retryable_provider_error_remains_bounded(tmp_path: Path) -> None:
+    queue = NotificationDeliveryQueue(tmp_path / "push.sqlite3", max_attempts=2)
+    intent = notification_intent("runtime", "workspace", "session", {
+        "event_id": "event", "type": "event.run.completed",
+    })
+    assert intent is not None
+    queue.enqueue(intent, ["device-a"])
+
+    class Provider:
+        def send(self, _device_id, _payload):
+            raise PushDeliveryError("provider_rate_limited", retryable=True)
+
+    assert queue.dispatch_once(Provider(), now=10)["retrying"] == 1
+    assert queue.dispatch_once(Provider(), now=12)["retrying"] == 1
+    assert queue.status_counts() == {"dead": 1}
 
 
 def test_fanout_resolves_only_opaque_device_ids_at_accept_time(tmp_path: Path) -> None:

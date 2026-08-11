@@ -19,8 +19,8 @@ def test_catalog_has_one_unique_p5_entry_for_every_phase() -> None:
     assert payload["schema_version"] == "p5/1"
     phases = payload["phases"]
     assert {item["phase"] for item in phases} == {
-        "architecture", "local", "real-device", "two-device", "stability", "secret-scan",
-        "push-preflight", "evidence", "finalize",
+        "architecture", "local", "real-device", "session-catalog", "interaction", "two-device", "stability", "secret-scan",
+        "long-session", "push-preflight", "evidence", "finalize",
     }
     assert len(phases) == len({item["driver"] for item in phases})
     assert all(item["protocol"] == "oaep/1+owop/1" for item in phases)
@@ -43,6 +43,42 @@ def test_release_automation_does_not_call_legacy_driver_directly() -> None:
             if any(name in text for name in forbidden):
                 violations.append(str(path.relative_to(ROOT)))
     assert violations == []
+
+
+def test_local_phase_runs_p5_component_gate_not_a_legacy_ledger() -> None:
+    spec = importlib.util.spec_from_file_location("remote_workspace", ROOT / "scripts/remote_workspace.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.PHASES["local"][2] == "accept_remote_workspace_local_p5.py"
+
+
+def test_long_session_phase_routes_to_physical_p5_gate() -> None:
+    spec = importlib.util.spec_from_file_location("remote_workspace", ROOT / "scripts/remote_workspace.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.PHASES["long-session"][2] == "accept_mobile_remote_workspace_long_session_p5.py"
+
+
+def test_session_catalog_phase_routes_to_authoritative_realtime_gate() -> None:
+    spec = importlib.util.spec_from_file_location("remote_workspace", ROOT / "scripts/remote_workspace.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.PHASES["session-catalog"][2] == (
+        "accept_mobile_remote_workspace_session_catalog_p5.py"
+    )
+
+
+def test_interaction_phase_routes_to_physical_response_loss_gate() -> None:
+    spec = importlib.util.spec_from_file_location("remote_workspace", ROOT / "scripts/remote_workspace.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.PHASES["interaction"][2] == (
+        "accept_mobile_remote_workspace_interaction_p5.py"
+    )
 
 
 def test_secret_scan_phase_routes_only_through_p5_operator_entry() -> None:

@@ -36,9 +36,9 @@ environment:
     isolation: required
     initial_directories: [output]
     allowed_write_paths: [output/]
-  required_capabilities: [regression.controlled_write]
+  required_capabilities: [regression_controlled_write]
   tools:
-    - id: regression.controlled_write
+    - id: regression_controlled_write
       revision: 1
       effect: write_local_mutable
       approval: always_required
@@ -69,7 +69,7 @@ expect:
     status: completed
 
   behavior:
-    required_capabilities: [regression.controlled_write]
+    required_capabilities: [regression_controlled_write]
     logical_tool_calls:
       exact: 1
     tool_attempts:
@@ -89,7 +89,7 @@ expect:
     count:
       exact: 1
     proposal:
-      tool: regression.controlled_write
+      tool: regression_controlled_write
       effect: write_local_mutable
       relative_path: output/approval-proof.txt
       content_sha256: 5c659a280801d37500e8895c5e97a7ba6de0693164197dee9e6ae3bb90dcb415

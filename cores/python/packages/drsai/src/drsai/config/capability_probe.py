@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
+import asyncio
 import base64
 import hashlib
 from io import BytesIO
@@ -20,6 +21,7 @@ from .audio_operation_adapter import OpenAIAudioOperationAdapter, SpeechSynthesi
 from .gemini_operation_adapter import GeminiGenerateContentAdapter
 from .model_operation_adapters import ModelProtocolError, OpenAITextOperationAdapter
 from .model_operation_routing import OperationProtocol, ResolvedAgentOperation
+from .openai_image_operation_adapter import OpenAIImageOperationAdapter
 
 
 ProbeStatus = Literal["verified", "runtime_verified", "unsupported", "unavailable", "inconclusive", "stale", "error"]
@@ -126,10 +128,12 @@ class CapabilityProbeService:
         *,
         text_adapter: OpenAITextOperationAdapter | None = None,
         gemini_adapter: GeminiGenerateContentAdapter | None = None,
+        image_adapter: OpenAIImageOperationAdapter | None = None,
         audio_adapter: OpenAIAudioOperationAdapter | None = None,
     ) -> None:
         self.text_adapter = text_adapter or OpenAITextOperationAdapter()
         self.gemini_adapter = gemini_adapter or GeminiGenerateContentAdapter()
+        self.image_adapter = image_adapter or OpenAIImageOperationAdapter()
         self.audio_adapter = audio_adapter or OpenAIAudioOperationAdapter()
 
     async def probe(
@@ -155,7 +159,8 @@ class CapabilityProbeService:
                 prompt = "Return JSON with background, center, shape."
                 image_url = f"data:image/png;base64,{base64.b64encode(image).decode('ascii')}"
                 if protocol == "gemini_generate_content":
-                    result = self.gemini_adapter.create(
+                    result = await asyncio.to_thread(
+                        self.gemini_adapter.create,
                         resolved, prompt=prompt, image=image, image_mime="image/png",
                     )
                 elif protocol == "openai_responses":
@@ -184,21 +189,30 @@ class CapabilityProbeService:
                     ProbeAssertion("shape_circle", "circle" in normalized),
                 ])
             elif operation == "image_generation":
-                result = self.gemini_adapter.create(
-                    resolved, prompt="A single flat blue circle centered on a plain white background, no text.",
-                    response_modalities=("TEXT", "IMAGE"),
-                )
-                valid = bool(result.images)
+                prompt = "A single flat blue circle centered on a plain white background, no text."
+                if protocol == "gemini_generate_content":
+                    result = await asyncio.to_thread(
+                        self.gemini_adapter.create,
+                        resolved, prompt=prompt, response_modalities=("TEXT", "IMAGE"),
+                    )
+                    content = result.images[0].content if result.images else b""
+                elif protocol == "openai_images_generation":
+                    image_result = await asyncio.to_thread(self.image_adapter.generate, resolved, prompt=prompt)
+                    content = image_result.content
+                else:
+                    raise ModelProtocolError("protocol_unsupported", f"Unsupported image protocol: {protocol}")
+                valid = bool(content)
                 if valid:
-                    output_bytes = len(result.images[0].content)
+                    output_bytes = len(content)
                     try:
-                        with PILImage.open(BytesIO(result.images[0].content)) as image:
+                        with PILImage.open(BytesIO(content)) as image:
                             image.verify()
                     except Exception:
                         valid = False
                 assertions.append(ProbeAssertion("decodable_image", valid))
             elif operation == "text_to_speech":
-                synthesized = self.audio_adapter.synthesize(
+                synthesized = await asyncio.to_thread(
+                    self.audio_adapter.synthesize,
                     resolved, text="OpenDrSai capability test 42", output_format="mp3",
                 )
                 output_bytes = len(synthesized.content)
@@ -206,7 +220,8 @@ class CapabilityProbeService:
             elif operation == "speech_to_text":
                 if not audio_input:
                     raise ModelProtocolError("request_rejected", "Speech-to-text probe requires bounded audio input")
-                result = self.audio_adapter.transcribe(
+                result = await asyncio.to_thread(
+                    self.audio_adapter.transcribe,
                     resolved, audio=audio_input, filename="capability-probe.mp3", media_type="audio/mpeg",
                 )
                 output_bytes = len(result.text.encode())
@@ -225,7 +240,8 @@ class CapabilityProbeService:
                     "parameters": {"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}, "required": ["a", "b"], "additionalProperties": False},
                 }
                 if protocol == "gemini_generate_content":
-                    result = self.gemini_adapter.create(
+                    result = await asyncio.to_thread(
+                        self.gemini_adapter.create,
                         resolved, prompt="Use calculator_add to add 17 and 25.", tools=[tool],
                     )
                 else:

@@ -59,6 +59,34 @@ def proactively_searched_core():
     return core
 
 
+def knowledge_searched_core():
+    core = create_mobile_agent_core()
+    knowledge_tool = {
+        "name": "knowledge_search", "version": 1, "source": "desktop-host", "classification": "local-equivalent",
+        "description": "knowledge", "parameters": {"type": "object", "properties": {}},
+        "required_capabilities": [], "risk": "read_only", "requires_approval": False,
+    }
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "仅根据知识库回答并引用", "model_id": "model", "tools": [knowledge_tool],
+    }))
+    core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "kb-1", "name": "knowledge_search", "arguments": {"query": "default port"}},
+    ]}))
+    core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "kb-1", "succeeded": True,
+        "content": {
+            "require_citations": True,
+            "evidence": [{
+                "knowledge_id": "kb", "document_id": "doc", "chunk_id": "doc:0",
+                "source": "opendrsai://knowledge/kb/doc", "score": 1.0,
+                "content_sha256": "a" * 64,
+            }],
+        },
+        "artifact_ids": [], "artifacts": [],
+    }))
+    return core
+
+
 def test_evidence_contains_only_call_ids_and_url_digests() -> None:
     evidence = build_citation_evidence([
         {"role": "tool", "tool_call_id": "search-1", "name": "web.search", "succeeded": True,
@@ -160,6 +188,23 @@ def test_second_missing_citation_is_repaired_from_trusted_tool_result() -> None:
     message = next(item.payload for item in completed if item.payload.get("kind") == "message.completed")
     assert SOURCE in message["text"]
     assert core.snapshot("run-cite")["phase"] == "completed"
+
+
+def test_second_missing_knowledge_citation_attaches_trusted_internal_source() -> None:
+    core = knowledge_searched_core()
+    first = core.handle(command(MessageType.MODEL_COMPLETED, 3, {
+        "content": "The supplied knowledge does not state a default port.",
+    }))
+    assert kinds(first) == ["tool.decision", "citation.required"]
+
+    completed = core.handle(command(MessageType.MODEL_COMPLETED, 4, {
+        "content": "The supplied knowledge does not state a default port.",
+    }, "still-missing-kb"))
+
+    assert kinds(completed) == ["tool.decision", "citation.verified", "message.completed", "run.completed"]
+    message = next(item.payload for item in completed if item.payload.get("kind") == "message.completed")
+    assert "opendrsai://knowledge/kb/doc" in message["text"]
+    assert "Web information" not in message["text"]
 
 
 def test_second_missing_citation_decodes_tavily_string_wrappers() -> None:

@@ -45,6 +45,9 @@ CONVERSATION_LATENCY_STAGES = (
     "client_receive",
     "client_render",
 )
+CONVERSATION_LATENCY_RETENTION_SECONDS = 30 * 86400
+DEFAULT_CONVERSATION_LATENCY_CAPACITY = 100_000
+DEFAULT_CONVERSATION_LATENCY_TRIM_INTERVAL = 256
 
 _FORBIDDEN_DIMENSIONS = frozenset({
     "command", "output", "content", "snapshot", "terminal_tail", "stderr",
@@ -58,10 +61,27 @@ _FORBIDDEN_RUNTIME_METRIC_DIMENSIONS = frozenset({
 class RuntimeObservability:
     """SQLite-backed bounded operational telemetry; never stores command/output bodies."""
 
-    def __init__(self, database: Path):
+    def __init__(
+        self,
+        database: Path,
+        *,
+        conversation_latency_capacity: int = DEFAULT_CONVERSATION_LATENCY_CAPACITY,
+        conversation_latency_trim_interval: int = DEFAULT_CONVERSATION_LATENCY_TRIM_INTERVAL,
+    ):
+        if not 5 <= conversation_latency_capacity <= 1_000_000:
+            raise ValueError("conversation latency capacity is outside the bounded range")
+        if not 1 <= conversation_latency_trim_interval <= 10_000:
+            raise ValueError("conversation latency trim interval is outside the bounded range")
         self.database = Path(database)
+        self.conversation_latency_capacity = conversation_latency_capacity
+        self.conversation_latency_trim_interval = conversation_latency_trim_interval
         self.database.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
+            # Runtime and Relay workers use independent connections. WAL keeps
+            # short telemetry writes concurrent without weakening SQLite's
+            # transactional visibility or requiring synchronized clocks.
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=NORMAL")
             db.execute("""CREATE TABLE IF NOT EXISTS runtime_metrics(
                 metric TEXT NOT NULL, correlation_id TEXT NOT NULL, operation_id TEXT NOT NULL,
                 dimensions_json TEXT NOT NULL, value REAL NOT NULL, observed_at REAL NOT NULL
@@ -81,6 +101,7 @@ class RuntimeObservability:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database, timeout=30, factory=ClosingConnection)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout=30000")
         return connection
 
     def record(self, metric: str, value: float, correlation: ResourceCorrelation,
@@ -131,10 +152,7 @@ class RuntimeObservability:
                     now,
                 ),
             )
-            db.execute(
-                "DELETE FROM conversation_latency_stages WHERE observed_at < ?",
-                (now - 30 * 86400,),
-            )
+            self._trim_conversation_latency(db, now, cursor.lastrowid)
         return cursor.rowcount == 1
 
     def record_conversation_latency_in_transaction(
@@ -159,11 +177,26 @@ class RuntimeObservability:
                 now,
             ),
         )
+        self._trim_conversation_latency(db, now, cursor.lastrowid)
+        return cursor.rowcount == 1
+
+    def _trim_conversation_latency(
+        self, db: sqlite3.Connection, now: float, inserted_rowid: int | None
+    ) -> None:
         db.execute(
             "DELETE FROM conversation_latency_stages WHERE observed_at < ?",
-            (now - 30 * 86400,),
+            (now - CONVERSATION_LATENCY_RETENTION_SECONDS,),
         )
-        return cursor.rowcount == 1
+        # Amortize the indexed OFFSET scan. The physical hard bound is
+        # capacity + interval - 1, without an O(n^2) scan under Event load.
+        if not inserted_rowid or inserted_rowid % self.conversation_latency_trim_interval:
+            return
+        db.execute(
+            "DELETE FROM conversation_latency_stages WHERE rowid IN ("
+            "SELECT rowid FROM conversation_latency_stages "
+            "ORDER BY observed_at DESC,rowid DESC LIMIT -1 OFFSET ?)",
+            (self.conversation_latency_capacity,),
+        )
 
     @staticmethod
     def _validated_latency_payload(
@@ -199,8 +232,8 @@ class RuntimeObservability:
         with self._connect() as db:
             rows = db.execute(
                 "SELECT operation_id,stage,duration_ms FROM conversation_latency_stages "
-                "WHERE correlation_id=? ORDER BY stage",
-                (correlation_id,),
+                "WHERE correlation_id=? AND observed_at>=? ORDER BY stage",
+                (correlation_id, time.time() - CONVERSATION_LATENCY_RETENTION_SECONDS),
             ).fetchall()
         return [
             {
@@ -245,7 +278,9 @@ class RuntimeObservability:
         with self._connect() as db:
             rows = db.execute(
                 "SELECT correlation_id,operation_id,stage,duration_ms "
-                "FROM conversation_latency_stages ORDER BY correlation_id,operation_id,stage"
+                "FROM conversation_latency_stages WHERE observed_at>=? "
+                "ORDER BY correlation_id,operation_id,stage",
+                (time.time() - CONVERSATION_LATENCY_RETENTION_SECONDS,),
             ).fetchall()
         grouped: dict[tuple[str, str], dict[str, float]] = {}
         for row in rows:

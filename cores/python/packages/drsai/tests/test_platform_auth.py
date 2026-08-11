@@ -69,7 +69,7 @@ class PlatformAuthTests(unittest.TestCase):
             f"Bearer {self.valid_token(issuer='https://ai.ihep.ac.cn/api')}",
             USER_ID,
         )
-        self.assertEqual(context.model_base_url, "https://ai.ihep.ac.cn/apiv2/v1")
+        self.assertEqual(context.model_base_url, "https://ai-dev.ihep.ac.cn/apiv2/v1")
 
     def test_expired_and_mismatched_tokens_are_rejected(self) -> None:
         expired = jwt({"sub": USER_ID, "iss": "https://ai-dev.ihep.ac.cn/api", "exp": int(time.time()) - 1, "aud": "hai-api"})
@@ -119,6 +119,23 @@ class PlatformAuthTests(unittest.TestCase):
             self.assertTrue(verify_gateway_instance("local-secret"))
             self.assertFalse(verify_gateway_instance("wrong-secret"))
             self.assertFalse(verify_gateway_instance(None))
+
+    def test_gateway_instance_token_file_survives_watcher_restart_and_invalid_file_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = os.path.join(temporary, "runtime")
+            os.makedirs(runtime)
+            token_path = os.path.join(runtime, "instance-token")
+            with patch.dict(os.environ, {"DRSAI_HOME": temporary}, clear=False):
+                os.environ.pop("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", None)
+                self.assertTrue(verify_gateway_instance(None))
+                with open(token_path, "w", encoding="ascii") as handle:
+                    handle.write("f" * 43)
+                self.assertTrue(verify_gateway_instance("f" * 43))
+                self.assertFalse(verify_gateway_instance("wrong"))
+                self.assertFalse(verify_gateway_instance(None))
+                with open(token_path, "w", encoding="ascii") as handle:
+                    handle.write("invalid token")
+                self.assertFalse(verify_gateway_instance("invalid token"))
 
     def test_gateway_instance_token_expiry_and_revocation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

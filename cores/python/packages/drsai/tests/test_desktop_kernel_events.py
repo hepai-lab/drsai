@@ -51,6 +51,57 @@ def test_tool_inspection_survives_desktop_projection_as_ui_only_envelope() -> No
     assert content["_inspection"]["candidates"][0]["title"] == "Candidate"
 
 
+def test_knowledge_citation_is_emitted_only_when_final_text_links_source() -> None:
+    state = DesktopKernelTurnState("OpenDrSai")
+    source = "opendrsai://regression/knowledge/kb/revisions/1/documents/doc.md"
+    translate_kernel_event(_event(
+        1, "tool.result", call_id="knowledge-1", name="knowledge_search",
+        result={
+            "documents": [{
+                "knowledge_base_id": "kb", "knowledge_base_revision": 1,
+                "document_path": "doc.md", "corpus_complete": True,
+            }],
+            "evidence": [{
+                "knowledge_id": "kb", "knowledge_base_revision": 1,
+                "document_path": "doc.md", "title": "Runtime",
+                "source": source, "chunk_id": "doc.md:0", "content": "searched text",
+                "content_sha256": "a" * 64, "relation": "searched_scope",
+            }],
+        },
+    ), state)
+
+    unlinked = translate_kernel_event(_event(2, "message.completed", text="No answer."), state)[0]
+    linked = translate_kernel_event(_event(3, "message.completed", text=f"No answer. [{source}]({source})"), state)[0]
+
+    assert "citations_json" not in unlinked.metadata
+    citation = json.loads(linked.metadata["citations_json"])[0]
+    assert citation["url"] == source
+    assert citation["relation"] == "searched_scope"
+    assert citation["knowledge_base_id"] == "kb"
+    assert citation["revision"] == 1
+    assert citation["document_path"] == "doc.md"
+    assert citation["corpus_complete"] is True
+
+
+def test_web_citation_is_emitted_only_for_url_present_in_final_text() -> None:
+    state = DesktopKernelTurnState("OpenDrSai")
+    source = "https://indico.cern.ch/event/1598655"
+    translate_kernel_event(_event(
+        1, "tool.result", call_id="web-1", name="web_search",
+        result={"results": [{"title": "HEPiX Spring 2026", "url": source}]},
+    ), state)
+
+    message = translate_kernel_event(_event(
+        2, "message.completed", text=f"Official source: {source}",
+    ), state)[0]
+    citation = json.loads(message.metadata["citations_json"])[0]
+
+    assert citation["url"] == source
+    assert citation["title"] == "HEPiX Spring 2026"
+    assert citation["relation"] == "supports_claim"
+    assert citation["citation_id"]
+
+
 def test_verification_and_unknown_oaep_events_remain_observable_logs() -> None:
     state = DesktopKernelTurnState("OpenDrSai")
     verification = translate_kernel_event(_event(
