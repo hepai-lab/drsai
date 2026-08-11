@@ -1,4 +1,4 @@
-import { app, session as electronSession, shell, type IpcMain } from "electron";
+import { app, BrowserWindow, session as electronSession, shell, type IpcMain } from "electron";
 import { hasActiveAgentRuns } from "../../../../shared/main/agentRuns";
 import { getA5ServiceGuidanceScenario } from "../../../../shared/main/a5ServiceGuidanceScenario";
 import {
@@ -38,9 +38,28 @@ export function registerMacosRuntimeServicesIpc(
 ): void {
   const browser = dependencies.browserTaskService;
   ipcMain.handle("desktop:get-auth-session", () => getAuthSession());
+  ipcMain.handle("desktop:restart-application", () => {
+    setTimeout(() => {
+      app.relaunch();
+      app.quit();
+    }, 100).unref();
+    return true;
+  });
   ipcMain.handle("desktop:e2e-a5-service-guidance-scenario", () => getA5ServiceGuidanceScenario());
   ipcMain.handle("desktop:login", (_event, request) => login(request));
-  ipcMain.handle("desktop:start-oidc-login", (event, request) => startOidcLogin(request, (debugEvent) => event.sender.send("desktop:oidc-login-debug", debugEvent)));
+  ipcMain.handle("desktop:start-oidc-login", async (event, request) => {
+    const result = await startOidcLogin(
+      request,
+      (debugEvent) => event.sender.send("desktop:oidc-login-debug", debugEvent),
+    );
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window && !window.isDestroyed()) {
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+    }
+    return result;
+  });
   ipcMain.handle("desktop:cancel-oidc-login", () => cancelOidcLogin());
   ipcMain.handle("desktop:start-desktop-sso-login", () => startDesktopSsoLogin());
   ipcMain.handle("desktop:start-wechat-desktop-login", () => startWechatDesktopLogin());

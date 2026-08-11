@@ -103,8 +103,25 @@ export async function saveMyDrSaiModelProvider(provider: string, raw: unknown): 
   const request = validateProviderSave(raw);
   const gateway = await getGatewayStatus();
   if (!gateway.ready) throw new Error("OpenDrSai is not running. Model provider cannot be saved.");
-  await gatewayRequest(gateway.baseUrl, "PUT", `/v1/config/model-providers/${encodeURIComponent(provider)}`, request);
-  return readModelConnection(gateway.baseUrl);
+  const committed = await gatewayRequest<{
+    provider: MyDrSaiModelProvider;
+    revision?: string;
+    warnings?: string[];
+  }>(gateway.baseUrl, "PUT", `/v1/config/model-providers/${encodeURIComponent(provider)}`, request);
+  // Provider creation must precede an Agent policy that references it. Do not
+  // read /v1/config/model-state here: that endpoint intentionally fails while
+  // the Agent has no explicit primary model, which otherwise makes first-time
+  // setup circular and impossible.
+  const listed = await gatewayRequest<{ providers: MyDrSaiModelProvider[] }>(gateway.baseUrl, "GET", "/v1/config/model-providers");
+  const saved = listed.providers.find((candidate) => candidate.name === provider) ?? committed.provider;
+  return {
+    model: "",
+    model_provider: provider,
+    provider: saved,
+    providers: listed.providers,
+    ...(committed.revision ? { revision: committed.revision.replace(/^sha256:/, "") } : {}),
+    ...(committed.warnings?.length ? { warnings: committed.warnings } : {}),
+  };
 }
 
 export async function testMyDrSaiModelProvider(provider: string, model?: string): Promise<MyDrSaiProviderTestResult> { validateProviderName(provider); const gateway = await getGatewayStatus(); if (!gateway.ready) throw new Error("OpenDrSai is not running."); return gatewayRequest(gateway.baseUrl, "POST", `/v1/config/model-providers/${encodeURIComponent(provider)}/test`, model ? { model } : {}, provider === "hepai" ? await oidcGatewayHeaders() : undefined); }

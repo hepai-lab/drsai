@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { userFacingBusinessText } from "../userFacingLanguage";
 import { formatWebSearchActivitySummary } from "../webSearchPresentation";
+import { stripTrailingSourceList } from "../sourceListPresentation";
 import { boundedProcessWindow, PROCESS_ACTIVITY_WINDOW_SIZE, PROCESS_PART_WINDOW_SIZE } from "../boundedProcessWindow";
 import type {
   ArtifactPart,
@@ -240,18 +241,6 @@ function extractPublicSources(turn: StructuredTurnState): Array<{ url: string; l
     try { return { url, label: new URL(url).hostname.replace(/^www\./, "") }; }
     catch { return { url, label: url }; }
   });
-}
-
-export function stripTrailingSourceList(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (!/^\s*(?:sources?|来源)\s*[:：]\s*$/i.test(lines[index])) continue;
-    const trailing = lines.slice(index + 1).filter((line) => line.trim());
-    if (trailing.length > 0 && trailing.every((line) => /^\s*(?:[-*+]\s*)?(?:\[[^\]]+\]\()?https:\/\//i.test(line))) {
-      return lines.slice(0, index).join("\n").trimEnd();
-    }
-  }
-  return markdown;
 }
 
 function RetrievalStageSummary({ turn, language }: { turn: StructuredTurnState; language: "en" | "zh" }): React.JSX.Element | null {

@@ -65,7 +65,10 @@ for (const symbol of ["OaepSnapshot", "OaepEvent", "getOaepSnapshot", "openOaepE
   assert.ok(runtimeClient.includes(symbol), `Desktop RuntimeClient OAEP symbol missing: ${symbol}`);
 }
 
-assert.ok(subscription.includes("selectRuntimeConversationProtocol(capabilities)"), "Desktop subscription must use strict protocol selection.");
+assert.ok(subscription.includes("selectRuntimeConversationProtocolResult(capabilities"), "Desktop subscription must use strict protocol selection.");
+for (const handshakeField of ["runtimeId", "instanceId", "runtimeVersion", "protocolVersion", "schemaHash"]) {
+  assert.ok(subscription.includes(handshakeField), `Desktop Runtime protocol evidence is missing ${handshakeField}.`);
+}
 for (const capability of ["oaep.v1", "oaep.session.snapshot", "oaep.session.events", "oaep.session.events.stream", "event.cursor_expired"]) {
   assert.ok(protocolSelection.includes(`"${capability}"`), `Desktop OAEP selection requirement missing: ${capability}`);
 }
@@ -74,6 +77,10 @@ assert.ok(
     && protocolSelection.includes("profiles.includes(OAEP_PROFILE)"),
   "Desktop subscription must require the OAEP profile.",
 );
+assert.ok(protocolSelection.includes("oaepProtocol.schema_sha256 === OAEP_SCHEMA_SHA256"),
+  "Desktop subscription must require the exact OAEP schema hash.");
+assert.ok(gateway.includes('"schema_sha256": OAEP_SCHEMA_SHA256'),
+  "Runtime capability negotiation must advertise the generated OAEP schema hash.");
 assert.ok(subscription.includes("subscribeOaepSession"), "Desktop thread subscription must use the shared OAEP Session controller.");
 assert.ok(oaepSessionStream.includes("openOaepEventStream"), "Shared OAEP Session controller must open OAEP Event stream.");
 for (const runtimeLogOperation of [

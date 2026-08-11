@@ -33,6 +33,18 @@ def test_regression_control_is_enabled_only_for_explicit_or_fully_managed_deskto
     assert _regression_control_enabled() is False
     monkeypatch.setenv("DRSAI_GATEWAY_DEV_MANAGED", "1")
     assert _regression_control_enabled() is True
+
+
+def test_desktop_user_name_update_logs_only_real_changes(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(gateway, "_desktop_user_name", "desktop-user-one")
+    caplog.set_level("INFO")
+
+    asyncio.run(gateway.set_user_name(gateway.UserNameRequest(user_name="desktop-user-two")))
+    asyncio.run(gateway.set_user_name(gateway.UserNameRequest(user_name="desktop-user-two")))
+
+    matching = [record for record in caplog.records if "Desktop user name set to:" in record.getMessage()]
+    assert len(matching) == 1
+    assert matching[0].getMessage().endswith("desktop-user-two")
     monkeypatch.delenv("OPENDRSAI_DESKTOP_DEV")
     assert _regression_control_enabled() is False
     monkeypatch.setenv("OPENDRSAI_ENABLE_REGRESSION_CONTROL", "1")

@@ -128,6 +128,7 @@ from drsai.owop.protocol import OWOPProtocol
 from drsai.owop.runtime_terminal import RuntimeTerminalOWOPOperations
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.runtime.input_resources import inspect_native_image_resources
+from drsai.oaep.generated import OAEP_PROFILE, OAEP_SCHEMA_SHA256, OAEP_VERSION
 from drsai.backend.runtime.image_operations import RuntimeImageOperationAdapter
 from drsai.backend.runtime.web_search import create_web_fetch_tool, create_web_search_tool, web_search
 from drsai.backend.runtime.journal import SessionCursorExpired
@@ -1946,8 +1947,9 @@ _REMOTE_CAPABILITY_VERSIONS = {
 
 _RUNTIME_PROTOCOLS = {
     "oaep": {
-        "version": "1.0",
-        "profiles": ["oaep.session-stream/1"],
+        "version": OAEP_VERSION,
+        "profiles": [OAEP_PROFILE],
+        "schema_sha256": OAEP_SCHEMA_SHA256,
     },
     "owop": {
         "version": "1.0",
@@ -5804,6 +5806,33 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
         and fixture_request_id == "packaged_chat_recovery_001"
         and metadata.get("packaged_recovery_fixture") is True
     )
+    packaged_crash_fixture = (
+        os.getenv("OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE") == "1"
+        and os.getenv("OPENDRSAI_DEV_AUTH_BYPASS") == "1"
+        and raw_request.headers.get("x-opendrsai-auth-mode") == "offline"
+        and request.user_id == "packaged-l5-user"
+        and fixture_request_id in {"packaged_chat_crash_001", "packaged_agent_crash_001"}
+        and metadata.get("packaged_crash_fixture") is True
+    )
+    if packaged_crash_fixture:
+        fixture_run = _runtime_engine().get_run(run_id)
+        _runtime_engine().set_run_input(
+            run_id,
+            request.prompt,
+            source_client="windows",
+            source_message_id=str(metadata.get("source_message_id") or fixture_request_id),
+        )
+        if fixture_run["status"] == "queued":
+            _runtime_engine().transition_run(run_id, "running")
+        _runtime_engine().append_backend_event(
+            run_id,
+            "agent.message.delta",
+            {"text": "preserved before crash"},
+            f"fixture:{run_id}:preserved-before-crash",
+        )
+        while not await raw_request.is_disconnected():
+            await asyncio.sleep(0.1)
+        return {"run": _runtime_engine().get_run(run_id), "result": {"fixture": "desktop-process-crash"}}
     if packaged_recovery_fixture:
         fixture_run = _runtime_engine().get_run(run_id)
         _runtime_engine().set_run_input(
@@ -9882,9 +9911,13 @@ async def set_user_name(req: UserNameRequest):
 
         raise HTTPException(status_code=400, detail="user_name must not be empty")
 
+    previous_name = _get_user_id()
+
     _desktop_user_name = name
 
-    logger.info(f"Desktop user name set to: {name}")
+    if previous_name != name:
+
+        logger.info(f"Desktop user name set to: {name}")
 
     return {"user_name": name}
 

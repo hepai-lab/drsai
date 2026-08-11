@@ -4711,7 +4711,7 @@ function registerIpc(): void {
   secureHandle("desktop:terminal-kill", (event, id: string) =>
     killTerminalSession(event, id),
   );
-  secureHandle("desktop:list-workspaces", () => listWorkspaces());
+  secureHandle("desktop:list-workspaces", () => listWorkspaces(app.getPath("documents")));
   secureHandle("desktop:ssh-hosts", () => listSshHosts());
   secureHandle("desktop:ssh-diagnose", (_event, hostAlias: string) => diagnoseSshHost(hostAlias));
   secureHandle("desktop:ssh-host-keys", (_event, hostAlias: string) => inspectSshHostKeys(hostAlias));

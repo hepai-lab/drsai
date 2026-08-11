@@ -52,7 +52,7 @@ try {
   await shellPage.locator(".app-shell").waitFor({ state: "visible", timeout: 10000 });
   assert.equal(await shellPage.evaluate(() => window.openDrSai?.isOperationalStateE2eEnabled()), true, "operational-state fixture bridge is disabled");
   const diagnostic = shellPage.getByTestId("operational-state-bar");
-  const facts = { identity: "authenticated", runtime: "ready", model: "unconfigured", workspace: "none", run: "idle" };
+  const facts = { identity: "authenticated", runtime: "ready", model: "unconfigured", workspace: "none" };
   for (let attempt = 0; attempt < 20 && !(await diagnostic.count()); attempt += 1) {
     await shellPage.evaluate((detail) => window.dispatchEvent(new CustomEvent("drsai:e2e-operational-state", { detail })), facts);
     await shellPage.waitForTimeout(100);

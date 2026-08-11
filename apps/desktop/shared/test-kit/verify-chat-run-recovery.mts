@@ -34,5 +34,11 @@ try {
   assert.equal(recovered[1]?.content, "hello again");
   assert.equal(recovered[2]?.type, "error", "A run lost during application restart must fail closed without duplicate execution.");
   assert.equal((await threads.listThreads()).find((item) => item.id === thread.id)?.status, "error");
+  const cancelledThread = await threads.createThread({ kind: "chat", title: "Recover fast cancel", workspacePath: root });
+  await threads.updateThread({ id: cancelledThread.id, status: "running", lastRunId: "chat-run-cancelled", lastRequestId: "chat-request-cancelled" });
+  journal.recordChatRunEvent({ requestId: "chat-request-cancelled", sessionId: cancelledThread.id, runId: "chat-run-cancelled", type: "aborted", seq: 1 });
+  await journal.shutdownChatRunJournal();
+  const recoveredCancellation = await chat.recoverChatRun({ requestId: "chat-request-cancelled", sessionId: cancelledThread.id });
+  assert.deepEqual(recoveredCancellation.map((event) => event.type), ["aborted"], "A durable terminal journal event must win over a lagging Thread status write.");
   console.log("Chat journal, coalescing and restart recovery verification passed.");
 } finally { await rm(root, { recursive: true, force: true }); }

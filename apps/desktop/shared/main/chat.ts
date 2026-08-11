@@ -51,6 +51,7 @@ import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal"
 import { codexContinuationAction } from "./codexSessionResumePolicy";
 import { selectCurrentUserInput } from "./chatInput";
 import { materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
+import { selectRuntimeConversationProtocolResult } from "./runtimeProtocolSelection";
 import { decideRuntimeRestartRecovery } from "../api/runtimeRestartRecovery";
 import {
   createOaepPresentationProjection,
@@ -137,6 +138,7 @@ interface ChatTurnRecord {
   cancelRequested: boolean;
   controller: AbortController;
   eventTarget: ChatEventTarget;
+  request?: ChatRequest;
   runtime?: RuntimeChatTarget;
   platform?: { agentId: string; threadId: string; mode: string };
   subscription?: { stop(): void };
@@ -172,6 +174,7 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     cancelRequested: false,
     controller,
     eventTarget: webContents,
+    request: runRequest,
   });
   chatEventSequences.set(requestId, 0);
   chatDiagnosticOperations.set(requestId, desktopDiagnostics.start({
@@ -255,6 +258,21 @@ export async function cancelChatTurn(rawIdentity: unknown): Promise<ChatTurnCanc
   if (runtimeTarget) void runtimeTarget.client.cancelAgentRun(runtimeTarget.runId).catch(() => undefined);
   turn.controller.abort("user");
   if (!runtimeTarget) {
+    const pendingRequest = turn.request;
+    if (!pendingRequest) return { accepted: true, state: "cancelled" };
+    // A fast cancel can win before runChat reaches its first Thread write.
+    // Persist the provisional run key before journaling `aborted` so restart
+    // recovery can locate the terminal event without inventing a Runtime Run.
+    await upsertThreadFromRun({
+      id: turn.sessionId,
+      kind: "chat",
+      title: deriveThreadTitle(pendingRequest.messages),
+      workspacePath: pendingRequest.workspacePath,
+      lastRunId: turn.runId,
+      lastRequestId: requestId,
+      status: "idle",
+      messageCount: pendingRequest.messages.length,
+    });
     structuredTerminalRequests.add(requestId);
     emit(turn.eventTarget, {
       requestId,
@@ -300,7 +318,8 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   if (!thread.runtimeSessionId || !thread.workspacePath) {
     const journal = await listRecordedChatRunEvents(thread.lastRunId);
     const recovered = journal.map((event, index) => ({ ...event, requestId, sessionId, seq: index + 1 }));
-    if (thread.status === "running" && !chatTurns.has(thread.lastRequestId ?? requestId)) {
+    const journalHasTerminal = journal.some((event) => event.type === "done" || event.type === "error" || event.type === "aborted");
+    if (!journalHasTerminal && thread.status === "running" && !chatTurns.has(thread.lastRequestId ?? requestId)) {
       recovered.push({ requestId, sessionId, runId: thread.lastRunId, seq: recovered.length + 1, type: "error", error: "Chat run was interrupted by an application restart. Recovered output is preserved." });
       await updateThread({ id: thread.id, status: "error" });
     }
@@ -1529,6 +1548,24 @@ async function runRuntimeBackendChat(
     }
   }
   await preflightAttachments(request.attachments, request.workspacePath, controller.signal);
+  const runtimeProtocol = selectRuntimeConversationProtocolResult(await client.getCapabilities(), {
+    forceLegacy: process.env.OPENDRSAI_DESKTOP_PROTOCOL_ROLLBACK === "conversation/1",
+  });
+  // Capability discovery is asynchronous. A renderer can cancel while it is
+  // in flight, so stop before creating a Session, outbox entry, subscription,
+  // or Run. `start` is intentionally not emitted for this pre-binding case:
+  // only a persisted authoritative Runtime Run may publish it.
+  controller.signal.throwIfAborted();
+  if (runtimeProtocol.selected !== "oaep") {
+    throw Object.assign(new Error(
+      runtimeProtocol.fallbackReason === "operator_rollback"
+        ? "OAEP Chat is disabled by the operator rollback setting. Disable rollback before starting this task."
+        : "This Runtime does not provide the required OAEP conversation protocol. Upgrade or repair the Runtime.",
+    ), {
+      code: "oaep_runtime_required",
+      protocol: runtimeProtocol,
+    });
+  }
   const existingThread = (await listThreads()).find((thread) => thread.id === displaySessionId);
   let runtimeSessionId = existingThread?.runtimeSessionId;
   if (!runtimeSessionId && existingThread?.lastRunId) {
@@ -1556,8 +1593,10 @@ async function runRuntimeBackendChat(
     }
   }
   if (!runtimeSessionId) {
+    controller.signal.throwIfAborted();
     runtimeSessionId = (await client.createSession(resolved.workspaceId, deriveThreadTitle(request.messages))).session_id;
   }
+  controller.signal.throwIfAborted();
   bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
   const sourceMessageId = `desktop:${requestId}`;
   const idempotencyKey = `desktop-runtime-${requestId}`;
@@ -1584,6 +1623,7 @@ async function runRuntimeBackendChat(
       request.workspaceName || basename(request.workspacePath),
     ),
   };
+  controller.signal.throwIfAborted();
   const liveSubscription = await subscribeOaepSession(client as RuntimeClient, runtimeSessionId, {
     onEvent(event, state) {
       if (event.data.item && typeof event.data.item === "object" && "source" in event.data.item) {
@@ -1624,6 +1664,7 @@ async function runRuntimeBackendChat(
   });
   let run;
   try {
+    controller.signal.throwIfAborted();
     run = await client.createAgentRun(
       runtimeSessionId,
       agentDefinition,

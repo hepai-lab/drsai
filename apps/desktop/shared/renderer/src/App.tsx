@@ -115,7 +115,7 @@ import { isSelectableModelAvailability, modelCatalogRecoveryCopy } from "./model
 import { normalizeRuntimeErrorEnvelope } from "../../api/errorEnvelope";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
-import { deriveOperationalRunState, deriveOperationalState, shouldShowOperationalStateBar, type OperationalStateFacts } from "@shared/operationalState";
+import { deriveOperationalState, shouldShowOperationalStateBar, type OperationalStateFacts } from "@shared/operationalState";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
 import { ApprovalCenterView } from "./components/ApprovalCenterView";
@@ -2402,7 +2402,7 @@ function AuthenticatedApp({
     identity: auth.loading ? "loading" : user ? "authenticated" : "anonymous",
     runtime: auth.serviceBlocker && !auth.serviceBusy
       ? "blocked"
-      : auth.serviceReady && health?.gatewayReady
+      : auth.serviceReady
         ? "ready"
         : auth.serviceBusy || !health
           ? "preparing"
@@ -2417,7 +2417,6 @@ function AuthenticatedApp({
       : selectedSetupWorkspace.trusted
         ? "trusted"
         : "untrusted",
-    run: deriveOperationalRunState(threadBackgroundTasks, chat.activeRequestId),
   } as const;
   const operationalFacts = operationalE2eFacts ?? actualOperationalFacts;
   const operationalDecision = deriveOperationalState(operationalFacts);
@@ -3165,7 +3164,7 @@ function AuthenticatedApp({
     if (!desktopApi.isOperationalStateE2eEnabled()) return;
     const handleOperationalState = (event: Event): void => {
       const facts = (event as CustomEvent<OperationalStateFacts>).detail;
-      document.documentElement.dataset.operationalE2eState = `${facts.identity}:${facts.runtime}:${facts.model}:${facts.workspace}:${facts.run}`;
+      document.documentElement.dataset.operationalE2eState = `${facts.identity}:${facts.runtime}:${facts.model}:${facts.workspace}`;
       setOperationalE2eFacts(facts);
     };
     window.addEventListener("drsai:e2e-operational-state", handleOperationalState);
@@ -3229,9 +3228,6 @@ function AuthenticatedApp({
           } else {
             await handleAddLocalWorkspace();
           }
-          break;
-        case "run":
-          navigateTo(operationalDecision.state === "waiting_approval" ? MENU_IDS.approvalCenter : MENU_IDS.savedPlan);
           break;
     }
   }

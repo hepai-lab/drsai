@@ -5,7 +5,7 @@ import type { RuntimeCapabilities } from "./runtimeClient";
 // this mirror against the generated TS/Kotlin/Python constants.
 const OAEP_VERSION = "1.0";
 const OAEP_PROFILE = "oaep.session-stream/1";
-const OAEP_SCHEMA_SHA256 = "f586a6171063f0a1d1019097558b0fd8175692437fc0f685ac914710a7f15640";
+const OAEP_SCHEMA_SHA256 = "1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09";
 
 const OAEP_REQUIRED = [
   "oaep.v1",
@@ -39,6 +39,7 @@ export function selectRuntimeConversationProtocolResult(
   const oaepSignals = Boolean(oaepProtocol) || [...advertised].some((name) => name.startsWith("oaep."));
   const oaepComplete = oaepProtocol?.version === OAEP_VERSION
     && oaepProtocol.profiles.includes(OAEP_PROFILE)
+    && oaepProtocol.schema_sha256 === OAEP_SCHEMA_SHA256
     && OAEP_REQUIRED.every((name) => advertised.has(name));
   if (oaepSignals && !oaepComplete) throw new Error("oaep_capability_partial");
   if (oaepComplete && !options.forceLegacy) return {

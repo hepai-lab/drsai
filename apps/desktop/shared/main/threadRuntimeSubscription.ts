@@ -8,7 +8,7 @@ import type {
   DesktopThreadSnapshotPatchEvent,
 } from "../api/desktopApi";
 import { connectRuntimeClientForWorkspaceIfAvailable, type OaepEvent } from "./runtimeClient";
-import { selectRuntimeConversationProtocol } from "./runtimeProtocolSelection";
+import { selectRuntimeConversationProtocolResult } from "./runtimeProtocolSelection";
 import { projectOaepThreadSnapshot, projectRuntimeThreadSnapshot } from "./threadRuntimeProjection";
 import {
   subscribeSessionConversation,
@@ -252,7 +252,9 @@ export async function getRuntimeThreadSnapshotEnvelope(
   signal?.throwIfAborted();
   const capabilities = await runtime.resolved.client.getCapabilities();
   signal?.throwIfAborted();
-  if (selectRuntimeConversationProtocol(capabilities) === "oaep") {
+  if (selectRuntimeConversationProtocolResult(capabilities, {
+    forceLegacy: process.env.OPENDRSAI_DESKTOP_PROTOCOL_ROLLBACK === "conversation/1",
+  }).selected === "oaep") {
     const shared = await subscribeOaepSession(runtime.resolved.client, runtime.runtimeSessionId, {});
     try {
       signal?.throwIfAborted();
@@ -449,9 +451,13 @@ async function subscribeRuntimeThreadSnapshotOnce(
   const runtime = await runtimeForThread(thread);
   if (!runtime) return null;
   const sync = await syncSessionHistorySingleflight(runtime.resolved.client, runtime.runtimeSessionId);
-  const capabilities = await runtime.resolved.client.getCapabilities();
+  const [capabilities, identity] = await Promise.all([
+    runtime.resolved.client.getCapabilities(),
+    runtime.resolved.client.getRuntime(),
+  ]);
   const forceLegacy = process.env.OPENDRSAI_DESKTOP_PROTOCOL_ROLLBACK === "conversation/1";
-  const selectedProtocol = selectRuntimeConversationProtocol(capabilities, { forceLegacy });
+  const protocolSelection = selectRuntimeConversationProtocolResult(capabilities, { forceLegacy });
+  const selectedProtocol = protocolSelection.selected;
   legacyProtocolTelemetry.record(
     selectedProtocol === "legacy" ? "conversation/1" : selectedProtocol,
     forceLegacy ? "operator_rollback" : selectedProtocol === "legacy" ? "oaep_unavailable" : "capability_selection",
@@ -463,7 +469,14 @@ async function subscribeRuntimeThreadSnapshotOnce(
     emitRuntimeLog(target, thread, runtime.runtimeSessionId, {
       level: "info", status: "completed", protocol: "oaep/1", phase: "capability",
       operation: "runtime.protocol.selected", message: "Runtime selected OAEP v1 for this session.",
-      details: { capabilities: capabilities.capabilities },
+      details: {
+        runtimeId: identity.runtime_id,
+        instanceId: identity.instance_id,
+        runtimeVersion: identity.version,
+        protocolVersion: protocolSelection.version,
+        schemaHash: protocolSelection.schemaHash,
+        capabilities: capabilities.capabilities,
+      },
     });
     const viewStore = new SessionViewStore(
       thread,
@@ -554,7 +567,15 @@ async function subscribeRuntimeThreadSnapshotOnce(
   emitRuntimeLog(target, thread, runtime.runtimeSessionId, {
     level: "info", status: "completed", protocol: "conversation/1", phase: "capability",
     operation: "runtime.protocol.selected", message: "Runtime selected the legacy conversation protocol for this session.",
-    details: { capabilities: capabilities.capabilities },
+    details: {
+      runtimeId: identity.runtime_id,
+      instanceId: identity.instance_id,
+      runtimeVersion: identity.version,
+      protocolVersion: protocolSelection.version,
+      fallbackReason: protocolSelection.fallbackReason,
+      upgradeAction: protocolSelection.upgradeAction,
+      capabilities: capabilities.capabilities,
+    },
   });
   const legacy = new LegacyConversationAdapter(thread);
   const publish = (sequence: number, snapshot: DesktopThreadSnapshot) => {

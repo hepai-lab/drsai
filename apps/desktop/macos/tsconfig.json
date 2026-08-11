@@ -1,19 +1,7 @@
 {
-  "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
-  "include": [
-    "electron.vite.config.ts",
-    "src/**/*",
-    "../shared/api/**/*",
-    "../shared/main/**/*",
-    "../shared/renderer/src/**/*"
-  ],
-  "compilerOptions": {
-    "composite": true,
-    "jsx": "react-jsx",
-    "types": ["electron-vite/node"],
-    "paths": {
-      "@renderer/*": ["../shared/renderer/src/*"],
-      "@shared/*": ["../shared/api/*"]
-    }
-  }
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.node.json" },
+    { "path": "./tsconfig.web.json" }
+  ]
 }

@@ -279,13 +279,13 @@ assert.equal(selectRuntimeConversationProtocol({
   protocol_version: 1,
   capabilities: oaepCapabilities,
   capability_versions: Object.fromEntries(oaepCapabilities.map((name) => [name, 1])),
-  protocols: { oaep: { version: "1.0", profiles: ["oaep.session-stream/1"] } },
+  protocols: { oaep: { version: "1.0", profiles: ["oaep.session-stream/1"], schema_sha256: OAEP_SCHEMA_SHA256 } },
 }), "oaep");
 assert.deepEqual(selectRuntimeConversationProtocolResult({
   protocol_version: 1,
   capabilities: oaepCapabilities,
   capability_versions: Object.fromEntries(oaepCapabilities.map((name) => [name, 1])),
-  protocols: { oaep: { version: "1.0", profiles: ["oaep.session-stream/1"] } },
+  protocols: { oaep: { version: "1.0", profiles: ["oaep.session-stream/1"], schema_sha256: OAEP_SCHEMA_SHA256 } },
 }), {
   selected: "oaep", version: "1.0", schemaHash: OAEP_SCHEMA_SHA256,
   fallbackReason: null, upgradeAction: null,

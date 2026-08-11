@@ -21,7 +21,7 @@ import { backupLegacyWorkspaceDataOnce, migrateLegacyWorkspaceRecords, migrateWo
 import { LocalRuntimeClient } from "./runtimeClient";
 import { isRemoteAcceptanceWorkspace } from "./remoteWorkspaceRestorePolicy";
 import { replaceFileSafely } from "./atomicFileReplace";
-import { ensureDefaultWorkspaceDirectory } from "./defaultWorkspace";
+import { ensureDefaultWorkspaceDirectory, migrateLegacyDefaultWorkspaceDirectory } from "./defaultWorkspace";
 
 const WORKSPACES_FILE = join(DRSAI_HOME, "desktop", "workspaces.json");
 const WORKSPACES_LEGACY_BACKUP_FILE = join(DRSAI_HOME, "desktop", "workspaces.legacy-v1.backup.json");
@@ -39,10 +39,10 @@ const FOLDER_NAME_PATTERN = /^[^<>:"/\\|?*\u0000-\u001f]+$/;
 let workspaceUpdateQueue: Promise<void> = Promise.resolve();
 let defaultWorkspaceCreation: Promise<WorkspaceProject> | null = null;
 
-export async function listWorkspaces(): Promise<WorkspaceProject[]> {
+export async function listWorkspaces(documentsPath?: string): Promise<WorkspaceProject[]> {
   let workspaces = await readWorkspaces();
   if (workspaces.length === 0) {
-    workspaces = await ensureDefaultWorkspace();
+    workspaces = documentsPath ? [await createDefaultWorkspace(documentsPath)] : await ensureDefaultWorkspace();
   }
   workspaces = await synchronizeRuntimeWorkspaceNames(workspaces);
   const refreshed = await Promise.all(workspaces.map(refreshWorkspaceStatus));
@@ -108,6 +108,9 @@ export async function createDefaultWorkspace(documentsPath: string): Promise<Wor
 async function performDefaultWorkspaceCreation(documentsPath: string): Promise<WorkspaceProject> {
   const canonicalWorkspacePath = await ensureDefaultWorkspaceDirectory(documentsPath);
   const workspaces = await readWorkspaces();
+  const legacyDefaults = workspaces.filter(isLegacyProfileDefaultWorkspace);
+  const legacyFullyMigrated = legacyDefaults.length === 0
+    || await migrateLegacyDefaultWorkspaceDirectory(DEFAULT_USER_WORKSPACE_PATH, canonicalWorkspacePath);
   const existing = workspaces.find((workspace) =>
     workspace.location !== "remote" && samePath(workspace.path, canonicalWorkspacePath));
   const metadata = {
@@ -129,12 +132,14 @@ async function performDefaultWorkspaceCreation(documentsPath: string): Promise<W
     });
     const refreshed = await readWorkspaces();
     const staleManagedDefaults = refreshed.filter((workspace) =>
-      workspace.id !== updated.id && workspace.metadata?.managedDefault === true);
+      workspace.id !== updated.id && (workspace.metadata?.managedDefault === true
+        || (legacyFullyMigrated && isLegacyProfileDefaultWorkspace(workspace))));
     if (staleManagedDefaults.length > 0) {
       await writeWorkspaces([
         updated,
         ...refreshed.filter((workspace) =>
-          workspace.id !== updated.id && workspace.metadata?.managedDefault !== true),
+          workspace.id !== updated.id && workspace.metadata?.managedDefault !== true
+            && !(legacyFullyMigrated && isLegacyProfileDefaultWorkspace(workspace))),
       ]);
     }
     return updated;
@@ -151,9 +156,19 @@ async function performDefaultWorkspaceCreation(documentsPath: string): Promise<W
   await writeWorkspaces([
     created,
     ...refreshed.filter((workspace) =>
-      workspace.id !== created.id && workspace.metadata?.managedDefault !== true),
+      workspace.id !== created.id && workspace.metadata?.managedDefault !== true
+        && !(legacyFullyMigrated && isLegacyProfileDefaultWorkspace(workspace))),
   ]);
   return created;
+}
+
+function isLegacyProfileDefaultWorkspace(workspace: WorkspaceProject): boolean {
+  return workspace.location !== "remote"
+    && samePath(workspace.path, DEFAULT_USER_WORKSPACE_PATH)
+    && workspace.description === "Auto-created on first launch"
+    && workspace.trusted === true
+    && workspace.pinned === true
+    && workspace.metadata?.managedDefault !== true;
 }
 
 export async function updateWorkspace(rawRequest: unknown): Promise<WorkspaceProject> {

@@ -125,6 +125,21 @@ async function startRuntimeAgentSurface(
   request: AgentRunRequest,
 ): Promise<void> {
   const agentName = await getCurrentAgentName();
+  const active = activeRuns.get(requestId);
+  if (!active || active.controller.signal.aborted) {
+    await upsertThreadFromRun({
+      id: sessionId,
+      kind: "agent_run",
+      title: request.task.replace(/\s+/g, " ").trim().slice(0, 80),
+      workspacePath: request.workspacePath,
+      lastRunId: runId,
+      lastRequestId: requestId,
+      status: "idle",
+    });
+    emit(webContents, { requestId, sessionId, runId, type: "aborted" });
+    activeRuns.delete(requestId);
+    return;
+  }
   const bridge = createOaepAgentRunBridge({ requestId, sessionId, runId });
   const target = {
     send(channel: string, event: unknown): void {

@@ -49,7 +49,7 @@ function ensureLoopbackNoProxy(): void {
 // direct, including on corporate/proxied Windows installations.
 ensureLoopbackNoProxy();
 
-const packagedRecoveryRuns = new Map<string, { failures: number; events: RuntimeAgentEvent[] }>();
+const packagedOaepRecoverySessions = new Set<string>();
 
 interface RemoteGatewayAccess {
   baseUrl: string;
@@ -94,7 +94,7 @@ export interface RuntimeCapabilities {
   capabilities: string[];
   capability_versions: Record<string, number>;
   protocols?: {
-    oaep?: { version: string; profiles: string[] };
+    oaep?: { version: string; profiles: string[]; schema_sha256?: string };
     owop?: { version: string; capabilities: string[] };
     control?: { version: string };
     relay?: { version: string };
@@ -805,7 +805,34 @@ abstract class HttpRuntimeClient implements RuntimeClient {
       { headers: { Accept: "text/event-stream" }, signal },
     );
     if (!response.body) throw new Error("Runtime Session did not return an OAEP Event stream.");
-    return { response, events: response.body };
+    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE !== "1" || !packagedOaepRecoverySessions.has(sessionId)) {
+      return { response, events: response.body };
+    }
+    // L5 must exercise OAEP replay, not the retired per-Run polling fixture.
+    // Forward complete SSE frames and terminate exactly after the first alpha
+    // delta. The shared Session controller then reconnects from its durable
+    // cursor and receives beta + the Run terminal without duplicating alpha.
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    let buffered = "";
+    const interrupted = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffered += decoder.decode(chunk, { stream: true });
+        while (true) {
+          const boundary = buffered.indexOf("\n\n");
+          if (boundary < 0) return;
+          const frame = buffered.slice(0, boundary + 2);
+          buffered = buffered.slice(boundary + 2);
+          controller.enqueue(encoder.encode(frame));
+          if (frame.includes('"text":"alpha"')) {
+            packagedOaepRecoverySessions.delete(sessionId);
+            controller.terminate();
+            return;
+          }
+        }
+      },
+    }));
+    return { response, events: interrupted };
   }
 
   getAgentRun(runId: string): Promise<RuntimeAgentRun> {
@@ -813,12 +840,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   }
 
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun> {
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && idempotencyKey === "desktop-runtime-packaged_chat_crash_001") {
-      return Promise.resolve({ run_id: "packaged-runtime-crash-run", session_id: sessionId, workspace_id: "packaged-runtime-workspace", backend_id: agentDefinition, status: "running" });
-    }
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && idempotencyKey === "desktop-runtime-packaged_chat_recovery_001") {
-      return Promise.resolve({ run_id: "packaged-runtime-recovery-run", session_id: sessionId, workspace_id: "packaged-runtime-workspace", backend_id: agentDefinition, status: "running" });
-    }
+    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && idempotencyKey === "desktop-runtime-packaged_chat_recovery_001") packagedOaepRecoverySessions.add(sessionId);
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/runs`, { method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ agent_definition: agentDefinition }) });
@@ -859,18 +881,6 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
     auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }> {
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && provenance?.sourceMessageId === "desktop:packaged_chat_crash_001") {
-      packagedRecoveryRuns.set(runId, { failures: 0, events: [{ event_id: `fixture-${runId}-1`, run_id: runId, sequence: 1, type: "agent.message.delta", data: { text: "preserved before crash" } }] });
-      return new Promise((_resolve, reject) => signal?.addEventListener("abort", () => reject(new DOMException("Packaged crash fixture aborted.", "AbortError")), { once: true }));
-    }
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && provenance?.sourceMessageId === "desktop:packaged_chat_recovery_001") {
-      packagedRecoveryRuns.set(runId, { failures: 1, events: [
-        { event_id: `fixture-${runId}-1`, run_id: runId, sequence: 1, type: "agent.message.delta", data: { text: "alpha" } },
-        { event_id: `fixture-${runId}-2`, run_id: runId, sequence: 2, type: "agent.message.delta", data: { text: " beta" } },
-        { event_id: `fixture-${runId}-3`, run_id: runId, sequence: 3, type: "run.completed", data: {} },
-      ] });
-      return new Promise((resolve) => setTimeout(() => resolve({ run: { run_id: runId } as RuntimeAgentRun, result: { fixture: "runtime-event-poll-recovery" } }), 250));
-    }
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/execute`, { method: "POST", signal,
       headers: {
         "Content-Type": "application/json",
@@ -905,13 +915,6 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   }
 
   async listAgentRunEvents(runId: string, afterSequence = 0): Promise<RuntimeAgentEvent[]> {
-    const fixture = packagedRecoveryRuns.get(runId);
-    if (fixture?.failures) { fixture.failures -= 1; throw new Error("Packaged Runtime event poll network interruption."); }
-    if (fixture) return fixture.events.filter((event) => event.sequence > afterSequence);
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && runId === "packaged-runtime-crash-run") return [
-      { event_id: `fixture-${runId}-1`, run_id: runId, sequence: 1, type: "agent.message.delta", data: { text: "preserved before crash" } },
-      { event_id: `fixture-${runId}-2`, run_id: runId, sequence: 2, type: "run.failed", data: { reason: "desktop_process_crash" } },
-    ].filter((event) => event.sequence > afterSequence);
     const result = await this.requestJson<{ data?: RuntimeAgentEvent[] }>(`/v1/runs/${encodeURIComponent(runId)}/events?after_sequence=${afterSequence}`);
     return result.data ?? [];
   }

@@ -1,10 +1,10 @@
-import type { IpcMain, WebContents } from "electron";
+import { app, type IpcMain, type WebContents } from "electron";
 import { getAgentCatalogSnapshot, getPlatformAgentStatus, listAgents, recordAgentUsage, setDefaultAgent } from "../../../../shared/main/agents";
 import type { MobilePairingController } from "../../../../shared/main/mobilePairingController";
-import { deleteMyDrSaiModelProvider, discoverMyDrSaiProviderModels, getMyDrSaiAgentModelPolicy, getMyDrSaiConfig, listMyDrSaiModelProviderPresets, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, testMyDrSaiModelDraft, testMyDrSaiModelProvider, updateMyDrSaiAgentModelPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection } from "../../../../shared/main/myDrSaiConfig";
+import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../../shared/main/myDrSaiConfig";
 import { createThread, deleteThread, getThreadSnapshot, listThreads, searchThreadMessages, updateThread, updateThreadSnapshot } from "../../../../shared/main/threads";
 import { getRuntimeThreadSnapshot, getRuntimeThreadSnapshotEnvelope } from "../../../../shared/main/threadRuntimeSubscription";
-import { createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../../../../shared/main/workspaces";
+import { createDefaultWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../../../../shared/main/workspaces";
 import { remoteWorkspaceController } from "../../../../shared/main/remoteWorkspaceController";
 import type { MacosServiceContainer } from "../serviceContainer";
 import { macosThreadSnapshotController } from "../threadSnapshotController";
@@ -105,8 +105,9 @@ export function registerMacosCatalogIpc(
     return mergeSearchResults(remote, local, typeof request?.limit === "number" ? request.limit : 24);
   });
   ipcMain.handle("desktop:update-thread-snapshot", (_event, request) => updateThreadSnapshot(request));
-  ipcMain.handle("desktop:list-workspaces", () => listWorkspaces());
+  ipcMain.handle("desktop:list-workspaces", () => listWorkspaces(app.getPath("documents")));
   ipcMain.handle("desktop:create-workspace", (_event, request) => createWorkspace(request));
+  ipcMain.handle("desktop:create-default-workspace", () => createDefaultWorkspace(app.getPath("documents")));
   ipcMain.handle("desktop:update-workspace", (_event, request) => updateWorkspace(request));
   ipcMain.handle("desktop:delete-workspace", (_event, id) => deleteWorkspace(id));
   ipcMain.handle("desktop:get-my-drsai-config", async (_event, workspacePath) => {
@@ -117,15 +118,43 @@ export function registerMacosCatalogIpc(
   });
   ipcMain.handle("desktop:update-my-drsai-config", (_event, request) => updateMyDrSaiConfig(request));
   ipcMain.handle("desktop:update-my-drsai-model-connection", (_event, request) => updateMyDrSaiModelConnection(request));
+  ipcMain.handle("desktop:preview-my-drsai-model-connection", (_event, request) => previewMyDrSaiModelConnection(request));
+  ipcMain.handle("desktop:diagnose-my-drsai-model-connection", (_event, online) => diagnoseMyDrSaiModelConnection(online));
+  ipcMain.handle("desktop:restore-my-drsai-model-connection", (_event, expectedRevision) => restoreMyDrSaiModelConnection(expectedRevision));
+  ipcMain.handle("desktop:save-my-drsai-model-provider", (_event, provider, request) => saveMyDrSaiModelProvider(provider, request));
   ipcMain.handle("desktop:test-my-drsai-model-provider", (_event, provider, model) => testMyDrSaiModelProvider(provider, model));
+  ipcMain.handle("desktop:probe-my-drsai-provider-model", (_event, provider, request) => probeMyDrSaiProviderModel(provider, request));
   ipcMain.handle("desktop:test-my-drsai-model-draft", (_event, request, mode) => testMyDrSaiModelDraft(request, mode));
   ipcMain.handle("desktop:list-my-drsai-model-provider-presets", () => listMyDrSaiModelProviderPresets());
-  ipcMain.handle("desktop:discover-my-drsai-provider-models", (_event, provider, refresh) => discoverMyDrSaiProviderModels(provider, refresh));
+  ipcMain.handle("desktop:discover-my-drsai-provider-models", (_event, provider, refresh, draft) => discoverMyDrSaiProviderModels(provider, refresh, draft));
   ipcMain.handle("desktop:preflight-my-drsai-model-provider-deletion", (_event, provider) => preflightMyDrSaiModelProviderDeletion(provider));
+  ipcMain.handle("desktop:get-my-drsai-runtime-model-catalog", () => getMyDrSaiRuntimeModelCatalog());
   ipcMain.handle("desktop:get-my-drsai-agent-model-policy", (_event, agentId) => getMyDrSaiAgentModelPolicy(agentId));
+  ipcMain.handle("desktop:get-my-drsai-agent-tool-policy", (_event, agentId) => getMyDrSaiAgentToolPolicy(agentId));
+  ipcMain.handle("desktop:update-my-drsai-agent-tool-policy", (_event, agentId, policy) => updateMyDrSaiAgentToolPolicy(agentId, policy));
+  ipcMain.handle("desktop:preview-my-drsai-agent-tools", (_event, agentId) => previewMyDrSaiAgentTools(agentId));
+  ipcMain.handle("desktop:test-agent-tool", (_event, toolId) => testAgentTool(toolId));
+  ipcMain.handle("desktop:get-my-drsai-agent-skill-policy", (_event, agentId) => getMyDrSaiAgentSkillPolicy(agentId));
+  ipcMain.handle("desktop:update-my-drsai-agent-skill-policy", (_event, agentId, policy) => updateMyDrSaiAgentSkillPolicy(agentId, policy));
+  ipcMain.handle("desktop:preview-my-drsai-agent-skills", (_event, agentId) => previewMyDrSaiAgentSkills(agentId));
+  ipcMain.handle("desktop:get-my-drsai-agent-knowledge-policy", (_event, agentId) => getMyDrSaiAgentKnowledgePolicy(agentId));
+  ipcMain.handle("desktop:update-my-drsai-agent-knowledge-policy", (_event, agentId, policy) => updateMyDrSaiAgentKnowledgePolicy(agentId, policy));
+  ipcMain.handle("desktop:preview-my-drsai-agent-knowledge", (_event, agentId) => previewMyDrSaiAgentKnowledge(agentId));
+  ipcMain.handle("desktop:get-my-drsai-agent-model-capability-status", (_event, agentId) => getMyDrSaiAgentModelCapabilityStatus(agentId));
   ipcMain.handle("desktop:update-my-drsai-agent-model-policy", (_event, agentId, policy) => updateMyDrSaiAgentModelPolicy(agentId, policy));
   ipcMain.handle("desktop:migrate-my-drsai-agent-model-policy", (_event, agentId, legacyModel, expectedRevision) => migrateMyDrSaiAgentModelPolicy(agentId, legacyModel, expectedRevision));
   ipcMain.handle("desktop:delete-my-drsai-model-provider", (_event, provider, deleteCredential) => deleteMyDrSaiModelProvider(provider, deleteCredential));
+  ipcMain.handle("desktop:list-perceptors", () => listPerceptors());
+  ipcMain.handle("desktop:save-perceptor", (_event, request) => savePerceptor(request));
+  ipcMain.handle("desktop:update-perceptor", (_event, perceptorId, request) => updatePerceptor(perceptorId, request));
+  ipcMain.handle("desktop:test-perceptor", (_event, perceptorId, capability) => testPerceptor(perceptorId, capability));
+  ipcMain.handle("desktop:delete-perceptor", (_event, perceptorId) => deletePerceptor(perceptorId));
+  ipcMain.handle("desktop:list-knowledge-bases", () => listKnowledgeBases());
+  ipcMain.handle("desktop:create-knowledge-base", (_event, request) => createKnowledgeBase(request));
+  ipcMain.handle("desktop:index-knowledge-base", (_event, knowledgeId) => indexKnowledgeBase(knowledgeId));
+  ipcMain.handle("desktop:search-knowledge-base", (_event, knowledgeId, query) => searchKnowledgeBase(knowledgeId, query));
+  ipcMain.handle("desktop:test-knowledge-base", (_event, knowledgeId) => testKnowledgeBase(knowledgeId));
+  ipcMain.handle("desktop:delete-knowledge-base", (_event, knowledgeId) => deleteKnowledgeBase(knowledgeId));
 }
 
 function mergeSearchResults<T extends { threadId: string; messageId: string; updatedAt: number }>(remote: T[], local: T[], rawLimit: number): T[] {

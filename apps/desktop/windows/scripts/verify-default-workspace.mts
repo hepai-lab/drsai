@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,7 +8,7 @@ import {
   DEFAULT_WORKSPACE_VERSION,
   resolveDefaultWorkspaceDisplayName,
 } from "../../shared/api/workspaceDefaults.ts";
-import { ensureDefaultWorkspaceDirectory } from "../../shared/main/defaultWorkspace.ts";
+import { ensureDefaultWorkspaceDirectory, migrateLegacyDefaultWorkspaceDirectory } from "../../shared/main/defaultWorkspace.ts";
 
 assert.equal(DEFAULT_WORKSPACE_FOLDER_NAME, "OpenDrSai Workspace");
 assert.equal(DEFAULT_WORKSPACE_DISPLAY_NAME, "默认");
@@ -39,6 +39,19 @@ try {
     await realpath(join(documentsPath, "OpenDrSai Workspace")),
     "changing the display name must not change the on-disk folder",
   );
+  const legacyPath = join(temporaryRoot, ".drsai", "workspaces", "default");
+  await mkdir(join(legacyPath, "nested"), { recursive: true });
+  await writeFile(join(legacyPath, "nested", "preserved.txt"), "legacy", "utf8");
+  assert.equal(await migrateLegacyDefaultWorkspaceDirectory(legacyPath, workspacePath), true);
+  assert.equal(await readFile(join(workspacePath, "nested", "preserved.txt"), "utf8"), "legacy");
+
+  const conflictingLegacyPath = join(temporaryRoot, ".drsai", "workspaces", "conflicting-default");
+  await mkdir(conflictingLegacyPath, { recursive: true });
+  await writeFile(join(conflictingLegacyPath, "conflict.txt"), "legacy", "utf8");
+  await writeFile(join(workspacePath, "conflict.txt"), "canonical", "utf8");
+  assert.equal(await migrateLegacyDefaultWorkspaceDirectory(conflictingLegacyPath, workspacePath), false);
+  assert.equal(await readFile(join(workspacePath, "conflict.txt"), "utf8"), "canonical", "existing canonical files must never be overwritten");
+  assert.equal(await readFile(join(conflictingLegacyPath, "conflict.txt"), "utf8"), "legacy", "conflicting legacy files must remain recoverable");
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
 }

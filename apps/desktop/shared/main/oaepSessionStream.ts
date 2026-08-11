@@ -350,15 +350,17 @@ async function consumeSse(
     while (!signal.aborted) {
       const { value, done } = await reader.read();
       buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
-      let boundary = buffer.indexOf("\n\n");
+      let consumed = 0;
+      let boundary = buffer.indexOf("\n\n", consumed);
       while (boundary >= 0) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
+        const frame = buffer.slice(consumed, boundary);
+        consumed = boundary + 2;
         const data = frame.split("\n").filter((line) => line.startsWith("data:"))
           .map((line) => line.slice(5).trimStart()).join("\n");
         if (data) await onEvent(JSON.parse(data) as OaepEvent);
-        boundary = buffer.indexOf("\n\n");
+        boundary = buffer.indexOf("\n\n", consumed);
       }
+      if (consumed > 0) buffer = buffer.slice(consumed);
       if (done) return;
     }
   } finally {
@@ -545,7 +547,16 @@ class SharedOaepSessionController {
     if (event.sequence !== this.cursor + 1) throw new OaepEventGap();
     reduceOaepEvent(this.items, this.runs, event, this.deltaShadows);
     this.cursor = event.sequence;
-    if (source === "replay") this.metrics.replayEvents += 1;
+    if (source === "replay") {
+      this.metrics.replayEvents += 1;
+      // Publish restoration before the first recovered Event. A terminal
+      // Event can make the owner stop synchronously, so a page-level callback
+      // after delivery is too late and loses the observable restored state.
+      if (this.retryAttempt) {
+        this.notifyConnection("connected");
+        this.retryAttempt = 0;
+      }
+    }
     else this.metrics.streamEvents += 1;
     this.notifyEvent(event, source);
   }
@@ -572,6 +583,9 @@ class SharedOaepSessionController {
           if (!page.has_more) break;
         }
         if (!firstReady) { firstReady = true; this.markReady(); }
+        // Replay itself is an authoritative Runtime connection. A terminal
+        // may arrive during replay and synchronously stop this subscription,
+        // so publish restoration before attempting the next long-lived SSE.
         const opened = await this.client.openOaepEventStream(this.sessionId, this.cursor, this.abort.signal);
         this.transition("connected");
         if (this.retryAttempt) this.notifyConnection("connected");

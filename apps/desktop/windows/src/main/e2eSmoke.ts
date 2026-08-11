@@ -1947,13 +1947,10 @@ async function runM07OperationalStateSmoke(window: BrowserWindow): Promise<Smoke
   })()`, true) as boolean;
   if (!checks.workspaceSelectedForRecovery) throw new Error("M07 recovery workspace was not selectable in the packaged UI.");
   const scenarios = [
-    { name: "identity", facts: { identity: "anonymous", runtime: "blocked", model: "unconfigured", workspace: "none", run: "failed" }, layer: "identity", state: "anonymous" },
-    { name: "runtime", facts: { identity: "authenticated", runtime: "blocked", model: "unconfigured", workspace: "none", run: "failed" }, layer: "runtime", state: "blocked" },
-    { name: "model", facts: { identity: "authenticated", runtime: "ready", model: "unconfigured", workspace: "none", run: "failed" }, layer: "model", state: "unconfigured" },
-    { name: "workspace", facts: { identity: "authenticated", runtime: "ready", model: "ready", workspace: "untrusted", run: "failed" }, layer: "workspace", state: "untrusted" },
-    { name: "approval", facts: { identity: "authenticated", runtime: "ready", model: "ready", workspace: "trusted", run: "waiting_approval" }, layer: "run", state: "waiting_approval" },
-    { name: "recovering", facts: { identity: "authenticated", runtime: "ready", model: "ready", workspace: "trusted", run: "recovering" }, layer: "run", state: "recovering" },
-    { name: "running", facts: { identity: "authenticated", runtime: "ready", model: "ready", workspace: "trusted", run: "running" }, layer: "run", state: "running" },
+    { name: "identity", facts: { identity: "anonymous", runtime: "blocked", model: "unconfigured", workspace: "none" }, layer: "identity", state: "anonymous" },
+    { name: "runtime", facts: { identity: "authenticated", runtime: "blocked", model: "unconfigured", workspace: "none" }, layer: "runtime", state: "blocked" },
+    { name: "model", facts: { identity: "authenticated", runtime: "ready", model: "unconfigured", workspace: "none" }, layer: "model", state: "unconfigured" },
+    { name: "workspace", facts: { identity: "authenticated", runtime: "ready", model: "ready", workspace: "untrusted" }, layer: "workspace", state: "untrusted" },
   ] as const;
   for (const scenario of scenarios) {
     await window.webContents.executeJavaScript(`(() => { window.dispatchEvent(new CustomEvent('drsai:e2e-operational-state', { detail: ${JSON.stringify(scenario.facts)} })); return true; })()`, true);
@@ -1973,7 +1970,7 @@ async function runM07OperationalStateSmoke(window: BrowserWindow): Promise<Smoke
       return { summary: bar.querySelector('summary')?.textContent?.trim() || '', summaryLabel: bar.querySelector('summary')?.getAttribute('aria-label') || '', rows, currentCount: rows.filter((row) => row.current === 'step').length };
     })()`, true) as Record<string, unknown>;
     checks[`${scenario.name}NotMaskedByReady`] = !String(state.summary).match(/^.*已就绪.*$/);
-    checks[`${scenario.name}FiveLayersVisible`] = Array.isArray(state.rows) && state.rows.length === 5 && state.currentCount === 1;
+    checks[`${scenario.name}FourLayersVisible`] = Array.isArray(state.rows) && state.rows.length === 4 && state.currentCount === 1;
     checks[`${scenario.name}AccessibleSummary`] = Boolean(String(state.summaryLabel).trim());
     (details.scenarios as unknown[]).push({ ...scenario, state });
     writeFileSync(join(evidenceDir, `m07-operational-${scenario.name}.png`), (await window.webContents.capturePage()).toPNG());
@@ -1987,7 +1984,7 @@ async function runM07OperationalStateSmoke(window: BrowserWindow): Promise<Smoke
   await window.webContents.debugger.sendCommand("Accessibility.enable");
   const axTree = await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree") as { nodes?: Array<Record<string, unknown>> };
   const names = (axTree.nodes ?? []).map((node) => String((node.name as { value?: unknown })?.value || ""));
-  checks.accessibilityTreeExposesCurrentState = names.some((name) => name.includes("任务运行") && name.includes("任务正在运行"));
+  checks.accessibilityTreeExposesCurrentState = names.some((name) => name.includes("工作区") && name.includes("需要信任工作区"));
   writeFileSync(join(evidenceDir, "m07-operational-accessibility-tree.json"), JSON.stringify(axTree, null, 2));
   if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
 
@@ -2013,12 +2010,9 @@ async function runM07OperationalStateSmoke(window: BrowserWindow): Promise<Smoke
       throw new Error("M07 recovery test could not return to the task shell.");
     }
   };
-  const readyBase = { identity: "authenticated", runtime: "ready", model: "ready", workspace: "trusted", run: "idle" };
-
-  for (const run of ["idle", "completed", "cancelled"]) {
-    await setFacts({ ...readyBase, run });
-    checks[`${run}DoesNotOccupyGlobalOverlay`] = await waitFor("!document.querySelector('[data-testid=operational-state-bar]')");
-  }
+  const readyBase = { identity: "authenticated", runtime: "ready", model: "ready", workspace: "trusted" };
+  await setFacts(readyBase);
+  checks.readyDoesNotOccupyGlobalOverlay = await waitFor("!document.querySelector('[data-testid=operational-state-bar]')");
 
   await setFacts({ ...readyBase, runtime: "blocked" });
   await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-primary-action]')?.click()", true);
@@ -2032,15 +2026,6 @@ async function runM07OperationalStateSmoke(window: BrowserWindow): Promise<Smoke
   await waitFor("document.querySelector('[data-testid=operational-action-message]')");
   checks.workspaceRecoveryTrustsSelectedWorkspace = await window.webContents.executeJavaScript(`window.openDrSai.listWorkspaces().then((rows) => rows.some((item) => item.path === ${JSON.stringify(workspacePath)} && item.trusted === true))`, true) as boolean;
   if (!checks.workspaceRecoveryTrustsSelectedWorkspace) throw new Error("M07 workspace recovery did not trust the selected workspace.");
-
-  await setFacts({ ...readyBase, run: "waiting_approval" });
-  await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-primary-action]')?.click()", true);
-  checks.approvalRecoveryOpensApprovalCenter = await waitFor("document.querySelector('.approval-center-view')");
-
-  await returnToTaskShell();
-  await setFacts({ ...readyBase, run: "failed" });
-  await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-primary-action]')?.click()", true);
-  checks.failedRunRecoveryOpensTaskCenter = await waitFor("document.querySelector('[data-testid=task-center-view]')");
 
   await returnToTaskShell();
   await setFacts({ ...readyBase, runtime: "blocked" });

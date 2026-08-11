@@ -64,6 +64,8 @@ const OIDC_FETCH_TIMEOUT_MS = Number(process.env.OPENDRSAI_OIDC_FETCH_TIMEOUT_MS
 const OIDC_AUTH_COMPLETE_DEEP_LINK = process.env.OPENDRSAI_DEEP_LINK_PROTOCOL === "opendrsai-dev"
   ? "opendrsai-dev://auth-complete"
   : "opendrsai://auth-complete";
+const OIDC_AUTH_COMPLETE_AUTO_OPEN =
+  process.env.OPENDRSAI_OIDC_AUTH_COMPLETE_AUTO_OPEN !== "0";
 
 interface StoredAuthSession extends AuthSession {
   sessionId: string;
@@ -1502,6 +1504,24 @@ function safeCloseServer(server: Server): void {
 }
 
 function successHtml(): string {
+  if (!OIDC_AUTH_COMPLETE_AUTO_OPEN) {
+    return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>登录成功</title>
+    <style>
+      body { font: 16px "Segoe UI", "Open Sans", Arial, sans-serif; text-align: center; padding: 48px; color: #172033; }
+      p { color: #536074; }
+    </style>
+  </head>
+  <body>
+    <h1>登录成功</h1>
+    <p>已经返回 OpenDrSai，你现在可以关闭此页面。</p>
+    <script>setTimeout(function () { window.close(); }, 300);</script>
+  </body>
+</html>`;
+  }
   return `<!doctype html>
 <html lang="en">
   <head>

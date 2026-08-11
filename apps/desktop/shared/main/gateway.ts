@@ -157,6 +157,9 @@ async function checkGatewayEndpoints(): Promise<boolean> {
 
 export async function getGatewayStatus(): Promise<GatewayStatus> {
   const probe = await probeGatewayEndpoints();
+  // A later healthy instance must receive identity again, but routine health
+  // reads against the same instance must not rewrite identical identity state.
+  if (!probe.ready) lastSyncedGatewayUserId = null;
   // Ownership and health are deliberately independent. A managed Runtime that
   // misses one probe deadline is degraded, not a foreign port occupant.
   const managed = isGatewayOwnershipKnown();
@@ -216,8 +219,9 @@ export async function syncAuthIdentityToGateway(explicitUserId?: string): Promis
   process.env.DRSAI_DESKTOP_USER = userId;
   process.env.DRSAI_USER_ID = userId;
 
-  // Runtime override does not evict agents; safe to refresh on adopt/start.
-  await putGatewayJson("/v1/config/user-name", { user_name: userId });
+  // Runtime override does not evict agents, but an unchanged identity must not
+  // generate a PUT (and INFO log) on every health/recovery cycle.
+  if (identityChanged) await putGatewayJson("/v1/config/user-name", { user_name: userId });
 
   // cli_config PUT evicts the user's agent pool — only when the id changes.
   if (identityChanged && previousCliUserId !== userId) {

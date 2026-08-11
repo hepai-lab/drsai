@@ -13,6 +13,7 @@ const promotionPolicy = read("scripts/update-promotion-policy.mjs");
 const promotionVerifier = read("scripts/verify-update-promotion-policy.mjs");
 const ossPublisher = read("scripts/publish-update-to-oss.mjs");
 const publishedVerifier = read("scripts/verify-published-update.mjs");
+const websiteReleaseVerifier = read("scripts/verify-website-release.mjs");
 const thinPackageVerifier = read("scripts/verify-thin-update-package.mjs");
 const metadataAnnotator = read("scripts/annotate-update-metadata.mjs");
 const runtimeInstaller = read("src/main/runtimeInstaller.ts");
@@ -88,20 +89,24 @@ for (const contract of ["MACOS_UPDATE_CDN_URL", "MACOS_UPDATE_GITHUB_OWNER", "MA
 }
 for (const contract of ["http://", "user:secret@", "selected CDN version", "digests differ"]) assert.ok(updateFeedVerifier.includes(contract), `Unsigned update policy verifier omits ${contract}`);
 assert.ok(packageJson.scripts["verify:update-feed:unsigned"], "macOS package omits the unsigned update feed gate");
-for (const contract of ["signed-l6", "verify-dual-source-digests", "promote-stable-metadata", "publish-github-release", "verify-production-fallback", "productionPromotionBlocked: true"]) {
+for (const contract of ["signed-l6", "verify-cdn-assets", "promote-stable-metadata", "verify-production-assets", "productionPromotionBlocked: true"]) {
   assert.ok(`${promotionPolicy}\n${promotionVerifier}`.includes(contract), `macOS promotion order gate omits ${contract}`);
 }
 assert.ok(packageJson.scripts["verify:update-promotion:unsigned"], "macOS package omits the unsigned promotion order gate");
-for (const contract of ["--preflight", "--assets-only", "--promote-metadata", "--snapshot-stable", "--rollback-metadata", 'spawnSync(binary, ["stat", target]', "Immutable OSS object already exists", "Unable to prove immutable OSS object is absent", '"--force", "--meta"', 'runRaw(["rm", stableTarget, "--force"])', "channels/history/macos/arm64", "channels/rollback/macos/arm64", "max-age=31536000, immutable", "max-age=30, must-revalidate"]) {
+for (const contract of ["--preflight", "--assets-only", "--promote-metadata", "--snapshot-stable", "--rollback-metadata", 'withConfig(["stat", target])', "OPENDRSAI_OSSUTIL_CONFIG", "Immutable OSS object already exists", "Unable to prove immutable OSS object is absent", '"--force", "--meta"', 'runRaw(["rm", stableTarget, "--force"])', "channels/history/macos/arm64", "channels/rollback/macos/arm64", "max-age=31536000, immutable", "max-age=30, must-revalidate"]) {
   assert.ok(ossPublisher.includes(contract), `macOS OSS publisher omits ${contract}`);
 }
-for (const contract of ["method: \"HEAD\"", "Range: \"bytes=0-1\"", "content-range", "sha256", '"release", "download"', "--pre-promotion", "--metadata-only"]) {
+for (const contract of ["--head", '"--range", "0-1"', "content-range", "sha256", "OSS/CDN assets are byte-identical", "--pre-promotion", "--metadata-only"]) {
   assert.ok(publishedVerifier.includes(contract), `macOS published-origin verifier omits ${contract}`);
 }
-for (const contract of ["macos-production-release", "Verify OSS CLI and publication credentials", "--preflight", "Create immutable GitHub draft release", "--assets-only", "Verify staged CDN and GitHub draft byte identity", "Publish verified GitHub release before stable promotion", "Snapshot current stable metadata", "--snapshot-stable", "--promote-metadata", "Verify stable metadata", "--rollback-metadata"]) {
+for (const contract of ["--origin", "--download-origin", "--release-dir", "latest-mac.yml", "opendrsaiRuntimeVersion", "remote-local-byte-identity", '"stapler", "validate"', '"--assess", "--type", "execute"', "website-release.json"]) {
+  assert.ok(websiteReleaseVerifier.includes(contract), `macOS website release verifier omits ${contract}`);
+}
+for (const contract of ["macos-production-release", "Verify OSS CLI and publication credentials", "--preflight", "--assets-only", "Verify staged OSS/CDN byte identity", "Snapshot current stable metadata", "--snapshot-stable", "--promote-metadata", "Verify stable metadata", "--rollback-metadata"]) {
   assert.ok(workflow.includes(contract), `macOS production publication workflow omits ${contract}`);
 }
-assert.ok(packageJson.scripts["verify:update-publish-plan"] && packageJson.scripts["publish:update:oss"] && packageJson.scripts["verify:update-published"], "macOS package omits production distribution commands");
+for (const forbidden of ["gh release create", "gh release edit", "GitHub draft byte identity"]) assert.equal(workflow.includes(forbidden), false, `OSS-only workflow must not require ${forbidden}`);
+assert.ok(packageJson.scripts["verify:update-publish-plan"] && packageJson.scripts["publish:update:oss"] && packageJson.scripts["verify:update-published"] && packageJson.scripts["verify:website-release"], "macOS package omits production distribution commands");
 for (const contract of ["macos-production-release", "OPENDRSAI_OSSUTIL_BIN", "Developer ID Application", "previousExists=false", "--rollback-metadata", "opendrsaiRuntimeSha256", "production-promotion-blocked"]) assert.ok(updateRunbook.includes(contract), `macOS update production runbook omits ${contract}`);
 for (const contract of ["scheduleUpdateHealthConfirmation", "minimum = acceptance ? 1_000 : 30_000", "configureSignedUpdateLabFeed", 'url.protocol !== "https:"', "url.hostname !== expectedHost"]) {
   assert.ok(`${updater}\n${updateFeedPolicy}`.includes(contract), `macOS updater health/lab policy omits ${contract}`);

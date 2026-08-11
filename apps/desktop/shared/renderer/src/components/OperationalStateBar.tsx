@@ -3,8 +3,8 @@ import type { OperationalStateDecision } from "@shared/operationalState";
 import type { AppLanguage } from "../navigation";
 
 const LABELS = {
-  zh: { identity: "身份", runtime: "运行时", model: "当前智能体模型", workspace: "工作区", run: "任务运行" },
-  en: { identity: "Identity", runtime: "Runtime", model: "Current Agent model", workspace: "Workspace", run: "Task run" },
+  zh: { identity: "身份", runtime: "运行时", model: "智能体", workspace: "工作区" },
+  en: { identity: "Identity", runtime: "Runtime", model: "Agent", workspace: "Workspace" },
 } as const;
 
 const STATE_COPY: Record<string, { zh: string; en: string }> = {
@@ -20,14 +20,6 @@ const STATE_COPY: Record<string, { zh: string; en: string }> = {
   none: { zh: "需要选择工作区", en: "Workspace selection required" },
   untrusted: { zh: "需要信任工作区", en: "Workspace trust required" },
   trusted: { zh: "已信任", en: "Trusted" },
-  idle: { zh: "可以开始任务", en: "Ready to start a task" },
-  queued: { zh: "任务正在排队", en: "Task is queued" },
-  running: { zh: "任务正在运行", en: "Task is running" },
-  waiting_approval: { zh: "任务等待你的批准", en: "Task needs your approval" },
-  recovering: { zh: "正在恢复任务", en: "Recovering the task" },
-  failed: { zh: "任务失败，需要处理", en: "Task failed and needs attention" },
-  completed: { zh: "最近任务已完成", en: "Latest task completed" },
-  cancelled: { zh: "最近任务已取消", en: "Latest task cancelled" },
 };
 
 const AUTO_OPEN_STATES = new Set([
@@ -36,8 +28,6 @@ const AUTO_OPEN_STATES = new Set([
   "unconfigured",
   "none",
   "untrusted",
-  "waiting_approval",
-  "failed",
 ]);
 
 export function OperationalStateBar({ decision, language, busy = false, actionMessage, onPrimaryAction, onCopyDiagnostics }: {
@@ -75,7 +65,7 @@ export function OperationalStateBar({ decision, language, busy = false, actionMe
       <span className="operational-state-dot" aria-hidden="true" />
       <span>{currentCopy}</span>
     </summary>
-    <div className="operational-state-popover" role="dialog" aria-label={zh ? "任务运行状态" : "Task run status"}>
+    <div className="operational-state-popover" role="dialog" aria-label={zh ? "OpenDrSai 就绪状态" : "OpenDrSai readiness status"}>
       <header>
         <strong>{labels[decision.currentLayer]}</strong>
         <span>{currentCopy}</span>
@@ -104,5 +94,5 @@ function primaryActionLabel(decision: OperationalStateDecision, language: AppLan
   if (decision.currentLayer === "runtime") return zh ? "修复并重试运行时" : "Repair and retry runtime";
   if (decision.currentLayer === "model") return decision.state === "untested" ? (zh ? "打开模型提供方设置" : "Open Model provider settings") : (zh ? "配置当前智能体模型" : "Configure current Agent model");
   if (decision.currentLayer === "workspace") return decision.state === "untrusted" ? (zh ? "信任此工作区" : "Trust this workspace") : (zh ? "选择工作区" : "Choose workspace");
-  return decision.state === "waiting_approval" ? (zh ? "查看待批准操作" : "Review pending approval") : (zh ? "查看并重试任务" : "Review and retry task");
+  return zh ? "检查工作区" : "Check workspace";
 }

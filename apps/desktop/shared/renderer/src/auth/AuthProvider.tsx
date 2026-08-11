@@ -82,8 +82,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
           setMessage("Developer workspace unlocked.");
           return;
         }
-        // Restoring identity must stay cheap. Runtime bootstrap is deferred
-        // until the user sends a task or explicitly requests recovery.
+        // The main screen performs the real Runtime/service readiness check.
+        // Keep this false until bootstrap has reached an explicit terminal state.
         setServiceReady(false);
         setServiceBlocker(null);
       }
@@ -156,6 +156,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     void loadInitialSession();
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (
+      !session.authenticated ||
+      session.authMode === "offline" ||
+      serviceReady ||
+      serviceBusy ||
+      serviceBlocker
+    ) {
+      return;
+    }
+    void retryBootstrap();
+  }, [
+    serviceBlocker,
+    serviceBusy,
+    serviceReady,
+    session.authMode,
+    session.authenticated,
+  ]);
 
   useEffect(() => {
     if (
