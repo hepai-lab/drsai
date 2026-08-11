@@ -352,6 +352,7 @@ apps/desktop/shared/renderer/out/
 # Reasonix（个人配置，不提交）
 ########################
 .reasonix/
+reasonix.toml
 
 ########################
 # E2E 测试（个人使用，不提交）
