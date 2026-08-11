@@ -34,6 +34,7 @@ const packagedSmoke = read("scripts/verify-packaged-smoke.mjs");
 const packagedL5 = read("scripts/verify-packaged-l5.mjs");
 const sleepWakeDevice = read("scripts/verify-sleep-wake-real-device.mjs");
 const releaseL6 = read("scripts/verify-release-l6.mjs");
+const dmgNotarizer = read("scripts/notarize-dmg.mjs");
 const tccL6 = read("scripts/verify-tcc-real-device.mjs");
 const onlineUpdateL6 = read("scripts/verify-online-signed-update.mjs");
 const updateWatchdog = read("resources/update/update-watchdog.sh");
@@ -72,6 +73,8 @@ for (const path of ["../shared/browser-use-worker/worker.py", "../shared/browser
   assert.ok(existsSync(resolve(root, path)), `missing shared Browser worker resource: ${path}`);
 }
 assert.ok(packageJson.scripts["build:mac:arm64"]?.includes("electron-builder"));
+assert.ok(packageJson.scripts["build:mac:arm64"]?.includes("notarize:dmg"), "Release build must notarize and staple the completed DMG.");
+for (const contract of ["notarytool", 'submission.status, "Accepted"', '"stapler", "staple"', '"stapler", "validate"', "dmg-notarization.json"]) assert.ok(dmgNotarizer.includes(contract), `DMG notarizer omits ${contract}`);
 assert.ok(packageJson.devDependencies["electron-builder"]);
 assert.ok(packageJson.dependencies["electron-updater"]);
 assert.ok(packageJson.devDependencies.c8, "coverage runner dependency must be pinned in the macOS workspace");
