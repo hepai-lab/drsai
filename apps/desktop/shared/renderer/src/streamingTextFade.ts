@@ -57,4 +57,3 @@ function transformChildren(parent: any, segments: StreamingTextSegment[], blocke
 export function createStreamingTextFadePlugin(segments: StreamingTextSegment[]) {
   return () => (tree: any): void => transformChildren(tree, segments);
 }
-

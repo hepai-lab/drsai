@@ -26,4 +26,3 @@ export function splitStreamingMarkdown(markdown: string): StreamingMarkdownSplit
   if (lastBoundary === 0) return { stable: "", tail: markdown };
   return { stable: markdown.slice(0, lastBoundary), tail: markdown.slice(lastBoundary) };
 }
-

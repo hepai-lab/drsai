@@ -64,4 +64,3 @@ export function useStreamingDisplayBuffer(authoritative: string, streaming: bool
   }, []);
   return streaming ? displayed : authoritative;
 }
-

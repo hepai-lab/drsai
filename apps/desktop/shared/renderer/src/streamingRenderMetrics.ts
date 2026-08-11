@@ -31,4 +31,3 @@ export function resetStreamingRenderMetrics(): void {
   samples["markdown-render"] = [];
   samples["commit-layout"] = [];
 }
-

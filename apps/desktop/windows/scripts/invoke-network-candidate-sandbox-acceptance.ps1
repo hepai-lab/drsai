@@ -15,4 +15,3 @@ $arguments = @{
 }
 if ($EvidenceRoot) { $arguments.EvidenceRoot = $EvidenceRoot }
 & (Join-Path $PSScriptRoot "invoke-windows-sandbox-oidc-acceptance.ps1") @arguments
-
