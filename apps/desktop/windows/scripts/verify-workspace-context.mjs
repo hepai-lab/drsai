@@ -66,7 +66,7 @@ const checks = [
     file: "../shared/renderer/src/navigation.ts",
     markers: [
       "getRightTabs",
-      "[\"files\", \"browser\", \"terminal\", \"debug\"]",
+      "[\"run\", \"files\", \"browser\", \"terminal\", \"debug\"]",
       "browser: \"Browser\"",
     ],
   },

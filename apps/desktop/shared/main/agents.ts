@@ -1,12 +1,14 @@
 import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { join } from "path";
-import type {
-  DesktopAgent,
-  DesktopAgentCatalogSnapshot,
-  DesktopAgentListOptions,
-  DesktopAgentPreferenceResult,
-  PlatformAgentStatus,
+import {
+  LOCAL_OPENDRSAI_AGENT_NAME,
+  type ConfiguredAgentDescriptor,
+  type DesktopAgent,
+  type DesktopAgentCatalogSnapshot,
+  type DesktopAgentListOptions,
+  type DesktopAgentPreferenceResult,
+  type PlatformAgentStatus,
 } from "../api/desktopApi";
 import { getMyDrSaiAgentModelPolicy, listConfiguredAgents } from "./myDrSaiConfig";
 import {
@@ -16,7 +18,7 @@ import {
   requireAuthContext,
 } from "./auth";
 import { getGatewaySnapshot } from "./gateway";
-import { DRSAI_HOME } from "./paths";
+import { DRSAI_CONFIG_FILE, DRSAI_HOME } from "./paths";
 import { getActivePlatformConfig } from "./platformConfig";
 import {
   fetchPlatformAgents,
@@ -58,7 +60,6 @@ const platformCatalogFlights = new Map<string, Promise<{
   executionDescriptors: PlatformAgentExecutionDescriptor[];
   status: PlatformAgentStatus;
 }>>();
-let localAgentCache: { at: number; agents: DesktopAgent[] } | undefined;
 let localAgentFlight: Promise<DesktopAgent[]> | undefined;
 
 let platformStatus: PlatformAgentStatus = {
@@ -182,15 +183,10 @@ export async function respondToDdfChatInput(
 }
 
 async function listLocalAgents(options: DesktopAgentListOptions = {}): Promise<DesktopAgent[]> {
-  if (!options.refresh && localAgentCache && Date.now() - localAgentCache.at < 5_000) {
-    return structuredClone(localAgentCache.agents);
-  }
   if (localAgentFlight) return structuredClone(await localAgentFlight);
   localAgentFlight = loadLocalAgents(options);
   try {
-    const agents = await localAgentFlight;
-    localAgentCache = { at: Date.now(), agents: structuredClone(agents) };
-    return agents;
+    return await localAgentFlight;
   } finally {
     localAgentFlight = undefined;
   }
@@ -200,13 +196,16 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
   // Catalog discovery is read-only. It must never start Python, Gateway, or
   // Codex merely because the user opened the Agent Square.
   const gateway = getGatewaySnapshot();
+  const localSnapshot = readLocalAgentSnapshot();
   const configured = gateway.ready
-    ? await listConfiguredAgents().catch(() => ({ current_agent: "", agents: [] }))
-    : { current_agent: "", agents: [] };
-  const descriptors = configured.agents;
+    ? await listConfiguredAgents().catch(() => localSnapshot)
+    : localSnapshot;
+  const descriptors = configured.agents.length > 0
+    ? configured.agents
+    : [recoveryLocalAgentDescriptor()];
   const agents: DesktopAgent[] = descriptors.map((descriptor) => ({
     id: descriptor.agent_name,
-    name: descriptor.display_name,
+    name: LOCAL_OPENDRSAI_AGENT_NAME,
     description: "An agent running on this computer.", owner: "Local", source: "local",
     status: gateway.ready ? "running" : "stopped", mode: "local", available: descriptor.enabled,
     capabilities: ["chat", "workspace", "tools"], catalogGroup: "local", url: gateway.baseUrl,
@@ -251,6 +250,63 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
     // catalog browsing into a Runtime recovery workflow.
   }
   return agents;
+}
+
+/**
+ * Reconstruct the local Agent catalog without starting the Runtime. Installed
+ * configuration is the identity authority; Runtime health only enriches the
+ * card with live status and model details.
+ */
+function readLocalAgentSnapshot(): { current_agent: string; agents: ConfiguredAgentDescriptor[] } {
+  try {
+    const config = readFileSync(DRSAI_CONFIG_FILE, "utf8");
+    const currentAgent = readTomlAgentId(config, "current_agent");
+    if (!currentAgent) return { current_agent: "", agents: [] };
+    const expectedRelativePath = `configs/agents/agent_${currentAgent}.toml`;
+    const configuredPath = readTomlString(config, "agent_config_file")?.replace(/\\/g, "/");
+    if (configuredPath !== expectedRelativePath) return { current_agent: "", agents: [] };
+    const agentConfigPath = join(DRSAI_HOME, ...expectedRelativePath.split("/"));
+    const agentConfig = readFileSync(agentConfigPath, "utf8");
+    const configuredAgentName = readTomlAgentId(agentConfig, "agent_name");
+    if (configuredAgentName !== currentAgent) return { current_agent: "", agents: [] };
+    return {
+      current_agent: currentAgent,
+      agents: [{
+        agent_name: currentAgent,
+        display_name: readTomlString(agentConfig, "display_name") || LOCAL_OPENDRSAI_AGENT_NAME,
+        enabled: readTomlBoolean(agentConfig, "enabled") !== false,
+        config_file: expectedRelativePath,
+        current: true,
+      }],
+    };
+  } catch {
+    return { current_agent: "", agents: [] };
+  }
+}
+
+function recoveryLocalAgentDescriptor(): ConfiguredAgentDescriptor {
+  return {
+    agent_name: "opendrsai",
+    display_name: LOCAL_OPENDRSAI_AGENT_NAME,
+    enabled: true,
+    config_file: "configs/agents/agent_opendrsai.toml",
+    current: true,
+  };
+}
+
+function readTomlAgentId(source: string, key: string): string | null {
+  const value = readTomlString(source, key);
+  return value && /^[a-z][a-z0-9_-]{0,63}$/.test(value) ? value : null;
+}
+
+function readTomlString(source: string, key: string): string | null {
+  const match = source.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"\\r\\n]*)"\\s*(?:#.*)?$`, "m"));
+  return match?.[1]?.trim() || null;
+}
+
+function readTomlBoolean(source: string, key: string): boolean | null {
+  const match = source.match(new RegExp(`^\\s*${key}\\s*=\\s*(true|false)\\s*(?:#.*)?$`, "mi"));
+  return match ? match[1].toLowerCase() === "true" : null;
 }
 
 async function listPlatformAgents(options: DesktopAgentListOptions): Promise<DesktopAgent[]> {

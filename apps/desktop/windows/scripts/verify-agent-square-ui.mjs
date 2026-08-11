@@ -48,13 +48,16 @@ assert(chat.includes("if (!platformDescriptor)") && chat.includes("await runRunt
 assert(chat.includes("Only HAI Platform Agents reach this branch"), "platform chat is not isolated from the local Runtime branch");
 assert(agents.includes('capabilities.has("chat")') && agents.includes('capabilities.has("streaming")'), "per-agent chat capability gate is missing");
 assert(threads.includes("boundAgentId") && threads.includes("boundAgentName"), "D2 thread agent binding is missing");
-assert(app.includes("changesBoundAgent") && app.includes("window.confirm") && app.includes("Start a new conversation"), "D5 switch protection is missing");
+assert(app.includes("changesBoundAgent") && app.includes("requestAppDecision") && app.includes("Start a new conversation"), "D5 switch protection is missing");
 assert(
   app.includes("persistInBackground: true") && app.includes("Keep navigation responsive"),
   "starting an agent chat still blocks navigation on thread persistence",
 );
 assert(
-  workspace.includes('data-testid="composer-input"') && workspace.includes("autoFocus"),
+  workspace.includes('data-testid="composer-input"')
+    && workspace.includes("composerFocusRequest")
+    && workspace.includes("textareaRef.current?.focus({ preventScroll: true })")
+    && app.includes("setComposerFocusRequest((current) => current + 1)"),
   "starting an agent chat does not focus the empty composer",
 );
 assert(workspace.includes("chat-agent-input-request") && workspace.includes("respondChatInput"), "E5 native input request UI is missing");

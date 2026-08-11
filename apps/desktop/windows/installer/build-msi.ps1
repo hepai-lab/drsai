@@ -7,6 +7,7 @@ param(
     [string]$BootstrapperVersion = "",
     [string]$ExtraInstallArgs = "",
     [string]$WixDir = "",
+    [switch]$RequireTrustedRuntime,
     [ValidatePattern('^[A-Za-z0-9._-]+\.msi$')]
     [string]$OutputName = "OpenDrSai-Windows-Installer-x64.msi"
 )
@@ -152,6 +153,16 @@ if (-not $RuntimePath) {
 }
 if ($RuntimePath) {
     $runtimeItem = Get-Item -LiteralPath (Resolve-FullPath $RuntimePath)
+    if ($RequireTrustedRuntime) {
+        $receiptPath = "$($runtimeItem.FullName).receipt.json"
+        if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+            throw "Trusted Runtime receipt is required before building an MSI: $receiptPath"
+        }
+        & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `
+            (Join-Path $windowsAppDir "scripts\verify-final-runtime-artifact.ps1") `
+            -ArchivePath $runtimeItem.FullName -ReceiptPath $receiptPath
+        if ($LASTEXITCODE -ne 0) { throw "MSI input Runtime failed completed-artifact verification." }
+    }
     if (-not $RuntimeSha256) {
         $RuntimeSha256 = Get-Sha256Hex $runtimeItem.FullName
     }

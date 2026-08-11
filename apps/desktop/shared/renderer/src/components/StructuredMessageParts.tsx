@@ -30,11 +30,13 @@ import type {
 } from "@shared/structuredConversation";
 import type { RunReproducibilityLevel } from "@shared/runInspection";
 import { ChatMessageContent } from "./ChatMessageContent";
+import { desktopApi } from "../desktopApi";
 
 export interface InteractionResponse extends Record<string, unknown> {
   approved?: boolean;
   decision?: "accept" | "acceptForSession" | "decline" | "revise";
   goal?: { objective: string; materials: string[]; outputs: string[]; constraints: string[] };
+  capabilityAction?: "configured" | "answer_without_network";
 }
 
 interface StructuredMessagePartsProps {
@@ -42,6 +44,7 @@ interface StructuredMessagePartsProps {
   runId?: string;
   language: "en" | "zh";
   respondedRequestIds: ReadonlySet<string>;
+  configuredCapabilityRequestIds: ReadonlySet<string>;
   onOpenLink: (href: string | undefined) => void;
   onOpenArtifact: (part: ArtifactPart) => void;
   onOpenCitation: (part: CitationPart) => void;
@@ -69,6 +72,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   runId,
   language,
   respondedRequestIds,
+  configuredCapabilityRequestIds,
   onOpenLink,
   onOpenArtifact,
   onOpenCitation,
@@ -90,7 +94,11 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   const progressParts = turn.parts.filter((part) => part.kind === "progress");
   const reasoningParts = turn.parts.filter((part) => part.kind === "reasoning");
   const subtaskParts = turn.parts.filter((part) => part.kind === "subtask");
-  const interactionParts = turn.parts.filter((part): part is InteractionPart => part.kind === "interaction" && (part.status === "running" || part.status === "pending"));
+  const interactionParts = turn.parts.filter((part): part is InteractionPart =>
+    part.kind === "interaction"
+    && (part.status === "running" || part.status === "pending")
+    && (turn.status === "running" || !respondedRequestIds.has(part.requestId))
+  );
   const resultParts = turn.parts.filter((part) => part.kind === "markdown" || part.kind === "artifact" || part.kind === "citation");
   const noticeParts = turn.parts.filter((part): part is NoticePart => part.kind === "notice");
   const publicSources = useMemo(() => extractPublicSources(turn), [turn]);
@@ -170,7 +178,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     </div>;
     if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} />;
     if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
-    if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} />;
+    if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} capabilityConfigured={configuredCapabilityRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} onOpenLink={onOpenLink} />;
     if (part.kind === "subtask") return <div className={`structured-subtask ${part.status}`} key={part.id}><ListChecks size={14} aria-hidden="true" /><span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span></div>;
     return <NoticeItem key={part.id} part={part} language={language} onOpenDebug={onOpenDebug} />;
   }
@@ -646,17 +654,21 @@ function InteractionItem({
   part,
   language,
   responded,
+  capabilityConfigured,
   onRespond,
   onRequestText,
   onOpenResult,
+  onOpenLink,
 }: {
   compact?: boolean;
   part: InteractionPart;
   language: "en" | "zh";
   responded: boolean;
+  capabilityConfigured: boolean;
   onRespond: (part: InteractionPart, response: InteractionResponse) => void;
   onRequestText: (part: InteractionPart) => void;
   onOpenResult?: () => void;
+  onOpenLink?: (href: string | undefined) => void;
 }): React.JSX.Element {
   const zh = language === "zh";
   const isGoalConfirmation = part.interactionType === "confirmation" && part.requestId.startsWith("goal:");
@@ -665,6 +677,11 @@ function InteractionItem({
     return separator > 0 ? [line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim()] : ["", ""];
   }));
   const [editingGoal, setEditingGoal] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [configurationError, setConfigurationError] = useState("");
+  const [configurationWarning, setConfigurationWarning] = useState("");
+  const [savingConfiguration, setSavingConfiguration] = useState(false);
+  const [configurationSaved, setConfigurationSaved] = useState(false);
   const [goalDraft, setGoalDraft] = useState(() => ({
     objective: goalLines.goal || "",
     materials: goalLines.materials === "None supplied" ? "" : goalLines.materials || "",
@@ -672,6 +689,114 @@ function InteractionItem({
     constraints: goalLines.constraints === "None supplied" ? "" : goalLines.constraints || "",
   }));
   const splitGoalList = (value: string): string[] => value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+  if (part.interactionType === "capability_configuration") {
+    const capabilityPrompt = !part.prompt.trim() || part.prompt.trim() === "[REDACTED]"
+      ? (zh
+          ? "这个问题需要联网获取当前信息。请配置网络感知器后继续，或选择暂不联网回答。"
+          : "This question needs current information from the web. Configure a network perceptor to continue, or answer without web access.")
+      : part.prompt;
+    const configure = async () => {
+      const key = apiKey.trim();
+      if (!key) {
+        setConfigurationError(zh ? "请输入 Tavily API Key。" : "Enter a Tavily API key.");
+        return;
+      }
+      setSavingConfiguration(true);
+      setConfigurationError("");
+      setConfigurationWarning("");
+      let configurationPersisted = false;
+      try {
+        await desktopApi.savePerceptor({
+          perceptor_id: "web-tavily-main",
+          name: zh ? "网页搜索" : "Web search",
+          kind: "public_web",
+          adapter: "tavily",
+          enabled: true,
+          capabilities: ["web.search", "web.extract"],
+          config: {
+            api_key: key,
+            base_url: "https://api.tavily.com",
+            search_depth: "basic",
+            extract_depth: "basic",
+            timeout_seconds: 15,
+            max_document_chars: 20000,
+          },
+        });
+        configurationPersisted = true;
+        const tested = await desktopApi.testPerceptor("web-tavily-main", "search");
+        if (!tested.ok) {
+          const messages: Record<string, string> = zh ? {
+            credential_required: "请输入 API Key。",
+            credential_invalid: "Tavily 未接受当前 API Key，请检查后重试。",
+            quota_exhausted: "Tavily 账户额度不足，请检查账户后重试。",
+            network_unavailable: "当前无法连接 Tavily，请检查网络后重试。",
+            provider_timeout: "Tavily 响应超时，请稍后重试。",
+          } : {
+            credential_required: "Enter an API key.",
+            credential_invalid: "Tavily did not accept this API key. Check it and retry.",
+            quota_exhausted: "The Tavily account has insufficient quota.",
+            network_unavailable: "Tavily cannot be reached. Check the network and retry.",
+            provider_timeout: "Tavily timed out. Please retry.",
+          };
+          if (["network_unavailable", "provider_timeout", "runtime_unavailable", "degraded"].includes(tested.status)) {
+            setApiKey("");
+            setConfigurationWarning(zh
+              ? "网络感知器已保存；自动验证暂时未完成，正在使用已保存配置继续。实际搜索会自动重试。"
+              : "The network perceptor was saved, but automatic validation is temporarily inconclusive. Continuing with the saved configuration; web search will retry automatically.");
+            setConfigurationSaved(true);
+            onRespond(part, { decision: "accept", capabilityAction: "configured" });
+            return;
+          }
+          throw new Error(messages[tested.status] || (zh ? "连接测试失败，请稍后重试。" : "Connection test failed. Please retry."));
+        }
+        setApiKey("");
+        setConfigurationSaved(true);
+        onRespond(part, { decision: "accept", capabilityAction: "configured" });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        if (configurationPersisted) {
+          setApiKey("");
+          setConfigurationWarning(zh
+            ? "网络感知器已保存；自动验证请求未完成，正在使用已保存配置继续。实际搜索会自动重试。"
+            : "The network perceptor was saved, but its automatic validation request did not complete. Continuing with the saved configuration; web search will retry automatically.");
+          setConfigurationSaved(true);
+          onRespond(part, { decision: "accept", capabilityAction: "configured" });
+          return;
+        }
+        setConfigurationError(zh
+          ? `网页搜索配置未通过验证：${detail}`
+          : `Web search configuration could not be verified: ${detail}`);
+      } finally {
+        setSavingConfiguration(false);
+      }
+    };
+    if (configurationSaved || capabilityConfigured) {
+      return <section className="chat-agent-input-request structured-interaction capability-configuration-card capability-configuration-complete" data-testid="capability-configuration-card" data-state="configured" aria-label={zh ? "网络感知器已配置" : "Network perceptor configured"} role="status">
+        <div className="capability-configuration-title">
+          <CheckCircle2 size={18} aria-hidden="true" />
+          <strong>{zh ? "网络感知器已配置" : "Network perceptor configured"}</strong>
+          <span className="streaming-status capability-configuration-resume-status" aria-live="polite">
+            <span className="streaming-dot" aria-hidden />
+            <span>{zh ? "正在继续处理" : "Continuing the task"}</span>
+          </span>
+        </div>
+        {configurationWarning ? <p className="capability-configuration-warning" role="status">{configurationWarning}</p> : null}
+      </section>;
+    }
+    return <section className="chat-agent-input-request structured-interaction capability-configuration-card" data-testid="capability-configuration-card" data-state="required" aria-label={zh ? "配置网页搜索" : "Configure web search"}>
+      <div className="capability-configuration-title"><Globe2 size={18} aria-hidden="true" /><strong>{zh ? "需要网络感知器" : "A network perceptor is needed"}</strong></div>
+      <p>{capabilityPrompt}</p>
+      <p>{zh ? "你也可以稍后在“设置 → 感知器配置”中管理 Tavily。" : "You can also manage Tavily later in Settings → Perceptors."}</p>
+      <p className="capability-configuration-privacy">{zh ? "隐私说明：保存并验证之前，不会把本次问题发送给 Tavily。API Key 将安全保存在本机。" : "Privacy: this query is not sent to Tavily before you save and verify the configuration. The API key is stored securely on this device."}</p>
+      <label>{zh ? "Tavily API Key" : "Tavily API key"}<input data-testid="capability-api-key" type="password" autoComplete="off" value={apiKey} disabled={responded || savingConfiguration} onChange={(event) => setApiKey(event.target.value)} placeholder="tvly-…" /></label>
+      <button type="button" className="link-button" onClick={() => onOpenLink?.("https://app.tavily.com/home")}>{zh ? "如何获取 API Key" : "How to get an API key"}<ArrowUpRight size={13} aria-hidden="true" /></button>
+      {configurationError ? <p className="capability-configuration-error" role="alert">{configurationError}</p> : null}
+      <div>
+        <button type="button" disabled={responded || savingConfiguration} onClick={() => onRespond(part, { decision: "decline", capabilityAction: "answer_without_network" })}>{zh ? "暂不联网，继续回答" : "Continue without web"}</button>
+        <button type="button" data-testid="capability-save-and-continue" disabled={responded || savingConfiguration || !apiKey.trim()} onClick={() => void configure()}>{savingConfiguration ? (zh ? "正在验证…" : "Verifying…") : (zh ? "保存并继续" : "Save and continue")}</button>
+      </div>
+    </section>;
+  }
   if (compact) {
     const label = isGoalConfirmation
       ? (responded ? (zh ? "任务目标已处理" : "Task goal handled") : (zh ? "任务目标等待确认，请在输入栏处理" : "Task goal is awaiting confirmation in the composer"))

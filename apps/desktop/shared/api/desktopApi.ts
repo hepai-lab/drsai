@@ -11,27 +11,6 @@ import type { ExecutionActionKind } from "./executionPolicy";
 import type { DesktopPlatformDescriptor } from "./platform";
 import type { InteractionOption, StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
 import type { OaepEvent } from "./oaep.generated";
-import type {
-  RegressionAttachRunRequest,
-  RegressionBeginRequest,
-  RegressionCaseDetail,
-  RegressionEvaluation,
-  RegressionSuiteCatalog,
-  RegressionSuiteSummary,
-  RegressionTransitionRequest,
-} from "./regression";
-export type {
-  RegressionAttachRunRequest,
-  RegressionBeginRequest,
-  RegressionCaseDetail,
-  RegressionEvaluation,
-  RegressionEvaluationStatus,
-  RegressionExpectationSummary,
-  RegressionInputPart,
-  RegressionSuiteCatalog,
-  RegressionSuiteSummary,
-  RegressionTransitionRequest,
-} from "./regression";
 export type { InteractionOption } from "./structuredConversation";
 import type {
   RunInspection,
@@ -454,10 +433,34 @@ export interface DesktopStreamingVoiceCapabilities {
   supportsPartialTranscripts: boolean;
   supportsProviderEndpointing: boolean;
   supportsSessionResume: boolean;
+  supportsAdaptiveEndpointing?: boolean;
+  supportsContextualRepair?: boolean;
+  supportsProviderFailover?: boolean;
+  protocolVersion?: 1 | 2;
   maxBufferedAudioMs: number;
 }
 
+export type DesktopTranscriptRepairSourceType = "later_speech" | "conversation_summary" | "user_dictionary" | "workspace_term";
+
+export interface DesktopTranscriptRepairSource {
+  type: DesktopTranscriptRepairSourceType;
+  label?: string;
+}
+
+export interface DesktopTranscriptRepairCandidate {
+  id: string;
+  revision: number;
+  originalText: string;
+  suggestedText: string;
+  confidence: number;
+  sources: DesktopTranscriptRepairSource[];
+  risk: "none" | "meaning_change" | "sensitive_value" | "command_or_code";
+  autoAccept: boolean;
+  reasons: string[];
+}
+
 export interface DesktopStreamingVoiceStartRequest {
+  protocolVersion?: 1 | 2;
   turnId: string;
   languageHint?: string;
   encoding: DesktopStreamingAudioEncoding;
@@ -475,6 +478,7 @@ export interface DesktopStreamingVoiceStartResult {
 }
 
 export interface DesktopStreamingVoiceAudioChunk {
+  protocolVersion?: 1 | 2;
   sessionId: string;
   turnId: string;
   sequence: number;
@@ -502,7 +506,7 @@ export interface DesktopStreamingVoiceTranscriptSegment {
   endMs?: number;
 }
 
-export type DesktopStreamingVoiceTranscriptionEvent =
+export type DesktopStreamingVoiceTranscriptionEvent = { protocolVersion?: 1 | 2 } & (
   | { sessionId: string; turnId: string; sequence: number; type: "accepted"; runtimeId: DesktopVoiceRuntimeId }
   | { sessionId: string; turnId: string; sequence: number; type: "audio_ack"; ack: DesktopStreamingVoiceAudioAck }
   | { sessionId: string; turnId: string; sequence: number; type: "flow_control"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
@@ -512,7 +516,8 @@ export type DesktopStreamingVoiceTranscriptionEvent =
   | { sessionId: string; turnId: string; sequence: number; type: "endpoint"; reason: "provider" | "local_vad" | "manual" }
   | { sessionId: string; turnId: string; sequence: number; type: "completed" }
   | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError }
-  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" };
+  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" }
+);
 
 export interface DesktopStreamingVoiceTtsSegmentRequest {
   sessionId: string;
@@ -3335,6 +3340,15 @@ export interface ModelCapabilityProbeStatus {
   retryable: boolean;
 }
 
+export type ModelCapabilityProbeOperation = "chat" | "tool_calling" | "reasoning" | "image_generation" | "image_edit" | "text_to_speech" | "speech_to_text";
+export interface ModelCapabilityProbeResult extends ModelCapabilityProbeStatus {
+  upstream_model_id?: string;
+  http_status?: number | null;
+  may_incur_cost?: boolean;
+  evidence_kind?: "real_provider" | "configuration";
+  assertions?: Array<{ id: string; passed: boolean; detail?: string }>;
+}
+
 export interface AgentModelCapabilityStatus {
   agent_id: string;
   capabilities: ModelCapabilityProbeStatus[];
@@ -5336,16 +5350,6 @@ export interface DesktopApi {
     request: WorkspaceCheckpointRestoreRequest,
   ): Promise<WorkspaceCheckpointRestoreResult>;
   listThreads(): Promise<DesktopThread[]>;
-  isRegressionTestingEnabled(): Promise<boolean>;
-  listRegressionSuites(): Promise<{ schema_version: string; suites: RegressionSuiteSummary[] }>;
-  listRegressionCases(suiteId: string): Promise<RegressionSuiteCatalog>;
-  getRegressionCase(caseId: string): Promise<RegressionCaseDetail>;
-  beginRegressionEvaluation(request: RegressionBeginRequest): Promise<RegressionEvaluation>;
-  transitionRegressionEvaluation(request: RegressionTransitionRequest): Promise<RegressionEvaluation>;
-  attachRegressionRun(request: RegressionAttachRunRequest): Promise<RegressionEvaluation>;
-  getRegressionEvaluation(evaluationId: string): Promise<RegressionEvaluation>;
-  cancelRegressionEvaluation(evaluationId: string): Promise<RegressionEvaluation>;
-  listRegressionHistory(limit?: number): Promise<RegressionEvaluation[]>;
   listAgents(options?: DesktopAgentListOptions): Promise<DesktopAgent[]>;
   getAgentCatalogSnapshot(options?: DesktopAgentListOptions): Promise<DesktopAgentCatalogSnapshot>;
   setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult>;
@@ -5385,6 +5389,7 @@ export interface DesktopApi {
   restoreMyDrSaiModelConnection(expectedRevision?: string): Promise<MyDrSaiModelConnection>;
   saveMyDrSaiModelProvider(provider: string, request: SaveMyDrSaiModelProviderRequest): Promise<MyDrSaiModelConnection>;
   testMyDrSaiModelProvider(provider: string, model?: string): Promise<MyDrSaiProviderTestResult>;
+  probeMyDrSaiProviderModel(provider: string, request: { model: string; operation: ModelCapabilityProbeOperation; protocol?: string }): Promise<ModelCapabilityProbeResult>;
   testMyDrSaiModelDraft(request: UpdateMyDrSaiModelConnectionRequest, mode?: "basic" | "model"): Promise<MyDrSaiProviderTestResult>;
   listMyDrSaiModelProviderPresets(): Promise<MyDrSaiProviderPreset[]>;
   discoverMyDrSaiProviderModels(provider: string, refresh?: boolean, draft?: MyDrSaiModelProviderDraft): Promise<MyDrSaiModelDiscoveryResult>;
@@ -5704,6 +5709,7 @@ export interface DesktopApi {
   listPendingBrowserTaskApprovals(): Promise<BrowserTaskPendingApproval[]>;
   approveBrowserTaskAction(request: BrowserTaskApprovalRequest): Promise<boolean>;
   openExternal(url: string): Promise<void>;
+  openRegressionReference(uri: string): Promise<string>;
   openPath(path: string): Promise<string>;
   openPdfPage(request: PdfPageOpenRequest): Promise<PdfPageOpenResult>;
   getIdeContext(workspacePath: string): Promise<DesktopIdeContextSnapshot>;

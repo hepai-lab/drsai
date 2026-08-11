@@ -1,8 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { spawn } from "node:child_process";
 import type { WebContents } from "electron";
 import type {
   DesktopVoiceError,
@@ -13,7 +9,7 @@ import type {
   DesktopVoiceSynthesisRuntimeStatus,
   DesktopVoiceSynthesisStartResult,
 } from "../api/desktopApi";
-import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
+import { getAuthenticatedGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
 import { syncSavedApiKeyToGateway } from "./settings";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
 import { getVoiceProviderReadiness } from "./voiceProviderReadiness";
@@ -27,6 +23,17 @@ import {
 } from "./voiceTtsValidation";
 
 const TTS_TIMEOUT_MS = 60_000;
+
+export type SystemVoiceSynthesizer = (
+  request: NormalizedVoiceSynthesisRequest,
+  signal: AbortSignal,
+) => Promise<DesktopVoiceSynthesisResult>;
+
+let systemVoiceSynthesizer: SystemVoiceSynthesizer | null = null;
+
+export function configureSystemVoiceSynthesizer(synthesizer: SystemVoiceSynthesizer | null): void {
+  systemVoiceSynthesizer = synthesizer;
+}
 
 interface ActiveTtsTask {
   cleanupSenderListener: () => void;
@@ -56,12 +63,12 @@ export async function getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynt
   if (runtimeId === "system") {
     return {
       runtimeId,
-      state: process.platform === "win32" ? "ready" : "unavailable",
-      supportsSynthesisTask: process.platform === "win32",
-      supportedFormats: process.platform === "win32" ? ["wav"] : [],
+      state: systemVoiceSynthesizer ? "ready" : "unavailable",
+      supportsSynthesisTask: Boolean(systemVoiceSynthesizer),
+      supportedFormats: systemVoiceSynthesizer ? ["wav"] : [],
       maxTextChars: MAX_TTS_TEXT_CHARS,
       providerDisclosure: "System speech is synthesized locally with Windows Speech API.",
-      message: process.platform === "win32"
+      message: systemVoiceSynthesizer
         ? "Windows system speech synthesis is ready."
         : "Native system speech synthesis is only available on Windows.",
     };
@@ -79,7 +86,7 @@ export async function getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynt
   }
   const status = await getGatewayStatus();
   const readiness = status.ready
-    ? await getVoiceProviderReadiness(status.baseUrl, getGatewayRequestHeaders(), "text_to_speech").catch(() => ({ state: "unconfigured" as const }))
+    ? await getVoiceProviderReadiness(status.baseUrl, await getAuthenticatedGatewayRequestHeaders(), "text_to_speech").catch(() => ({ state: "unconfigured" as const }))
     : { state: "unconfigured" as const };
   const state = !status.ready
     ? "unavailable"
@@ -110,7 +117,7 @@ export function startVoiceSynthesis(
   request: DesktopVoiceSynthesisRequest,
 ): DesktopVoiceSynthesisStartResult {
   const runtimeId = resolveRuntimeId(request);
-  if (runtimeId === "system" && process.platform !== "win32") {
+  if (runtimeId === "system" && !systemVoiceSynthesizer) {
     throw ttsFailure("runtime_unavailable", "Native system speech synthesis is only available on Windows.", false);
   }
   if (activeTtsTasks.size >= 3) throw ttsFailure("runtime_unavailable", "Too many active voice synthesis tasks.", true);
@@ -174,7 +181,7 @@ async function runVoiceSynthesis(
     const result = runtimeId === "mock-local"
       ? await synthesizeFixture(request, task.controller.signal)
       : runtimeId === "system"
-        ? await synthesizeWithWindowsSpeech(request, task.controller.signal)
+        ? await synthesizeWithSystemVoice(request, task.controller.signal)
         : await synthesizeThroughGateway(request, task.controller.signal);
     finishTtsTask(requestId, task, { requestId, type: "completed", result });
   } catch (error) {
@@ -201,113 +208,14 @@ async function synthesizeFixture(
   };
 }
 
-async function synthesizeWithWindowsSpeech(
+async function synthesizeWithSystemVoice(
   request: NormalizedVoiceSynthesisRequest,
   parentSignal: AbortSignal,
 ): Promise<DesktopVoiceSynthesisResult> {
-  if (process.platform !== "win32") {
-    throw ttsFailure("runtime_unavailable", "Windows Speech API is unavailable on this platform.", false);
+  if (!systemVoiceSynthesizer) {
+    throw ttsFailure("runtime_unavailable", "System speech synthesis is unavailable on this platform.", false);
   }
-  const dir = await mkdtemp(join(tmpdir(), "opendrsai-tts-"));
-  const scriptPath = join(dir, "speak.ps1");
-  const wavPath = join(dir, "speech.wav");
-  const payloadPath = join(dir, "text.txt");
-  try {
-    await writeFile(payloadPath, request.text, "utf8");
-    const rate = Math.max(-10, Math.min(10, Math.round((request.speed - 1) * 10)));
-    const preferredVoice = request.voice?.trim() ?? "";
-    const language = (request.language || "zh-CN").replace(/'/g, "''");
-    const voiceBlock = preferredVoice
-      ? `
-  $preferred = '${preferredVoice.replace(/'/g, "''")}'
-  try { $synth.SelectVoice($preferred) } catch {
-    $match = $synth.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Name -eq $preferred } | Select-Object -First 1
-    if (-not $match) {
-      $match = $synth.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name -like ('${language}'.Split('-')[0] + '*') } | Select-Object -First 1
-    }
-    if ($match) { $synth.SelectVoice($match.VoiceInfo.Name) }
-  }`
-      : `
-  $match = $synth.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name -like ('${language}'.Split('-')[0] + '*') } | Select-Object -First 1
-  if ($match) { $synth.SelectVoice($match.VoiceInfo.Name) }`;
-    // Render to WAV so the renderer can play/pause/stop. Chromium speechSynthesis is unreliable in Electron.
-    const script = `
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Speech
-$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-try {
-  $synth.Rate = ${rate}
-${voiceBlock}
-  $text = [System.IO.File]::ReadAllText(${JSON.stringify(payloadPath)}, [System.Text.Encoding]::UTF8)
-  $synth.SetOutputToWaveFile(${JSON.stringify(wavPath)})
-  $synth.Speak($text)
-  $synth.SetOutputToNull()
-} finally {
-  $synth.Dispose()
-}
-`;
-    await writeFile(scriptPath, script, "utf8");
-    await runPowerShell(scriptPath, parentSignal);
-    const audioData = new Uint8Array(await readFile(wavPath));
-    if (audioData.byteLength < 44) {
-      throw ttsFailure("provider_error", "Windows speech synthesis produced empty audio.", true);
-    }
-    return {
-      audioData,
-      mimeType: "audio/wav",
-      runtimeId: "system",
-      createdAt: new Date().toISOString(),
-      providerDisclosure: "Reply text was synthesized locally with Windows Speech API.",
-    };
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
-  }
-}
-
-function runPowerShell(scriptPath: string, parentSignal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
-      { windowsHide: true },
-    );
-    let stderr = "";
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(ttsFailure("timeout", "Windows speech synthesis timed out.", true));
-    }, TTS_TIMEOUT_MS);
-    const onAbort = (): void => {
-      child.kill();
-      reject(new DOMException("Cancelled", "AbortError"));
-    };
-    parentSignal.addEventListener("abort", onAbort, { once: true });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      parentSignal.removeEventListener("abort", onAbort);
-      reject(ttsFailure("internal_error", error.message, true));
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      parentSignal.removeEventListener("abort", onAbort);
-      if (parentSignal.aborted) {
-        reject(new DOMException("Cancelled", "AbortError"));
-        return;
-      }
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(ttsFailure(
-        "provider_error",
-        stderr.trim() || `Windows speech synthesis failed (exit ${code ?? "unknown"}).`,
-        true,
-      ));
-    });
-  });
+  return systemVoiceSynthesizer(request, parentSignal);
 }
 
 async function synthesizeThroughGateway(
@@ -324,7 +232,7 @@ async function synthesizeThroughGateway(
   try {
     response = await fetch(`${gateway.baseUrl}/v1/audio/speech`, {
       method: "POST",
-      headers: { ...getGatewayRequestHeaders(), "Content-Type": "application/json" },
+      headers: { ...await getAuthenticatedGatewayRequestHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify(request),
       signal,
     });

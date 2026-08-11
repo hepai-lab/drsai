@@ -3,7 +3,7 @@ param(
     [string]$DesktopAppDir = "$PSScriptRoot\..\..\windows\release\win-unpacked",
     [string]$DrsaiAgentDir = "",
     [string]$BackendSourceDir = "$PSScriptRoot\..\..\..\..\cores\python\packages\drsai\src\drsai",
-    [string]$DrsaiHomeDefaultsDir = "",
+    [string]$DrsaiHomeDefaultsDir = "$PSScriptRoot\defaults\drsai-home",
     [string]$CodexArtifactDir = "",
     [string]$CodexTrustedPublishersPath = "",
     [string]$OpenSshDir = "$env:WINDIR\System32\OpenSSH",
@@ -205,6 +205,9 @@ Write-Host "Using current DrSai source: $backendSourceDir" -ForegroundColor Dark
 if (-not (Test-Path (Join-Path $drsaiAgentDir "venv\Scripts\python.exe"))) {
     throw "DrsaiAgentDir is missing venv\Scripts\python.exe: $drsaiAgentDir"
 }
+if (-not (Test-Path (Join-Path $drsaiAgentDir "venv\Scripts\pythonw.exe"))) {
+    throw "DrsaiAgentDir is missing venv\Scripts\pythonw.exe required for background Runtime launch: $drsaiAgentDir"
+}
 if (-not (Test-Path (Join-Path $drsaiAgentDir "venv\Scripts\drsai.cmd"))) {
     throw "DrsaiAgentDir is missing venv\Scripts\drsai.cmd: $drsaiAgentDir"
 }
@@ -230,6 +233,10 @@ Add-PortablePythonBase $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
 Set-RelocatablePythonLauncher (Join-Path $payloadRoot "drsai-agent")
 
 $payloadPython = Join-Path $payloadRoot "drsai-agent\venv\Scripts\python.exe"
+$payloadPythonw = Join-Path $payloadRoot "drsai-agent\venv\Scripts\pythonw.exe"
+if (-not (Test-Path -LiteralPath $payloadPythonw -PathType Leaf)) {
+    throw "Runtime payload is missing the background Python launcher: $payloadPythonw"
+}
 $originalLocation = Get-Location
 try {
     Set-Location ([IO.Path]::GetTempPath())
@@ -250,15 +257,23 @@ if ($pythonCacheFiles.Count -gt 0) {
 
 $homeDefaultsTarget = Join-Path $payloadRoot "drsai-home"
 New-Item -ItemType Directory -Force -Path $homeDefaultsTarget | Out-Null
-if ($DrsaiHomeDefaultsDir -and (Test-Path $DrsaiHomeDefaultsDir)) {
-    Copy-DirectoryContents (Resolve-FullPath $DrsaiHomeDefaultsDir) $homeDefaultsTarget
-} else {
-    $agentParent = Split-Path -Parent $drsaiAgentDir
-    foreach ($name in @(".env", "config.yaml")) {
-        $candidate = Join-Path $agentParent $name
-        if (Test-Path $candidate) {
-            Copy-Item -LiteralPath $candidate -Destination (Join-Path $homeDefaultsTarget $name) -Force
-        }
+if (-not $DrsaiHomeDefaultsDir -or -not (Test-Path -LiteralPath $DrsaiHomeDefaultsDir -PathType Container)) {
+    throw "DrsaiHomeDefaultsDir must point to the version-controlled Runtime defaults directory: $DrsaiHomeDefaultsDir"
+}
+$resolvedDefaults = Resolve-FullPath $DrsaiHomeDefaultsDir
+$repoDefaults = Resolve-FullPath (Join-Path $PSScriptRoot "defaults\drsai-home")
+if (-not $PSBoundParameters.ContainsKey("DrsaiHomeDefaultsDir") -and $resolvedDefaults -ne $repoDefaults) {
+    throw "Implicit Runtime defaults must resolve to the version-controlled installer defaults directory."
+}
+Copy-DirectoryContents $resolvedDefaults $homeDefaultsTarget
+foreach ($requiredDefault in @("config.toml", "configs\agents\agent_opendrsai.toml")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $homeDefaultsTarget $requiredDefault) -PathType Leaf)) {
+        throw "Runtime defaults are incomplete; missing $requiredDefault."
+    }
+}
+foreach ($forbiddenDefault in @(".env", "config.yaml")) {
+    if (Test-Path -LiteralPath (Join-Path $homeDefaultsTarget $forbiddenDefault)) {
+        throw "Runtime defaults must not contain legacy or secret-bearing file $forbiddenDefault."
     }
 }
 
@@ -310,12 +325,25 @@ $manifest = [ordered]@{
     }
     managedCodex = $managedCodex
 }
+if ($env:OPENDRSAI_BUILD_LABEL) {
+    $manifest.buildLabel = $env:OPENDRSAI_BUILD_LABEL.Trim()
+}
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText(
     (Join-Path $payloadRoot "opendrsai-runtime.json"),
     (($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine),
     $utf8NoBom
 )
+
+$trustScript = Join-Path $windowsAppDir "scripts\runtime-build-trust.mjs"
+& node $trustScript seal-runtime --payload $payloadRoot --version $Version --channel $Channel
+if ($LASTEXITCODE -ne 0) {
+    throw "Runtime build identity and file manifest generation failed."
+}
+& node $trustScript verify-directory --payload $payloadRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Runtime payload trust verification failed before archive creation."
+}
 
 $runtimeZip = Join-Path $outDir "OpenDrSai-Windows-v$Version-x64.zip"
 Remove-Item -LiteralPath $runtimeZip -Force -ErrorAction SilentlyContinue
@@ -326,6 +354,22 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
     [System.IO.Compression.CompressionLevel]::Optimal,
     $false
 )
+
+$receiptPath = "$runtimeZip.receipt.json"
+Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+& node $trustScript record-archive --payload $payloadRoot --archive $runtimeZip --receipt $receiptPath
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+    Remove-Item -LiteralPath $runtimeZip -Force -ErrorAction SilentlyContinue
+    throw "Runtime archive completion receipt was not created; the incomplete artifact was removed."
+}
+& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `
+    (Join-Path $windowsAppDir "scripts\verify-final-runtime-artifact.ps1") `
+    -ArchivePath $runtimeZip -ReceiptPath $receiptPath
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item -LiteralPath $runtimeZip -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+    throw "Final Runtime archive verification failed; incomplete artifacts were removed."
+}
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $workRoot
 
 $hash = Get-Sha256Hex $runtimeZip

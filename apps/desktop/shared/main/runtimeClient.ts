@@ -34,6 +34,21 @@ import type {
   RuntimeModelRef,
 } from "../api/desktopApi";
 
+function ensureLoopbackNoProxy(): void {
+  for (const key of ["NO_PROXY", "no_proxy"] as const) {
+    const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+    for (const host of ["127.0.0.1", "localhost"]) {
+      if (!entries.some((entry) => entry.toLowerCase() === host)) entries.push(host);
+    }
+    process.env[key] = entries.join(",");
+  }
+}
+
+// Node 24 can route global fetch through HTTP_PROXY when NODE_USE_ENV_PROXY is
+// enabled. Runtime endpoints are deliberately loopback-only and must remain
+// direct, including on corporate/proxied Windows installations.
+ensureLoopbackNoProxy();
+
 const packagedRecoveryRuns = new Map<string, { failures: number; events: RuntimeAgentEvent[] }>();
 
 interface RemoteGatewayAccess {
@@ -1619,13 +1634,7 @@ export async function connectRuntimeClientForWorkspace(
     throw new Error("Remote Workspace is offline; Runtime operation refused without local fallback (stale cache is read-only).");
   }
   const client = await LocalRuntimeClient.connect();
-  // Desktop Workspace IDs are presentation/persistence identities. Local Full
-  // Runtime owns a distinct authoritative Workspace ID, so resolve it by path.
-  // A non-persisted ID is already a Runtime execution identity (for example a
-  // Worktree Workspace selected by a Thread) and must remain unchanged.
-  if (workspaceId && workspaceId !== "current" && !persisted) return { client, workspaceId };
-  const opened = await client.openWorkspace(workspacePath, persisted?.name ?? workspaceName);
-  return { client, workspaceId: opened.workspace_id };
+  return resolveLocalRuntimeWorkspace(client, workspacePath, workspaceId, persisted?.name ?? workspaceName, Boolean(persisted));
 }
 
 /** Resolve an already-running Runtime for read-only restoration work without
@@ -1659,7 +1668,33 @@ export async function connectRuntimeClientForWorkspaceIfAvailable(
   if (persisted?.location === "remote") return null;
   const client = await LocalRuntimeClient.connectIfAvailable();
   if (!client) return null;
-  if (workspaceId && workspaceId !== "current" && !persisted) return { client, workspaceId };
-  const opened = await client.openWorkspace(workspacePath, persisted?.name ?? workspaceName);
+  return resolveLocalRuntimeWorkspace(client, workspacePath, workspaceId, persisted?.name ?? workspaceName, Boolean(persisted));
+}
+
+/**
+ * Desktop can briefly retain a provisional Workspace ID while the Runtime
+ * startup refresh replaces it with an authoritative ID. Unknown IDs may also
+ * legitimately identify a Runtime-owned Worktree, so validate them against
+ * Runtime before deciding whether to preserve or heal them by canonical path.
+ */
+export async function resolveLocalRuntimeWorkspace<T extends Pick<RuntimeClient, "listWorkspaces" | "openWorkspace">>(
+  client: T,
+  workspacePath: string,
+  workspaceId?: string,
+  workspaceName?: string,
+  persisted = false,
+): Promise<{ client: T; workspaceId: string }> {
+  if (workspaceId && workspaceId !== "current" && !persisted) {
+    try {
+      const runtimeWorkspace = (await client.listWorkspaces(true)).find(
+        (candidate) => candidate.workspace_id === workspaceId && candidate.open,
+      );
+      if (runtimeWorkspace) return { client, workspaceId };
+    } catch {
+      // Opening by path is the safe fallback: it heals provisional IDs and
+      // preserves Worktree identity because Worktree paths are authoritative.
+    }
+  }
+  const opened = await client.openWorkspace(workspacePath, workspaceName);
   return { client, workspaceId: opened.workspace_id };
 }

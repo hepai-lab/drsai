@@ -2145,21 +2145,6 @@ export function installMockDesktopApi(): void {
       return deleted;
     },
     listThreads: async () => threads,
-    isRegressionTestingEnabled: async () => false,
-    listRegressionSuites: async () => ({ schema_version: "opendrsai.regression-catalog/1", suites: [] }),
-    listRegressionCases: async (suiteId) => ({
-      schema_version: "opendrsai.regression-catalog/1",
-      suite: { id: suiteId, title: suiteId, description: "" },
-      catalog_revision: "0".repeat(64),
-      cases: [],
-    }),
-    getRegressionCase: async () => { throw new Error("regression_feature_disabled"); },
-    beginRegressionEvaluation: async () => { throw new Error("regression_feature_disabled"); },
-    transitionRegressionEvaluation: async () => { throw new Error("regression_feature_disabled"); },
-    attachRegressionRun: async () => { throw new Error("regression_feature_disabled"); },
-    getRegressionEvaluation: async () => { throw new Error("regression_feature_disabled"); },
-    cancelRegressionEvaluation: async () => { throw new Error("regression_feature_disabled"); },
-    listRegressionHistory: async () => [],
     listAgents: async (): Promise<DesktopAgent[]> => [
       {
         id: "opendrsai",
@@ -2391,6 +2376,20 @@ export function installMockDesktopApi(): void {
       return structuredClone(myDrSaiModelConnection);
     },
     testMyDrSaiModelProvider: async (provider, model) => ({ ok: provider === myDrSaiModelConnection.model_provider, provider, model: model ?? myDrSaiModelConnection.model, wire_api: myDrSaiModelConnection.provider.wire_api }),
+    probeMyDrSaiProviderModel: async (provider, request) => ({
+      probe_id: "mock-capability-probe",
+      agent_id: "opendrsai",
+      provider_id: provider,
+      model_id: request.model,
+      operation: request.operation,
+      protocol: request.protocol ?? "auto",
+      status: "verified",
+      started_at: new Date().toISOString(),
+      duration_ms: 1,
+      retryable: false,
+      evidence_kind: "configuration",
+      assertions: [{ id: "mock-provider-model", passed: true }],
+    }),
     testMyDrSaiModelDraft: async (request, mode) => ({ ok: Boolean(request.model && request.model_provider && request.base_url), provider: request.model_provider, wire_api: request.wire_api ?? "openai", persisted: false, ...(mode === "model" ? { output: "pong" } : {}) }),
     listMyDrSaiModelProviderPresets: async () => [{ id: "hepai", label: "HepAI", base_url: "https://aiapi.ihep.ac.cn/apiv2", wire_api: "openai", requires_api_key: false, base_url_editable: false, supports_model_discovery: true, auth_mode: "oidc" }],
     discoverMyDrSaiProviderModels: async (provider) => ({ ok: true, provider, models: [myDrSaiModelConnection.model], cached: false }),
@@ -2966,6 +2965,10 @@ export function installMockDesktopApi(): void {
       supportsPartialTranscripts: true,
       supportsProviderEndpointing: true,
       supportsSessionResume: false,
+      supportsAdaptiveEndpointing: true,
+      supportsContextualRepair: true,
+      supportsProviderFailover: false,
+      protocolVersion: 2,
       maxBufferedAudioMs: 2_000,
     }),
     startStreamingVoiceTranscription: async (request) => {
@@ -3025,13 +3028,15 @@ export function installMockDesktopApi(): void {
       }
       if (!session.partialSent) {
         session.partialSent = true;
-        emit(streamingVoiceTranscriptionListeners, {
-          sessionId: chunk.sessionId,
-          turnId: chunk.turnId,
-          sequence: session.eventSequence++,
-          type: "partial",
-          segment: { text: "Fixture live…", revision: 1, confidence: 0.92 },
-        });
+        const emitPartial = () => emit(streamingVoiceTranscriptionListeners, {
+            sessionId: chunk.sessionId,
+            turnId: chunk.turnId,
+            sequence: session.eventSequence++,
+            type: "partial",
+            segment: { text: "Fixture live…", revision: 1, confidence: 0.92 },
+          });
+        if ((window as Window & { __voiceFixtureHoldPartial?: boolean }).__voiceFixtureHoldPartial) window.setTimeout(emitPartial, 200);
+        else emitPartial();
       }
       return true;
     },
@@ -3039,7 +3044,14 @@ export function installMockDesktopApi(): void {
       const session = streamingVoiceSessions.get(sessionId);
       if (!session) return false;
       emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "endpoint", reason });
-      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "final", segment: { text: "Fixture streaming transcript.", revision: 1, confidence: 1 } });
+      const repairFixture = (window as Window & { __voiceFixtureTranscriptRepair?: boolean }).__voiceFixtureTranscriptRepair;
+      emit(streamingVoiceTranscriptionListeners, {
+        sessionId,
+        turnId: session.turnId,
+        sequence: session.eventSequence++,
+        type: "final",
+        segment: { text: repairFixture ? "检查留是语音模块" : "Fixture streaming transcript.", revision: 1, confidence: 1 },
+      });
       emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "completed" });
       streamingVoiceSessions.delete(sessionId);
       return true;
@@ -6237,6 +6249,7 @@ export function installMockDesktopApi(): void {
     listPendingBrowserTaskApprovals: async () => [],
     approveBrowserTaskAction: async () => true,
     openExternal: async () => undefined,
+    openRegressionReference: async () => "",
     openPath: async () => "",
     openPdfPage: async (request) => ({
       ok: true,

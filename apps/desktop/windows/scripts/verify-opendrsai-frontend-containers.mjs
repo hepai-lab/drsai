@@ -57,10 +57,10 @@ assert.match(diagnostics, /const \[busy, setBusy\] = useState/);
 assert.match(diagnostics, /const \[message, setMessage\] = useState/);
 assert.match(diagnostics, /copyTextSafely/);
 assert.doesNotMatch(diagnostics, /autoRecoverKey|completedAutomaticRecoveries/, "automatic Agent verification must not depend on whether the status popover is mounted");
-assert.match(authenticatedApp, /testMyDrSaiModelProvider\(provider, model\)/, "current Agent model recovery must test the selected persisted model inline");
-assert.match(authenticatedApp, /automaticAgentModelVerificationsRef[\s\S]{0,1400}myDrSaiAgentModelPolicy\.agent_id[\s\S]{0,400}ref\.provider_id[\s\S]{0,200}ref\.model_id[\s\S]{0,500}testMyDrSaiModelProvider\(ref\.provider_id, ref\.model_id\)/, "automatic verification must be keyed by the current Agent and its effective model ref");
-assert.match(authenticatedApp, /const selectedRef = myDrSaiAgentModelPolicy\?\.effective_ref;[\s\S]{0,1200}const provider = selectedRef\.provider_id;[\s\S]{0,100}const model = selectedRef\.model_id;/, "verification must not fall back to a legacy global or HAI model");
-assert.match(authenticatedApp, /if \(!config\?\.modelConnection\?\.model \|\| !config\.modelConnection\.model_provider\)/, "model recovery must open settings only when persisted configuration is unavailable");
+assert.doesNotMatch(authenticatedApp, /automaticAgentModelVerificationsRef|recordSuccessfulModelUsage/, "ordinary startup and chat must not perform or synthesize model probes");
+assert.equal((app.match(/testMyDrSaiModelProvider\(/g) ?? []).length, 1, "the saved-model probe must have exactly one renderer call site");
+assert.match(app, /async function testModelConnection\(mode:[\s\S]{0,700}testingSavedModel[\s\S]{0,160}testMyDrSaiModelProvider\(providerDraft\.trim\(\), modelDraft\.trim\(\)\)/, "the saved-model probe must remain inside Model provider settings");
+assert.match(authenticatedApp, /case "model":[\s\S]{0,700}setRequestedSettingsPane\("model-providers"\);[\s\S]{0,100}navigateTo\(MENU_IDS\.profile\)/, "global model recovery must navigate to Model provider settings without probing");
 
 console.log(JSON.stringify({
   ok: true,
@@ -72,4 +72,5 @@ console.log(JSON.stringify({
   diagnosticsTransientStateOwned: true,
   taskShellDelegated: true,
   appModelDraftsOwned: 0,
+  modelProbeRendererCallSites: 1,
 }, null, 2));

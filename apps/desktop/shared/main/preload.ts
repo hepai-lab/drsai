@@ -38,9 +38,6 @@ import type {
   InteractiveDebugStartRequest,
   AgentRunEvent,
   AgentRunRequest,
-  RegressionAttachRunRequest,
-  RegressionBeginRequest,
-  RegressionTransitionRequest,
   AuthSession,
   ChatEvent,
   ChatRequest,
@@ -638,6 +635,8 @@ const api: DesktopApi = {
     model?: string,
   ): Promise<MyDrSaiProviderTestResult> =>
     ipcRenderer.invoke("desktop:test-my-drsai-model-provider", provider, model),
+  probeMyDrSaiProviderModel: (provider, request) =>
+    ipcRenderer.invoke("desktop:probe-my-drsai-provider-model", provider, request),
   testMyDrSaiModelDraft: (request, mode) =>
     ipcRenderer.invoke("desktop:test-my-drsai-model-draft", request, mode),
   listMyDrSaiModelProviderPresets: () =>
@@ -873,25 +872,6 @@ const api: DesktopApi = {
     request: AgentRunRequest,
   ): Promise<{ requestId: string; sessionId: string; runId: string }> =>
     ipcRenderer.invoke("desktop:start-agent-run", request),
-  isRegressionTestingEnabled: (): Promise<boolean> =>
-    ipcRenderer.invoke("desktop:regression-enabled"),
-  listRegressionSuites: () => ipcRenderer.invoke("desktop:regression-suites"),
-  listRegressionCases: (suiteId: string) =>
-    ipcRenderer.invoke("desktop:regression-cases", suiteId),
-  getRegressionCase: (caseId: string) =>
-    ipcRenderer.invoke("desktop:regression-case", caseId),
-  beginRegressionEvaluation: (request: RegressionBeginRequest) =>
-    ipcRenderer.invoke("desktop:regression-begin", request),
-  transitionRegressionEvaluation: (request: RegressionTransitionRequest) =>
-    ipcRenderer.invoke("desktop:regression-transition", request),
-  attachRegressionRun: (request: RegressionAttachRunRequest) =>
-    ipcRenderer.invoke("desktop:regression-attach-run", request),
-  getRegressionEvaluation: (evaluationId: string) =>
-    ipcRenderer.invoke("desktop:regression-get", evaluationId),
-  cancelRegressionEvaluation: (evaluationId: string) =>
-    ipcRenderer.invoke("desktop:regression-cancel", evaluationId),
-  listRegressionHistory: (limit?: number) =>
-    ipcRenderer.invoke("desktop:regression-history", limit),
   abortAgentRun: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:abort-agent-run", requestId),
   recoverAgentRun: (threadId: string): Promise<AgentRunEvent[]> =>
@@ -1314,6 +1294,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:browser-task-approve", request),
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke("desktop:open-external", url),
+  openRegressionReference: (uri: string): Promise<string> =>
+    ipcRenderer.invoke("desktop:open-regression-reference", uri),
   openPath: (path: string): Promise<string> =>
     ipcRenderer.invoke("desktop:open-path", path),
   openPdfPage: (request: PdfPageOpenRequest): Promise<PdfPageOpenResult> =>

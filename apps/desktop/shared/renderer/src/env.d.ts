@@ -1,5 +1,9 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_OPENDRSAI_LAUNCH_MODE?: "development" | "production";
+}
+
 declare module "jszip" {
   interface JSZipObject {
     async(type: "string"): Promise<string>;

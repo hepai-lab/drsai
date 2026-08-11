@@ -34,7 +34,7 @@ $env:OPENDRSAI_E2E_SCREENSHOT = $resolvedScreenshot
 $env:OPENDRSAI_E2E_TIMEOUT_MS = "90000"
 if ($VerifyModelConnection) { $env:OPENDRSAI_E2E_P3_VERIFY_MODEL = "1" }
 
-$devLaunchArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $devScript, "-WithGateway", "-GatewayPort", $GatewayPort)
+$devLaunchArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $devScript, "-HotLoad", "-GatewayPort", $GatewayPort)
 if ($DrsaiHome) { $devLaunchArgs += @("-DrsaiHome", $DrsaiHome) }
 if ($SkipNpmInstall) { $devLaunchArgs += "-SkipNpmInstall" }
 & powershell.exe @devLaunchArgs

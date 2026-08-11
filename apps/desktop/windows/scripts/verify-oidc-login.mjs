@@ -104,7 +104,9 @@ const checks = [
       auth.includes("waitForCode.catch") &&
       auth.includes("isOidcLoginCancelled") &&
       main.includes('"desktop:oidc-login-debug"') &&
-      main.includes("if (result.ok) focusMainWindow()") &&
+      main.includes("if (result.ok) {") &&
+      main.includes("syncAuthIdentityToGateway(userId)") &&
+      main.includes("focusMainWindow();") &&
       preload.includes('"desktop:oidc-login-debug"') &&
       auth.includes('response_type", "code"') &&
       auth.includes("exchangeOidcAuthorizationCode"),
@@ -138,7 +140,8 @@ const checks = [
   ],
   [
     "OIDC public user is built from ID and access token claims",
-    auth.includes("email: idClaims?.email || userId") &&
+    auth.includes("const email = idClaims?.email || userId") &&
+      auth.includes("email,") &&
       auth.includes("name: idClaims?.name || idClaims?.email || userId") &&
       auth.includes("avatarUrl: idClaims?.picture || undefined") &&
       auth.includes("roles: Array.isArray(accessClaims?.roles) ? accessClaims.roles : undefined") &&
@@ -223,7 +226,7 @@ const checks = [
       login.includes("onOidcLoginDebug") &&
       login.includes("auth.startOidcLogin({ rememberMe })") &&
       login.includes("auth.cancelOidcLogin()") &&
-      login.includes("Sign in with HepAI") &&
+      login.includes("Continue with HepAI") &&
       !login.includes("Use API key instead") &&
       !login.includes("DEFAULT_MODEL_OPTIONS") &&
       !login.includes('type="email"') &&
@@ -241,7 +244,7 @@ const checks = [
   [
     "production IPC rejects API key configuration",
     mainProcess.includes('secureHandle("desktop:save-api-key"') &&
-      mainProcess.includes("if (!is.dev)") &&
+      mainProcess.includes('if (process.env.OPENDRSAI_DESKTOP_DEV !== "1")') &&
       mainProcess.includes("receives service authorization through HepAI OIDC") &&
       e2eSmoke.includes("productionApiKeyRejected") &&
       e2eSmoke.includes("apiKeyStatusUnchanged"),

@@ -146,10 +146,10 @@ export function useDesktopChatAdapter({
   const completedStructuredRequests = useRef<Set<string>>(new Set());
   const lastSequenceByRequest = useRef<Record<string, number>>({});
   const pendingDeltasByRequest = useRef<Record<string, { text: string; reasoning: string }>>({});
-  const deltaFlushTimerRef = useRef<number | null>(null);
+  const deltaFlushFrameRef = useRef<number | null>(null);
   const restoredSnapshotThreadRef = useRef<string | null>(null);
   const pendingStructuredEventsByRequest = useRef<Record<string, StructuredConversationEvent[]>>({});
-  const structuredFlushTimerRef = useRef<number | null>(null);
+  const structuredFlushFrameRef = useRef<number | null>(null);
   const appliedSnapshotUpdatedAtRef = useRef(0);
   const lastPublishedSnapshotAtRef = useRef(0);
   const pendingThreadSnapshotRef = useRef<ChatThreadSnapshot | null>(null);
@@ -168,8 +168,8 @@ export function useDesktopChatAdapter({
 
   function clearStructuredFlush(): void {
     pendingStructuredEventsByRequest.current = {};
-    if (structuredFlushTimerRef.current !== null) window.clearTimeout(structuredFlushTimerRef.current);
-    structuredFlushTimerRef.current = null;
+    if (structuredFlushFrameRef.current !== null) window.cancelAnimationFrame(structuredFlushFrameRef.current);
+    structuredFlushFrameRef.current = null;
   }
 
   function applyStructuredEventBatch(requestId: string, events: StructuredConversationEvent[]): void {
@@ -188,16 +188,22 @@ export function useDesktopChatAdapter({
   }
 
   function flushStructuredEventDeltas(): void {
-    structuredFlushTimerRef.current = null;
+    structuredFlushFrameRef.current = null;
     const pending = pendingStructuredEventsByRequest.current;
     pendingStructuredEventsByRequest.current = {};
+    const committedAt = Date.now();
     setMessages((current) => {
       let next = current;
       for (const [requestId, events] of Object.entries(pending)) {
         const assistantId = streamingAssistantByRequest.current[requestId];
-        next = updateAssistantByIdOrLatestStreaming(next, assistantId, (message) =>
-          events.reduce(applyStructuredEventToMessage, message),
-        );
+        next = updateAssistantByIdOrLatestStreaming(next, assistantId, (message) => {
+          const updated = events.reduce(applyStructuredEventToMessage, message);
+          return {
+            ...updated,
+            firstDeltaAt: message.firstDeltaAt ?? committedAt,
+            lastEventAt: committedAt,
+          };
+        });
       }
       return next === current ? current : publishAndReturn(next);
     });
@@ -232,7 +238,19 @@ export function useDesktopChatAdapter({
       if (isActive) latestActiveRequestId = requestId;
       streamingAssistantByRequest.current[requestId] = message.id;
       structuredRequests.current.add(requestId);
-      void desktopApi.recoverChatRun({ requestId, sessionId: threadIdRef.current })
+      let recoveryTimeout: number | undefined;
+      const recovery = Promise.race([
+        desktopApi.recoverChatRun({ requestId, sessionId: threadIdRef.current }),
+        new Promise<ChatEvent[]>((_, reject) => {
+          recoveryTimeout = window.setTimeout(
+            () => reject(new Error(`Structured turn recovery timed out: ${requestId}`)),
+            30_000,
+          );
+        }),
+      ]).finally(() => {
+        if (recoveryTimeout !== undefined) window.clearTimeout(recoveryTimeout);
+      });
+      void recovery
         .then((events) => {
           if (!events.length) {
             settleUnrecoverableTurn(requestId, turn.turnId);
@@ -285,9 +303,9 @@ export function useDesktopChatAdapter({
       ? threadSnapshot.updatedAt
       : 0;
     lastPublishedSnapshotAtRef.current = 0;
-    if (deltaFlushTimerRef.current !== null) {
-      window.clearTimeout(deltaFlushTimerRef.current);
-      deltaFlushTimerRef.current = null;
+    if (deltaFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(deltaFlushFrameRef.current);
+      deltaFlushFrameRef.current = null;
     }
     setActiveRequestId(null);
     setCurrentRuntimeMode(null);
@@ -409,7 +427,7 @@ export function useDesktopChatAdapter({
   }, []);
 
   useEffect(() => () => {
-    if (deltaFlushTimerRef.current !== null) window.clearTimeout(deltaFlushTimerRef.current);
+    if (deltaFlushFrameRef.current !== null) window.cancelAnimationFrame(deltaFlushFrameRef.current);
   }, []);
 
   async function submit(
@@ -698,17 +716,17 @@ export function useDesktopChatAdapter({
     if (!acceptChatEventSequence(lastSequenceByRequest.current, event.requestId, event.seq)) return;
     event = sanitizeSensitiveValue(event);
     if (event.type === "start") {
-      touchStreamingAssistant(event.requestId, "feedback");
-      if (event.runId) {
-        const assistantId = streamingAssistantByRequest.current[event.requestId];
-        setMessages((current) => publishAndReturn(
-          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
-            ...message,
-            runtimeRunId: event.runId,
-            startedAt: message.startedAt ?? Date.now(),
-          })),
-        ));
-      }
+      const assistantId = streamingAssistantByRequest.current[event.requestId];
+      const startedAt = Date.now();
+      setMessages((current) => publishAndReturn(
+        updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          ...message,
+          ...(event.runId ? { runtimeRunId: event.runId } : {}),
+          startedAt: message.startedAt ?? startedAt,
+          firstFeedbackAt: message.firstFeedbackAt ?? startedAt,
+          lastEventAt: startedAt,
+        })),
+      ));
       setActiveRequestId(event.requestId);
       return;
     }
@@ -736,6 +754,41 @@ export function useDesktopChatAdapter({
         source: oaep.source.backend,
         details: oaep as unknown as Record<string, unknown>,
       });
+      const capabilityConfiguration = capabilityConfigurationPartFromOaep(oaep);
+      if (capabilityConfiguration) {
+        // The authoritative OAEP item is sufficient to show the recoverable
+        // configuration interaction. Do not rely exclusively on the adjacent
+        // presentation event: losing that one event would otherwise leave the
+        // Run waiting for a choice that the user cannot see.
+        structuredRequests.current.add(event.requestId);
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => {
+            const structuredTurn = message.structuredTurn?.turnId === event.requestId
+              ? message.structuredTurn
+              : createStructuredTurnState(event.requestId);
+            const existingIndex = structuredTurn.parts.findIndex(
+              (part) => part.id === capabilityConfiguration.id,
+            );
+            const parts = existingIndex >= 0
+              ? structuredTurn.parts.map((part, index) => index === existingIndex ? capabilityConfiguration : part)
+              : [...structuredTurn.parts, capabilityConfiguration];
+            const interactionIsActive = capabilityConfiguration.status === "pending"
+              || capabilityConfiguration.status === "running";
+            const turnIsActive = structuredTurn.status === "pending" || structuredTurn.status === "running";
+            return {
+              ...message,
+              structuredTurn: {
+                ...structuredTurn,
+                status: interactionIsActive ? "pending" : structuredTurn.status,
+                parts,
+              },
+              streaming: interactionIsActive || turnIsActive,
+              lastEventAt: Date.now(),
+            };
+          }),
+        ));
+      }
       return;
     }
     if (event.type === "structured" && event.structuredEvent) {
@@ -751,7 +804,6 @@ export function useDesktopChatAdapter({
       structuredRequests.current.add(event.requestId);
       delete pendingDeltasByRequest.current[event.requestId];
       const structuredEvent = event.structuredEvent;
-      if (structuredEvent.type === "part.delta") touchStreamingAssistant(event.requestId, "delta");
       appendStructuredProtocolLog(structuredEvent);
       if (structuredEvent.type === "part.delta" && structuredEvent.delta.kind === "markdown.append") {
         emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: structuredEvent.delta.text, at: Date.now() });
@@ -764,8 +816,8 @@ export function useDesktopChatAdapter({
           ...(pendingStructuredEventsByRequest.current[event.requestId] ?? []),
           structuredEvent,
         ];
-        if (structuredFlushTimerRef.current === null) {
-          structuredFlushTimerRef.current = window.setTimeout(flushStructuredEventDeltas, 16);
+        if (structuredFlushFrameRef.current === null) {
+          structuredFlushFrameRef.current = window.requestAnimationFrame(flushStructuredEventDeltas);
         }
         return;
       }
@@ -845,7 +897,6 @@ export function useDesktopChatAdapter({
       (event.type === "chunk" || event.type === "reasoning" || event.type === "status")
     ) return;
     if (event.type === "chunk") {
-      touchStreamingAssistant(event.requestId, "delta");
       emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: event.content ?? "", at: Date.now() });
       queueAssistantDelta(event.requestId, "text", event.content ?? "");
       return;
@@ -1008,14 +1059,14 @@ export function useDesktopChatAdapter({
     const pending = pendingDeltasByRequest.current[requestId] ?? { text: "", reasoning: "" };
     pending[kind] += content;
     pendingDeltasByRequest.current[requestId] = pending;
-    if (deltaFlushTimerRef.current !== null) return;
-    deltaFlushTimerRef.current = window.setTimeout(flushPendingDeltas, 40);
+    if (deltaFlushFrameRef.current !== null) return;
+    deltaFlushFrameRef.current = window.requestAnimationFrame(flushPendingDeltas);
   }
 
   function flushPendingDeltas(): void {
-    if (deltaFlushTimerRef.current !== null) {
-      window.clearTimeout(deltaFlushTimerRef.current);
-      deltaFlushTimerRef.current = null;
+    if (deltaFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(deltaFlushFrameRef.current);
+      deltaFlushFrameRef.current = null;
     }
     const queued = pendingDeltasByRequest.current;
     pendingDeltasByRequest.current = {};
@@ -2653,8 +2704,14 @@ function appendAssistantChunk(
   if (index === -1) return next;
   const structuredTurn = appendStructuredDelta(next[index].structuredTurn, next[index].id, "markdown", content);
   const canonicalContent = readStructuredMarkdown(structuredTurn);
-  next[index] = { ...next[index], content: canonicalContent, structuredTurn };
-  next[index].lastEventAt = Date.now();
+  const committedAt = Date.now();
+  next[index] = {
+    ...next[index],
+    content: canonicalContent,
+    structuredTurn,
+    firstDeltaAt: next[index].firstDeltaAt ?? committedAt,
+    lastEventAt: committedAt,
+  };
   return next;
 }
 
@@ -2669,11 +2726,13 @@ function appendAssistantReasoning(
   if (index === -1) return next;
   const structuredTurn = appendStructuredDelta(next[index].structuredTurn, next[index].id, "reasoning", content);
   const canonicalReasoning = readStructuredReasoning(structuredTurn);
+  const committedAt = Date.now();
   next[index] = {
     ...next[index],
     reasoningContent: canonicalReasoning,
     structuredTurn,
-    lastEventAt: Date.now(),
+    firstDeltaAt: next[index].firstDeltaAt ?? committedAt,
+    lastEventAt: committedAt,
   };
   return next;
 }
@@ -2797,6 +2856,48 @@ function readStructuredMarkdown(state: StructuredTurnState): string {
     .join("\n\n");
 }
 
+function capabilityConfigurationPartFromOaep(
+  event: NonNullable<ChatEvent["oaepEvent"]>,
+): Extract<StructuredAssistantPart, { kind: "interaction" }> | null {
+  const item = event.data.item;
+  if (!item || typeof item !== "object" || item.type !== "interaction") return null;
+  const content = item.content;
+  if (!content || typeof content !== "object" || content.interaction_type !== "capability_configuration") {
+    return null;
+  }
+  const summary = content.request_summary && typeof content.request_summary === "object"
+    ? content.request_summary as Record<string, unknown>
+    : {};
+  const requestId = String(content.approval_id || item.id || "").trim();
+  if (!requestId) return null;
+  const status = item.status === "completed"
+    ? "completed"
+    : item.status === "failed"
+      ? "error"
+      : item.status === "cancelled"
+        ? "cancelled"
+        : item.status === "pending"
+          ? "pending"
+          : "running";
+  return {
+    id: String(item.id || `capability:${requestId}`),
+    kind: "interaction",
+    // This OAEP branch is deliberately able to stand on its own when the
+    // adjacent presentation event is lost during batching or gap recovery.
+    // Preserve the authoritative item lifecycle instead of resurrecting a
+    // completed configuration request as pending.
+    status,
+    requestId,
+    interactionType: "capability_configuration",
+    prompt: String(content.prompt || summary.prompt || "[REDACTED]"),
+    ...(summary.capability ? { capability: String(summary.capability) } : {}),
+    ...(summary.resource_kind ? { resourceKind: String(summary.resource_kind) } : {}),
+    ...(summary.preferred_adapter ? { preferredAdapter: String(summary.preferred_adapter) } : {}),
+    ...(summary.reason ? { reason: String(summary.reason) } : {}),
+    ...(typeof summary.query_disclosed === "boolean" ? { queryDisclosed: summary.query_disclosed } : {}),
+  };
+}
+
 function readStructuredReasoning(state: StructuredTurnState): string {
   return state.parts
     .filter((part): part is Extract<StructuredAssistantPart, { kind: "reasoning" }> => part.kind === "reasoning")
@@ -2829,7 +2930,7 @@ function applyStructuredEventToMessage(
     reasoningContent,
     streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
     error: structuredTurn.status === "error" || message.error,
-    inputRequest: activeInteraction
+    inputRequest: activeInteraction && activeInteraction.interactionType !== "capability_configuration"
       ? {
           requestId: activeInteraction.requestId,
           prompt: activeInteraction.prompt,

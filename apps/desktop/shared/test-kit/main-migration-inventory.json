@@ -13,7 +13,6 @@
     "gateway.ts",
     "auth.ts",
     "chat.ts",
-    "modelDefaults.ts",
     "networkRecovery.ts",
     "paths.ts",
     "platformAgentClient.ts",

@@ -373,11 +373,18 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
   }
   if (item.type === "interaction") {
     const candidate = String(item.content.interaction_type);
-    const interactionType = ["approval", "text_input", "choice", "confirmation"].includes(candidate)
-      ? candidate as "approval" | "text_input" | "choice" | "confirmation" : "approval";
+    const interactionType = ["approval", "text_input", "choice", "confirmation", "capability_configuration"].includes(candidate)
+      ? candidate as "approval" | "text_input" | "choice" | "confirmation" | "capability_configuration" : "approval";
+    const summary = item.content.request_summary && typeof item.content.request_summary === "object"
+      ? item.content.request_summary as Record<string, unknown> : {};
     return { parts: [{
       id: item.id, kind: "interaction", status, requestId: String(item.content.approval_id || item.id),
       interactionType, prompt: String(item.content.prompt || "Input required"),
+      ...(summary.capability ? { capability: String(summary.capability) } : {}),
+      ...(summary.resource_kind ? { resourceKind: String(summary.resource_kind) } : {}),
+      ...(summary.preferred_adapter ? { preferredAdapter: String(summary.preferred_adapter) } : {}),
+      ...(summary.reason ? { reason: String(summary.reason) } : {}),
+      ...(typeof summary.query_disclosed === "boolean" ? { queryDisclosed: summary.query_disclosed } : {}),
     }], activities: [] };
   }
   if (item.type === "file_change") {

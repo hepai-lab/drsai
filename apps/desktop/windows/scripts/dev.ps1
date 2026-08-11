@@ -1,19 +1,27 @@
 param(
+    [ValidateSet("Development", "Production")]
+    [string]$LaunchMode = "Development",
     [string]$DrsaiHome,
-    [ValidateRange(1, 65535)]
-    [int]$GatewayPort = 28642,
+    [ValidateRange(0, 65535)]
+    [int]$GatewayPort = 0,
     [switch]$InstallPrerequisites,
     [switch]$InstallOnly,
     [switch]$ForceInstall,
     [switch]$SkipNpmInstall,
     [switch]$NoDevServer,
     [switch]$NoGateway,
-    [switch]$WithGateway,
+    [switch]$HotLoad,
+    [switch]$EnableRegressionControl,
     [string]$PipIndexUrl = "https://pypi.tuna.tsinghua.edu.cn/simple",
     [switch]$ShowLibPngWarnings
 )
 
 $ErrorActionPreference = "Stop"
+$IsProductionLaunch = $LaunchMode -eq "Production"
+$LaunchModeName = $LaunchMode.ToLowerInvariant()
+if ($GatewayPort -eq 0) {
+    $GatewayPort = if ($IsProductionLaunch) { 18642 } else { 28642 }
+}
 $StartupStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $env:OPENDRSAI_DEV_START_EPOCH_MS = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
 
@@ -553,6 +561,7 @@ function Start-HotReloadGateway {
     )
 
     $instanceToken = Get-GatewayInstanceToken -DrsaiHome $DrsaiHome
+    $instanceTokenPath = Join-Path $DrsaiHome "runtime\instance-token"
     $gatewayHeaders = Get-GatewayHeaders -Token $instanceToken
     Write-Host "[2/3] Gateway hot reload" -ForegroundColor Yellow
     if (Test-GatewayReady -Port $Port -Token $instanceToken) {
@@ -595,6 +604,11 @@ function Start-HotReloadGateway {
     $env:OPENDRSAI_GATEWAY_PORT = [string]$Port
     $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
     $env:DRSAI_GATEWAY_HOT_RELOAD = "1"
+    if ($EnableRegressionControl) {
+        $env:OPENDRSAI_ENABLE_REGRESSION_CONTROL = "1"
+    } else {
+        Remove-Item Env:OPENDRSAI_ENABLE_REGRESSION_CONTROL -ErrorAction SilentlyContinue
+    }
     $env:OPENDRSAI_GATEWAY_INSTANCE_TOKEN = $instanceToken
     $env:PYTHONPATH = if ($env:PYTHONPATH) { "$drsaiSrc$([IO.Path]::PathSeparator)$env:PYTHONPATH" } else { $drsaiSrc }
 
@@ -616,8 +630,12 @@ function Start-HotReloadGateway {
         $gatewayArgs = @(
             "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$watcher`"",
             "-PythonPath", "`"$PythonPath`"", "-RepoRoot", "`"$RepoRoot`"",
-            "-WatchPath", "`"$reloadDir`"", "-Port", [string]$Port
+            "-WatchPath", "`"$reloadDir`"", "-Port", [string]$Port,
+            "-InstanceTokenPath", "`"$instanceTokenPath`""
         )
+        if ($EnableRegressionControl) {
+            $gatewayArgs += "-EnableRegressionControl"
+        }
     } else {
         $gatewayArgs += @("--reload", "--reload-dir", $reloadDir)
     }
@@ -670,9 +688,10 @@ function Start-HotReloadGateway {
 }
 
 if (-not $DrsaiHome) {
-    # Development must never mutate or attach to the production profile at
-    # %USERPROFILE%\.drsai unless the caller explicitly opts into that path.
-    $DrsaiHome = Join-Path $env:USERPROFILE ".drsai-dev"
+    # Source launches are isolated from the installed application's profile.
+    # Production mode selects HAI production services; it does not mutate ~/.drsai.
+    $profileName = if ($IsProductionLaunch) { ".drsai-prod" } else { ".drsai-dev" }
+    $DrsaiHome = Join-Path $env:USERPROFILE $profileName
 }
 $DrsaiHome = [IO.Path]::GetFullPath($DrsaiHome)
 $ElectronUserData = Join-Path $DrsaiHome "electron-user-data"
@@ -680,8 +699,17 @@ $ElectronUserData = Join-Path $DrsaiHome "electron-user-data"
 # Desktop development must exercise the same OIDC-only credential boundary as
 # a clean packaged install. Static keys in the host environment or ~/.drsai/.env
 # must not mask missing request-scoped OIDC propagation.
-$env:OPENDRSAI_DESKTOP_DEV = "1"
+$env:OPENDRSAI_DESKTOP_LAUNCH_MODE = $LaunchModeName
+$env:VITE_OPENDRSAI_LAUNCH_MODE = $LaunchModeName
+$env:OPENDRSAI_DESKTOP_DEV = if ($IsProductionLaunch) { "0" } else { "1" }
+$env:OPENDRSAI_ACTIVE_PLATFORM = if ($IsProductionLaunch) { "production" } else { "development" }
 $env:OPENDRSAI_OIDC_ONLY = "1"
+$PlatformPortalUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn" } else { "https://ai-dev.ihep.ac.cn" }
+$PlatformModelBaseUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn/apiv2/v1" } else { "https://ai-dev.ihep.ac.cn/apiv2/v1" }
+$env:OPENDRSAI_PLATFORM_BASE_URL = $PlatformPortalUrl
+$env:OPENDRSAI_PLATFORM_API_BASE_URL = $PlatformModelBaseUrl
+$env:OPENDRSAI_MODEL_BASE_URL = $PlatformModelBaseUrl
+$env:OPENDRSAI_OIDC_ISSUER = "$PlatformPortalUrl/api"
 $BuiltInSkillsDir = Join-Path $RepoRoot "skills\skills"
 if (-not (Test-Path -LiteralPath $BuiltInSkillsDir -PathType Container)) {
     throw "Cannot find the built-in Skills directory: $BuiltInSkillsDir"
@@ -698,8 +726,9 @@ $PipIndexUrl = $PipIndexUrl.TrimEnd('/')
 $env:PIP_INDEX_URL = if ($PipIndexUrl.EndsWith('/simple')) { $PipIndexUrl } else { "$PipIndexUrl/simple" }
 $env:PIP_DEFAULT_TIMEOUT = "60"
 
-$DevLogDir = Join-Path $DrsaiHome "logs\desktop-dev"
-$DevCacheDir = Join-Path $DrsaiHome "cache\desktop-dev"
+$SourceProfileName = if ($IsProductionLaunch) { "desktop-prod" } else { "desktop-dev" }
+$DevLogDir = Join-Path $DrsaiHome "logs\$SourceProfileName"
+$DevCacheDir = Join-Path $DrsaiHome "cache\$SourceProfileName"
 $BackendValidationStamp = Join-Path $DevCacheDir "backend-validation.txt"
 $FrontendValidationStamp = Join-Path $DevCacheDir "frontend-validation.txt"
 
@@ -742,11 +771,12 @@ if (Test-Path $InstallDir) {
 }
 
 Write-Host ""
-Write-Host "OpenDrSai Windows desktop developer bootstrap" -ForegroundColor Cyan
+Write-Host "OpenDrSai Windows desktop source bootstrap ($LaunchModeName platform)" -ForegroundColor Cyan
 Write-Host "  Repository:  $RepoRoot" -ForegroundColor Green
 Write-Host "  DrSai home:  $DrsaiHome" -ForegroundColor Green
 Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
 Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
+Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'HAI production (OIDC + models)' } else { 'HAI development (OIDC + models)' })" -ForegroundColor Green
 Write-Host "  Skills:      $BuiltInSkillsDir" -ForegroundColor Green
 Write-Host "  Pip index:   $($env:PIP_INDEX_URL)" -ForegroundColor Green
 Write-Host "  Desktop app: $DesktopDir" -ForegroundColor Green
@@ -806,11 +836,12 @@ if ($InstallOnly) {
 }
 
 $GatewayProcess = $null
-$StartGateway = $WithGateway -and -not $NoGateway -and -not $NoDevServer
-if (-not $StartGateway) {
-    Write-Host "[2/3] Gateway hot reload" -ForegroundColor Yellow
-    Write-Host "    SKIP Gateway hot reload." -ForegroundColor Yellow
-} else {
+$GatewayEnabled = -not $NoGateway -and -not $NoDevServer
+$GatewayHotReload = $GatewayEnabled -and $HotLoad
+Write-Host "[2/3] Gateway" -ForegroundColor Yellow
+if (-not $GatewayEnabled) {
+    Write-Host "    SKIP Gateway startup." -ForegroundColor Yellow
+} elseif ($GatewayHotReload) {
     $GatewayPython = Join-Path $InstallDir "venv\Scripts\python.exe"
     $GatewayProcess = Start-HotReloadGateway `
         -PythonPath $GatewayPython `
@@ -818,6 +849,8 @@ if (-not $StartGateway) {
         -DrsaiHome $DrsaiHome `
         -LogDir $DevLogDir `
         -Port $GatewayPort
+} else {
+    Write-Host "    READY Electron will start Gateway without Python hot reload." -ForegroundColor Green
 }
 
 Push-Location $DesktopWorkspaceDir
@@ -879,14 +912,19 @@ try {
     Write-Host "    Renderer: React/CSS hot module replacement; main/preload: automatic Electron restart." -ForegroundColor DarkGray
     Write-Host "    Startup preparation: $($StartupStopwatch.ElapsedMilliseconds) ms" -ForegroundColor DarkGray
     $env:DRSAI_HOME = $DrsaiHome
+    $env:OPENDRSAI_LAUNCH_HOME = $DrsaiHome
     $env:OPENDRSAI_DEV_HOME = $DrsaiHome
     $env:DRSAI_REPO = $RepoRoot
     $env:OPENDRSAI_RUNTIME_ROOT = $InstallDir
     $env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData
-    $env:OPENDRSAI_GATEWAY_STARTUP = if ($StartGateway) { "eager" } else { "on-demand" }
+    $env:OPENDRSAI_GATEWAY_STARTUP = if ($GatewayEnabled) { "eager" } else { "on-demand" }
+    # Source Runtime ownership is session-scoped: normal mode is owned by
+    # Electron, while hot-load mode is owned by the outer watcher below.
+    $env:OPENDRSAI_RUNTIME_PERSIST = "0"
+    $env:OPENDRSAI_LAUNCH_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_DEV_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_VOICE_TTS_RUNTIME = "gateway-provider"
-    if ($StartGateway) {
+    if ($GatewayHotReload) {
         $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
         $env:DRSAI_GATEWAY_HOT_RELOAD = "1"
         $env:OPENDRSAI_GATEWAY_PORT = [string]$GatewayPort

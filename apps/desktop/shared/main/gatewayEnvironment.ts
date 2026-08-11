@@ -7,6 +7,9 @@ export function isDevelopmentGatewayRuntime(
   environment: GatewayEnvironment = process.env,
   electronDefaultApp = Boolean((process as NodeJS.Process & { defaultApp?: boolean }).defaultApp),
 ): boolean {
+  if (environment.OPENDRSAI_DESKTOP_LAUNCH_MODE === "production" || environment.OPENDRSAI_DESKTOP_DEV === "0") {
+    return false;
+  }
   return environment.OPENDRSAI_DESKTOP_DEV === "1" || electronDefaultApp;
 }
 

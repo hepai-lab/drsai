@@ -9,7 +9,7 @@ const diagnostics = readFileSync(resolve(root, "../shared/renderer/src/container
 const checks = {
   identityAction: /currentLayer === "identity"[\s\S]*Go to sign in/.test(bar),
   runtimeAction: /currentLayer === "runtime"[\s\S]*Repair and retry runtime/.test(bar),
-  modelActions: /Configure current Agent model/.test(bar) && /Verify current Agent model again/.test(bar),
+  modelActions: /Configure current Agent model/.test(bar) && /Open Model provider settings/.test(bar),
   workspaceActions: /Trust this workspace/.test(bar) && /Choose workspace/.test(bar),
   runActions: /Review pending approval/.test(bar) && /Review and retry task/.test(bar),
   diagnosticAction: /operational-copy-diagnostics/.test(bar) && /Copy redacted diagnostics/.test(bar),

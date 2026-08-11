@@ -1,9 +1,30 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 
 const entries = readdirSync(tmpdir(), { withFileTypes: true });
 const baseline = parseBaseline(process.env.OPENDRSAI_TEST_TEMP_BASELINE);
-const leftovers = entries
+let leftovers = entries
+  .filter((entry) => entry.isDirectory() && /^opendrsai-[A-Za-z0-9_.-]+$/.test(entry.name))
+  .map((entry) => entry.name)
+  .filter((name) => !baseline.has(name))
+  .sort();
+
+for (const name of leftovers) {
+  const target = resolve(tmpdir(), name);
+  const expectedRoot = `${resolve(tmpdir())}\\`;
+  if (!target.startsWith(expectedRoot)) continue;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      rmSync(target, { recursive: true, force: true });
+      break;
+    } catch {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    }
+  }
+}
+
+leftovers = readdirSync(tmpdir(), { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && /^opendrsai-[A-Za-z0-9_.-]+$/.test(entry.name))
   .map((entry) => entry.name)
   .filter((name) => !baseline.has(name))

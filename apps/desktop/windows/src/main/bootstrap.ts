@@ -2,9 +2,15 @@ import type {
   DesktopBootstrapBlocker,
   DesktopBootstrapResult,
 } from "../shared/desktopApi";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { refreshAuthContextAfterUnauthorized, requireAuthContext } from "./auth";
+import { replaceFileSafely } from "./atomicFileReplace";
 import { discoverGatewayModels, startGateway, syncAuthIdentityToGateway, type GatewayModelDiscoveryResult } from "./gateway";
+import { DRSAI_HOME } from "./paths";
 import { getInstallStatus } from "./status";
+
+const MODEL_CATALOG_STATUS_FILE = join(DRSAI_HOME, "logs", "model-catalog-status.json");
 
 export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   const auth = await requireAuthContext();
@@ -56,6 +62,7 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   }
 
   const discovery = await discoverModelsWithRecovery(auth.accessToken);
+  await writeModelCatalogStatus(discovery).catch(() => undefined);
   if (discovery.state !== "ready") {
     if (discovery.state === "forbidden") {
       return result(
@@ -113,6 +120,26 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
     );
   }
   return result(true, "OpenDrSai is ready.", auth.session.user!, models);
+}
+
+async function writeModelCatalogStatus(discovery: GatewayModelDiscoveryResult): Promise<void> {
+  const temporary = `${MODEL_CATALOG_STATUS_FILE}.${process.pid}.tmp`;
+  const models = discovery.state === "ready" ? discovery.models : [];
+  const record = {
+    schemaVersion: 1,
+    updatedAt: new Date().toISOString(),
+    authMode: "oidc",
+    state: discovery.state,
+    diagnosticCode: "diagnosticCode" in discovery ? discovery.diagnosticCode : "model_catalog_ready",
+    modelCount: models.length,
+  };
+  try {
+    await mkdir(dirname(MODEL_CATALOG_STATUS_FILE), { recursive: true, mode: 0o700 });
+    await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await replaceFileSafely(temporary, MODEL_CATALOG_STATUS_FILE);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 async function discoverModelsWithRecovery(accessToken: string): Promise<GatewayModelDiscoveryResult> {

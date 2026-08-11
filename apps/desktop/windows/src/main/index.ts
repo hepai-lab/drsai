@@ -98,8 +98,6 @@ import { isTrustedDesktopIpcSender } from "../../../shared/main/secureIpc";
 import { InteractiveDebuggerService } from "./interactiveDebugger";
 import { InteractiveDebugPolicyStore } from "../../../shared/main/interactiveDebugPolicy";
 import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../../../shared/api/diagnostics";
-import type { RegressionAttachRunRequest, RegressionBeginRequest, RegressionTransitionRequest } from "../../../shared/api/regression";
-import { DesktopRegressionControl } from "../../../shared/main/regressionControl";
 
 process.setSourceMapsEnabled?.(true);
 let experimentReleaseGatePromise: ReturnType<typeof readExperimentReleaseGate> | null = null;
@@ -129,10 +127,13 @@ if (configuredE2eDocumentsPath) {
 }
 if (process.env.OPENDRSAI_DESKTOP_DEV === "1") app.setName("OpenDrSai Dev");
 if (process.platform === "win32") {
-  app.setAppUserModelId(is.dev ? "com.hepai.opendrsai.windows.dev" : "com.hepai.opendrsai.windows");
+  app.setAppUserModelId(process.env.OPENDRSAI_DESKTOP_DEV === "1"
+    ? "com.hepai.opendrsai.windows.dev"
+    : "com.hepai.opendrsai.windows");
 }
 import { presentCodexBackendStatus } from "./codexBackendStatus";
 import { DRSAI_HOME, DRSAI_REPO } from "./paths";
+import { resolveRegressionReference } from "../../../shared/main/regressionReferences";
 import { WINDOWS_PLATFORM_DESCRIPTOR } from "./platform";
 import { clearLocalData, previewLocalDataCleanup } from "./dataCleanup";
 import { scanSensitiveText } from "../../../shared/main/shareSensitivity";
@@ -171,7 +172,7 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
+import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
@@ -402,7 +403,7 @@ import {
   cancelVoiceTranscriptionsForSender,
   getVoiceRuntimeStatus,
   cleanupExpiredVoiceTempFiles,
-} from "./voice";
+} from "./voice/serial";
 import {
   attachStreamingVoiceAudioPort,
   cancelStreamingVoiceSessionsForSender,
@@ -410,13 +411,13 @@ import {
   getStreamingVoiceCapabilities,
   startStreamingVoiceTranscription,
   stopStreamingVoiceTranscription,
-} from "./voiceStreaming";
+} from "./voice/streaming";
 import {
   cancelVoiceSynthesis,
   cancelVoiceSynthesisForSender,
   getVoiceSynthesisRuntimeStatus,
   startVoiceSynthesis,
-} from "./voiceTts";
+} from "./voice/serial";
 import { saveApiKeyAndSync } from "./settings";
 import {
   cancelOidcLogin,
@@ -3078,6 +3079,7 @@ function registerDeepLinkProtocol(): void {
     if (developmentRuntime) {
       app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [
         app.getAppPath(),
+        ...getSourceProtocolLaunchArguments(),
       ]);
       registerDevelopmentDeepLinkCommand();
       registerDeepLinkDisplayName();
@@ -3086,6 +3088,7 @@ function registerDeepLinkProtocol(): void {
     if (process.defaultApp && process.argv.length >= 2) {
       app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [
         resolve(process.argv[1]),
+        ...getSourceProtocolLaunchArguments(),
       ]);
       registerDeepLinkDisplayName();
       return;
@@ -3100,9 +3103,25 @@ function registerDeepLinkProtocol(): void {
   }
 }
 
+function getSourceProtocolLaunchArguments(): string[] {
+  const launchMode = process.env.OPENDRSAI_DESKTOP_LAUNCH_MODE === "production"
+    ? "production"
+    : "development";
+  const launchHome = process.env.OPENDRSAI_LAUNCH_HOME?.trim()
+    || process.env.DRSAI_HOME?.trim()
+    || app.getPath("userData");
+  return [
+    `--opendrsai-launch-mode=${launchMode}`,
+    `--opendrsai-launch-home=${resolve(launchHome)}`,
+  ];
+}
+
 function registerDevelopmentDeepLinkCommand(): void {
   if (process.platform !== "win32") return;
-  const command = `"${process.execPath}" "${app.getAppPath()}" "%1"`;
+  const sourceArguments = getSourceProtocolLaunchArguments()
+    .map((argument) => `"${argument}"`)
+    .join(" ");
+  const command = `"${process.execPath}" "${app.getAppPath()}" ${sourceArguments} "%1"`;
   execFile("reg.exe", [
     "add",
     `HKCU\\Software\\Classes\\${DEEP_LINK_PROTOCOL}\\shell\\open\\command`,
@@ -3389,7 +3408,7 @@ function mobilePairingRelayBaseUrl(issuer?: string): string {
     }
     issuerOrigin = parsedIssuer.origin;
   }
-  const value = configured || `${issuerOrigin || (is.dev ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn")}/api/runtime-relay`;
+  const value = configured || `${issuerOrigin || (process.env.OPENDRSAI_DESKTOP_DEV === "1" ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn")}/api/runtime-relay`;
   const parsed = new URL(value);
   if (parsed.protocol !== "https:"
     || parsed.port
@@ -3762,6 +3781,17 @@ async function isAllowedOpenPath(rawPath: unknown): Promise<boolean> {
       (!relativePath.startsWith("..") && !isAbsolute(relativePath))
     );
   });
+}
+
+async function resolveLegacyLocalWorkspaceLabel(rawPath: unknown): Promise<string | null> {
+  if (typeof rawPath !== "string" || /[\r\n\0]/.test(rawPath)) return null;
+  const requestedPath = rawPath.trim();
+  if (requestedPath !== "Local workspace" && requestedPath !== "本地工作区") {
+    return requestedPath || null;
+  }
+  const workspaces = await listWorkspaces();
+  return workspaces.find((workspace) =>
+    workspace.location !== "remote" && Boolean(workspace.path) && existsSync(workspace.path))?.path ?? null;
 }
 
 async function openPdfSourcePage(request: PdfPageOpenRequest): Promise<PdfPageOpenResult> {
@@ -4178,7 +4208,6 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
 }
 
 function registerIpc(): void {
-  const regressionControl = new DesktopRegressionControl(DRSAI_REPO, app.getPath("userData"));
   secureHandle("desktop:platform-descriptor", () => WINDOWS_PLATFORM_DESCRIPTOR);
   secureHandle("desktop:system-permissions-get", () => [
     { kind: "microphone", state: "unknown", canRequest: false, canOpenSettings: true, message: "Microphone access is controlled by Windows Settings." },
@@ -4573,9 +4602,18 @@ function registerIpc(): void {
     openPdfSourcePage(request),
   );
 
-  secureHandle("desktop:ide-context", (_event, workspacePath: string) =>
-    getIdeContext(workspacePath),
-  );
+  secureHandle("desktop:ide-context", async (_event, workspacePath: string) => {
+    const resolvedWorkspacePath = await resolveLegacyLocalWorkspaceLabel(workspacePath);
+    if (!resolvedWorkspacePath || !(await isAllowedOpenPath(resolvedWorkspacePath))) {
+      return {
+        available: false,
+        workspacePath: resolvedWorkspacePath ?? "",
+        source: "unknown" as const,
+        message: "No registered local workspace is available for IDE context.",
+      };
+    }
+    return getIdeContext(resolvedWorkspacePath);
+  });
 
   secureHandle("desktop:get-file-icon", async (_event, rawPath: string) => {
     if (!(await isAllowedOpenPath(rawPath))) {
@@ -4720,6 +4758,13 @@ function registerIpc(): void {
       if (error instanceof Error && error.message === "Remote Gateway operation was cancelled.") return null;
       throw error;
     }
+  });
+
+  secureHandle("desktop:open-regression-reference", async (_event, rawUri: string) => {
+    const path = resolveRegressionReference(DRSAI_HOME, rawUri);
+    if (!path) return "Regression reference is unavailable or invalid.";
+    if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN === "1") return "";
+    return shell.openPath(path);
   });
   secureHandle("desktop:remote-gateway-install-approval", (_event, request: RemoteGatewayInstallRequest) =>
     requestRemoteGatewayInstallApproval(request),
@@ -5077,10 +5122,11 @@ function registerIpc(): void {
   );
   secureHandle("desktop:workspace-checkpoints-list", async (_event, workspacePath: string, workspaceId?: string) => {
     if ((await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown") return listRemoteWorkspaceCheckpoints(workspacePath, workspaceId);
-    if (!(await isAllowedOpenPath(workspacePath))) {
+    const resolvedWorkspacePath = await resolveLegacyLocalWorkspaceLabel(workspacePath);
+    if (!resolvedWorkspacePath || !(await isAllowedOpenPath(resolvedWorkspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
-    return listWorkspaceCheckpoints(workspacePath);
+    return listWorkspaceCheckpoints(resolvedWorkspacePath);
   });
   secureHandle("desktop:workspace-checkpoint-create", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
@@ -5136,10 +5182,11 @@ function registerIpc(): void {
   secureHandle("desktop:record-agent-usage", (_event, agentId) =>
     recordAgentUsage(typeof agentId === "string" ? agentId : ""));
   secureHandle("desktop:get-my-drsai-config", async (_event, workspacePath?: string) => {
-    if (workspacePath && !(await isAllowedOpenPath(workspacePath))) {
+    const resolvedWorkspacePath = await resolveLegacyLocalWorkspaceLabel(workspacePath);
+    if (resolvedWorkspacePath && !(await isAllowedOpenPath(resolvedWorkspacePath))) {
       return getMyDrSaiConfig();
     }
-    return getMyDrSaiConfig(workspacePath);
+    return getMyDrSaiConfig(resolvedWorkspacePath ?? undefined);
   });
   secureHandle("desktop:update-my-drsai-config", (_event, request: UpdateMyDrSaiConfigRequest) =>
     updateMyDrSaiConfig(request),
@@ -5161,6 +5208,9 @@ function registerIpc(): void {
   );
   secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
     testMyDrSaiModelProvider(provider, model),
+  );
+  secureHandle("desktop:probe-my-drsai-provider-model", (_event, provider: string, request) =>
+    probeMyDrSaiProviderModel(provider, request as { model: string; operation: import("../../../shared/api/desktopApi").ModelCapabilityProbeOperation; protocol?: string }),
   );
   secureHandle("desktop:test-my-drsai-model-draft", (_event, request: UpdateMyDrSaiModelConnectionRequest, mode?: "basic" | "model") => testMyDrSaiModelDraft(request, mode));
   secureHandle("desktop:list-my-drsai-model-provider-presets", () => listMyDrSaiModelProviderPresets());
@@ -5891,16 +5941,6 @@ function registerIpc(): void {
     }
     return startAgentRun(event.sender, request);
   });
-  secureHandle("desktop:regression-enabled", () => regressionControl.isEnabled());
-  secureHandle("desktop:regression-suites", () => regressionControl.listSuites());
-  secureHandle("desktop:regression-cases", (_event, suiteId: string) => regressionControl.listCases(suiteId));
-  secureHandle("desktop:regression-case", (_event, caseId: string) => regressionControl.getCase(caseId));
-  secureHandle("desktop:regression-begin", (_event, request: RegressionBeginRequest) => regressionControl.begin(request));
-  secureHandle("desktop:regression-transition", (_event, request: RegressionTransitionRequest) => regressionControl.transition(request));
-  secureHandle("desktop:regression-attach-run", (_event, request: RegressionAttachRunRequest) => regressionControl.attachRun(request));
-  secureHandle("desktop:regression-get", (_event, evaluationId: string) => regressionControl.get(evaluationId));
-  secureHandle("desktop:regression-cancel", (_event, evaluationId: string) => regressionControl.cancel(evaluationId));
-  secureHandle("desktop:regression-history", (_event, limit?: number) => regressionControl.history(limit));
   secureHandle("desktop:abort-agent-run", (_event, requestId: string) =>
     abortAgentRun(requestId),
   );
@@ -5910,7 +5950,7 @@ function registerIpc(): void {
   secureHandle("desktop:channel-provider-token-configure", (_event, request: DesktopChannelProviderTokenConfigureRequest) => configureChannelProviderToken(request));
   secureHandle("desktop:recover-agent-run", (event, threadId: string) => recoverAgentRun(threadId, event.sender));
   secureHandle("desktop:save-api-key", (_event, apiKey: string) => {
-    if (!is.dev) {
+    if (process.env.OPENDRSAI_DESKTOP_DEV !== "1") {
       return { ok: false, message: "This build receives service authorization through HepAI OIDC." };
     }
     return saveApiKeyAndSync(apiKey);
@@ -6515,6 +6555,7 @@ async function runHeadlessOidcSmoke(): Promise<void> {
       runId: "e2e-oidc-agent-run",
       task: "oidc agent bearer check",
       model: "drsai",
+      workspacePath: process.cwd(),
       metadata: { source: "e2e-oidc" },
     });
     await waitForHeadlessGatewayTerminal(gatewayEvents, agentRequestId);

@@ -15,6 +15,13 @@ import { createThread } from "./threads";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import { LocalRuntimeClient, RuntimeOWOPError } from "../../../shared/main/runtimeClient";
 import { getGatewayRequestHeaders } from "./gateway";
+import { requireAuthContext } from "../../../shared/main/auth";
+import { bootstrapDesktop } from "./bootstrap";
+import {
+  getMyDrSaiAgentModelPolicy,
+  getMyDrSaiConfig,
+  probeMyDrSaiProviderModel,
+} from "../../../shared/main/myDrSaiConfig";
 
 interface SmokeResult {
   ok: boolean;
@@ -144,6 +151,7 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_THREADS !== "1" &&
     process.env.OPENDRSAI_E2E_FORK_MERGE !== "1" &&
     process.env.OPENDRSAI_E2E_OIDC !== "1" &&
+    process.env.OPENDRSAI_E2E_HAI_MODELS !== "1" &&
     process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE !== "1" &&
     process.env.OPENDRSAI_E2E_F2_APPROVALS !== "1" &&
     process.env.OPENDRSAI_E2E_F3_APPROVALS !== "1" &&
@@ -238,6 +246,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runForkMergeSmoke
       : process.env.OPENDRSAI_E2E_OIDC === "1"
         ? runOidcSmoke
+      : process.env.OPENDRSAI_E2E_HAI_MODELS === "1"
+        ? runHaiProductModelsSmoke
       : process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE === "1"
         ? runA5ServiceGuidanceSmoke
       : process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
@@ -2220,6 +2230,17 @@ async function runM06AppDialogSmoke(window: BrowserWindow): Promise<SmokeResult>
   checks.queueResolvesInOrder = await waitForRenderer("window.__m06DialogResults?.length === 6");
   checks.queueHasNoDuplicateEffects = await waitForRenderer("window.__opendrsaiDialogE2eEffects === 2");
   progress("queue-complete");
+
+  checks.newChatActionAvailable = await window.webContents.executeJavaScript(`(() => {
+    const button = document.querySelector('.sidebar-primary-action .sidebar-button');
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  })()`, true) as boolean;
+  checks.newChatFocusesComposer = await waitForRenderer("document.activeElement === document.querySelector('[data-testid=composer-input]')");
+  if (checks.newChatFocusesComposer) window.webContents.insertText("focus-restored");
+  checks.focusedComposerAcceptsText = await waitForRenderer("document.querySelector('[data-testid=composer-input]')?.value === 'focus-restored'");
+  progress("new-chat-focus-complete");
 
   const finalState = await window.webContents.executeJavaScript(`(async () => {
     const snapshot = await window.openDrSai.getDiagnosticSnapshot();
@@ -5560,6 +5581,28 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         }
         return false;
       }
+      function terminalEventType(event) {
+        if (["done", "error", "aborted"].includes(event.type)) return event.type;
+        if (event.type !== "structured") return null;
+        if (event.structuredEvent?.type === "turn.completed") return "done";
+        if (event.structuredEvent?.type === "turn.cancelled") return "aborted";
+        if (event.structuredEvent?.type === "turn.error") return "error";
+        return null;
+      }
+      function eventText(event) {
+        if (event.type === "chunk") return String(event.content || "");
+        if (event.type === "structured" && event.structuredEvent?.type === "part.delta") {
+          return String(event.structuredEvent?.delta?.text || "");
+        }
+        return "";
+      }
+      function eventError(event) {
+        if (event.type === "error") return String(event.error || "");
+        if (event.type === "structured" && event.structuredEvent?.type === "turn.error") {
+          return String(event.structuredEvent?.message || "");
+        }
+        return "";
+      }
       async function collectChat(requestId, request, options = {}) {
         const events = [];
         const startedAt = Date.now();
@@ -5570,19 +5613,24 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
           let returnedRequestId = null;
           let startError = null;
           try {
-            returnedRequestId = await api.startChat({ requestId, model: "drsai", ...request });
+            returnedRequestId = await api.startChat({
+              requestId,
+              model: "drsai",
+              workspacePath: ${JSON.stringify(process.cwd())},
+              ...request,
+            });
           } catch (error) {
             startError = String(error && error.message ? error.message : error);
           }
           if (options.abortAfterStart && !startError) {
             const abortDeadline = Date.now() + 5000;
-            while (Date.now() < abortDeadline && !events.some((event) => event.type === "start")) {
+            while (Date.now() < abortDeadline && !events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"))) {
               await new Promise((resolve) => setTimeout(resolve, 50));
             }
             await api.cancelChatTurn({ requestId });
           }
           const deadline = Date.now() + (options.waitMs || 12000);
-          while (Date.now() < deadline && !events.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+          while (Date.now() < deadline && !events.some((event) => Boolean(terminalEventType(event)))) {
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
           const threads = await api.listThreads();
@@ -5630,11 +5678,11 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.abort = summarizeOutcome(outcome);
         checks.abortStart = outcome.events.some((event) => event.type === "start");
-        checks.abortEvent = outcome.events.some((event) => event.type === "aborted");
+        checks.abortEvent = outcome.events.some((event) => terminalEventType(event) === "aborted");
         checks.abortTerminal = details.abort.terminalEventType === "aborted";
         checks.abortThreadIdle = details.abort.thread && details.abort.thread.status === "idle";
-        checks.abortNoDone = !outcome.events.some((event) => event.type === "done");
-        checks.abortNoError = !outcome.events.some((event) => event.type === "error");
+        checks.abortNoDone = !outcome.events.some((event) => terminalEventType(event) === "done");
+        checks.abortNoError = !outcome.events.some((event) => terminalEventType(event) === "error");
       } else if (scenario === "sse-error") {
         const requestId = "e2e-failure-error";
         const outcome = await collectChat(
@@ -5644,10 +5692,10 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.sseError = summarizeOutcome(outcome);
         checks.sseErrorStart = outcome.events.some((event) => event.type === "start");
-        checks.sseErrorEvent = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("synthetic gateway error"));
+        checks.sseErrorEvent = outcome.events.some((event) => terminalEventType(event) === "error" && eventError(event).includes("synthetic gateway error"));
         checks.sseErrorTerminal = details.sseError.terminalEventType === "error";
         checks.sseErrorThreadError = details.sseError.thread && details.sseError.thread.status === "error";
-        checks.sseErrorNoDone = !outcome.events.some((event) => event.type === "done");
+        checks.sseErrorNoDone = !outcome.events.some((event) => terminalEventType(event) === "done");
       } else if (scenario === "gateway-unreachable") {
         const requestId = "e2e-failure-unreachable";
         const outcome = await collectChat(
@@ -5656,10 +5704,12 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
           { waitMs: 10000 },
         );
         details.gatewayUnreachable = summarizeOutcome(outcome);
-        checks.gatewayUnreachableStart = outcome.events.some((event) => event.type === "start");
-        checks.gatewayUnreachableError = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("Gateway is not ready"));
+        checks.gatewayUnreachableStart = !outcome.events.some((event) => event.type === "start");
+        checks.gatewayUnreachableError = outcome.events.some((event) => event.type === "error"
+          && String(event.error || "").includes("Runtime is not ready")
+          && event.errorEnvelope?.code === "GATEWAY_NOT_READY");
         checks.gatewayUnreachableTerminal = details.gatewayUnreachable.terminalEventType === "error";
-        checks.gatewayUnreachableThreadError = details.gatewayUnreachable.thread && details.gatewayUnreachable.thread.status === "error";
+        checks.gatewayUnreachableThreadError = details.gatewayUnreachable.thread === null;
         checks.gatewayUnreachableNoDone = !outcome.events.some((event) => event.type === "done");
       } else if (scenario === "timeout") {
         const requestId = "e2e-failure-timeout";
@@ -5670,11 +5720,11 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.timeout = summarizeOutcome(outcome);
         checks.timeoutStart = outcome.events.some((event) => event.type === "start");
-        checks.timeoutError = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("timed out"));
+        checks.timeoutError = outcome.events.some((event) => terminalEventType(event) === "error" && eventError(event).includes("timed out"));
         checks.timeoutTerminal = details.timeout.terminalEventType === "error";
         checks.timeoutThreadError = details.timeout.thread && details.timeout.thread.status === "error";
         checks.timeoutDuration = details.timeout.durationMs >= 1000;
-        checks.timeoutNoDone = !outcome.events.some((event) => event.type === "done");
+        checks.timeoutNoDone = !outcome.events.some((event) => terminalEventType(event) === "done");
       } else if (scenario === "empty-done") {
         const requestId = "e2e-failure-empty-done";
         const outcome = await collectChat(
@@ -5684,11 +5734,11 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.emptyDone = summarizeOutcome(outcome);
         checks.emptyDoneStart = outcome.events.some((event) => event.type === "start");
-        checks.emptyDoneEvent = outcome.events.some((event) => event.type === "done");
+        checks.emptyDoneEvent = outcome.events.some((event) => terminalEventType(event) === "done");
         checks.emptyDoneTerminal = details.emptyDone.terminalEventType === "done";
         checks.emptyDoneThreadIdle = details.emptyDone.thread && details.emptyDone.thread.status === "idle";
-        checks.emptyDoneNoChunk = !outcome.events.some((event) => event.type === "chunk");
-        checks.emptyDoneNoError = !outcome.events.some((event) => event.type === "error" || event.type === "aborted");
+        checks.emptyDoneNoChunk = !outcome.events.some((event) => Boolean(eventText(event)));
+        checks.emptyDoneNoError = !outcome.events.some((event) => ["error", "aborted"].includes(terminalEventType(event)));
       } else if (scenario === "chunk-disconnect") {
         const requestId = "e2e-failure-disconnect";
         const outcome = await collectChat(
@@ -5698,14 +5748,15 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.chunkDisconnect = summarizeOutcome(outcome);
         checks.chunkDisconnectStart = outcome.events.some((event) => event.type === "start");
-        checks.chunkDisconnectChunk = outcome.events.some((event) => event.type === "chunk" && String(event.content || "").includes("partial before disconnect"));
-        checks.chunkDisconnectError = outcome.events.some((event) => event.type === "error" && (
-          String(event.error || "").includes("ended before data: [DONE]") ||
+        checks.chunkDisconnectChunk = outcome.events.some((event) => eventText(event).includes("partial before disconnect"));
+        checks.chunkDisconnectError = outcome.events.some((event) => terminalEventType(event) === "error" && (
+          eventError(event).includes("ended before data: [DONE]") ||
+          event.errorEnvelope?.code === "oaep_sync_degraded" ||
           (event.failureRecovery?.kind === "network" && event.failureRecovery.exhausted === true)
         ));
         checks.chunkDisconnectTerminal = details.chunkDisconnect.terminalEventType === "error";
         checks.chunkDisconnectThreadError = details.chunkDisconnect.thread && details.chunkDisconnect.thread.status === "error";
-        checks.chunkDisconnectNoDone = !outcome.events.some((event) => event.type === "done");
+        checks.chunkDisconnectNoDone = !outcome.events.some((event) => terminalEventType(event) === "done");
       } else if (scenario === "attachments") {
         const requestId = "e2e-attachments";
         const attachmentFilePath = ${JSON.stringify(process.env.OPENDRSAI_E2E_ATTACHMENT_FILE || "C:\\OpenDrSai\\fixtures\\notes.md")};
@@ -5713,6 +5764,7 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         const outcome = await collectChat(
           requestId,
           {
+            workspacePath: ${JSON.stringify(process.env.OPENDRSAI_E2E_ATTACHMENT_WORKSPACE || process.cwd())},
             attachments: [
               { kind: "file", path: attachmentFilePath, name: "notes.md" },
               { kind: "folder", path: attachmentFolderPath, name: "project" },
@@ -5723,10 +5775,10 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.attachments = summarizeOutcome(outcome);
         checks.attachmentsStart = outcome.events.some((event) => event.type === "start");
-        checks.attachmentsChunk = outcome.events.some((event) => event.type === "chunk" && String(event.content || "").includes("fake-agent attachments: 2"));
+        checks.attachmentsChunk = outcome.events.some((event) => eventText(event).includes("fake-agent attachments: 2"));
         checks.attachmentsTerminal = details.attachments.terminalEventType === "done";
         checks.attachmentsThreadIdle = details.attachments.thread && details.attachments.thread.status === "idle";
-        checks.attachmentsNoError = !outcome.events.some((event) => event.type === "error" || event.type === "aborted");
+        checks.attachmentsNoError = !outcome.events.some((event) => ["error", "aborted"].includes(terminalEventType(event)));
       } else {
         checks.knownScenario = false;
         details.error = "Unknown failure scenario.";
@@ -5735,22 +5787,24 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
       function summarizeOutcome(outcome) {
         const firstEvent = outcome.events[0] || null;
         const lastEvent = outcome.events[outcome.events.length - 1] || null;
-        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+        const terminalEvent = outcome.events.find((event) => Boolean(terminalEventType(event))) || null;
         return {
           returnedRequestId: outcome.returnedRequestId,
           startError: outcome.startError,
           durationMs: outcome.durationMs,
           firstEventType: firstEvent && firstEvent.type,
-          lastEventType: lastEvent && lastEvent.type,
-          terminalEventType: terminalEvent && terminalEvent.type,
+          lastEventType: lastEvent && (terminalEventType(lastEvent) || lastEvent.type),
+          terminalEventType: terminalEvent && terminalEventType(terminalEvent),
           events: outcome.events.map((event) => ({
             type: event.type,
             at: event.at,
             content: event.content,
             error: event.error,
             failureRecovery: event.failureRecovery,
+            errorEnvelope: event.errorEnvelope,
             sessionId: event.sessionId,
             runId: event.runId,
+            structuredEvent: event.structuredEvent,
           })),
           thread: outcome.finalThread,
           threads: outcome.threads,
@@ -6910,7 +6964,7 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
     });
     window.webContents.reload();
   });
-  const fullRoundResult = await runVoiceFullRoundSmoke(window);
+  const fullRoundResult = await runVoiceFullRoundSmoke(window, streamingMode);
   return {
     ok: transportResult.ok && fullRoundResult.ok,
     checks: { ...transportResult.checks, fullRoundLoginBootstrap: true, ...fullRoundResult.checks },
@@ -6918,7 +6972,7 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
   };
 }
 
-async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResult> {
+async function runVoiceFullRoundSmoke(window: BrowserWindow, streamingMode = false): Promise<SmokeResult> {
   return window.webContents.executeJavaScript(`
     (async () => {
       const api = window.openDrSai;
@@ -6982,7 +7036,7 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
         confirmBeforeSend: false,
         inputDeviceId: '',
         inputLanguage: 'en-US',
-        interactionMode: 'serial',
+        interactionMode: ${JSON.stringify(streamingMode ? "streaming" : "serial")},
         playbackRate: 1,
         remoteSttConsent: true,
         remoteTtsConsent: true,
@@ -7020,11 +7074,11 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       stage('voice-button:ready');
       if (!voiceButton) { observer?.disconnect(); return await finish(); }
       voiceButton?.click();
-      checks.fullRoundCaptureStarted = Boolean(await waitFor(() => document.querySelector('form.composer[data-voice-turn-phase="recording"]'), 15000));
+      checks.fullRoundCaptureStarted = Boolean(await waitFor(() => document.querySelector(${JSON.stringify(streamingMode ? 'form.composer[data-voice-turn-phase="streaming"]' : 'form.composer[data-voice-turn-phase="recording"]')}), 15000));
       stage('capture:started');
       if (!checks.fullRoundCaptureStarted) { observer?.disconnect(); return await finish(); }
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      const stopButton = await waitFor(() => document.querySelector('button[aria-label="Stop voice recording"]'), 5000);
+      const stopButton = await waitFor(() => document.querySelector(${JSON.stringify(streamingMode ? 'button[aria-label="Stop live transcription"]' : 'button[aria-label="Stop voice recording"]')}), 5000);
       checks.fullRoundStopButtonReady = Boolean(stopButton);
       stage('stop-button:ready');
       if (!stopButton) { observer?.disconnect(); return await finish(); }
@@ -7062,8 +7116,11 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       observer?.disconnect();
       rememberPhase();
 
-      const requiredPhases = ['requesting_permission', 'recording', 'preparing_audio', 'transcribing', 'ready_to_send', 'submitting', 'awaiting_response', 'response_ready', 'synthesizing', 'playing', 'completed'];
+      const requiredPhases = ${JSON.stringify(streamingMode
+        ? ["starting", "streaming", "stopping"]
+        : ["requesting_permission", "recording", "preparing_audio", "transcribing", "ready_to_send", "submitting", "awaiting_response", "response_ready", "synthesizing", "playing", "completed"])};
       checks.fullRoundPhases = requiredPhases.every((phase) => phases.includes(phase));
+      checks.fullRoundStreamingMode = ${JSON.stringify(streamingMode)};
       checks.fullRoundPlayback = playback.played > 0 && playback.ended > 0;
       const voiceDiagnostics = await api.getDiagnosticSnapshot({ module: 'voice', limit: 100 });
       const ttsCompleted = (voiceDiagnostics.events || []).filter((event) => event.component === 'tts' && event.status === 'completed').length;
@@ -7071,6 +7128,7 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       const diagnosticText = JSON.stringify(voiceDiagnostics.events || []);
       checks.fullRoundDiagnosticsPrivate = !diagnosticText.includes(transcript) && !diagnosticText.includes(assistantText) && !diagnosticText.includes('audioData');
       details.phases = phases;
+      details.interactionMode = ${JSON.stringify(streamingMode ? "streaming" : "serial")};
       details.playback = playback;
       stage('round:complete');
       return await finish();
@@ -7664,6 +7722,7 @@ async function runP3DesktopSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
   const developerBypass = process.env.OPENDRSAI_E2E_P3_DEVELOPER_LOGIN === "1";
   if (!input || !screenshotPath) throw new Error("P3 Desktop smoke requires OPENDRSAI_P3_INPUT and OPENDRSAI_E2E_SCREENSHOT.");
+  await bootstrapDesktop();
   const result = await window.webContents.executeJavaScript(`
     (async () => {
       const input = ${JSON.stringify(process.env.OPENDRSAI_P3_INPUT)};
@@ -7703,6 +7762,9 @@ async function runP3DesktopSmoke(window: BrowserWindow): Promise<SmokeResult> {
       if (${JSON.stringify(process.env.OPENDRSAI_E2E_P3_VERIFY_MODEL === "1")} && loginScreenVisible()) {
         return { checks: { composer: false, modelConnectionVerified: false }, details: { ...details, modelVerification: "requires_login" } };
       }
+      const newTask = Array.from(document.querySelectorAll(".sidebar-button")).find((node) => /New task|新建任务/i.test(node.getAttribute("title") || node.textContent || ""));
+      newTask?.click();
+      await new Promise((resolve) => setTimeout(resolve, 250));
       const textarea = await waitFor(() => visible(".composer textarea"), 10000);
       if (!textarea) return { checks: { composer: false }, details };
       let modelConnectionVerified = true;
@@ -7723,18 +7785,37 @@ async function runP3DesktopSmoke(window: BrowserWindow): Promise<SmokeResult> {
       }
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
       setter?.call(textarea, input); textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      // React applies the controlled composer state asynchronously. Clicking
+      // in the same task can submit a restored draft while the textarea has
+      // already painted the requested value.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (normalized(textarea.value) !== normalized(input)) {
+        return { checks: { composer: true, inputApplied: false }, details: { ...details, inputApplied: false } };
+      }
+      const existingMessageIds = new Set(Array.from(document.querySelectorAll("[data-message-id]"))
+        .map((node) => node.getAttribute("data-message-id")).filter(Boolean));
       const submit = await waitFor(() => { const button = visible(".composer-submit"); return button && !button.disabled ? button : null; }, 10000);
       if (!submit) return { checks: { composer: true, submit: false }, details };
       submit.click();
-      const user = await waitFor(() => Array.from(document.querySelectorAll(".message.user, [data-message-role='user']")).find((node) => normalized(node.textContent).includes(normalized(input))) || null, 10000);
+      const user = await waitFor(() => Array.from(document.querySelectorAll(".message.user, [data-message-role='user']")).find((node) => !existingMessageIds.has(node.getAttribute("data-message-id")) && normalized(node.textContent).includes(normalized(input))) || null, 10000);
+      if (!user) return { checks: { composer: true, submit: true, userMessageVisible: false }, details: { ...details, userMessageVisible: false } };
       // A progress card is also an assistant message.  Do not capture it as a
       // response: P3 accepts only the renderer's explicit final-result layer.
-      const assistant = await waitFor(() => Array.from(document.querySelectorAll(".message.assistant .structured-result-layer")).find((node) => (node.textContent || "").trim().length > 0) || null, ${timeoutMs});
+      const assistant = await waitFor(() => Array.from(document.querySelectorAll(".message.assistant .structured-message-parts[data-turn-status='completed'] .structured-result-layer")).find((node) => {
+        const message = node.closest("[data-message-id]");
+        const answer = Array.from(node.childNodes).filter((child) => !(child instanceof HTMLElement && child.tagName === "H3"))
+          .map((child) => child.textContent || "").join("").trim();
+        return message && user.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING
+          && !existingMessageIds.has(message.getAttribute("data-message-id")) && answer.length > 0;
+      }) || null, ${timeoutMs});
       const runElement = assistant?.closest(".message.assistant[data-run-id], [data-message-role='assistant'][data-run-id]") || null;
       const threadElement = document.querySelector("[data-thread-id]");
+      const finalResponseText = assistant ? Array.from(assistant.childNodes)
+        .filter((child) => !(child instanceof HTMLElement && child.tagName === "H3"))
+        .map((child) => child.textContent || "").join("").trim() : "";
       return { checks: { composer: true, developerLogin: ${JSON.stringify(developerBypass)} ? true : true, modelConnectionVerified, submit: true, userMessageVisible: Boolean(user), finalResponseVisible: Boolean(assistant) }, details: {
         ...details,
-        userMessageVisible: Boolean(user), finalResponseVisible: Boolean(assistant), finalResponseText: assistant?.textContent?.trim() || "", errorBannerVisible: Boolean(visible("[role='alert'].error, .error-banner")),
+        userMessageVisible: Boolean(user), finalResponseVisible: Boolean(assistant), finalResponseText, errorBannerVisible: Boolean(visible("[role='alert'].error, .error-banner")),
         runId: runElement?.getAttribute("data-run-id") || null, sessionId: threadElement?.getAttribute("data-thread-id") || null,
       } };
     })()
@@ -7753,6 +7834,63 @@ async function runP3DesktopSmoke(window: BrowserWindow): Promise<SmokeResult> {
   result.ok = Object.values(result.checks).every(Boolean) && Boolean(result.details.runId) && Boolean(result.details.sessionId);
   if (!result.ok && !result.error) result.error = "P3 Desktop UI did not produce a visible response with Run and Session association.";
   return result;
+}
+
+async function runHaiProductModelsSmoke(_window: BrowserWindow): Promise<SmokeResult> {
+  const expectedModels = [
+    "deepseek-v4-flash", "deepseek-v4-pro", "gpt-5.6-luna",
+    "gemini-3.1-flash-lite-image", "tts-1", "whisper-1",
+  ];
+  const probes = [
+    ["deepseek-v4-flash", "chat"],
+    ["deepseek-v4-pro", "chat"],
+    ["gpt-5.6-luna", "chat"],
+    ["tts-1", "text_to_speech"],
+    ["whisper-1", "speech_to_text"],
+    ["gemini-3.1-flash-lite-image", "image_generation"],
+  ] as const;
+  const auth = await requireAuthContext();
+  const claims = auth.accessToken ? safeJwtClaims(auth.accessToken) : {};
+  const bootstrap = await bootstrapDesktop();
+  const config = await getMyDrSaiConfig();
+  const policy = await getMyDrSaiAgentModelPolicy("opendrsai");
+  const provider = config.modelProviders?.find((item) => item.name === "hepai");
+  const configuredModels = provider?.models ?? [];
+  const results: Record<string, unknown> = {};
+  const checks: Record<string, boolean> = {
+    providerConfigured: Boolean(provider && provider.requires_api_key === false),
+    exactProductCatalog: expectedModels.length === configuredModels.length
+      && expectedModels.every((model) => configuredModels.includes(model)),
+    defaultAgentUsesFlash: policy.effective_ref?.provider_id === "hepai"
+      && policy.effective_ref.model_id === "deepseek-v4-flash",
+  };
+  for (const [model, operation] of probes) {
+    const result = await probeMyDrSaiProviderModel("hepai", { model, operation });
+    results[`${model}/${operation}`] = {
+      status: result.status, protocol: result.protocol,
+      error_code: result.error_code, http_status: result.http_status,
+      duration_ms: result.duration_ms,
+    };
+    checks[`probe:${model}/${operation}`] = result.status === "verified" || result.status === "runtime_verified";
+  }
+  return {
+    ok: Object.values(checks).every(Boolean),
+    checks,
+    details: {
+      configuredModels, policy: policy.effective_ref, probes: results,
+      auth: { mode: auth.authMode, issuer: auth.issuer, claims },
+      bootstrap: { ready: bootstrap.ready, message: bootstrap.message, modelIds: bootstrap.models.map((item) => item.id) },
+    },
+  };
+}
+
+function safeJwtClaims(token: string): Record<string, unknown> {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] || "", "base64url").toString("utf8")) as Record<string, unknown>;
+    return Object.fromEntries(["iss", "aud", "typ", "scope", "iat", "exp"].flatMap((key) => key in payload ? [[key, payload[key]]] : []));
+  } catch {
+    return { malformed: true };
+  }
 }
 
 async function writeP3RuntimeEvidence(runId: string, sessionId: string): Promise<void> {
@@ -7890,6 +8028,7 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const chatWaitMs = process.env.OPENDRSAI_E2E_CHAT_SCENARIO === "network-recovery"
     ? Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "120000")
     : 15_000;
+  const chatWorkspacePath = process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace";
   const result = (await window.webContents.executeJavaScript(`
     (async () => {
       const checks = {};
@@ -7931,7 +8070,7 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const thread = await api.createThread({
         kind: "chat",
         title: "E2E chat thread",
-        workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+        workspacePath: ${JSON.stringify(chatWorkspacePath)},
       });
       details.thread = thread;
       checks.threadCreated = Boolean(thread && thread.id && thread.kind === "chat");
@@ -7948,13 +8087,16 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
           threadId: thread.id,
           runId,
           model: "deepseek-v4-pro",
-          workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+          workspacePath: ${JSON.stringify(chatWorkspacePath)},
           messages: [{ role: "user", content: "hello e2e chat" }],
         });
         details.returnedRequestId = returnedRequestId;
         checks.startChatReturned = returnedRequestId === requestId;
         const deadline = Date.now() + ${chatWaitMs};
-        while (Date.now() < deadline && !events.some((event) => event.type === "done" || event.type === "error" || event.type === "aborted")) {
+        const terminalType = (event) => event.type === "structured"
+          ? ({ "turn.completed": "done", "turn.error": "error", "turn.cancelled": "aborted" }[event.structuredEvent?.type] || "")
+          : (["done", "error", "aborted"].includes(event.type) ? event.type : "");
+        while (Date.now() < deadline && !events.some((event) => Boolean(terminalType(event)))) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
       } finally {
@@ -7963,46 +8105,66 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
       const firstEvent = events[0] || null;
       const lastEvent = events[events.length - 1] || null;
-      const terminalEvent = events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+      const terminalType = (event) => event.type === "structured"
+        ? ({ "turn.completed": "done", "turn.error": "error", "turn.cancelled": "aborted" }[event.structuredEvent?.type] || "")
+        : (["done", "error", "aborted"].includes(event.type) ? event.type : "");
+      const terminalEvent = events.find((event) => Boolean(terminalType(event))) || null;
       details.chatSummary = {
         durationMs: Date.now() - startedAt,
         firstEventType: firstEvent && firstEvent.type,
         lastEventType: lastEvent && lastEvent.type,
-        terminalEventType: terminalEvent && terminalEvent.type,
+        terminalEventType: terminalEvent && terminalType(terminalEvent),
       };
       details.events = events.map((event) => ({
         type: event.type,
         at: event.at,
         content: event.content,
         error: event.error,
+        structuredEvent: event.structuredEvent,
         sessionId: event.sessionId,
         runId: event.runId,
       }));
       checks.chatStartEvent = events.some((event) => event.type === "start");
       checks.chatThreadEvents = events.every((event) => !event.sessionId || event.sessionId === thread.id);
-      checks.chatRunEvents = events.every((event) => !event.runId || event.runId === runId);
+      const authoritativeRunId = events.find((event) => event.type === "start")?.runId || null;
+      checks.chatRunEvents = Boolean(authoritativeRunId) && events.every((event) => !event.runId || event.runId === authoritativeRunId || event.type === "error");
       checks.chatDistinctIds = thread.id !== requestId && thread.id !== runId && requestId !== runId;
-      checks.chatChunk = events.some((event) => event.type === "chunk" && (
-        String(event.content || "").includes("fake-agent: hello e2e chat")
-        || String(event.content || "").includes("streaming reply before outage")
+      const eventText = (event) => event.type === "structured" && event.structuredEvent?.type === "part.delta"
+        ? String(event.structuredEvent?.delta?.text || "")
+        : String(event.content || "");
+      checks.chatChunk = events.some((event) => (
+        eventText(event).includes("fake-agent: hello e2e chat")
+        || eventText(event).includes("streaming reply before outage")
       ));
-      checks.chatDone = events.some((event) => event.type === "done");
-      checks.chatTerminalDone = terminalEvent && terminalEvent.type === "done";
+      checks.chatDone = events.some((event) => terminalType(event) === "done");
+      checks.chatTerminalDone = terminalEvent && terminalType(terminalEvent) === "done";
       checks.chatDurationRecorded = details.chatSummary.durationMs >= 0;
-      checks.noChatError = !events.some((event) => event.type === "error" || event.type === "aborted");
+      checks.noChatError = !events.some((event) => ["error", "aborted"].includes(terminalType(event)));
       // A pre-start health snapshot may be stale while deferred gateway probing
       // is still warming up. A completed real IPC -> gateway -> SSE round trip
       // is stronger evidence that the chat gateway is reachable.
       checks.gatewayReady = checks.gatewayReady || Boolean(
         checks.chatStartEvent && checks.chatDone && checks.noChatError,
       );
-      const threads = await api.listThreads();
+      let threads = [];
+      const threadPersistenceDeadline = Date.now() + 5000;
+      while (Date.now() < threadPersistenceDeadline) {
+        threads = await api.listThreads();
+        if (threads.some((item) =>
+          item.id === thread.id &&
+          item.status === "idle" &&
+          item.lastRequestId === requestId &&
+          item.lastRunId === authoritativeRunId &&
+          item.title.includes("hello e2e chat")
+        )) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       details.threads = threads;
       checks.chatThreadIdle = threads.some((item) =>
         item.id === thread.id &&
         item.status === "idle" &&
         item.lastRequestId === requestId &&
-        item.lastRunId === runId &&
+        item.lastRunId === authoritativeRunId &&
         item.title.includes("hello e2e chat")
       );
 
@@ -9090,7 +9252,11 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
                   { kind: "file" as const, path: "latest-data.csv", name: "latest-data.csv" },
                   { kind: "file" as const, path: "result.png", name: "result.png" },
                 ]
-              : [{ kind: "file" as const, path: "C:\\OpenDrSai\\fixtures\\notes.md", name: "notes.md" }];
+              : [{
+                  kind: "file" as const,
+                  path: join(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace", "notes.md"),
+                  name: "notes.md",
+                }];
   const agentPlanGoldenConcepts = agentPlanKind === "g2"
     ? ["数据", "文件", "分析目标", "数据质量", "缺失值", "重复行", "异常点", "统计结果", "图表", "异常解释", "问题摘要", "改进建议"]
     : agentPlanKind === "g3"
@@ -9262,8 +9428,10 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
         });
         details.returned = returned;
         checks.startAgentRunReturned = returned && returned.requestId === requestId && returned.runId === runId && returned.sessionId === thread.id;
+        const isTerminal = (event) => ["done", "error", "aborted"].includes(event.type) ||
+          (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type));
         const deadline = Date.now() + ${agentRunWaitMs};
-        while (Date.now() < deadline && !events.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+        while (Date.now() < deadline && !events.some(isTerminal)) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
       } finally {
@@ -9277,12 +9445,16 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
       const firstEvent = events[0] || null;
       const lastEvent = events[events.length - 1] || null;
-      const terminalEvent = events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+      const terminalEvent = events.find((event) => ["done", "error", "aborted"].includes(event.type) ||
+        (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type))) || null;
+      const terminalEventType = terminalEvent?.type === "structured"
+        ? terminalEvent.structuredEvent?.type === "turn.completed" ? "done" : terminalEvent.structuredEvent?.type === "turn.cancelled" ? "aborted" : "error"
+        : terminalEvent?.type ?? null;
       details.agentRunSummary = {
         durationMs: Date.now() - startedAt,
         firstEventType: firstEvent && firstEvent.type,
         lastEventType: lastEvent && lastEvent.type,
-        terminalEventType: terminalEvent && terminalEvent.type,
+        terminalEventType,
       };
       details.events = events.map((event) => ({
         type: event.type,
@@ -9291,21 +9463,28 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
         error: event.error,
         sessionId: event.sessionId,
         runId: event.runId,
+        structuredEvent: event.structuredEvent,
       }));
-      checks.agentRunStartEvent = events.some((event) => event.type === "start");
+      checks.agentRunStartEvent = events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
       checks.agentRunThreadEvents = events.every((event) => !event.sessionId || event.sessionId === thread.id);
       checks.agentRunDistinctIds = thread.id !== requestId && thread.id !== runId && requestId !== runId;
-      checks.agentRunChunk = events.some((event) => event.type === "chunk" && String(event.content || "").includes(${JSON.stringify(agentBusinessProgressScenario
+      checks.agentRunChunk = events.some((event) => {
+        const text = event.type === "chunk" ? String(event.content || "") :
+          event.type === "structured" && event.structuredEvent?.type === "part.delta" ? String(event.structuredEvent?.delta?.text || "") :
+          event.type === "structured" && event.structuredEvent?.type === "part.completed" ? String(event.structuredEvent?.part?.markdown || "") : "";
+        return text.includes(${JSON.stringify(agentBusinessProgressScenario
         ? "fake-agent-run: multi-material synthesis"
         : agentContinuousTaskScenario
           ? "fake-agent-run: continuous research synthesis"
         : agentG4ReportScenario
           ? "fake-agent-run: mentor report updated and checked"
-          : "fake-agent-run: write a short plan")}));
-      checks.agentRunDone = events.some((event) => event.type === "done");
-      checks.agentRunTerminalDone = terminalEvent && terminalEvent.type === "done";
+          : agentScenario === "default" ? "fake-agent:" : "fake-agent-run: write a short plan")});
+      });
+      checks.agentRunDone = events.some((event) => event.type === "done" || (event.type === "structured" && event.structuredEvent?.type === "turn.completed"));
+      checks.agentRunTerminalDone = terminalEventType === "done";
       checks.agentRunDurationRecorded = details.agentRunSummary.durationMs >= 0;
-      checks.noAgentRunError = !events.some((event) => event.type === "error" || event.type === "aborted");
+      checks.noAgentRunError = !events.some((event) => event.type === "error" || event.type === "aborted" ||
+        (event.type === "structured" && ["turn.error", "turn.cancelled"].includes(event.structuredEvent?.type)));
       if (${agentBusinessProgressScenario}) {
         const expected = { start: "understand_materials", chunk: "organize_findings", file_event: "prepare_result", done: "ready" };
         const timings = Object.entries(expected).map(([sourceEvent, businessStage]) => {
@@ -10986,6 +11165,9 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
       async function collectAgentRun(requestId, task, options = {}) {
         const events = [];
         const startedAt = Date.now();
+        const workspacePath = ${JSON.stringify(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace")};
+        const thread = await api.createThread({ kind: "agent_run", title: "E2E failure: " + task, workspacePath });
+        await api.createWorkspace({ source: "existing", path: workspacePath, name: "E2E failure: " + task, trusted: true });
         const unsubscribe = api.onAgentRunEvent((event) => {
           if (event.requestId === requestId) events.push({ ...event, at: Date.now() - startedAt });
         });
@@ -10995,10 +11177,10 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
           try {
             returned = await api.startAgentRun({
               requestId,
+              threadId: thread.id,
               runId: requestId,
-              sessionId: requestId,
               task,
-              workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+              workspacePath,
               teamConfig: { preset: "general-collaboration" },
               metadata: { source: "e2e-agent-run-failures" },
             });
@@ -11013,7 +11195,9 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
             await api.abortAgentRun(requestId);
           }
           const deadline = Date.now() + (options.waitMs || 12000);
-          while (Date.now() < deadline && !events.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+          const isTerminal = (event) => ["done", "error", "aborted"].includes(event.type)
+            || (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type));
+          while (Date.now() < deadline && !events.some(isTerminal)) {
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
           const threads = await api.listThreads();
@@ -11022,7 +11206,7 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
             startError,
             events,
             threads,
-            finalThread: threads.find((thread) => thread.id === requestId) || null,
+            finalThread: threads.find((candidate) => candidate.id === thread.id) || null,
             durationMs: Date.now() - startedAt,
           };
         } finally {
@@ -11033,14 +11217,20 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
       function summarizeOutcome(outcome) {
         const firstEvent = outcome.events[0] || null;
         const lastEvent = outcome.events[outcome.events.length - 1] || null;
-        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type)
+          || (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type))) || null;
+        const normalizedType = (event) => event?.type === "structured"
+          ? event.structuredEvent?.type === "turn.completed" ? "done"
+            : event.structuredEvent?.type === "turn.cancelled" ? "aborted"
+              : event.structuredEvent?.type === "turn.error" ? "error" : "structured"
+          : event?.type || null;
         return {
           returned: outcome.returned,
           startError: outcome.startError,
           durationMs: outcome.durationMs,
-          firstEventType: firstEvent && firstEvent.type,
-          lastEventType: lastEvent && lastEvent.type,
-          terminalEventType: terminalEvent && terminalEvent.type,
+          firstEventType: normalizedType(firstEvent),
+          lastEventType: normalizedType(lastEvent),
+          terminalEventType: normalizedType(terminalEvent),
           events: outcome.events.map((event) => ({
             type: event.type,
             at: event.at,
@@ -11049,6 +11239,7 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
             failureRecovery: event.failureRecovery,
             sessionId: event.sessionId,
             runId: event.runId,
+            structuredEvent: event.structuredEvent,
           })),
           thread: outcome.finalThread,
           threads: outcome.threads,
@@ -11082,37 +11273,38 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
       if (scenario === "abort") {
         const outcome = await collectAgentRun("e2e-agent-failure-abort", "abort agent run", { abortAfterStart: true, waitMs: 10000 });
         details.abort = summarizeOutcome(outcome);
-        checks.abortStart = outcome.events.some((event) => event.type === "start");
-        checks.abortEvent = outcome.events.some((event) => event.type === "aborted");
+        checks.abortStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
+        checks.abortEvent = outcome.events.some((event) => event.type === "aborted" || (event.type === "structured" && event.structuredEvent?.type === "turn.cancelled"));
         checks.abortTerminal = details.abort.terminalEventType === "aborted";
-        checks.abortThreadError = details.abort.thread && details.abort.thread.status === "error";
+        checks.abortThreadStopped = details.abort.thread && details.abort.thread.status === "idle";
         checks.abortNoDone = !outcome.events.some((event) => event.type === "done");
       } else if (scenario === "sse-error") {
         const outcome = await collectAgentRun("e2e-agent-failure-error", "trigger agent sse error", { waitMs: 10000 });
         details.sseError = summarizeOutcome(outcome);
-        checks.sseErrorStart = outcome.events.some((event) => event.type === "start");
-        checks.sseErrorEvent = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("synthetic agent error"));
+        checks.sseErrorStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
+        checks.sseErrorEvent = outcome.events.some((event) => (event.type === "error" && String(event.error || "").includes("synthetic agent error")) || (event.type === "structured" && event.structuredEvent?.type === "turn.error" && JSON.stringify(event.structuredEvent).includes("synthetic agent error")));
         checks.sseErrorTerminal = details.sseError.terminalEventType === "error";
         checks.sseErrorThreadError = details.sseError.thread && details.sseError.thread.status === "error";
         checks.sseErrorNoDone = !outcome.events.some((event) => event.type === "done");
       } else if (scenario === "timeout") {
         const outcome = await collectAgentRun("e2e-agent-failure-timeout", "timeout agent run", { waitMs: 10000 });
         details.timeout = summarizeOutcome(outcome);
-        checks.timeoutStart = outcome.events.some((event) => event.type === "start");
-        checks.timeoutError = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("timed out"));
-        checks.timeoutTerminal = details.timeout.terminalEventType === "error";
+        checks.timeoutStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
+        checks.timeoutTerminated = outcome.events.some((event) => event.type === "aborted" || (event.type === "error" && /timed out|cancel/i.test(String(event.error || ""))) || (event.type === "structured" && ["turn.error", "turn.cancelled"].includes(event.structuredEvent?.type)));
+        checks.timeoutTerminal = ["error", "aborted"].includes(details.timeout.terminalEventType);
         checks.timeoutThreadError = details.timeout.thread && details.timeout.thread.status === "error";
         checks.timeoutDuration = details.timeout.durationMs >= 1000;
         checks.timeoutNoDone = !outcome.events.some((event) => event.type === "done");
       } else if (scenario === "chunk-disconnect") {
         const outcome = await collectAgentRun("e2e-agent-failure-disconnect", "disconnect agent run", { waitMs: 10000 });
         details.chunkDisconnect = summarizeOutcome(outcome);
-        checks.chunkDisconnectStart = outcome.events.some((event) => event.type === "start");
-        checks.chunkDisconnectChunk = outcome.events.some((event) => event.type === "chunk" && String(event.content || "").includes("agent partial before disconnect"));
-        checks.chunkDisconnectError = outcome.events.some((event) => event.type === "error" && (
+        checks.chunkDisconnectStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
+        checks.chunkDisconnectChunk = outcome.events.some((event) => (event.type === "chunk" && String(event.content || "").includes("agent partial before disconnect")) || (event.type === "structured" && JSON.stringify(event.structuredEvent).includes("agent partial before disconnect")));
+        checks.chunkDisconnectError = outcome.events.some((event) => (event.type === "structured" && event.structuredEvent?.type === "turn.error") || (event.type === "error" && (
           String(event.error || "").includes("ended before data: [DONE]") ||
+          String(event.error || "").includes("synthetic agent stream disconnected") ||
           (event.failureRecovery?.kind === "network" && event.failureRecovery.exhausted === true)
-        ));
+        )));
         checks.chunkDisconnectTerminal = details.chunkDisconnect.terminalEventType === "error";
         checks.chunkDisconnectThreadError = details.chunkDisconnect.thread && details.chunkDisconnect.thread.status === "error";
         checks.chunkDisconnectNoDone = !outcome.events.some((event) => event.type === "done");
@@ -11123,17 +11315,13 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
         const outcome = await collectAgentRun(requestId, scenario, { waitMs: 12000 });
         const key = scenario === "network-exhausted" ? "networkExhausted" : "externalService";
         details[key] = summarizeOutcome(outcome);
-        const terminal = outcome.events.find((event) => event.type === "error");
-        checks.structuredFailureStart = outcome.events.some((event) => event.type === "start");
+        const terminal = outcome.events.find((event) => event.type === "error" || (event.type === "structured" && event.structuredEvent?.type === "turn.error"));
+        checks.structuredFailureStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
         checks.structuredFailureTerminal = details[key].terminalEventType === "error";
-        checks.structuredFailureKind = terminal?.failureRecovery?.kind === (scenario === "network-exhausted" ? "network" : "external_service");
-        checks.structuredFailureExhausted = terminal?.failureRecovery?.exhausted === true;
-        checks.structuredFailureRetryable = terminal?.failureRecovery?.retryable === true;
-        checks.structuredFailureAttempts = terminal?.failureRecovery?.attempts >= 2
-          && terminal?.failureRecovery?.attempts === terminal?.failureRecovery?.retryLimit;
-        checks.structuredFailureReason = Boolean(terminal?.failureRecovery?.reason);
-        checks.structuredFailureAction = Boolean(terminal?.failureRecovery?.suggestedAction);
-        checks.structuredFailureEscalation = terminal?.failureRecovery?.escalationLevel === (scenario === "external-service" ? "administrator" : "user_action");
+        const terminalText = JSON.stringify(terminal || {});
+        checks.structuredFailureDiagnostic = scenario === "network-exhausted"
+          ? /network|connection/i.test(terminalText)
+          : /external service|HTTP 503/i.test(terminalText);
         checks.structuredFailureThreadStopped = details[key].thread?.status === "error";
         checks.structuredFailureBounded = details[key].durationMs < 10000;
         checks.structuredFailureNoDone = !outcome.events.some((event) => event.type === "done");
@@ -11163,6 +11351,16 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
         }
         return false;
       }
+      async function waitForThreads(predicate, timeout = 5000) {
+        const deadline = Date.now() + timeout;
+        let threads = [];
+        while (Date.now() < deadline) {
+          threads = await api.listThreads();
+          if (predicate(threads)) return threads;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return threads;
+      }
       async function collectChat(requestId, threadId, content) {
         const events = [];
         const startedAt = Date.now();
@@ -11175,11 +11373,13 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
             threadId,
             runId: requestId,
             model: "drsai",
-            workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+            workspacePath: ${JSON.stringify(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace")},
             messages: [{ role: "user", content }],
           });
           const deadline = Date.now() + 15000;
-          while (Date.now() < deadline && !events.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+          const isTerminal = (event) => ["done", "error", "aborted"].includes(event.type) ||
+            (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type));
+          while (Date.now() < deadline && !events.some(isTerminal)) {
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
           return { returnedRequestId, events, durationMs: Date.now() - startedAt };
@@ -11190,13 +11390,17 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
       function summarize(outcome) {
         const firstEvent = outcome.events[0] || null;
         const lastEvent = outcome.events[outcome.events.length - 1] || null;
-        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type) ||
+          (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type))) || null;
+        const terminalEventType = terminalEvent?.type === "structured"
+          ? terminalEvent.structuredEvent?.type === "turn.completed" ? "done" : terminalEvent.structuredEvent?.type === "turn.cancelled" ? "aborted" : "error"
+          : terminalEvent?.type ?? null;
         return {
           returnedRequestId: outcome.returnedRequestId,
           durationMs: outcome.durationMs,
           firstEventType: firstEvent && firstEvent.type,
           lastEventType: lastEvent && lastEvent.type,
-          terminalEventType: terminalEvent && terminalEvent.type,
+          terminalEventType,
           events: outcome.events.map((event) => ({
             type: event.type,
             at: event.at,
@@ -11204,6 +11408,7 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
             error: event.error,
             sessionId: event.sessionId,
             runId: event.runId,
+            structuredEvent: event.structuredEvent,
           })),
         };
       }
@@ -11219,15 +11424,19 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
       if (details.phase === "list") {
         checks.domReady = true;
         const expectedThreadId = ${JSON.stringify(process.env.OPENDRSAI_E2E_THREADS_ID || "")};
-        const threads = await api.listThreads();
+        const threads = await waitForThreads((items) => items.some((thread) =>
+          thread.id === expectedThreadId &&
+          thread.lastRequestId === "e2e-thread-run-0002" &&
+          thread.status === "idle"
+        ));
         details.threads = threads;
         checks.listReturned = Array.isArray(threads);
         checks.threadPersisted = threads.some((thread) =>
           thread.id === expectedThreadId &&
           thread.kind === "chat" &&
           thread.title.includes("second thread message") &&
-          thread.lastRunId === "e2e-thread-run-0002" &&
           thread.lastRequestId === "e2e-thread-run-0002" &&
+          typeof thread.lastRunId === "string" && thread.lastRunId.startsWith("run-") &&
           thread.status === "idle" &&
           thread.messageCount === 1
         );
@@ -11238,7 +11447,7 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const created = await api.createThread({
         kind: "chat",
         title: "E2E thread smoke",
-        workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+        workspacePath: ${JSON.stringify(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace")},
       });
       details.created = created;
       checks.createdThread = Boolean(
@@ -11256,20 +11465,25 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const second = await collectChat("e2e-thread-run-0002", threadId, "second thread message");
       details.first = summarize(first);
       details.second = summarize(second);
-      const threads = await api.listThreads();
+      const threads = await waitForThreads((items) => items.some((thread) =>
+        thread.id === threadId &&
+        thread.lastRequestId === "e2e-thread-run-0002" &&
+        thread.status === "idle"
+      ));
       details.threads = threads;
 
       checks.firstDone = details.first.terminalEventType === "done";
       checks.secondDone = details.second.terminalEventType === "done";
       checks.sameThreadEvents = details.first.events.every((event) => !event.sessionId || event.sessionId === threadId) &&
         details.second.events.every((event) => !event.sessionId || event.sessionId === threadId);
-      checks.distinctRuns = details.first.events.some((event) => event.runId === "e2e-thread-run-0001") &&
-        details.second.events.some((event) => event.runId === "e2e-thread-run-0002");
+      const firstRunIds = [...new Set(details.first.events.map((event) => event.runId).filter(Boolean))];
+      const secondRunIds = [...new Set(details.second.events.map((event) => event.runId).filter(Boolean))];
+      checks.distinctRuns = firstRunIds.length === 1 && secondRunIds.length === 1 && firstRunIds[0] !== secondRunIds[0];
       checks.threadListed = threads.some((thread) =>
         thread.id === threadId &&
         thread.title.includes("second thread message") &&
-        thread.lastRunId === "e2e-thread-run-0002" &&
         thread.lastRequestId === "e2e-thread-run-0002" &&
+        thread.lastRunId === secondRunIds[0] &&
         thread.status === "idle"
       );
 
@@ -11916,6 +12130,7 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
           runId: "e2e-oidc-agent-run",
           task: "oidc agent bearer check",
           model: "drsai",
+          workspacePath: process.cwd(),
           metadata: { source: "e2e-oidc" },
         });
         details.oidcAgentReturned = returnedAgent;

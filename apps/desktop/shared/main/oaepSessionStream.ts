@@ -120,6 +120,16 @@ export function oaepRetryDelayMs(attempt: number, jitterUnit = Math.random()): n
  */
 export const MAX_AUTOMATIC_RETRY_ATTEMPTS = 120;
 
+function positiveIntEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+// Keep OAEP recovery aligned with the desktop chat/agent recovery contract.
+// Tests may shorten this window, while production retains the three-minute
+// interruption tolerance documented above.
+const OAEP_NETWORK_RECOVERY_WINDOW_MS = positiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", 180_000);
+
 export class OaepSyncDegradedError extends Error {
   readonly code = "oaep_sync_degraded";
   readonly retryable = false;
@@ -543,6 +553,7 @@ class SharedOaepSessionController {
   private async run(): Promise<void> {
     let needsSnapshot = true;
     let firstReady = false;
+    let retryStartedAt = 0;
     while (!this.abort.signal.aborted) {
       try {
         if (needsSnapshot) {
@@ -564,8 +575,19 @@ class SharedOaepSessionController {
         const opened = await this.client.openOaepEventStream(this.sessionId, this.cursor, this.abort.signal);
         this.transition("connected");
         if (this.retryAttempt) this.notifyConnection("connected");
-        this.retryAttempt = 0;
-        await consumeSse(opened.events, this.abort.signal, (event) => this.accept(event, "stream"));
+        // A TCP handshake followed by an immediate close is not a recovered
+        // subscription. Only reset the consecutive-recovery budget after the
+        // stream has remained healthy for a short interval; this prevents a
+        // connect/close loop from keeping a Run in `running` forever.
+        const stableConnection = setTimeout(() => {
+          this.retryAttempt = 0;
+          retryStartedAt = 0;
+        }, Math.min(5_000, Math.max(250, Math.floor(OAEP_NETWORK_RECOVERY_WINDOW_MS / 2))));
+        try {
+          await consumeSse(opened.events, this.abort.signal, (event) => this.accept(event, "stream"));
+        } finally {
+          clearTimeout(stableConnection);
+        }
         if (!this.abort.signal.aborted) throw new Error("Runtime OAEP stream ended before cancellation.");
       } catch (error) {
         if (this.abort.signal.aborted) break;
@@ -589,7 +611,11 @@ class SharedOaepSessionController {
         // Only an explicitly expired cursor requires a canonical resnapshot.
         needsSnapshot ||= disposition === "cursor_expired";
         this.retryAttempt += 1;
-        if (this.retryAttempt >= MAX_AUTOMATIC_RETRY_ATTEMPTS) {
+        if (!retryStartedAt) retryStartedAt = Date.now();
+        if (
+          this.retryAttempt >= MAX_AUTOMATIC_RETRY_ATTEMPTS
+          || Date.now() - retryStartedAt >= OAEP_NETWORK_RECOVERY_WINDOW_MS
+        ) {
           this.metrics.degradedErrors += 1;
           this.terminalError = new OaepSyncDegradedError(error);
           this.transition("degraded");

@@ -58,6 +58,8 @@ function Invoke-PackagedWsbCli([string[]]$Arguments) {
         return (($output | Out-String).Trim())
     }
 
+    if ($env:OPENDRSAI_SANDBOX_DISABLE_PACKAGED_CLI -eq "1") { return $null }
+
     $package = Get-CurrentUserSandboxPackage
     if (-not $package) { return $null }
     if (-not (Get-Command Invoke-CommandInDesktopPackage -ErrorAction SilentlyContinue)) { return $null }
@@ -77,8 +79,27 @@ echo %errorlevel% > "$exitPath"
     [IO.File]::WriteAllText($commandPath, $content, (New-Object Text.UTF8Encoding($false)))
 
     try {
-        Invoke-CommandInDesktopPackage -PackageFamilyName $packageFamilyName -AppId $packageCliAppId `
-            -Command "cmd.exe" -Args "/d /c `"$commandPath`"" -PreventBreakaway
+        # Start-Job/Stop-Job can itself wait forever when the AppX command host is
+        # stale. Keep the packaged invocation in a disposable helper process so
+        # the advertised timeout is a real upper bound.
+        $escapedFamily = $packageFamilyName.Replace("'", "''")
+        $escapedAppId = $packageCliAppId.Replace("'", "''")
+        $escapedPath = $commandPath.Replace("'", "''")
+        $helperScript = @"
+`$ErrorActionPreference = 'Stop'
+Invoke-CommandInDesktopPackage -PackageFamilyName '$escapedFamily' -AppId '$escapedAppId' -Command 'cmd.exe' -Args '/d /c `"$escapedPath`"' -PreventBreakaway
+"@
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($helperScript))
+        $helper = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList @("-NoProfile", "-NonInteractive", "-EncodedCommand", $encoded) `
+            -WindowStyle Hidden -PassThru
+        if (-not $helper.WaitForExit(30000)) {
+            Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue
+            throw "Timed out starting the packaged wsb CLI. The Sandbox AppX command host may be stale; use StopAll -Force to close client sessions, then retry."
+        }
+        if ($helper.ExitCode -ne 0 -and -not (Test-Path -LiteralPath $exitPath)) {
+            throw "The packaged wsb CLI helper exited with code $($helper.ExitCode)."
+        }
         $deadline = (Get-Date).AddSeconds(30)
         while (-not (Test-Path -LiteralPath $exitPath) -and (Get-Date) -lt $deadline) {
             Start-Sleep -Milliseconds 250
@@ -93,6 +114,10 @@ echo %errorlevel% > "$exitPath"
         }
         return $output
     } finally {
+        if ($helper -and -not $helper.HasExited) {
+            Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue
+        }
+        if ($helper) { $helper.Dispose() }
         Remove-Item -LiteralPath $commandPath, $outputPath, $exitPath -Force -ErrorAction SilentlyContinue
     }
 }
@@ -215,20 +240,40 @@ switch ($Action) {
             }
         } while ((Get-Date) -lt $deadline)
         $launcher.Refresh()
-        throw "Windows Sandbox did not create a session within $TimeoutSeconds seconds. launcherExited=$($launcher.HasExited). Run -Action Diagnose and check Store/Windows Update if the current-user AppX registration is missing."
+        $launcherExitedBeforeCleanup = $launcher.HasExited
+        $launcherCleaned = $false
+        if (-not $launcherExitedBeforeCleanup) {
+            # No legacy/modern session was ever observed. Only terminate the
+            # exact launcher created above; never touch SandboxServer, VM
+            # compute, HNS, or unrelated Sandbox clients from this path.
+            Stop-Process -Id $launcher.Id -Force -ErrorAction SilentlyContinue
+            try { Wait-Process -Id $launcher.Id -Timeout 10 -ErrorAction SilentlyContinue } catch { }
+            $launcherCleaned = -not [bool](Get-Process -Id $launcher.Id -ErrorAction SilentlyContinue)
+        }
+        throw "Windows Sandbox did not create a session within $TimeoutSeconds seconds. launcherExitedBeforeCleanup=$launcherExitedBeforeCleanup; launcherCleaned=$launcherCleaned. Run -Action Diagnose and check Store/Windows Update if the current-user AppX registration is missing."
     }
     "Stop" {
         if (-not $Id) { throw "Stop requires -Id." }
         Write-Result (Stop-WsbSession $Id $TimeoutSeconds -AllowForce:$Force)
     }
     "StopAll" {
+        if ($Force -and -not (Get-Command wsb.exe -ErrorAction SilentlyContinue)) {
+            $clients = @(Get-Process WindowsSandbox, WindowsSandboxClient, WindowsSandboxRemoteSession -ErrorAction SilentlyContinue)
+            $clients | Stop-Process -Force -ErrorAction SilentlyContinue
+            Write-Result ([pscustomobject]@{
+                stopped = @($clients | ForEach-Object { [pscustomobject]@{ id = [string]$_.Id; process = $_.ProcessName; mode = "forced-client-close" } })
+                remaining = @()
+                mode = "forced-client-close-no-direct-wsb-alias"
+            })
+            break
+        }
         $state = Get-WsbState
         if ($state.available) {
             $results = foreach ($session in $state.sessions) { Stop-WsbSession ([string]$session.Id) $TimeoutSeconds -AllowForce:$Force }
             $remainingState = Get-WsbState
             Write-Result ([pscustomobject]@{ stopped = @($results); remaining = @($remainingState.sessions) })
         } elseif ($Force) {
-            Get-Process WindowsSandboxClient, WindowsSandboxRemoteSession -ErrorAction SilentlyContinue |
+            Get-Process WindowsSandbox, WindowsSandboxClient, WindowsSandboxRemoteSession -ErrorAction SilentlyContinue |
                 Stop-Process -Force -ErrorAction SilentlyContinue
             Write-Result ([pscustomobject]@{ stopped = @(); remaining = @(); mode = "forced-client-close" })
         } else {

@@ -58,7 +58,7 @@ export function LoginScreen(): React.JSX.Element {
 
   function getSubmitLabel(): string {
     if (auth.loginBusy) return zh ? "正在等待浏览器登录..." : "Waiting for browser sign-in...";
-    return zh ? "使用 HepAI 登录" : "Sign in with HepAI";
+    return zh ? "使用 HepAI 继续" : "Continue with HepAI";
   }
 
   async function handleCopyDiagnostics(): Promise<void> {
@@ -142,7 +142,7 @@ export function LoginScreen(): React.JSX.Element {
           </div>
         )}
 
-        {(import.meta.env.DEV
+        {((import.meta.env.DEV && import.meta.env.VITE_OPENDRSAI_LAUNCH_MODE !== "production")
           || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1"
           || new URLSearchParams(window.location.search).get("developerBypassFixture") === "1") && (
           <button
@@ -199,7 +199,7 @@ export function LoginScreen(): React.JSX.Element {
           <ol className="login-debug-list">
             {loginEvents.length === 0 ? (
               <li className="login-debug-empty">
-                {zh ? "暂无日志。点击“使用 HepAI 登录”开始。" : "No logs yet. Click Sign in with HepAI to start."}
+                {zh ? "暂无日志。点击“使用 HepAI 继续”开始。" : "No logs yet. Click Continue with HepAI to start."}
               </li>
             ) : (
               loginEvents.map((event, index) => (

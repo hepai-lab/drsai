@@ -209,12 +209,12 @@ async function synchronizeRuntimeWorkspaceNames(workspaces: WorkspaceProject[]):
         const opened = await client.openWorkspace(workspace.path, workspace.name);
         if (opened.workspace_id !== workspace.id || !samePath(opened.path, workspace.path)) {
           changed = true;
-          return {
+          return migrateWorkspaceToAuthoritativeId(workspace, {
             ...workspace,
             id: opened.workspace_id,
             path: opened.path,
             updatedAt: new Date().toISOString(),
-          };
+          });
         }
         return workspace;
       }
@@ -274,7 +274,11 @@ export async function deleteWorkspace(rawId: unknown): Promise<boolean> {
 }
 
 export async function findWorkspaceById(id: string): Promise<WorkspaceProject | undefined> {
-  return (await readWorkspaces()).find((workspace) => workspace.id === id);
+  return (await readWorkspaces()).find((workspace) => (
+    workspace.id === id
+    || (Array.isArray(workspace.metadata?.legacyWorkspaceIds)
+      && workspace.metadata.legacyWorkspaceIds.includes(id))
+  ));
 }
 
 export async function setRemoteWorkspaceAutoReconnect(id: string, enabled: boolean): Promise<void> {

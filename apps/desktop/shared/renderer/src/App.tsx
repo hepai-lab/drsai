@@ -13,6 +13,8 @@ import {
   Bot,
   Bug,
   Copy,
+  ChevronLeft,
+  Folder,
   FileText,
   Globe2,
   History,
@@ -34,6 +36,7 @@ import {
   Type,
   Video,
   Volume2,
+  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type {
@@ -234,6 +237,14 @@ type WorkspaceSortMode = "recent" | "name" | "created";
 type AppearanceMode = "light" | "dark" | "system";
 type AgentConfigurationTab = "opendrsai" | "codex" | "platform";
 type AgentCapabilityModelRole = "image_understanding_model" | "image_generation_model" | "text_to_speech_model" | "speech_to_text_model";
+interface AgentModelPolicyDraft {
+  primary_model: AgentModelSelection;
+  image_understanding_model: AgentModelSelection | null;
+  image_generation_model: AgentModelSelection | null;
+  text_to_speech_model: AgentModelSelection | null;
+  speech_to_text_model: AgentModelSelection | null;
+  reasoning_effort: ThinkingEffort | null;
+}
 interface AgentConfigurationPreference {
   model?: string;
   modelRef?: { provider_id: string; model_id: string };
@@ -307,6 +318,7 @@ function AuthenticatedApp({
   const [platformDescriptor, setPlatformDescriptor] = useState<DesktopPlatformDescriptor | null>(null);
   const developerMode = import.meta.env.DEV && loadDeveloperMode();
   const [activeNav, setActiveNav] = useState<NavId>(MENU_IDS.currentSession);
+  const [composerFocusRequest, setComposerFocusRequest] = useState(0);
   const [mobilePairingOpen, setMobilePairingOpen] = useState(false);
   const [mobilePairingRefreshToken, setMobilePairingRefreshToken] = useState(0);
   const [awaySummary, setAwaySummary] = useState<AwaySummary | null>(null);
@@ -370,7 +382,10 @@ function AuthenticatedApp({
   const chatChoicesGenerationRef = useRef(0);
   const [chatChoicesRefreshNonce, setChatChoicesRefreshNonce] = useState(0);
   const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
-  const [workspaceLocationChoice, setWorkspaceLocationChoice] = useState<"remote" | null>(null);
+  const [workspaceLocationChoice, setWorkspaceLocationChoice] = useState<"local" | "remote" | null>(null);
+  const [workspaceDraftName, setWorkspaceDraftName] = useState("");
+  const [workspaceNameTouched, setWorkspaceNameTouched] = useState(false);
+  const [localWorkspacePath, setLocalWorkspacePath] = useState("");
   const [remoteWorkspaceStep, setRemoteWorkspaceStep] = useState<"computer" | "directory">("computer");
   const [remoteHosts, setRemoteHosts] = useState<RemoteSshHost[]>([]);
   const [remoteHostAlias, setRemoteHostAlias] = useState("");
@@ -707,31 +722,6 @@ function AuthenticatedApp({
                 ? "请先信任当前工作区。"
                 : "Trust this workspace before sending."
               : undefined;
-  function recordSuccessfulModelUsage(): void {
-    if (selectedChatAgentId !== myDrSaiAgentModelPolicy?.agent_id) return;
-    const ref = myDrSaiAgentModelPolicy.effective_ref;
-    if (!ref) return;
-    const testedAt = new Date().toISOString();
-    setMyDrSaiConfig((current) => {
-      if (!current?.modelConnection) return current;
-      const success = {
-        provider: ref.provider_id,
-        model: ref.model_id,
-        mode: "model" as const,
-        ok: true,
-        tested_at: testedAt,
-      };
-      const updated = {
-        ...current,
-        modelConnection: {
-          ...current.modelConnection,
-          last_test: { ...success, last_success: success },
-        },
-      };
-      myDrSaiConfigRef.current = updated;
-      return updated;
-    });
-  }
   const chat = useDesktopChatAdapter({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
@@ -743,8 +733,7 @@ function AuthenticatedApp({
         && workspaceTrusted,
     ),
     developerMode,
-    onChatComplete: (successful) => {
-      if (successful) recordSuccessfulModelUsage();
+    onChatComplete: () => {
       void desktop.refreshHealth();
       showCompletionNotification(completionNotifications, language, false);
     },
@@ -1189,6 +1178,35 @@ function AuthenticatedApp({
   }, []);
 
   useEffect(() => {
+    if (!workspacesLoaded || health?.gatewayReady) return undefined;
+    let cancelled = false;
+    const applyCatalog = (agents: DesktopAgent[]): void => {
+      if (cancelled) return;
+      setAvailableChatAgents(agents);
+      if (agents.length === 0) return;
+      setSelectedChatAgentId((current) => {
+        const preferredAgent = agents.find((agent) => agent.id === current)
+          ?? agents.find((agent) => agent.source === "local" && agent.id !== "my-codex")
+          ?? agents.find((agent) => agent.status === "running")
+          ?? agents[0];
+        setSelectedChatAgentName(preferredAgent.name);
+        setSelectedChatExamples(preferredAgent.examples);
+        return preferredAgent.id;
+      });
+    };
+    void (async () => {
+      try {
+        applyCatalog(await desktopApi.listAgents({ preferCache: true }));
+        applyCatalog(await desktopApi.listAgents({ refresh: true }));
+      } catch {
+        // The local catalog is best-effort during early startup. Health polling
+        // will retry the full Runtime-backed load once Gateway is available.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [health?.gatewayReady, user?.id, workspacesLoaded]);
+
+  useEffect(() => {
     let cancelled = false;
     let retryTimer: number | undefined;
     const generation = chatChoicesGenerationRef.current;
@@ -1366,8 +1384,64 @@ function AuthenticatedApp({
   async function handleAddWorkspace(): Promise<void> {
     setRemoteDialogError("");
     setWorkspaceLocationChoice(null);
+    setWorkspaceDraftName("");
+    setWorkspaceNameTouched(false);
+    setLocalWorkspacePath("");
     setRemoteWorkspaceStep("computer");
+    setRemoteDirectories([]);
+    setRemoteNeedsHostTrust(false);
     setRemoteDialogOpen(true);
+  }
+
+  function closeWorkspaceCreate(): void {
+    setRemoteDialogOpen(false);
+    setRemoteDialogError("");
+    setRemoteNeedsHostTrust(false);
+  }
+
+  function applyDefaultWorkspaceName(path: string): void {
+    if (workspaceNameTouched) return;
+    setWorkspaceDraftName(getWorkspaceName(path) || path);
+  }
+
+  async function handleAddLocalWorkspace(): Promise<void> {
+    setRemoteDialogOpen(true);
+    setWorkspaceLocationChoice("local");
+    setWorkspaceDraftName("");
+    setWorkspaceNameTouched(false);
+    setLocalWorkspacePath("");
+    setRemoteDialogError("");
+  }
+
+  async function chooseLocalWorkspaceFolder(): Promise<void> {
+    const result = await desktopApi.pickFolder();
+    if (result.canceled || result.paths.length === 0) return;
+    const path = result.paths[0];
+    setLocalWorkspacePath(path);
+    applyDefaultWorkspaceName(path);
+  }
+
+  async function submitLocalWorkspace(): Promise<void> {
+    if (!localWorkspacePath.trim()) {
+      setRemoteDialogError(language === "zh" ? "请先添加源文件夹。" : "Choose a source folder first.");
+      return;
+    }
+    if (!workspaceDraftName.trim()) {
+      setRemoteDialogError(language === "zh" ? "请输入工作区名称。" : "Enter a workspace name.");
+      return;
+    }
+    try {
+      await handleCreateWorkspace({
+        source: "existing",
+        path: localWorkspacePath,
+        name: workspaceDraftName.trim(),
+        description: language === "zh" ? "本地工作区" : "Local workspace",
+        trusted: true,
+      });
+      closeWorkspaceCreate();
+    } catch (error) {
+      setRemoteDialogError(userFacingFailureMessage(error, language, "operation"));
+    }
   }
 
   async function beginRemoteWorkspace(): Promise<void> {
@@ -1377,6 +1451,7 @@ function AuthenticatedApp({
     const hosts = await desktopApi.listSshHosts();
     setRemoteHosts(hosts);
     setRemoteHostAlias((current) => current || hosts[0]?.alias || "");
+    applyDefaultWorkspaceName(remotePath);
   }
 
   async function selectRemoteComputer(): Promise<void> {
@@ -1394,7 +1469,7 @@ function AuthenticatedApp({
     setRemoteNeedsHostTrust(false);
     setRemoteHostKeys([]);
     setRemoteWorkspaceStep("directory");
-    await browseRemotePath(remotePath);
+    await browseRemotePath(remotePath, remoteHostAlias);
   }
 
   async function handleConnectRemoteWorkspace(): Promise<void> {
@@ -1405,7 +1480,10 @@ function AuthenticatedApp({
         setRemoteNeedsHostTrust(true);
         throw new Error("SSH authentication or host-key verification failed.");
       }
-      const workspace = await desktopApi.connectRemoteWorkspace({ hostAlias: remoteHostAlias, path: remotePath.trim(), trusted: true });
+      if (!workspaceDraftName.trim()) {
+        throw new Error(language === "zh" ? "请输入工作区名称。" : "Enter a workspace name.");
+      }
+      const workspace = await desktopApi.connectRemoteWorkspace({ hostAlias: remoteHostAlias, path: remotePath.trim(), name: workspaceDraftName.trim(), trusted: true });
       setStoredWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
       setRemoteRecentPaths((current) => {
         const next = [workspace.remote?.canonicalPath || remotePath.trim(), ...current.filter((path) => path !== remotePath.trim())].slice(0, 8);
@@ -1418,7 +1496,7 @@ function AuthenticatedApp({
       }
       setActiveWorkspaceId(workspace.id);
       navigateTo(MENU_IDS.currentSession);
-      setRemoteDialogOpen(false);
+      closeWorkspaceCreate();
     } catch (error) {
       setRemoteDialogError(userFacingFailureMessage(error, language, "connection"));
     } finally {
@@ -1426,26 +1504,13 @@ function AuthenticatedApp({
     }
   }
 
-  async function browseRemotePath(path = remotePath): Promise<void> {
-    if (!remoteHostAlias || !path.trim()) return;
+  async function browseRemotePath(path = remotePath, hostAlias = remoteHostAlias): Promise<void> {
+    if (!hostAlias || !path.trim()) return;
     try {
-      const entries = await desktopApi.listRemoteDirectories(remoteHostAlias, path.trim());
+      const entries = await desktopApi.listRemoteDirectories(hostAlias, path.trim());
       setRemoteDirectories(entries); setRemotePath(path.trim()); setRemoteDialogError("");
+      applyDefaultWorkspaceName(path.trim());
     } catch (error) { setRemoteDialogError(userFacingFailureMessage(error, language, "connection")); }
-  }
-
-  async function handleAddLocalWorkspace(): Promise<void> {
-    const result = await desktopApi.pickFolder();
-    if (result.canceled || result.paths.length === 0) return;
-    const path = result.paths[0];
-    await handleCreateWorkspace({
-      source: "existing",
-      path,
-      name: getWorkspaceName(path) || path,
-      description: language === "zh" ? "本地工作区" : "Local workspace",
-      trusted: true,
-    });
-    setRemoteDialogOpen(false);
   }
 
   async function handleCreateWorkspace(
@@ -1605,6 +1670,7 @@ function AuthenticatedApp({
   async function handleNewChat(): Promise<void> {
     setRightPanelCollapsed(true);
     setActiveThreadId(createLocalThreadId());
+    setComposerFocusRequest((current) => current + 1);
     navigateTo(MENU_IDS.currentSession);
   }
 
@@ -1996,22 +2062,32 @@ function AuthenticatedApp({
     if (agentId === selectedChatAgentId) setSelectedChatModel(model);
   }
 
-  async function configureAgentCapabilityModel(role: AgentCapabilityModelRole, modelId?: string, providerId?: string): Promise<void> {
-    const policy = myDrSaiAgentModelPolicy ?? await desktopApi.getMyDrSaiAgentModelPolicy();
-    const selection = modelId && providerId
-      ? { mode: "explicit" as const, ref: { provider_id: providerId, model_id: modelId } }
-      : null;
-    const updated = await desktopApi.updateMyDrSaiAgentModelPolicy(policy.agent_id, {
-      agent_id: policy.agent_id,
-      primary_model: policy.primary_model,
-      image_understanding_model: role === "image_understanding_model" ? selection : policy.image_understanding_model ?? null,
-      image_generation_model: role === "image_generation_model" ? selection : policy.image_generation_model ?? policy.image_model ?? null,
-      text_to_speech_model: role === "text_to_speech_model" ? selection : policy.text_to_speech_model ?? null,
-      speech_to_text_model: role === "speech_to_text_model" ? selection : policy.speech_to_text_model ?? null,
-      reasoning_effort: policy.reasoning_effort ?? null,
+  async function saveAgentModelPolicy(agentId: string, draft: AgentModelPolicyDraft): Promise<void> {
+    const policy = myDrSaiAgentModelPolicy ?? await desktopApi.getMyDrSaiAgentModelPolicy(agentId);
+    if (policy.agent_id !== agentId) throw new Error("The selected Agent does not own this model policy.");
+    const updated = await desktopApi.updateMyDrSaiAgentModelPolicy(agentId, {
+      agent_id: agentId,
+      ...draft,
       expected_revision: policy.revision,
     });
+    if (!updated.valid || !updated.effective_ref) {
+      throw new Error(updated.error || "The Agent model configuration is invalid.");
+    }
+    const effectiveRef = updated.effective_ref;
     setMyDrSaiAgentModelPolicy(updated);
+    setAgentConfigurations((current) => ({
+      ...current,
+      [agentId]: {
+        ...current[agentId],
+        model: effectiveRef.model_id,
+        modelRef: effectiveRef,
+        ...(updated.reasoning_effort ? { thinkingEffort: updated.reasoning_effort } : {}),
+      },
+    }));
+    if (agentId === selectedChatAgentId) {
+      setSelectedChatModel(effectiveRef.model_id);
+      if (updated.reasoning_effort) setDefaultThinkingEffort(updated.reasoning_effort);
+    }
   }
 
   async function configureAgentThinkingEffort(agentId: string, effort: ThinkingEffort): Promise<void> {
@@ -2319,23 +2395,9 @@ function AuthenticatedApp({
   }, [goBack, goForward]);
 
   const selectedSetupWorkspace = storedWorkspaces.find((workspace) => workspace.id === activeWorkspaceId);
-  const configuredModelConnection = myDrSaiConfig?.modelConnection;
   // The operational model is authoritative only when it comes from the
   // current Agent policy configured in Settings > Agent configuration.
   const operationalSelectedModelRef = myDrSaiAgentModelPolicy?.effective_ref;
-  const lastModelTest = configuredModelConnection?.last_test;
-  const lastSuccessfulModelTest = lastModelTest?.last_success
-    ?? (lastModelTest?.ok ? lastModelTest : undefined);
-  const selectedModelIsVerified = Boolean(
-    operationalSelectedModelRef
-    && lastSuccessfulModelTest?.ok === true
-    && lastSuccessfulModelTest.mode === "model"
-    && lastSuccessfulModelTest.provider === operationalSelectedModelRef.provider_id
-    && (lastSuccessfulModelTest.model
-      ? lastSuccessfulModelTest.model === operationalSelectedModelRef.model_id
-      : configuredModelConnection?.model_provider === operationalSelectedModelRef.provider_id
-        && configuredModelConnection.model === operationalSelectedModelRef.model_id),
-  );
   const actualOperationalFacts = {
     identity: auth.loading ? "loading" : user ? "authenticated" : "anonymous",
     runtime: auth.serviceBlocker && !auth.serviceBusy
@@ -2349,9 +2411,7 @@ function AuthenticatedApp({
       ? "unknown"
       : !operationalSelectedModelRef
         ? "unconfigured"
-        : selectedModelIsVerified
-          ? "ready"
-          : "untested",
+        : "ready",
     workspace: !workspacesLoaded || !selectedSetupWorkspace
       ? "none"
       : selectedSetupWorkspace.trusted
@@ -2361,44 +2421,6 @@ function AuthenticatedApp({
   } as const;
   const operationalFacts = operationalE2eFacts ?? actualOperationalFacts;
   const operationalDecision = deriveOperationalState(operationalFacts);
-  const automaticAgentModelVerificationsRef = useRef(new Set<string>());
-  useEffect(() => {
-    const ref = myDrSaiAgentModelPolicy?.effective_ref;
-    if (
-      actualOperationalFacts.identity !== "authenticated"
-      || actualOperationalFacts.runtime !== "ready"
-      || actualOperationalFacts.model !== "untested"
-      || !myDrSaiAgentModelPolicy?.agent_id
-      || !ref
-    ) return;
-    const key = [
-      myDrSaiAgentModelPolicy.agent_id,
-      myDrSaiAgentModelPolicy.revision,
-      ref.provider_id,
-      ref.model_id,
-    ].join("::");
-    if (automaticAgentModelVerificationsRef.current.has(key)) return;
-    automaticAgentModelVerificationsRef.current.add(key);
-    void desktopApi.testMyDrSaiModelProvider(ref.provider_id, ref.model_id).then(async (result) => {
-      if (!result.ok) return;
-      const refreshed = await desktopApi.getMyDrSaiConfig(effectiveWorkspacePath || undefined);
-      myDrSaiConfigRef.current = refreshed;
-      setMyDrSaiConfig(refreshed);
-      setAvailableChatModels(refreshed.models ?? []);
-    }).catch(() => {
-      // Automatic verification is intentionally quiet. The collapsed status
-      // retains a manual retry action and Settings provides full diagnostics.
-    });
-  }, [
-    actualOperationalFacts.identity,
-    actualOperationalFacts.model,
-    actualOperationalFacts.runtime,
-    effectiveWorkspacePath,
-    myDrSaiAgentModelPolicy?.agent_id,
-    myDrSaiAgentModelPolicy?.effective_ref?.model_id,
-    myDrSaiAgentModelPolicy?.effective_ref?.provider_id,
-    myDrSaiAgentModelPolicy?.revision,
-  ]);
   useEffect(() => {
     if (!desktopApi.isOperationalStateE2eEnabled()) return;
     document.documentElement.dataset.operationalE2eDecision = `${operationalDecision.currentLayer}:${operationalDecision.state}:${operationalDecision.blockingLayer ?? "none"}`;
@@ -2441,7 +2463,6 @@ function AuthenticatedApp({
           }}
           onProposeTerminalCommand={proposeTerminalCommand}
           onRunComplete={() => {
-            recordSuccessfulModelUsage();
             void desktop.refreshHealth();
           }}
           threadId={activeThreadId}
@@ -2462,6 +2483,7 @@ function AuthenticatedApp({
           cancellingRequestId={chat.cancellingRequestId}
           canChat={canChat}
           chatUnavailableReason={chatUnavailableReason}
+          composerFocusRequest={composerFocusRequest}
           conversationId={activeThreadId}
           conversationTitle={activeThread?.title}
           conversationSource={activeThread?.boundAgentId === "my-codex" || activeThread?.archiveSource === "codex" ? "codex" : "opendrsai"}
@@ -2702,7 +2724,6 @@ function AuthenticatedApp({
           proposeTerminalCommand(command);
         }}
         onRunComplete={() => {
-          recordSuccessfulModelUsage();
           void desktop.refreshHealth();
         }}
         threadId={activeThreadId}
@@ -2800,7 +2821,7 @@ function AuthenticatedApp({
         onRestoreLastWorkspaceChange={setRestoreLastWorkspace}
         onRightSidebarComponentsChange={setRightSidebarComponents}
         onConfigureAgentModel={configureAgentModel}
-        onConfigureAgentCapabilityModel={(role, modelId, providerId) => void configureAgentCapabilityModel(role, modelId, providerId)}
+        onSaveAgentModelPolicy={saveAgentModelPolicy}
         onRefreshAgentModels={() => setChatChoicesRefreshNonce((current) => current + 1)}
         onSessionScopeChange={setSessionScope}
         threads={threads}
@@ -3193,64 +3214,14 @@ function AuthenticatedApp({
               navigateTo(MENU_IDS.profile);
               return;
             }
-            let config = myDrSaiConfig;
-            if (!config?.modelConnection) {
-              try {
-                config = await desktopApi.getMyDrSaiConfig(effectiveWorkspacePath || undefined);
-              } catch {
-                config = null;
-              }
-            }
-            if (!config?.modelConnection?.model || !config.modelConnection.model_provider) {
-              setRequestedSettingsPane("model-providers");
-              navigateTo(MENU_IDS.profile);
-              return;
-            }
-
-            const provider = selectedRef.provider_id;
-            const model = selectedRef.model_id;
-            const result = await desktopApi.testMyDrSaiModelProvider(provider, model);
-            if (!result.ok) {
-              const localizedGuidance = result.guidance?.localizations?.[language];
-              throw new Error(
-                localizedGuidance?.message
-                || result.guidance?.message
-                || (language === "zh"
-                  ? `模型 ${model} 验证失败：${result.error || "未知错误"}`
-                  : `Model ${model} verification failed: ${result.error || "unknown error"}`),
-              );
-            }
-
-            const verifiedConfig: MyDrSaiConfig = {
-              ...config,
-              modelConnection: {
-                ...config.modelConnection,
-                last_test: {
-                  provider,
-                  model,
-                  mode: "model",
-                  ok: true,
-                  tested_at: new Date().toISOString(),
-                },
-              },
-            };
-            myDrSaiConfigRef.current = verifiedConfig;
-            setMyDrSaiConfig(verifiedConfig);
-            setMyDrSaiConfigLoaded(true);
-            setAvailableChatModels(verifiedConfig.models ?? []);
-            try {
-              const refreshed = await desktopApi.getMyDrSaiConfig(effectiveWorkspacePath || undefined);
-              myDrSaiConfigRef.current = refreshed;
-              setMyDrSaiConfig(refreshed);
-              setAvailableChatModels(refreshed.models ?? []);
-            } catch {
-              // The bounded model call already succeeded. A transient config
-              // refresh failure must not turn that success into a false error.
-            }
-            await desktop.refreshHealth();
+            // A model probe is an explicit, potentially billable diagnostic.
+            // Global readiness and ordinary chat must never start one. Keep
+            // that operation behind Settings > Model providers > Test model call.
+            setRequestedSettingsPane("model-providers");
+            navigateTo(MENU_IDS.profile);
             return language === "zh"
-              ? `已使用 ${model} 完成最小调用，模型连接正常。`
-              : `The minimal call to ${model} succeeded.`;
+              ? "请在模型提供方设置中按需执行测试模型调用。"
+              : "Use Test model call in Model provider settings when you want to run a diagnostic.";
           }
         case "workspace":
           if (operationalDecision.state === "untrusted" && selectedSetupWorkspace) {
@@ -3374,59 +3345,113 @@ function AuthenticatedApp({
     <AppDecisionDialogHost language={language} />
     {mobilePairingOpen ? <MobilePairingDialog language={language} onClose={() => setMobilePairingOpen(false)} onConnected={() => setMobilePairingRefreshToken((value) => value + 1)} /> : null}
     {remoteDialogOpen ? (
-      <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(3, 7, 18, .68)" }}>
-        <section role="dialog" aria-modal="true" aria-labelledby="remote-workspace-title" style={{ width: 520, maxWidth: "calc(100vw - 40px)", padding: 24, borderRadius: 14, background: "#111827", color: "#f9fafb", boxShadow: "0 24px 80px rgba(0,0,0,.5)" }}>
-          <h2 id="remote-workspace-title" style={{ marginTop: 0 }}>{language === "zh" ? "添加工作区" : "Add workspace"}</h2>
-          {workspaceLocationChoice === null ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <button type="button" style={{ minHeight: 92, padding: 14 }} onClick={() => void handleAddLocalWorkspace()}>
-                <strong style={{ display: "block" }}>{language === "zh" ? "本地" : "Local"}</strong>
-                <small>{language === "zh" ? "选择这台电脑上的文件夹" : "Choose a folder on this computer"}</small>
-              </button>
-              {platformDescriptor?.capabilities.features.remoteWorkspace === true && <button type="button" style={{ minHeight: 92, padding: 14 }} onClick={() => void beginRemoteWorkspace()}>
-                <strong style={{ display: "block" }}>{language === "zh" ? "远程" : "Remote"}</strong>
-                <small>{language === "zh" ? "选择另一台计算机上的文件夹" : "Choose a folder on another computer"}</small>
-              </button>}
+      <div className="workspace-create-overlay" role="presentation" onMouseDown={closeWorkspaceCreate}>
+        <section className="workspace-create-modal workspace-location-modal" data-testid="workspace-create-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-create-title" onMouseDown={(event) => event.stopPropagation()}>
+          <header className="workspace-create-header">
+            <div>
+              <h2 id="workspace-create-title">{workspaceLocationChoice === "local"
+                ? (language === "zh" ? "添加本地工作区" : "Add local workspace")
+                : workspaceLocationChoice === "remote"
+                  ? (language === "zh" ? "新建远程工作区" : "Add remote workspace")
+                  : (language === "zh" ? "创建工作区" : "Create workspace")}</h2>
+              {workspaceLocationChoice !== null ? <small>{language === "zh" ? "选择已有源文件夹并为工作区命名" : "Choose an existing source folder and name the workspace"}</small> : null}
             </div>
-          ) : <div style={{ paddingTop: 8 }}>
-            <p style={{ marginTop: 0, color: "#cbd5e1" }}>
-              {remoteWorkspaceStep === "computer"
-                ? (language === "zh" ? "第 1 步（共 2 步）：选择计算机" : "Step 1 of 2: Choose a computer")
-                : (language === "zh" ? "第 2 步（共 2 步）：选择目录" : "Step 2 of 2: Choose a directory")}
-            </p>
-            {remoteWorkspaceStep === "computer" ? <>
-            <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>{language === "zh" ? "计算机" : "Computer"}
-              <select value={remoteHostAlias} onChange={(event) => setRemoteHostAlias(event.target.value)} style={{ padding: 9 }}>
-                {remoteHosts.map((host) => <option key={host.alias} value={host.alias}>{host.alias} — {host.user ? `${host.user}@` : ""}{host.hostname}:{host.port}</option>)}
-              </select>
-            </label>
-            <button type="button" disabled={!remoteHostAlias} onClick={() => void selectRemoteComputer()}>{language === "zh" ? "继续" : "Continue"}</button>
-            </> : <>
-            <button type="button" style={{ marginBottom: 12 }} onClick={() => setRemoteWorkspaceStep("computer")}>
-              {language === "zh" ? `← ${remoteHostAlias}` : `← ${remoteHostAlias}`}
-            </button>
-            <label style={{ display: "grid", gap: 6 }}>{language === "zh" ? "远程目录" : "Remote directory"}
-              <input value={remotePath} onChange={(event) => setRemotePath(event.target.value)} placeholder="/home/vscode" style={{ padding: 9 }} />
-            </label>
-            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}><button type="button" onClick={() => void browseRemotePath()}>{language === "zh" ? "浏览" : "Browse"}</button><button type="button" onClick={() => void browseRemotePath("~")}>Home</button><button type="button" onClick={() => void browseRemotePath(remotePath.replace(/\/[^/]+\/?$/, "") || "/")}>{language === "zh" ? "父目录" : "Parent"}</button><label><input type="checkbox" checked={remoteShowHidden} onChange={(event) => setRemoteShowHidden(event.target.checked)} /> {language === "zh" ? "隐藏目录" : "Hidden"}</label></div>
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 8 }}>{remotePath.split("/").filter(Boolean).map((part, index, parts) => <button type="button" key={`${part}-${index}`} onClick={() => void browseRemotePath(`/${parts.slice(0, index + 1).join("/")}`)}>{index === 0 ? "/" : ""}{part}</button>)}</div>
-            {remoteRecentPaths.length > 0 ? <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}><small>Recent:</small>{remoteRecentPaths.map((path) => <button type="button" key={path} title={path} onClick={() => void browseRemotePath(path)}>{path.split("/").filter(Boolean).at(-1) || path}</button>)}</div> : null}
-            {remoteDirectories.length > 0 ? <div style={{ maxHeight: 180, overflow: "auto", marginTop: 8, border: "1px solid #374151" }}>{remoteDirectories.filter((entry) => remoteShowHidden || !entry.name.startsWith(".")).map((entry) => <button type="button" disabled={entry.readable === false} title={`${entry.path} · ${entry.mode || "mode unknown"}${entry.writable === false ? " · read-only" : ""}`} key={entry.path} style={{ display: "block", width: "100%", textAlign: "left", padding: 7 }} onDoubleClick={() => void browseRemotePath(entry.path)} onClick={() => setRemotePath(entry.path)}>📁 {entry.name} {entry.writable === false ? "🔒" : ""}</button>)}</div> : null}
-            </>}
-            {remoteHosts.length === 0 ? <p style={{ color: "#fbbf24" }}>{language === "zh" ? "没有找到已配置的远程计算机。" : "No configured remote computers were found."}</p> : null}
-            {remoteDialogError ? <p role="alert" style={{ color: "#fca5a5" }}>{remoteDialogError}</p> : null}
-            {remoteNeedsHostTrust ? <section style={{ padding: 10, border: "1px solid #f59e0b", borderRadius: 8 }}>
-              {remoteHostKeys.map((key) => <code key={`${key.algorithm}-${key.fingerprint}`} style={{ display: "block", overflowWrap: "anywhere", marginBottom: 5 }}>{key.algorithm} · {key.fingerprint}</code>)}
-              <button type="button" onClick={() => void desktopApi.approveSshHostKey(remoteHostAlias).then(async (ok) => {
-                setRemoteNeedsHostTrust(!ok);
-                setRemoteDialogError(ok ? "" : "Host key approval failed; changed keys must be resolved in known_hosts.");
-                if (ok) await selectRemoteComputer();
-              })}>{language === "zh" ? "已核对，信任这台计算机" : "Verified — trust this computer"}</button>
-            </section> : null}
-          </div>}
-          <footer style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
-            <button type="button" onClick={() => setRemoteDialogOpen(false)}>{language === "zh" ? "取消" : "Cancel"}</button>
-            {workspaceLocationChoice === "remote" && remoteWorkspaceStep === "directory" ? <button type="button" disabled={remoteConnecting || !remoteHostAlias || !remotePath.trim()} onClick={() => void handleConnectRemoteWorkspace()}>{remoteConnecting ? (language === "zh" ? "连接中…" : "Connecting…") : (language === "zh" ? "打开远程工作区" : "Open remote workspace")}</button> : null}
+            <button type="button" onClick={closeWorkspaceCreate} aria-label={language === "zh" ? "关闭" : "Close"}><X size={18} /></button>
+          </header>
+
+          <div className="workspace-create-content">
+            {workspaceLocationChoice === null ? <>
+              <strong>{language === "zh" ? "工作区类型" : "Workspace type"}</strong>
+              <div className="workspace-type-grid">
+                <button className="workspace-type-card" data-testid="workspace-type-local" type="button" onClick={() => void handleAddLocalWorkspace()}>
+                  <Folder size={22} />
+                  <span><b>{language === "zh" ? "本地" : "Local"}</b><small>{language === "zh" ? "添加这台电脑上的源文件夹" : "Add a source folder from this computer"}</small></span>
+                </button>
+                {platformDescriptor?.capabilities.features.remoteWorkspace === true ? <button className="workspace-type-card" data-testid="workspace-type-remote" type="button" onClick={() => void beginRemoteWorkspace()}>
+                  <Globe2 size={22} />
+                  <span><b>{language === "zh" ? "远程" : "Remote"}</b><small>{language === "zh" ? "从已配置的远程主机添加源文件夹" : "Add a source folder from a configured remote host"}</small></span>
+                </button> : null}
+              </div>
+            </> : null}
+
+            {workspaceLocationChoice === "local" ? <>
+              <button className="workspace-create-back" type="button" onClick={() => { setWorkspaceLocationChoice(null); setRemoteDialogError(""); }}><ChevronLeft size={15} />{language === "zh" ? "工作区类型" : "Workspace type"}</button>
+              <div className="workspace-create-form single-column">
+                <label>
+                  <span>{language === "zh" ? "源文件夹" : "Source folder"}</span>
+                  <div className="workspace-create-path-row">
+                    <input data-testid="local-workspace-path" value={localWorkspacePath} readOnly placeholder={language === "zh" ? "添加已有源文件夹" : "Add an existing source folder"} />
+                    <button data-testid="local-workspace-folder-picker" type="button" onClick={() => void chooseLocalWorkspaceFolder()}><Folder size={15} />{language === "zh" ? "添加" : "Add"}</button>
+                  </div>
+                </label>
+                <label>
+                  <span>{language === "zh" ? "工作区名称" : "Workspace name"}</span>
+                  <input data-testid="workspace-name-input" value={workspaceDraftName} onChange={(event) => { setWorkspaceNameTouched(true); setWorkspaceDraftName(event.target.value); }} placeholder={language === "zh" ? "选择源文件夹后自动填写" : "Filled from the source folder"} />
+                  <small>{language === "zh" ? "默认使用源文件夹名称，也可以输入指定名称。" : "The source folder name is used by default; you can override it."}</small>
+                </label>
+              </div>
+            </> : null}
+
+            {workspaceLocationChoice === "remote" ? <>
+              <button className="workspace-create-back" type="button" onClick={() => { setWorkspaceLocationChoice(null); setRemoteDialogError(""); setRemoteNeedsHostTrust(false); }}><ChevronLeft size={15} />{language === "zh" ? "工作区类型" : "Workspace type"}</button>
+              <div className="workspace-create-form single-column remote-workspace-create-form">
+                <label>
+                  <span>{language === "zh" ? "工作区名称" : "Workspace name"}</span>
+                  <input data-testid="workspace-name-input" value={workspaceDraftName} onChange={(event) => { setWorkspaceNameTouched(true); setWorkspaceDraftName(event.target.value); }} placeholder={language === "zh" ? "默认使用源文件夹名称" : "Defaults to the source folder name"} />
+                </label>
+                <label>
+                  <span>{language === "zh" ? "远程主机" : "Remote host"}</span>
+                  <div className="workspace-create-path-row">
+                    <select data-testid="remote-workspace-host" value={remoteHostAlias} onChange={(event) => { setRemoteHostAlias(event.target.value); setRemoteWorkspaceStep("computer"); setRemoteDirectories([]); setRemoteDialogError(""); }}>
+                      <option value="">{language === "zh" ? "选择主机" : "Choose a host"}</option>
+                      {remoteHosts.map((host) => <option key={host.alias} value={host.alias}>{host.alias} · {host.user ? `${host.user}@` : ""}{host.hostname}:{host.port}</option>)}
+                    </select>
+                    <button data-testid="remote-workspace-load" type="button" disabled={!remoteHostAlias} onClick={() => void selectRemoteComputer()}>{remoteWorkspaceStep === "directory" ? (language === "zh" ? "重新加载" : "Reload") : (language === "zh" ? "加载目录" : "Load folders")}</button>
+                  </div>
+                </label>
+
+                <label>
+                  <span>{language === "zh" ? "源文件夹" : "Source folder"}</span>
+                  <div className="workspace-create-path-row">
+                    <input data-testid="remote-workspace-path" value={remotePath} disabled={remoteWorkspaceStep !== "directory"} onChange={(event) => { setRemotePath(event.target.value); applyDefaultWorkspaceName(event.target.value); }} placeholder="/home/user/project" />
+                    <button type="button" disabled={remoteWorkspaceStep !== "directory"} onClick={() => void browseRemotePath()}>{language === "zh" ? "打开" : "Open"}</button>
+                  </div>
+                </label>
+
+                {remoteWorkspaceStep === "directory" ? <>
+                  <div className="remote-directory-toolbar">
+                    <button type="button" onClick={() => void browseRemotePath("~")}>{language === "zh" ? "主目录" : "Home"}</button>
+                    <button type="button" onClick={() => void browseRemotePath(remotePath.replace(/\/[^/]+\/?$/, "") || "/")}>{language === "zh" ? "上一级" : "Parent"}</button>
+                    <label><input type="checkbox" checked={remoteShowHidden} onChange={(event) => setRemoteShowHidden(event.target.checked)} />{language === "zh" ? "显示隐藏目录" : "Show hidden"}</label>
+                  </div>
+                  <div className="remote-directory-breadcrumbs">{remotePath.split("/").filter(Boolean).map((part, index, parts) => <button type="button" key={`${part}-${index}`} onClick={() => void browseRemotePath(`/${parts.slice(0, index + 1).join("/")}`)}>{index === 0 ? "/" : ""}{part}</button>)}</div>
+                  {remoteRecentPaths.length > 0 ? <div className="remote-directory-recents"><small>{language === "zh" ? "最近" : "Recent"}</small>{remoteRecentPaths.map((path) => <button type="button" key={path} title={path} onClick={() => void browseRemotePath(path)}>{path.split("/").filter(Boolean).at(-1) || path}</button>)}</div> : null}
+                  <div className="remote-directory-list" role="listbox" aria-label={language === "zh" ? "远程源文件夹" : "Remote source folders"}>
+                    {remoteDirectories.filter((entry) => entry.directory && (remoteShowHidden || !entry.name.startsWith("."))).map((entry) => <button type="button" role="option" aria-selected={entry.path === remotePath} disabled={entry.readable === false} title={`${entry.path} · ${entry.mode || "mode unknown"}${entry.writable === false ? " · read-only" : ""}`} key={entry.path} onDoubleClick={() => void browseRemotePath(entry.path)} onClick={() => { setRemotePath(entry.path); applyDefaultWorkspaceName(entry.path); }}><Folder size={16} /><span>{entry.name}</span>{entry.writable === false ? <em>{language === "zh" ? "只读" : "Read only"}</em> : null}</button>)}
+                    {remoteDirectories.length === 0 ? <p>{language === "zh" ? "加载主机后在这里选择源文件夹。" : "Load the host to choose a source folder."}</p> : null}
+                  </div>
+                </> : null}
+
+              </div>
+              {remoteHosts.length === 0 ? <p className="workspace-create-note">{language === "zh" ? "没有找到已配置的远程主机，请先在设置中添加。" : "No configured remote hosts were found. Add one in Settings first."}</p> : null}
+              {remoteNeedsHostTrust ? <section className="remote-host-trust">
+                <strong>{language === "zh" ? "核对主机密钥" : "Verify host key"}</strong>
+                {remoteHostKeys.map((key) => <code key={`${key.algorithm}-${key.fingerprint}`}>{key.algorithm} · {key.fingerprint}</code>)}
+                <button type="button" onClick={() => void desktopApi.approveSshHostKey(remoteHostAlias).then(async (ok) => {
+                  setRemoteNeedsHostTrust(!ok);
+                  setRemoteDialogError(ok ? "" : "Host key approval failed; changed keys must be resolved in known_hosts.");
+                  if (ok) await selectRemoteComputer();
+                })}>{language === "zh" ? "已核对，信任这台主机" : "Verified, trust this host"}</button>
+              </section> : null}
+            </> : null}
+
+            {remoteDialogError ? <div className="workspace-create-error" role="alert">{remoteDialogError}</div> : null}
+          </div>
+
+          <footer className="workspace-create-actions">
+            <button type="button" onClick={closeWorkspaceCreate}>{language === "zh" ? "取消" : "Cancel"}</button>
+            {workspaceLocationChoice === "local" ? <button type="button" disabled={!localWorkspacePath.trim() || !workspaceDraftName.trim()} onClick={() => void submitLocalWorkspace()}>{language === "zh" ? "添加工作区" : "Add workspace"}</button> : null}
+            {workspaceLocationChoice === "remote" ? <button type="button" disabled={remoteConnecting || remoteWorkspaceStep !== "directory" || !remoteHostAlias || !remotePath.trim() || !workspaceDraftName.trim()} onClick={() => void handleConnectRemoteWorkspace()}>{remoteConnecting ? (language === "zh" ? "连接中…" : "Connecting…") : (language === "zh" ? "添加工作区" : "Add workspace")}</button> : null}
           </footer>
         </section>
       </div>
@@ -6765,6 +6790,17 @@ function ModelApiProtocolBadge({ protocol, zh, onClick }: { protocol: string; zh
   return <div className={`model-api-protocols ${onClick ? "is-editable" : ""}`} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={onClick ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(); } } : undefined}><span className={`model-api-protocol protocol-${kind} is-supported`} title={label} aria-label={label}><i aria-hidden>{marks[kind]}</i></span></div>;
 }
 
+function createAgentModelPolicyDraft(policy: MyDrSaiAgentModelPolicy): AgentModelPolicyDraft {
+  return {
+    primary_model: policy.primary_model,
+    image_understanding_model: policy.image_understanding_model ?? null,
+    image_generation_model: policy.image_generation_model ?? policy.image_model ?? null,
+    text_to_speech_model: policy.text_to_speech_model ?? null,
+    speech_to_text_model: policy.speech_to_text_model ?? null,
+    reasoning_effort: policy.reasoning_effort ?? null,
+  };
+}
+
 function agentToolLabel(toolId: string, zh: boolean): string {
   if (toolId === "builtin.web-search") return zh ? "网络搜索" : "Web search";
   if (toolId === "builtin.image_generation") return zh ? "图像生成" : "Image generation";
@@ -6870,7 +6906,7 @@ function AgentResourcesSettings({ agentId, zh, onManagePerceptors }: { agentId: 
         <span><strong>{perceptor.name || perceptor.perceptor_id}</strong><small>{perceptor.adapter} · {perceptor.capabilities.join(", ")}</small><span className="perceptor-runtime-status">
           <em className={perceptor.config.api_key ? "ok" : "warning"}>{perceptor.config.api_key ? (zh ? "已配置" : "Configured") : (zh ? "缺少凭据" : "Credential required")}</em>
           <em className={perceptor.enabled ? "ok" : "muted"}>{perceptor.enabled ? (zh ? "已启用" : "Enabled") : (zh ? "已禁用" : "Disabled")}</em>
-          <em className={(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "web_search" && tool.selected && tool.status === "available") ? "ok" : "warning"}>{(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "web_search" && tool.selected && tool.status === "available") ? (zh ? "当前智能体可用" : "Available to this Agent") : (zh ? "当前智能体未加载" : "Not loaded by this Agent")}</em>
+          <em className={(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "builtin.web-search" && tool.selected) ? "ok" : "warning"}>{(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "builtin.web-search" && tool.selected) ? (zh ? "当前智能体已加载" : "Loaded by this Agent") : (zh ? "当前智能体未加载" : "Not loaded by this Agent")}</em>
         </span></span>
       </div>)}
       {!busy && perceptors.length === 0 && <p>{zh ? "尚未配置感知器，请前往全局感知器配置创建资源。" : "No perceptor is configured. Create one in global Perceptor configuration."}</p>}
@@ -6959,7 +6995,7 @@ function SettingsPanel({
   onRestoreLastWorkspaceChange,
   onRightSidebarComponentsChange,
   onConfigureAgentModel,
-  onConfigureAgentCapabilityModel,
+  onSaveAgentModelPolicy,
   onRefreshAgentModels,
   onSessionScopeChange,
   onArchiveThread,
@@ -7019,7 +7055,7 @@ function SettingsPanel({
   onRestoreLastWorkspaceChange: (enabled: boolean) => void;
   onRightSidebarComponentsChange: React.Dispatch<React.SetStateAction<RightSidebarComponentVisibility>>;
   onConfigureAgentModel: (agentId: string, model: string, providerId?: string) => void;
-  onConfigureAgentCapabilityModel: (role: AgentCapabilityModelRole, modelId?: string, providerId?: string) => void;
+  onSaveAgentModelPolicy: (agentId: string, draft: AgentModelPolicyDraft) => Promise<void>;
   onRefreshAgentModels: () => void;
   onSessionScopeChange: (scope: "workspace" | "all") => void;
   onArchiveThread: (threadId: string, archived: boolean) => void | Promise<void>;
@@ -7064,6 +7100,8 @@ function SettingsPanel({
     newProviderModelDraft, setNewProviderModelDraft,
   } = modelSettings;
   const zh = language === "zh";
+  const [modelCapabilityResults, setModelCapabilityResults] = useState<Record<string, import("@shared/desktopApi").ModelCapabilityProbeResult>>({});
+  const [runningModelCapability, setRunningModelCapability] = useState<string | null>(null);
   const [providerModelEditor, setProviderModelEditor] = useState<ProviderModelEditorDraft | null>(null);
   const [providerModelEditorError, setProviderModelEditorError] = useState<string | null>(null);
   const [addedProviderProtocols, setAddedProviderProtocols] = useState<Set<MyDrSaiModelApiProtocol>>(new Set());
@@ -7073,6 +7111,11 @@ function SettingsPanel({
     selectedSettingsAgent ? getAgentConfigurationTab(selectedSettingsAgent) : "opendrsai");
   const [platformConfigurationAgentId, setPlatformConfigurationAgentId] = useState(() =>
     selectedSettingsAgent?.source === "remote" ? selectedSettingsAgent.id : "");
+  const [agentModelPolicyDraft, setAgentModelPolicyDraft] = useState<AgentModelPolicyDraft | null>(() =>
+    myDrSaiAgentModelPolicy ? createAgentModelPolicyDraft(myDrSaiAgentModelPolicy) : null);
+  const [agentModelPolicyDirty, setAgentModelPolicyDirty] = useState(false);
+  const [agentModelPolicySaving, setAgentModelPolicySaving] = useState(false);
+  const [agentModelPolicyMessage, setAgentModelPolicyMessage] = useState<string | null>(null);
   const openDrSaiConfigurationAgent = agents.find((agent) => agent.source === "local" && agent.id !== "my-codex");
   const codexConfigurationAgent = agents.find((agent) => agent.id === "my-codex");
   const platformConfigurationAgents = agents.filter((agent) => agent.source === "remote");
@@ -7087,14 +7130,20 @@ function SettingsPanel({
   const activeAgentModels = getAgentModelOptions(
     models, activeConfigurationAgent, activeAgentPreference?.model ?? null, activeAgentPreference?.modelRef,
   );
-  const activeAgentModel = activeAgentConfigurationTab === "opendrsai" && activeAgentPreference?.modelRef
-    ? `${encodeURIComponent(activeAgentPreference.modelRef.provider_id)}::${encodeURIComponent(activeAgentPreference.modelRef.model_id)}`
+  const draftPrimaryModelRef = agentModelPolicyDraft?.primary_model.mode === "explicit"
+    ? agentModelPolicyDraft.primary_model.ref
+    : undefined;
+  const displayedPrimaryModelRef = draftPrimaryModelRef || activeAgentPreference?.modelRef;
+  const activeAgentModel = activeAgentConfigurationTab === "opendrsai" && displayedPrimaryModelRef
+    ? `${encodeURIComponent(displayedPrimaryModelRef.provider_id)}::${encodeURIComponent(displayedPrimaryModelRef.model_id)}`
     : activeAgentPreference?.model || activeConfigurationAgent?.model || activeConfigurationAgent?.models?.[0]
       || (activeAgentConfigurationTab === "opendrsai" ? "" : DEFAULT_AGENT_TEXT_MODEL);
-  const activeAgentThinkingEffort = activeAgentPreference?.thinkingEffort
+  const activeAgentThinkingEffort = activeAgentConfigurationTab === "opendrsai" && agentModelPolicyDraft?.reasoning_effort
+    ? agentModelPolicyDraft.reasoning_effort
+    : activeAgentPreference?.thinkingEffort
     ?? (activeConfigurationAgent?.id === selectedAgentId ? defaultThinkingEffort : "medium");
   const activeAgentModelDescriptor = activeAgentConfigurationTab === "opendrsai"
-    ? activeAgentModels.find((model) => model.provider_id === activeAgentPreference?.modelRef?.provider_id && model.alias === activeAgentPreference?.modelRef?.model_id)
+    ? activeAgentModels.find((model) => model.provider_id === displayedPrimaryModelRef?.provider_id && model.alias === displayedPrimaryModelRef?.model_id)
       ?? activeAgentModels.find((model) => model.alias === activeAgentPreference?.model)
     : undefined;
   const activeAgentModelGroups = activeAgentModels.reduce<Record<string, MyDrSaiModelConfig[]>>((groups, model) => {
@@ -7106,7 +7155,7 @@ function SettingsPanel({
     && activeAgentModelDescriptor
     && !isSelectableModelAvailability(activeAgentModelDescriptor.availability);
   const activeAgentModelProvider = activeAgentConfigurationTab === "opendrsai"
-    ? activeAgentPreference?.modelRef?.provider_id || activeAgentModelDescriptor?.provider_id
+    ? displayedPrimaryModelRef?.provider_id || activeAgentModelDescriptor?.provider_id
     : undefined;
   const modelCatalogState = myDrSaiConfig?.modelCatalog?.state
     ?? (myDrSaiConfig?.ready ? (models.length ? "fresh" : "empty") : "offline");
@@ -7129,11 +7178,16 @@ function SettingsPanel({
     models: MyDrSaiModelConfig[];
     selection: AgentModelSelection | null | undefined;
   }> = [
-    { role: "image_understanding_model", testId: "agent-image-understanding-model-setting", label: zh ? "图像理解" : "Image understanding", description: zh ? "接收图片并输出文字理解结果。" : "Accepts images and returns a text understanding.", models: selectableCapabilityModels("image", "text"), selection: myDrSaiAgentModelPolicy?.image_understanding_model },
-    { role: "image_generation_model", testId: "agent-image-generation-model-setting", label: zh ? "图像生成" : "Image generation", description: zh ? "根据文字或图片生成图像。" : "Generates images from text or image input.", models: models.filter((model) => model.provider_id && ["available", "configured_unverified"].includes(model.availability ?? "") && model.output_modalities?.includes("image")), selection: myDrSaiAgentModelPolicy?.image_generation_model ?? myDrSaiAgentModelPolicy?.image_model },
-    { role: "text_to_speech_model", testId: "agent-text-to-speech-model-setting", label: zh ? "文字转语音" : "Text to speech", description: zh ? "将文字合成为语音。" : "Synthesizes speech from text.", models: selectableCapabilityModels("text", "audio"), selection: myDrSaiAgentModelPolicy?.text_to_speech_model },
-    { role: "speech_to_text_model", testId: "agent-speech-to-text-model-setting", label: zh ? "语音转文字" : "Speech to text", description: zh ? "将语音识别为文字。" : "Transcribes speech into text.", models: selectableCapabilityModels("audio", "text"), selection: myDrSaiAgentModelPolicy?.speech_to_text_model },
+    { role: "image_understanding_model", testId: "agent-image-understanding-model-setting", label: zh ? "图像理解" : "Image understanding", description: zh ? "接收图片并输出文字理解结果。" : "Accepts images and returns a text understanding.", models: selectableCapabilityModels("image", "text"), selection: agentModelPolicyDraft?.image_understanding_model },
+    { role: "image_generation_model", testId: "agent-image-generation-model-setting", label: zh ? "图像生成" : "Image generation", description: zh ? "根据文字或图片生成图像。" : "Generates images from text or image input.", models: models.filter((model) => model.provider_id && ["available", "configured_unverified"].includes(model.availability ?? "") && model.output_modalities?.includes("image")), selection: agentModelPolicyDraft?.image_generation_model },
+    { role: "text_to_speech_model", testId: "agent-text-to-speech-model-setting", label: zh ? "文字转语音" : "Text to speech", description: zh ? "将文字合成为语音。" : "Synthesizes speech from text.", models: selectableCapabilityModels("text", "audio"), selection: agentModelPolicyDraft?.text_to_speech_model },
+    { role: "speech_to_text_model", testId: "agent-speech-to-text-model-setting", label: zh ? "语音转文字" : "Speech to text", description: zh ? "将语音识别为文字。" : "Transcribes speech into text.", models: selectableCapabilityModels("audio", "text"), selection: agentModelPolicyDraft?.speech_to_text_model },
   ];
+  useEffect(() => {
+    if (!myDrSaiAgentModelPolicy) return;
+    setAgentModelPolicyDraft(createAgentModelPolicyDraft(myDrSaiAgentModelPolicy));
+    setAgentModelPolicyDirty(false);
+  }, [myDrSaiAgentModelPolicy?.agent_id, myDrSaiAgentModelPolicy?.revision]);
   useEffect(() => {
     if (!selectedSettingsAgent) return;
     const tab = getAgentConfigurationTab(selectedSettingsAgent);
@@ -7679,6 +7733,27 @@ function SettingsPanel({
     finally { setModelConfigBusy(false); }
   }
 
+  async function probeProviderModelCapability(model: string, operation: import("@shared/desktopApi").ModelCapabilityProbeOperation): Promise<void> {
+    const confirmed = await requestAppDecision({
+      id: `probe-model-capability-${model}-${operation}`,
+      title: zh ? `测试模型“${model}”的 ${operation} 能力？` : `Test ${operation} on “${model}”?`,
+      description: zh
+        ? "这会向模型提供方发送一次最小能力测试请求。"
+        : "This sends one minimal capability probe to the model provider.",
+      impact: zh ? "服务商可能收取少量费用。" : "The provider may charge a small fee.",
+      confirmLabel: zh ? "确认并测试" : "Confirm and test",
+    });
+    if (!confirmed) return;
+    const key = `${model}:${operation}`;
+    setRunningModelCapability(key);
+    try {
+      const result = await desktopApi.probeMyDrSaiProviderModel(providerDraft.trim(), { model, operation });
+      setModelCapabilityResults((current) => ({ ...current, [key]: result }));
+    } catch (error) {
+      setModelCapabilityResults((current) => ({ ...current, [key]: { probe_id: "", agent_id: "", provider_id: providerDraft.trim(), model_id: model, operation, protocol: "auto", status: "error", started_at: new Date().toISOString(), duration_ms: 0, error_code: userFacingFailureMessage(error, language, "connection"), retryable: false } }));
+    } finally { setRunningModelCapability(null); }
+  }
+
   async function requestModelProviderDeletion(): Promise<void> {
     const provider = providerDraft.trim();
     if (!provider || provider === "hepai") return;
@@ -7767,6 +7842,21 @@ function SettingsPanel({
       setAgentConfigMessage(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setAgentConfigSaving(false);
+    }
+  }
+
+  async function saveAgentModelConfiguration(): Promise<void> {
+    if (!openDrSaiConfigurationAgent || !agentModelPolicyDraft) return;
+    setAgentModelPolicySaving(true);
+    setAgentModelPolicyMessage(null);
+    try {
+      await onSaveAgentModelPolicy(openDrSaiConfigurationAgent.id, agentModelPolicyDraft);
+      setAgentModelPolicyDirty(false);
+      setAgentModelPolicyMessage(zh ? "模型配置已保存。" : "Model configuration saved.");
+    } catch (error) {
+      setAgentModelPolicyMessage(userFacingFailureMessage(error, language, "operation"));
+    } finally {
+      setAgentModelPolicySaving(false);
     }
   }
 
@@ -8285,7 +8375,9 @@ function SettingsPanel({
                   </div>
                   {providerModelsDraft.length === 0 && newProviderModelDraft === null ? <p>{zh ? "尚未添加模型。可以手工新建，或从提供方获取。" : "No models yet. Add one manually or fetch from the provider."}</p> : providerModelsDraft.map((model) => {
                     const config = providerModelConfigsDraft[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft, model_aliases: providerModelAliasesDraft, model_operations: providerModelOperationsDraft });
-                    return <div className="model-provider-model-row" key={model}>
+                    const probeOperations = config.capabilities.filter((capability) => ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech"].includes(capability)) as import("@shared/desktopApi").ModelCapabilityProbeOperation[];
+                    return <div className="model-provider-model-row-wrap" key={model}>
+                    <div className="model-provider-model-row">
                       <code className="model-provider-model-id" title={model}>{model}</code>
                       <button type="button" className={`model-provider-model-alias ${config.alias ? "" : "is-placeholder"}`} data-testid={`model-provider-model-alias-${model}`} title={zh ? "点击编辑别名" : "Click to edit alias"} onClick={() => openProviderModelEditor(model)}>{config.alias || model}</button>
                       <div className="model-modality-directional"><ModelModalityBadges zh={zh} direction="input" modalities={config.input_modalities} onClick={() => openProviderModelEditor(model)} /><span className="model-modality-separator" aria-hidden>→</span><ModelModalityBadges zh={zh} direction="output" modalities={config.output_modalities} onClick={() => openProviderModelEditor(model)} /></div>
@@ -8294,8 +8386,11 @@ function SettingsPanel({
                         <label className="model-provider-model-enabled" title={config.enabled ? (zh ? "点击停用" : "Click to disable") : (zh ? "点击启用" : "Click to enable")}><input type="checkbox" checked={config.enabled} onChange={(event) => { const enabled = event.target.checked; setProviderModelConfigsDraft((current) => ({ ...current, [model]: { ...config, enabled } })); if (!enabled && modelDraft === model) { const fallback = providerModelsDraft.find((candidate) => candidate !== model && (providerModelConfigsDraft[candidate]?.enabled ?? true)); setModelDraft(fallback ?? ""); } else if (enabled && !modelDraft) setModelDraft(model); }} aria-label={zh ? `${config.enabled ? "停用" : "启用"}模型 ${model}` : `${config.enabled ? "Disable" : "Enable"} model ${model}`} /><span aria-hidden /></label>
                         <button type="button" className="model-provider-model-action" data-testid={`model-provider-model-edit-${model}`} title={zh ? "编辑模型信息" : "Edit model information"} aria-label={zh ? `编辑模型 ${model}` : `Edit model ${model}`} onClick={() => openProviderModelEditor(model)}><Pencil size={14} aria-hidden /></button>
                         <button type="button" className="model-provider-model-action" data-testid={`model-provider-model-copy-${model}`} title={zh ? "复制模型" : "Copy model"} aria-label={zh ? `复制模型 ${model}` : `Copy model ${model}`} onClick={() => duplicateProviderModel(model)}><Copy size={14} aria-hidden /></button>
+                        <details className="model-provider-capability-test-menu"><summary title={zh ? "测试单项能力" : "Test a capability"}>{zh ? "测试" : "Test"}</summary><div>{probeOperations.length ? probeOperations.map((operation) => { const key = `${model}:${operation}`; const result = modelCapabilityResults[key]; return <button key={operation} type="button" disabled={!config.enabled || runningModelCapability === key} onClick={() => void probeProviderModelCapability(model, operation)}>{runningModelCapability === key ? (zh ? "测试中…" : "Testing…") : operation}{result ? <small className={result.status}>{result.status === "verified" ? (zh ? "已验证" : "Verified") : result.error_code || result.status}</small> : null}</button>; }) : <small>{zh ? "请先声明能力" : "Declare capabilities first."}</small>}</div></details>
                         <button type="button" className="model-provider-model-remove" title={zh ? "删除模型" : "Delete model"} aria-label={zh ? `移除模型 ${model}` : `Remove model ${model}`} onClick={() => removeProviderModel(model)}><Trash2 size={14} aria-hidden /></button>
                       </div>
+                    </div>
+                    {probeOperations.map((operation) => { const result = modelCapabilityResults[`${model}:${operation}`]; return result ? <div className={`model-provider-capability-result ${result.status}`} key={`${model}:${operation}:result`}><strong>{operation}</strong><span>{result.status === "verified" ? (zh ? "已验证" : "Verified") : result.error_code || result.status}</span><small>{result.protocol} · {result.duration_ms} ms</small></div> : null; })}
                     </div>;
                   })}
                   {newProviderModelDraft !== null && <div className="model-provider-model-row model-provider-model-new" data-testid="model-provider-model-new">
@@ -8674,12 +8769,22 @@ function SettingsPanel({
                     if (!activeConfigurationAgent) return;
                     if (activeAgentConfigurationTab !== "opendrsai") { onConfigureAgentModel(activeConfigurationAgent.id, event.target.value); return; }
                     const [providerId, modelId] = event.target.value.split("::").map(decodeURIComponent);
-                    onConfigureAgentModel(activeConfigurationAgent.id, modelId, providerId);
+                    const descriptor = activeAgentModels.find((model) => model.provider_id === providerId && model.alias === modelId);
+                    const efforts = descriptor?.operations?.includes("reasoning") ? descriptor.reasoning_efforts ?? [] : [];
+                    setAgentModelPolicyDraft((current) => current ? {
+                      ...current,
+                      primary_model: { mode: "explicit", ref: { provider_id: providerId, model_id: modelId } },
+                      reasoning_effort: current.reasoning_effort && efforts.includes(current.reasoning_effort)
+                        ? current.reasoning_effort
+                        : efforts.includes("high") ? "high" : efforts[0] ?? null,
+                    } : current);
+                    setAgentModelPolicyDirty(true);
+                    setAgentModelPolicyMessage(null);
                   }} disabled={!activeConfigurationAgent || activeAgentModels.length === 0}>
                     {activeAgentModels.length === 0 && <option value="">{zh ? "暂无可用模型" : "No model available"}</option>}
                     {Object.entries(activeAgentModelGroups).map(([provider, providerModels]) => <optgroup key={provider} label={provider}>
                       {providerModels.map((model) => {
-                        const selected = model.provider_id === activeAgentPreference?.modelRef?.provider_id && model.alias === activeAgentPreference?.modelRef?.model_id;
+                        const selected = model.provider_id === displayedPrimaryModelRef?.provider_id && model.alias === displayedPrimaryModelRef?.model_id;
                         const usable = isSelectableModelAvailability(model.availability);
                         const status = usable ? "" : ` · ${model.availability}`;
                         return <option key={`${model.provider_id || "backend"}:${model.alias}`} disabled={!usable && !selected} value={activeAgentConfigurationTab === "opendrsai" ? `${encodeURIComponent(model.provider_id || "") }::${encodeURIComponent(model.alias)}` : model.alias}>{`${model.display_name || model.alias}${status}`}</option>;
@@ -8710,9 +8815,15 @@ function SettingsPanel({
                   <span><strong>{setting.label}</strong><small>{setting.description}</small></span>
                   <div className="settings-model-control">
                     <select aria-label={setting.label} value={value} onChange={(event) => {
-                      if (!event.target.value) { onConfigureAgentCapabilityModel(setting.role); return; }
-                      const [providerId, modelId] = event.target.value.split("::").map(decodeURIComponent);
-                      onConfigureAgentCapabilityModel(setting.role, modelId, providerId);
+                      const selection = event.target.value
+                        ? (() => {
+                            const [providerId, modelId] = event.target.value.split("::").map(decodeURIComponent);
+                            return { mode: "explicit" as const, ref: { provider_id: providerId, model_id: modelId } };
+                          })()
+                        : null;
+                      setAgentModelPolicyDraft((current) => current ? { ...current, [setting.role]: selection } : current);
+                      setAgentModelPolicyDirty(true);
+                      setAgentModelPolicyMessage(null);
                     }} disabled={setting.models.length === 0}>
                       <option value="">{setting.models.length === 0 ? (zh ? "暂无匹配模型" : "No matching model") : (zh ? "未指定" : "Not assigned")}</option>
                       {Object.entries(groups).map(([provider, providerModels]) => <optgroup key={provider} label={provider}>
@@ -8738,7 +8849,14 @@ function SettingsPanel({
               </div>}
               <div className="settings-row">
                 <span><strong>{zh ? "思考强度" : "Thinking effort"}</strong><small>{zh ? "可在每次发送前从聊天输入区临时调整。" : "Can still be changed in the composer before sending."}</small></span>
-                <select value={activeAgentThinkingEfforts.includes(activeAgentThinkingEffort) ? activeAgentThinkingEffort : activeAgentThinkingEfforts.includes("high") ? "high" : activeAgentThinkingEfforts[0] ?? ""} disabled={!activeConfigurationAgent || activeAgentThinkingEfforts.length === 0} onChange={(event) => activeConfigurationAgent && void onConfigureAgentThinkingEffort(activeConfigurationAgent.id, event.target.value as ThinkingEffort)}>
+                <select value={activeAgentThinkingEfforts.includes(activeAgentThinkingEffort) ? activeAgentThinkingEffort : activeAgentThinkingEfforts.includes("high") ? "high" : activeAgentThinkingEfforts[0] ?? ""} disabled={!activeConfigurationAgent || activeAgentThinkingEfforts.length === 0} onChange={(event) => {
+                  if (!activeConfigurationAgent) return;
+                  const effort = event.target.value as ThinkingEffort;
+                  if (activeAgentConfigurationTab !== "opendrsai") { void onConfigureAgentThinkingEffort(activeConfigurationAgent.id, effort); return; }
+                  setAgentModelPolicyDraft((current) => current ? { ...current, reasoning_effort: effort } : current);
+                  setAgentModelPolicyDirty(true);
+                  setAgentModelPolicyMessage(null);
+                }}>
                   {activeAgentThinkingEfforts.length === 0 && <option value="">{zh ? "当前模型不支持" : "Not supported by this model"}</option>}
                   {activeAgentThinkingEfforts.includes("none") && <option value="none">{zh ? "不思考" : "Off"}</option>}
                   {activeAgentThinkingEfforts.includes("low") && <option value="low">{zh ? "低" : "Low"}</option>}
@@ -8748,6 +8866,12 @@ function SettingsPanel({
                   {activeAgentThinkingEfforts.includes("max") && <option value="max">{zh ? "最大" : "Max"}</option>}
                 </select>
               </div>
+              {activeAgentConfigurationTab === "opendrsai" && <div className="settings-actions agent-model-policy-actions">
+                <button type="button" className="primary" data-testid="save-agent-model-policy" disabled={!agentModelPolicyDirty || agentModelPolicySaving || !agentModelPolicyDraft || !openDrSaiConfigurationAgent} onClick={() => void saveAgentModelConfiguration()}>
+                  {agentModelPolicySaving ? (zh ? "保存中…" : "Saving…") : (zh ? "保存模型配置" : "Save model configuration")}
+                </button>
+                {agentModelPolicyMessage && <span className="settings-message" role="status" aria-live="polite">{agentModelPolicyMessage}</span>}
+              </div>}
             </section>
             {activeAgentConfigurationTab === "opendrsai" && <section className="settings-section">
               <div><h2>{zh ? "执行与上下文" : "Execution and context"}</h2><p>{zh ? "这些选项保存到当前 OpenDrSai 配置，并受现有审批策略约束。" : "These options are saved to the current OpenDrSai configuration and remain governed by approval policy."}</p></div>

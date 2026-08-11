@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-const { StreamingTransportReliability } = await import("../src/main/voiceStreaming/transportReliability.ts");
+const { StreamingTransportReliability } = await import("../../shared/main/voiceStreaming/transportReliability.ts");
 const policy = { connectTimeoutMs: 100, idleTimeoutMs: 200, totalTimeoutMs: 1_000, heartbeatIntervalMs: 50, reconnectWindowMs: 150, maxReconnectAttempts: 2, supportsResume: true };
 const connection = new StreamingTransportReliability(0, policy);
 assert.deepEqual(connection.poll(49), { heartbeatDue: false, timeout: null });

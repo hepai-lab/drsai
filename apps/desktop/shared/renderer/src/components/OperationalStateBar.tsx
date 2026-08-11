@@ -16,7 +16,7 @@ const STATE_COPY: Record<string, { zh: string; en: string }> = {
   blocked: { zh: "运行时需要修复", en: "Runtime needs attention" },
   ready: { zh: "已就绪", en: "Ready" },
   unconfigured: { zh: "当前智能体需要配置模型", en: "Current Agent model setup required" },
-  untested: { zh: "当前智能体模型待验证", en: "Current Agent model pending verification" },
+  untested: { zh: "当前智能体模型尚未手动测试", en: "Current Agent model has not been manually tested" },
   none: { zh: "需要选择工作区", en: "Workspace selection required" },
   untrusted: { zh: "需要信任工作区", en: "Workspace trust required" },
   trusted: { zh: "已信任", en: "Trusted" },
@@ -102,7 +102,7 @@ function primaryActionLabel(decision: OperationalStateDecision, language: AppLan
   const zh = language === "zh";
   if (decision.currentLayer === "identity") return zh ? "前往登录" : "Go to sign in";
   if (decision.currentLayer === "runtime") return zh ? "修复并重试运行时" : "Repair and retry runtime";
-  if (decision.currentLayer === "model") return decision.state === "untested" ? (zh ? "重新验证当前智能体模型" : "Verify current Agent model again") : (zh ? "配置当前智能体模型" : "Configure current Agent model");
+  if (decision.currentLayer === "model") return decision.state === "untested" ? (zh ? "打开模型提供方设置" : "Open Model provider settings") : (zh ? "配置当前智能体模型" : "Configure current Agent model");
   if (decision.currentLayer === "workspace") return decision.state === "untrusted" ? (zh ? "信任此工作区" : "Trust this workspace") : (zh ? "选择工作区" : "Choose workspace");
   return decision.state === "waiting_approval" ? (zh ? "查看待批准操作" : "Review pending approval") : (zh ? "查看并重试任务" : "Review and retry task");
 }
