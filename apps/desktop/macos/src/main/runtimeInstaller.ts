@@ -24,8 +24,7 @@ interface RuntimeManifest {
 }
 
 let activeInstall: AbortController | null = null;
-const INSTALLED_RUNTIME_INSPECTION_TTL_MS = 5 * 60_000;
-let installedRuntimeInspectionCache: { checkedAt: number; result: { version: string | null; archiveSha256: string | null; healthy: boolean } } | null = null;
+let installedRuntimeInspectionCache: { version: string | null; archiveSha256: string | null; healthy: boolean } | null = null;
 let installedRuntimeInspectionInFlight: Promise<{ version: string | null; archiveSha256: string | null; healthy: boolean }> | null = null;
 
 export function bundledRuntimeManifestPath(): string { return join(process.resourcesPath, "runtime", "runtime-manifest.json"); }
@@ -97,7 +96,7 @@ export async function ensureBundledRuntimeInstalled(onProgress: (progress: Insta
       // that absolute root, so seal the venv metadata to its final location.
       await relocateRuntimeVirtualEnvironments(DRSAI_REPO, manifest.pythonVersion);
       await rm(backup, { recursive: true, force: true });
-      installedRuntimeInspectionCache = { checkedAt: Date.now(), result: { version: manifest.version, archiveSha256: manifest.sha256, healthy: true } };
+      installedRuntimeInspectionCache = { version: manifest.version, archiveSha256: manifest.sha256, healthy: true };
       onProgress({ phase: "complete", message: "Runtime installation complete.", log, exitCode: 0 });
       return true;
     } catch (error) {
@@ -117,12 +116,12 @@ export function runtimeExtractionTimeoutMs(archiveSize: number): number {
 }
 
 export async function inspectInstalledRuntime(force = false): Promise<{ version: string | null; archiveSha256: string | null; healthy: boolean }> {
-  if (!force && installedRuntimeInspectionCache && Date.now() - installedRuntimeInspectionCache.checkedAt < INSTALLED_RUNTIME_INSPECTION_TTL_MS) return installedRuntimeInspectionCache.result;
+  if (!force && installedRuntimeInspectionCache) return installedRuntimeInspectionCache;
   if (installedRuntimeInspectionInFlight) return installedRuntimeInspectionInFlight;
   installedRuntimeInspectionInFlight = inspectInstalledRuntimeContents();
   try {
     const result = await installedRuntimeInspectionInFlight;
-    installedRuntimeInspectionCache = { checkedAt: Date.now(), result };
+    installedRuntimeInspectionCache = result;
     return result;
   } finally {
     installedRuntimeInspectionInFlight = null;
