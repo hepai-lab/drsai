@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,11 +8,22 @@ import { createServer } from "node:net";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Packaged L5 must run on Apple Silicon macOS.");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const executable = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "MacOS", "OpenDrSai");
-const appBundle = join(root, "release", "mac-arm64", "OpenDrSai.app");
+const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+let releaseMount;
+let appBundle = resolve(process.env.OPENDRSAI_MACOS_APP_PATH || join(root, "release", "mac-arm64", "OpenDrSai.app"));
+if (!process.env.OPENDRSAI_MACOS_APP_PATH && !hasRuntimeArchive(appBundle)) {
+  const dmg = join(root, "release", `OpenDrSai-macOS-v${packageJson.version}-arm64.dmg`);
+  assert.ok(existsSync(dmg), `Packaged L5 full Runtime DMG is missing: ${dmg}`);
+  releaseMount = mkdtempSync(join(tmpdir(), "opendrsai-macos-l5-dmg-"));
+  const attached = spawnSync("/usr/bin/hdiutil", ["attach", dmg, "-readonly", "-nobrowse", "-mountpoint", releaseMount], { encoding: "utf8" });
+  assert.equal(attached.status, 0, `Packaged L5 could not mount ${dmg}.\n${attached.stderr}`);
+  appBundle = join(releaseMount, "OpenDrSai.app");
+}
+process.once("exit", cleanupReleaseMount);
+const executable = join(appBundle, "Contents", "MacOS", "OpenDrSai");
 const signature = spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", appBundle], { encoding: "utf8" });
 assert.equal(signature.status, 0, `Packaged L5 requires a valid sealed App bundle. Build unsigned development packages with npm run build:mac:dir:unsigned.\n${signature.stderr}`);
-const runtimeRoot = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "Resources", "runtime");
+const runtimeRoot = join(appBundle, "Contents", "Resources", "runtime");
 const runtimeManifest = JSON.parse(readFileSync(join(runtimeRoot, "runtime-manifest.json"), "utf8"));
 const runtimeArchive = statSync(join(runtimeRoot, runtimeManifest.archive));
 const runtimeGiB = Math.ceil(runtimeArchive.size / (1024 ** 3));
@@ -213,6 +224,24 @@ try {
   if (powerAssertion.exitCode === null && powerAssertion.signalCode === null) powerAssertion.kill("SIGTERM");
   if (!suitePassed && keepTempOnFailure) console.error(`L5 preserved failed fixture at ${temp}`);
   else rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  cleanupReleaseMount();
+}
+
+function hasRuntimeArchive(candidateApp) {
+  const candidateRuntime = join(candidateApp, "Contents", "Resources", "runtime");
+  const manifestPath = join(candidateRuntime, "runtime-manifest.json");
+  if (!existsSync(manifestPath)) return false;
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    return Boolean(manifest.archive && existsSync(join(candidateRuntime, manifest.archive)));
+  } catch { return false; }
+}
+
+function cleanupReleaseMount() {
+  if (!releaseMount) return;
+  spawnSync("/usr/bin/hdiutil", ["detach", releaseMount, "-force"], { stdio: "ignore" });
+  rmSync(releaseMount, { recursive: true, force: true });
+  releaseMount = undefined;
 }
 
 async function runScenario(scenario, config, extraEnv, timeoutMs, keepRunning = false) {
