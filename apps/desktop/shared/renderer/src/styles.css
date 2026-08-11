@@ -3368,22 +3368,6 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   filter: drop-shadow(0 8px 20px rgba(255, 145, 44, 0.24)) drop-shadow(0 0 18px rgba(139, 92, 246, 0.16));
   object-fit: contain;
   transform: translateX(-50%);
-  animation: empty-chat-logo-glow 9s ease-in-out infinite;
-}
-
-@keyframes empty-chat-logo-glow {
-  0%, 100% {
-    filter: drop-shadow(0 8px 18px rgba(255, 145, 44, 0.2)) drop-shadow(0 0 14px rgba(139, 92, 246, 0.12));
-  }
-  48% {
-    filter: drop-shadow(0 10px 26px rgba(255, 145, 44, 0.34)) drop-shadow(0 0 24px rgba(139, 92, 246, 0.22));
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .empty-chat-logo {
-    animation: none;
-  }
 }
 
 .empty-chat-intro h1 {

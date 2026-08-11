@@ -26,6 +26,9 @@ assert.match(installer, /Verifying extracted Runtime inventory/, "Long Runtime v
 assert.match(platformIpc, /desktop:cancel-install[\s\S]{0,100}cancelBundledRuntimeInstall/, "Cancel IPC must abort the active install.");
 assert.match(platformIpc, /desktop:install-progress/, "Runtime install progress must be sent to the renderer.");
 assert.match(lifecycle, /backendNeedsRepair: missing\.length === 0 && !runtime\.healthy/, "Corrupt installed runtimes must request repair.");
+assert.match(installer, /INSTALLED_RUNTIME_INSPECTION_TTL_MS/, "Repeated health polling must cache the expensive Runtime inventory verification.");
+assert.match(installer, /installedRuntimeInspectionInFlight/, "Concurrent health polling must share one Runtime inventory verification.");
+assert.match(installer, /inspectInstalledRuntime\(force = false\)/, "Security-sensitive callers must be able to force a fresh Runtime verification.");
 
 for (const reproducibilityControl of ["SOURCE_DATE_EPOCH", "LC_ALL=C sort", "COPYFILE_DISABLE=1", "gzip -n"]) {
   assert.ok(builder.includes(reproducibilityControl), `Runtime builder is missing reproducibility control: ${reproducibilityControl}.`);

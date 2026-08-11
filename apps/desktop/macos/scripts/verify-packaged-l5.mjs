@@ -223,7 +223,10 @@ try {
 } finally {
   if (powerAssertion.exitCode === null && powerAssertion.signalCode === null) powerAssertion.kill("SIGTERM");
   if (!suitePassed && keepTempOnFailure) console.error(`L5 preserved failed fixture at ${temp}`);
-  else rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  else {
+    try { rmSync(temp, { recursive: true, force: true, maxRetries: 30, retryDelay: 500 }); }
+    catch (error) { console.warn(`L5 cleanup could not remove ${temp}: ${error instanceof Error ? error.message : String(error)}`); }
+  }
   cleanupReleaseMount();
 }
 
