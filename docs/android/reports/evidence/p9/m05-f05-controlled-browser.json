@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F05",
+  "generated_at": "2026-08-05T14:15:08.476229+00:00",
+  "passed": true,
+  "gates": {
+    "protocol_is_versioned": true,
+    "passive_navigation_and_read_are_bounded": true,
+    "active_content_is_not_executed": true,
+    "forms_are_declared_and_field_bounded": true,
+    "submit_and_download_require_approval": true,
+    "login_state_is_subject_isolated": true,
+    "cookie_values_are_not_exported": true,
+    "download_exports_digest_not_bytes": true,
+    "capability_requires_validated_network": true,
+    "desktop_android_manifest_is_local_equivalent": true,
+    "registry_wires_production_provider": true,
+    "android_behavior_suite_green": true
+  },
+  "android_suite": {
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "sha256": "20de7c612b43681c4466b9641346647a468d309a27f6bc49b94c2fa2783bcb6e"
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ControlledBrowserTool.kt": "1bc4166c12c358d183f423cce43174c01032cda7daf8bf5caeceab0a92db9b40",
+    "apps/android/app/src/test/java/ai/drsai/remote/ControlledBrowserToolTest.kt": "527c92de11e5e4fd3167ddee94acdb775633d62e7d811812796838483c5befb2",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt": "d6a045f9eb61a7a91704d1e288b33bddf2945d9f63c675ec53153d710d5e5b43",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b"
+  }
+}

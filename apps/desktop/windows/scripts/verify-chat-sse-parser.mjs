@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Script } from "node:vm";
@@ -144,7 +145,34 @@ assertDeepEqual(
 assertDeepEqual(
   "native agent input request",
   parseAgentInputRequestSseFrame('event: agent.input_request\ndata: {"type":"input_request","input_type":"approval","prompt":"Continue?"}'),
-  { prompt: "Continue?", inputType: "approval" },
+  { version: 1, requestId: "", prompt: "Continue?", inputType: "approval" },
+);
+assertDeepEqual(
+  "v1 choice input request",
+  parseAgentInputRequestSseFrame('event: agent.input_request\ndata: {"version":1,"request_id":"input-1","chat_id":"chat-1","run_id":"run-1","input_type":"choice","prompt":"Select","options":[{"id":"a","label":"Option A","value":"A"}],"default":"A","allow_custom":true,"timeout_at":"2026-07-29T13:00:00Z"}'),
+  {
+    version: 1,
+    requestId: "input-1",
+    chatId: "chat-1",
+    runId: "run-1",
+    prompt: "Select",
+    inputType: "choice",
+    options: [{ id: "a", label: "Option A", value: "A" }],
+    defaultValue: "A",
+    allowCustom: true,
+    timeoutAt: "2026-07-29T13:00:00Z",
+  },
+);
+assertDeepEqual(
+  "legacy value-only choice option",
+  parseAgentInputRequestSseFrame('event: agent.input_request\ndata: {"version":1,"request_id":"input-2","input_type":"choice","prompt":"Select","options":[{"value":"continue","label":"Continue"}]}'),
+  {
+    version: 1,
+    requestId: "input-2",
+    prompt: "Select",
+    inputType: "choice",
+    options: [{ id: "continue", label: "Continue", value: "continue" }],
+  },
 );
 assertDeepEqual(
   "message content with CRLF",
@@ -266,6 +294,12 @@ assertDeepEqual(
   },
 );
 assertDeepEqual("done sentinel", parseChatSseFrame("data: [DONE]"), []);
+assert.throws(
+  () => parseChatSseFrame('data: {"error":{"code":"upstream_timeout","message":"Worker timed out","retryable":true},"request_id":"req-ddf-1","invoke_id":"42"}'),
+  (error) => error?.code === "upstream_timeout"
+    && error?.retryable === true
+    && error?.message === "Worker timed out (request_id: req-ddf-1, invoke_id: 42)",
+);
 assertDeepEqual("malformed frame", parseChatSseFrame("data: not-json"), []);
 try {
   parseChatSseFrame('data: {"error":{"code":"token_expired","message":"Session expired","retryable":true}}');
@@ -368,6 +402,60 @@ assertDeepEqual(
     'data: {"metadata":{"tool_calls":[{"kind":"tool_result","name":"pytest","status":"done","output":"2 passed"}]}}',
   ).map(({ kind, title, status, content, toolName }) => ({ kind, title, status, content, toolName })),
   [{ kind: "tool_result", title: "Tool: pytest", status: "completed", content: "2 passed", toolName: "pytest" }],
+);
+assertDeepEqual(
+  "remote worker metadata step queued",
+  parseChatToolTimelineSseFrame(
+    'data: {"choices":[{"delta":{}}],"metadata":{"event_type":"step","step_id":"step-0001","title":"Host response","status":"queued","content":"Waiting to start"}}',
+  ).map(({ id, kind, title, status, content }) => ({ id, kind, title, status, content })),
+  [{
+    id: "step-0001",
+    kind: "log",
+    title: "Host response",
+    status: "started",
+    content: "Waiting to start",
+  }],
+);
+assertDeepEqual(
+  "remote worker metadata step completed",
+  parseChatToolTimelineSseFrame(
+    'data: {"choices":[{"delta":{}}],"metadata":{"event_type":"step","step_id":"step-0001","title":"Host response","status":"completed","content":"Completed"}}',
+  ).map(({ id, kind, title, status, content }) => ({ id, kind, title, status, content })),
+  [{
+    id: "step-0001",
+    kind: "tool_result",
+    title: "Host response",
+    status: "completed",
+    content: "Completed",
+  }],
+);
+assertDeepEqual(
+  "remote worker metadata tool start",
+  parseChatToolTimelineSseFrame(
+    'data: {"choices":[{"delta":{}}],"metadata":{"chat_id":"tool-thread","event_type":"tool","status":"in_progress","tool":{"id":"tool-worker-health-0001","name":"worker_health_check","phase":"start"}}}',
+  ).map(({ id, kind, title, status, content, toolName }) => ({ id, kind, title, status, content, toolName })),
+  [{
+    id: "tool-worker-health-0001",
+    kind: "tool_call",
+    title: "Tool: worker_health_check",
+    status: "running",
+    content: undefined,
+    toolName: "worker_health_check",
+  }],
+);
+assertDeepEqual(
+  "remote worker metadata tool result",
+  parseChatToolTimelineSseFrame(
+    'data: {"choices":[{"delta":{}}],"metadata":{"chat_id":"tool-thread","event_type":"tool","status":"completed","tool":{"id":"tool-worker-health-0001","name":"worker_health_check","phase":"result","result":{"status":"ok","agent":"drsai_v3_test"}}}}',
+  ).map(({ id, kind, title, status, content, toolName }) => ({ id, kind, title, status, content, toolName })),
+  [{
+    id: "tool-worker-health-0001",
+    kind: "tool_result",
+    title: "Tool: worker_health_check",
+    status: "completed",
+    content: '{"status":"ok","agent":"drsai_v3_test"}',
+    toolName: "worker_health_check",
+  }],
 );
 assertDeepEqual(
   "tool timeline openai chat tool_calls",
@@ -936,6 +1024,12 @@ assertDeepEqual(
 
 if (!isCompletionDoneFrame("event: done\ndata: [DONE]")) {
   throw new Error("done frame detector did not detect [DONE]");
+}
+if (!isCompletionDoneFrame('data: {"choices":[{"delta":{},"finish_reason":"stop"}],"metadata":{"chat_id":"thread-1"}}')) {
+  throw new Error("done frame detector did not detect OpenAI finish_reason");
+}
+if (!isCompletionDoneFrame('data: {"choices":[{"delta":{}}],"metadata":{"event_type":"terminal","status":"completed","chat_id":"thread-1"}}')) {
+  throw new Error("done frame detector did not detect worker terminal metadata");
 }
 if (isCompletionDoneFrame('data: {"choices":[{"delta":{"content":"not done"}}]}')) {
   throw new Error("done frame detector returned true for a content frame");

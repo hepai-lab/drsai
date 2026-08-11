@@ -4,8 +4,13 @@ import ai.drsai.remote.remote.data.DiscoveredRuntime
 import ai.drsai.remote.remote.data.Page
 import ai.drsai.remote.remote.data.RelayDiscoveryService
 import ai.drsai.remote.remote.data.RemoteDirectoryLoader
+import ai.drsai.remote.remote.data.RemoteDirectoryCache
+import ai.drsai.remote.remote.data.RemoteDirectoryEntry
+import ai.drsai.remote.remote.data.RemoteCacheSource
+import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.WorkspaceRecencyKey
 import ai.drsai.remote.remote.data.WorkspaceRecencyStore
+import ai.drsai.remote.remote.data.WorkspaceCatalogSync
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import ai.drsai.remote.remote.model.RemoteRuntimeRef
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
@@ -25,6 +30,7 @@ class RemoteDirectoryLoaderTest {
         val directory = loader.load("user-a")
 
         assertEquals(listOf("runtime-a", "runtime-b"), directory.map { it.runtime.reference.runtimeId.value })
+        assertEquals(0, service.syncCalls)
         assertEquals(listOf("shared", "workspace-a2"), directory[0].workspaces.map { it.workspaceId.value })
         assertEquals("runtime-a", directory[0].workspaces[0].runtimeId.value)
         assertEquals("runtime-b", directory[1].workspaces.single().runtimeId.value)
@@ -68,16 +74,248 @@ class RemoteDirectoryLoaderTest {
         assertEquals("runtime-b", userB.first().workspaces.first().runtimeId.value)
     }
 
+    @Test
+    fun `authoritative empty host catalog removes every cached projection`() = runTest {
+        val cache = MemoryDirectoryCache(
+            mutableListOf(
+                RemoteDirectoryEntry(
+                    discovered("runtime-a", RemoteConnectionState.ONLINE),
+                    listOf(RemoteWorkspaceRef(RuntimeId("runtime-a"), WorkspaceId("workspace-a"), "A")),
+                    true,
+                    100,
+                )
+            )
+        )
+        val service = object : EmptyDirectoryService() {
+            override suspend fun listRuntimes(cursor: String?, query: String?) =
+                Page<DiscoveredRuntime>(emptyList())
+        }
+
+        val result = RemoteDirectoryLoader(service, MemoryRecencyStore(), cache)
+            .synchronize("same-account-device-b")
+
+        assertTrue(result.entries.isEmpty())
+        assertTrue(cache.entries.isEmpty())
+    }
+
+    @Test
+    fun `offline authorized host keeps only explicitly cached workspace projection`() = runTest {
+        val runtimeId = RuntimeId("runtime-a")
+        val workspace = RemoteWorkspaceRef(runtimeId, WorkspaceId("workspace-a"), "Cached")
+        val cache = MemoryDirectoryCache(
+            mutableListOf(
+                RemoteDirectoryEntry(
+                    discovered("runtime-a", RemoteConnectionState.ONLINE),
+                    listOf(workspace),
+                    true,
+                    123,
+                )
+            )
+        )
+        var workspaceRequests = 0
+        val service = object : EmptyDirectoryService() {
+            override suspend fun listRuntimes(cursor: String?, query: String?) =
+                Page(listOf(discovered("runtime-a", RemoteConnectionState.OFFLINE)))
+            override suspend fun listWorkspaces(
+                runtimeId: RuntimeId,
+                cursor: String?,
+                query: String?,
+            ): Page<RemoteWorkspaceRef> {
+                workspaceRequests += 1
+                error("offline host must not be queried")
+            }
+        }
+
+        val result = RemoteDirectoryLoader(service, MemoryRecencyStore(), cache)
+            .synchronize("user-a")
+
+        assertEquals(0, workspaceRequests)
+        assertTrue(result.stale)
+        assertTrue(result.entries.single().workspaceProjectionCached)
+        assertEquals(listOf(workspace), result.entries.single().workspaces)
+        assertEquals(123L, result.entries.single().lastSyncedAt)
+        assertEquals(RemoteCacheSource.CACHE, result.entries.single().cacheMetadata.source)
+        assertEquals("runtime_offline", result.entries.single().cacheMetadata.staleReason)
+    }
+
+    @Test
+    fun `authoritative workspace 403 removes host instead of reviving Room cache`() = runTest {
+        val cache = MemoryDirectoryCache(
+            mutableListOf(
+                RemoteDirectoryEntry(
+                    discovered("runtime-a", RemoteConnectionState.ONLINE),
+                    listOf(RemoteWorkspaceRef(RuntimeId("runtime-a"), WorkspaceId("workspace-a"), "Old")),
+                    true,
+                    100,
+                )
+            )
+        )
+        val service = object : EmptyDirectoryService() {
+            override suspend fun listRuntimes(cursor: String?, query: String?) =
+                Page(listOf(discovered("runtime-a", RemoteConnectionState.ONLINE)))
+            override suspend fun listWorkspaces(
+                runtimeId: RuntimeId,
+                cursor: String?,
+                query: String?,
+            ): Page<RemoteWorkspaceRef> = throw RelayHttpException(403, null, "association_required")
+        }
+
+        val result = RemoteDirectoryLoader(service, MemoryRecencyStore(), cache)
+            .synchronize("user-a")
+
+        assertTrue(result.entries.isEmpty())
+        assertEquals("remote_access_revoked", result.warning)
+        assertTrue(cache.entries.isEmpty())
+    }
+
+    @Test
+    fun `targeted workspace refresh posts force sync and replaces cached projection`() = runTest {
+        val runtimeId = RuntimeId("runtime-a")
+        val cache = MemoryDirectoryCache(
+            mutableListOf(
+                RemoteDirectoryEntry(
+                    discovered("runtime-a", RemoteConnectionState.ONLINE),
+                    listOf(RemoteWorkspaceRef(runtimeId, WorkspaceId("old"), "Old")),
+                    true,
+                    100,
+                )
+            )
+        )
+        val service = FakeDirectoryService()
+
+        val refreshed = RemoteDirectoryLoader(service, MemoryRecencyStore(), cache)
+            .forceSyncWorkspaces("user-a", runtimeId)
+
+        assertEquals(listOf("shared", "workspace-a2"), refreshed.items.map { it.workspaceId.value })
+        assertEquals(1, service.syncCalls)
+        assertTrue(service.workspaceCursors[runtimeId].isNullOrEmpty())
+        assertEquals(refreshed.items, cache.entries.single().workspaces)
+        assertEquals(200L, cache.entries.single().lastSyncedAt)
+    }
+
+    @Test
+    fun `offline force sync preserves cached workspaces while forbidden removes host`() = runTest {
+        val runtimeId = RuntimeId("runtime-a")
+        fun cached() = MemoryDirectoryCache(
+            mutableListOf(
+                RemoteDirectoryEntry(
+                    discovered("runtime-a", RemoteConnectionState.OFFLINE),
+                    listOf(RemoteWorkspaceRef(runtimeId, WorkspaceId("cached"), "Cached")),
+                    true,
+                    100,
+                )
+            )
+        )
+        val offlineCache = cached()
+        val offlineService = FakeDirectoryService().apply {
+            syncFailure = RelayHttpException(503, "safe", "host_offline")
+        }
+        runCatching {
+            RemoteDirectoryLoader(offlineService, MemoryRecencyStore(), offlineCache)
+                .forceSyncWorkspaces("user-a", runtimeId)
+        }
+        assertEquals(listOf("cached"), offlineCache.entries.single().workspaces.map { it.workspaceId.value })
+
+        val forbiddenCache = cached()
+        val forbiddenService = FakeDirectoryService().apply {
+            syncFailure = RelayHttpException(403, "safe", "association_required")
+        }
+        runCatching {
+            RemoteDirectoryLoader(forbiddenService, MemoryRecencyStore(), forbiddenCache)
+                .forceSyncWorkspaces("user-a", runtimeId)
+        }
+        assertTrue(forbiddenCache.entries.isEmpty())
+    }
+
     private class MemoryRecencyStore : WorkspaceRecencyStore {
         private val values = mutableMapOf<WorkspaceRecencyKey, Long>()
         override fun lastOpened(key: WorkspaceRecencyKey): Long? = values[key]
         override fun markOpened(key: WorkspaceRecencyKey, timestampMillis: Long) { values[key] = timestampMillis }
     }
 
+    private open class EmptyDirectoryService : RelayDiscoveryService {
+        override suspend fun listRuntimes(cursor: String?, query: String?) =
+            Page<DiscoveredRuntime>(emptyList())
+        override suspend fun listWorkspaces(
+            runtimeId: RuntimeId,
+            cursor: String?,
+            query: String?,
+        ) = Page<RemoteWorkspaceRef>(emptyList())
+        override suspend fun associate(accessGrantPayload: String): RuntimeId = error("not used")
+        override suspend fun revokeAssociation(runtimeId: RuntimeId): Unit = error("not used")
+        override suspend fun recordPresence(runtimeId: RuntimeId, accessing: Boolean): Unit = error("not used")
+    }
+
+    private class MemoryDirectoryCache(
+        val entries: MutableList<RemoteDirectoryEntry> = mutableListOf(),
+    ) : RemoteDirectoryCache {
+        override suspend fun read(subject: String, organization: String) = entries.toList()
+        override suspend fun reconcileRuntimes(
+            subject: String,
+            organization: String,
+            runtimes: List<DiscoveredRuntime>,
+            syncedAt: Long,
+        ) {
+            val authorized = runtimes.map { it.reference.runtimeId }.toSet()
+            entries.removeAll { it.runtime.reference.runtimeId !in authorized }
+            runtimes.forEach { runtime ->
+                val index = entries.indexOfFirst {
+                    it.runtime.reference.runtimeId == runtime.reference.runtimeId
+                }
+                val replacement = if (index >= 0) {
+                    entries[index].copy(runtime = runtime)
+                } else {
+                    RemoteDirectoryEntry(runtime, emptyList(), false, syncedAt)
+                }
+                if (index >= 0) entries[index] = replacement else entries += replacement
+            }
+        }
+        override suspend fun replaceWorkspaces(
+            subject: String,
+            organization: String,
+            runtimeId: RuntimeId,
+            workspaces: List<RemoteWorkspaceRef>,
+            syncedAt: Long,
+            catalogRevision: String?,
+        ) {
+            val index = entries.indexOfFirst { it.runtime.reference.runtimeId == runtimeId }
+            check(index >= 0)
+            entries[index] = entries[index].copy(
+                workspaces = workspaces,
+                workspaceProjectionCached = false,
+                lastSyncedAt = syncedAt,
+            )
+        }
+        override suspend fun removeRuntime(
+            subject: String,
+            organization: String,
+            runtimeId: RuntimeId,
+        ) {
+            entries.removeAll { it.runtime.reference.runtimeId == runtimeId }
+        }
+        override suspend fun clear(subject: String, organization: String) {
+            entries.clear()
+        }
+    }
+
+    private fun discovered(
+        id: String,
+        state: RemoteConnectionState,
+    ) = DiscoveredRuntime(
+        reference = RemoteRuntimeRef(RuntimeId(id), "Host $id"),
+        instanceId = "instance-$id",
+        version = "1.5.3",
+        protocolVersion = "2.0.0",
+        connectionGeneration = 1,
+        state = state,
+    )
+
     private class FakeDirectoryService : RelayDiscoveryService {
         val runtimeCursors = mutableListOf<String?>()
         val workspaceCursors = mutableMapOf<RuntimeId, MutableList<String?>>()
         val workspaceQueries = mutableListOf<String?>()
+        var syncCalls = 0
+        var syncFailure: Throwable? = null
 
         override suspend fun listRuntimes(cursor: String?, query: String?): Page<DiscoveredRuntime> {
             runtimeCursors += cursor
@@ -100,8 +338,23 @@ class RemoteDirectoryLoaderTest {
             else Page(all)
         }
 
+        override suspend fun syncWorkspaces(runtimeId: RuntimeId): WorkspaceCatalogSync {
+            syncCalls += 1
+            syncFailure?.let { throw it }
+            return WorkspaceCatalogSync(
+                runtimeId = runtimeId,
+                catalogRevision = "3",
+                syncedAt = "1970-01-01T00:00:00.200Z",
+                items = listOf(
+                    RemoteWorkspaceRef(runtimeId, WorkspaceId("shared"), "Alpha project"),
+                    RemoteWorkspaceRef(runtimeId, WorkspaceId("workspace-a2"), "Zulu"),
+                ),
+            )
+        }
+
         override suspend fun associate(accessGrantPayload: String): RuntimeId = error("not used")
         override suspend fun revokeAssociation(runtimeId: RuntimeId): Unit = error("not used")
+        override suspend fun recordPresence(runtimeId: RuntimeId, accessing: Boolean): Unit = error("not used")
 
         private fun runtime(id: String, name: String) = DiscoveredRuntime(
             reference = RemoteRuntimeRef(RuntimeId(id), name),

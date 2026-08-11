@@ -47,18 +47,87 @@ const baseUrl = `http://127.0.0.1:${address.port}`;
 const browser = await chromium.launch({ headless: true, executablePath: chromePath });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, colorScheme: "light" });
 const results = [];
+let accessibility = null;
 
 try {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("opendrsai:first-run-complete:v3", "true");
+  });
   await page.goto(`${baseUrl}?structuredVisualFixture=1`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: /进入开发者工作区|Enter developer workspace/ }).click();
-  const composer = page.locator("textarea").last();
+  const composer = page.getByTestId("composer-input");
   await composer.waitFor({ state: "visible" });
   await composer.fill("__STRUCTURED_VISUAL_FIXTURE__");
-  await page.getByRole("button", { name: /发送|Send/, exact: true }).click();
+  const composerForm = composer.locator("xpath=ancestor::form[1]");
+  const submit = composerForm.locator('button.composer-submit:not(.stop)').first();
+  await submit.waitFor({ state: "visible" });
+  assert.match((await submit.innerText()).trim(), /发送|Send|排队|Queue/,
+    "The visible composer action must explain whether the message sends now or queues.");
+  assert.equal(await submit.isEnabled(), true, "The structured fixture composer action must be enabled.");
+  await submit.click();
   await page.locator('.structured-message-parts[data-turn-status="completed"]').last().waitFor({ state: "visible" });
   await page.locator(".chat-markdown-image").last().waitFor({ state: "visible" });
+  const completedTurn = page.locator('.structured-message-parts[data-turn-status="completed"]').last();
+  const conversationTitlebar = page.locator(".conversation-titlebar");
+  const statusRow = completedTurn.locator(".structured-run-status");
+  const process = completedTurn.locator(".structured-process");
+  const resultLayer = completedTurn.locator(".structured-result-layer");
+  assert.equal(await conversationTitlebar.count(), 1, "An active conversation must have exactly one fixed title bar.");
+  assert.equal(await statusRow.count(), 1, "The OAEP run status layer must render exactly once.");
+  assert.equal(await process.count(), 1, "The OAEP process layer must render exactly once.");
+  assert.equal(await resultLayer.count(), 1, "The OAEP result layer must render exactly once.");
+  assert.equal(await process.locator("summary.structured-run-status").count(), 1, "Process disclosure must be the run status row, not a second row.");
+  assert.equal(await statusRow.locator(".structured-process-label").count(), 1, "The merged status row must expose the process label.");
+  assert.equal(await process.evaluate((node) => node.hasAttribute("open")), false, "A completed process must be collapsed by default.");
+  assert.match(await resultLayer.innerText(), /Final answer|最终回答/, "The final answer must remain visible outside process details.");
+  await process.locator("summary").click();
+  assert.equal(await process.evaluate((node) => node.hasAttribute("open")), true, "The completed process must be expandable.");
+  const processText = await process.innerText();
+  assert.match(processText, /Analysis summary|分析摘要/, "Reasoning must be labeled as an analysis summary.");
+  assert.match(processText, /Result ready/, "Completed progress commentary must remain available in history.");
+  assert.match(processText, /Actions and changes|操作与变更/, "Tool and file activity must be available inside the process layer.");
+  const processSummary = process.locator("summary");
+  await processSummary.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await process.evaluate((node) => node.hasAttribute("open")), false,
+    "The process disclosure must close from the keyboard.");
+  await page.keyboard.press("Space");
+  assert.equal(await process.evaluate((node) => node.hasAttribute("open")), true,
+    "The process disclosure must open from the keyboard.");
+  accessibility = await page.evaluate(() => {
+    const scopes = [
+      document.querySelector(".conversation-titlebar"),
+      Array.from(document.querySelectorAll(".structured-message-parts")).at(-1),
+      document.querySelector('[data-testid="composer-input"]')?.closest("form"),
+    ].filter(Boolean);
+    const elements = scopes.flatMap((scope) => Array.from(scope.querySelectorAll("button, input, textarea, select, summary, a[href]")))
+      .filter((element) => {
+        const style = getComputedStyle(element);
+        return style.display !== "none" && style.visibility !== "hidden";
+      });
+    const accessibleName = (element) => String(
+      element?.getAttribute("aria-label") || element?.getAttribute("title")
+      || (element?.getAttribute("aria-labelledby")
+        ? document.getElementById(element.getAttribute("aria-labelledby"))?.textContent : "")
+      || element?.textContent || element?.getAttribute("placeholder") || element?.getAttribute("alt") || "",
+    ).trim();
+    const ids = Array.from(document.querySelectorAll("[id]")).map((element) => element.id).filter(Boolean);
+    return {
+      interactiveCount: elements.length,
+      unnamedInteractive: elements.filter((element) => !accessibleName(element)).map((element) => element.outerHTML.slice(0, 160)),
+      duplicateIds: [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))],
+      imagesMissingAlt: scopes.flatMap((scope) => Array.from(scope.querySelectorAll("img:not([alt])"))).length,
+      composerName: accessibleName(document.querySelector('[data-testid="composer-input"]')),
+      processSummaryName: accessibleName(Array.from(document.querySelectorAll("summary.structured-run-status")).at(-1)),
+      keyboardDisclosureVerified: true,
+    };
+  });
+  assert.equal(accessibility.unnamedInteractive.length, 0, `Interactive controls need accessible names: ${accessibility.unnamedInteractive.join(" | ")}`);
+  assert.equal(accessibility.duplicateIds.length, 0, `Duplicate DOM ids: ${accessibility.duplicateIds.join(", ")}`);
+  assert.equal(accessibility.imagesMissingAlt, 0, "Rendered conversation images must expose alternative text.");
+  assert.ok(accessibility.composerName, "The composer must have an accessible name.");
+  assert.ok(accessibility.processSummaryName, "The process disclosure must have an accessible name.");
   await page.addStyleTag({ content: `
-    .message-list > .message { content-visibility: visible !important; contain-intrinsic-block-size: none !important; }
     *, *::before, *::after { animation: none !important; transition: none !important; }
   ` });
 
@@ -82,6 +151,11 @@ try {
       const image = turn?.querySelector(".chat-markdown-image");
       const turnRect = turn?.getBoundingClientRect();
       const imageRect = image?.getBoundingClientRect();
+      const status = turn?.querySelector(".structured-run-status");
+      const statusRect = status?.getBoundingClientRect();
+      const statusChildren = status ? Array.from(status.children).map((child) => child.getBoundingClientRect()) : [];
+      const titlebarRect = document.querySelector(".conversation-titlebar")?.getBoundingClientRect();
+      const messageListRect = document.querySelector(".message-list")?.getBoundingClientRect();
       return {
         viewportWidth: window.innerWidth,
         documentWidth: document.documentElement.scrollWidth,
@@ -96,6 +170,8 @@ try {
         codeFitsTurn: Boolean(codeBlock && turnRect && codeBlock.getBoundingClientRect().right <= turnRect.right + 1),
         imageLoaded: image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0,
         imageFitsTurn: Boolean(imageRect && turnRect && imageRect.width <= turnRect.width + 1 && imageRect.right <= turnRect.right + 1),
+        statusSingleLine: Boolean(statusRect && statusChildren.every((rect) => rect.top >= statusRect.top - 1 && rect.bottom <= statusRect.bottom + 1)),
+        titlebarDoesNotOverlapMessages: Boolean(titlebarRect && messageListRect && messageListRect.top >= titlebarRect.bottom - 1),
       };
     });
     console.log(`${scenario.name}: ${JSON.stringify(metrics)}`);
@@ -107,6 +183,8 @@ try {
     assert.equal(metrics.codeFitsTurn, true, `${scenario.name}: code block escaped the response column.`);
     assert.equal(metrics.imageLoaded, true, `${scenario.name}: fixture image did not load.`);
     assert.equal(metrics.imageFitsTurn, true, `${scenario.name}: image escaped the response column.`);
+    assert.equal(metrics.statusSingleLine, true, `${scenario.name}: run status must remain on one line.`);
+    assert.equal(metrics.titlebarDoesNotOverlapMessages, true, `${scenario.name}: conversation title bar overlaps the message list.`);
 
     const screenshotPath = join(evidenceDir, `${scenario.name}.png`);
     const screenshot = await page.screenshot({ path: screenshotPath, fullPage: false });
@@ -118,6 +196,7 @@ try {
       ["table", ".chat-table-block"],
       ["code", ".chat-code-block"],
       ["image", ".chat-markdown-image"],
+      ["process", ".structured-process"],
     ]) {
       const contentPath = join(evidenceDir, `${scenario.name}-${kind}.png`);
       await page.evaluate((targetSelector) => {
@@ -151,5 +230,5 @@ try {
 }
 
 const reportPath = join(evidenceDir, "report.json");
-writeFileSync(reportPath, `${JSON.stringify({ ok: true, generatedAt: new Date().toISOString(), results }, null, 2)}\n`);
-console.log(`Structured visual verification passed (${results.length * 4} screenshots, report: ${reportPath}).`);
+writeFileSync(reportPath, `${JSON.stringify({ ok: true, generatedAt: new Date().toISOString(), accessibility, results }, null, 2)}\n`);
+console.log(`Structured visual verification passed (${results.length * 5} screenshots, OAEP four-layer layout and accessibility, report: ${reportPath}).`);

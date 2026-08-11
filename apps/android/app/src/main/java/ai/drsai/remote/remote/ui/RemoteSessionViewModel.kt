@@ -8,26 +8,19 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import androidx.room.Room
-import ai.drsai.remote.BuildConfig
-import ai.drsai.remote.data.AccessTokenCoordinator
-import ai.drsai.remote.data.ChatDatabase
-import ai.drsai.remote.data.MIGRATION_1_2
-import ai.drsai.remote.data.MIGRATION_2_3
-import ai.drsai.remote.data.MIGRATION_3_4
-import ai.drsai.remote.data.MIGRATION_4_5
-import ai.drsai.remote.data.MIGRATION_5_6
-import ai.drsai.remote.data.MIGRATION_6_7
-import ai.drsai.remote.data.OidcClient
-import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.*
 import android.content.Intent
 import android.util.Base64
 import java.io.File
 import ai.drsai.remote.remote.model.*
+import ai.drsai.remote.remote.generated.*
+import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,20 +38,20 @@ class RemoteSessionViewModel(
     private val runtimeName: String,
     private val workspaceName: String,
 ) : AndroidViewModel(app) {
-    private val tokens = SecureTokenStore(app)
-    private val auth = AccessTokenCoordinator(tokens, OidcClient(refreshClientId = { tokens.oidcClientId }))
-    private val repository = RelayRemoteRepository(
-        BuildConfig.RELAY_BASE_URL, auth::current, refreshAfter = auth::refreshAfter,
-    )
-    private val stream = RelaySseClient(
-        BuildConfig.RELAY_BASE_URL, auth::current, refreshAfter = auth::refreshAfter,
-    )
-    private val workspace = RelayWorkspaceOperationsClient(HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current))
-    private val database = Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
-        .build()
-    private val cache = RemoteCacheRepository(database)
-    private val connectivity = AndroidRemoteConnectivity(app)
+    private val container = RemoteWorkspaceContainer.get(app)
+    private val tokens = container.tokenStore
+    private val auth = container.auth
+    private val database = container.database
+    private val repository = container.repository
+    private val stream = container.stream
+    private val oaep = container.oaepSessions
+    private val legacy = container.legacyConversations
+    private val workspace = container.workspace(runtimeId)
+    private val cache = container.cache
+    private val drafts = container.drafts
+    private val activity = container.activity
+    private val connectivity = container.connectivity
+    private val resourceLease = container.resourceLeases.acquire("session_sync")
     private val subject get() = tokens.user()?.id ?: error("remote_subject_required")
     private val organization = ""
     private val scopeKey = "${runtimeId.value}/${workspaceId.value}/${sessionId.value}"
@@ -66,64 +59,158 @@ class RemoteSessionViewModel(
     val state: StateFlow<RemoteChatUiState> = mutableState.asStateFlow()
     private var streamJob: Job? = null
     private var activeRun: RemoteRunIdentity? = null
+    private var latestRun: RemoteRunSummary? = null
     private var synchronizer: RemoteSequenceSynchronizer? = null
+    private val deltaFrames = RemoteDeltaFrameBuffer()
+    private var deltaFrameJob: Job? = null
+    private var oaepRenderFrameJob: Job? = null
+    @Volatile private var pendingOaepRenderObservation: Pair<OaepEvent, Long>? = null
     private var authRefreshAttempted = false
+    private val refreshGeneration = AtomicLong(0)
+    private val retryPolicy = RemoteRetryPolicy()
+    @Volatile private var oaepEnabled = false
+    @Volatile private var foreground = true
     private val lifecycleObserver = object : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) {
-            activeRun?.let(::reconcileAndRestart)
+            foreground = true
+            startSessionSync()
+        }
+        override fun onStop(owner: LifecycleOwner) {
+            // Background delivery is notification-driven. Do not keep an SSE
+            // reconnect loop alive while the process is not visible.
+            foreground = false
+            streamJob?.cancel()
         }
     }
 
     init {
+        AndroidDevicePresence.markAccessing(runtimeId)
+        runCatching { activity.markSessionRead(subject, runtimeId.value, sessionId.value) }
         ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
         viewModelScope.launch {
             connectivity.online.drop(1).collect { online ->
                 mutableState.update { it.copy(online = online,
                     connectionState = if (online) RemoteConnectionState.CONNECTING else RemoteConnectionState.OFFLINE) }
-                if (online) activeRun?.let(::reconcileAndRestart) else streamJob?.cancel()
+                if (online && foreground) startSessionSync() else streamJob?.cancel()
             }
         }
+        runCatching { drafts.read(subject, runtimeId.value, sessionId.value) }
+            .getOrDefault("")
+            .takeIf(String::isNotEmpty)
+            ?.let { draft -> mutableState.update { it.copy(draft = draft) } }
         refresh()
     }
 
-    fun refresh(): Job = viewModelScope.launch(Dispatchers.IO) {
+    fun updateDraft(value: String) {
+        mutableState.update { it.copy(draft = value) }
+        runCatching { drafts.write(subject, runtimeId.value, sessionId.value, value) }
+    }
+
+    fun loadOlderHistory() = viewModelScope.launch(Dispatchers.IO) {
+        val cursor = mutableState.value.historyCursor ?: return@launch
+        if (mutableState.value.loadingHistory) return@launch
+        mutableState.update { it.copy(loadingHistory = true, historyError = null) }
         runCatching {
-            val session = repository.session(runtimeId, workspaceId, sessionId)
-            require(session.lifecycle == RemoteResourceLifecycle.ACTIVE) { "remote_session_not_active" }
-            val conversation = loadConversation()
-            val runs = collectAllPages { cursor -> repository.runs(runtimeId, workspaceId, sessionId, cursor) }
-            val latest = runs.lastOrNull()
-            val latestEvents = latest?.let { loadAllEvents(it) }.orEmpty()
-            val messages = projectConversationMessages(conversation).map {
-                RemoteMessageUi(it.id, it.role, it.text, it.progress)
-            }
-            val artifacts = conversation.asSequence()
-                .filter { it.kind == "artifact.created" }
-                .mapNotNull(::conversationArtifact)
-                .distinctBy { it.artifactId }
-                .toList()
-            val pending = repository.approvals(runtimeId, workspaceId)
-                .firstOrNull { it.sessionId == sessionId && (latest == null || it.runId == latest.identity.runId) }
-            LoadedSession(session, runs, messages, artifacts, latestEvents, pending)
-        }.onSuccess { loaded ->
-            val latest = loaded.runs.lastOrNull()
-            activeRun = latest?.identity
-            val fetchedSequence = loaded.latestEvents.maxOfOrNull { it.event.sequence } ?: 0
-            val cachedSequence = latest?.let {
-                cache.runCursor(subject, organization, runtimeId.value, it.identity.runId.value)?.lastSequence
-            } ?: 0
-            if (latest != null && loaded.latestEvents.isNotEmpty()) {
-                cache.replaceRunProjection(
-                    subject, organization, runtimeId.value, latest.identity.runId.value,
-                    loaded.latestEvents.map(::cacheEntity), System.currentTimeMillis(),
+            val snapshot = oaep.snapshot(runtimeId, workspaceId, sessionId, cursor = cursor)
+            cache.mergeOaepSnapshotWindow(
+                subject, organization, runtimeId.value, workspaceId.value, snapshot,
+            )
+            renderCachedOaepItems()
+            mutableState.update {
+                it.copy(
+                    historyCursor = snapshot.window?.nextCursor,
+                    loadingHistory = false,
+                    historyError = null,
                 )
             }
+        }.onFailure { failure ->
+            mutableState.update {
+                it.copy(loadingHistory = false, historyError = safeRemoteFailureMessage(failure))
+            }
+        }
+    }
+
+    fun refresh(): Job = viewModelScope.launch(Dispatchers.IO) {
+        val requestGeneration = refreshGeneration.incrementAndGet()
+        runCatching {
+            container.singleFlight.run("session:${runtimeId.value}:${workspaceId.value}:${sessionId.value}") {
+                val session = repository.session(runtimeId, workspaceId, sessionId)
+                require(session.lifecycle == RemoteResourceLifecycle.ACTIVE) { "remote_session_not_active" }
+                coroutineScope {
+                val selection = repository.protocolSelection(runtimeId)
+                container.protocolTelemetry.record(selection)
+                oaepEnabled = selection.oaep
+                val snapshotRequest = async {
+                    if (oaepEnabled) {
+                        val snapshot = oaep.snapshot(runtimeId, workspaceId, sessionId)
+                        cache.replaceOaepSnapshot(
+                            subject, organization, runtimeId.value, workspaceId.value,
+                            snapshot, System.currentTimeMillis(),
+                        )
+                        val messages = projectOaepMessages(snapshot).map { it.toUi() }
+                        val artifacts = snapshot.items.mapNotNull(::oaepArtifact).distinctBy { it.artifactId }
+                        Triple(messages, artifacts, snapshot.window?.nextCursor)
+                    } else {
+                        val snapshot = loadConversationSnapshot()
+                        cache.replaceSessionSnapshot(
+                            subject, organization, runtimeId.value, workspaceId.value,
+                            snapshot, System.currentTimeMillis(),
+                        )
+                        val conversation = snapshot.toLegacyItems()
+                        val messages = projectConversationMessages(conversation).map { it.toUi() }
+                        val artifacts = conversation.asSequence()
+                            .filter { it.kind == "artifact.created" }
+                            .mapNotNull(::conversationArtifact)
+                            .distinctBy { it.artifactId }
+                            .toList()
+                        Triple(messages, artifacts, null)
+                    }
+                }
+                val runsRequest = async {
+                    collectAllPages { cursor ->
+                        repository.runs(runtimeId, workspaceId, sessionId, cursor)
+                    }
+                }
+                val approvalsRequest = async { repository.approvals(runtimeId, workspaceId) }
+                val (messages, artifacts, historyCursor) = snapshotRequest.await()
+
+                // Conversation is the primary screen content. Publish it as
+                // soon as the authoritative Snapshot arrives; slow Run or
+                // Approval metadata must not leave the chat blank.
+                    if (requestGeneration == refreshGeneration.get()) {
+                        mutableState.update {
+                            it.copy(
+                                sessionTitle = session.title,
+                                messages = messages,
+                                artifacts = artifacts,
+                                historyCursor = historyCursor,
+                                online = true,
+                                connectionState = RemoteConnectionState.ONLINE,
+                            )
+                        }
+                    }
+
+                    val runs = runsRequest.await()
+                    val latest = runs.lastOrNull()
+                    val pending = approvalsRequest.await().firstOrNull {
+                        it.sessionId == sessionId &&
+                            (latest == null || it.runId == latest.identity.runId)
+                    }
+                    LoadedSession(session, runs, messages, artifacts, emptyList(), pending, historyCursor)
+                }
+            }
+        }.onSuccess { loaded ->
+            if (requestGeneration != refreshGeneration.get()) return@onSuccess
+            val latest = loaded.runs.lastOrNull()
+            latestRun = latest
+            activeRun = latest?.identity
             mutableState.value = RemoteChatUiState(
                 runtimeName = runtimeName,
                 workspaceName = workspaceName,
                 sessionTitle = loaded.session.title,
                 messages = loaded.messages,
                 artifacts = loaded.artifacts,
+                historyCursor = loaded.historyCursor,
                 approval = loaded.pending?.let { approval ->
                     RemoteApprovalCard(approval.approvalId,
                         latest?.identity ?: RemoteRunIdentity(runtimeId, workspaceId, sessionId, approval.runId, approval.backendId),
@@ -136,12 +223,18 @@ class RemoteSessionViewModel(
                 activeRunId = latest?.identity?.runId,
                 scopeKey = scopeKey,
                 connectionState = RemoteConnectionState.ONLINE,
+                draft = mutableState.value.draft,
+                canRetry = latest?.status in setOf(RemoteRunStatus.FAILED, RemoteRunStatus.CANCELLED),
+                approvalDecisionState = if (loaded.pending == null) mutableState.value.approvalDecisionState
+                    else RemoteApprovalDecisionState.PENDING,
+                approvalOutcome = mutableState.value.approvalOutcome,
             )
-            if (latest != null && mutableState.value.running) {
-                startStream(latest.identity, maxOf(fetchedSequence, cachedSequence))
-            }
+            authRefreshAttempted = false
+            startSessionSync()
         }.onFailure { failure ->
+            if (requestGeneration != refreshGeneration.get()) return@onFailure
             when {
+                handleAuthoritativeRevocation(failure) -> Unit
                 recoverAuthentication(failure) -> refresh()
                 mutableState.value.connectionState == RemoteConnectionState.AUTH_REQUIRED -> Unit
                 else -> mutableState.update {
@@ -150,7 +243,7 @@ class RemoteSessionViewModel(
                         running = false,
                         connectionState = RemoteConnectionState.OFFLINE,
                         messages = it.messages + RemoteMessageUi(
-                            "error", "assistant", failure.message ?: "远程会话加载失败",
+                            "error", "assistant", safeRemoteFailureMessage(failure),
                         ),
                     )
                 }
@@ -160,23 +253,136 @@ class RemoteSessionViewModel(
 
     fun send(message: String) = viewModelScope.launch(Dispatchers.IO) {
         if (message.isBlank() || mutableState.value.running) return@launch
+        val sourceMessageId = UUID.randomUUID().toString()
+        var sideEffectRequestStarted = false
         runCatching {
+            if (oaepEnabled) {
+                cache.saveOptimisticOaepMessage(
+                    subject, organization, runtimeId.value, workspaceId.value, sessionId.value,
+                    sourceMessageId, message, System.currentTimeMillis(),
+                )
+                renderCachedOaepItems()
+            } else {
+                cache.saveOptimisticMessage(
+                    subject, organization, runtimeId.value, workspaceId.value, sessionId.value,
+                    sourceMessageId, message, System.currentTimeMillis(),
+                )
+                renderCachedSessionItems()
+            }
             val session = repository.session(runtimeId, workspaceId, sessionId)
-            repository.createRun(session, message, emptyList(), UUID.randomUUID().toString())
-        }.onSuccess { refresh() }
-            .onFailure { failure -> mutableState.update { it.copy(messages = it.messages +
-                RemoteMessageUi("send-error-${UUID.randomUUID()}", "assistant", failure.message ?: "发送失败")) } }
+            if (oaepEnabled) {
+                cache.markOptimisticOaepDelivery(
+                    subject, organization, runtimeId.value, sessionId.value,
+                    sourceMessageId, RemoteDeliveryState.SENDING, System.currentTimeMillis(),
+                )
+                renderCachedOaepItems()
+            }
+            sideEffectRequestStarted = true
+            repository.createRun(
+                session, message, emptyList(), sourceMessageId,
+                sourceMessageId = sourceMessageId,
+            )
+        }.onSuccess { identity ->
+            activeRun = identity
+            cache.markOptimisticOaepDelivery(subject, organization, runtimeId.value, sessionId.value,
+                sourceMessageId, RemoteDeliveryState.ACCEPTED, System.currentTimeMillis())
+            drafts.clear(subject, runtimeId.value, sessionId.value)
+            mutableState.update { it.copy(draft = "") }
+            if (oaepEnabled) reconcileOaepSession() else reconcileSession()
+        }
+            .onFailure { failure ->
+                if (!handleAuthoritativeRevocation(failure)) {
+                    val delivery = deliveryFailureState(
+                        sideEffectRequestStarted,
+                        failure is java.io.IOException || failure is RelayHttpException && failure.status >= 500,
+                    )
+                    if (oaepEnabled) {
+                        cache.markOptimisticOaepDelivery(subject, organization, runtimeId.value, sessionId.value,
+                            sourceMessageId, delivery, System.currentTimeMillis())
+                        renderCachedOaepItems()
+                    }
+                    mutableState.update { it.copy(messages = it.messages +
+                        RemoteMessageUi("send-error-${UUID.randomUUID()}", "assistant", safeRemoteFailureMessage(failure))) }
+                }
+            }
     }
 
     fun cancel() = viewModelScope.launch(Dispatchers.IO) {
-        activeRun?.let { identity -> runCatching { repository.cancel(identity) }.onSuccess { refresh() } }
+        val identity = activeRun ?: return@launch
+        mutableState.update { it.copy(runControlState = RemoteRunControlState.CANCELLING) }
+        runCatching { repository.cancel(identity) }
+            .onSuccess { refresh() }
+            .onFailure { failure -> reconcileCancelOutcome(identity, failure) }
+    }
+
+    fun retry() = viewModelScope.launch(Dispatchers.IO) {
+        val prior = latestRun ?: return@launch
+        if (prior.status !in setOf(RemoteRunStatus.FAILED, RemoteRunStatus.CANCELLED)) return@launch
+        mutableState.update { it.copy(runControlState = RemoteRunControlState.RETRYING) }
+        runCatching {
+            val session = repository.session(runtimeId, workspaceId, sessionId)
+            val retryKey = "retry:${prior.identity.runId.value}"
+            repository.createRun(
+                session, prior.message, prior.attachmentRefs, retryKey, prior.identity.runId,
+                sourceMessageId = retryKey,
+            )
+        }.onSuccess { refresh() }
+            .onFailure { failure -> mutableState.update { it.copy(
+                runControlState = RemoteRunControlState.IDLE,
+                messages = it.messages + RemoteMessageUi("retry-error-${UUID.randomUUID()}", "assistant", safeRemoteFailureMessage(failure)),
+            ) } }
+    }
+
+    private suspend fun reconcileCancelOutcome(identity: RemoteRunIdentity, failure: Throwable) {
+        val authoritative = runCatching { repository.getRun(runtimeId, identity.runId).second }.getOrNull()
+        if (authoritative in setOf("completed", "failed", "cancelled")) {
+            mutableState.update { it.copy(runControlState = RemoteRunControlState.IDLE) }
+            refresh()
+            return
+        }
+        mutableState.update { it.copy(
+            runControlState = RemoteRunControlState.IDLE,
+            messages = it.messages + RemoteMessageUi(
+                "cancel-error-${UUID.randomUUID()}", "assistant", safeRemoteFailureMessage(failure),
+            ),
+        ) }
     }
 
     fun decide(approvalId: String, decision: String) = viewModelScope.launch(Dispatchers.IO) {
-        runCatching { repository.decide(runtimeId, ApprovalId(approvalId), decision) }.onSuccess { refresh() }
+        if (mutableState.value.approvalDecisionState != RemoteApprovalDecisionState.PENDING) return@launch
+        mutableState.update { it.copy(approvalDecisionState = RemoteApprovalDecisionState.DECIDING) }
+        runCatching { repository.decide(runtimeId, ApprovalId(approvalId), decision) }
+            .onSuccess { status ->
+                val final = approvalDecisionState(status) ?: RemoteApprovalDecisionState.PENDING
+                mutableState.update { it.copy(approvalDecisionState = final,
+                    approvalOutcome = final.userLabel()) }
+                refresh()
+            }
+            .onFailure { failure -> reconcileApprovalDecision(approvalId, failure) }
     }
 
-    fun openArtifact(artifactId: String) = viewModelScope.launch(Dispatchers.IO) {
+    fun openArtifact(artifactId: String) {
+        val artifact = mutableState.value.artifacts.firstOrNull { it.artifactId == artifactId } ?: return
+        when (RemoteNetworkPolicy().download(artifact.size, connectivity.metered.value)) {
+            RemoteDownloadDecision.ALLOW -> downloadArtifact(artifactId)
+            RemoteDownloadDecision.REQUIRE_CONFIRMATION -> mutableState.update {
+                it.copy(pendingArtifactConfirmation = artifactId)
+            }
+            RemoteDownloadDecision.REJECT_TOO_LARGE -> mutableState.update { state -> state.copy(
+                artifacts = state.artifacts.map {
+                    if (it.artifactId == artifactId) it.copy(error = "文件过大，无法在移动端下载") else it
+                },
+            ) }
+        }
+    }
+
+    fun confirmArtifactDownload(confirmed: Boolean) {
+        val artifactId = mutableState.value.pendingArtifactConfirmation ?: return
+        mutableState.update { it.copy(pendingArtifactConfirmation = null) }
+        if (confirmed) downloadArtifact(artifactId)
+    }
+
+    private fun downloadArtifact(artifactId: String) = viewModelScope.launch(Dispatchers.IO) {
         val expected = mutableState.value.artifacts.firstOrNull { it.artifactId == artifactId } ?: return@launch
         mutableState.update { state -> state.copy(artifacts = state.artifacts.map {
             if (it.artifactId == artifactId) it.copy(downloading = true, error = null) else it
@@ -208,8 +414,406 @@ class RemoteSessionViewModel(
                 if (it.artifactId == artifactId) it.copy(downloading = false, error = null) else it
             }) }
         }.onFailure { failure -> mutableState.update { state -> state.copy(artifacts = state.artifacts.map {
-            if (it.artifactId == artifactId) it.copy(downloading = false, error = failure.message ?: "Artifact 下载失败") else it
+            if (it.artifactId == artifactId) it.copy(downloading = false, error = safeRemoteFailureMessage(failure)) else it
         }) } }
+    }
+
+    private suspend fun loadConversationSnapshot(): GeneratedConversationSnapshot {
+        val items = mutableListOf<GeneratedSessionConversationItem>()
+        var cursor: String? = null
+        var snapshotSequence: Long? = null
+        do {
+            val page = legacy.snapshot(runtimeId, workspaceId, sessionId, cursor)
+            if (snapshotSequence == null) snapshotSequence = page.snapshotSequence
+            require(page.snapshotSequence == snapshotSequence) { "conversation_snapshot_changed_during_paging" }
+            items += page.items
+            cursor = page.nextCursor
+        } while (cursor != null)
+        return GeneratedConversationSnapshot(
+            sessionId.value,
+            snapshotSequence ?: 0,
+            items.groupBy { it.itemId }.map { (_, values) -> values.maxBy { it.revision } }
+                .sortedBy { it.sessionSequence },
+            null,
+        )
+    }
+
+    private fun GeneratedConversationSnapshot.toLegacyItems(): List<RemoteConversationItem> =
+        items.mapIndexed { index, item -> item.toLegacyItem(index + 1L) }
+
+    private fun GeneratedSessionConversationItem.toLegacyItem(projectedSequence: Long) =
+        RemoteConversationItem(
+            eventId = itemId,
+            sequence = projectedSequence,
+            kind = if (kind == "message") "message.${role ?: "system"}" else kind,
+            timestamp = updatedAt,
+            payload = payload.toMutableMap().apply {
+                if (!containsKey("content") && containsKey("text")) put("content", get("text"))
+                runId?.let { put("run_id", it) }
+                sourceMessageId?.let { put("source_message_id", it) }
+            },
+        )
+
+    private fun RemoteConversationItemEntity.toLegacyItem(projectedSequence: Long): RemoteConversationItem {
+        val payload = JSONObject(payloadJson).keys().asSequence().associateWith {
+            JSONObject(payloadJson).opt(it).takeUnless { value -> value == JSONObject.NULL }
+        }.toMutableMap()
+        if (!payload.containsKey("content") && payload.containsKey("text")) {
+            payload["content"] = payload["text"]
+        }
+        runId?.let { payload["run_id"] = it }
+        sourceMessageId?.let { payload["source_message_id"] = it }
+        return RemoteConversationItem(
+            itemId, projectedSequence,
+            if (kind == "message") "message.${role ?: "system"}" else kind,
+            updatedAt, payload,
+        )
+    }
+
+    private suspend fun renderCachedSessionItems() {
+        val items = cache.sessionItems(
+            subject, organization, runtimeId.value, sessionId.value,
+        ).mapIndexed { index, item -> item.toLegacyItem(index + 1L) }
+        val messages = projectConversationMessages(items).map { it.toUi() }
+        val artifacts = items.asSequence()
+            .filter { it.kind == "artifact.created" }
+            .mapNotNull(::conversationArtifact)
+            .distinctBy { it.artifactId }
+            .toList()
+        mutableState.update { it.copy(messages = messages, artifacts = artifacts) }
+    }
+
+    private suspend fun renderCachedOaepItems() {
+        val messages = cache.oaepSessionItems(
+            subject, organization, runtimeId.value, sessionId.value,
+        ).mapNotNull { item ->
+            val content = JSONObject(item.contentJson)
+            val text = when (item.type) {
+                "message" -> content.optString("text")
+                "reasoning" -> content.optJSONArray("segments")?.let { segments ->
+                    (0 until segments.length()).joinToString("\n") {
+                        segments.getJSONObject(it).optString("text")
+                    }
+                }.orEmpty()
+                "plan" -> content.optString("text")
+                "command_execution" -> listOf(
+                    content.optString("display_command"), content.optString("output"),
+                ).filter(String::isNotBlank).joinToString("\n")
+                "tool_call" -> content.optString("tool_name")
+                "file_change", "artifact", "subtask" -> content.optString("summary")
+                "interaction" -> content.optString("prompt")
+                "notice" -> content.optString("message")
+                else -> ""
+            }
+            val safeText = sanitizeRemoteTranscriptText(text)
+            safeText.takeIf(String::isNotBlank)?.let {
+                RemoteMessageUi(
+                    item.itemId,
+                    sanitizeRemoteTranscriptText(content.optString("role", item.type)),
+                    safeText,
+                    item.status,
+                    kind = item.type,
+                    title = oaepCachedTitle(item.type, content)?.let(::sanitizeRemoteTranscriptText),
+                    deliveryState = content.optString("delivery_state").takeIf(String::isNotBlank)?.let { value ->
+                        runCatching { RemoteDeliveryState.valueOf(value.uppercase()) }.getOrNull()
+                    },
+                )
+            }
+        }
+        mutableState.update { it.copy(messages = messages) }
+    }
+
+    private suspend fun reloadSessionProjection() {
+        if (oaepEnabled) {
+            reloadOaepProjection()
+            return
+        }
+        val (snapshot, runs, approvals) = coroutineScope {
+            val snapshotRequest = async { loadConversationSnapshot() }
+            val runsRequest = async {
+                collectAllPages { cursor ->
+                    repository.runs(runtimeId, workspaceId, sessionId, cursor)
+                }
+            }
+            val approvalsRequest = async { repository.approvals(runtimeId, workspaceId) }
+            Triple(
+                snapshotRequest.await(),
+                runsRequest.await(),
+                approvalsRequest.await(),
+            )
+        }
+        cache.replaceSessionSnapshot(
+            subject, organization, runtimeId.value, workspaceId.value,
+            snapshot, System.currentTimeMillis(),
+        )
+        renderCachedSessionItems()
+        val latest = runs.lastOrNull()
+        activeRun = latest?.identity
+        val pending = approvals
+            .firstOrNull { it.sessionId == sessionId && (latest == null || it.runId == latest.identity.runId) }
+        mutableState.update { current ->
+            current.copy(
+                running = latest?.status in setOf(
+                    RemoteRunStatus.QUEUED,
+                    RemoteRunStatus.RUNNING,
+                    RemoteRunStatus.WAITING_APPROVAL,
+                ),
+                correlationId = latest?.correlationId,
+                activeRunId = latest?.identity?.runId,
+                approval = pending?.let { approval ->
+                    RemoteApprovalCard(
+                        approval.approvalId,
+                        latest?.identity ?: RemoteRunIdentity(
+                            runtimeId, workspaceId, sessionId, approval.runId, approval.backendId,
+                        ),
+                        runtimeName, workspaceName, current.sessionTitle, approval.operation,
+                        approval.riskSummary, approval.scope, approval.expiresAt, approval.correlationId,
+                    )
+                },
+                online = true,
+                connectionState = RemoteConnectionState.ONLINE,
+            )
+        }
+    }
+
+    private suspend fun reloadOaepProjection() {
+        val (snapshot, runs, approvals) = coroutineScope {
+            val snapshotRequest = async { oaep.snapshot(runtimeId, workspaceId, sessionId) }
+            val runsRequest = async {
+                collectAllPages { cursor -> repository.runs(runtimeId, workspaceId, sessionId, cursor) }
+            }
+            val approvalsRequest = async { repository.approvals(runtimeId, workspaceId) }
+            Triple(snapshotRequest.await(), runsRequest.await(), approvalsRequest.await())
+        }
+        cache.replaceOaepSnapshot(
+            subject, organization, runtimeId.value, workspaceId.value,
+            snapshot, System.currentTimeMillis(),
+        )
+        val latest = runs.lastOrNull()
+        activeRun = latest?.identity
+        val pending = approvals.firstOrNull {
+            it.sessionId == sessionId && (latest == null || it.runId == latest.identity.runId)
+        }
+        mutableState.update { current -> current.copy(
+            messages = projectOaepMessages(snapshot).map { it.toUi() },
+            artifacts = snapshot.items.mapNotNull(::oaepArtifact).distinctBy { it.artifactId },
+            running = latest?.status in setOf(
+                RemoteRunStatus.QUEUED, RemoteRunStatus.RUNNING, RemoteRunStatus.WAITING_APPROVAL,
+            ),
+            correlationId = latest?.correlationId,
+            activeRunId = latest?.identity?.runId,
+            approval = pending?.let { approval -> RemoteApprovalCard(
+                approval.approvalId,
+                latest?.identity ?: RemoteRunIdentity(
+                    runtimeId, workspaceId, sessionId, approval.runId, approval.backendId,
+                ),
+                runtimeName, workspaceName, current.sessionTitle, approval.operation,
+                approval.riskSummary, approval.scope, approval.expiresAt, approval.correlationId,
+            ) },
+            online = true,
+            connectionState = RemoteConnectionState.ONLINE,
+        ) }
+    }
+
+    private suspend fun reconcileOaepSession() {
+        recoverUncertainRuns()
+        var after = cache.oaepSessionCursor(
+            subject, organization, runtimeId.value, sessionId.value,
+        )?.lastSequence ?: 0L
+        var changed = false
+        while (true) {
+            val page = oaep.events(runtimeId, workspaceId, sessionId, after)
+            if (page.data.isEmpty()) break
+            for (event in page.data) {
+                when (cache.applyOaepEvent(
+                    subject, organization, runtimeId.value, workspaceId.value,
+                    sessionId.value, event, System.currentTimeMillis(),
+                )) {
+                    EventDecision.APPLY -> { after = event.sequence; changed = true }
+                    EventDecision.DUPLICATE, EventDecision.OUT_OF_ORDER -> after = maxOf(after, event.sequence)
+                    EventDecision.GAP -> { reloadOaepProjection(); return }
+                    EventDecision.CROSS_SCOPE -> error("remote_oaep_event_scope_mismatch")
+                }
+            }
+            if (!page.hasMore) break
+        }
+        if (changed) reloadOaepProjection()
+    }
+
+    private suspend fun recoverUncertainRuns() {
+        val pending = cache.uncertainOaepSourceMessageIds(
+            subject, organization, runtimeId.value, sessionId.value,
+        )
+        for (sourceMessageId in pending) {
+            val recovered = repository.recoverRun(
+                runtimeId, workspaceId, sessionId, sourceMessageId,
+            ) ?: continue
+            activeRun = recovered
+            cache.markOptimisticOaepDelivery(
+                subject, organization, runtimeId.value, sessionId.value,
+                sourceMessageId, RemoteDeliveryState.ACCEPTED, System.currentTimeMillis(),
+            )
+        }
+    }
+
+    private suspend fun reconcileSession() {
+        var after = cache.sessionCursor(
+            subject, organization, runtimeId.value, sessionId.value,
+        )?.lastSequence ?: 0L
+        var changed = false
+        while (true) {
+            val page = legacy.events(runtimeId, workspaceId, sessionId, after)
+            if (page.items.isEmpty()) break
+            for (event in page.items.sortedBy { it.sessionSequence }) {
+                when (
+                    cache.applySessionEvent(
+                        subject, organization, runtimeId.value, workspaceId.value,
+                        sessionId.value, event, System.currentTimeMillis(),
+                    )
+                ) {
+                    EventDecision.APPLY -> {
+                        after = event.sessionSequence
+                        changed = true
+                    }
+                    EventDecision.DUPLICATE, EventDecision.OUT_OF_ORDER -> {
+                        after = maxOf(after, event.sessionSequence)
+                    }
+                    EventDecision.GAP -> {
+                        reloadSessionProjection()
+                        return
+                    }
+                    EventDecision.CROSS_SCOPE -> error("remote_session_event_scope_mismatch")
+                }
+            }
+            if (page.items.size < 500) break
+        }
+        if (changed) reloadSessionProjection()
+    }
+
+    private fun startSessionSync() {
+        if (!foreground || !connectivity.online.value) return
+        streamJob?.cancel()
+        streamJob = viewModelScope.launch(Dispatchers.IO) {
+            var attempt = 0
+            var retryWindowStartedNanos = 0L
+            while (isActive) {
+                try {
+                    if (oaepEnabled) {
+                        reconcileOaepSession()
+                        val after = cache.oaepSessionCursor(
+                            subject, organization, runtimeId.value, sessionId.value,
+                        )?.lastSequence ?: 0L
+                        mutableState.update {
+                            it.copy(online = true, connectionState = RemoteConnectionState.ONLINE)
+                        }
+                        retryWindowStartedNanos = 0L
+                        attempt = 0
+                        oaep.eventStream(
+                            runtimeId, workspaceId, sessionId, after,
+                            onReceived = { event, durationMs ->
+                                viewModelScope.launch(Dispatchers.IO) {
+                                    runCatching {
+                                        oaep.recordLatency(
+                                            runtimeId, workspaceId, sessionId, event,
+                                            "client_receive", durationMs,
+                                        )
+                                    }
+                                }
+                            },
+                        ).collect { event ->
+                            val renderStarted = System.nanoTime()
+                            val renderedNow = when (cache.applyOaepEvent(
+                                subject, organization, runtimeId.value, workspaceId.value,
+                                sessionId.value, event, System.currentTimeMillis(),
+                            )) {
+                                EventDecision.APPLY -> {
+                                    if (event.type == "event.item.delta") {
+                                        scheduleOaepProjectionReload(event, renderStarted)
+                                        false
+                                    } else {
+                                        flushOaepProjectionReload()
+                                        reloadOaepProjection()
+                                        true
+                                    }
+                                }
+                                EventDecision.GAP -> {
+                                    flushOaepProjectionReload()
+                                    reloadOaepProjection()
+                                    true
+                                }
+                                EventDecision.DUPLICATE, EventDecision.OUT_OF_ORDER -> false
+                                EventDecision.CROSS_SCOPE -> error("remote_oaep_event_scope_mismatch")
+                            }
+                            if (renderedNow) runCatching {
+                                oaep.recordLatency(
+                                    runtimeId, workspaceId, sessionId, event,
+                                    "client_render",
+                                    (System.nanoTime() - renderStarted) / 1_000_000.0,
+                                )
+                            }
+                            authRefreshAttempted = false
+                        }
+                        throw java.io.EOFException("relay_oaep_sse_eof")
+                    }
+                    reconcileSession()
+                    val after = cache.sessionCursor(
+                        subject, organization, runtimeId.value, sessionId.value,
+                    )?.lastSequence ?: 0L
+                    mutableState.update {
+                        it.copy(online = true, connectionState = RemoteConnectionState.ONLINE)
+                    }
+                    retryWindowStartedNanos = 0L
+                    attempt = 0
+                    legacy.eventStream(runtimeId, workspaceId, sessionId, after).collect { event ->
+                        when (
+                            cache.applySessionEvent(
+                                subject, organization, runtimeId.value, workspaceId.value,
+                                sessionId.value, event, System.currentTimeMillis(),
+                            )
+                        ) {
+                            EventDecision.APPLY -> reloadSessionProjection()
+                            EventDecision.GAP -> reloadSessionProjection()
+                            EventDecision.DUPLICATE, EventDecision.OUT_OF_ORDER -> Unit
+                            EventDecision.CROSS_SCOPE -> error("remote_session_event_scope_mismatch")
+                        }
+                        authRefreshAttempted = false
+                    }
+                    throw java.io.EOFException("relay_session_sse_eof")
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    if (handleAuthoritativeRevocation(failure)) break
+                    if (failure is RelayHttpException && failure.requiresSnapshotRecovery()) {
+                        reloadSessionProjection()
+                        continue
+                    }
+                    if (recoverAuthentication(failure)) continue
+                    if (mutableState.value.connectionState == RemoteConnectionState.AUTH_REQUIRED) break
+                    mutableState.update {
+                        it.copy(online = false, connectionState = RemoteConnectionState.DEGRADED)
+                    }
+                    if (retryWindowStartedNanos == 0L) retryWindowStartedNanos = System.nanoTime()
+                    val retryFailure = when (failure) {
+                        is RelayHttpException -> RemoteFailure(
+                            RemoteFailureSource.RELAY,
+                            failure.errorCode ?: "http_${failure.status}",
+                            failure.status == 429 || failure.status >= 500,
+                        )
+                        is java.io.IOException -> RemoteFailure(
+                            RemoteFailureSource.RELAY, "network_unavailable", true,
+                        )
+                        else -> RemoteFailure(RemoteFailureSource.BUSINESS, "stream_failed", false)
+                    }
+                    val retryDelay = retryPolicy.delay(
+                        attempt,
+                        (System.nanoTime() - retryWindowStartedNanos) / 1_000_000L,
+                        retryFailure,
+                    ) ?: break
+                    delay(retryDelay)
+                    attempt += 1
+                }
+            }
+        }
     }
 
     private suspend fun loadAllEvents(run: RemoteRunSummary): List<RelayStreamEvent> {
@@ -247,6 +851,19 @@ class RemoteSessionViewModel(
         )
     }
 
+    private fun oaepArtifact(item: OaepItem): RemoteArtifactUi? {
+        val content = item.content as? OaepArtifactContent ?: return null
+        val size = content.size ?: return null
+        val sha256 = content.sha256?.takeIf(String::isNotBlank) ?: return null
+        return RemoteArtifactUi(
+            artifactId = content.artifactId,
+            name = content.name.ifBlank { "Artifact" },
+            mimeType = content.mimeType.orEmpty().ifBlank { "application/octet-stream" },
+            size = size,
+            sha256 = sha256,
+        )
+    }
+
     private fun startStream(identity: RemoteRunIdentity, afterSequence: Long) {
         streamJob?.cancel()
         val sequence = RemoteSequenceSynchronizer(
@@ -274,22 +891,44 @@ class RemoteSessionViewModel(
                         sequence.accept(it)
                         authRefreshAttempted = false
                     }
+                    if (settleCompletedStream(identity, sequence)) break
                     throw java.io.EOFException("relay_sse_eof")
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
+                    if (handleAuthoritativeRevocation(failure)) break
                     if (failure is RelayHttpException && failure.requiresSnapshotRecovery()) {
                         rebuildProjection(identity)
                         continue
                     }
                     if (recoverAuthentication(failure)) continue
                     if (mutableState.value.connectionState == RemoteConnectionState.AUTH_REQUIRED) break
+                    if (settleCompletedStream(identity, sequence)) break
                     mutableState.update { it.copy(online = false, connectionState = RemoteConnectionState.DEGRADED) }
                     delay((500L * (1L shl attempt.coerceAtMost(6))).coerceAtMost(30_000L))
                     attempt += 1
                 }
             }
         }
+    }
+
+    private suspend fun settleCompletedStream(
+        identity: RemoteRunIdentity,
+        sequence: RemoteSequenceSynchronizer,
+    ): Boolean {
+        if (!mutableState.value.running) {
+            mutableState.update {
+                it.copy(online = true, connectionState = RemoteConnectionState.ONLINE)
+            }
+            return true
+        }
+        return runCatching {
+            sequence.reconcile()
+            val status = repository.getRun(runtimeId, identity.runId).second
+            if (!isTerminalRemoteRunStatus(status)) return@runCatching false
+            rebuildProjection(identity)
+            true
+        }.getOrDefault(false)
     }
 
     private fun reconcileAndRestart(identity: RemoteRunIdentity) {
@@ -302,9 +941,7 @@ class RemoteSessionViewModel(
         val status = repository.getRun(runtimeId, identity.runId).second
         val pending = repository.approvals(runtimeId, workspaceId)
             .firstOrNull { it.sessionId == sessionId && it.runId == identity.runId }
-        val messages = projectConversationMessages(conversation).map {
-            RemoteMessageUi(it.id, it.role, it.text, it.progress)
-        }
+        val messages = projectConversationMessages(conversation).map { it.toUi() }
         val artifacts = conversation.asSequence()
             .filter { it.kind == "artifact.created" }
             .mapNotNull(::conversationArtifact)
@@ -340,21 +977,111 @@ class RemoteSessionViewModel(
 
     private suspend fun applyProjectedEvent(identity: RemoteRunIdentity, item: RelayStreamEvent) {
         when (item.event.type) {
-            "message.delta" -> mutableState.update { state ->
-                val id = "assistant-${identity.runId.value}"
-                val existing = state.messages.indexOfFirst { it.id == id }
-                val messages = state.messages.toMutableList()
-                val delta = item.payload.optString("delta")
-                if (existing >= 0) {
-                    messages[existing] = messages[existing].copy(text = messages[existing].text + delta)
-                } else {
-                    messages += RemoteMessageUi(id, "assistant", delta)
-                }
-                state.copy(messages = messages)
+            "message.delta" -> enqueueDelta(identity, item.payload.optString("delta"))
+            "approval.requested", "artifact.created" -> {
+                flushDeltaFrames()
+                rebuildProjection(identity)
             }
-            "approval.requested", "approval.resolved", "artifact.created" -> rebuildProjection(identity)
-            "run.completed", "run.failed", "run.cancelled" ->
-                mutableState.update { it.copy(running = false) }
+            "approval.resolved" -> {
+                flushDeltaFrames()
+                val final = approvalDecisionState(
+                    item.payload.optString("decision").ifBlank { item.payload.optString("status") },
+                )
+                rebuildProjection(identity)
+                if (final != null && final != RemoteApprovalDecisionState.PENDING) {
+                    mutableState.update { it.copy(
+                        approval = null,
+                        approvalDecisionState = final,
+                        approvalOutcome = "该请求${final.userLabel()}（可能由另一台已授权设备处理）",
+                    ) }
+                }
+            }
+            "run.completed", "run.failed", "run.cancelled" -> {
+                flushDeltaFrames()
+                mutableState.update { it.copy(running = false, runControlState = RemoteRunControlState.IDLE) }
+            }
+        }
+    }
+
+    private suspend fun reconcileApprovalDecision(approvalId: String, failure: Throwable) {
+        val final = runCatching {
+            repository.audit(runtimeId, workspaceId, activeRun?.runId)
+                .asReversed()
+                .firstNotNullOfOrNull { entry ->
+                    if (entry.approvalId?.value == approvalId) approvalDecisionState(entry.action) else null
+                }
+        }.getOrNull()
+        if (final != null && final != RemoteApprovalDecisionState.PENDING) {
+            mutableState.update { it.copy(
+                approval = null,
+                approvalDecisionState = final,
+                approvalOutcome = "该请求${final.userLabel()}（可能由另一台已授权设备处理）",
+            ) }
+            refresh()
+            return
+        }
+        mutableState.update { it.copy(
+            approvalDecisionState = RemoteApprovalDecisionState.PENDING,
+            approvalOutcome = safeRemoteFailureMessage(failure),
+        ) }
+    }
+
+    private fun enqueueDelta(identity: RemoteRunIdentity, delta: String) {
+        val forced = deltaFrames.offer(identity.runId.value, delta)
+        if (forced.isNotEmpty()) applyDeltaChunks(forced)
+        if (deltaFrameJob?.isActive != true) {
+            deltaFrameJob = viewModelScope.launch {
+                delay(16L)
+                applyDeltaChunks(deltaFrames.drain())
+            }
+        }
+    }
+
+    private fun flushDeltaFrames() {
+        deltaFrameJob?.cancel()
+        deltaFrameJob = null
+        applyDeltaChunks(deltaFrames.drain())
+    }
+
+    private fun scheduleOaepProjectionReload(event: OaepEvent, started: Long) {
+        pendingOaepRenderObservation = event to started
+        if (oaepRenderFrameJob?.isActive == true) return
+        oaepRenderFrameJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(16L)
+            reloadOaepProjection()
+            pendingOaepRenderObservation?.let { (renderedEvent, renderStarted) ->
+                runCatching {
+                    oaep.recordLatency(
+                        runtimeId, workspaceId, sessionId, renderedEvent,
+                        "client_render", (System.nanoTime() - renderStarted) / 1_000_000.0,
+                    )
+                }
+            }
+            pendingOaepRenderObservation = null
+            oaepRenderFrameJob = null
+        }
+    }
+
+    private fun flushOaepProjectionReload() {
+        oaepRenderFrameJob?.cancel()
+        oaepRenderFrameJob = null
+        pendingOaepRenderObservation = null
+    }
+
+    private fun applyDeltaChunks(chunks: List<RemoteDeltaChunk>) {
+        if (chunks.isEmpty()) return
+        mutableState.update { state ->
+            val messages = state.messages.toMutableList()
+            chunks.forEach { chunk ->
+                val id = "assistant-${chunk.streamId}"
+                val existing = messages.indexOfFirst { it.id == id }
+                if (existing >= 0) {
+                    messages[existing] = messages[existing].copy(text = messages[existing].text + chunk.text)
+                } else {
+                    messages += RemoteMessageUi(id, "assistant", chunk.text)
+                }
+            }
+            state.copy(messages = messages)
         }
     }
 
@@ -378,11 +1105,39 @@ class RemoteSessionViewModel(
         return false
     }
 
+    private suspend fun handleAuthoritativeRevocation(failure: Throwable): Boolean {
+        if (failure !is RelayHttpException || failure.status != 403) return false
+        RoomRemoteDirectoryCache(database).removeRuntime(
+            subject,
+            organization,
+            runtimeId,
+        )
+        activeRun = null
+        mutableState.update {
+            it.copy(
+                online = false,
+                running = false,
+                connectionState = RemoteConnectionState.AUTH_REQUIRED,
+                messages = listOf(
+                    RemoteMessageUi(
+                        "access-revoked",
+                        "assistant",
+                        "当前设备的远程访问授权已撤销",
+                    )
+                ),
+                artifacts = emptyList(),
+                approval = null,
+            )
+        }
+        return true
+    }
+
     override fun onCleared() {
+        oaepRenderFrameJob?.cancel()
+        deltaFrameJob?.cancel()
         streamJob?.cancel()
         ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
-        connectivity.close()
-        database.close()
+        resourceLease.close()
         super.onCleared()
     }
 
@@ -393,7 +1148,41 @@ class RemoteSessionViewModel(
         val artifacts: List<RemoteArtifactUi>,
         val latestEvents: List<RelayStreamEvent>,
         val pending: ai.drsai.remote.remote.data.RemoteApprovalRecord?,
+        val historyCursor: String?,
     )
+
+    private fun RemoteTranscriptMessage.toUi() = RemoteMessageUi(
+        id = id,
+        role = role,
+        text = text,
+        progress = progress,
+        kind = kind,
+        title = title,
+        detail = detail,
+        runId = runId,
+        phase = phase,
+        resources = resources,
+        deliveryState = if (role == "user") when (progress?.lowercase()) {
+            "pending" -> RemoteDeliveryState.ACCEPTED
+            "in_progress", "running" -> RemoteDeliveryState.RUNNING
+            "completed" -> RemoteDeliveryState.COMPLETED
+            "failed", "cancelled" -> RemoteDeliveryState.FAILED
+            else -> null
+        } else null,
+    )
+
+    private fun oaepCachedTitle(type: String, content: JSONObject): String? = when (type) {
+        "command_execution" -> "Command"
+        "tool_call" -> content.optString("tool_name").takeIf(String::isNotBlank) ?: "Tool"
+        "file_change" -> "File change"
+        "artifact" -> content.optString("name").takeIf(String::isNotBlank) ?: "Artifact"
+        "interaction" -> content.optString("interaction_type").takeIf(String::isNotBlank) ?: "Interaction"
+        "subtask" -> content.optString("title").takeIf(String::isNotBlank) ?: "Subtask"
+        "notice" -> content.optString("code").takeIf(String::isNotBlank) ?: "Notice"
+        "reasoning" -> "Reasoning"
+        "plan" -> "Plan"
+        else -> null
+    }
 
     private fun OwopResult.success(): Map<String, Any?> = when (this) {
         is OwopResult.Success -> result
@@ -410,3 +1199,6 @@ class RemoteSessionViewModel(
             }
     }
 }
+
+internal fun isTerminalRemoteRunStatus(status: String): Boolean =
+    status.uppercase() in setOf("COMPLETED", "FAILED", "CANCELLED")

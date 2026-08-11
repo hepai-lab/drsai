@@ -8,7 +8,13 @@ import unittest
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1] / "src" / "drsai" / "backend"
+ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "drsai"
+    / "backend"
+    / "runtime"
+)
 
 
 def load(name: str, filename: str):
@@ -20,7 +26,7 @@ def load(name: str, filename: str):
     return module
 
 
-bindings = load("agent_backend_bindings_under_test", "agent_backend_bindings.py")
+bindings = load("agent_backend_bindings_under_test", "agent_bindings.py")
 
 
 class AgentBackendBindingStoreTests(unittest.TestCase):
@@ -98,6 +104,26 @@ class AgentBackendBindingStoreTests(unittest.TestCase):
         with self.assertRaises(bindings.AgentBackendBindingError) as caught:
             self.store.bind_session(**{**self.session_args, "workspace_runtime_id": "runtime-remote"})
         self.assertEqual(caught.exception.code, "distributed_backend_not_supported")
+
+    def test_legacy_session_context_is_adopted_once_and_then_immutable(self) -> None:
+        legacy = self.store.bind_session(**self.session_args)
+        self.assertIsNone(legacy.backend_model_id)
+        adopted = self.store.adopt_session_context(
+            "session-1", backend_model_id="gpt-current", workspace_fingerprint="workspace-sha256",
+        )
+        self.assertEqual((adopted.backend_model_id, adopted.workspace_fingerprint),
+                         ("gpt-current", "workspace-sha256"))
+        self.assertEqual(
+            self.store.adopt_session_context(
+                "session-1", backend_model_id="gpt-current", workspace_fingerprint="workspace-sha256",
+            ),
+            adopted,
+        )
+        with self.assertRaises(bindings.AgentBackendBindingError) as caught:
+            self.store.adopt_session_context(
+                "session-1", backend_model_id="another-model", workspace_fingerprint="workspace-sha256",
+            )
+        self.assertEqual(caught.exception.code, "agent_backend_session_context_conflict")
 
     def test_confirmed_session_and_run_responses_complete_atomically(self) -> None:
         session_operation = self.store.prepare_operation("session", "session-1", "thread/start", "sha256:session")

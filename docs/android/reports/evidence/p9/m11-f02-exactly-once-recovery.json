@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "feature_id": "M11-F02",
+  "generated_at": "2026-08-05T13:32:52.746437+00:00",
+  "passed": true,
+  "gates": {
+    "tool_wal_has_prepared_executing_and_receipt_states": true,
+    "prepared_intent_resumes_and_executes_at_most_once": true,
+    "uncertain_execution_never_reexecutes_and_enters_reconciliation": true,
+    "durable_receipt_replays_without_duplicate_side_effect": true,
+    "approval_decision_is_durable_and_not_prompted_twice": true,
+    "tool_and_artifact_intents_share_reconciliation_contract": true,
+    "checkpoint_and_oaep_authority_are_room_transaction_bound": true,
+    "oaep_cached_writer_cannot_advance_ahead_of_room": true,
+    "oaep_pre_and_post_commit_fault_windows_are_idempotent_on_both_devices": true,
+    "reconciliation_is_user_visible_waiting_state_not_permanent_running": true
+  },
+  "device_count": 2,
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonAgentLoopCoordinator.kt": "9626f5f1c8200c6ec7fd86ca32fdf4b081fc04a1cf17de98dd15409e111d344f",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/RoomPythonCheckpointStore.kt": "6abc626fcb9b96671edfcb014c62cc2b6864519bfa59f7fc9afdd7a8b37c2f6d",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeReconciliation.kt": "49b04ca7759c0d368704fce1526ca7185f115c0ec80d08ba3250726b29d7ad30",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/AndroidOaepRuntimeSink.kt": "0a08f964318d8caff72ee8d1001f4657f5a784e057c9d288ec536988cb2ca931",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/AndroidOaepStore.kt": "95d3f58d1b1d6f5b5479f81e2217bf91d7a3da94884b014662b2408b4a8d70c6",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonAgentLoopCoordinatorTest.kt": "da796c0f871d701375635c0cf5765e725bf39d9b0de54a9c171a723d51d24ffa",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonRuntimeReconciliationTest.kt": "6cbee4f3086f43c39ff3a1ff5e6c6436e3535adf36a56b0de3bfbc5d2aa7d4b9",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonRuntimeEventMapperTest.kt": "5c3822ae42302be6a581ace5d23f0511ffb2df8750da313bb6be48a9095de830",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/AndroidOaepStoreTest.kt": "07e2b37013fd6b3fe6962e14690c0e7fc21d13b9914296931ca83d0fc039a857"
+  }
+}

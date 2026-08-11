@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "plan": "docs/model-provider-release-hardening-development-plan.md",
+  "requirements": [
+    { "id": "A1", "requirement": "功能文件清单与机器可读源码指纹", "status": "complete", "evidence": ["docs/model-provider-delivery-manifest.json", "scripts/verify_model_provider_release_readiness.py"] },
+    { "id": "A2", "requirement": "清单范围形成干净、已审查提交", "status": "pending_external", "evidence": ["build/acceptance/model-provider-release-readiness.json#worktreeCleanForManifest"], "blocker": "共享工作区包含并行开发改动，不能替用户提交或丢弃" },
+    { "id": "B1", "requirement": "Provider删除三动作且取消零副作用", "status": "complete", "evidence": ["apps/desktop/windows/scripts/verify-renderer-visual.mjs", "apps/desktop/windows/scripts/verify-model-provider-config.mjs"] },
+    { "id": "B2", "requirement": "恢复HepAI、删除Provider、清理凭据语义分离", "status": "complete", "evidence": ["apps/desktop/shared/renderer/src/App.tsx", "cores/python/packages/drsai/tests/test_model_provider_credentials.py"] },
+    { "id": "C1", "requirement": "Desktop基础/模型测试、失败零保存、保存、冲突、删除和恢复旅程", "status": "complete", "evidence": ["apps/desktop/windows/scripts/verify-renderer-visual.mjs"] },
+    { "id": "C2", "requirement": "双窗口真实revision竞争与重新加载", "status": "complete", "evidence": ["apps/desktop/windows/scripts/verify-renderer-visual.mjs"] },
+    { "id": "C3", "requirement": "Key来源互斥、Ollama、未知模型、Gateway失败、Renderer重建恢复", "status": "complete", "evidence": ["apps/desktop/windows/scripts/verify-renderer-visual.mjs"] },
+    { "id": "D1", "requirement": "macOS签名、公证、Gatekeeper、Keychain与最终产物链路", "status": "pending_external_not_local", "evidence": ["apps/desktop/macos/scripts/verify-model-provider-release-gate.mjs", "apps/desktop/macos/scripts/verify-model-provider-keychain.py"], "blocker": "用户明确不在本机执行；仅由未来Apple Silicon signed RC Runner、Developer ID和Keychain产生发布证据" },
+    { "id": "E1", "requirement": "本地六类Provider确定性矩阵", "status": "complete", "evidence": ["scripts/verify_model_provider_compatibility.py", "build/acceptance/model-provider-local-deterministic.json"] },
+    { "id": "E2", "requirement": "六类真实Provider发布前矩阵", "status": "pending_credentials", "evidence": ["scripts/verify_model_provider_compatibility.py", "build/acceptance/model-provider-real-preflight.json", "docs/model-provider-compatibility-matrix.md"], "blocker": "预检表明当前进程尚未配置六类专用服务和Secret；矩阵已与macOS解耦，可在Windows/Linux受保护环境执行" },
+    { "id": "F1", "requirement": "Python全量无失败且flaky/生成物基线清零", "status": "blocked_by_parallel_regressions", "evidence": ["build/acceptance/model-provider-release-readiness-full.json#python-full", "build/acceptance/model-provider-release-readiness-quick.json"], "blocker": "Provider专项104项及全部快速门禁通过；第10轮全量为1187 passed、4 skipped、81 subtests passed、7 failed。第14轮复查已有3项累计恢复，仍有4项持续失败：relay OAEP版本合同1项、运行可复现性1项、Android Stage7合同2项；受监控源码仍由并行任务修改" },
+    { "id": "G1", "requirement": "basic/model状态和费用语义统一", "status": "complete", "evidence": ["apps/desktop/shared/renderer/src/App.tsx", "cores/python/packages/drsai/tests/test_model_provider_connectivity.py"] },
+    { "id": "H1", "requirement": "脱敏分类遥测、写入熔断和last-good回退演练", "status": "complete", "evidence": ["cores/python/packages/drsai/tests/test_model_provider_telemetry.py", "cores/python/packages/drsai/tests/test_model_provider_tui_rpc.py"] },
+    { "id": "H2", "requirement": "受保护环境灰度及版本回退发布演练", "status": "pending_external", "evidence": [".github/workflows/macos-desktop.yml"], "blocker": "需要发布环境和真实候选版本" }
+  ]
+}

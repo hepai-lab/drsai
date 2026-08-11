@@ -5,7 +5,8 @@ import {
   ArrowRight,
   CalendarClock,
   ChevronDown,
-  Cloud,
+  // Temporarily unused while GFS cloud entry is hidden — keep for later reuse.
+  // Cloud,
   Copy,
   FileText,
   Monitor,
@@ -17,6 +18,7 @@ import {
   Info,
   Keyboard,
   IdCard,
+  Languages,
   LogOut,
   Maximize2,
   MessageSquarePlus,
@@ -25,6 +27,7 @@ import {
   PackageOpen,
   PanelLeft,
   PanelRight,
+  Plus,
   RefreshCw,
   RotateCcw,
   RotateCw,
@@ -35,6 +38,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type { DesktopPlatformId } from "@shared/platform";
 import type {
   AuthUser,
   CreateWorkspaceRequest,
@@ -42,6 +46,7 @@ import type {
   DesktopEditCommand,
   DesktopThreadContentSearchResult,
   DesktopThreadForkMetadata,
+  DesktopThreadMessageSnapshot,
   DesktopWorktreeListRequest,
   DesktopWorktreeEventRequest,
   DesktopWorktreeEventBatch,
@@ -54,7 +59,21 @@ import drsaiLogo from "../assets/drsai.png";
 import { desktopApi } from "../desktopApi";
 import { copyTextSafely } from "../clipboard";
 import { isTextCompositionEvent } from "../imeKeyboardPolicy";
+import { loadThreadMessages } from "../adapters/threadMessages";
+import {
+  copyThreadShareLinkClient,
+  createThreadShareClient,
+  openThreadShareClient,
+  type LocalThreadShare,
+} from "../threadShareClient";
+import { getAssistantVisibleAnswer } from "../chatOutputModel";
+import { extractShareConclusion, extractShareMessageText } from "@shared/threadShareHtml";
+import { ChatMessageContent } from "./ChatMessageContent";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
+import { userFacingFailureMessage } from "../userFacingLanguage";
+import { showAppNotice } from "./AppDecisionDialog";
+import { ThreadActivityBubble } from "./ThreadActivityBubble";
+import type { ThreadActivityState } from "../threadActivity";
 import {
   getConflictMarkerCount,
   getForkConflictFileKind,
@@ -81,6 +100,8 @@ export interface WorkspaceThread {
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  activity: ThreadActivityState;
+  source?: "codex" | "opendrsai" | "remote";
 }
 
 export interface ForkConflictFile {
@@ -126,6 +147,7 @@ interface WorkspaceShellProps {
   mainContent: React.ReactNode;
   navIcons: Record<NavId, LucideIcon>;
   navSections: NavSection[];
+  platformId: DesktopPlatformId;
   recentThreads: WorkspaceThread[];
   searchableThreads: WorkspaceThread[];
   rightPanel: React.ReactNode;
@@ -164,6 +186,7 @@ interface WorkspaceShellProps {
   onOpenWorkspaceResults: (workspaceId: string) => void;
   onOpenWorkspacePath: (path: string) => void | Promise<void>;
   onRefreshWorkspaces: () => void | Promise<void>;
+  onSyncWorkspaceSessions: (workspace: WorkspaceProject) => void | Promise<void>;
   onRemoveWorkspace: (id: string) => void | Promise<void>;
   onRequestForkLifecycle: (threadId: string, action: DesktopForkLifecycleAction) => void | Promise<void>;
   onRightTabChange: (id: RightTab) => void;
@@ -183,6 +206,7 @@ interface WorkspaceShellProps {
     threadIds: string[],
   ) => Promise<DesktopThreadContentSearchResult[]>;
   onThreadUpdate: (threadId: string, updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThreadForkMetadata }) => void | Promise<void>;
+  onDeleteThread: (threadId: string) => void | Promise<void>;
   onToggleRightPanel: () => void;
   onToggleSidebar: () => void;
   onUpdateWorkspace: (id: string, updates: Partial<Pick<WorkspaceProject, "name" | "description" | "trusted" | "pinned">>) => void | Promise<void>;
@@ -221,6 +245,7 @@ export function WorkspaceShell({
   mainContent,
   navIcons,
   navSections,
+  platformId,
   recentThreads,
   searchableThreads,
   rightPanel,
@@ -252,6 +277,7 @@ export function WorkspaceShell({
   onOpenWorkspaceResults,
   onOpenWorkspacePath,
   onRefreshWorkspaces,
+  onSyncWorkspaceSessions,
   onRemoveWorkspace,
   onRequestForkLifecycle,
   onRightTabChange,
@@ -260,6 +286,7 @@ export function WorkspaceShell({
   onThreadSelect,
   onSearchThreadMessages,
   onThreadUpdate,
+  onDeleteThread,
   onToggleRightPanel,
   onToggleSidebar,
   onUpdateWorkspace,
@@ -284,6 +311,7 @@ export function WorkspaceShell({
   const [worktrees, setWorktrees] = useState<DesktopWorktreeSummary[]>([]);
   const [worktreesLoading, setWorktreesLoading] = useState(false);
   const [worktreesError, setWorktreesError] = useState<string | null>(null);
+  const [worktreesDegraded, setWorktreesDegraded] = useState<DesktopWorktreeEventBatch["degraded"] | null>(null);
   const [worktreeMigrationDiagnostics, setWorktreeMigrationDiagnostics] = useState<DesktopWorktreeMigrationDiagnostic[]>([]);
   const [reviewWorktreeId, setReviewWorktreeId] = useState<string | null>(null);
   const [reviewDiff, setReviewDiff] = useState<WorkspaceGitDiffResult | null>(null);
@@ -294,6 +322,8 @@ export function WorkspaceShell({
   const [workspaceDetailsId, setWorkspaceDetailsId] = useState<string | null>(null);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceDescriptionDraft, setWorkspaceDescriptionDraft] = useState("");
+  const [workspaceSavePending, setWorkspaceSavePending] = useState(false);
+  const [workspaceSaveError, setWorkspaceSaveError] = useState<string | null>(null);
   const [workspaceDeleteConfirm, setWorkspaceDeleteConfirm] = useState(false);
   const [workspaceCreateSource, setWorkspaceCreateSource] = useState<CreateWorkspaceRequest["source"]>("existing");
   const [workspaceCreateName, setWorkspaceCreateName] = useState("");
@@ -310,6 +340,23 @@ export function WorkspaceShell({
     x: number;
     y: number;
   } | null>(null);
+  const [deleteConfirmThread, setDeleteConfirmThread] = useState<WorkspaceThread | null>(null);
+  const [shareDialog, setShareDialog] = useState<{
+    thread: WorkspaceThread;
+    loading: boolean;
+    error: string | null;
+    messages: DesktopThreadMessageSnapshot[];
+    selectedIds: string[];
+    share: LocalThreadShare | null;
+    shareSelectionKey: string | null;
+    busy: boolean;
+    status: string | null;
+  } | null>(null);
+  const [shareToast, setShareToast] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+  const shareToastTimerRef = useRef<number | null>(null);
   const [forkConflictPreview, setForkConflictPreview] = useState<{
     key: string;
     path: string;
@@ -332,8 +379,13 @@ export function WorkspaceShell({
   const [sidebarWidth, setSidebarWidth] = useState(248);
   const [rightPanelWidth, setRightPanelWidth] = useState(420);
   const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
+  const [rightPanelActivated, setRightPanelActivated] = useState(!rightPanelCollapsed);
+  const [openRightTabs, setOpenRightTabs] = useState<RightTab[]>(() => rightTabs.map(({ id }) => id));
+  const availableRightTabIdsRef = useRef<Set<RightTab>>(new Set(rightTabs.map(({ id }) => id)));
+  const [rightTabMenuOpen, setRightTabMenuOpen] = useState(false);
   const workbenchMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const rightTabMenuRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
   const commandPaletteResultsRef = useRef<HTMLElement | null>(null);
@@ -385,6 +437,7 @@ export function WorkspaceShell({
   async function refreshWorktrees(): Promise<void> {
     if (!activeWorkspace?.path) {
       setWorktrees([]);
+      setWorktreesDegraded(null);
       return;
     }
     setWorktreesLoading(true);
@@ -392,13 +445,16 @@ export function WorkspaceShell({
     try {
       const request = {
         workspacePath: activeWorkspace.path,
-        ...(activeWorkspace.id === "current" ? {} : { workspaceId: activeWorkspace.id }),
+        ...(activeWorkspace.id ? { workspaceId: activeWorkspace.id } : {}),
       };
       setWorktrees(await onListWorktrees(request));
+      setWorktreesDegraded(null);
       setWorktreeMigrationDiagnostics(await onGetWorktreeMigrationDiagnostics(request));
     } catch (error) {
-      setWorktrees([]);
-      setWorktreesError(error instanceof Error ? error.message : String(error));
+      // Preserve the last successful Runtime projection while the managed
+      // Gateway recovers. Clearing it turns a transient health miss into an
+      // apparent data-loss event in the UI.
+      setWorktreesError(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setWorktreesLoading(false);
     }
@@ -416,7 +472,7 @@ export function WorkspaceShell({
         maxChars: 120_000,
       }));
     } catch (error) {
-      setReviewError(error instanceof Error ? error.message : String(error));
+      setReviewError(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setReviewLoading(false);
     }
@@ -433,20 +489,35 @@ export function WorkspaceShell({
     if (!activeWorkspace?.path) return;
     let disposed = false;
     let reading = false;
+    let consecutiveFailures = 0;
+    let retryAfter = 0;
+    const recordFailure = (): void => {
+      consecutiveFailures += 1;
+      retryAfter = Date.now() + Math.min(60_000, 5_000 * (2 ** Math.min(4, consecutiveFailures - 1)));
+    };
     const readEvents = async (): Promise<void> => {
-      if (disposed || reading || document.visibilityState !== "visible") return;
+      if (disposed || reading || document.visibilityState !== "visible" || Date.now() < retryAfter) return;
       reading = true;
       try {
         const batch = await onListWorktreeEvents({
           workspacePath: activeWorkspace.path,
-          ...(activeWorkspace.id === "current" ? {} : { workspaceId: activeWorkspace.id }),
+          ...(activeWorkspace.id ? { workspaceId: activeWorkspace.id } : {}),
           afterSequence: worktreeEventCursor.current,
         });
         if (disposed) return;
         worktreeEventCursor.current = Math.max(worktreeEventCursor.current, batch.nextSequence);
+        if (batch.degraded) {
+          setWorktreesDegraded(batch.degraded);
+          recordFailure();
+          return;
+        }
+        consecutiveFailures = 0;
+        retryAfter = 0;
+        setWorktreesDegraded(null);
         if (batch.events.length > 0) await refreshWorktrees();
       } catch {
         // Keep the last Runtime projection visible; the next generation retries.
+        recordFailure();
       } finally {
         reading = false;
       }
@@ -477,6 +548,38 @@ export function WorkspaceShell({
     [searchableThreads],
   );
 
+  const visibleRightTabs = rightTabs.filter(({ id }) => openRightTabs.includes(id));
+  const availableRightTabs = rightTabs.filter(({ id }) => !openRightTabs.includes(id));
+
+  useEffect(() => {
+    const nextIds = rightTabs.map(({ id }) => id);
+    const nextIdSet = new Set(nextIds);
+    const newlyAvailable = nextIds.filter((id) => !availableRightTabIdsRef.current.has(id));
+    availableRightTabIdsRef.current = nextIdSet;
+    setOpenRightTabs((current) => {
+      const retained = current.filter((id) => nextIdSet.has(id));
+      const additions = newlyAvailable.filter((id) => !retained.includes(id));
+      return retained.length === current.length && additions.length === 0
+        ? current
+        : [...retained, ...additions];
+    });
+  }, [rightTabs]);
+
+  function openRightTab(id: RightTab): void {
+    setOpenRightTabs((current) => current.includes(id) ? current : [...current, id]);
+    onRightTabChange(id);
+    setRightTabMenuOpen(false);
+  }
+
+  function closeRightTab(id: RightTab): void {
+    const closingIndex = openRightTabs.indexOf(id);
+    const remaining = openRightTabs.filter((tab) => tab !== id);
+    setOpenRightTabs(remaining);
+    if (id === activeRightTab && remaining.length > 0) {
+      onRightTabChange(remaining[Math.min(closingIndex, remaining.length - 1)]);
+    }
+  }
+
   useEffect(() => {
     function handlePointerDown(event: PointerEvent): void {
       if (!userMenuRef.current?.contains(event.target as Node)) {
@@ -488,11 +591,19 @@ export function WorkspaceShell({
       if (!commandPaletteRef.current?.contains(event.target as Node)) {
         closeCommandPalette();
       }
+      if (!rightTabMenuRef.current?.contains(event.target as Node)) {
+        setRightTabMenuOpen(false);
+      }
     }
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, []);
+
+  useEffect(() => {
+    if (rightPanelCollapsed || !rightTabs.some(({ id }) => id === activeRightTab)) return;
+    setOpenRightTabs((current) => current.includes(activeRightTab) ? current : [...current, activeRightTab]);
+  }, [activeRightTab, rightPanelCollapsed, rightTabs]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
@@ -540,6 +651,7 @@ export function WorkspaceShell({
   }, [activeRightTab, capturingShortcut, onGoBack, onGoForward, onNavChange, onNewChat, onRightTabChange, onToggleRightPanel, onToggleSidebar, rightPanelCollapsed, shortcutDrafts]);
 
   useEffect(() => {
+    if (!rightPanelCollapsed) setRightPanelActivated(true);
     if (rightPanelCollapsed) {
       setRightPanelExpanded(false);
     }
@@ -718,7 +830,7 @@ export function WorkspaceShell({
       });
       setWorkspaceCreateOpen(false);
     } catch (error) {
-      setWorkspaceCreateError(error instanceof Error ? error.message : String(error));
+      setWorkspaceCreateError(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
@@ -726,6 +838,8 @@ export function WorkspaceShell({
     setWorkspaceDetailsId(workspace.id);
     setWorkspaceNameDraft(workspace.name);
     setWorkspaceDescriptionDraft(workspace.description ?? "");
+    setWorkspaceSavePending(false);
+    setWorkspaceSaveError(null);
     setWorkspaceDeleteConfirm(false);
   }
 
@@ -733,6 +847,8 @@ export function WorkspaceShell({
     setWorkspaceDetailsId(null);
     setWorkspaceNameDraft("");
     setWorkspaceDescriptionDraft("");
+    setWorkspaceSavePending(false);
+    setWorkspaceSaveError(null);
     setWorkspaceDeleteConfirm(false);
   }
 
@@ -748,25 +864,38 @@ export function WorkspaceShell({
   }
 
   async function saveWorkspaceDetails(): Promise<void> {
-    if (!workspaceDetails || workspaceDetails.id === "current") return;
-    await onUpdateWorkspace(workspaceDetails.id, {
-      name: workspaceNameDraft,
-      description: workspaceDescriptionDraft,
-    });
+    if (!workspaceDetails?.id) return;
+    const name = workspaceNameDraft.trim();
+    if (!name) {
+      setWorkspaceSaveError(zh ? "工作区名称不能为空。" : "Workspace name cannot be empty.");
+      return;
+    }
+    setWorkspaceSavePending(true);
+    setWorkspaceSaveError(null);
+    try {
+      await onUpdateWorkspace(workspaceDetails.id, {
+        name,
+        description: workspaceDescriptionDraft,
+      });
+      closeWorkspaceDetails();
+    } catch (error) {
+      setWorkspaceSaveError(userFacingFailureMessage(error, language, "operation"));
+      setWorkspaceSavePending(false);
+    }
   }
 
   async function toggleWorkspaceTrusted(): Promise<void> {
-    if (!workspaceDetails || workspaceDetails.id === "current") return;
+    if (!workspaceDetails?.id) return;
     await onUpdateWorkspace(workspaceDetails.id, { trusted: !workspaceDetails.trusted });
   }
 
   async function toggleWorkspacePinned(): Promise<void> {
-    if (!workspaceDetails || workspaceDetails.id === "current") return;
+    if (!workspaceDetails?.id) return;
     await onUpdateWorkspace(workspaceDetails.id, { pinned: !workspaceDetails.pinned });
   }
 
   async function confirmWorkspaceRemoval(): Promise<void> {
-    if (!workspaceDetails || workspaceDetails.id === "current") return;
+    if (!workspaceDetails?.id) return;
     if (!workspaceDeleteConfirm) {
       setWorkspaceDeleteConfirm(true);
       return;
@@ -902,10 +1031,271 @@ export function WorkspaceShell({
   }
 
   function renameThread(thread: WorkspaceThread): void {
-    const nextTitle = window.prompt(zh ? "重命名对话" : "Rename conversation", thread.title);
+    const nextTitle = window.prompt(
+      thread.source === "codex"
+        ? (zh ? "设置 OpenDrSai 本地显示名（不会修改 Codex 原始任务名）" : "Set the local OpenDrSai display name (the original Codex task name is unchanged)")
+        : (zh ? "重命名对话" : "Rename conversation"),
+      thread.title,
+    );
     if (!nextTitle || nextTitle.trim() === thread.title) return;
     void onThreadUpdate(thread.id, { title: nextTitle.trim() });
   }
+
+  function closeShareDialog(): void {
+    setShareDialog(null);
+    setShareToast(null);
+    if (shareToastTimerRef.current !== null) {
+      window.clearTimeout(shareToastTimerRef.current);
+      shareToastTimerRef.current = null;
+    }
+  }
+
+  function showShareToast(type: "success" | "error", message: string): void {
+    setShareToast({ type, message });
+    if (shareToastTimerRef.current !== null) {
+      window.clearTimeout(shareToastTimerRef.current);
+    }
+    shareToastTimerRef.current = window.setTimeout(() => {
+      setShareToast(null);
+      shareToastTimerRef.current = null;
+    }, 2400);
+  }
+
+  function openShareDialog(thread: WorkspaceThread): void {
+    setShareDialog({
+      thread,
+      loading: true,
+      error: null,
+      messages: [],
+      selectedIds: [],
+      share: null,
+      shareSelectionKey: null,
+      busy: false,
+      status: null,
+    });
+    void (async () => {
+      try {
+        const snapshot = await loadThreadMessages(thread.id);
+        const messages = (snapshot?.messages || []).filter((message) => message.role !== "system");
+        if (!messages.length) {
+          setShareDialog((current) =>
+            current && current.thread.id === thread.id
+              ? {
+                  ...current,
+                  loading: false,
+                  error: zh
+                    ? "当前对话还没有可分享的消息。"
+                    : "This conversation has no messages to share yet.",
+                }
+              : current,
+          );
+          return;
+        }
+        setShareDialog((current) =>
+          current && current.thread.id === thread.id
+            ? {
+                ...current,
+                loading: false,
+                messages,
+                selectedIds: messages.map((message) => message.id),
+                error: null,
+              }
+            : current,
+        );
+      } catch (error) {
+        setShareDialog((current) =>
+          current && current.thread.id === thread.id
+            ? {
+                ...current,
+                loading: false,
+                error: userFacingFailureMessage(error, language, "operation"),
+              }
+            : current,
+        );
+      }
+    })();
+  }
+
+  function toggleShareMessage(messageId: string): void {
+    setShareDialog((current) => {
+      if (!current) return current;
+      const selected = new Set(current.selectedIds);
+      if (selected.has(messageId)) selected.delete(messageId);
+      else selected.add(messageId);
+      return { ...current, selectedIds: [...selected], share: null, shareSelectionKey: null, status: null };
+    });
+  }
+
+  function setShareSelection(all: boolean): void {
+    setShareDialog((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        selectedIds: all ? current.messages.map((message) => message.id) : [],
+        share: null,
+        shareSelectionKey: null,
+        status: null,
+      };
+    });
+  }
+
+  async function ensureThreadShare(): Promise<LocalThreadShare | null> {
+    if (!shareDialog) return null;
+    if (!shareDialog.selectedIds.length) {
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: zh ? "请至少勾选一条消息。" : "Select at least one message.",
+            }
+          : current,
+      );
+      return null;
+    }
+    const selectionKey = `${shareDialog.selectedIds.slice().sort().join(",")}:conclusion-md-v3`;
+    if (
+      shareDialog.share &&
+      shareDialog.shareSelectionKey === selectionKey &&
+      shareDialog.share.publicShareUrl
+    ) {
+      return shareDialog.share;
+    }
+    setShareDialog((current) =>
+      current ? { ...current, busy: true, error: null, status: null } : current,
+    );
+    try {
+      const selectedMessages = shareDialog.messages.filter((message) =>
+        shareDialog.selectedIds.includes(message.id),
+      );
+      const share = await createThreadShareClient({
+        request: {
+          threadId: shareDialog.thread.id,
+          messageIds: shareDialog.selectedIds,
+          title: shareDialog.thread.title,
+        },
+        messages: selectedMessages,
+      });
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              busy: false,
+              share,
+              shareSelectionKey: selectionKey,
+              status:
+                share.mode === "ipc"
+                  ? share.publicShareUrl
+                    ? zh
+                      ? "已生成公开分享链接（对方可只读打开）"
+                      : "Public share link ready (read-only for recipients)"
+                    : zh
+                      ? share.publishError
+                        ? `本地预览已生成，但公开链接发布失败：${share.publishError}`
+                        : "已生成本地预览（公开链接未发布）"
+                      : share.publishError
+                        ? `Local preview ready, but public publish failed: ${share.publishError}`
+                        : "Local preview ready (public link not published)"
+                  : zh
+                    ? "已生成只读分享页（当前为本地预览模式）"
+                    : "Read-only share ready (local preview mode)",
+            }
+          : current,
+      );
+      return share;
+    } catch (error) {
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              busy: false,
+              error: userFacingFailureMessage(error, language, "operation"),
+            }
+          : current,
+      );
+      return null;
+    }
+  }
+
+  async function copyShareLink(): Promise<void> {
+    const share = await ensureThreadShare();
+    if (!share) {
+      showShareToast("error", zh ? "复制失败" : "Copy failed");
+      return;
+    }
+    try {
+      const copied = await copyThreadShareLinkClient(share);
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: null,
+              status: zh
+                ? "已复制公开分享链接（对方可只读打开）"
+                : "Public share link copied (read-only for recipients)",
+              share: {
+                ...share,
+                fileUrl: share.publicShareUrl || copied,
+                publicShareUrl: share.publicShareUrl || copied,
+              },
+            }
+          : current,
+      );
+      showShareToast("success", zh ? "复制成功" : "Copied successfully");
+    } catch (error) {
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: userFacingFailureMessage(error, language, "operation"),
+            }
+          : current,
+      );
+      showShareToast("error", zh ? "复制失败" : "Copy failed");
+    }
+  }
+
+  async function openSharePreview(): Promise<void> {
+    const share = await ensureThreadShare();
+    if (!share) return;
+    try {
+      await openThreadShareClient(share);
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: null,
+              status: zh ? "已打开只读预览" : "Opened read-only preview",
+            }
+          : current,
+      );
+    } catch (error) {
+      setShareDialog((current) =>
+        current
+          ? {
+              ...current,
+              error: userFacingFailureMessage(error, language, "operation"),
+            }
+          : current,
+      );
+    }
+  }
+
+  function extractShareMessagePreview(message: DesktopThreadMessageSnapshot): string {
+    if (message.role === "assistant") {
+      const fromParts = message.parts
+        ?.filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .filter(Boolean)
+        .join("\n\n");
+      const raw = fromParts?.trim() || message.content || "";
+      return (
+        extractShareConclusion(raw, message.reasoningContent) ||
+        getAssistantVisibleAnswer(raw, message.reasoningContent)
+      );
+    }
+    return extractShareMessageText(message);
+  }
+
 
   function copyText(text: string): void {
     void copyTextSafely(text);
@@ -943,8 +1333,17 @@ export function WorkspaceShell({
             </b>
           )}
           {thread.title}
+          <small className={`thread-source-label source-${thread.source ?? "opendrsai"}`}>
+            {thread.source === "codex" ? "Codex" : thread.source === "remote" ? (zh ? "远程" : "Remote") : "OpenDrSai"}
+          </small>
         </span>
-        <time>{thread.timeLabel}</time>
+        <span className="thread-item-status">
+          {thread.activity.kind === "idle" ? (
+            <time>{thread.timeLabel}</time>
+          ) : (
+            <ThreadActivityBubble state={thread.activity} language={language} />
+          )}
+        </span>
       </button>
     );
   }
@@ -1136,7 +1535,7 @@ export function WorkspaceShell({
         key,
         path: file.path,
         status: "error",
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingFailureMessage(error, language, "operation"),
       });
     }
   }
@@ -1169,7 +1568,7 @@ export function WorkspaceShell({
           ? {
               ...current,
               stageStatus: "error",
-              stageMessage: error instanceof Error ? error.message : String(error),
+              stageMessage: userFacingFailureMessage(error, language, "operation"),
             }
           : current,
       );
@@ -1220,7 +1619,7 @@ export function WorkspaceShell({
           ? {
               ...current,
               writeStatus: "error",
-              writeMessage: error instanceof Error ? error.message : String(error),
+              writeMessage: userFacingFailureMessage(error, language, "operation"),
             }
           : current,
       );
@@ -1376,7 +1775,9 @@ export function WorkspaceShell({
 
   function runThreadMenuAction(action: () => void | Promise<void>): void {
     closeThreadMenu();
-    void action();
+    void Promise.resolve(action()).catch((error) => {
+      void showAppNotice({ id: "thread-menu-action-failed", title: zh ? "操作未完成" : "Action did not complete", description: userFacingFailureMessage(error, language, "operation") });
+    });
   }
 
   function handleCommandPaletteKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
@@ -1651,6 +2052,11 @@ export function WorkspaceShell({
         </header>
         <div className="worktree-context-body">
           {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "offline" ? <small className="worktree-error">{worktreesError}</small> : null}
+          {worktreesDegraded ? (
+            <small className="worktree-warning" data-testid="worktree-degraded-status" title={worktreesDegraded.code} role="status">
+              {zh ? "本地 Runtime 暂不可用，隔离工作区状态已暂停刷新。" : "Local Runtime is unavailable; isolated workspace refresh is paused."}
+            </small>
+          ) : null}
           {worktreeMigrationDiagnostics.filter((item) => item.status === "pending").map((item) => (
             <small className="worktree-error" key={`migration-${item.threadId}`} title={item.code}>
               {zh ? "旧 Fork 等待迁移" : "Legacy Fork migration pending"}: {item.message}
@@ -1723,7 +2129,7 @@ export function WorkspaceShell({
 
   return (
     <div
-      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+      className={`app-shell platform-${platformId} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
       style={{
         "--sidebar-width": `${sidebarWidth}px`,
         "--right-panel-width": `${rightPanelWidth}px`,
@@ -1871,7 +2277,10 @@ export function WorkspaceShell({
                 {zh ? "设置" : "Settings"}
               </button>
               <div className="titlebar-language-row">
-                <span>{zh ? "语言" : "Language"}</span>
+                <span className="titlebar-language-label">
+                  <Languages size={15} aria-hidden />
+                  <span>{zh ? "语言" : "Language"}</span>
+                </span>
                 <div className="language-segment" role="group" aria-label={zh ? "语言" : "Language"}>
                   <button
                     type="button"
@@ -1906,6 +2315,7 @@ export function WorkspaceShell({
         <div className="titlebar-window-divider" aria-hidden />
         <button
           className="titlebar-right-panel-toggle"
+          data-testid="titlebar-right-panel-toggle"
           type="button"
           onClick={onToggleRightPanel}
           title={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
@@ -1991,8 +2401,10 @@ export function WorkspaceShell({
             </div>
           )}
 
-          {workspaceItems.map(({ id, label }) => {
-            const Icon = id === MENU_IDS.library ? Cloud : navIcons[id];
+            {workspaceItems.map(({ id, label }) => {
+            // Temporarily hide GFS cloud icon special-case — keep for later reuse.
+            // const Icon = id === MENU_IDS.library ? Cloud : navIcons[id];
+            const Icon = navIcons[id];
             return (
               <SidebarButton
                 key={id}
@@ -2152,7 +2564,9 @@ export function WorkspaceShell({
             isRightPanelExpanded ? "right-expanded" : ""
           }`}
         >
-          <section className="main-content-area">{mainContent}</section>
+          <section className="main-content-area">
+            {mainContent}
+          </section>
           {!rightPanelCollapsed && !isRightPanelExpanded && (
             <div
               className="right-resize-handle"
@@ -2163,24 +2577,45 @@ export function WorkspaceShell({
             />
           )}
 
-          {!rightPanelCollapsed && (
-            <aside className={rightPanelClassName}>
+          {rightPanelActivated ? <aside className={`${rightPanelClassName} ${rightPanelCollapsed ? "is-collapsed" : ""}`} aria-hidden={rightPanelCollapsed || undefined}>
               <div className="right-tabs">
-                {rightTabs.map(({ id, label }) => {
+                <div className="right-tabs-list" role="tablist" aria-label={zh ? "右侧面板" : "Side panel"}>
+                {visibleRightTabs.map(({ id, label }) => {
                   const Icon = rightTabIcons[id];
                   return (
-                    <button
-                      key={id}
-                      className={id === activeRightTab ? "active" : ""}
-                      onClick={() => onRightTabChange(id)}
-                      title={label}
-                      aria-label={label}
-                    >
-                      <Icon size={15} />
-                      <span>{label}</span>
-                    </button>
+                    <div key={id} className={`right-tab ${id === activeRightTab ? "active" : ""}`}>
+                      <button type="button" role="tab" aria-selected={id === activeRightTab} onClick={() => onRightTabChange(id)} title={label}>
+                        <Icon size={15} />
+                        <span>{label}</span>
+                      </button>
+                      <button type="button" className="right-tab-close" onClick={() => closeRightTab(id)} title={zh ? `关闭${label}` : `Close ${label}`} aria-label={zh ? `关闭${label}` : `Close ${label}`}>
+                        <X size={12} />
+                      </button>
+                    </div>
                   );
                 })}
+                </div>
+                <div className="right-tab-add" ref={rightTabMenuRef}>
+                  <button
+                    type="button"
+                    className="right-tab-add-button"
+                    disabled={availableRightTabs.length === 0}
+                    onClick={() => setRightTabMenuOpen((open) => !open)}
+                    title={availableRightTabs.length > 0 ? (zh ? "添加面板" : "Add panel") : (zh ? "所有面板均已显示" : "All panels are already shown")}
+                    aria-label={availableRightTabs.length > 0 ? (zh ? "添加面板" : "Add panel") : (zh ? "所有面板均已显示" : "All panels are already shown")}
+                    aria-expanded={availableRightTabs.length > 0 ? rightTabMenuOpen : false}
+                  >
+                    <Plus size={15} />
+                  </button>
+                  {rightTabMenuOpen && availableRightTabs.length > 0 && (
+                    <div className="right-tab-add-menu" role="menu">
+                      {availableRightTabs.map(({ id, label }) => {
+                        const Icon = rightTabIcons[id];
+                        return <button type="button" role="menuitem" key={id} onClick={() => openRightTab(id)}><Icon size={14} /><span>{label}</span></button>;
+                      })}
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
                   className="right-panel-expand-button"
@@ -2192,7 +2627,7 @@ export function WorkspaceShell({
                   {isRightPanelExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                 </button>
               </div>
-              {activeRightTab === "files" ? (
+              {openRightTabs.includes(activeRightTab) ? activeRightTab === "files" ? (
                 <div className="files-worktree-context">
                   <div className="files-worktree-switcher" role="tablist" aria-label={zh ? "文件面板视图" : "Files panel view"}>
                     <button type="button" role="tab" aria-selected={!worktreeOpen} className={!worktreeOpen ? "active" : ""} onClick={() => setWorktreeOpen(false)}>
@@ -2207,9 +2642,18 @@ export function WorkspaceShell({
                   </div>
                   {worktreeOpen ? renderWorktreePanel() : rightPanel}
                 </div>
-              ) : rightPanel}
-            </aside>
-          )}
+              ) : rightPanel : (
+                <button
+                  type="button"
+                  className="right-tabs-empty"
+                  onClick={() => setRightTabMenuOpen(true)}
+                  aria-label={zh ? "打开添加面板菜单" : "Open add panel menu"}
+                >
+                  <Plus size={18} />
+                  <span>{zh ? "点击加号添加" : "Click the plus button to add a panel"}</span>
+                </button>
+              )}
+          </aside> : null}
         </section>
       </main>
       {threadMenu && (
@@ -2256,6 +2700,15 @@ export function WorkspaceShell({
             >
               {threadMenu.thread.unread ? (zh ? "标记为已读" : "Mark as read") : (zh ? "标记为未读" : "Mark as unread")}
             </button>
+            {/* Temporarily hide share conversation — keep for later reuse.
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runThreadMenuAction(() => openShareDialog(threadMenu.thread))}
+            >
+              {zh ? "分享对话" : "Share conversation"}
+            </button>
+            */}
             {threadMenu.thread.fork && (
               <>
                 <div className="thread-context-separator" />
@@ -2732,7 +3185,228 @@ export function WorkspaceShell({
             >
               {zh ? "复制深度链接" : "Copy deep link"}
             </button>
+            <div className="thread-context-separator" />
+            <button
+              type="button"
+              role="menuitem"
+              className="thread-context-danger"
+              onClick={() =>
+                runThreadMenuAction(() => {
+                  setDeleteConfirmThread(threadMenu.thread);
+                })
+              }
+            >
+              {threadMenu.thread.source === "codex"
+                ? (zh ? "从 OpenDrSai 列表移除…" : "Remove from OpenDrSai list…")
+                : (zh ? "永久删除本地对话…" : "Permanently delete local conversation…")}
+            </button>
           </div>
+        </div>
+      )}
+      {shareDialog && (
+        <div
+          className="thread-delete-confirm-overlay"
+          role="presentation"
+          onMouseDown={closeShareDialog}
+        >
+          <section
+            className="thread-share-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="thread-share-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="thread-share-header">
+              <div>
+                <h2 id="thread-share-title">{zh ? "分享对话" : "Share conversation"}</h2>
+                <p>
+                  {zh
+                    ? "生成只读分享页：对方只能查看聊天记录，无法继续提问。"
+                    : "Create a read-only share page. Recipients can view the chat, but cannot continue the conversation."}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="thread-share-close"
+                onClick={closeShareDialog}
+                aria-label={zh ? "关闭" : "Close"}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="thread-share-title-row">
+              <strong>{shareDialog.thread.title}</strong>
+              <span>
+                {shareDialog.loading
+                  ? zh
+                    ? "加载中…"
+                    : "Loading…"
+                  : zh
+                    ? `已选 ${shareDialog.selectedIds.length}/${shareDialog.messages.length} 条`
+                    : `${shareDialog.selectedIds.length}/${shareDialog.messages.length} selected`}
+              </span>
+            </div>
+            <div className="thread-share-selection-actions">
+              <button type="button" onClick={() => setShareSelection(true)} disabled={shareDialog.loading}>
+                {zh ? "全选" : "Select all"}
+              </button>
+              <button type="button" onClick={() => setShareSelection(false)} disabled={shareDialog.loading}>
+                {zh ? "清空" : "Clear"}
+              </button>
+            </div>
+            <div className="thread-share-messages" role="group" aria-label={zh ? "分享消息" : "Messages to share"}>
+              {shareDialog.loading ? (
+                <p className="thread-share-empty">{zh ? "正在读取聊天记录…" : "Loading chat history…"}</p>
+              ) : shareDialog.messages.length ? (
+                shareDialog.messages.map((message) => {
+                  const checked = shareDialog.selectedIds.includes(message.id);
+                  const rawContent = extractShareMessagePreview(message);
+                  return (
+                    <div
+                      key={message.id}
+                      className={`thread-share-message ${message.role}${checked ? " selected" : ""}`}
+                    >
+                      <label className="thread-share-message-select">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleShareMessage(message.id)}
+                        />
+                        <strong>
+                          {message.role === "user" ? (zh ? "你" : "You") : (zh ? "助手" : "Assistant")}
+                        </strong>
+                      </label>
+                      <div className="thread-share-message-body">
+                        {message.role === "assistant" ? (
+                          rawContent.trim() ? (
+                            <ChatMessageContent
+                              content={rawContent}
+                              language={language}
+                              onOpenLink={() => undefined}
+                            />
+                          ) : (
+                            <span className="thread-share-empty-inline">
+                              {zh ? "（空消息）" : "(empty)"}
+                            </span>
+                          )
+                        ) : (
+                          <p className="thread-share-user-text">
+                            {rawContent.trim() || (zh ? "（空消息）" : "(empty)")}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="thread-share-empty">
+                  {shareDialog.error || (zh ? "没有可分享的消息" : "No messages to share")}
+                </p>
+              )}
+            </div>
+            {(shareDialog.error || shareDialog.status || shareDialog.share) && (
+              <div className="thread-share-status" role="status">
+                {shareDialog.error ? <p className="thread-share-error">{shareDialog.error}</p> : null}
+                {shareDialog.status ? <p>{shareDialog.status}</p> : null}
+                {shareDialog.share ? (
+                  <code title={shareDialog.share.publicShareUrl || shareDialog.share.filePath}>
+                    {shareDialog.share.publicShareUrl || shareDialog.share.fileUrl}
+                  </code>
+                ) : null}
+              </div>
+            )}
+            {shareToast ? (
+              <div
+                className={`thread-share-toast thread-share-toast-${shareToast.type}`}
+                role="status"
+                aria-live="polite"
+              >
+                {shareToast.message}
+              </div>
+            ) : null}
+            <div className="thread-share-actions">
+              <button type="button" className="thread-delete-confirm-cancel" onClick={closeShareDialog}>
+                {zh ? "取消" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                className="thread-share-secondary"
+                onClick={() => void openSharePreview()}
+                disabled={shareDialog.loading || shareDialog.busy || !shareDialog.selectedIds.length}
+              >
+                {zh ? "打开预览" : "Open preview"}
+              </button>
+              <button
+                type="button"
+                className="thread-share-primary"
+                onClick={() => void copyShareLink()}
+                disabled={shareDialog.loading || shareDialog.busy || !shareDialog.selectedIds.length}
+              >
+                {shareDialog.busy
+                  ? zh
+                    ? "生成中…"
+                    : "Working…"
+                  : zh
+                    ? "复制链接"
+                    : "Copy link"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {deleteConfirmThread && (
+        <div
+          className="thread-delete-confirm-overlay"
+          role="presentation"
+          onMouseDown={() => setDeleteConfirmThread(null)}
+        >
+          <section
+            className="thread-delete-confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="thread-delete-confirm-title"
+            aria-describedby="thread-delete-confirm-desc"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="thread-delete-confirm-body">
+              <span className="thread-delete-confirm-icon" aria-hidden>
+                !
+              </span>
+              <div className="thread-delete-confirm-copy">
+                <h2 id="thread-delete-confirm-title">
+                  {deleteConfirmThread.source === "codex"
+                    ? (zh ? "从 OpenDrSai 列表移除？" : "Remove from the OpenDrSai list?")
+                    : (zh ? "永久删除本地对话？" : "Permanently delete this local conversation?")}
+                </h2>
+                <p id="thread-delete-confirm-desc">
+                  <span className="thread-delete-confirm-name">{deleteConfirmThread.title}</span>
+                  {deleteConfirmThread.source === "codex"
+                    ? (zh ? "只移除 OpenDrSai 的本地列表记录，不会删除或归档 Codex 历史；下次同步可重新导入。" : "This only removes the local OpenDrSai list entry. Codex history is not deleted or archived and can be imported again.")
+                    : (zh ? "这会永久删除 OpenDrSai 本地聊天记录，且不可恢复。若只想隐藏，请改用归档。" : "This permanently deletes the local OpenDrSai chat history and cannot be undone. Use Archive if you only want to hide it.")}
+                </p>
+              </div>
+            </div>
+            <div className="thread-delete-confirm-actions">
+              <button
+                type="button"
+                className="thread-delete-confirm-cancel"
+                onClick={() => setDeleteConfirmThread(null)}
+              >
+                {zh ? "取消" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                className="thread-delete-confirm-delete"
+                onClick={() => {
+                  const threadId = deleteConfirmThread.id;
+                  setDeleteConfirmThread(null);
+                  void onDeleteThread(threadId);
+                }}
+              >
+                {zh ? "删除" : "Delete"}
+              </button>
+            </div>
+          </section>
         </div>
       )}
       {desktopStatusOpen && (
@@ -2889,7 +3563,7 @@ export function WorkspaceShell({
                 <span>{zh ? "名称" : "Name"}</span>
                 <input
                   value={workspaceNameDraft}
-                  disabled={workspaceDetails.id === "current"}
+                  disabled={!workspaceDetails.id}
                   onChange={(event) => setWorkspaceNameDraft(event.target.value)}
                 />
               </label>
@@ -2897,11 +3571,14 @@ export function WorkspaceShell({
                 <span>{zh ? "描述" : "Description"}</span>
                 <input
                   value={workspaceDescriptionDraft}
-                  disabled={workspaceDetails.id === "current"}
+                  disabled={!workspaceDetails.id}
                   onChange={(event) => setWorkspaceDescriptionDraft(event.target.value)}
                   placeholder={zh ? "给这个工作区加一句说明" : "Add a short note for this workspace"}
                 />
               </label>
+              {workspaceSaveError && (
+                <div className="workspace-details-error" role="alert">{workspaceSaveError}</div>
+              )}
 
               <div className="workspace-path-box">
                 <span>{zh ? "路径" : "Path"}</span>
@@ -2967,7 +3644,11 @@ export function WorkspaceShell({
                 <RefreshCw size={14} />
                 {zh ? "刷新状态" : "Refresh"}
               </button>
-              {workspaceDetails.id !== "current" && (
+              {workspaceDetails.location !== "remote" ? <button type="button" data-testid="workspace-sync-codex-sessions" onClick={() => void onSyncWorkspaceSessions(workspaceDetails)}>
+                <RefreshCw size={14} />
+                {zh ? "重新同步 Codex 会话" : "Resync Codex sessions"}
+              </button> : null}
+              {workspaceDetails.id !== "current" ? (
                 <>
                   <button type="button" onClick={toggleWorkspaceTrusted}>
                     {workspaceDetails.trusted ? (zh ? "取消信任" : "Untrust") : (zh ? "信任" : "Trust")}
@@ -2975,15 +3656,15 @@ export function WorkspaceShell({
                   <button type="button" onClick={toggleWorkspacePinned}>
                     {workspaceDetails.pinned ? (zh ? "取消置顶" : "Unpin") : (zh ? "置顶" : "Pin")}
                   </button>
-                  <button type="button" onClick={saveWorkspaceDetails}>
-                    {zh ? "保存" : "Save"}
+                  <button type="button" disabled={workspaceSavePending} onClick={saveWorkspaceDetails}>
+                    {workspaceSavePending ? (zh ? "保存中…" : "Saving…") : (zh ? "保存" : "Save")}
                   </button>
                   <button className="danger" type="button" onClick={confirmWorkspaceRemoval}>
                     <Trash2 size={14} />
                     {workspaceDeleteConfirm ? (zh ? "确认移除" : "Confirm Remove") : (zh ? "移除" : "Remove")}
                   </button>
                 </>
-              )}
+              ) : null}
             </div>
           </section>
         </div>

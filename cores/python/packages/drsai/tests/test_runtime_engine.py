@@ -44,6 +44,66 @@ def test_session_lifecycle_pagination_and_workspace_binding(engine: RuntimeEngin
         db.execute("UPDATE runtime_runs SET worktree_id=NULL WHERE run_id=?", (run["run_id"],))
 
 
+def test_imported_desktop_session_preserves_identity_and_refreshes_metadata(engine: RuntimeEngine) -> None:
+    first, created = engine.import_session(
+        "thread-desktop", "workspace-one", "Desktop title",
+        agent_definition="codex@1", backend_id="codex",
+        created_at="2026-07-01T00:00:00Z", updated_at="2026-07-02T00:00:00Z",
+    )
+    refreshed, repeated = engine.import_session(
+        "thread-desktop", "workspace-one", "Renamed title",
+        agent_definition="codex@1", backend_id="codex",
+        created_at="2026-07-01T00:00:00Z", updated_at="2026-07-03T00:00:00Z",
+    )
+
+    assert created is True
+    assert repeated is False
+    assert first["session_id"] == refreshed["session_id"] == "thread-desktop"
+    assert refreshed["title"] == "Renamed title"
+    assert refreshed["updated_at"] == "2026-07-03T00:00:00Z"
+    before = engine.conversation_snapshot("thread-desktop")
+    unchanged, repeated_again = engine.import_session(
+        "thread-desktop", "workspace-one", "Renamed title",
+        agent_definition="codex@1", backend_id="codex",
+        created_at="2026-07-01T00:00:00Z", updated_at="2026-07-03T00:00:00Z",
+    )
+    after = engine.conversation_snapshot("thread-desktop")
+    assert repeated_again is False
+    assert unchanged["revision"] == refreshed["revision"]
+    assert after["snapshot_sequence"] == before["snapshot_sequence"]
+
+
+def test_import_timestamp_drift_and_repeated_updates_are_projection_noops(
+    engine: RuntimeEngine,
+) -> None:
+    imported, _ = engine.import_session(
+        "thread-noop", "workspace-one", "Stable title",
+        agent_definition="codex@1", backend_id="codex",
+        created_at="2026-07-01T00:00:00Z", updated_at="2026-07-02T00:00:00Z",
+    )
+    before = engine.conversation_snapshot("thread-noop")["snapshot_sequence"]
+    timestamp_only, created = engine.import_session(
+        "thread-noop", "workspace-one", "Stable title",
+        agent_definition="codex@1", backend_id="codex",
+        created_at="2026-07-01T00:00:00Z", updated_at="2026-08-04T00:00:00+00:00",
+    )
+    assert created is False
+    assert timestamp_only["revision"] == imported["revision"]
+    assert timestamp_only["updated_at"] == imported["updated_at"]
+    assert engine.conversation_snapshot("thread-noop")["snapshot_sequence"] == before
+
+    session = engine.create_session("workspace-one", "Original")
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        results = list(pool.map(
+            lambda _: engine.update_session(session["session_id"], title="Renamed"),
+            range(20),
+        ))
+    assert {item["revision"] for item in results} == {session["revision"] + 1}
+    stable = engine.update_session(session["session_id"], title="Renamed")
+    assert stable["revision"] == session["revision"] + 1
+    assert engine.conversation_snapshot(session["session_id"])["snapshot_sequence"] == 2
+
+
 def test_session_agent_binding_removed_tombstone_and_revision(engine: RuntimeEngine) -> None:
     session = engine.create_session(
         "workspace-one",
@@ -159,6 +219,11 @@ def test_conversation_projection_uses_authoritative_input_and_stable_cursor(engi
         "hello from Android",
         attachment_refs=["artifact-one"],
         correlation_id="correlation-one",
+        input_resources=[{
+            "protocol": "oaep.input/1", "resource_id": "selection-one", "kind": "selection",
+            "name": "Selected text", "permission": "read", "status": "encoded", "content": "hello",
+            "captured_at": "2026-08-05T00:00:00Z",
+        }],
     )
     for index in range(650):
         engine.append_event(run["run_id"], "agent.message.delta", {"delta": str(index)})
@@ -180,6 +245,159 @@ def test_conversation_projection_uses_authoritative_input_and_stable_cursor(engi
     assert stored["input_message"] == "hello from Android"
     assert stored["correlation_id"] == "correlation-one"
     assert stored["attachment_refs"] == ["artifact-one"]
+    assert stored["input_resources"] == [{
+        "protocol": "oaep.input/1", "resource_id": "selection-one", "kind": "selection",
+        "name": "Selected text", "permission": "read", "status": "encoded", "content": "hello",
+        "captured_at": "2026-08-05T00:00:00Z",
+    }]
+
+
+def test_agent_events_project_to_assistant_message_snapshot(engine: RuntimeEngine) -> None:
+    session = engine.create_session(
+        "workspace-one",
+        agent_definition="opendrsai@1",
+        backend_id="opendrsai",
+    )
+    run, _ = engine.create_run(session["session_id"], "opendrsai@1", "agent-projection-key")
+    engine.append_event(run["run_id"], "agent.message.delta", {"delta": "hello "})
+    engine.append_event(run["run_id"], "agent.message.delta", {"content": "world"})
+    engine.append_event(run["run_id"], "agent.completed", {"content": "hello world"})
+
+    snapshot = engine.conversation_snapshot(session["session_id"])
+    assistant = next(item for item in snapshot["items"] if item["item_id"] == f"assistant:{run['run_id']}")
+    assert assistant["kind"] == "message"
+    assert assistant["role"] == "assistant"
+    assert assistant["payload"]["text"] == "hello world"
+    assert assistant["payload"]["status"] == "completed"
+
+
+def test_reconcile_backfills_missing_agent_message_projection(engine: RuntimeEngine) -> None:
+    session = engine.create_session(
+        "workspace-one",
+        agent_definition="opendrsai@1",
+        backend_id="opendrsai",
+    )
+    run, _ = engine.create_run(session["session_id"], "opendrsai@1", "agent-backfill-key")
+    with engine._connect() as db:
+        db.execute(
+            "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) "
+            "VALUES(?,?,?,?,?,?,NULL)",
+            ("legacy-agent-delta", run["run_id"], 2, "agent.message.delta", '{"delta":"restored "}', "2026-07-01T00:00:01Z"),
+        )
+        db.execute(
+            "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) "
+            "VALUES(?,?,?,?,?,?,NULL)",
+            ("legacy-agent-completed", run["run_id"], 3, "agent.completed", '{"content":"restored answer"}', "2026-07-01T00:00:02Z"),
+        )
+
+    restored = RuntimeEngine(
+        engine.database,
+        RuntimeEngineIdentity("runtime-test", "instance-one"),
+        lambda workspace_id: workspace_id in {"workspace-one", "workspace-two"},
+        lambda workspace_id: "worktree-two" if workspace_id == "workspace-two" else None,
+    )
+
+    snapshot = restored.conversation_snapshot(session["session_id"])
+    assistant = next(item for item in snapshot["items"] if item["item_id"] == f"assistant:{run['run_id']}")
+    assert assistant["payload"]["text"] == "restored answer"
+    assert assistant["payload"]["status"] == "completed"
+
+
+@pytest.mark.parametrize("legacy_version", ["v0", "v1"])
+def test_legacy_desktop_agent_run_import_is_complete_and_idempotent(
+    engine: RuntimeEngine, legacy_version: str,
+) -> None:
+    if legacy_version == "v0":
+        events = [
+            {"event": "chunk", "text": "legacy "},
+            {"event_type": "chunk", "delta": "answer"},
+            {"event": "status", "message": "working"},
+            {"event": "file", "file_event": {"action": "modify", "path": "report.md"}},
+            {"event": "completed"},
+        ]
+    else:
+        events = [
+            {"type": "chunk", "content": "legacy answer"},
+            {"type": "plan_adjustment", "planAdjustment": {"reason": "new evidence", "replacementStepTitle": "Re-check"}},
+            {"type": "file_event", "fileEvent": {"action": "artifact", "path": "result.pdf", "name": "Result"}},
+            {"type": "done"},
+        ]
+    first = engine.import_legacy_desktop_agent_run(
+        "workspace-one", f"thread-{legacy_version}", f"run-{legacy_version}", events,
+        title=f"Legacy {legacy_version}", created_at="2026-07-01T00:00:00Z",
+        updated_at="2026-07-01T00:00:05Z",
+    )
+    second = engine.import_legacy_desktop_agent_run(
+        "workspace-one", f"thread-{legacy_version}", f"run-{legacy_version}", events,
+        title=f"Legacy {legacy_version}", created_at="2026-07-01T00:00:00Z",
+        updated_at="2026-07-01T00:00:05Z",
+    )
+
+    assert first["session_created"] is True and first["run_created"] is True
+    assert second["session_created"] is False and second["run_created"] is False
+    assert second["items_created"] == 0
+    assert second["oaep_item_count"] == first["oaep_item_count"]
+    snapshot = engine.oaep_snapshot(first["session_id"])
+    items = snapshot["items"]
+    assert len({item["id"] for item in items}) == len(items)
+    message = next(item for item in items if item["type"] == "message")
+    assert message["content"]["text"] == "legacy answer"
+    assert message["status"] == "completed"
+    if legacy_version == "v0":
+        file_item = next(item for item in items if item["type"] == "file_change")
+        assert file_item["content"]["changes"][0]["path"] == "report.md"
+        assert any(item["type"] == "notice" for item in items)
+    else:
+        artifact = next(item for item in items if item["type"] == "artifact")
+        assert artifact["content"]["path"] == "result.pdf"
+        assert any(item["type"] == "plan" for item in items)
+    run = engine.get_run(first["run_id"])
+    assert run["status"] == "completed"
+    assert run["backend_id"] == "opendrsai"
+
+
+def test_reconcile_does_not_resurrect_compacted_runtime_events(
+    engine: RuntimeEngine,
+) -> None:
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "compaction-restart")
+    compacted_event = engine.append_event(
+        run["run_id"], "tool.started", {"tool": "read"}
+    )
+    checkpoint = engine.conversation_journal.checkpoint(session["session_id"])
+    engine.conversation_journal.compact(
+        session["session_id"], through_sequence=checkpoint["checkpoint_sequence"]
+    )
+    with engine._connect() as db:
+        before = int(db.execute(
+            "SELECT COUNT(*) FROM runtime_session_journal WHERE session_id=?",
+            (session["session_id"],),
+        ).fetchone()[0])
+        assert db.execute(
+            "SELECT 1 FROM runtime_session_journal_compacted_runtime_events "
+            "WHERE runtime_event_id=?",
+            (compacted_event["event_id"],),
+        ).fetchone() is not None
+
+    restored = RuntimeEngine(
+        engine.database,
+        RuntimeEngineIdentity("runtime-test", "instance-one"),
+        lambda workspace_id: workspace_id in {"workspace-one", "workspace-two"},
+        lambda workspace_id: "worktree-two" if workspace_id == "workspace-two" else None,
+    )
+    with restored._connect() as db:
+        after = int(db.execute(
+            "SELECT COUNT(*) FROM runtime_session_journal WHERE session_id=?",
+            (session["session_id"],),
+        ).fetchone()[0])
+    assert after == before
+
+    new_event = restored.append_event(run["run_id"], "tool.completed", {"ok": True})
+    with restored._connect() as db:
+        assert db.execute(
+            "SELECT 1 FROM runtime_session_journal WHERE dedupe_key=?",
+            (f"runtime-event:{new_event['event_id']}",),
+        ).fetchone() is not None
 
 
 @pytest.mark.parametrize("decision,expected", [("approved", "running"), ("denied", "cancelled"), ("timeout", "failed")])
@@ -272,6 +490,18 @@ def test_runtime_persistence_redacts_secret_canaries_but_keeps_normal_content(
     assert engine.latest_checkpoint(run["run_id"]) == checkpoint
 
 
+def test_runtime_persistence_redacts_cookie_and_url_userinfo_canaries(engine: RuntimeEngine) -> None:
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "secret-url-persistence")
+    engine.append_event(run["run_id"], "tool.completed", {
+        "header": "Cookie: session=P3_COOKIE_PERSISTENCE_CANARY",
+        "url": "https://user:P3_URL_PERSISTENCE_CANARY@example.test/path",
+    })
+    persisted = engine.database.read_bytes()
+    assert b"P3_COOKIE_PERSISTENCE_CANARY" not in persisted
+    assert b"P3_URL_PERSISTENCE_CANARY" not in persisted
+
+
 def test_pending_approval_query_atomically_expires_elapsed_deadline(engine: RuntimeEngine) -> None:
     session = engine.create_session("workspace-one")
     run, _ = engine.create_run(session["session_id"], "agent@v1", "approval-expired")
@@ -279,7 +509,7 @@ def test_pending_approval_query_atomically_expires_elapsed_deadline(engine: Runt
     approval = engine.request_approval(run["run_id"], {"tool": "shell"}, "2000-01-01T00:00:00+00:00")
 
     assert engine.list_pending_approvals(run["run_id"]) == []
-    assert engine.get_approval(approval["approval_id"])["status"] == "timeout"
+    assert engine.get_approval(approval["approval_id"])["status"] == "expired"
     assert engine.get_run(run["run_id"])["status"] == "failed"
 
 

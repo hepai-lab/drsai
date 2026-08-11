@@ -117,17 +117,20 @@ export interface WebSocketMessage {
   | "message_chunk"
   | "message_log"
   | "message_files"
+  | "message_thinking"
   | "tool_call_summary"
     | "result"
     | "completion"
     | "input_request"
     | "error"
-    | "system";
+    | "system"
+    | "tool.progress";
   data?: AgentMessageConfig | TaskResult | FilesEvent;
   input_type?: InputType;
   status?: RunStatus;
   error?: string;
   timestamp?: string;
+  prompt?: string;
 }
 
 export type FileDownloadMethod = "base64" | "url";

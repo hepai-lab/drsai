@@ -31,6 +31,7 @@ import {
   type StructuredConversationEvent,
   type StructuredTurnState,
 } from "@shared/structuredConversation";
+import { stripAttachmentContextFromUserContent } from "@shared/attachmentContextDisplay";
 import {
   parseChatCommand,
   parseForkQueueEntries,
@@ -42,12 +43,14 @@ import {
 } from "../chatCommands";
 import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
+import { describeUserFacingError, type UserFacingRecoveryAction } from "../userFacingErrors";
 import { emitAssistantSpeechStreamEvent } from "../voice/streaming/assistantSpeechStream";
 import {
   formatRecentTerminalTestResult,
   readRecentTerminalTestResult,
 } from "../terminalTestResults";
 import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel";
+import { sanitizeSensitiveValue } from "../../../api/sensitiveData";
 import {
   appendDebugLog,
   appendStructuredActivityLog,
@@ -73,6 +76,7 @@ export interface DesktopChatAdapter {
   clearRuntimeMode: () => void;
   clearCommandAttachments: () => void;
   removeCommandAttachment: (index: number) => void;
+  dismissRecoveryActions: (messageId: string) => void;
   setInput: (value: string) => void;
   submit: (
     attachments?: ChatAttachment[],
@@ -104,6 +108,7 @@ export function useDesktopChatAdapter({
   threadSnapshot,
   workspaceInstructions,
   workspaceId,
+  workspaceName,
   workspacePath,
 }: {
   availableAgents?: DesktopAgent[];
@@ -121,11 +126,13 @@ export function useDesktopChatAdapter({
   threadSnapshot?: ChatThreadSnapshot | null;
   workspaceInstructions?: WorkspaceInstructionSummary[];
   workspaceId?: string;
+  workspaceName?: string;
   workspacePath?: string;
 }): DesktopChatAdapter {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<UiMessage[]>([createWelcomeMessage(language, [])]);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
+  const activeRequestIdRef = useRef<string | null>(null);
   const [currentRuntimeMode, setCurrentRuntimeMode] = useState<ChatRuntimeMode | null>(null);
   const [commandAttachments, setCommandAttachments] = useState<ChatAttachment[]>([]);
   const [customCommands, setCustomCommands] = useState<DesktopCustomCommand[]>([]);
@@ -310,6 +317,10 @@ export function useDesktopChatAdapter({
 
   useEffect(() => {
     let cancelled = false;
+    if (!canChat) {
+      teamMemoryRef.current = [];
+      return () => { cancelled = true; };
+    }
     desktopApi.listTeamMemory({ limit: 20 }).then((entries) => {
       if (cancelled) return;
       teamMemoryRef.current = entries;
@@ -318,7 +329,7 @@ export function useDesktopChatAdapter({
       teamMemoryRef.current = [];
     });
     return () => { cancelled = true; };
-  }, [threadId, workspacePath]);
+  }, [canChat, threadId, workspacePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -399,8 +410,21 @@ export function useDesktopChatAdapter({
     attachments: ChatAttachment[] = [],
     options?: ChatSubmitOptions,
   ): Promise<boolean> {
-    const text = input.trim();
-    if (!text || activeRequestId) return false;
+    const skillName = options?.skillName?.trim();
+    const skillPrefix = skillName
+      ? languageRef.current === "zh"
+        ? `用 ${skillName} `
+        : `Use ${skillName} skill to `
+      : "";
+    const rawInput = input.trim();
+    const alreadyPrefixed = Boolean(
+      skillName &&
+        (languageRef.current === "zh"
+          ? new RegExp(`^用\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(rawInput)
+          : new RegExp(`^Use\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+skill\\s+to\\b`, "i").test(rawInput)),
+    );
+    const text = (skillPrefix && !alreadyPrefixed ? `${skillPrefix}${rawInput}` : rawInput).trim();
+    if (!text) return false;
 
     const materialPaths = [...new Set(attachments
       .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
@@ -408,7 +432,7 @@ export function useDesktopChatAdapter({
     if (materialPaths.length > 0 && isMaterialInventoryIntent(text)) {
       try {
         const analysis = await desktopApi.analyzeMaterialRoles({ paths: materialPaths });
-        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current));
+        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current), attachments);
         setInput("");
         return true;
       } catch {
@@ -418,7 +442,7 @@ export function useDesktopChatAdapter({
     if (materialPaths.length > 0 && isNaturalMaterialQueryIntent(text)) {
       try {
         const result = await desktopApi.queryMaterials({ paths: materialPaths, question: text });
-        publishLocalAssistantResult(text, formatMaterialQueryAnswer(result, languageRef.current));
+        publishLocalAssistantResult(text, formatMaterialQueryAnswer(result, languageRef.current), attachments);
         setInput("");
         return true;
       } catch {
@@ -520,9 +544,11 @@ export function useDesktopChatAdapter({
       id: crypto.randomUUID(),
       role: "user",
       content: text,
+      ...(attachments.length ? { attachments } : {}),
     };
     const assistantId = crypto.randomUUID();
     const requestId = crypto.randomUUID();
+    activeRequestIdRef.current = requestId;
     const nextMessages: UiMessage[] = [
       ...messages.filter((message) => message.id !== "welcome"),
       userMessage,
@@ -549,11 +575,14 @@ export function useDesktopChatAdapter({
         sessionId: threadIdRef.current,
         runId: requestId,
         workspaceId,
+        workspaceName,
         workspacePath,
         attachments,
         model: options?.model?.trim() || undefined,
         metadata: {
           selected_agent_id: options?.agentId?.trim() || undefined,
+          goal_confirmation_required: options?.agentId?.trim() === "my-drsai"
+            && options.goalConfirmationRequired === true,
           workspace_instructions: workspaceInstructions || [],
           selected_agent: options?.agentName?.trim() || undefined,
           thinking_effort: options?.thinkingEffort,
@@ -567,7 +596,7 @@ export function useDesktopChatAdapter({
         },
         messages: buildRequestMessages(
           [...messages, userMessage]
-            .filter((message) => !message.error && message.content.trim().length > 0)
+            .filter((message) => message.id !== "welcome" && !message.error && message.content.trim().length > 0)
             .map(({ role, content }) => ({ role, content })),
           workspaceInstructions,
           projectMemoryRef.current,
@@ -583,10 +612,11 @@ export function useDesktopChatAdapter({
         : languageRef.current === "zh" ? "聊天未能启动。" : "Chat failed to start.";
       appendDebugLog(
         "error",
-        `${formatAssistantError(message, false, languageRef.current)}\n\n${message}`,
+        describeUserFacingError(error, languageRef.current).diagnosticCode,
         "chat",
       );
       setActiveRequestId(null);
+      activeRequestIdRef.current = null;
       delete streamingAssistantByRequest.current[requestId];
       setMessages((current) => current.filter((item) => item.id !== assistantId));
       setInput(text);
@@ -613,6 +643,7 @@ export function useDesktopChatAdapter({
         })),
       ));
       setActiveRequestId((current) => current === requestId ? null : current);
+      activeRequestIdRef.current = null;
     } catch (error) {
       appendDebugLog(
         "error",
@@ -638,20 +669,40 @@ export function useDesktopChatAdapter({
   function applyChatEvent(event: ChatEvent): void {
     if (event.sessionId && event.sessionId !== threadIdRef.current) return;
     if (!acceptChatEventSequence(lastSequenceByRequest.current, event.requestId, event.seq)) return;
+    event = sanitizeSensitiveValue(event);
     const recoveryTimer = recoveryTimersRef.current[event.requestId];
     if (recoveryTimer !== undefined) {
       window.clearTimeout(recoveryTimer);
       delete recoveryTimersRef.current[event.requestId];
     }
     if (event.type === "start") {
-      touchStreamingAssistant(event.requestId);
+      touchStreamingAssistant(event.requestId, "feedback");
+      if (event.runId) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            runtimeRunId: event.runId,
+          })),
+        ));
+      }
       setActiveRequestId(event.requestId);
       return;
     }
     if (event.type === "structured" && event.structuredEvent) {
+      if (event.runId) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            runtimeRunId: event.runId,
+          })),
+        ));
+      }
       structuredRequests.current.add(event.requestId);
       delete pendingDeltasByRequest.current[event.requestId];
       const structuredEvent = event.structuredEvent;
+      if (structuredEvent.type === "part.delta") touchStreamingAssistant(event.requestId, "delta");
       const recoveryTimer = recoveryTimersRef.current[event.requestId];
       if (recoveryTimer !== undefined) {
         window.clearTimeout(recoveryTimer);
@@ -678,9 +729,14 @@ export function useDesktopChatAdapter({
       delete pendingStructuredEventsByRequest.current[event.requestId];
       applyStructuredEventBatch(event.requestId, [...pendingStructuredEvents, structuredEvent]);
       if (structuredEvent.type === "turn.error") {
+        const friendly = describeUserFacingError({
+          code: structuredEvent.code ?? "backend_fault",
+          retryable: false,
+          diagnostic_reference: structuredEvent.debugRef,
+        }, languageRef.current);
         appendDebugLog(
           "error",
-          `${formatAssistantError(structuredEvent.message, false, languageRef.current)}\n\n${structuredEvent.message}`,
+          `${friendly.title} ${friendly.action}\n${friendly.diagnosticCode}`,
           "chat",
         );
       }
@@ -689,6 +745,7 @@ export function useDesktopChatAdapter({
         structuredEvent.type === "turn.cancelled" ||
         structuredEvent.type === "turn.error"
       ) {
+        if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
         emitAssistantSpeechStreamEvent({
           type: structuredEvent.type === "turn.completed" ? "done" : structuredEvent.type === "turn.cancelled" ? "aborted" : "error",
           requestId: event.requestId,
@@ -697,8 +754,16 @@ export function useDesktopChatAdapter({
         setActiveRequestId((current) => current === event.requestId ? null : current);
         if (!completedStructuredRequests.current.has(event.requestId)) {
           completedStructuredRequests.current.add(event.requestId);
+          if (completedStructuredRequests.current.size > 128) {
+            const oldest = completedStructuredRequests.current.values().next().value;
+            if (oldest) completedStructuredRequests.current.delete(oldest);
+          }
           onChatComplete();
         }
+        structuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
+        delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
       }
       return;
     }
@@ -733,9 +798,10 @@ export function useDesktopChatAdapter({
     }
     if (
       structuredRequests.current.has(event.requestId) &&
-      (event.type === "chunk" || event.type === "reasoning" || event.type === "status" || event.type === "tool_timeline")
+      (event.type === "chunk" || event.type === "reasoning" || event.type === "status")
     ) return;
     if (event.type === "chunk") {
+      touchStreamingAssistant(event.requestId, "delta");
       emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: event.content ?? "", at: Date.now() });
       queueAssistantDelta(event.requestId, "text", event.content ?? "");
       return;
@@ -756,6 +822,7 @@ export function useDesktopChatAdapter({
         formatToolTimelineDebugLog(toolTimeline),
         "chat",
       );
+      appendStructuredActivityLog(createStructuredToolActivity(event.requestId, toolTimeline));
       setMessages((current) =>
         publishAndReturn(
           appendAssistantToolTimeline(
@@ -774,9 +841,13 @@ export function useDesktopChatAdapter({
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             inputRequest: {
-              requestId: event.requestId,
+              requestId: event.inputRequestId || event.requestId,
               prompt: event.prompt || "Input required",
               inputType: event.inputType || "text_input",
+              options: event.inputOptions,
+              defaultValue: event.inputDefault,
+              allowCustom: event.inputAllowCustom,
+              timeoutAt: event.inputTimeoutAt,
             },
           })),
         ),
@@ -784,6 +855,11 @@ export function useDesktopChatAdapter({
       return;
     }
     if (event.type === "done" || event.type === "aborted") {
+      if (completedStructuredRequests.current.delete(event.requestId)) {
+        delete lastSequenceByRequest.current[event.requestId];
+        return;
+      }
+      if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
       emitAssistantSpeechStreamEvent({ type: event.type, requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
       if (structuredRequests.current.has(event.requestId)) {
@@ -793,6 +869,7 @@ export function useDesktopChatAdapter({
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             streaming: false,
+            inputRequest: undefined,
             structuredTurn: finalizeStructuredTurn(
               message.structuredTurn,
               message.id,
@@ -816,6 +893,7 @@ export function useDesktopChatAdapter({
           updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
             ...message,
             streaming: false,
+            inputRequest: undefined,
             structuredTurn: finalizeStructuredTurn(
               message.structuredTurn,
               message.id,
@@ -832,9 +910,26 @@ export function useDesktopChatAdapter({
       return;
     }
     if (event.type === "error") {
+      if (completedStructuredRequests.current.delete(event.requestId)) {
+        delete lastSequenceByRequest.current[event.requestId];
+        return;
+      }
+      if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
       emitAssistantSpeechStreamEvent({ type: "error", requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
+      const rawError = event.errorEnvelope ?? event.failureRecovery ?? { code: "unexpected_error", retryable: true };
+      const friendlyError = describeUserFacingError(rawError, languageRef.current);
+      const runtimeVisibleError = `${friendlyError.title} ${friendlyError.action}`;
       if (structuredRequests.current.has(event.requestId)) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) =>
+          publishAndReturn(settleAssistantAfterHiddenError(
+            current,
+            assistantId,
+            runtimeVisibleError,
+            friendlyError.actions,
+          )),
+        );
         structuredRequests.current.delete(event.requestId);
         completedStructuredRequests.current.delete(event.requestId);
         delete streamingAssistantByRequest.current[event.requestId];
@@ -844,16 +939,18 @@ export function useDesktopChatAdapter({
         return;
       }
       const assistantId = streamingAssistantByRequest.current[event.requestId];
-      const userFacingError = event.failureRecovery?.message
-        || event.error
-        || (languageRef.current === "zh" ? "聊天失败。" : "Chat failed.");
       appendDebugLog(
         "error",
-        `${formatAssistantError(userFacingError, false, languageRef.current)}\n\n${userFacingError}`,
+        `${runtimeVisibleError}\n${friendlyError.diagnosticCode}`,
         "chat",
       );
       setMessages((current) =>
-        publishAndReturn(settleAssistantAfterHiddenError(current, assistantId)),
+        publishAndReturn(settleAssistantAfterHiddenError(
+          current,
+          assistantId,
+          runtimeVisibleError,
+          friendlyError.actions,
+        )),
       );
       delete streamingAssistantByRequest.current[event.requestId];
       delete lastSequenceByRequest.current[event.requestId];
@@ -890,12 +987,17 @@ export function useDesktopChatAdapter({
     });
   }
 
-  function touchStreamingAssistant(requestId: string): void {
+  function touchStreamingAssistant(requestId: string, metric?: "feedback" | "delta"): void {
     const assistantId = streamingAssistantByRequest.current[requestId];
     const timestamp = Date.now();
     setMessages((current) =>
       current.map((message) =>
-        message.id === assistantId ? { ...message, lastEventAt: timestamp } : message,
+        message.id === assistantId ? {
+          ...message,
+          lastEventAt: timestamp,
+          ...(metric === "feedback" && !message.firstFeedbackAt ? { firstFeedbackAt: timestamp } : {}),
+          ...(metric === "delta" && !message.firstDeltaAt ? { firstDeltaAt: timestamp } : {}),
+        } : message,
       ),
     );
   }
@@ -914,20 +1016,26 @@ export function useDesktopChatAdapter({
     appliedSnapshotUpdatedAtRef.current = updatedAt;
     onThreadUpdated?.({
       threadId: threadIdRef.current,
-      title: firstUser?.content.slice(0, 48) || (languageRef.current === "zh" ? "新会话" : "New chat"),
+      title: firstUser?.content.replace(/[\r\n]+/g, " ").trim().slice(0, 48)
+        || (languageRef.current === "zh" ? "新会话" : "New chat"),
       messages: nextMessages,
       updatedAt,
       messageCount: nonWelcome.length,
     });
   }
 
-  function publishLocalAssistantResult(userText: string, assistantText: string): void {
+  function publishLocalAssistantResult(
+    userText: string,
+    assistantText: string,
+    attachments: ChatAttachment[] = [],
+  ): void {
     const commandMessages: UiMessage[] = [
       ...messages.filter((message) => message.id !== "welcome"),
       {
         id: crypto.randomUUID(),
         role: "user",
         content: userText,
+        ...(attachments.length ? { attachments } : {}),
       },
       {
         id: crypto.randomUUID(),
@@ -954,9 +1062,10 @@ export function useDesktopChatAdapter({
       return;
     }
     if (action.type === "open-view") {
-      if (action.viewId === "skills_square") {
-        onOpenSkillsSquare?.(action.target);
-      }
+      // Temporarily hide Skills management entry — keep for later reuse.
+      // if (action.viewId === "skills_square") {
+      //   onOpenSkillsSquare?.(action.target);
+      // }
       return;
     }
     if (action.type === "set-input") {
@@ -1645,6 +1754,12 @@ export function useDesktopChatAdapter({
     return entries;
   }
 
+  function dismissRecoveryActions(messageId: string): void {
+    setMessages((current) => current.map((message) =>
+      message.id === messageId ? { ...message, recoveryActions: undefined } : message,
+    ));
+  }
+
   return {
     activeRequestId,
     commandAttachments,
@@ -1654,6 +1769,7 @@ export function useDesktopChatAdapter({
     clearCommandAttachments,
     clearRuntimeMode,
     removeCommandAttachment,
+    dismissRecoveryActions,
     setInput,
     submit,
     abort,
@@ -2316,7 +2432,7 @@ function createWelcomeMessage(language: "en" | "zh", preferences: DesktopUserPre
 }
 
 function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
-  return messages.map((message) => {
+  const hydrated = messages.map((message) => {
     if (message.role !== "assistant") return message;
     if (message.structuredTurn) return sanitizeStructuredAssistantMessage(message);
     return sanitizeStructuredAssistantMessage({
@@ -2333,6 +2449,115 @@ function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
       }),
     });
   });
+  return consolidateHydratedAssistantRuns(hydrated);
+}
+
+function consolidateHydratedAssistantRuns(messages: UiMessage[]): UiMessage[] {
+  const consolidated: UiMessage[] = [];
+  const assistantIndexByRun = new Map<string, number>();
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      assistantIndexByRun.clear();
+      consolidated.push(message);
+      continue;
+    }
+    const runId = readPersistedRunId(message.id);
+    if (!runId) {
+      consolidated.push(message);
+      continue;
+    }
+    const existingIndex = assistantIndexByRun.get(runId);
+    if (existingIndex === undefined) {
+      assistantIndexByRun.set(runId, consolidated.length);
+      consolidated.push(message);
+      continue;
+    }
+    consolidated[existingIndex] = mergeHydratedAssistantMessages(consolidated[existingIndex], message);
+  }
+  return consolidated;
+}
+
+function readPersistedRunId(messageId: string): string | undefined {
+  return messageId.match(/(?:^|:)run-[A-Za-z0-9-]{8,}(?=:|$)/)?.[0].replace(/^:/, "");
+}
+
+function mergeHydratedAssistantMessages(primary: UiMessage, secondary: UiMessage): UiMessage {
+  const primaryTurn = primary.structuredTurn;
+  const secondaryTurn = secondary.structuredTurn;
+  if (!primaryTurn || !secondaryTurn) return primary;
+  const partIds = new Set(primaryTurn.parts.map((part) => part.id));
+  const activityIds = new Set(primaryTurn.activities.map((activity) => activity.id));
+  const parts = [
+    ...primaryTurn.parts,
+    ...secondaryTurn.parts.filter((part) => !partIds.has(part.id)),
+  ];
+  const activities = [
+    ...primaryTurn.activities,
+    ...secondaryTurn.activities
+      .filter((activity) => !activityIds.has(activity.id))
+      .map((activity) => ({ ...activity, turnId: primaryTurn.turnId })),
+  ];
+  const structuredTurn: StructuredTurnState = {
+    ...primaryTurn,
+    parts,
+    activities,
+    lastSequence: Math.max(primaryTurn.lastSequence, secondaryTurn.lastSequence),
+    seenDedupeKeys: [...new Set([...primaryTurn.seenDedupeKeys, ...secondaryTurn.seenDedupeKeys])],
+    protocolIssues: [...primaryTurn.protocolIssues, ...secondaryTurn.protocolIssues],
+  };
+  const secondaryContent = secondary.content.trim();
+  return sanitizeStructuredAssistantMessage({
+    ...primary,
+    content: secondaryContent && !primary.content.includes(secondaryContent)
+      ? [primary.content, secondary.content].filter(Boolean).join("\n\n")
+      : primary.content,
+    reasoningContent: [primary.reasoningContent, secondary.reasoningContent].filter(Boolean).join(""),
+    structuredTurn,
+    lastEventAt: Math.max(primary.lastEventAt ?? 0, secondary.lastEventAt ?? 0) || undefined,
+  });
+}
+
+function coalesceUiAssistantMessages(messages: UiMessage[]): UiMessage[] {
+  const merged: UiMessage[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      merged.push(message);
+      continue;
+    }
+    const body = [message.content, message.reasoningContent, message.statusContent]
+      .map((value) => value?.trim() ?? "")
+      .filter(Boolean)
+      .join("\n");
+    if (!body && !message.streaming && !message.error && !message.structuredTurn) continue;
+    const previous = merged[merged.length - 1];
+    const previousThin = previous?.role === "assistant" && !previous.content.trim();
+    const currentThin = !message.content.trim();
+    if (previous?.role === "assistant" && (previousThin || currentThin)) {
+      const preferCurrent = !previous.content.trim() && Boolean(message.content.trim());
+      merged[merged.length - 1] = {
+        ...previous,
+        id: preferCurrent ? message.id : previous.id,
+        content: previous.content.trim() || message.content,
+        reasoningContent: [previous.reasoningContent, message.reasoningContent]
+          .map((value) => value?.trim() ?? "")
+          .filter(Boolean)
+          .join("\n\n") || undefined,
+        statusContent: [previous.statusContent, message.statusContent]
+          .map((value) => value?.trim() ?? "")
+          .filter(Boolean)
+          .join("\n\n") || undefined,
+        streaming: Boolean(previous.streaming || message.streaming),
+        error: Boolean(previous.error || message.error),
+        attachments: previous.attachments?.length ? previous.attachments : message.attachments,
+        structuredTurn: previous.structuredTurn ?? message.structuredTurn,
+        startedAt: Math.min(previous.startedAt ?? Number.MAX_SAFE_INTEGER, message.startedAt ?? Number.MAX_SAFE_INTEGER),
+        lastEventAt: Math.max(previous.lastEventAt ?? 0, message.lastEventAt ?? 0),
+      };
+      continue;
+    }
+    merged.push(message);
+  }
+  return merged;
 }
 
 function appendAssistantChunk(
@@ -2422,19 +2647,31 @@ function appendStructuredActivity(
   if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
   return applyLocalStructuredEvent(state, {
     type: "activity.updated",
-    activity: {
-      id: event.id,
-      turnId,
-      timestamp: event.timestamp ?? new Date().toISOString(),
-      source: "desktop-sse",
-      status: event.status === "failed" ? "error" : event.status === "completed" ? "completed" : "running",
-      title: event.title,
-      kind: "tool",
-      toolName: event.toolName ?? event.title,
-      callId: event.id,
-      ...(event.content ? { output: event.content } : {}),
-    },
+    activity: createStructuredToolActivity(state.turnId, event),
   });
+}
+
+function createStructuredToolActivity(
+  turnId: string,
+  event: NonNullable<ChatEvent["toolTimeline"]>,
+): Extract<StructuredActivityEvent, { kind: "tool" }> {
+  return {
+    id: event.id,
+    ...(event.oaepItemId ? { oaepItemId: event.oaepItemId } : {}),
+    turnId,
+    timestamp: event.timestamp?.trim() || new Date().toISOString(),
+    source: "desktop-sse",
+    status: event.status === "failed" ? "error" : event.status === "completed" ? "completed" : "running",
+    title: event.title,
+    kind: "tool",
+    toolName: event.toolName ?? event.title,
+    callId: event.id,
+    ...(event.content
+      ? event.kind === "tool_call"
+        ? { input: event.content }
+        : { output: event.content }
+      : {}),
+  };
 }
 
 function appendConnectionActivity(
@@ -2509,15 +2746,14 @@ function applyStructuredEventToMessage(
     reasoningContent,
     streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
     error: structuredTurn.status === "error" || message.error,
-    ...(activeInteraction
+    inputRequest: activeInteraction
       ? {
-          inputRequest: {
-            requestId: activeInteraction.requestId,
-            prompt: activeInteraction.prompt,
-            inputType: activeInteraction.interactionType === "approval" ? "approval" as const : "text_input" as const,
-          },
+          requestId: activeInteraction.requestId,
+          prompt: activeInteraction.prompt,
+          inputType: activeInteraction.interactionType,
+          options: activeInteraction.options,
         }
-      : {}),
+      : undefined,
     lastEventAt: Date.now(),
   });
 }
@@ -2597,62 +2833,6 @@ function getDebugLevel(level: string | undefined): "log" | "info" | "warn" | "er
   return "info";
 }
 
-function formatAssistantError(error: string, developerMode: boolean, language: "en" | "zh"): string {
-  const raw = error.trim();
-  if (!raw || developerMode) return raw;
-
-  if (/HepAI session expired|token_expired|session expired/i.test(raw)) {
-    return language === "zh" ? "HepAI 登录已过期，请重新登录。" : "Your HepAI session expired. Sign in again.";
-  }
-  if (/invalid_token|authentication context is not valid/i.test(raw)) {
-    return language === "zh" ? "HepAI 登录凭据无效，请退出后重新登录。" : "Your HepAI credentials are invalid. Sign out and sign in again.";
-  }
-  if (/subject_mismatch/i.test(raw)) {
-    return language === "zh" ? "HepAI 登录身份不一致，请退出后重新登录。" : "Your HepAI identity does not match this session. Sign out and sign in again.";
-  }
-  if (/agent_credentials_unavailable/i.test(raw)) {
-    return language === "zh"
-      ? "当前 HepAI 账号尚未配置可用的模型访问凭据，请联系平台管理员。"
-      : "No model access credential is configured for this HepAI account. Contact the platform administrator.";
-  }
-  if (/agent_credentials_invalid/i.test(raw)) {
-    return language === "zh"
-      ? "当前 HepAI 账号的模型访问凭据已失效，请在 HepAI 平台更新或联系管理员。"
-      : "The model access credential for this HepAI account is invalid. Update it in HepAI or contact the administrator.";
-  }
-  if (/unsupported_issuer|invalid_model_base_url/i.test(raw)) {
-    return language === "zh" ? "当前 HepAI 登录环境尚未配置对应的模型服务。" : "No model service is configured for this HepAI environment.";
-  }
-  if (/account cannot use this model|model_forbidden/i.test(raw)) {
-    return language === "zh" ? "当前账号没有使用该模型的权限。" : "Your account cannot use this model.";
-  }
-  if (/quota or concurrency limit|quota_exceeded|rate limit/i.test(raw)) {
-    return language === "zh" ? "模型额度或并发上限已达到，请稍后重试。" : "The model quota or concurrency limit was reached.";
-  }
-  if (/selected model is unavailable|model_not_found/i.test(raw)) {
-    return language === "zh" ? "所选模型当前不可用，请更换模型。" : "The selected model is unavailable. Choose another model.";
-  }
-  if (/model service is temporarily unavailable|upstream_unavailable/i.test(raw)) {
-    return language === "zh" ? "模型服务暂时不可用，请稍后重试。" : "The model service is temporarily unavailable.";
-  }
-  if (/No candidate worker|candidate worker/i.test(raw)) {
-    return language === "zh"
-      ? "模型服务当前不可用：没有找到可用的模型 worker。请稍后重试或切换模型。"
-      : "The model service is unavailable: no model worker was found. Try again later or switch models.";
-  }
-  if (/timed out|timeout/i.test(raw)) {
-    return language === "zh"
-      ? "模型响应超时。请稍后重试。"
-      : "The model response timed out. Please try again later.";
-  }
-  if (/HTTP\s*5\d\d|InternalServerError|INTERNAL_ERROR/i.test(raw)) {
-    return language === "zh"
-      ? "模型服务返回内部错误。请稍后重试或切换模型。"
-      : "The model service returned an internal error. Try again later or switch models.";
-  }
-  return language === "zh" ? "聊天失败。请稍后重试。" : "Chat failed. Please try again later.";
-}
-
 function updateAssistantByIdOrLatestStreaming(
   messages: UiMessage[],
   assistantId: string | undefined,
@@ -2668,12 +2848,29 @@ function updateAssistantByIdOrLatestStreaming(
 function settleAssistantAfterHiddenError(
   messages: UiMessage[],
   assistantId: string | undefined,
+  visibleError?: string,
+  recoveryActions?: UserFacingRecoveryAction[],
 ): UiMessage[] {
   const next = [...messages];
   const index = findAssistantIndex(next, assistantId);
   if (index === -1) return next;
   const message = next[index];
   if (!message.content.trim()) {
+    if (visibleError?.trim()) {
+      next[index] = {
+        ...message,
+        content: visibleError,
+        replyFailed: false,
+        streaming: false,
+        error: true,
+        recoveryActions,
+        structuredTurn: message.structuredTurn
+          ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
+          : undefined,
+        lastEventAt: Date.now(),
+      };
+      return next;
+    }
     next[index] = {
       ...message,
       replyFailed: true,
@@ -2689,6 +2886,7 @@ function settleAssistantAfterHiddenError(
     ...message,
     streaming: false,
     error: false,
+    recoveryActions,
     structuredTurn: message.structuredTurn
       ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
       : undefined,

@@ -11,7 +11,7 @@ export function DirectoryContextPreview({
   files: WorkspaceFileNode[];
   language: AppLanguage;
   node: WorkspaceFileNode;
-  onAttach: () => void;
+  onAttach?: () => void;
 }): React.JSX.Element {
   const zh = language === "zh";
   const totalSize = files.reduce((sum, file) => sum + (file.size ?? 0), 0);
@@ -23,10 +23,12 @@ export function DirectoryContextPreview({
           <strong>{node.relativePath || node.name}</strong>
           <span>{files.length} files · {formatBytes(totalSize)}</span>
         </div>
-        <button type="button" onClick={onAttach}>
-          <ListPlus size={14} />
-          {zh ? "加入目录" : "Attach folder"}
-        </button>
+        {onAttach ? (
+          <button type="button" onClick={onAttach}>
+            <ListPlus size={14} />
+            {zh ? "加入目录" : "Attach folder"}
+          </button>
+        ) : null}
       </header>
       <p>
         {zh

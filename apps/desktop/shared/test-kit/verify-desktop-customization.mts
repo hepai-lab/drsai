@@ -11,7 +11,7 @@ const server = createServer((request, response) => {
     gatewayWrites.push({ path: request.url || "", body }); response.setHeader("Content-Type", "application/json");
     if (request.url === "/health") response.end(JSON.stringify({ status: "ok" }));
     else if (request.url === "/v1/models") response.end(JSON.stringify({ object: "list", data: [{ id: "available-model", name: "Available Model" }] }));
-    else if (request.url === "/v1/config/cli") response.end(JSON.stringify({ path: "/tmp/config.json", config: { plan_mode: true } }));
+    else if (request.url === "/v1/config/cli") response.end(JSON.stringify({ path: "/tmp/config.json", config: { user_id: "anonymous", plan_mode: true } }));
     else if (request.url === "/v1/models/config") response.end(JSON.stringify({ default_alias: "configured", models: [{ alias: "configured", model: "configured-model", token_limit: 1000 }] }));
     else if (request.method === "PUT" && request.url?.startsWith("/v1/config/cli/")) response.end("{}");
     else { response.statusCode = 404; response.end(JSON.stringify({ detail: "missing" })); }
@@ -65,13 +65,13 @@ try {
   assert.deepEqual(validateMyDrSaiConfigUpdate({ plan_mode: true, workspace_enabled: false }), { plan_mode: true, workspace_enabled: false });
   assert.throws(() => validateMyDrSaiConfigUpdate({}), /empty/i);
   assert.throws(() => validateMyDrSaiConfigUpdate({ unknown: true }), /non-writable/i);
-  assert.throws(() => validateMyDrSaiConfigUpdate({ user_id: "bad\nvalue" }), /user_id is invalid/i);
+  assert.throws(() => validateMyDrSaiConfigUpdate({ user_id: "forged-user" }), /non-writable/i);
   assert.throws(() => validateMyDrSaiConfigUpdate({ dangerous_allowed: "yes" }), /dangerous_allowed is invalid/i);
-  const config = await getMyDrSaiConfig(); assert.equal(config.ready, true); assert.equal(config.config.plan_mode, true); assert.equal(config.models[0].alias, "configured");
+  const config = await getMyDrSaiConfig(); assert.equal(config.ready, true); assert.equal(config.config.plan_mode, true); assert.equal(config.models[0].alias, "configured"); assert.equal("user_id" in config.config, false);
   const updated = await updateMyDrSaiConfig({ plan_mode: false, dangerous_allowed: true }); assert.equal(updated.ready, true);
   assert(gatewayWrites.some((item) => item.path === "/v1/config/cli/plan_mode" && item.body === JSON.stringify({ value: false })));
   assert(gatewayWrites.some((item) => item.path === "/v1/config/cli/dangerous_allowed" && item.body === JSON.stringify({ value: true })));
-  console.log("Desktop preferences, custom commands, legacy migration, concurrency and real fake-Gateway My DrSai config passed.");
+  console.log("Desktop preferences, custom commands, legacy migration, concurrency and real fake-Gateway OpenDrSai config passed.");
 } finally {
   await new Promise<void>((resolve) => {
     server.close(() => resolve());

@@ -16,9 +16,35 @@ async function importTypeScript(relativePath) {
 
 const {
   createPublicAgentCachePayload,
+  createPlatformCatalogSubjectKey,
+  getOrCreateCatalogFlight,
+  markCachedPlatformAgents,
   mergeAndSortAgents,
   parsePublicAgentCachePayload,
 } = await importTypeScript("../shared/main/agentCatalog.ts");
+
+const subjectA = createPlatformCatalogSubjectKey("development", "platform", "oidc-subject-a");
+const subjectB = createPlatformCatalogSubjectKey("development", "platform", "oidc-subject-b");
+assert.notEqual(subjectA, subjectB, "different OIDC subjects must never share a Desktop catalog cache namespace");
+assert(!subjectA.includes("oidc-subject-a"), "raw OIDC subjects must not appear in cache filenames");
+
+{
+  const flights = new Map();
+  let loads = 0;
+  let resolveLoad;
+  const load = () => {
+    loads += 1;
+    return new Promise((resolve) => { resolveLoad = resolve; });
+  };
+  const first = getOrCreateCatalogFlight(flights, "subject-a", load);
+  const second = getOrCreateCatalogFlight(flights, "subject-a", load);
+  assert.equal(first, second, "concurrent catalog reads for one subject must share one flight");
+  assert.equal(loads, 1);
+  resolveLoad(["fresh"]);
+  assert.deepEqual(await first, ["fresh"]);
+  await Promise.resolve();
+  assert.equal(flights.size, 0, "settled catalog flights must be released");
+}
 
 const local = {
   id: "my-drsai",
@@ -60,6 +86,11 @@ const unavailable = {
   status: "unreachable",
   available: false,
 };
+
+const cachedAgents = markCachedPlatformAgents([defaultPlatform]);
+assert.equal(cachedAgents[0].catalogState, "cached");
+assert.equal(cachedAgents[0].available, false, "cached discovery must not claim current availability");
+assert.equal(cachedAgents[0].status, "unreachable");
 
 const merged = mergeAndSortAgents(
   [featuredPlatform, unavailable],
@@ -140,7 +171,10 @@ const agentSource = readFileSync(join(root, "../shared/main/agents.ts"), "utf8")
 const preloadSource = readFileSync(join(root, "../shared/main/preload.ts"), "utf8");
 assert(agentSource.includes("platformExecutionDescriptors"), "Main-private execution descriptor map is missing");
 assert(agentSource.includes("PLATFORM_CACHE_TTL_MS"), "catalog cache TTL is missing");
+assert(agentSource.includes("PLATFORM_MEMORY_TTL_MS") && agentSource.includes("getOrCreateCatalogFlight"), "platform memory TTL or single-flight is missing");
+assert(agentSource.includes("platformCachePath(subjectKey)") && agentSource.includes("createPlatformCatalogSubjectKey"), "platform cache is not scoped to the verified OIDC subject");
 assert(agentSource.includes("createPublicAgentCachePayload"), "public-only cache serializer is not used");
+assert(agentSource.includes("const gateway = getGatewaySnapshot()") && agentSource.includes("if (!gateway.ready) return agents;"), "catalog discovery may still start a cold local Runtime");
 assert(!agentSource.includes("listRemoteAgents"), "Agent Square must not merge legacy local remote-agent files");
 assert(!agentSource.includes("remote_agents.json"), "Agent Square must source non-local agents exclusively from HAI");
 assert(preloadSource.includes('ipcRenderer.invoke("desktop:list-agents", options)'), "refresh options do not cross IPC");

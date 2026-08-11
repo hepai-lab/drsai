@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F06",
+  "generated_at": "2026-08-05T14:15:40.478468+00:00",
+  "passed": true,
+  "gates": {
+    "encrypted_account_scoped_credentials_stay_in_kotlin": true,
+    "minimum_scope_defaults_exclude_external_write": true,
+    "expiry_and_revocation_disable_token_immediately": true,
+    "tool_registry_is_account_scoped_and_dynamically_available": true,
+    "mcp_discovery_and_each_call_reauthorize_scope": true,
+    "disconnect_unregisters_tools_and_closes_transport": true,
+    "product_supports_restore_expiry_write_opt_in_and_revoke": true,
+    "credentials_absent_from_model_oaep_and_test_outputs": true,
+    "cross_account_visibility_and_execution_are_zero": true,
+    "scope_expiry_revoke_and_encryption_tests_exist": true,
+    "jvm_connector_suites_green": true,
+    "api35_encrypted_lifecycle_suite_green": true
+  },
+  "unit_suites": {
+    "AndroidMcpClientTest": {
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "name": "ai.drsai.remote.AndroidMcpClientTest",
+      "sha256": "f461dc7eb3d1c8ed4951adadd7ad5bd8f9164377b5ff7d7be40f3b96c84b4bd0"
+    },
+    "ToolApprovalPolicyTest": {
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "name": "ai.drsai.remote.ToolApprovalPolicyTest",
+      "sha256": "de2f8f08be8bcecf95cf42e054b162c67bd38c1149be1f88acb1435756039121"
+    }
+  },
+  "connected_suite": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.AndroidMcpInstrumentedTest",
+    "sha256": "8d2a20eac7f90635dbcb136147550da77fecc2e52535940bff70e9bdbb5604b4"
+  },
+  "connected_report": "docs/android/reports/evidence/p9/m07-f06-connector-lifecycle-instrumentation.xml",
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/McpSecureConfigStore.kt": "0a78cb9a35b3e30874eddf991d19cc89935e29fd331a5b4be5b868acf8a5a11e",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/AndroidMcpClient.kt": "dbea54b40a3c58da6752b3cae3d2aec76cb4cb7e7a49ab3cb50e21ee11f638d3",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt": "d6a045f9eb61a7a91704d1e288b33bddf2945d9f63c675ec53153d710d5e5b43",
+    "apps/android/app/src/main/java/ai/drsai/remote/data/Models.kt": "129c981b5bb653c61eaadc69b6d1ee18c1070cc1e0eb158a54cfdc1b8045864c",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt": "5e78c7262c9456967e5f440ecfa593499ffb0e8b2ba90f1292bd6e8716d91baa",
+    "apps/android/app/src/test/java/ai/drsai/remote/AndroidMcpClientTest.kt": "2cbca31519a816da5ea6bb28dfdff05e281b57c4834ad7545743de59d3f77784",
+    "apps/android/app/src/test/java/ai/drsai/remote/ToolApprovalPolicyTest.kt": "c8844ed063637682631df0c14ccd99df29f6d86c271c4869ca7f8b60c957cece",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/AndroidMcpInstrumentedTest.kt": "2ceece11ffac42f5bf2958820286e6af94753f27ab26988573c5765c5f77f2eb"
+  }
+}

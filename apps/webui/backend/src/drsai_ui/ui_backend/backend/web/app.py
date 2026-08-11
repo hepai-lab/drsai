@@ -4,7 +4,7 @@ import re
 import yaml
 from dotenv import load_dotenv
 
-from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, desktop_auth, docmaster, files, local_login, models, native, plans, runs, sessions, settingsroute, skills, teams, users, validation
+from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, cloud, desktop_auth, docmaster, files, local_login, models, native, plans, runs, sessions, settingsroute, skills, skills_gfs, skills_share, teams, users, validation
 load_dotenv()
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,7 +21,27 @@ from .config import settings
 from .deps import cleanup_managers, init_managers
 from .initialization import AppInitializer
 from .routes import (
+    access_compat,
+    admin_analytics,
+    cloud,
+    plans,
+    runs,
+    sessions,
+    settingsroute,
+    teams,
+    validation,
     ws,
+    agent_mode,
+    files,
+    agent_worker,
+    models,
+    local_login,
+    users,
+    skills,
+    skills_gfs,
+    skills_share,
+    docmaster,
+    auth,
 )
 from ....drsai_adapter.sso.science_user_router import router as science_user_router
 import httpx
@@ -350,9 +370,30 @@ api.include_router(
 )
 
 api.include_router(
+    skills_gfs.router,
+    prefix="/skills",
+    tags=["skills"],
+    responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    skills_share.router,
+    prefix="/skills",
+    tags=["skills"],
+    responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
     docmaster.router,
     prefix="/docmaster",
     tags=["docmaster"],
+    responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    cloud.router,
+    prefix="/cloud",
+    tags=["cloud"],
     responses={404: {"description": "Not found"}},
 )
 

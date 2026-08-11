@@ -18,6 +18,7 @@ export function recordAgentRunEvent(event: AgentRunEvent): void {
     const current = journal[event.runId]?.events ?? [];
     const previous = current[current.length - 1];
     const events = event.type === "chunk" && previous?.type === "chunk" && previous.requestId === event.requestId
+      && previous.oaepItemId === event.oaepItemId
       ? [...current.slice(0, -1), { ...previous, content: `${previous.content ?? ""}${event.content ?? ""}`.slice(-500_000) }]
       : [...current, event].slice(-MAX_EVENTS_PER_RUN);
     journal[event.runId] = { updatedAt: Date.now(), events };
@@ -29,6 +30,11 @@ export function recordAgentRunEvent(event: AgentRunEvent): void {
 export async function listRecordedAgentRunEvents(runId: string): Promise<AgentRunEvent[]> {
   await queue.catch(() => undefined);
   return [...((await readJournal())[runId]?.events ?? [])];
+}
+export async function listLegacyAgentRunJournalEntries(): Promise<Record<string, AgentRunEvent[]>> {
+  await queue.catch(() => undefined);
+  const journal = await readJournal();
+  return Object.fromEntries(Object.entries(journal).map(([runId, entry]) => [runId, [...entry.events]]));
 }
 export async function shutdownAgentRunJournal(): Promise<void> { await queue.catch(() => undefined); }
 

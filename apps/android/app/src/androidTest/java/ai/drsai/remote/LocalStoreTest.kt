@@ -17,6 +17,13 @@ import ai.drsai.remote.data.MIGRATION_3_4
 import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
+import ai.drsai.remote.data.MIGRATION_7_8
+import ai.drsai.remote.data.MIGRATION_8_9
+import ai.drsai.remote.data.MIGRATION_9_10
+import ai.drsai.remote.data.MIGRATION_10_11
+import ai.drsai.remote.data.MIGRATION_11_12
+import ai.drsai.remote.data.MIGRATION_12_13
+import ai.drsai.remote.data.MIGRATION_13_14
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
@@ -26,10 +33,17 @@ import ai.drsai.remote.remote.data.PendingRemoteApprovalEntity
 import ai.drsai.remote.remote.data.RemoteRunEntity
 import ai.drsai.remote.remote.data.RemoteWorkspaceEntity
 import ai.drsai.remote.remote.data.RemoteSessionEntity
+import ai.drsai.remote.remote.data.RemoteSessionEventEntity
+import ai.drsai.remote.remote.data.RemoteOaepEventEntity
+import ai.drsai.remote.remote.data.RemoteOaepItemEntity
+import ai.drsai.remote.remote.data.RemoteOaepRunEntity
+import ai.drsai.remote.remote.data.RemoteConversationItemEntity
 import ai.drsai.remote.remote.data.RemoteProcessRecovery
+import ai.drsai.remote.remote.data.RoomRemoteDirectoryCache
 import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
+import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.data.RelayRemoteRepository
 import ai.drsai.remote.runtime.v2.EventAppendDecision
 import ai.drsai.remote.runtime.v2.RunCommand
@@ -49,6 +63,13 @@ import ai.drsai.remote.runtime.security.ApprovalDecision
 import ai.drsai.remote.runtime.security.ApprovalDecisionResult
 import ai.drsai.remote.runtime.security.ApprovalRepository
 import ai.drsai.remote.runtime.security.CreateApprovalCommand
+import ai.drsai.remote.runtime.python.HostSideEffectAudit
+import ai.drsai.remote.runtime.python.RoomPythonSideEffectAudit
+import ai.drsai.remote.runtime.oaep.AndroidOaepOwner
+import ai.drsai.remote.runtime.oaep.AndroidOaepScope
+import ai.drsai.remote.runtime.oaep.AndroidOaepWriter
+import ai.drsai.remote.runtime.oaep.NormalizedAgentEvent
+import ai.drsai.remote.runtime.oaep.RoomAndroidOaepStore
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -118,6 +139,12 @@ class LocalStoreTest {
         assertEquals(null, store.accepted("bob", runtime, workspace))
         assertEquals(null, store.accepted("alice", RuntimeId("other-runtime"), workspace))
         assertEquals(null, store.accepted("alice", runtime, WorkspaceId("other-workspace")))
+        store.accept("bob", runtime, workspace, versions)
+        store.clearSubject("alice")
+        assertEquals(null, store.accepted("alice", runtime, workspace))
+        assertEquals(versions, store.accepted("bob", runtime, workspace))
+        store.clearRuntime("bob", runtime)
+        assertEquals(null, store.accepted("bob", runtime, workspace))
     }
 
     @Test fun remote_cache_is_account_scoped_and_logout_clear_preserves_other_account() = runBlocking {
@@ -128,6 +155,94 @@ class LocalStoreTest {
         RemoteCacheRepository(database).clearSubject("alice")
         assertTrue(dao.runtimes("alice", "ihep").isEmpty())
         assertEquals(listOf("bob"), dao.runtimes("bob", "ihep").map { it.subject })
+    }
+
+    @Test fun authoritativeEmptyDeviceCatalogPurgesHostWorkspaceAndSessionProjections() = runBlocking {
+        val dao = database.remoteDao()
+        dao.saveRuntimes(
+            listOf(
+                RemoteRuntimeEntity(
+                    "alice", "", "runtime-a", "Computer", "instance", "1.5.3",
+                    "ONLINE", "[]", 1, false,
+                )
+            )
+        )
+        dao.saveWorkspaces(
+            listOf(
+                RemoteWorkspaceEntity(
+                    "alice", "", "runtime-a", "workspace-a", "Project",
+                    1, false,
+                )
+            )
+        )
+        dao.saveSessions(
+            listOf(
+                RemoteSessionEntity(
+                    "alice", "", "runtime-a", "workspace-a", "session-a",
+                    "Conversation", "opendrsai", 1, false,
+                )
+            )
+        )
+
+        RoomRemoteDirectoryCache(database).reconcileRuntimes(
+            subject = "alice",
+            organization = "",
+            runtimes = emptyList(),
+            syncedAt = 2,
+        )
+
+        assertTrue(dao.runtimes("alice", "").isEmpty())
+        assertTrue(dao.workspaces("alice", "", "runtime-a").isEmpty())
+        assertTrue(dao.sessions("alice", "", "runtime-a", "workspace-a").isEmpty())
+    }
+
+    @Test fun forceSyncAtomicallyReplacesWorkspaceRowsAndCatalogRevision() = runBlocking {
+        val dao = database.remoteDao()
+        dao.saveRuntimes(
+            listOf(
+                RemoteRuntimeEntity(
+                    "alice", "", "runtime-a", "Computer", "instance", "1.5.3",
+                    "ONLINE", "[]", 1, false,
+                )
+            )
+        )
+        dao.saveWorkspaces(
+            listOf(
+                RemoteWorkspaceEntity(
+                    "alice", "", "runtime-a", "removed-by-sync", "Old",
+                    1, false,
+                )
+            )
+        )
+        dao.saveSessions(
+            listOf(
+                RemoteSessionEntity(
+                    "alice", "", "runtime-a", "removed-by-sync", "session-old",
+                    "Old conversation", "opendrsai", 1, false,
+                )
+            )
+        )
+
+        RoomRemoteDirectoryCache(database).replaceWorkspaces(
+            subject = "alice",
+            organization = "",
+            runtimeId = RuntimeId("runtime-a"),
+            workspaces = listOf(
+                RemoteWorkspaceRef(
+                    RuntimeId("runtime-a"),
+                    WorkspaceId("current"),
+                    "Current",
+                    revision = 7,
+                    updatedAt = "1785180000",
+                )
+            ),
+            syncedAt = 1785180000000,
+            catalogRevision = "catalog:42",
+        )
+
+        assertEquals(listOf("current"), dao.workspaces("alice", "", "runtime-a").map { it.workspaceId })
+        assertTrue(dao.sessions("alice", "", "runtime-a", "removed-by-sync").isEmpty())
+        assertEquals("catalog:42", dao.runtimes("alice", "").single().workspaceCatalogRevision)
     }
 
     @Test fun runtime_v2_journal_atomically_persists_event_and_checkpoint() = runBlocking {
@@ -342,6 +457,58 @@ class LocalStoreTest {
         assertEquals(0, dao.cursorCount("alice", "ihep"))
     }
 
+    @Test fun remote_oaep_and_session_journals_are_bounded_and_account_clear_is_complete() = runBlocking {
+        val dao = database.remoteDao()
+        repeat(5) { index ->
+            dao.insertSessionEvent(RemoteSessionEventEntity(
+                subject = "alice", organization = "ihep", runtimeId = "rt", workspaceId = "ws",
+                sessionId = "session", runId = "run", eventId = "event-s-$index",
+                sessionSequence = (index + 1).toLong(), kind = "message.delta",
+                timestamp = "2026-01-01T00:00:0${index}Z", payloadJson = "{}",
+            ))
+            dao.insertOaepEvent(RemoteOaepEventEntity(
+                "alice", "ihep", "rt", "ws", "session", "run", "item",
+                "event-o-$index", (index + 1).toLong(), "event.item.delta",
+                "2026-01-01T00:00:0${index}Z", "dedupe-$index", "{}",
+            ))
+        }
+        dao.saveOaepRuns(listOf(RemoteOaepRunEntity(
+            subject = "alice", organization = "ihep", runtimeId = "rt", workspaceId = "ws",
+            sessionId = "session", runId = "run", parentRunId = null, status = "running",
+            createdAt = "2026-01-01T00:00:00Z", updatedAt = "2026-01-01T00:00:05Z",
+            completedAt = null,
+        )))
+        dao.saveOaepItems((0 until 5).map { index ->
+            RemoteOaepItemEntity(
+                "alice", "ihep", "rt", "ws", "session", "run", "item-$index",
+                "message", "completed", index.toLong(), index.toLong(), "runtime", null,
+                null, "2026-01-01T00:00:0${index}Z", "2026-01-01T00:00:0${index}Z",
+                "{}", false,
+            )
+        } + RemoteOaepItemEntity(
+            "alice", "ihep", "rt", "ws", "session", "run", "item-running",
+            "message", "running", 6, 6, "runtime", null, null,
+            "2026-01-01T00:00:06Z", "2026-01-01T00:00:06Z", "{}", false,
+        ) + RemoteOaepItemEntity(
+            "bob", "ihep", "rt", "ws", "session", "run", "item-bob",
+            "message", "completed", 1, 1, "runtime", null, null,
+            "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "{}", false,
+        ))
+
+        val repository = RemoteCacheRepository(database)
+        repository.maintainAccount(
+            "alice", "ihep", "2025-01-01T00:00:00Z", 0, 2, maxTerminalItems = 2,
+        )
+        assertEquals(2, dao.sessionEventCount("alice", "ihep"))
+        assertEquals(2, dao.oaepEventCount("alice", "ihep"))
+        assertEquals(3, dao.oaepItemCount("alice", "ihep"))
+        assertEquals(1, dao.oaepItemCount("bob", "ihep"))
+        repository.clearAccount("alice", "ihep")
+        assertEquals(0, dao.sessionEventCount("alice", "ihep"))
+        assertEquals(0, dao.oaepEventCount("alice", "ihep"))
+        assertEquals(0, dao.oaepItemCount("alice", "ihep"))
+    }
+
     @Test fun malformed_non_authoritative_projection_is_cleared_for_only_that_account() = runBlocking {
         val dao = database.remoteDao()
         dao.saveRuntimes(listOf(
@@ -436,7 +603,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
             .allowMainThreadQueries()
             .build()
         try {
@@ -474,7 +641,7 @@ class LocalStoreTest {
             legacy.version = 3
         }
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
             .allowMainThreadQueries()
             .build()
         try {
@@ -482,6 +649,116 @@ class LocalStoreTest {
             assertEquals("hello", dao.visibleMessageSnapshot("c1").single().content)
             dao.saveAttachments(listOf(MessageAttachmentEntity("a1", "m1", "c1", null, "x.txt", "text/plain", 1, "file", null, null, "h")))
             assertEquals("x.txt", dao.attachmentSnapshot("c1").single().name)
+        } finally {
+            migrated.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test fun side_effect_audit_is_idempotent_and_queryable_by_run() = runBlocking {
+        val command = RunCommand(
+            "alice", "ihep", RuntimeBinding.AndroidLocal,
+            WorkbenchId("local"), WorkbenchId("session"), WorkbenchId("audit-run"),
+            "opendrsai", "audit-send-once", "hello",
+        )
+        RoomRunJournal(database).createIfAbsent(command)
+        val audit = RoomPythonSideEffectAudit(database)
+        listOf("intent", "execution", "receipt", "replay", "terminal").forEach { phase ->
+            audit.append(HostSideEffectAudit("audit-run", "call-1", "tool", phase, "passed"))
+        }
+        audit.append(HostSideEffectAudit("audit-run", "call-1", "tool", "receipt", "passed"))
+        val rows = database.workbenchDao().auditForRun("alice", "ihep", "android-local", "audit-run")
+        assertEquals(
+            listOf("side_effect.intent", "side_effect.execution", "side_effect.receipt", "side_effect.replay", "side_effect.terminal"),
+            rows.map { it.action },
+        )
+    }
+
+    @Test fun migration_10_to_11_preserves_v3_projection_and_adds_oaep_tables() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-v10-v11.db"
+        context.deleteDatabase(name)
+        val current = Room.databaseBuilder(context, ChatDatabase::class.java, name)
+            .allowMainThreadQueries().build()
+        current.remoteDao().saveConversationItem(RemoteConversationItemEntity(
+            "alice", "ihep", "rt", "ws", "session", "legacy-item", "run",
+            "message", "user", 1, 1, "windows", "source", "now", "now",
+            "{\"text\":\"preserved\"}", false,
+        ))
+        current.close()
+        SQLiteDatabase.openDatabase(
+            context.getDatabasePath(name).path, null, SQLiteDatabase.OPEN_READWRITE,
+        ).use { legacy ->
+            legacy.execSQL("DROP TABLE remote_oaep_events")
+            legacy.execSQL("DROP TABLE remote_oaep_items")
+            legacy.execSQL("DROP TABLE remote_oaep_runs")
+            legacy.version = 10
+        }
+        val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).allowMainThreadQueries().build()
+        try {
+            assertEquals(
+                "legacy-item",
+                migrated.remoteDao().conversationItems("alice", "ihep", "rt", "session").single().itemId,
+            )
+            assertTrue(migrated.remoteDao().oaepItems("alice", "ihep", "rt", "session").isEmpty())
+        } finally {
+            migrated.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test fun migration_11_to_13_preserves_legacy_data_and_creates_android_oaep_authority() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-v11-v12.db"
+        context.deleteDatabase(name)
+        val current = Room.databaseBuilder(context, ChatDatabase::class.java, name)
+            .allowMainThreadQueries().build()
+        current.dao().saveConversation(ConversationEntity(
+            id = "legacy-session", userId = "alice", title = "Legacy", agentId = "agent",
+            modelId = "model", createdAt = 1, updatedAt = 2,
+        ))
+        current.dao().saveMessage(MessageEntity(
+            id = "legacy-message", conversationId = "legacy-session", role = "user",
+            content = "preserve me", createdAt = 3,
+        ))
+        current.remoteDao().saveConversationItem(RemoteConversationItemEntity(
+            "alice", "ihep", "remote-runtime", "remote-workspace", "remote-session", "remote-item", "remote-run",
+            "message", "user", 1, 1, "windows", "source", "now", "now",
+            "{\"text\":\"remote preserved\"}", false,
+        ))
+        current.close()
+        SQLiteDatabase.openDatabase(
+            context.getDatabasePath(name).path, null, SQLiteDatabase.OPEN_READWRITE,
+        ).use { legacy ->
+            listOf(
+                "android_oaep_migrations", "android_oaep_events", "android_oaep_items", "android_oaep_runs", "android_oaep_sessions",
+            ).forEach { table -> legacy.execSQL("DROP TABLE $table") }
+            legacy.version = 11
+        }
+
+        val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
+            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).allowMainThreadQueries().build()
+        try {
+            assertEquals("preserve me", migrated.dao().visibleMessageSnapshot("legacy-session").single().content)
+            assertEquals(
+                "remote-item",
+                migrated.remoteDao().conversationItems("alice", "ihep", "remote-runtime", "remote-session").single().itemId,
+            )
+            val scope = AndroidOaepScope(
+                "local", "legacy-session", "local-run", "android-agent", "android-local", "Legacy",
+            )
+            val owner = AndroidOaepOwner("alice", "")
+            val store = RoomAndroidOaepStore(migrated)
+            val writer = AndroidOaepWriter(scope, "2026-08-04T00:00:00Z")
+            store.commit(owner, scope, writer.apply(
+                "migration-proof", NormalizedAgentEvent.RunStarted, "2026-08-04T00:00:01Z",
+            ))
+            assertEquals(3L, store.load(owner, scope)?.lastSequence)
+            assertEquals(
+                null,
+                migrated.androidOaepDao().migration("alice", "", "android-local", "legacy-session", 1),
+            )
         } finally {
             migrated.close()
             context.deleteDatabase(name)

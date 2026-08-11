@@ -45,10 +45,15 @@ class TaskEvent(BaseAgentEvent):
 class FileInfo(BaseModel):
     """A file info"""
     name: str
+    artifact_id: Optional[str] = None
     url: Optional[str] = None
     base64_content: Optional[str] = None
     size: Optional[int] = None
     mime_type: Optional[str] = None
+    sha256: Optional[str] = None
+    previewable: Optional[bool] = None
+    downloadable: Optional[bool] = None
+    source_call_id: Optional[str] = None
     description: Optional[str] = None
     download_method: Literal["url", "base64", "none"] = "url"
 

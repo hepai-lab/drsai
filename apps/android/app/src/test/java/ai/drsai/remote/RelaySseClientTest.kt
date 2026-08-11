@@ -2,14 +2,17 @@ package ai.drsai.remote
 
 import ai.drsai.remote.remote.data.RelaySseClient
 import ai.drsai.remote.remote.model.*
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 
 class RelaySseClientTest {
     private lateinit var server: MockWebServer
@@ -26,7 +29,11 @@ class RelaySseClientTest {
             : keep-alive
 
         """.trimIndent()))
-        val events = RelaySseClient(server.url("/").toString(), { "token" }).stream(identity, 2).toList()
+        var connected = false
+        val events = RelaySseClient(server.url("/").toString(), { "token" })
+            .stream(identity, 2, onConnected = { connected = true })
+            .toList()
+        assertTrue(connected)
         assertEquals(1, events.size)
         assertEquals("你好", events.single().payload.getString("delta"))
         assertEquals(3, events.single().event.sequence)
@@ -83,5 +90,128 @@ class RelaySseClientTest {
         assertEquals(2L, client.stream(identity, 1).toList().single().event.sequence)
         assertEquals("0", server.takeRequest().requestUrl?.queryParameter("after_sequence"))
         assertEquals("1", server.takeRequest().requestUrl?.queryParameter("after_sequence"))
+    }
+
+    @Test fun `session SSE uses session cursor and discovers later run`() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+                "data: {\"event_id\":\"session-event-4\",\"runtime_id\":\"rt\",\"workspace_id\":\"ws\"," +
+                    "\"session_id\":\"session\",\"run_id\":\"run-2\",\"session_sequence\":4," +
+                    "\"kind\":\"run.created\",\"timestamp\":\"now\",\"payload\":{\"source_message_id\":\"android-1\"}}\n\n",
+            ),
+        )
+
+        var connected = false
+        val events = RelaySseClient(server.url("/").toString(), { "token" })
+            .sessionStream(
+                RuntimeId("rt"),
+                WorkspaceId("ws"),
+                SessionId("session"),
+                3,
+                onConnected = { connected = true },
+            )
+            .toList()
+
+        assertTrue(connected)
+        assertEquals(4, events.single().sessionSequence)
+        assertEquals("run-2", events.single().runId)
+        server.takeRequest().apply {
+            assertEquals("3", requestUrl?.queryParameter("after_sequence"))
+            assertEquals(
+                "/v1/runtimes/rt/workspaces/ws/sessions/session/oaep-events/stream?after_sequence=3",
+                path,
+            )
+        }
+    }
+
+    @Test fun `native OAEP SSE decodes canonical event and ignores optional fields`() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"version\":\"1.0\",\"event_id\":\"event-4\",\"session_id\":\"session\"," +
+                "\"run_id\":\"run-2\",\"sequence\":4,\"type\":\"event.run.started\"," +
+                "\"timestamp\":\"now\",\"dedupe_key\":\"event-4\",\"source\":{" +
+                "\"backend\":\"runtime\",\"runtime_id\":\"rt\"},\"data\":{},\"future\":true}\n\n",
+        ))
+        val events = RelaySseClient(server.url("/").toString(), { "token" })
+            .oaepSessionStream(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 3)
+            .toList()
+        assertEquals(4, events.single().sequence)
+        assertEquals("event.run.started", events.single().type)
+    }
+
+    @Test fun `finite OAEP collector closes a live stream without surfacing transport cancel`() = runTest {
+        val event =
+            "data: {\"version\":\"1.0\",\"event_id\":\"event-4\",\"session_id\":\"session\"," +
+                "\"run_id\":\"run-2\",\"sequence\":4,\"type\":\"event.run.started\"," +
+                "\"timestamp\":\"now\",\"dedupe_key\":\"event-4\",\"source\":{" +
+                "\"backend\":\"runtime\",\"runtime_id\":\"rt\"},\"data\":{}}\n\n"
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(event + " ".repeat(2048))
+                .throttleBody(512, 1, TimeUnit.SECONDS),
+        )
+
+        val first = RelaySseClient(server.url("/").toString(), { "token" })
+            .oaepSessionStream(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 3)
+            .first()
+
+        assertEquals(4, first.sequence)
+    }
+
+    @Test fun `session SSE does not inherit a finite response body read timeout`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBodyDelay(150, TimeUnit.MILLISECONDS)
+                .setBody(
+                    "data: {\"event_id\":\"session-event-5\",\"runtime_id\":\"rt\",\"workspace_id\":\"ws\"," +
+                        "\"session_id\":\"session\",\"run_id\":\"run-3\",\"session_sequence\":5," +
+                        "\"kind\":\"run.created\",\"timestamp\":\"now\",\"payload\":{}}\n\n",
+                ),
+        )
+        val finiteHttp = okhttp3.OkHttpClient.Builder()
+            .readTimeout(50, TimeUnit.MILLISECONDS)
+            .build()
+
+        val events = RelaySseClient(
+            server.url("/").toString(),
+            { "token" },
+            http = finiteHttp,
+        ).sessionStream(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 4)
+            .toList()
+
+        assertEquals(5, events.single().sessionSequence)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `cross scope session SSE fails closed`() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+                "data: {\"event_id\":\"e\",\"runtime_id\":\"other\",\"workspace_id\":\"ws\"," +
+                    "\"session_id\":\"session\",\"run_id\":null,\"session_sequence\":1," +
+                    "\"kind\":\"session.updated\",\"timestamp\":\"now\",\"payload\":{}}\n\n",
+            ),
+        )
+        RelaySseClient(server.url("/").toString(), { "token" })
+            .sessionStream(RuntimeId("rt"), WorkspaceId("ws"), SessionId("session"), 0)
+            .toList()
+    }
+
+    @Test fun `workspace catalog SSE emits one content free invalidation`() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "event: session.catalog.changed\n" +
+                "data: {\"event_id\":\"event-2\",\"session_id\":\"session\"," +
+                "\"type\":\"event.session.archived\",\"sequence\":2}\n\n",
+        ))
+        var connected = false
+        val events = RelaySseClient(server.url("/").toString(), { "token" })
+            .workspaceSessionCatalogStream(RuntimeId("rt"), WorkspaceId("ws")) { connected = true }
+            .toList()
+        assertTrue(connected)
+        assertEquals(1, events.size)
+        assertEquals(
+            "/v1/runtimes/rt/workspaces/ws/session-catalog-events/stream",
+            server.takeRequest().path,
+        )
     }
 }

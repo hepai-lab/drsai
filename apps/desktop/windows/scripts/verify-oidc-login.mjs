@@ -14,6 +14,8 @@ function readHai(relativePath) {
 }
 
 const auth = read("../shared/main/auth.ts");
+const desktopRuntimeMode = read("../shared/main/desktopRuntimeMode.ts");
+const platformConfig = read("../shared/main/platformConfig.ts");
 const platformCredentials = read("src/main/platformCredentials.ts");
 const chat = read("../shared/main/chat.ts");
 const agentRuns = read("../shared/main/agentRuns.ts");
@@ -59,10 +61,11 @@ const checks = [
   [
     "main process implements Authorization Code + PKCE over loopback",
     auth.includes("getOidcMetadata") &&
-      auth.includes("IS_DESKTOP_DEV") &&
-      auth.includes('"https://ai-dev.ihep.ac.cn"') &&
-      auth.includes('"https://ai.ihep.ac.cn"') &&
-      auth.includes('`${DEFAULT_OIDC_ORIGIN}/api`') &&
+      auth.includes("getActivePlatformConfig") &&
+      auth.includes("ACTIVE_PLATFORM.oidcIssuer") &&
+      auth.includes("isDesktopDevelopment") &&
+      desktopRuntimeMode.includes('process.env.OPENDRSAI_DESKTOP_DEV === "1"') &&
+      platformConfig.includes('development ? "config-dev.toml" : "config.toml"') &&
       auth.includes('`${OIDC_ISSUER}/.well-known/openid-configuration`') &&
       auth.includes("OPENDRSAI_OIDC_DISCOVERY_URL") &&
       auth.includes("Loading OIDC discovery") &&
@@ -77,7 +80,8 @@ const checks = [
       auth.includes('server.listen(0, "127.0.0.1")') &&
       auth.includes("openExternalUrl(url)") &&
       auth.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
-      auth.includes("opendrsai://auth-complete") &&
+      auth.includes('"opendrsai-dev://auth-complete"') &&
+      auth.includes('"opendrsai://auth-complete"') &&
       auth.includes('id="open-app"') &&
       auth.includes("window.location.href = openAppLink.href") &&
       auth.includes('window.addEventListener("blur", closePage') &&
@@ -185,8 +189,7 @@ const checks = [
       auth.includes("accessToken: refreshed.accessToken") &&
       chat.includes("requireAuthContext") &&
       chat.includes("Authorization: `Bearer ${authContext.accessToken}`") &&
-      chat.includes('"X-OpenDrSai-Auth-Mode": authContext.authMode') &&
-      chat.includes("auth_mode: authContext.authMode") &&
+      chat.includes("getPlatformAgentChatUrl") &&
       agentRuns.includes("requireAuthContext") &&
       agentRuns.includes("Authorization: `Bearer ${authContext.accessToken}`") &&
       agentRuns.includes('"X-OpenDrSai-Auth-Mode": authContext.authMode') &&
@@ -199,7 +202,7 @@ const checks = [
     bootstrap.includes("requireAuthContext") &&
       bootstrap.includes('auth.authMode !== "oidc"') &&
       bootstrap.includes("startGateway()") &&
-      bootstrap.includes("getGatewayModels(auth.accessToken)") &&
+      bootstrap.includes("discoverModelsWithRecovery(auth.accessToken)") &&
       bootstrap.includes('tools: ["files", "shell", "git"]') &&
       gateway.includes('Authorization: `Bearer ${accessToken}`') &&
       gateway.includes('"X-OpenDrSai-Auth-Mode": "oidc"') &&
@@ -214,6 +217,9 @@ const checks = [
       !login.includes("if (!import.meta.env.DEV) return") &&
       login.includes("{debugOpen &&") &&
       login.includes('event.key !== "F12"') &&
+      login.includes('data-testid="login-error-message"') &&
+      login.includes("登录失败，按F12调试。") &&
+      provider.includes("loginFailed") &&
       login.includes("onOidcLoginDebug") &&
       login.includes("auth.startOidcLogin({ rememberMe })") &&
       login.includes("auth.cancelOidcLogin()") &&

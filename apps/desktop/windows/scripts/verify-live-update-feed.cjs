@@ -26,5 +26,5 @@ app.whenReady().then(async () => {
   }
 
   console.log(JSON.stringify(results));
-  app.exit(results.globalFetch?.version === "1.5.2" ? 0 : 1);
+  app.exit(results.globalFetch?.version === "1.5.3" ? 0 : 1);
 });

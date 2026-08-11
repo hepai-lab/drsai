@@ -1,0 +1,76 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 27,
+  "captured_at": "2026-08-05T01:40:54.069Z",
+  "feature": "M06-F01",
+  "result": "accepted",
+  "contract": {
+    "passed_checks": 12,
+    "evidence": "npm run verify:f4-anomaly-decision"
+  },
+  "focused_tests": {
+    "passed": true,
+    "coverage": [
+      "keep",
+      "exclude",
+      "both",
+      "CSV quoting",
+      "atomic replacement",
+      "source preservation",
+      "invalid input rejection"
+    ]
+  },
+  "single_packaged_run": {
+    "branches": 3,
+    "passed_checks": 60,
+    "total_checks": 60,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "summary_sha256": "sha256:df4daf8042dd65c61b6da8a5de1d490d63dded7a57de41559e45438f564b0d7e",
+    "evidence": "docs/desktop/evidence/round27-f4-packaged-final8/summary.json"
+  },
+  "formal_stability": {
+    "completed_rounds": 20,
+    "scenarios": 60,
+    "passed_checks": 1200,
+    "total_checks": 1200,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "all_rounds_passed": true,
+    "summary_sha256": "sha256:6d90038168c95f66bf01e2ec4d318bf1c5e743990bc38616f84077de355c454c",
+    "evidence": "docs/desktop/evidence/round27-f4-stability-final/summary.json"
+  },
+  "acceptance": {
+    "three_exclusive_decisions": true,
+    "impact_explanations_visible": true,
+    "native_keyboard_execution": true,
+    "accessibility_tree_complete": true,
+    "decision_persisted_and_visible": true,
+    "restart_safe_task_record": true,
+    "branch_outputs_exact": true,
+    "branch_isolation_exact": true,
+    "side_effect_ledger_exact": true,
+    "source_files_unchanged": true,
+    "output_hashes_verified": true
+  },
+  "defects_fixed": [
+    "The packaged F4 verifier did not start a real OpenDrSai Full Runtime.",
+    "Keyboard activation did not reach the apply button through the native focus order.",
+    "Windows background-task normalization silently discarded artifact.anomalyDecision, so the UI and restart path lost the durable decision record.",
+    "PID-derived Full Runtime ports could be reused between zero-retry stability rounds and be stopped by adjacent teardown."
+  ],
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:044227e48d42eacb4df8f8a50a5e34b40424b0aa2cbc4012d9f19838c9dd7e90"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:8b85068f6437394b6142df8915dd121ee07e80574b0926187262387c705c6255"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:80d0bb58255f89eaa6e53c6df9be5de53260aae7c45fe6cf57208634bd037423"
+    }
+  }
+}

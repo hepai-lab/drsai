@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-04T12:16:01.215712+00:00",
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "dirty": true,
+  "apk": {
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+    "sha256": "8d9e6a814ac2d6419c3194176b400d961822bc78a23a94fa0b26cef20f363dd4"
+  },
+  "package": "ai.drsai.remote.debug",
+  "version": "1.5.6",
+  "device": {
+    "serial": "emulator-5560"
+  },
+  "tests": {
+    "jvm": {
+      "tests": 391,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2
+    },
+    "instrumentation": {
+      "tests": 4,
+      "failures": 0
+    }
+  },
+  "checks": {
+    "unit_suite_green": true,
+    "tool_schema_contract": true,
+    "skill_capability_pinning": true,
+    "model_tool_error_is_explicit": true,
+    "approval_is_single_decision": true,
+    "device_registry_and_python_journey_4_tests": true,
+    "base_tools_execute_without_saf": true,
+    "forged_saf_fails_closed": true,
+    "live_provider_tool_chain": false
+  },
+  "features": {
+    "M05-F01": true,
+    "M05-F02": true,
+    "M05-F03": true,
+    "M05-F04": true,
+    "M05-F05": true,
+    "M05-F06": false
+  },
+  "provider": null,
+  "passed": false,
+  "status": "awaiting_live_provider"
+}

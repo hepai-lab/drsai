@@ -1,0 +1,32 @@
+name: Agent regression framework
+
+on:
+  pull_request:
+    paths:
+      - "eval/regression/**"
+      - "eval/README.md"
+      - "docs/development/opendrsai-agent-regression-testing-*.md"
+      - ".github/workflows/agent-regression.yml"
+  workflow_dispatch:
+
+jobs:
+  controlled-framework:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: eval/regression/requirements.txt
+      - run: python -m pip install -r eval/regression/requirements.txt
+      - run: python eval/regression/run_regression.py validate
+      - run: python -m pytest eval/regression/tests -q
+      - run: python eval/regression/run_regression.py run --case qa.greeting.hello --adapter fixture --fixture-dir eval/regression/assets/evidence --output tmp/eval-results/regression --execution-id ci-controlled
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-regression-controlled
+          path: tmp/eval-results/regression/ci-controlled
+          if-no-files-found: error

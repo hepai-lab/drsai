@@ -1,0 +1,98 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 28,
+  "captured_at": "2026-08-05T02:16:10.499Z",
+  "feature": "M06-F02",
+  "result": "accepted",
+  "scope": "OpenDrSai Windows App with HAI configuration and OpenDrSai Full Agent Runtime; no Codex dependency",
+  "contract_and_focused_tests": {
+    "passed": true,
+    "f5_contract_checks": 9,
+    "l3_metrics": 8,
+    "l3_negative_mutations": 8,
+    "l3_contract_checks": 39,
+    "coverage": [
+      "API keys",
+      "Bearer tokens",
+      "user-defined secrets",
+      "email addresses",
+      "phone numbers",
+      "nested runtime and debug events",
+      "chat local blocking",
+      "local data export",
+      "notifications",
+      "diagnostics and gateway logs",
+      "share review, storage, open, and download"
+    ],
+    "commands": [
+      "npm run verify:f5-sensitive-data-pipeline",
+      "npm run verify:l3-sensitive-share-review"
+    ]
+  },
+  "single_packaged_run": {
+    "real_full_runtime": true,
+    "passed_checks": 25,
+    "total_checks": 25,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "summary_sha256": "sha256:af833b0396f57f29352a307a29b3d98aee3a726ac576914b8ddf1ef506eb73dc",
+    "evidence": "apps/desktop/windows/release/product-evidence/c8-chinese-privacy/round28-f5-single5/packaged-c8-chinese-privacy-summary.json"
+  },
+  "packaged_external_share_review": {
+    "passed_checks": 20,
+    "total_checks": 20,
+    "raw_sensitive_values_in_recipient_or_storage": 0,
+    "model_requests": 0,
+    "result_sha256": "sha256:12089da8aec562755d9c7ec7ae7e3cca9d6b5bf72a2475cd57c4c1bbd880deb3",
+    "evidence": "apps/desktop/windows/release/product-evidence/l3-sensitive-share-review/packaged-l3-sensitive-share-review-result.json"
+  },
+  "formal_stability": {
+    "completed_rounds": 20,
+    "passed_checks": 500,
+    "total_checks": 500,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "all_rounds_passed": true,
+    "all_rounds_logs_secret_free": true,
+    "all_rounds_application_data_secret_free": true,
+    "summary_sha256": "sha256:ecb878d5913639efbdd32c846e3abca0f91ab6f4bd57b84cc6154fcd2bb531a1",
+    "evidence": "apps/desktop/windows/release/product-evidence/c8-chinese-privacy/stability-summary.json"
+  },
+  "acceptance": {
+    "shared_scanner_and_redactor": true,
+    "chat_secret_free": true,
+    "runtime_event_and_debug_log_secret_free": true,
+    "diagnostics_and_gateway_log_secret_free": true,
+    "notification_secret_free": true,
+    "local_export_redacted_before_blob": true,
+    "share_review_required_before_external_send": true,
+    "share_direct_bypass_denied": true,
+    "share_recipient_and_storage_secret_free": true,
+    "no_automatic_share": true,
+    "source_files_unchanged": true,
+    "application_owned_data_secret_free": true
+  },
+  "defects_fixed": [
+    "Local data export serialized thread snapshots and preferences without a universal redaction pass.",
+    "Renderer debug and structured runtime events could preserve sensitive values in nested objects.",
+    "Diagnostics and chat memory protection did not consistently cover email, phone, and user-defined secrets.",
+    "Sharing, notifications, diagnostics, chat, and logs used duplicated scanners with inconsistent coverage.",
+    "The packaged privacy verifier did not explicitly start a real OpenDrSai Full Runtime.",
+    "The packaged privacy verifier could run behind first-use setup and report an opaque native setter error.",
+    "The L3 contract read a deprecated Windows re-export instead of the platform-neutral sharing service."
+  ],
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:79ba0572a5ebc0987fa0175941080fd16f916c068d167ec330796c1cabd1f57d"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:ef9422a18576b22492e931891630f81de1bd8a63a3fd4ac1a8315679e0e370a9"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:3f53ec3f6a164255222fcdff5023eaf6cfb6cd86dff2d00bf9946316aceb64a9"
+    }
+  }
+}

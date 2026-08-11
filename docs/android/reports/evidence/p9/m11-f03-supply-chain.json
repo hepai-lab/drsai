@@ -1,0 +1,41 @@
+{
+  "apk": {
+    "path": "OpenDrSai-Android-v1.5.6.apk",
+    "sha256": "2af5378301cfa4f2341adb74274297f4b6a9fae3c33f1eed66261b353668627f"
+  },
+  "dependency_counts": {
+    "maven": 179,
+    "python_apk_artifacts": 50,
+    "python_source": 59,
+    "skills": 0
+  },
+  "feature_id": "M11-F03",
+  "gates": {
+    "all_gradle_dependencies_in_sbom": true,
+    "all_maven_components_hashed": true,
+    "all_maven_components_licensed": true,
+    "cyclonedx_complete": true,
+    "no_dynamic_pip_or_executable_download": true,
+    "osv_fresh": true,
+    "osv_matches_current_gradle_graph": true,
+    "python_apk_artifacts_hashed": true,
+    "python_runtime_sources_hashed": true,
+    "skills_hashed_or_explicitly_empty": true,
+    "zero_known_osv_vulnerabilities": true
+  },
+  "generated_at": "2026-08-05T15:12:37.997954+00:00",
+  "missing_hashes": [],
+  "missing_licenses": [],
+  "osv": {
+    "age_days": 0.0002057063773148148,
+    "path": "docs/android/reports/evidence/p9/m11-f03-osv-maven-scan.json",
+    "sha256": "4faf5a29d0fd186c03573323580e9e28bf1fc0e58ddf7dac5b1d7dff817e04e3"
+  },
+  "passed": true,
+  "sbom": {
+    "path": "docs/android/reports/evidence/p9/m11-f03-supply-chain.cdx.json",
+    "sha256": "8cc019b260ef664d4fdea16b0d22c433f5460c33c091acccea2f4bf914c2f745"
+  },
+  "schema_version": 1,
+  "static_findings": []
+}

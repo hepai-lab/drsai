@@ -1,0 +1,29 @@
+FROM python:3.11-slim-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/bash vscode \
+    && mkdir -p /run/sshd /home/vscode/.ssh /home/vscode/workspace \
+    && chown -R vscode:vscode /home/vscode \
+    && chmod 700 /home/vscode/.ssh
+
+COPY cores/python/packages/drsai /opt/drsai
+COPY cores/protocol /cores/protocol
+RUN python3 -m pip install --no-cache-dir /opt/drsai
+COPY apps/desktop/windows/tests/remote-ssh/fake_codex_app_server.py /usr/local/bin/codex-p10-fixture
+RUN chmod 755 /usr/local/bin/codex-p10-fixture
+
+ARG OPENDRSAI_TEMPORARY_AUTHORIZED_KEY
+RUN printf '%s\n' "$OPENDRSAI_TEMPORARY_AUTHORIZED_KEY" > /home/vscode/.ssh/authorized_keys \
+    && chown vscode:vscode /home/vscode/.ssh/authorized_keys \
+    && chmod 600 /home/vscode/.ssh/authorized_keys \
+    && printf '%s\n' \
+       'PasswordAuthentication no' \
+       'PermitRootLogin no' \
+       'AllowUsers vscode' \
+       'AllowTcpForwarding yes' \
+       'PermitOpen 127.0.0.1:18643' >> /etc/ssh/sshd_config
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D", "-e"]

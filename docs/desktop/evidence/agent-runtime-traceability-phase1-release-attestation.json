@@ -1,0 +1,22 @@
+{
+  "schema_version": "opendrsai.run-traceability-release-attestation/1",
+  "generated_at": "2026-08-04T19:50:03.899Z",
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "source_digest": "9290dbfdfb7bf2d3cc420d6e59f2c12216e8931249666aa41c8ec96da39f98ef",
+  "ledger_digest": "a4e54e043c49e8c430922df5f398e4ba6e551b5a3e0787d2e3f8ef98ff6ba229",
+  "commands": [
+    {
+      "id": "backend",
+      "command": ".venv\\Scripts\\python.exe -m pytest cores/python/packages/drsai/tests/test_run_inspection.py cores/python/packages/drsai/tests/test_run_inspection_gateway.py cores/python/packages/drsai/tests/test_run_inspection_scenarios.py cores/python/packages/drsai/tests/test_runtime_engine.py cores/python/packages/drsai/tests/test_oaep_protocol.py cores/python/packages/drsai/tests/test_oaep_runtime_four_path.py cores/python/packages/drsai/tests/test_oaep_delta_parity.py -q",
+      "cwd": ".",
+      "started_at": "2026-08-04T19:47:51.700Z",
+      "completed_at": "2026-08-04T19:50:03.898Z",
+      "duration_ms": 132197,
+      "exit_code": 1,
+      "signal": null,
+      "error_code": null,
+      "stdout_sha256": "41c59fc060b9beb187ccaef89746073dd1d8b4639edb2659c80b920b93b875e6",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

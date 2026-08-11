@@ -30,7 +30,7 @@ if (process.platform !== "win32") assert.equal((await stat(join(root, "desktop",
 
 const task = {
   id: "background-task:agent_run:00000000-0000-4000-8000-000000000001", kind: "agent_run", source: "agent",
-  title: "Report token=secret-value user@example.com", status: "completed", createdAt: new Date().toISOString(),
+  title: "Report token=secret-value user@example.com 13812345678", status: "completed", createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(), message: "done", verification: "passed", attempt: 1, maxAttempts: 3,
 } as const;
 const target = { kind: "agent_run", targetId: "run-1", workspacePath: "/workspace" } as const;
@@ -38,7 +38,7 @@ assert.equal(service.notifyBackgroundTaskCompleted(task, target), true);
 assert.equal(service.notifyBackgroundTaskCompleted(task, target), false, "duplicate completion must be suppressed");
 assert.equal(created.length, 1);
 assert.equal(created[0].handle.shown, 1);
-assert.doesNotMatch(created[0].input.body, /secret-value|user@example\.com/);
+assert.doesNotMatch(created[0].input.body, /secret-value|user@example\.com|13812345678/);
 created[0].handle.emit("click");
 assert.equal(focused, 1);
 assert.equal(clicks.length, 1);

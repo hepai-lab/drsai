@@ -18,6 +18,18 @@ from typing import BinaryIO, Iterable
 
 
 CHUNK_SIZE = 1024 * 1024
+V3_REQUIRED_SOURCES = {
+    "android_apk",
+    "android_logs",
+    "android_room",
+    "windows_database",
+    "windows_logs",
+    "windows_dump",
+    "relay_logs",
+    "relay_redis",
+    "relay_postgres",
+    "diagnostics",
+}
 
 
 @dataclass(frozen=True)
@@ -25,6 +37,7 @@ class ArtifactResult:
     label: str
     files_scanned: int
     archive_members_scanned: int
+    bytes_scanned: int
     leaked: bool
     leak_locations: tuple[str, ...]
 
@@ -58,8 +71,10 @@ def scan_artifact(label: str, path: Path, canaries: tuple[bytes, ...]) -> Artifa
     leaks: list[str] = []
     files_scanned = 0
     members_scanned = 0
+    bytes_scanned = 0
     for file in _files(path):
         files_scanned += 1
+        bytes_scanned += file.stat().st_size
         relative = file.name if path.is_file() else file.relative_to(path).as_posix()
         with file.open("rb") as stream:
             if _contains_canary(stream, canaries):
@@ -70,10 +85,18 @@ def scan_artifact(label: str, path: Path, canaries: tuple[bytes, ...]) -> Artifa
                     if member.is_dir():
                         continue
                     members_scanned += 1
+                    bytes_scanned += member.file_size
                     with archive.open(member) as stream:
                         if _contains_canary(stream, canaries):
                             leaks.append(f"{relative}!/{member.filename}")
-    return ArtifactResult(label, files_scanned, members_scanned, bool(leaks), tuple(leaks))
+    return ArtifactResult(
+        label,
+        files_scanned,
+        members_scanned,
+        bytes_scanned,
+        bool(leaks),
+        tuple(leaks),
+    )
 
 
 def load_canaries(environment_name: str) -> tuple[bytes, ...]:
@@ -109,15 +132,45 @@ def canary_variants(values: Iterable[str]) -> tuple[bytes, ...]:
 def run(manifest: Path, environment_name: str) -> dict:
     definition = json.loads(manifest.read_text(encoding="utf-8"))
     canaries = load_canaries(environment_name)
+    artifacts = definition.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ValueError("artifact manifest must contain a non-empty artifacts array")
+    labels = [
+        str(item.get("label", ""))
+        for item in artifacts
+        if isinstance(item, dict)
+    ]
+    if len(labels) != len(artifacts) or any(not label for label in labels):
+        raise ValueError("every artifact must have a non-empty label")
+    if len(set(labels)) != len(labels):
+        raise ValueError("artifact labels must be unique")
+    if definition.get("profile") == "mobile-remote-workspace-v3":
+        missing = V3_REQUIRED_SOURCES - set(labels)
+        if missing:
+            raise ValueError(
+                "mobile V3 secret sources missing: " + ",".join(sorted(missing))
+            )
     results = [
         scan_artifact(str(item["label"]), Path(item["path"]).expanduser(), canaries)
-        for item in definition["artifacts"]
+        for item in artifacts
     ]
+    matches = sum(len(item.leak_locations) for item in results)
     return {
         "schema_version": 1,
         "manifest_profile": definition.get("profile", "remote-workspace-v2"),
         "artifact_count": len(results),
-        "passed": not any(item.leaked for item in results),
+        "passed": matches == 0,
+        "matches": matches,
+        "sources": [
+            {
+                "name": item.label,
+                "status": "leaked" if item.leaked else "clean",
+                "bytes_scanned": item.bytes_scanned,
+                "files_scanned": item.files_scanned,
+                "archive_members_scanned": item.archive_members_scanned,
+            }
+            for item in results
+        ],
         "results": [asdict(item) for item in results],
     }
 

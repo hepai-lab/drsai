@@ -19,17 +19,43 @@ for (const kind of ["markdown", "reasoning", "progress", "artifact", "citation",
 assert.equal(renderer.includes('part.kind === "tool"'), false, "Tool activity must not render in the conversation document.");
 assert.ok(
   renderer.includes('part.kind === "progress"')
-    && renderer.includes('part.status === "running"')
-    && renderer.includes('part.status === "pending"')
-    && renderer.includes('part.status === "error"'),
-  "Completed progress must be hidden from the transcript.",
+    && renderer.includes('items={progressParts}')
+    && renderer.includes('items={reasoningParts}'),
+  "Progress, including completed backend commentary, must render inside the process layer.",
 );
 assert.ok(
   renderer.includes('part.kind === "interaction"')
-    && renderer.includes('return part.status === "running" || part.status === "pending"'),
+    && renderer.includes('part.status === "running" || part.status === "pending"'),
   "Resolved interactions must leave the transcript.",
 );
-assert.ok(renderer.includes("part.segments.map") && renderer.includes("structured-reasoning"), "Reasoning segments must share one disclosure.");
+assert.ok(
+  renderer.includes("part.segments.filter")
+    && renderer.includes("visibleSegments.map")
+    && renderer.includes("分析摘要"),
+  "User-visible reasoning summaries must render inside the process layer.",
+);
+assert.ok(renderer.includes('className="structured-run-status"') && renderer.includes("statusMeta"), "Run identity, status and elapsed time must share one status row.");
+assert.ok(renderer.includes('className="structured-process"') && renderer.includes("processOpen"), "Process details must use one state-aware disclosure.");
+assert.ok(
+  renderer.includes('processOpen ? <div')
+    && renderer.includes('data-testid="structured-process-content"'),
+  "Collapsed completed process details must not mount their evidence body.",
+);
+assert.ok(
+  renderer.includes("BoundedProcessSection")
+    && renderer.includes("ProcessWindowNavigation")
+    && renderer.includes("turn.activities.slice(window.start, window.end)"),
+  "Large process and activity collections must use bounded, navigable windows.",
+);
+assert.ok(
+  renderer.includes('<summary className="structured-run-status"')
+    && renderer.includes('className="structured-run-actions"')
+    && renderer.includes('className="structured-process-label"'),
+  "Process disclosure must be merged into the run status row.",
+);
+assert.ok(renderer.includes('className="structured-interaction-layer"'), "Pending user interaction must have its own visible layer.");
+assert.ok(renderer.includes('className="structured-result-layer"') && renderer.includes("最终回答"), "Final results must remain outside process details.");
+assert.ok(renderer.includes("StructuredActivityDetails") && renderer.includes("操作与变更"), "Observable actions and file changes must be inspectable in the process layer.");
 assert.ok(renderer.includes("respondedRequestIds") && renderer.includes("onRespondInteraction"), "Interaction parts must be actionable and idempotent.");
 assert.ok(renderer.includes("onOpenArtifact") && renderer.includes("onOpenCitation"), "Artifacts and citations must route to contextual panels.");
 assert.ok(renderer.includes("part.citationIds.map") && renderer.includes("focusPart(citation.id)"), "Markdown citations must locate stable citation cards.");
@@ -39,6 +65,7 @@ assert.ok(renderer.includes("<StructuredActivitySummary") && renderer.includes('
 assert.ok(renderer.includes('activity.kind === "tool"') && renderer.includes("activity.toolName"), "Tool activity footer must show only the concise tool name.");
 assert.ok(renderer.includes('turn.status !== "pending" && turn.status !== "running"'), "Activity footer must disappear when the turn ends.");
 assert.ok(renderer.includes("formatRunDuration") && renderer.includes("startedAt ?? now"), "Active turns must expose a live elapsed duration.");
+assert.ok(renderer.includes('durationMs < 1000') && renderer.includes('少于 1 秒'), "Sub-second runs must never be presented as 0 seconds.");
 assert.equal(renderer.includes('className="structured-run-stop"'), false, "The transcript must not duplicate the Composer stop action.");
 
 assert.ok(workspace.includes('message.role === "assistant" && message.structuredTurn'), "ChatWorkspace must prefer the V2 document.");
@@ -60,9 +87,9 @@ assert.ok(app.includes('setActiveRightTab("files")') && app.includes("setFilesPa
 assert.ok(app.includes('setActiveRightTab("browser")'), "Citation URLs must use the existing Browser panel.");
 assert.ok(files.includes("focusPath") && files.includes("findNodeByPath(nodes, focusPath)"), "Files panel must focus the selected artifact.");
 
-for (const className of ["structured-message-parts", "structured-progress", "structured-artifact", "structured-citation", "structured-notice", "structured-activity-summary"]) {
+for (const className of ["structured-message-parts", "structured-run-status", "structured-process", "structured-interaction-layer", "structured-result-layer", "structured-progress", "structured-artifact", "structured-citation", "structured-notice", "structured-activity-summary"]) {
   assert.ok(styles.includes(`.${className}`), `Missing ${className} styles.`);
 }
 assert.ok(styles.includes(".structured-progress,") && !styles.includes(".structured-progress {\n  border:"), "Progress must remain a quiet text-level status.");
 
-console.log("Structured message renderer verification passed (8 part kinds, 4 panel/visibility rules)." );
+console.log("Structured message renderer verification passed (8 part kinds, OAEP four-layer output)." );

@@ -1,0 +1,26 @@
+{
+  "schema_version": "opendrsai.p9-real-model-statistical-gate/1",
+  "suite_id": "android-p9-m09-f06",
+  "source_suite": "p9-natural-tool-selection-v1.json",
+  "candidate_models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+  "minimum_attempts_per_case": 3,
+  "thresholds": {
+    "tool_selection_rate": 0.85,
+    "parameter_correctness_rate": 0.85,
+    "final_task_success_rate": 0.85,
+    "maximum_provider_error_rate": 0.05
+  },
+  "semantic_parameter_rules": {
+    "workspace.list_docs": {"tool":"workspace.list","equals":{"path":"docs"}},
+    "workspace.read_readme": {"tool":"workspace.read","equals":{"path":"README.md"}},
+    "workspace.read_config": {"tool":"workspace.read","equals":{"path":"settings.json"}},
+    "workspace.find_settings": {"tool":"workspace.search","contains":{"query":["settings"]}},
+    "workspace.find_gradle": {"tool":"workspace.search","contains":{"query":["gradle"]}},
+    "workspace.create_note": {"tool":"workspace.write","equals":{"path":"notes/today.txt"},"contains":{"content":["完成运行时检查"]}},
+    "workspace.change_endpoint": {"tool":"workspace.write","equals":{"path":"config/test.txt","content":"https://test.example"}},
+    "plan.create": {"tool":"core.update_plan","array_min":{"steps":3}},
+    "plan.update": {"tool":"core.update_plan","array_min":{"steps":3}},
+    "delegate.compare": {"tool":"delegate","array_min":{"tasks":3}},
+    "delegate.research": {"tool":"delegate","array_min":{"tasks":3}}
+  }
+}

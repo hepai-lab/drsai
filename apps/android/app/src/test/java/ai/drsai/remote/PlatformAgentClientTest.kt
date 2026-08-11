@@ -171,6 +171,7 @@ private class PlatformRuntimeFakeDao : ChatDao {
     val toolArtifactRows = mutableListOf<ToolArtifactEntity>()
     override fun conversations(userId: String): Flow<List<ConversationEntity>> = flowOf(emptyList())
     override suspend fun conversationSnapshot(userId: String) = emptyList<ConversationEntity>()
+    override suspend fun conversationMigrationPage(userId: String, afterId: String?, limit: Int) = emptyList<ConversationEntity>()
     override suspend fun visibleMessageSnapshot(id: String) = messages.filter { it.conversationId == id && it.visible }
     override suspend fun runtimeMessageSnapshot(id: String) = messages.filter { it.conversationId == id }
     override suspend fun searchVisibleMessages(userId: String, escapedQuery: String, limit: Int) = emptyList<MessageEntity>()
@@ -184,12 +185,14 @@ private class PlatformRuntimeFakeDao : ChatDao {
     override suspend fun attachmentSnapshot(id: String) = attachments.filter { it.conversationId == id }
     override suspend fun allAttachmentsForUser(userId: String) = attachments.toList()
     override suspend fun deleteAttachment(id: String) { attachments.removeAll { it.id == id } }
-    override suspend fun updateConversation(id: String, title: String, updatedAt: Long) = Unit
+        override suspend fun updateConversation(id: String, title: String, updatedAt: Long) = Unit
+        override suspend fun updateConversationModel(id: String, userId: String, modelId: String, updatedAt: Long) = 1
     override suspend fun deleteConversation(id: String) = Unit
     override suspend fun saveMemory(item: MemoryEntity) = 1L
     override suspend fun searchMemories(userId: String, query: String, limit: Int) = emptyList<MemoryEntity>()
     override suspend fun memorySnapshot(userId: String, limit: Int) = emptyList<MemoryEntity>()
     override suspend fun deleteMemory(userId: String, id: Long) = 0
+    override suspend fun deleteMemories(userId: String) = 0
     override suspend fun saveConversationSummary(item: ConversationSummaryEntity) = Unit
     override suspend fun conversationSummary(conversationId: String) = null
     override suspend fun saveToolArtifact(item: ToolArtifactEntity) { toolArtifactRows += item }

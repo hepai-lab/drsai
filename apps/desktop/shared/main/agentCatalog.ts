@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import type { DesktopAgent } from "../api/desktopApi";
 
 export interface PlatformAgentExecutionDescriptor {
@@ -7,12 +8,48 @@ export interface PlatformAgentExecutionDescriptor {
   name: string;
   model?: string;
   available: boolean;
+  capabilities: string[];
 }
 
 export interface PlatformAgentCachePayload {
   version: 1;
   savedAt: string;
   agents: DesktopAgent[];
+}
+
+export function createPlatformCatalogSubjectKey(
+  platformName: string,
+  platformCacheId: string,
+  subject: string,
+): string {
+  return createHash("sha256")
+    .update(`${platformName}:${platformCacheId}:${subject}`)
+    .digest("hex")
+    .slice(0, 20);
+}
+
+export function getOrCreateCatalogFlight<T>(
+  flights: Map<string, Promise<T>>,
+  key: string,
+  load: () => Promise<T>,
+): Promise<T> {
+  const current = flights.get(key);
+  if (current) return current;
+  const flight = load().finally(() => {
+    if (flights.get(key) === flight) flights.delete(key);
+  });
+  flights.set(key, flight);
+  return flight;
+}
+
+export function markCachedPlatformAgents(agents: DesktopAgent[]): DesktopAgent[] {
+  return agents.map((agent) => ({
+    ...agent,
+    status: "unreachable",
+    available: false,
+    catalogState: "cached",
+    error: "Cached catalog entry; refresh to verify current availability.",
+  }));
 }
 
 export function mergeAndSortAgents(...groups: DesktopAgent[][]): DesktopAgent[] {
@@ -103,7 +140,7 @@ function readCacheSafeAgent(value: unknown): DesktopAgent | null {
     owner: typeof record.owner === "string" ? record.owner : "OpenDrSai",
     // This parser is used only for the HAI platform cache. Never trust a
     // persisted source/group field enough to turn a platform record into a
-    // local agent; My DrSai is reconstructed independently from this device.
+    // local agent; OpenDrSai is reconstructed independently from this device.
     source: "remote",
     status,
     mode: stringValue(record.mode),

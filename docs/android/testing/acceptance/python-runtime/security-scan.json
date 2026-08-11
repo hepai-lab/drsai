@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T09:16:26Z",
+  "environment": {
+    "kind": "physical_device",
+    "manufacturer": "samsung",
+    "model": "SM-X936C",
+    "serial": "R5GYB3S8ACH",
+    "api": 36,
+    "abi": "arm64-v8a"
+  },
+  "scans": [
+    {
+      "source": "apk",
+      "status": "passed",
+      "sha256": "248308e2b6f11be29d0230cb6e326c5e4930f984a73e8ac24672f93e1edc62af"
+    },
+    {
+      "source": "device_log",
+      "status": "passed",
+      "canary_findings": 0
+    },
+    {
+      "source": "device_app_data",
+      "status": "passed",
+      "canary_findings": 0
+    }
+  ],
+  "findings": [],
+  "result": "passed"
+}

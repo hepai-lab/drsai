@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "mappings": {
+    "run_read": "workspace.read",
+    "run_glob": "workspace.glob",
+    "run_grep": "workspace.grep",
+    "run_write": "workspace.write",
+    "run_edit": "workspace.edit"
+  },
+  "safe_paths": ["README.md", "src/main/App.kt", "docs/中文.md"],
+  "denied_paths": ["../secret", "src/../secret", "src/./App.kt", "src//App.kt"],
+  "line_slices": [
+    {"text": "one\ntwo\nthree\nfour", "start": 2, "end": 3, "expected": "two\nthree"},
+    {"text": "one", "start": 3, "end": 4, "expected": ""}
+  ],
+  "glob_cases": [
+    {"pattern": "src/**/*.kt", "path": "src/main/App.kt", "matches": true},
+    {"pattern": "src/**/*.kt", "path": "src/main/deep/Tool.kt", "matches": true},
+    {"pattern": "src/**/*.kt", "path": "src/main/App.py", "matches": false},
+    {"pattern": "docs/*.md", "path": "docs/中文.md", "matches": true}
+  ]
+}

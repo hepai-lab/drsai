@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "feature_id": "M12-F05",
+  "generated_at": "2026-08-05T14:35:19.685409+00:00",
+  "passed": true,
+  "gates": {
+    "mobile_agent_core_has_no_independent_class": true,
+    "legacy_constructor_delegates_only_to_shared_factory": true,
+    "shared_compatibility_factory_delegates_only_to_shared_factory": true,
+    "android_production_probe_uses_shared_factory_directly": true,
+    "production_apk_contains_no_fake_acceptance_tool": true,
+    "production_apk_contains_no_acceptance_runner_argument": true,
+    "scanner_distinguishes_test_apk_from_production_apk": true,
+    "kotlin_lite_runtime_is_absent_from_production": true,
+    "parity_claim_is_derived_only_from_the_72_item_ledger": true,
+    "fault_injection_static_gate_tests_are_green": true
+  },
+  "errors": [],
+  "main_apk_sha256": "258a69aff099778125095e3e373ba0907a53e672a4cb939db3a39276d17bdf1e",
+  "test_apk_sha256": "12fb54ec34208a662d7c5f5e08949dc66158143c0469eae0081640504ab0b1f0",
+  "pytest": {
+    "returncode": 0,
+    "summary": "..                                                                       [100%]\n2 passed in 0.20s"
+  },
+  "source_sha256": {
+    "cores/python/packages/drsai/tests/test_android_p9_legacy_path_gate.py": "cd615070e1aa2d3b49acfe94452eb606f6aa16ccdcf31e95d073ca1654c9b340",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/factory.py": "a15b78c1b82a6b93bc2e6705617446eafeb0a2c6d06abf220fe5e53a85ebee77",
+    "apps/android/app/src/main/python/runtime_probe.py": "ea9232d7e17d190a2d59195217320b99ba6032682d7fbba26904634ab21a2088",
+    "apps/android/app/build.gradle.kts": "acff08763006e11e836d2a07ce5e962877f4f06b568f51afe0e416200c59877a"
+  }
+}

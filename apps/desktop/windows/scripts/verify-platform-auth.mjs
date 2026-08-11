@@ -16,7 +16,7 @@ const desktopGateway = read("apps/desktop/windows/../shared/main/gateway.ts");
 const chatAdapter = read("apps/desktop/windows/../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
 const authProvider = read("apps/desktop/windows/../shared/renderer/src/auth/AuthProvider.tsx");
 const modelDefaults = read("apps/desktop/windows/../shared/main/modelDefaults.ts");
-const myDrSaiConfig = read("apps/desktop/windows/src/main/mydrsaiconfig.ts");
+const myDrSaiConfig = read("apps/desktop/shared/main/myDrSaiConfig.ts");
 const modelFactory = read("cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py");
 const mainProcess = read("apps/desktop/windows/src/main/index.ts");
 const status = read("apps/desktop/windows/src/main/status.ts");
@@ -38,9 +38,12 @@ for (const [name, passed] of [
   ["OIDC install status does not require API key", !status.includes('prerequisites.apiKeyConfigured ? null : "api-key"') && !status.includes('apiKeyConfigured ? null : "HEPAI_API_KEY is not configured."')],
   ["desktop development disables static credential fallback", devLauncher.includes('$env:OPENDRSAI_OIDC_ONLY = "1"') && devLauncher.includes("Env:HEPAI_API_KEY")],
   ["desktop default model alias", modelDefaults.includes('const DEFAULT_MODEL_ALIAS = "deepseek-v4-pro"') && modelDefaults.includes('"deepseek-ai/deepseek-v4-pro": DEFAULT_MODEL_ALIAS')],
-  ["desktop model picker uses the authenticated available-model catalog", myDrSaiConfig.includes("getGatewayModels(auth.accessToken)") && myDrSaiConfig.includes("mergeAvailableModels") && myDrSaiConfig.includes("availableModelsPromise")],
+  ["desktop model picker uses the authenticated available-model catalog", myDrSaiConfig.includes("getGatewayModels(auth.accessToken)") && myDrSaiConfig.includes("mergeModels") && myDrSaiConfig.includes("availablePromise")],
+  ["model discovery preserves failure semantics", desktopGateway.includes("GatewayModelDiscoveryResult") && desktopGateway.includes('state: "forbidden"') && desktopGateway.includes('state: "unavailable"')],
+  ["bootstrap retries transient model discovery", mainProcess.includes("bootstrapDesktop") && read("apps/desktop/windows/src/main/bootstrap.ts").includes("discoverModelsWithRecovery") && read("apps/desktop/windows/src/main/bootstrap.ts").includes("[0, 250, 750, 1_500]")],
+  ["OIDC model catalog is proxied by the local Gateway", gateway.includes('f"{auth.model_base_url.rstrip(\'/\')}/models"') && gateway.includes('"model_catalog_timeout"')],
   ["default model resolves to DDF canonical id", modelFactory.includes('DEFAULT_CONFIG_NAME = "deepseek-v4-pro"') && modelFactory.includes('entry.model == resolved_config_name')],
-  ["chat selection reaches gateway", chatAdapter.includes("model: options?.model?.trim() || undefined") && chat.includes("const model = normalizeModelAlias(request.model) || getDefaultModelAlias()")],
+  ["chat selection reaches Runtime execution", chatAdapter.includes("model: options?.model?.trim() || undefined") && chat.includes("model: request.model") && gateway.includes("model_override=request.model")],
   ["unregistered workspace falls back to global model catalog", mainProcess.includes("return getMyDrSaiConfig();")],
   ["empty failed assistant messages are excluded", chatAdapter.includes("!message.error && message.content.trim().length > 0")],
 ]) {

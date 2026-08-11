@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F05",
+  "generated_at": "2026-08-05T14:15:08.679414+00:00",
+  "passed": true,
+  "gates": {
+    "powershell_git_pty_and_codex_have_distinct_capabilities": true,
+    "only_explicit_desktop_requests_are_intercepted": true,
+    "online_capable_remote_is_selected_deterministically": true,
+    "offline_or_incapable_remote_fails_honestly": true,
+    "android_never_claims_desktop_execution": true,
+    "preflight_precedes_upload_and_local_agent_execution": true,
+    "handoff_is_oaep_authoritative_before_ui_navigation": true,
+    "handoff_requires_confirmation_and_has_digest": true,
+    "attachments_are_digest_bound_without_silent_drop": true,
+    "handoff_is_user_visible_and_routes_to_remote_home": true,
+    "planner_and_product_contract_tests_green": true
+  },
+  "planner_suite": {
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.HybridRuntimeCoordinatorTest",
+    "sha256": "37a37dff01037b824d1817477863ead4636ddf28afeed660f862ec865bc9c6e0"
+  },
+  "contract_suite": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.DesktopHandoffContractTest",
+    "sha256": "bb9598a7be8c48c96128bccdae38a1911f0b593fb9c164d5823212efbc8f9946"
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt": "2e8570431e5fb4b73185d97515617947226c5eddb7c0801285f675d5e7fcc40f",
+    "apps/android/app/src/main/java/ai/drsai/remote/data/Models.kt": "129c981b5bb653c61eaadc69b6d1ee18c1070cc1e0eb158a54cfdc1b8045864c",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt": "5e78c7262c9456967e5f440ecfa593499ffb0e8b2ba90f1292bd6e8716d91baa",
+    "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt": "19e6ec344dda8d2aff2a2004125fab8e19ed14560c9f966a0950a816cff83efb",
+    "apps/android/app/src/test/java/ai/drsai/remote/HybridRuntimeCoordinatorTest.kt": "ba1a11f92c41fa4ffc6cd63ba698a60bab137c564febd0c61fb1f86ec12fce8a",
+    "apps/android/app/src/test/java/ai/drsai/remote/DesktopHandoffContractTest.kt": "a6dff1903d04e369355ed5fe5e386a017d188bd965b91e6d9f0d33bce325ab9b"
+  }
+}

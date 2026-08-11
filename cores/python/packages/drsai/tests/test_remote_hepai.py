@@ -5,7 +5,14 @@ import importlib.util
 from pathlib import Path
 
 
-MODULE = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "remote_hepai.py"
+MODULE = (
+    Path(__file__).parents[1]
+    / "src"
+    / "drsai"
+    / "backend"
+    / "integrations"
+    / "hepai.py"
+)
 SPEC = importlib.util.spec_from_file_location("remote_hepai", MODULE)
 assert SPEC and SPEC.loader
 remote_hepai = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(remote_hepai)

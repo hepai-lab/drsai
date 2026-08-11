@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T09:20:30Z",
+  "environment": {
+    "kind": "physical_device",
+    "serial": "R5GYB3S8ACH",
+    "manufacturer": "samsung",
+    "model": "SM-X936C",
+    "api": 36,
+    "abi": "arm64-v8a"
+  },
+  "test": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest#textToolsApprovalArtifactSkillAndSubagentsCloseOnPhysicalRuntime",
+  "covered": [
+    "text_stream",
+    "pure_core_tool",
+    "kotlin_host_tool",
+    "approval",
+    "artifact",
+    "local_skill",
+    "two_logical_subagents",
+    "subagent_cancel",
+    "subagent_summary",
+    "terminal_completion"
+  ],
+  "app_apk_sha256": "248308e2b6f11be29d0230cb6e326c5e4930f984a73e8ac24672f93e1edc62af",
+  "test_apk_sha256": "1dba7b665b8cf4b76c86e4d60c2c72ab2f97b8c27d26fb46f3b22c28265fccd0",
+  "tests": 1,
+  "failures": 0,
+  "duration_seconds": 0.543,
+  "result": "passed"
+}

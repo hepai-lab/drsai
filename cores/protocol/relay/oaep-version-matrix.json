@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "name": "runtime-1.6-relay-2-android-client-1.5.6",
+      "runtime_version": "1.6.0",
+      "relay_version": "2.0.0",
+      "capabilities": ["oaep.v1", "oaep.session.snapshot", "oaep.session.events", "oaep.session.events.stream", "event.cursor_expired", "conversation.snapshot", "session.event.resume", "session.event.stream", "session.event.cursor_expired"],
+      "protocols": {"oaep": {"version": "1.0", "profiles": ["oaep.session-stream/1"]}, "owop": {"version": "1.0", "capabilities": ["artifact"]}},
+      "expected": "oaep"
+    },
+    {
+      "name": "partial-oaep-advertisement",
+      "runtime_version": "1.6.0",
+      "relay_version": "2.0.0",
+      "capabilities": ["oaep.v1", "conversation.snapshot", "session.event.resume", "session.event.stream", "session.event.cursor_expired"],
+      "protocols": {"oaep": {"version": "1.0", "profiles": []}},
+      "expected": "reject"
+    },
+    {
+      "name": "runtime-1.5-relay-2-legacy-client",
+      "runtime_version": "1.5.3",
+      "relay_version": "2.0.0",
+      "capabilities": ["conversation.snapshot", "session.event.resume", "session.event.stream", "session.event.cursor_expired"],
+      "protocols": {"owop": {"version": "1.0", "capabilities": []}},
+      "expected": "legacy"
+    },
+    {
+      "name": "runtime-1.6-relay-1-strips-oaep",
+      "runtime_version": "1.6.0",
+      "relay_version": "1.0.0",
+      "capabilities": ["conversation.snapshot", "session.event.resume", "session.event.stream", "session.event.cursor_expired"],
+      "protocols": {"owop": {"version": "1.0", "capabilities": []}},
+      "expected": "legacy"
+    },
+    {
+      "name": "run-sse-only-runtime",
+      "runtime_version": "1.4.7",
+      "relay_version": "2.0.0",
+      "capabilities": ["run.read", "event.resume"],
+      "protocols": {},
+      "expected": "unavailable"
+    }
+  ]
+}

@@ -7,10 +7,20 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 const builder = read("electron-builder.yml");
 const packageJson = JSON.parse(read("package.json"));
 const updater = read("src/main/updater.ts");
+const updateFeedPolicy = read("src/main/updateFeedPolicy.ts");
+const updateFeedVerifier = read("scripts/verify-update-feed-policy.mts");
+const promotionPolicy = read("scripts/update-promotion-policy.mjs");
+const promotionVerifier = read("scripts/verify-update-promotion-policy.mjs");
+const ossPublisher = read("scripts/publish-update-to-oss.mjs");
+const publishedVerifier = read("scripts/verify-published-update.mjs");
+const thinPackageVerifier = read("scripts/verify-thin-update-package.mjs");
+const metadataAnnotator = read("scripts/annotate-update-metadata.mjs");
 const runtimeInstaller = read("src/main/runtimeInstaller.ts");
 const runtimeBuilder = read("scripts/build-runtime-artifact.sh");
 const adhocHook = read("scripts/after-pack.cjs");
 const nativePermissionsHook = read("scripts/after-pack-native-permissions.cjs");
+const updatePackHook = read("scripts/after-pack-update.cjs");
+const updateBuilder = read("electron-builder.update.yml");
 const bootstrapEntry = read("src/main/bootstrapEntry.ts");
 const browserRuntimeLock = read("resources/runtime/browser-requirements.lock");
 const runtimeLock = read("resources/runtime/runtime-requirements.lock");
@@ -29,6 +39,11 @@ const updateWatchdog = read("resources/update/update-watchdog.sh");
 const desktopRoot = resolve(root, "..");
 const workflow = readFileSync(resolve(desktopRoot, "../../.github/workflows/macos-desktop.yml"), "utf8");
 const gateway = readFileSync(resolve(root, "../../../cores/python/packages/drsai/src/drsai/backend/gateway.py"), "utf8");
+const updateRunbook = read("docs/macos-update-production-runbook.zh-CN.md");
+
+assert.ok(releaseL6.includes('const appExecutable = join(app, "Contents", "MacOS", "OpenDrSai")'), "L6 receipts must hash the App executable instead of reading the App directory.");
+assert.ok(releaseL6.includes("sha256(appExecutable)"), "L6 receipts must bind to the App executable digest.");
+assert.equal(releaseL6.includes("sha256(app)"), false, "L6 must not pass an App directory to readFileSync-based hashing.");
 
 for (const path of ["build/entitlements.mac.plist", "build/entitlements.mac.inherit.plist"]) {
   assert.ok(existsSync(resolve(root, path)), `missing macOS entitlement file: ${path}`);
@@ -64,8 +79,32 @@ assert.ok(packageJson.scripts.verify.indexOf("verify:coverage") >= 0 && packageJ
 for (const contract of ["checkForUpdates", "downloadUpdate", "CancellationToken", "quitAndInstall", "update-downloaded", "allowDowngrade = false"]) {
   assert.ok(updater.includes(contract), `macOS updater omits ${contract}`);
 }
+for (const contract of ["provider: generic", "https://download-opendrsai.ihep.ac.cn/channels/stable/macos/arm64/", "channel: latest"]) {
+  assert.ok(builder.includes(contract), `macOS builder CDN feed omits ${contract}`);
+}
+assert.equal(builder.includes("provider: github"), false, "The packaged macOS app must prefer the production CDN rather than GitHub.");
+for (const contract of ["MACOS_UPDATE_CDN_URL", "MACOS_UPDATE_GITHUB_OWNER", "MACOS_UPDATE_GITHUB_REPO", "validateFallbackCandidate", "source: \"github\"", "fallbackUsed: true", "macos-update-sources-failed", "macos-update-download-sources-failed"]) {
+  assert.ok(`${updater}\n${updateFeedPolicy}`.includes(contract), `macOS CDN/GitHub fallback contract omits ${contract}`);
+}
+for (const contract of ["http://", "user:secret@", "selected CDN version", "digests differ"]) assert.ok(updateFeedVerifier.includes(contract), `Unsigned update policy verifier omits ${contract}`);
+assert.ok(packageJson.scripts["verify:update-feed:unsigned"], "macOS package omits the unsigned update feed gate");
+for (const contract of ["signed-l6", "verify-dual-source-digests", "promote-stable-metadata", "publish-github-release", "verify-production-fallback", "productionPromotionBlocked: true"]) {
+  assert.ok(`${promotionPolicy}\n${promotionVerifier}`.includes(contract), `macOS promotion order gate omits ${contract}`);
+}
+assert.ok(packageJson.scripts["verify:update-promotion:unsigned"], "macOS package omits the unsigned promotion order gate");
+for (const contract of ["--preflight", "--assets-only", "--promote-metadata", "--snapshot-stable", "--rollback-metadata", 'spawnSync(binary, ["stat", target]', "Immutable OSS object already exists", "Unable to prove immutable OSS object is absent", '"--force", "--meta"', 'runRaw(["rm", stableTarget, "--force"])', "channels/history/macos/arm64", "channels/rollback/macos/arm64", "max-age=31536000, immutable", "max-age=30, must-revalidate"]) {
+  assert.ok(ossPublisher.includes(contract), `macOS OSS publisher omits ${contract}`);
+}
+for (const contract of ["method: \"HEAD\"", "Range: \"bytes=0-1\"", "content-range", "sha256", '"release", "download"', "--pre-promotion", "--metadata-only"]) {
+  assert.ok(publishedVerifier.includes(contract), `macOS published-origin verifier omits ${contract}`);
+}
+for (const contract of ["macos-production-release", "Verify OSS CLI and publication credentials", "--preflight", "Create immutable GitHub draft release", "--assets-only", "Verify staged CDN and GitHub draft byte identity", "Publish verified GitHub release before stable promotion", "Snapshot current stable metadata", "--snapshot-stable", "--promote-metadata", "Verify stable metadata", "--rollback-metadata"]) {
+  assert.ok(workflow.includes(contract), `macOS production publication workflow omits ${contract}`);
+}
+assert.ok(packageJson.scripts["verify:update-publish-plan"] && packageJson.scripts["publish:update:oss"] && packageJson.scripts["verify:update-published"], "macOS package omits production distribution commands");
+for (const contract of ["macos-production-release", "OPENDRSAI_OSSUTIL_BIN", "Developer ID Application", "previousExists=false", "--rollback-metadata", "opendrsaiRuntimeSha256", "production-promotion-blocked"]) assert.ok(updateRunbook.includes(contract), `macOS update production runbook omits ${contract}`);
 for (const contract of ["scheduleUpdateHealthConfirmation", "minimum = acceptance ? 1_000 : 30_000", "configureSignedUpdateLabFeed", 'url.protocol !== "https:"', "url.hostname !== expectedHost"]) {
-  assert.ok(updater.includes(contract), `macOS updater health/lab policy omits ${contract}`);
+  assert.ok(`${updater}\n${updateFeedPolicy}`.includes(contract), `macOS updater health/lab policy omits ${contract}`);
 }
 for (const contract of ["scheduleUpdateHealthConfirmation()", "onRendererGone:"]) {
   assert.ok(macMain.includes(contract), `macOS update health orchestration omits ${contract}`);
@@ -82,6 +121,16 @@ for (const contract of ["kill -0", "EXPECTED_VERSION", "MAX_ATTEMPTS", "grep -Fq
 for (const contract of ["sha256", "runtime-manifest.json", '"/usr/bin/tar"', '"import drsai"', ".previous", "rename(candidate, DRSAI_REPO)"]) {
   assert.ok(runtimeInstaller.includes(contract), `macOS Runtime installer omits ${contract}`);
 }
+for (const contract of ["afterPack: scripts/after-pack-update.cjs", "target: zip"]) assert.ok(updateBuilder.includes(contract), `Thin update builder omits ${contract}`);
+for (const contract of ["normalizeNativePermissions", 'name.endsWith(".tar.gz")', "rmSync", "runtime-manifest.json", "Thin update package still contains"]) assert.ok(updatePackHook.includes(contract), `Thin update packaging hook omits ${contract}`);
+for (const contract of ["readFileSync(bundledRuntimeManifestPath()", "isSafeRelativePath(manifest.archive)", "existsSync(resolveResource"]) assert.ok(runtimeInstaller.includes(contract), `Thin update Runtime availability policy omits ${contract}`);
+assert.ok(read("scripts/verify-update-assets.mjs").includes("2 * 1024 * 1024 * 1024"), "Update asset gate must enforce GitHub's 2 GiB per-file limit");
+for (const contract of ["Runtime compatibility metadata", 'manifest.archive.endsWith(".tar.gz")', "bundled archive absent by design", "64 * 1024 * 1024"]) assert.ok(thinPackageVerifier.includes(contract), `Thin update package verifier omits ${contract}`);
+assert.ok(packageJson.scripts["verify:update-thin-package"], "macOS package omits thin update structure verification");
+assert.ok(metadataAnnotator.includes('--compatible-runtime-manifest'), "Update metadata annotation cannot target the persisted Runtime required by a thin update");
+for (const contract of ["opendrsaiRuntimeVersion", "opendrsaiRuntimeSha256", "runtime-manifest.json"]) assert.ok(metadataAnnotator.includes(contract), `Update metadata annotator omits ${contract}`);
+for (const contract of ["runtimeCompatibleWith", "inspectInstalledRuntime", "macos-update-runtime-incompatible", "Install the full DMG", "archiveSha256"]) assert.ok(`${updater}\n${updateFeedPolicy}`.includes(contract), `Updater Runtime compatibility gate omits ${contract}`);
+assert.ok(packageJson.scripts["annotate:update-metadata"], "macOS package omits Runtime metadata annotation");
 for (const contract of ["OPENDRSAI_RUNTIME_PYTHON", 'EXPECTED_PYTHON="3.11.9"', "pip install", "shasum -a 256", 'uname -m']) {
   assert.ok(runtimeBuilder.includes(contract), `macOS Runtime artifact builder omits ${contract}`);
 }
@@ -107,7 +156,7 @@ for (const contract of ["listRuntimeWorktrees", "assertManagedFork", 'item.statu
 for (const contract of ["OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE", "OPENDRSAI_MACOS_PTY_OK", "renderer/preload/IPC", "child.exitCode"]) {
   assert.ok(packagedSmoke.includes(contract), `macOS packaged smoke omits ${contract}`);
 }
-for (const contract of ["packaged-core-journeys", "packaged-product-journeys", "thread-crud-snapshot-search-archive-binding", "chat-start-abort-journal-late-input", "agent-catalog-default-usage-start-abort-recovery", "OPENDRSAI_DEV_AUTH_BYPASS", "OPENDRSAI_E2E_AUTH_USER_ID", "OPENDRSAI_PLATFORM_AGENTS_ENABLED", "git-approval-execute-and-replay", "workspace-git-diff-stage-ref-revert-stale-review", "checkpoint-create-preview-approved-restore-accept", "worktree-create-event-queue-dispatch-abort-discard", "ide-context-native-icon-edit-command-pdf-launchservices", "handoff-source.ts", "ide-context.json", "handoff.pdf", "minimalPdf", "startxref", "git-action.txt", "OpenDrSai-Approval:", "rev-list", "rejected-after-crash.txt", "approvalRecoveredAfterCrash", "recoveredApprovalRejected", "rejectedApprovalCommits", "rejectedChangeRemainedStaged", "custom-command-crud", "project-memory-crud", "project-skill-draft-approval-install", "workflow-marketplace-strict-completion-history", "reusable-task-fresh-input-and-scheduled-safe-due", "background-task-idempotency-cancel-retry", "debug-policy-attach-detach", "managed-process-crash", "managed-process-crash-recovery", "nativeHelperForcedCrashes", "gatewayForcedCrashes", "performance-ready", "packaged-performance-budget", "coldInteractiveBudgetMs", "warmInteractiveP95BudgetMs", "idleAverageCpuBudgetPercent", "idleMaxRssBudgetKiB", "restart-stability", "packaged-resource-sampling", '"/bin/ps"', '"/usr/sbin/lsof"', '"pid=,ppid=,rss=,%cpu=,comm="', "formalHundredRestartBudgetSatisfied", "summarizeRestartGrowth", "rssSlopeKiBPerIteration", "fdSlopePerIteration", "iterations === 100", "residualProcessCount", "fault-injection", "SIGKILL", "OPENDRSAI_MACOS_L5_RESTART_ITERATIONS", "OPENDRSAI_MACOS_L5_STABILITY_MS"]) {
+for (const contract of ["packaged-core-journeys", "packaged-product-journeys", "thread-crud-snapshot-search-archive-binding", "chat-start-abort-journal-late-input", "agent-catalog-default-usage-start-abort-recovery", "OPENDRSAI_DEV_AUTH_BYPASS", "OPENDRSAI_E2E_AUTH_USER_ID", "OPENDRSAI_PLATFORM_AGENTS_ENABLED", "git-approval-execute-and-replay", "workspace-git-diff-stage-ref-revert-stale-review", "checkpoint-create-preview-approved-restore-accept", "worktree-create-event-queue-dispatch-abort-discard", "ide-context-native-icon-edit-command-pdf-launchservices", "handoff-source.ts", "ide-context.json", "handoff.pdf", "minimalPdf", "startxref", "git-action.txt", "OpenDrSai-Approval:", "rev-list", "rejected-after-crash.txt", "approvalRecoveredAfterCrash", "recoveredApprovalRejected", "rejectedApprovalCommits", "rejectedChangeRemainedStaged", "custom-command-crud", "project-memory-crud", "project-skill-draft-approval-install", "workflow-marketplace-strict-completion-history", "reusable-task-fresh-input-and-scheduled-safe-due", "background-task-idempotency-cancel-retry", "debug-policy-attach-detach", "managed-process-crash", "managed-process-crash-recovery", "nativeHelperForcedCrashes", "gatewayForcedCrashes", "performance-ready", "packaged-performance-budget", "coldInteractiveBudgetMs", "warmInteractiveP95BudgetMs", "idleAverageCpuBudgetPercent", "idleMaxRssBudgetKiB", "restart-stability", "packaged-resource-sampling", '"/bin/ps"', '"/usr/sbin/lsof"', '"pid=,ppid=,rss=,time=,command="', "formalHundredRestartBudgetSatisfied", "summarizeRestartGrowth", "rssSlopeKiBPerIteration", "fdSlopePerIteration", "iterations === 100", "residualProcessCount", "fault-injection", "SIGKILL", "OPENDRSAI_MACOS_L5_RESTART_ITERATIONS", "OPENDRSAI_MACOS_L5_STABILITY_MS"]) {
   assert.ok(packagedL5.includes(contract), `macOS packaged L5 omits ${contract}`);
 }
 for (const contract of ['scenario === "managed-process-crash"', 'process.kill(helperBefore.pid, "SIGKILL")', 'process.kill(gatewayBefore.pid, "SIGKILL")', "Native Helper did not recover after SIGKILL", "Gateway restart did not produce a new healthy PID"]) {
@@ -132,10 +181,13 @@ for (const contract of ["OPENDRSAI_MACOS_PACKAGED_SCENARIO", '"tcc"', "microphon
 for (const contract of ["https:", "online-signed-update", "onlineUpdateInstalled: true", "healthConfirmed: true", "userDataPreserved: true", "installedAppExecutableSha256", "codesign"] ) {
   assert.ok(onlineUpdateL6.includes(contract), `macOS signed online update L6 omits ${contract}`);
 }
+for (const contract of ["runtime-bootstrap.json", 'OPENDRSAI_MACOS_PACKAGED_SCENARIO: "smoke"', "waitForVersion", "--user-data-dir=", 'spawnSync("/usr/bin/pkill"']) {
+  assert.ok(onlineUpdateL6.includes(contract), `macOS signed online update L6 does not initialize the previous release Runtime: ${contract}`);
+}
 for (const contract of ['scenario === "tcc"', 'requestSystemPermission("microphone")', 'requestSystemPermission("automation")', 'requestSystemPermission("notifications")', 'openSystemPermissionSettings("files")']) {
   assert.ok(read("src/main/packagedSmoke.ts").includes(contract), `macOS packaged TCC scenario omits ${contract}`);
 }
-for (const contract of ['scenario === "product-state"', "login", "listAgents", "setDefaultAgent", "recordAgentUsage", "startChat", "abortChat", "recoverChatRun", "respondChatInput", "onChatEvent", "startAgentRun", "abortAgentRun", "recoverAgentRun", "onAgentRunEvent", "createThread", "updateThreadSnapshot", "searchThreadMessages", "setThreadArchived", "deleteThread", "requestGitCommitApproval", "getWorkspaceGitDiff", "stageWorkspaceFile", "getWorkspaceGitFileAtRef", "revertWorkspaceFile", "createWorkspaceCheckpoint", "listWorkspaceCheckpoints", "previewWorkspaceCheckpoint", "restoreWorkspaceCheckpoint", "acceptWorkspaceCheckpoint", "prepareForkWorktree", "listWorktrees", "listWorktreeEvents", "requestForkQueueStartApproval", "dispatchForkQueue", "worktreeBecameIdle", "requestForkLifecycleApproval", "getIdeContext", "getFileIcon", "performEditCommand", "openPdfPage", "upsertCustomCommand", "addProjectMemory", "createProjectSkillDraft", "installProjectSkillDraft", "listPendingApprovals", "decideApproval", "listWorkflowMarketplace", "prepareWorkflowRun", "startWorkflowRun", "dispatchWorkflowRunStep", "completeWorkflowRunStep", "listWorkflowRuns", "saveReusableTask", "prepareReusableTaskRun", "listReusableTasks", "createScheduledTask", "runDueScheduledTasks", "updateScheduledTask", "deleteScheduledTask", "recordDiagnostic", "enqueueBackgroundTask", "updateBackgroundTask", "cancelBackgroundTask", "retryBackgroundTask", "updateInteractiveDebugPolicy", "startInteractiveDebugSession", 'action: "disconnect"']) {
+for (const contract of ['scenario === "product-state"', "login", "listAgents", "setDefaultAgent", "recordAgentUsage", "startChat", "abortChat", "recoverChatRun", "respondChatInput", "onChatEvent", "startAgentRun", "abortAgentRun", "recoverAgentRun", "onAgentRunEvent", "createThread", "updateThreadSnapshot", "searchThreadMessages", "setThreadArchived", "deleteThread", "requestGitCommitApproval", "getWorkspaceGitDiff", "stageWorkspaceFile", "getWorkspaceGitFileAtRef", "revertWorkspaceFile", "createWorkspaceCheckpoint", "listWorkspaceCheckpoints", "previewWorkspaceCheckpoint", "restoreWorkspaceCheckpoint", "acceptWorkspaceCheckpoint", "prepareForkWorktree", "listWorktrees", "listWorktreeEvents", "requestForkQueueStartApproval", "dispatchForkQueue", "worktreeBecameIdle", "requestForkLifecycleApproval", "getIdeContext", "getFileIcon", "performEditCommand", "openPdfPage", "upsertCustomCommand", "addProjectMemory", "createProjectSkillDraft", "installProjectSkillDraft", "listPendingApprovals", "decideApproval", "listWorkflowMarketplace", "prepareWorkflowRun", "startWorkflowRun", "dispatchWorkflowRunStep", "completeWorkflowRunStep", "listWorkflowRuns", "saveReusableTask", "prepareReusableTaskRun", "listReusableTasks", "createScheduledTask", "listScheduledTasks", "runDueScheduledTasks", "duplicateDueResult", "updateScheduledTask", "recordDiagnostic", "enqueueBackgroundTask", "updateBackgroundTask", "cancelBackgroundTask", "retryBackgroundTask", "updateInteractiveDebugPolicy", "startInteractiveDebugSession", 'action: "disconnect"']) {
   assert.ok(read("src/main/packagedSmoke.ts").includes(contract), `macOS packaged product-state scenario omits ${contract}`);
 }
 for (const contract of ["tags: [\"v*\"]", 'cron: "0 16 * * *"', "generate-source-snapshot.mjs --require-clean", "verify:runtime-reproducibility", "record:l4-evidence", "record:l5-evidence", "verify:packaged:l5", "--require-l4 --require-l5", "release-macos-l6-real-device", "self-hosted, macOS, ARM64, opendrsai-release", "verify:release:l6-auto", "stage:update-lab-feed", "verify:online-update:l6", "record:signed-update-evidence", "verify:tcc:l6", "record:l6-evidence", "--require-l4 --require-l5 --require-l6", "macos/build/acceptance/**"]) {

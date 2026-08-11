@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const read = (...parts) => readFileSync(join(root, ...parts), "utf8");
 const api = read("..", "shared", "api", "desktopApi.ts");
+const sensitiveData = read("..", "shared", "api", "sensitiveData.ts");
 const scanner = read("..", "shared", "main", "shareSensitivity.ts");
-const service = read("src", "main", "shares.ts");
+const service = read("..", "shared", "main", "shares.ts");
 const main = read("src", "main", "index.ts");
 const preload = read("..", "shared", "main", "preload.ts");
 const ui = read("..", "shared", "renderer", "src", "App.tsx");
@@ -41,7 +42,7 @@ const contracts = [
   [api, "DesktopShareSensitiveFinding"], [api, "DesktopShareSensitiveResolution"], [api, "DesktopShareSensitiveReviewSummary"],
   [api, "DesktopShareInspectionRequest"], [api, "DesktopShareInspectionResult"], [api, "inspectShare(request"],
   [scanner, "scanSensitiveText"], [scanner, "publicSensitiveFindings"], [scanner, "sanitizeSensitiveText"], [scanner, "validateSensitiveResolutions"],
-  [scanner, "api[_ -]?key"], [scanner, "Bearer"], [scanner, "email"], [scanner, "phone"], [scanner, "user_secret"],
+  [sensitiveData, "api[_ -]?key"], [sensitiveData, "Bearer"], [sensitiveData, "email"], [sensitiveData, "phone"], [sensitiveData, "user_secret"],
   [scanner, "[已遮蔽秘密]"], [scanner, "[已遮蔽邮箱]"], [scanner, "[已遮蔽手机号]"],
   [service, "MAX_SENSITIVE_SCAN_BYTES"], [service, "SANITIZED_SHARES_DIR"], [service, "scanShareArtifacts"],
   [scanner, "Sensitive information review is required before sharing"], [service, "highRiskSecretsDirectlyShared: 0"],

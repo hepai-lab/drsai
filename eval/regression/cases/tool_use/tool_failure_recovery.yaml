@@ -1,0 +1,104 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: tool.failure.recovery
+revision: 1
+title: 网络搜索工具临时失败后由 Runtime 恢复
+description: 验证 Runtime 对可重试 Tool 错误执行一次受控重试，并保留完整失败与成功证据。
+owner: agent-runtime
+tags: [smoke, release, tool_use, recovery, deterministic]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: 请搜索 OpenDrSai Developer Summit 2026 的时间、地点和主要主题，并简要告诉我结果。
+
+environment:
+  network: disabled
+  session:
+    type: new
+    history: empty
+  required_capabilities: [web_search]
+  tool_faults:
+    - tool: web_search
+      scope: current_case
+      fail_invocations: [1]
+      error:
+        code: service_unavailable
+        message: Temporary search service failure.
+        retryable: true
+  tool_fixtures:
+    web_search:
+      match:
+        query_semantic_match: OpenDrSai Developer Summit 2026
+      successful_result:
+        status: success
+        results:
+          - title: OpenDrSai Developer Summit 2026
+            url: https://regression.test/events/opendrsai-summit-2026
+            snippet: The event will take place in Shanghai on September 10–11, 2026. Topics include Agent Runtime, OAEP, and Tool Safety.
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    required_capabilities: [web_search]
+    logical_tool_calls:
+      exact: 1
+      tool: web_search
+    tool_attempts:
+      exact: 2
+      ordered:
+        - tool: web_search
+          status: failed
+          error_code: service_unavailable
+          retryable: true
+        - tool: web_search
+          status: completed
+    retry:
+      initiated_by: runtime_policy
+      exact: 1
+      same_logical_operation: true
+    approvals:
+      max: 0
+    external_network_calls:
+      max: 0
+    external_writes:
+      max: 0
+
+  output:
+    type: text
+    semantic_requirements:
+      - 活动时间是 2026 年 9 月 10 日至 11 日
+      - 活动地点是上海
+      - 主题包括 Agent Runtime
+      - 主题包括 OAEP
+      - 主题包括 Tool Safety
+    forbidden_claims:
+      - 搜索没有结果
+      - 活动不存在
+      - 未经 Tool Result 支持的活动信息
+
+  evidence:
+    require_failed_attempt: true
+    require_successful_attempt: true
+    require_attempt_order: true
+    preserve_failed_attempt_after_success: true
+
+  artifacts:
+    max: 0
+
+execution:
+  timeout_seconds: 45
+  attempts: 1
+  isolation: required
+  tool_retry_policy:
+    owner: runtime
+    max_retries: 1
+    retryable_codes: [service_unavailable]

@@ -1,0 +1,76 @@
+{
+  "apk": "OpenDrSai-Android-v1.5.6.apk",
+  "apk_sha256": "8d9e6a814ac2d6419c3194176b400d961822bc78a23a94fa0b26cef20f363dd4",
+  "gates": {
+    "cold_start_p95_under_3s": true,
+    "database_growth_under_64mb": true,
+    "foreground_pss_under_220mb": true,
+    "recoveries_20": true,
+    "recovery_p95_under_2s": true,
+    "runs_500": true,
+    "tools_50": true,
+    "zero_data_corruption": true,
+    "zero_duplicate_side_effects": true,
+    "zero_permanent_running": true
+  },
+  "generated_at": "2026-08-04T12:10:19.401037+00:00",
+  "passed": true,
+  "performance": {
+    "cold_start_ms": [
+      993,
+      1020,
+      1053,
+      998,
+      991,
+      1101,
+      1035,
+      1003,
+      1039,
+      1013
+    ],
+    "cold_start_p95_ms": 1101,
+    "foreground_pss_mb": 91.445
+  },
+  "schema_version": 1,
+  "serial": "emulator-5560",
+  "stage7_thresholds": {
+    "cold_start_p95_ms": 3000,
+    "database_growth_mb": 64,
+    "foreground_pss_mb": 220,
+    "recovery_p95_ms": 2000
+  },
+  "stress": {
+    "data_corruption": 0,
+    "database_bytes": 4149248,
+    "duplicate_side_effects": 0,
+    "duration_ms": 8403.9745,
+    "permanent_running": 0,
+    "recovery_p95_ms": 5.3518,
+    "recovery_runs": 20,
+    "recovery_samples_ms": [
+      5.3518,
+      1.4162,
+      2.0744,
+      1.3056,
+      3.4262,
+      1.4741,
+      3.6366,
+      2.5848,
+      1.5734,
+      2.01,
+      1.5733,
+      1.4262,
+      1.3667,
+      3.3085,
+      1.3794,
+      2.1611,
+      1.5663,
+      2.4727,
+      1.3907,
+      1.2679
+    ],
+    "runs": 500,
+    "side_effect_executions": 50,
+    "tool_runs": 50
+  }
+}

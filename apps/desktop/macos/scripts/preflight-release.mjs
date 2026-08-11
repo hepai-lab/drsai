@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Release preflight requires Apple Silicon macOS.");
-const root = resolve(import.meta.dirname, "..");
+const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const output = resolve(root, "build/acceptance/release-preflight.json");
 const identities = run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"]);
 const developerIds = [...identities.matchAll(/\"(Developer ID Application:[^\"]+)\"/g)].map((match) => match[1]);

@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from drsai.backend.runtime.agent import RuntimeExecutionError
 
 
-_VERSION = re.compile(r"(?:codex-cli\s+)?(?P<version>\d+\.\d+\.\d+)(?:\s|$)")
+_VERSION = re.compile(r"(?:codex-cli\s+)?(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)")
 
 
 def _sha256(path: Path) -> str:
@@ -176,12 +176,17 @@ class CodexArtifactStore:
 
 
 class CodexBinaryProvider:
-    def __init__(self, store: CodexArtifactStore, *, mode: str = "product", environ: Mapping[str, str] | None = None):
+    def __init__(
+        self, store: CodexArtifactStore, *, mode: str = "product",
+        environ: Mapping[str, str] | None = None,
+        desktop_signature_verifier: Callable[[Path], bool] | None = None,
+    ):
         if mode not in {"product", "development"}:
             raise ValueError("mode must be product or development")
         self.store = store
         self.mode = mode
         self.environ = dict(os.environ if environ is None else environ)
+        self.desktop_signature_verifier = desktop_signature_verifier or _windows_openai_signature_is_valid
 
     def resolve(self) -> CodexBinary:
         override = self.environ.get("CODEX_BIN")
@@ -190,7 +195,72 @@ class CodexBinaryProvider:
             if not path.is_file():
                 raise RuntimeExecutionError("codex_development_override_invalid", "CODEX_BIN does not name a file.")
             return CodexBinary(path, _probe_codex_version(path), None, "CODEX_BIN", False)
-        return self.store.resolve()
+        try:
+            return self.store.resolve()
+        except RuntimeExecutionError as exc:
+            if exc.code != "codex_artifact_not_installed" or os.name != "nt":
+                raise
+        discovered = discover_windows_codex_desktop(self.environ)
+        if discovered is None:
+            raise RuntimeExecutionError(
+                "codex_artifact_not_installed",
+                "No managed Codex artifact or trusted Codex Desktop CLI was found.",
+            )
+        if not self.desktop_signature_verifier(discovered):
+            raise RuntimeExecutionError(
+                "codex_desktop_signature_invalid",
+                "The discovered Codex Desktop CLI is not signed by the trusted OpenAI publisher.",
+            )
+        version = _probe_codex_version(discovered)
+        if not version:
+            raise RuntimeExecutionError(
+                "codex_binary_version_unreadable",
+                "The discovered Codex Desktop CLI could not be started by the Runtime.",
+            )
+        return CodexBinary(discovered, version, None, "codex-desktop", True)
+
+
+def discover_windows_codex_desktop(environ: Mapping[str, str] | None = None) -> Path | None:
+    """Return a real Codex Desktop CLI, never the WindowsApps execution alias."""
+    environment = os.environ if environ is None else environ
+    local = environment.get("LOCALAPPDATA", "").strip()
+    if not local:
+        return None
+    root = (Path(local) / "OpenAI" / "Codex" / "bin").resolve(strict=False)
+    if not root.is_dir():
+        return None
+    candidates: list[Path] = []
+    for candidate in root.glob("*/codex.exe"):
+        try:
+            resolved = candidate.resolve(strict=True)
+            if (
+                resolved.is_file()
+                and re.fullmatch(r"[0-9a-fA-F]{8,64}", resolved.parent.name)
+                and os.path.commonpath([os.path.normcase(str(root)), os.path.normcase(str(resolved))]) == os.path.normcase(str(root))
+            ):
+                candidates.append(resolved)
+        except (OSError, ValueError):
+            continue
+    return max(candidates, key=lambda path: path.stat().st_mtime_ns, default=None)
+
+
+def _windows_openai_signature_is_valid(path: Path, *, timeout: float = 10) -> bool:
+    if os.name != "nt":
+        return False
+    script = (
+        "$s=Get-AuthenticodeSignature -LiteralPath $env:OPENDRSAI_CODEX_SIGNATURE_TARGET;"
+        "if($s.Status -eq 'Valid' -and $s.SignerCertificate.Subject -match 'OpenAI (?:OpCo|L\\.L\\.C\\.)'){exit 0};exit 1"
+    )
+    try:
+        environment = dict(os.environ)
+        environment["OPENDRSAI_CODEX_SIGNATURE_TARGET"] = str(path)
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, timeout=timeout, check=False, env=environment,
+        )
+        return completed.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 class CodexPlatformLauncher:
@@ -230,7 +300,7 @@ def _probe_codex_version(path: Path, *, timeout: float = 5) -> str | None:
 
 
 def verify_codex_compatibility(binary: CodexBinary, *, timeout: float = 15) -> str:
-    if not binary.release_safe or not binary.manifest:
+    if not binary.release_safe:
         raise RuntimeExecutionError("codex_development_override_unverified", "Development Codex override is not release-compatible.")
     command = CodexPlatformLauncher.command(binary.path, ["--version"])
     try:
@@ -242,6 +312,12 @@ def verify_codex_compatibility(binary: CodexBinary, *, timeout: float = 15) -> s
     if completed.returncode != 0 or not match:
         raise RuntimeExecutionError("codex_binary_version_unreadable", "Codex binary did not report a valid version.")
     actual = match.group("version")
+    if binary.source == "codex-desktop" and binary.manifest is None:
+        # Authenticity is established by Windows Authenticode during discovery.
+        # Stable app-server compatibility is then negotiated by initialize.
+        return actual
+    if not binary.manifest:
+        raise RuntimeExecutionError("codex_artifact_manifest_invalid", "Release Codex metadata is unavailable.")
     expected = str(binary.manifest["version"])
     if actual != expected:
         raise RuntimeExecutionError("codex_binary_version_mismatch", "Codex binary version does not match its manifest.",

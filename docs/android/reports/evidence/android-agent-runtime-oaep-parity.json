@@ -1,0 +1,19 @@
+{
+  "android_expected": {
+    "document_sha256": "3aa8870a99ec16f468c10512d53459604b75a14e25a91bd1ced8b49942cd30e1",
+    "events_sha256": "8179fbeaedd746008e61eca67c6d81c102901d578924836b6ab408547610d3ce",
+    "snapshot_sha256": "3a5930a8aeeb1d5e0b3948e3b55e40bab564bb5b0e41cae45a4eb791f8be69b4"
+  },
+  "canonicalization": "utf8-json-sort-keys-compact-no-nan",
+  "event_count": 11,
+  "fixture": "cores/protocol/oaep/examples.json",
+  "generated_at": "2026-08-04T14:23:03.210319+00:00",
+  "item_count": 10,
+  "passed": true,
+  "python_desktop": {
+    "document_sha256": "3aa8870a99ec16f468c10512d53459604b75a14e25a91bd1ced8b49942cd30e1",
+    "events_sha256": "8179fbeaedd746008e61eca67c6d81c102901d578924836b6ab408547610d3ce",
+    "snapshot_sha256": "3a5930a8aeeb1d5e0b3948e3b55e40bab564bb5b0e41cae45a4eb791f8be69b4"
+  },
+  "schema_version": 1
+}

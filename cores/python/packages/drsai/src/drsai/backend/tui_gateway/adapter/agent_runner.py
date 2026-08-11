@@ -23,6 +23,7 @@ import logging
 import os
 import threading
 import time
+from pathlib import Path
 from concurrent.futures import Future
 from typing import Any, Callable, Mapping, Optional
 
@@ -122,12 +123,20 @@ class AgentSession:
         self.cli_cfg = cli_cfg
         self.db_manager = db_manager
 
+        # The legacy agent remains the compatibility executor while Runtime V2
+        # commands and parity validation use the same Core factory as Desktop
+        # and Android.
+        from drsai.backend.runtime.mobile_adapter import create_surface_mobile_core
+
+        self.shared_mobile_core = create_surface_mobile_core("tui")
+
         self._loop, self._loop_thread = _start_loop_thread()
         self.agent: Any = None  # set by init()
         self._closed = False
         self._init_lock = threading.Lock()
         self._initialized = False
         self._workdir: str = ""
+        self._model_config_stamp: tuple[int, int] | None = self._read_model_config_stamp()
 
     # ── Initialization ────────────────────────────────────────────
 
@@ -176,6 +185,7 @@ class AgentSession:
             db_manager=self.db_manager,
             defult_config_name=defult_config_name or self.cli_cfg.get("defult_config_name"),
             cli_cfg=self.cli_cfg,
+            kernel_surface="tui",
         )
 
         if hasattr(agent, "lazy_init"):
@@ -313,6 +323,8 @@ class AgentSession:
             raise RuntimeError("session closed")
         if not self._initialized:
             raise RuntimeError("session not initialised")
+
+        self._refresh_model_config_if_changed()
 
         return _run_coro(
             self._loop,
@@ -537,19 +549,51 @@ class AgentSession:
 
     def switch_model(self, alias: str) -> bool:
         """Switch the agent's model client. Returns True on success."""
+        from drsai.config.telemetry import increment_metric
+
         if self.agent is None:
+            increment_metric("client_swap_unavailable")
             return False
         set_fn = getattr(self.agent, "_set_model_client", None)
         if set_fn is None:
+            increment_metric("client_swap_unavailable")
             return False
         try:
             new_client = set_fn(alias)
             _run_coro(self._loop, self.agent.switch_model(new_client), timeout=10.0)
             self.agent._defult_config_name = alias
+            self._model_config_stamp = self._read_model_config_stamp()
+            increment_metric("client_swap_succeeded")
             return True
         except Exception:
+            increment_metric("client_swap_failed")
             logger.exception("switch_model failed")
             return False
+
+    @staticmethod
+    def _read_model_config_stamp() -> tuple[int, int] | None:
+        from drsai.config.loader import default_config_path
+
+        try:
+            stat = Path(default_config_path()).stat()
+            return stat.st_mtime_ns, stat.st_size
+        except OSError:
+            return None
+
+    def _refresh_model_config_if_changed(self) -> None:
+        stamp = self._read_model_config_stamp()
+        if stamp == self._model_config_stamp:
+            return
+        try:
+            from drsai.config import load_user_config
+
+            config = load_user_config()
+            alias = config.model or getattr(self.agent, "_defult_config_name", "")
+            if alias and self.switch_model(alias):
+                self._model_config_stamp = stamp
+        except Exception:
+            # Keep the last known-good client and retry after the next edit/turn.
+            logger.exception("model config hot reload failed; keeping current client")
 
     def info(self) -> dict:
         """Snapshot session metadata for ``session.info`` event."""

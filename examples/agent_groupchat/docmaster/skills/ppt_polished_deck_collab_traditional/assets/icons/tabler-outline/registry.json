@@ -1,0 +1,286 @@
+{
+  "version": "0.1.0",
+  "family": {
+    "id": "tabler-outline",
+    "label": "Tabler Outline",
+    "license": "MIT",
+    "source_repo": "https://github.com/tabler/tabler-icons",
+    "source_url_template": "https://raw.githubusercontent.com/tabler/tabler-icons/master/icons/outline/{icon}.svg",
+    "style_note": "统一线性图标，适合高质量 deck 的卡片、标题旁辅助图标和 section 导航。"
+  },
+  "packs": [
+    {
+      "id": "general-layout",
+      "label": "General Layout",
+      "description": "适合通用高质量 deck 的标题、卡片、导航和证据页。"
+    },
+    {
+      "id": "llm-research",
+      "label": "LLM Research",
+      "description": "适合 ACL / EMNLP / LLM / Agent / RAG / Memory 等话题的研究表达。"
+    }
+  ],
+  "icons": [
+    {
+      "id": "insight-bulb",
+      "source_name": "bulb",
+      "packs": ["general-layout"],
+      "aliases": ["idea", "insight", "takeaway", "亮点", "洞察", "启发"],
+      "usage_note": "适合 insight、takeaway、key idea 卡片。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "18-28px"
+    },
+    {
+      "id": "growth-chart",
+      "source_name": "chart-line",
+      "packs": ["general-layout"],
+      "aliases": ["growth", "trend", "performance", "走势", "增长", "趋势"],
+      "usage_note": "适合趋势、增长、表现类数据页。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "20-30px"
+    },
+    {
+      "id": "team-users",
+      "source_name": "users",
+      "packs": ["general-layout"],
+      "aliases": ["team", "org", "people", "users", "团队", "组织", "用户"],
+      "usage_note": "适合角色、组织、用户分群与协作关系。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "safety-shield",
+      "source_name": "shield-check",
+      "packs": ["general-layout", "llm-research"],
+      "aliases": ["security", "safety", "compliance", "risk-control", "安全", "合规", "风控"],
+      "usage_note": "适合安全、合规、质量 gate 与风控说明。",
+      "recommended_color_role": "semantic",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "launch-rocket",
+      "source_name": "rocket",
+      "packs": ["general-layout"],
+      "aliases": ["launch", "ship", "go-live", "发布", "上线", "启动"],
+      "usage_note": "适合 launch、发布、计划推进、里程碑页。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "20-30px"
+    },
+    {
+      "id": "engineering-code",
+      "source_name": "code",
+      "packs": ["general-layout", "llm-research"],
+      "aliases": ["engineering", "dev", "implementation", "代码", "研发", "实现"],
+      "usage_note": "适合工程、技术实现、开发能力说明。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-28px"
+    },
+    {
+      "id": "data-database",
+      "source_name": "database",
+      "packs": ["general-layout", "llm-research"],
+      "aliases": ["data", "storage", "warehouse", "数据库", "数据", "仓库"],
+      "usage_note": "适合数据平台、存储、基础数据层说明。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "risk-alert",
+      "source_name": "alert-triangle",
+      "packs": ["general-layout", "llm-research"],
+      "aliases": ["risk", "warning", "issue", "alert", "风险", "告警", "问题"],
+      "usage_note": "适合风险、告警、例外路径或 blocker 卡片。",
+      "recommended_color_role": "semantic",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "target-focus",
+      "source_name": "target-arrow",
+      "packs": ["general-layout"],
+      "aliases": ["goal", "target", "objective", "focus", "目标", "聚焦", "方向"],
+      "usage_note": "适合目标、north star、战略聚焦页。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "20-30px"
+    },
+    {
+      "id": "knowledge-book",
+      "source_name": "book",
+      "packs": ["general-layout", "llm-research"],
+      "aliases": ["knowledge", "learning", "guide", "doc", "知识", "学习", "文档"],
+      "usage_note": "适合研究、学习、方法论和培训材料。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "business-briefcase",
+      "source_name": "briefcase",
+      "packs": ["general-layout"],
+      "aliases": ["business", "client", "work", "case", "业务", "客户", "项目"],
+      "usage_note": "适合业务场景、客户视角、项目页。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "presentation-deck",
+      "source_name": "presentation",
+      "packs": ["general-layout"],
+      "aliases": ["deck", "slides", "presentation", "汇报", "演示", "PPT"],
+      "usage_note": "适合目录页、章节页、交付物页。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "magic-sparkles",
+      "source_name": "sparkles",
+      "packs": ["general-layout"],
+      "aliases": ["highlight", "special", "magic", "亮点", "高光", "增强"],
+      "usage_note": "适合亮点、增强能力、创新点、小范围高光。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "18-24px"
+    },
+    {
+      "id": "desktop-analytics",
+      "source_name": "device-desktop-analytics",
+      "packs": ["general-layout"],
+      "aliases": ["analytics", "dashboard", "monitoring", "面板", "分析", "监控"],
+      "usage_note": "适合 dashboard、监控、运营分析页。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "flow-route",
+      "source_name": "route",
+      "packs": ["general-layout", "llm-research"],
+      "aliases": ["process", "route", "journey", "flow", "流程", "路径", "旅程"],
+      "usage_note": "适合用户旅程、路线、流程说明页。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "handoff-transfer",
+      "source_name": "arrows-transfer-up-down",
+      "packs": ["general-layout", "llm-research"],
+      "aliases": ["handoff", "exchange", "sync", "transfer", "交接", "同步", "流转"],
+      "usage_note": "适合交接、同步、上下游流转和系统交换。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "model-brain",
+      "source_name": "brain",
+      "packs": ["llm-research"],
+      "aliases": ["model", "llm", "reasoning", "brain", "模型", "推理", "认知"],
+      "usage_note": "适合模型能力、reasoning、memory、cognitive architecture 页面。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "dialog-messages",
+      "source_name": "messages",
+      "packs": ["llm-research"],
+      "aliases": ["dialog", "chat", "conversation", "message", "对话", "聊天", "消息"],
+      "usage_note": "适合对话式 agent、multi-turn interaction、conversation flow。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "20-28px"
+    },
+    {
+      "id": "retrieval-search",
+      "source_name": "search",
+      "packs": ["llm-research"],
+      "aliases": ["retrieval", "search", "query", "rag", "检索", "查询", "召回"],
+      "usage_note": "适合 RAG、retrieval、query understanding、search pipeline。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "evidence-file-search",
+      "source_name": "file-search",
+      "packs": ["llm-research"],
+      "aliases": ["document retrieval", "evidence", "corpus", "file", "文档", "证据", "语料"],
+      "usage_note": "适合 evidence grounding、document corpus、citation 与 source retrieval。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "embedding-vector",
+      "source_name": "vector",
+      "packs": ["llm-research"],
+      "aliases": ["embedding", "vector", "representation", "向量", "表征", "嵌入"],
+      "usage_note": "适合 embedding、vector DB、representation learning 页面。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "memory-stack",
+      "source_name": "stack-2",
+      "packs": ["llm-research"],
+      "aliases": ["memory", "context window", "stack", "层叠", "记忆", "上下文"],
+      "usage_note": "适合 short-term memory、long-term memory、context stack 表达。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "agent-branch",
+      "source_name": "git-branch",
+      "packs": ["llm-research"],
+      "aliases": ["agent branch", "tool branch", "planning", "分支", "规划", "工具调用"],
+      "usage_note": "适合 agent planning、branching policy、tool routing 页面。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "tree-structure",
+      "source_name": "binary-tree",
+      "packs": ["llm-research"],
+      "aliases": ["tree", "cot", "tot", "search tree", "树", "思维树", "搜索树"],
+      "usage_note": "适合 CoT、ToT、beam search、decision tree 结构表达。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "graph-relations",
+      "source_name": "circles-relation",
+      "packs": ["llm-research"],
+      "aliases": ["graph", "relation", "knowledge graph", "关系", "图结构", "知识图谱"],
+      "usage_note": "适合 graph memory、entity relation、tool graph、workflow graph。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "hierarchy-agent",
+      "source_name": "hierarchy-2",
+      "packs": ["llm-research"],
+      "aliases": ["hierarchy", "multi-agent", "coordinator", "层级", "多智能体", "协调器"],
+      "usage_note": "适合 hierarchical agent、planner-executor、多层 orchestrator 页面。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "language-nlp",
+      "source_name": "language",
+      "packs": ["llm-research"],
+      "aliases": ["nlp", "language", "token", "text", "语言", "文本", "自然语言"],
+      "usage_note": "适合 NLP、language modeling、multilingual、token-level 说明。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "network-system",
+      "source_name": "network",
+      "packs": ["llm-research"],
+      "aliases": ["network", "system", "topology", "网络", "拓扑", "系统结构"],
+      "usage_note": "适合 system architecture、module topology、agent network 页面。",
+      "recommended_color_role": "muted",
+      "ppt_size_hint": "18-26px"
+    },
+    {
+      "id": "eval-zoom-code",
+      "source_name": "zoom-code",
+      "packs": ["llm-research"],
+      "aliases": ["eval", "benchmark", "inspect code", "评测", "基准", "代码检查"],
+      "usage_note": "适合 benchmark、code eval、error analysis、inspection 页面。",
+      "recommended_color_role": "accent",
+      "ppt_size_hint": "18-26px"
+    }
+  ]
+}

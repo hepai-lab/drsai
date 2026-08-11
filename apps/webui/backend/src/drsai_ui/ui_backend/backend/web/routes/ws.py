@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from .....drsai_adapter.sso.jwt import decode_jwt_token
 from loguru import logger
 
-from ...datamodel import Run
+from ...datamodel import Run, RunStatus
 from ..deps import get_db, get_websocket_manager
 from ..managers import WebSocketManager
 from ...utils.utils import construct_task
@@ -71,6 +71,18 @@ async def run_websocket(
         await websocket.close(code=4004, reason="Run not found")
         return
 
+    run_record: Run = run_response.data[0]
+
+    # When restarting a terminal run, discard the previous execution state
+    # so load_state doesn't restore a completed plan and terminate immediately.
+    if run_record.status in (RunStatus.STOPPED, RunStatus.COMPLETE, RunStatus.ERROR):
+        if run_record.state is not None:
+            logger.info(
+                f"Clearing stale state for terminal run {run_id} (status={run_record.status})"
+            )
+            run_record.state = None
+            db.upsert(run_record)
+
     # Native clients send a Bearer token. Validate ownership when present;
     # legacy browser clients remain compatible while they migrate.
     authorization = websocket.headers.get("authorization", "")
@@ -106,6 +118,10 @@ async def run_websocket(
             try:
                 raw_message = await websocket.receive_text()
                 message = json.loads(raw_message)
+                logger.debug(
+                    f"[WS_IN] run={run_id} type={message.get('type')} "
+                    f"task_len={len(message.get('task', '')) if message.get('task') else 0}"
+                )
 
                 if message.get("type") == "start" or message.get("type") == "continue":
                     # Handle start message
@@ -128,18 +144,35 @@ async def run_websocket(
                     )
                     if requested_model:
                         settings_config["defult_config_name"] = requested_model
+
+                    # Pass lang through settings_config so the agent can inject it into the system prompt
+                    lang = start_metadata.pop("lang", None)
+                    if lang:
+                        settings_config["lang"] = lang
+
                     task = construct_task(
-                        query=task, 
+                        query=task,
                         files=files,
                         # settings_config=settings_config,
                         metadata=start_metadata,
                     )
                     if task and team_config:
-                        asyncio.create_task(
-                            ws_manager.start_stream(
-                                run_id, task, team_config, settings_config, files=files
+                        # If the run already has a live team manager waiting for input
+                        # (e.g. DocMaster paused at an input_request), route this as an
+                        # input_response instead of calling start_stream which would
+                        # cancel the running agent.
+                        if message.get("type") == "continue" and ws_manager.has_active_run(run_id):
+                            logger.info(
+                                f"Run {run_id} has active team manager — routing 'continue' as input_response"
                             )
-                        )
+                            raw_task = message.get("task", "")
+                            await ws_manager.handle_input_response(run_id, raw_task)
+                        else:
+                            asyncio.create_task(
+                                ws_manager.start_stream(
+                                    run_id, task, team_config, settings_config, files=files
+                                )
+                            )
                     else:
                         logger.warning(f"Invalid start message format for run {run_id}")
                         # Never send type=error to the frontend.
@@ -223,9 +256,10 @@ async def run_websocket(
                 )
 
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for run {run_id}")
+        logger.warning(f"[WS_DISCONNECT] run={run_id} — WebSocketDisconnect received")
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
     finally:
+        logger.warning(f"[WS_FINALLY] run={run_id} — calling disconnect()")
         # Do not stop the run on transient websocket disconnect; allow reconnect.
         await ws_manager.disconnect(run_id, conn_gen=conn_gen, stop_run=False)

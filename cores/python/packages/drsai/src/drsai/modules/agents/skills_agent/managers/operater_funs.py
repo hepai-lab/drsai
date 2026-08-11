@@ -328,7 +328,7 @@ def get_operator_funcs(
                     lines = text.splitlines()
                     if minilimit:
                         lines = lines[minilimit:maxlimit]
-                    return "\n".join(lines)[:5000]
+                    return "\n".join(lines)
         except asyncio.TimeoutError:
             return f"Error: Read operation timed out after {timeout}s"
         except Exception as e:

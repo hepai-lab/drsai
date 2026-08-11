@@ -1,0 +1,101 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 31,
+  "captured_at": "2026-08-05T03:45:41.797Z",
+  "feature": "M06-F05",
+  "result": "accepted",
+  "scope": "OpenDrSai Windows App with HAI configuration and OpenDrSai Full Agent Runtime",
+  "implementation": {
+    "shared_dialog_host": "apps/desktop/shared/renderer/src/components/AppDecisionDialog.tsx",
+    "active_renderer_native_confirm_alert_calls": 0,
+    "migrated_surfaces": [
+      "agent binding and preference reset",
+      "mobile enrollment and device access",
+      "debug policy",
+      "file context trust and large-directory review",
+      "workspace patch stage and revert",
+      "controlled browser actions",
+      "skill draft discard",
+      "GFS deletion",
+      "workspace notices"
+    ],
+    "interaction_model": [
+      "safe action receives initial focus",
+      "Tab and Shift+Tab remain inside the dialog",
+      "Escape and backdrop cancel",
+      "focus returns to the triggering control",
+      "queued decisions are consumed by a single pump",
+      "every decision emits a diagnostic audit record"
+    ]
+  },
+  "focused_tests": {
+    "contract_checks": 17,
+    "typescript": true,
+    "production_build": true,
+    "passed": true,
+    "commands": [
+      "npm run verify:m06-app-dialog-contract",
+      "npm run typecheck",
+      "npm run build:unpack"
+    ]
+  },
+  "packaged_ui": {
+    "real_executable": true,
+    "passed_checks": 26,
+    "total_checks": 26,
+    "accessibility_tree_captured": true,
+    "screenshot_captured": true,
+    "real_keyboard_input": true,
+    "real_mouse_backdrop_input": true,
+    "decision_scenarios": 6,
+    "cancelled_scenarios": 4,
+    "approved_scenarios": 2,
+    "cancelled_side_effects": 0,
+    "approved_effects": 2,
+    "native_confirm_calls": 0,
+    "native_alert_calls": 0,
+    "audited_decisions": 6,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "evidence": "apps/desktop/windows/release/product-evidence/m06-app-dialog/latest/packaged-m06-app-dialog-result.json"
+  },
+  "stability": {
+    "formal_rounds": 20,
+    "passed_rounds": 20,
+    "failed_rounds": 0,
+    "checks_per_round": 26,
+    "formal_checks": 520,
+    "native_dialog_calls": 0,
+    "approved_effects": 40,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "evidence": "apps/desktop/windows/release/product-evidence/m06-app-dialog/stability-summary.json"
+  },
+  "acceptance": {
+    "native_dialogs_removed_from_active_renderer": true,
+    "safe_initial_focus": true,
+    "focus_trap": true,
+    "escape_cancel": true,
+    "backdrop_cancel": true,
+    "focus_return": true,
+    "cancel_side_effects_zero": true,
+    "approved_side_effect_exactly_once": true,
+    "decision_queue_ordered_and_lossless": true,
+    "decision_auditable": true,
+    "accessible_name_and_description": true
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:5dd3f63c7aa64fc90c32907d87ce042b98bdada02a96164b3ba9544b68f271c9"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:3a0594da4354be242adfeecd361c6bc0e60aaf4255f17a3210e8be5caed4e9a9"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:6db3a28567bf8844624590c02452f08545be4ac6f5ba6c8db4268bc762f14eed"
+    }
+  }
+}

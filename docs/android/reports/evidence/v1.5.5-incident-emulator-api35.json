@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "captured_at_device": "2026-08-04T11:36:37+00:00",
+  "purpose": "Attempt to reproduce the Android v1.5.5 post-login OEM runtime exception on the API 35 emulator",
+  "artifact": {
+    "path": "C:\\tmp\\drsai-release-v1.5.5\\apps\\android\\app\\build\\outputs\\apk\\mvp\\OpenDrSai-Android-v1.5.5.apk",
+    "package_name": "ai.drsai.remote",
+    "version_name": "1.5.5",
+    "version_code": 10505,
+    "size_bytes": 26370437,
+    "sha256": "d52b7df0cee4fab11fa817e0ba25be4db7e67a2ca3e3a4596c205e1a641321a6"
+  },
+  "device": {
+    "serial": "emulator-5560",
+    "model": "sdk_gphone64_x86_64",
+    "android_release": "15",
+    "api_level": 35,
+    "build_fingerprint": "google/sdk_gphone64_x86_64/emu64xa:15/AE3A.240806.043/12960925:userdebug/dev-keys",
+    "abis": [
+      "x86_64",
+      "arm64-v8a"
+    ],
+    "page_size_bytes": 4096,
+    "display": "1080x2340@440dpi"
+  },
+  "checks": {
+    "install": "passed",
+    "cold_launch": "passed",
+    "pre_authentication_ui": "passed",
+    "main_process_alive": true,
+    "runtime_process_started": false,
+    "app_scoped_java_or_native_crash": false,
+    "app_scoped_anr": false,
+    "oem_runtime_exception_dialog": false,
+    "oidc_authorization_page_opened": true,
+    "oidc_host": "newlogin.ihep.ac.cn",
+    "authenticated_callback_completed": false,
+    "post_login_workspace_loaded": false
+  },
+  "result": "not_reproduced_before_authentication",
+  "limitations": [
+    "The AOSP emulator does not contain the OEM security component which generated the reported hardening-compatibility dialog.",
+    "The clean emulator Chrome profile had no authenticated IHEP session, and no credentials or tokens were injected.",
+    "The v1.5.5 MVP APK is not debuggable, so run-as cannot be used to seed a test authentication state.",
+    "A real post-login conclusion requires the user to complete OIDC interactively or a separately signed mock-OIDC acceptance build."
+  ]
+}

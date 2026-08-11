@@ -1,0 +1,66 @@
+{
+  "android_to_desktop": {
+    "event_count": 9,
+    "item_types": [
+      "artifact",
+      "interaction",
+      "message",
+      "subtask",
+      "tool_call"
+    ],
+    "items_digest": "9ad174a75e19673b8316a0d12dd4fd894678185319a22ccb45beacf95dfb8f22",
+    "p95_ms": 107.633,
+    "runtime_id": "rt_4c85b1acbfe2453e9c52d073261d731e",
+    "session_id": "android-e2e-session",
+    "snapshot_sequence": 9
+  },
+  "cross_end_approval_race": {
+    "android_status": "approved",
+    "approval_event_count": 1,
+    "approval_id": "desktop-e2e-approval",
+    "approval_transition_count": 1,
+    "decision_order": [
+      {
+        "decision": "approve",
+        "idempotency_key": "desktop-race-decision",
+        "order": 1
+      },
+      {
+        "decision": "approve",
+        "idempotency_key": "approval:desktop-e2e-approval:approve",
+        "order": 2
+      },
+      {
+        "decision": "approve",
+        "idempotency_key": "desktop-race-decision",
+        "order": 3
+      },
+      {
+        "decision": "approve",
+        "idempotency_key": "desktop-race-late-replay",
+        "order": 4
+      }
+    ],
+    "desktop_status": "approved",
+    "receipt_replay_count": 1,
+    "side_effect_execution_count": 1,
+    "side_effect_receipt_count": 1,
+    "status": "approved"
+  },
+  "desktop_to_android": {
+    "disconnect_after": 4,
+    "event_count": 9,
+    "items_digest": "c40203be4b169705892eec4f583041424126f08a3651e0bd479c724641b0a272",
+    "realtime_events": 5,
+    "reconnect_cursor": 4,
+    "runtime_id": "rt_0334d945b49845faa323da161f3a0be7",
+    "session_id": "desktop-e2e-session",
+    "snapshot_sequence": 9
+  },
+  "device": "SM-X936C",
+  "finished_at": "2026-08-03T22:59:04.491789+00:00",
+  "passed": true,
+  "schema_version": 1,
+  "serial": "R5GYB3S8ACH",
+  "started_at": "2026-08-03T22:58:29.177216+00:00"
+}

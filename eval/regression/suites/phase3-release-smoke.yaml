@@ -1,0 +1,13 @@
+schema_version: opendrsai.agent-regression-suite/1
+id: phase3-release-smoke
+title: OpenDrSai P3 formal Runtime six-capability smoke
+description: Six deterministic release cases executed through the official Gateway and Agent Runtime.
+cases:
+  - p3.qa.hello
+  - p3.tool.web
+  - p3.knowledge.runtime
+  - p3.skill.presentation
+  - p3.image.input
+  - p3.image.output
+defaults:
+  concurrency: 2

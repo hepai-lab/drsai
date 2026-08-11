@@ -1,0 +1,314 @@
+{
+  "schema_version": "opendrsai.agent-runtime-phase3-pre-release-result/1",
+  "generated_at": "2026-08-05T09:38:57.889Z",
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "source_digest": "e4a3543aa8abfd98f0a79023a4acdfd8611a264264a0d7f4491f6554939b2b04",
+  "ledger_digest": "2c16d85da356ff88a46732a959af36c53404614ba9b8f8d803f7121ec976fa8c",
+  "commands": [
+    {
+      "id": "backend",
+      "steps": [
+        {
+          "executable": "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+          "args": [
+            "-m",
+            "pytest",
+            "cores/python/packages/drsai/tests/test_experiment_overrides.py",
+            "cores/python/packages/drsai/tests/test_gateway_experiment_capabilities.py",
+            "cores/python/packages/drsai/tests/test_replay_planner.py",
+            "cores/python/packages/drsai/tests/test_replay_execution.py",
+            "cores/python/packages/drsai/tests/test_agent_runtime.py",
+            "cores/python/packages/drsai/tests/test_phase2_controlled_execute_e2e.py",
+            "cores/python/packages/drsai/tests/test_runtime_adoptions.py",
+            "cores/python/packages/drsai/tests/test_regression_runtime_control.py",
+            "cores/python/packages/drsai/tests/test_runtime_engine.py",
+            "cores/python/packages/drsai/tests/test_gateway_runtime_identity.py",
+            "cores/python/packages/drsai/tests/test_input_resources.py",
+            "cores/python/packages/drsai/tests/test_gateway_opendrsai_backend.py",
+            "cores/python/packages/drsai/tests/test_agent_kernel_production_parity.py",
+            "cores/python/packages/drsai/tests/test_desktop_autogen_ports.py",
+            "-q"
+          ],
+          "duration_ms": 39114,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "9ab075d77025ba7432e15885696aa28984d73ef7ba95adbb6ccdf3485e390f77",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "cwd": ".",
+      "started_at": "2026-08-05T09:34:47.812Z",
+      "completed_at": "2026-08-05T09:35:26.927Z",
+      "duration_ms": 39114,
+      "exit_code": 0,
+      "error_code": null,
+      "stdout_sha256": "9ab075d77025ba7432e15885696aa28984d73ef7ba95adbb6ccdf3485e390f77",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "desktop",
+      "steps": [
+        {
+          "executable": "C:\\WINDOWS\\system32\\cmd.exe",
+          "args": [
+            "/d",
+            "/s",
+            "/c",
+            "npm run typecheck:node"
+          ],
+          "duration_ms": 6203,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "856a710fa9d51843682c190a02d13c312c464bd7a1ba7198400bb8ff30f26fd3",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "executable": "C:\\WINDOWS\\system32\\cmd.exe",
+          "args": [
+            "/d",
+            "/s",
+            "/c",
+            "npm run typecheck:web"
+          ],
+          "duration_ms": 10130,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "b6b6052ce02dd89fafb22bc1f20abb978c158044e0427c4c87cfb8e3f0217c19",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "executable": "C:\\WINDOWS\\system32\\cmd.exe",
+          "args": [
+            "/d",
+            "/s",
+            "/c",
+            "npm run verify:run-inspector-ui"
+          ],
+          "duration_ms": 440,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "9a7cfc63ba31c811dc5193f39d200e61b26a44fac6f7869b91c64d96c2c9dccf",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "cwd": "apps/desktop/windows",
+      "started_at": "2026-08-05T09:35:26.927Z",
+      "completed_at": "2026-08-05T09:35:43.701Z",
+      "duration_ms": 16774,
+      "exit_code": 0,
+      "error_code": null,
+      "stdout_sha256": "2b7cd2bbfb27456a20a1eb1adbdce62875cc1d33f7920ec15e0d7438145616c5",
+      "stderr_sha256": "75a11da44c802486bc6f65640aa48a730f0f684c5c07a42ba3cd1735eb3fb070"
+    },
+    {
+      "id": "regression",
+      "steps": [
+        {
+          "executable": "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+          "args": [
+            "eval/regression/run_regression.py",
+            "validate",
+            "--suite",
+            "phase3-release-smoke"
+          ],
+          "duration_ms": 397,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "8cb2af3acaa9e84b14809c197ba81d08171535d9f840b8d2f01068d37a20939a",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "executable": "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+          "args": [
+            "-m",
+            "pytest",
+            "eval/regression/tests",
+            "-q"
+          ],
+          "duration_ms": 2422,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "8d8416972bf0e26fb6d26f7fe6b5157e5c22159f873515fc50812924c2a09f9e",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "cwd": ".",
+      "started_at": "2026-08-05T09:35:43.701Z",
+      "completed_at": "2026-08-05T09:35:46.521Z",
+      "duration_ms": 2820,
+      "exit_code": 0,
+      "error_code": null,
+      "stdout_sha256": "efa8ad3cdd91ae6308c2723e8f91a8039286aa5c639407a204dae7e3527b5380",
+      "stderr_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "id": "performance",
+      "steps": [
+        {
+          "executable": "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+          "args": [
+            "-m",
+            "pytest",
+            "cores/python/packages/drsai/tests/test_run_inspection.py::test_session_run_cursor_covers_5000_rows_with_concurrent_append",
+            "-q"
+          ],
+          "duration_ms": 7197,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "457db5f03d14ffde99d96a497bd96759de6ec31cf25d784f6643b667f1b284f1",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "executable": "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+          "args": [
+            "-m",
+            "pytest",
+            "cores/python/packages/drsai/tests/test_run_inspection.py::test_inspection_uses_run_index_and_bounds_a_10k_timeline",
+            "-q"
+          ],
+          "duration_ms": 13959,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "2a04dc9885ac4b006225ba573088b1f2cf3a2d729f64993c82d12c4f73e08eab",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "executable": "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+          "args": [
+            "-m",
+            "pytest",
+            "cores/python/packages/drsai/tests/test_run_inspection.py::test_inspection_100k_timeline_keeps_first_page_and_locator_bounded",
+            "-q"
+          ],
+          "duration_ms": 94429,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "c46654f9a26f92ffd3dfc8b80ac1a980f6c4f022bf381378d99459896bab8276",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "executable": "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+          "args": [
+            "-m",
+            "pytest",
+            "cores/python/packages/drsai/tests/test_run_inspection.py::test_inspection_truncates_a_10mb_tool_output_before_serialization",
+            "-q"
+          ],
+          "duration_ms": 12098,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "2b93e37c7f06a3b4589f5b449e469e6d0145cd8a168741ca67bca28e5e089527",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "executable": "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+          "args": [
+            "-m",
+            "pytest",
+            "cores/python/packages/drsai/tests/test_run_comparison.py::test_comparison_pages_file_changes_beyond_first_500_items",
+            "-q"
+          ],
+          "duration_ms": 15571,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "da3ee356843e8c26a98ce879ac2b8049a02f0fe5577ccea6e8f084f8fd6ae5c3",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "cwd": ".",
+      "started_at": "2026-08-05T09:35:46.521Z",
+      "completed_at": "2026-08-05T09:38:09.775Z",
+      "duration_ms": 143254,
+      "exit_code": 0,
+      "error_code": null,
+      "stdout_sha256": "ce6317944882805214e84d4bc9fccba6498206efedd371f2b52fba0c3493cd46",
+      "stderr_sha256": "545c38b0922de19734fbffde62792c37c2aef6a3216cfa472449173165220f7d"
+    },
+    {
+      "id": "accessibility",
+      "steps": [
+        {
+          "executable": "C:\\WINDOWS\\system32\\cmd.exe",
+          "args": [
+            "/d",
+            "/s",
+            "/c",
+            "npm run verify:m5-accessibility"
+          ],
+          "duration_ms": 3545,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "a236afc40bb3d487a4bb41104ee63c2029435a1c8e3c056075fe2d62fc6c7e24",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "cwd": "apps/desktop/windows",
+      "started_at": "2026-08-05T09:38:09.775Z",
+      "completed_at": "2026-08-05T09:38:13.320Z",
+      "duration_ms": 3545,
+      "exit_code": 0,
+      "error_code": null,
+      "stdout_sha256": "a236afc40bb3d487a4bb41104ee63c2029435a1c8e3c056075fe2d62fc6c7e24",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "windows_e2e",
+      "steps": [
+        {
+          "executable": "C:\\WINDOWS\\system32\\cmd.exe",
+          "args": [
+            "/d",
+            "/s",
+            "/c",
+            "npm run verify:run-traceability-phase3-windows-e2e"
+          ],
+          "duration_ms": 43191,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "439b0ff2ac471f4f70a99d727cd1d8e0ce820fa36c57f087b56b58defbf4a14c",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "cwd": "apps/desktop/windows",
+      "started_at": "2026-08-05T09:38:13.320Z",
+      "completed_at": "2026-08-05T09:38:56.511Z",
+      "duration_ms": 43191,
+      "exit_code": 0,
+      "error_code": null,
+      "stdout_sha256": "439b0ff2ac471f4f70a99d727cd1d8e0ce820fa36c57f087b56b58defbf4a14c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "evidence",
+      "steps": [
+        {
+          "executable": "C:\\Program Files\\nodejs\\node.exe",
+          "args": [
+            "C:\\Users\\win11\\VSProjects\\drsai\\apps\\desktop\\windows\\scripts\\verify-run-traceability-phase3-release.mjs",
+            "--self-test"
+          ],
+          "duration_ms": 1245,
+          "exit_code": 0,
+          "error_code": null,
+          "stdout_sha256": "b011151cc4f776cfc2cd009ec3245839aa2f7a3e3f45e8b26d0abb1efc008b2f",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "cwd": ".",
+      "started_at": "2026-08-05T09:38:56.511Z",
+      "completed_at": "2026-08-05T09:38:57.756Z",
+      "duration_ms": 1245,
+      "exit_code": 0,
+      "error_code": null,
+      "stdout_sha256": "b011151cc4f776cfc2cd009ec3245839aa2f7a3e3f45e8b26d0abb1efc008b2f",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "real_gateway": true,
+  "real_electron": true,
+  "artifact_digests": {
+    "windows_e2e": "cd5a162089454b8a5ed214087d4d1066eb8c445ad23403c2bfbd74fd6a8c2a7f",
+    "regression_results": "1ff7827fc57da5e5094189ca6f77b94eb75e140cb9167493ed362a612a69c726",
+    "application_build": "03f552ad97a971eb8e35bc638cc9e0de4b4cd5b0138fc1f44b619372363008f1"
+  }
+}

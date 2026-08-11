@@ -39,8 +39,8 @@ try {
   assert(result.ok === true, `M4 packaged acceptance failed:\n${JSON.stringify(result, null, 2)}`);
   const checks = Object.entries(result.checks || {});
   assert(checks.length >= 35 && checks.every(([, passed]) => passed === true), `M4 expected at least 35 passing checks, got ${checks.filter(([, passed]) => passed).length}/${checks.length}.`);
-  assert(result.details?.focusTrace?.length === 16, "M4 focus snapshot must contain exactly 16 milestones.");
-  console.log(`M4 packaged keyboard acceptance passed (${checks.length}/${checks.length} checks; 16 focus milestones; zero pointer events).`);
+  assert(result.details?.focusTrace?.length === 17, "M4 focus snapshot must contain exactly 17 milestones.");
+  console.log(`M4 packaged keyboard acceptance passed (${checks.length}/${checks.length} checks; 17 focus milestones; zero pointer events).`);
 } finally {
   rmSync(testRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
 }
@@ -69,6 +69,28 @@ function startGateway() {
     if (req.url === "/v1/models") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ object: "list", data: [{ id: "drsai", object: "model" }] }));
+      return;
+    }
+    if (req.url === "/v1/runtime") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ runtime_id: "runtime-m4-keyboard", instance_id: "instance-m4-keyboard", version: "1.5.5", protocol_version: 1, platform: "windows", dev_managed: true }));
+      return;
+    }
+    if (req.url === "/v1/capabilities") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ protocol_version: 1, capabilities: ["chat", "tools", "goals", "approvals"], capability_versions: { chat: 1, tools: 1, goals: 1, approvals: 1 } }));
+      return;
+    }
+    if (req.url === "/v1/workspaces" && req.method === "POST") {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        const path = JSON.parse(body || "{}").path;
+        const now = new Date().toISOString();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ workspace_id: `m4-${Buffer.from(String(path)).toString("base64url").slice(0, 48)}`, path, created_at: now, last_opened_at: now, closed_at: null, open: true }));
+      });
       return;
     }
     if (req.url === "/v1/config/cli" || req.url === "/v1/models/config") {

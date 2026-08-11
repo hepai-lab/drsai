@@ -1,0 +1,131 @@
+{
+  "evaluations": {
+    "corruption_kill": {
+      "actual": [
+        "kill_switch",
+        "data_corruption"
+      ],
+      "expected": [
+        "kill_switch",
+        "data_corruption"
+      ],
+      "passed": true,
+      "stage": "beta_1"
+    },
+    "crash_pause": {
+      "actual": [
+        "pause",
+        "crash_rate"
+      ],
+      "expected": [
+        "pause",
+        "crash_rate"
+      ],
+      "passed": true,
+      "stage": "beta_1"
+    },
+    "duplicate_kill": {
+      "actual": [
+        "kill_switch",
+        "duplicate_side_effect"
+      ],
+      "expected": [
+        "kill_switch",
+        "duplicate_side_effect"
+      ],
+      "passed": true,
+      "stage": "beta_1"
+    },
+    "healthy_expand": {
+      "actual": [
+        "expand",
+        "stage_gates_passed"
+      ],
+      "expected": [
+        "expand",
+        "stage_gates_passed"
+      ],
+      "passed": true,
+      "stage": "canary"
+    },
+    "security_kill": {
+      "actual": [
+        "kill_switch",
+        "security_incident"
+      ],
+      "expected": [
+        "kill_switch",
+        "security_incident"
+      ],
+      "passed": true,
+      "stage": "beta_1"
+    },
+    "under_sample": {
+      "actual": [
+        "hold",
+        "minimum_samples"
+      ],
+      "expected": [
+        "hold",
+        "minimum_samples"
+      ],
+      "passed": true,
+      "stage": "canary"
+    },
+    "under_window": {
+      "actual": [
+        "hold",
+        "observation_window"
+      ],
+      "expected": [
+        "hold",
+        "observation_window"
+      ],
+      "passed": true,
+      "stage": "canary"
+    }
+  },
+  "generated_at": "2026-08-03T22:48:30.577709+00:00",
+  "passed": true,
+  "policy_version": "android-agent-runtime-oaep-rollout-v1",
+  "production_policy_source_aligned": true,
+  "release": "Android Agent Runtime v1.6.0",
+  "schema_version": 1,
+  "stages": {
+    "beta_1": {
+      "minimum_observation_hours": 72,
+      "minimum_samples": 100,
+      "percent": 1
+    },
+    "beta_100": {
+      "minimum_observation_hours": 336,
+      "minimum_samples": 10000,
+      "percent": 100
+    },
+    "beta_20": {
+      "minimum_observation_hours": 168,
+      "minimum_samples": 2000,
+      "percent": 20
+    },
+    "beta_5": {
+      "minimum_observation_hours": 120,
+      "minimum_samples": 500,
+      "percent": 5
+    },
+    "beta_50": {
+      "minimum_observation_hours": 168,
+      "minimum_samples": 5000,
+      "percent": 50
+    },
+    "canary": {
+      "minimum_observation_hours": 72,
+      "minimum_samples": 50,
+      "percent": 0
+    },
+    "internal": {
+      "minimum_observation_hours": 48,
+      "minimum_samples": 20,
+      "percent": 0
+    }
+  }
+}

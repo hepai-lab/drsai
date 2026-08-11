@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { startApprovalRuntimeFixture } from "./lib/opendrsai-approval-runtime-fixture.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repo = resolve(root, "../../..");
@@ -27,6 +28,7 @@ const appHome = join(testRoot, "应用 数据");
 const userData = join(testRoot, "用户 数据");
 for (const path of [workspace, evidenceDir, appHome, userData]) mkdirSync(path, { recursive: true });
 copyFileSync(sourcePdf, fixturePath);
+const runtimeFixture = await startApprovalRuntimeFixture();
 
 try {
   const processOutput = await runPackagedApp();
@@ -63,6 +65,7 @@ try {
   writeFileSync(join(evidenceDir, "evidence-integrity.json"), `${JSON.stringify(summary, null, 2)}\n`);
   console.log(`F1 low-risk approvals passed ${summary.totalChecks}/${summary.totalChecks} checks; five low-risk operations queued zero approvals and waited 0 ms.`);
 } finally {
+  await runtimeFixture.close();
   rmSync(testRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
@@ -73,7 +76,7 @@ function runPackagedApp() {
     let stderr = "";
     const child = spawn(executable, [`--user-data-dir=${userData}`], {
       cwd: root,
-      env: { ...process.env, DRSAI_HOME: appHome, DRSAI_REPO: workspace, DRSAI_GATEWAY_DEV_MANAGED: "1", OPENDRSAI_DEV_AUTH_BYPASS: "1", OPENDRSAI_PDF_PYTHON: python, OPENDRSAI_PDF_SCRIPT: extractor, OPENDRSAI_E2E_F1_LOW_RISK_APPROVALS: "1", OPENDRSAI_E2E_F1_CERN_PDF: fixturePath, OPENDRSAI_E2E_F1_EVIDENCE_DIR: evidenceDir, OPENDRSAI_E2E_RESULT: resultPath, OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN: "1", OPENDRSAI_E2E_DISABLE_GPU: "1", OPENDRSAI_E2E_TIMEOUT_MS: "150000" },
+      env: { ...process.env, DRSAI_HOME: appHome, DRSAI_REPO: workspace, DRSAI_GATEWAY_DEV_MANAGED: "1", OPENDRSAI_GATEWAY_PORT: String(runtimeFixture.port), OPENDRSAI_DEV_AUTH_BYPASS: "1", OPENDRSAI_PDF_PYTHON: python, OPENDRSAI_PDF_SCRIPT: extractor, OPENDRSAI_E2E_F1_LOW_RISK_APPROVALS: "1", OPENDRSAI_E2E_F1_CERN_PDF: fixturePath, OPENDRSAI_E2E_F1_EVIDENCE_DIR: evidenceDir, OPENDRSAI_E2E_RESULT: resultPath, OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN: "1", OPENDRSAI_E2E_DISABLE_GPU: "1", OPENDRSAI_E2E_TIMEOUT_MS: "150000" },
       stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
     });
     child.stdout.on("data", (chunk) => { stdout += String(chunk); });

@@ -1,0 +1,62 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-evidence/1",
+  "captured_at": "2026-08-05T23:00:00+08:00",
+  "round": 44,
+  "status": "accepted_local",
+  "features": {
+    "M09-F02": {
+      "passed": true,
+      "duplicate_renderer_files": 0,
+      "renderer_root": "apps/desktop/shared/renderer",
+      "typecheck_root": "apps/desktop/shared/renderer/src",
+      "build_unpack_passed": true,
+      "packaged_real_ipc_passed": true
+    },
+    "M10-F03": {
+      "passed": true,
+      "codex_resolvable_in_packaged_path": false,
+      "packaged_checks": "27/27",
+      "tasks": 2,
+      "sessions": 2,
+      "runs": 2,
+      "legacy_chat_calls": 0,
+      "legacy_model_catalog_calls": 0,
+      "runtime_approval_exactly_once": true,
+      "legacy_agent_migration_idempotent": true
+    },
+    "M10-F04": {
+      "passed": true,
+      "ledger_features": 50,
+      "manifest_schema": "opendrsai.windows.phase3.release-manifest/1",
+      "per_feature_source_test_evidence_hash_bindings": true,
+      "package_artifact_hash_bindings": true,
+      "model_evidence_hash_bindings": 8,
+      "stale_manifest_fails_closed": true,
+      "release_ready_while_incomplete": false
+    }
+  },
+  "tests": [
+    "npm run verify:opendrsai-single-renderer-root",
+    "npm run typecheck",
+    "npm run build:unpack",
+    "npm run verify:packaged",
+    "npm run verify:opendrsai-unified-runtime-packaged",
+    "npm run generate:opendrsai-phase3-release-manifest",
+    "npm run verify:opendrsai-phase3-release-manifest"
+  ],
+  "artifacts": {
+    "electron_renderer_config": {"path": "apps/desktop/windows/electron.vite.config.ts", "sha256": "21d130ff5783583cfd958ec3ecae757e192cb548d713380152d90ad3ed8640cf"},
+    "renderer_typecheck_config": {"path": "apps/desktop/windows/tsconfig.web.json", "sha256": "8f1ba1177937aeb4ec479e67feaf97eb86731a762dde8b8e727c68b7e6a85fc8"},
+    "single_renderer_verifier": {"path": "apps/desktop/windows/scripts/verify-opendrsai-single-renderer-root.mjs", "sha256": "1be24bb83c36012bf361f0d5ba7e48c4250da63c02e3adab4ebe9beae770d001"},
+    "no_codex_packaged_verifier": {"path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs", "sha256": "8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"},
+    "release_manifest_generator": {"path": "apps/desktop/windows/scripts/generate-opendrsai-phase3-release-manifest.mjs", "sha256": "2a7dbe7fb68e70b8700fd62b0f82e2c05c0c9119d6cc0b212747d57f16bf7226"},
+    "app_asar": {"path": "apps/desktop/windows/release/win-unpacked/resources/app.asar", "sha256": "67b10c878bba071e168837a630d7be3545919ae7afdde7accfdec8316e99400d"},
+    "executable": {"path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe", "sha256": "bf39a731e0a67e87ac96a6aaffcc8b5325cd9afdaeba36ac9a4398c9ce422d69"},
+    "backend_source": {"path": "apps/desktop/windows/resources/backend/backend-source.json", "sha256": "bf00cb60a0d2a652b6303bda00e217ad6a46dd26f17617010eedf643494788f5"}
+  },
+  "progress_after_acceptance": {
+    "accepted": 32,
+    "total": 50,
+    "percent": 64
+  }
+}

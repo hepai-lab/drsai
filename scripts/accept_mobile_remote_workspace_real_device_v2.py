@@ -66,10 +66,16 @@ class GatewayPairingClient:
         self.session_factory = session_factory
 
     async def _request(
-        self, method: str, path: str, json_body: dict[str, Any] | None = None,
+        self,
+        method: str,
+        path: str,
+        json_body: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         async with self.session_factory(timeout=self.timeout) as session:
-            request_args: dict[str, Any] = {"headers": self.headers}
+            request_args: dict[str, Any] = {
+                "headers": {**self.headers, **(extra_headers or {})}
+            }
             if json_body is not None:
                 request_args["json"] = json_body
             async with session.request(
@@ -328,7 +334,7 @@ def phase(
         f"{args.package}.test/androidx.test.runner.AndroidJUnitRunner",
         timeout=(
             getattr(args, "interaction_timeout_seconds", args.phase_timeout_seconds)
-            if name == "interaction"
+            if name in {"interaction", "android-two-runs"}
             else args.phase_timeout_seconds
         ),
     )
@@ -475,6 +481,10 @@ async def accept(args: argparse.Namespace) -> dict[str, Any]:
         **interaction,
         **capture_screenshot(args, "interaction"),
     })
+    if getattr(args, "catalog_approval_only", False):
+        result["passed"] = True
+        result["finished_at"] = datetime.now(UTC).isoformat()
+        return result
 
     adb(args, "shell", "input", "keyevent", "KEYCODE_HOME")
     background = phase(args, "post")
@@ -648,7 +658,7 @@ def main() -> int:
     parser.add_argument(
         "--base-url", default="https://ai-dev.ihep.ac.cn/api/runtime-relay/"
     )
-    parser.add_argument("--gateway-url", default="http://127.0.0.1:18643")
+    parser.add_argument("--gateway-url", default="http://127.0.0.1:18642")
     parser.add_argument("--gateway-timeout-seconds", type=int, default=15)
     parser.add_argument("--runtime-python", default=sys.executable)
     parser.add_argument("--runtime-version", default="2.0.0")
@@ -667,6 +677,14 @@ def main() -> int:
     parser.add_argument("--network-recovery-timeout-seconds", type=int, default=90)
     parser.add_argument("--relay-fault-ttl-seconds", type=int, default=5)
     parser.add_argument("--relay-fault-recovery-timeout-seconds", type=int, default=120)
+    parser.add_argument(
+        "--catalog-approval-only",
+        action="store_true",
+        help=(
+            "Stop after real pairing, catalog UI and single Approval evidence; "
+            "V3 runs recovery and device revocation in dedicated gates."
+        ),
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:

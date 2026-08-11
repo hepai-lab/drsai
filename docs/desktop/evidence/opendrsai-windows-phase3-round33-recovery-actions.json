@@ -1,0 +1,84 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 33,
+  "captured_at": "2026-08-05T04:08:05.742Z",
+  "feature": "M07-F02",
+  "result": "accepted",
+  "scope": "OpenDrSai Windows App with HAI configuration and OpenDrSai Full Agent Runtime",
+  "implementation": {
+    "surface": "apps/desktop/shared/renderer/src/components/OperationalStateBar.tsx",
+    "controller": "apps/desktop/shared/renderer/src/App.tsx",
+    "matched_actions": {
+      "identity": "return to sign in",
+      "runtime": "retry bootstrap and refresh runtime health",
+      "model": "open HAI model provider configuration or connection test",
+      "workspace": "choose a workspace or trust the selected workspace",
+      "run": "open Approval Center or Task Center"
+    },
+    "diagnostics": "Copy a bounded redacted report containing only layer, state, runtime readiness, and timestamp.",
+    "loading_safety": "Every asynchronous recovery path clears busy state in finally and presents a user-facing result."
+  },
+  "focused_tests": {
+    "recovery_contract_checks": 14,
+    "operational_property_combinations": 1152,
+    "typescript": true,
+    "production_build": true,
+    "passed": true,
+    "commands": [
+      "npm run verify:m07-recovery-actions",
+      "npm run verify:m07-operational-state",
+      "npm run typecheck",
+      "npm run build:unpack"
+    ]
+  },
+  "packaged_ui": {
+    "real_executable": true,
+    "passed_checks": 39,
+    "total_checks": 39,
+    "fault_layers": 5,
+    "runtime_retry_executed": true,
+    "runtime_loading_settled": true,
+    "model_settings_opened": true,
+    "workspace_trust_persisted": true,
+    "approval_center_opened": true,
+    "task_center_opened": true,
+    "identity_returned_to_login": true,
+    "redacted_diagnostics_copied": true,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "evidence": "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json"
+  },
+  "stability": {
+    "formal_rounds": 20,
+    "passed_rounds": 20,
+    "failed_rounds": 0,
+    "checks_per_round": 39,
+    "formal_packaged_checks": 780,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "evidence": "apps/desktop/windows/release/product-evidence/m07-operational-state/stability-summary.json"
+  },
+  "acceptance": {
+    "actions_match_fault_layer": true,
+    "actions_execute_real_product_paths": true,
+    "no_infinite_loading": true,
+    "errors_use_user_facing_language": true,
+    "diagnostics_are_bounded_and_redacted": true,
+    "keyboard_accessible": true,
+    "five_fault_categories_covered": true
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:f39ae2b8bdbf1a9551c71a8e8598fb20b7d17ce15987807afa777d44ba143f8b"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:cbbc91ff37c378f09fbd17fb110b8aabf67045de32d837c4f163eaeb46b3bbf3"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:bb70684c9c41d7ef48029b17bab4954cf7b727666978c38f179f0d53ab6ed421"
+    }
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "round": 50,
+  "gate": "M09-F01",
+  "status": "accepted",
+  "schema": "opendrsai.frontend-container-boundary/1",
+  "summary": "Setup, model settings, task shell, results, and diagnostics now have independent React container boundaries; App.tsx composes domain controllers without owning their internal draft or transient state.",
+  "contract": {
+    "independent_containers": [
+      "SetupContainer",
+      "ModelSettingsContainer",
+      "TaskShellContainer",
+      "ResultsContainer",
+      "DiagnosticsContainer"
+    ],
+    "authenticated_app_domain_drafts": 0,
+    "app_model_drafts": 0,
+    "setup_persistence_owned": true,
+    "model_credential_drafts_owned": true,
+    "result_refresh_owned": true,
+    "diagnostics_transient_state_owned": true,
+    "task_shell_delegated": true
+  },
+  "usability_correction": {
+    "empty_task_recovery_visible": true,
+    "cause": "ChatWorkspace previously rendered operational recovery only after a conversation contained messages.",
+    "resolution": "An operational-only title bar is rendered for an empty task whenever identity, Runtime, model, workspace, or run recovery is required.",
+    "static_regression_contract": true,
+    "packaged_recovery_checks": "42/42",
+    "packaged_state_scenarios": 7
+  },
+  "production_renderer": {
+    "passed": true,
+    "setup_draft_persisted": true,
+    "diagnostics_recovery_opened_model_settings": true,
+    "results_container_visible": true,
+    "task_shell_visible": true,
+    "runtime_errors": 0,
+    "screenshots": [
+      "apps/desktop/windows/release/product-evidence/frontend-containers/production-renderer-setup-container.png",
+      "apps/desktop/windows/release/product-evidence/frontend-containers/production-renderer-container-shell.png"
+    ]
+  },
+  "packaged_first_run": {
+    "passed": true,
+    "processes": 2,
+    "text_restored": true,
+    "attachment_restored": true,
+    "default_workspace_restored": true,
+    "send_side_effects_before_confirmation": 0,
+    "approval_side_effects": 0,
+    "model_fixture_contract_updated": ["RuntimeModelCatalog", "AgentModelPolicy"],
+    "evidence": "docs/desktop/evidence/opendrsai-windows-phase3-round50-first-run-restart.json"
+  },
+  "regression": {
+    "typecheck": true,
+    "component_contract": true,
+    "production_build": true,
+    "build_unpack": true,
+    "packaged_main_preload_ipc_smoke": true,
+    "first_run_contract": "13 transitions + 26 production UI contracts",
+    "model_provider_contract": true,
+    "model_state_recovery": true,
+    "model_provider_production_e2e": true,
+    "results_center_contracts": "27/27",
+    "operational_state_properties": 1152,
+    "operational_run_mappings": 5,
+    "operational_ui_contracts": 11,
+    "packaged_operational_state": "42/42",
+    "structured_renderer_part_kinds": 8,
+    "structured_visual_screenshots": 20
+  },
+  "release_scope": {
+    "experiment_release_gate_bypassed": false,
+    "focused_architecture_gate": true,
+    "real_backend_account_proven": false,
+    "reason": "M09-F01 is a local renderer architecture and behavior-preservation gate; live HAI and cross-platform release evidence remain separate fail-closed gates."
+  },
+  "sha256": {
+    "app": "1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421",
+    "chat_workspace": "1f14f8540c4a9f00ba554a894a39fd24d5ade92324cf34940836b2d01afcb5a8",
+    "setup_container": "df4725e89fe26e95bb165f9f5957263ede05c65dbd996adc4270a233b65f6acb",
+    "model_settings_container": "3c271fc33bf4b1c9677805f813081516802469f2c37e1c26dc67e24d9f5f37ce",
+    "results_container": "e23b91aa69c00390c6e0ded563c4a38860325b2637e750ac4b4e7c891a03f480",
+    "task_shell_container": "9fd5a912778d1d0bc22322e72a31a80fbb195d32503877db33dd2f1a234a87dd",
+    "diagnostics_container": "4c46c28e33a6517a65a5d882d15f67e284d47043464ee7161327b9e26f7fb559",
+    "component_verifier": "53c6a710f209f0d6c5fcef97b2faf7961ced4dd98b3e1ebad679c3ad5ac0d28d",
+    "production_renderer_verifier": "32000a36e4784028246060df9eac590348e29b945c84626e71e525da107c020e",
+    "setup_screenshot": "963d85ac947b9d2992e7cd658ce53a1ffee14cf1a80dff88dc94b719a0a",
+    "container_shell_screenshot": "21934ad69436eff12229ffad82883729d7688678f4a410de9363157099096e67",
+    "packaged_operational_result": "7051e19f25bef47318f24ec566f1f71016d0b3e15be7a7b324002719e31ff0f9",
+    "first_run_restart_evidence": "d85987a6baec5c8a13c06eaa08b8d036e2c660839e58998684de4e553bf60178",
+    "app_asar": "979f7de63978da801af5d6a7a835cca2cd342fbeb8ee332e6036c5b747acd24a"
+  }
+}

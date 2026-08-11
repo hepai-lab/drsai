@@ -40,6 +40,9 @@ sealed interface AppRoute {
         override val path: String = "workbench/archived"
     }
 
+    data object Settings : AppRoute { override val path = "settings" }
+    data object ModelSettings : AppRoute { override val path = "settings/agent/models" }
+
     data class WorkspaceSessions(
         val runtimeId: RuntimeId,
         val workspaceId: WorkspaceId,
@@ -90,6 +93,8 @@ sealed interface AppRoute {
             if (path == AgentsAndSkills.path) return AgentsAndSkills
             if (path == Approvals.path) return Approvals
             if (path == Archived.path) return Archived
+            if (path == Settings.path) return Settings
+            if (path == ModelSettings.path) return ModelSettings
             val parts = path.split('/').filter(String::isNotBlank)
             if (parts.size < 5 || parts[0] != "remote" || parts[2] != "workspaces") return null
             return runCatching {

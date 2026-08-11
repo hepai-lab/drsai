@@ -1,0 +1,35 @@
+{
+  "schema_version": "opendrsai.windows.attachment-evidence/1",
+  "captured_at": "2026-08-04T22:31:47.334Z",
+  "package": {
+    "version": "1.5.5",
+    "platform": "windows",
+    "arch": "x64"
+  },
+  "checks": {
+    "externalFilePreflightHasNoSideEffect": true,
+    "externalFileStagesWithOaepIdentity": true,
+    "missingFileRejected": true,
+    "largeFileRejected": true,
+    "outsideFolderRejected": true,
+    "windowsAclUnreadableRejected": true,
+    "copyFailureRejected": true,
+    "contextResourcesEncoded": true,
+    "unsupportedScreenshotRejected": true,
+    "cancelRemovesPartialCopy": true,
+    "crashAndTtlCleanup": true,
+    "cacheCapacityRejected": true,
+    "preflightPrecedesRunCreation": true,
+    "postRunStageFailureCancelsRun": true
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:9a16c10544424a9013f35702ac6f840270cc364fcf349b34cd4301f232d84dcf"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:663970858253ca98c88fd48ab2cee5bfd397580107a424375f9d1dec36f94b2c"
+    }
+  }
+}

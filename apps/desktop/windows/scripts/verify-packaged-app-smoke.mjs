@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -11,12 +12,14 @@ const port = Number(process.env.OPENDRSAI_PACKAGED_SMOKE_PORT || "18645");
 const e2eTimeoutMs = Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "30000");
 const processTimeoutMs = e2eTimeoutMs + 15_000;
 const baseUrl = `127.0.0.1:${port}`;
+const gitLookup = spawnSync("where.exe", ["git"], { encoding: "utf8", windowsHide: true });
+const gitDirectory = gitLookup.status === 0 && gitLookup.stdout.trim() ? dirname(gitLookup.stdout.trim().split(/\r?\n/)[0]) : "";
 const systemPath = [
   dirname(exePath),
+  gitDirectory,
   process.env.SystemRoot ? join(process.env.SystemRoot, "System32") : "C:\\Windows\\System32",
   process.env.SystemRoot || "C:\\Windows",
-  process.env.PATH || "",
-].join(delimiter);
+].filter(Boolean).join(delimiter);
 
 if (process.platform !== "win32") {
   console.log("Packaged app smoke is only supported on Windows; skipped.");
@@ -25,6 +28,9 @@ if (process.platform !== "win32") {
 
 if (!existsSync(exePath)) {
   throw new Error("Build the unpacked Windows app before running verify:packaged.");
+}
+if (spawnSync("where.exe", ["codex"], { env: { SystemRoot: process.env.SystemRoot, PATH: systemPath }, windowsHide: true }).status === 0) {
+  throw new Error("Packaged no-Codex smoke PATH unexpectedly resolves a Codex executable.");
 }
 
 const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-packaged-smoke-"));
@@ -46,6 +52,7 @@ try {
     throw new Error(`Packaged app smoke failed:\n${JSON.stringify(result, null, 2)}`);
   }
   verifyNoEnvFile(result);
+  writePackagedEvidence(result);
   console.log("Packaged app smoke passed with real main/preload/IPC.");
 } finally {
   if (globalThis.__opendrsaiFakeGateway) {
@@ -62,10 +69,46 @@ try {
   }
 }
 
+function sha256(path) {
+  return `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
+}
+
+function writePackagedEvidence(result) {
+  const evidencePath = process.env.OPENDRSAI_PACKAGED_SMOKE_EVIDENCE;
+  if (!evidencePath) return;
+  const asarPath = join(root, "release", "win-unpacked", "resources", "app.asar");
+  const backendSourcePath = join(root, "release", "win-unpacked", "resources", "backend", "backend-source.json");
+  mkdirSync(dirname(resolve(evidencePath)), { recursive: true });
+  writeFileSync(resolve(evidencePath), JSON.stringify({
+    schema_version: "opendrsai.windows.packaged-smoke-evidence/1",
+    captured_at: new Date().toISOString(),
+    package: { version: "1.5.5", platform: "windows", arch: "x64" },
+    checks: result.checks,
+    first_run: result.details?.firstRun,
+    artifacts: {
+      executable: { path: "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe", sha256: sha256(exePath) },
+      app_asar: { path: "apps/desktop/windows/release/win-unpacked/resources/app.asar", sha256: sha256(asarPath) },
+      backend_source: { path: "apps/desktop/windows/release/win-unpacked/resources/backend/backend-source.json", sha256: sha256(backendSourcePath) },
+    },
+  }, null, 2) + "\n", "utf8");
+}
+
 function startFakeGateway() {
   const terminals = new Map();
   const workspacePaths = new Map();
   const server = createServer((req, res) => {
+    if (req.url === "/v1/runtime") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        runtime_id: "runtime-packaged-smoke",
+        instance_id: "instance-packaged-smoke",
+        version: "1.5.5",
+        protocol_version: 1,
+        platform: "windows",
+        dev_managed: true,
+      }));
+      return;
+    }
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok" }));

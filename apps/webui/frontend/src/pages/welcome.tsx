@@ -166,7 +166,7 @@ const WelcomePage = () => {
             href="/login"
             className="group inline-flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-2.5 text-sm font-extrabold text-white no-underline shadow-lg shadow-violet-500/20 transition hover:-translate-y-0.5"
           >
-            <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-2 text-white transition group-hover:drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">
               {isZh ? "直接开始对话" : "Start chatting"}
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </span>

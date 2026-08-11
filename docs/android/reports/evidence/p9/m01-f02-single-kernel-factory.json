@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "feature_id": "M01-F02",
+  "generated_at": "2026-08-05T10:11:47.868600+00:00",
+  "passed": true,
+  "gates": {
+    "factory_contract_tests_passed": true,
+    "all_surfaces_return_same_agent_type": true,
+    "all_surfaces_return_same_agent_id": true,
+    "all_surfaces_share_kernel_digest": true,
+    "all_surfaces_share_prompt_digest": true,
+    "desktop_factory_uses_only_kernel_factory": true,
+    "android_probe_uses_only_kernel_factory": true,
+    "desktop_tui_adapters_use_only_kernel_factory": true,
+    "legacy_production_loop_switch_removed": true
+  },
+  "identities": {
+    "desktop": {
+      "kernel_id": "drsai-agent-kernel",
+      "kernel_version": "p9.1",
+      "agent_config_schema_version": 1,
+      "prompt_version": "p9-agent-kernel-v1",
+      "base_prompt_sha256": "48443cb3f6cf1357d34a199cbaa2b8274f6e77af264c58879b67bce36f9d7cf0",
+      "capability_manifest_schema_version": 1,
+      "capability_manifest_version": "p9-capabilities-v1",
+      "tool_manifest_version": "p9-tools-v1",
+      "host_port_protocol_version": "p9-host-port-v1",
+      "model_tool_snapshot_version": "p9-model-tools-v1",
+      "kernel_sha256": "24f9bcbda9fe288d39a8e5c82c18d6d4fbae780e1b5e1824e2842768e66c5361",
+      "capability_manifest_sha256": "1dab1a2b586b26e0fe86f9a257198f789499767e02c65b531248c7c21b83f143",
+      "surface": "desktop"
+    },
+    "tui": {
+      "kernel_id": "drsai-agent-kernel",
+      "kernel_version": "p9.1",
+      "agent_config_schema_version": 1,
+      "prompt_version": "p9-agent-kernel-v1",
+      "base_prompt_sha256": "48443cb3f6cf1357d34a199cbaa2b8274f6e77af264c58879b67bce36f9d7cf0",
+      "capability_manifest_schema_version": 1,
+      "capability_manifest_version": "p9-capabilities-v1",
+      "tool_manifest_version": "p9-tools-v1",
+      "host_port_protocol_version": "p9-host-port-v1",
+      "model_tool_snapshot_version": "p9-model-tools-v1",
+      "kernel_sha256": "24f9bcbda9fe288d39a8e5c82c18d6d4fbae780e1b5e1824e2842768e66c5361",
+      "capability_manifest_sha256": "1dab1a2b586b26e0fe86f9a257198f789499767e02c65b531248c7c21b83f143",
+      "surface": "desktop"
+    },
+    "android": {
+      "kernel_id": "drsai-agent-kernel",
+      "kernel_version": "p9.1",
+      "agent_config_schema_version": 1,
+      "prompt_version": "p9-agent-kernel-v1",
+      "base_prompt_sha256": "48443cb3f6cf1357d34a199cbaa2b8274f6e77af264c58879b67bce36f9d7cf0",
+      "capability_manifest_schema_version": 1,
+      "capability_manifest_version": "p9-capabilities-v1",
+      "tool_manifest_version": "p9-tools-v1",
+      "host_port_protocol_version": "p9-host-port-v1",
+      "model_tool_snapshot_version": "p9-model-tools-v1",
+      "kernel_sha256": "24f9bcbda9fe288d39a8e5c82c18d6d4fbae780e1b5e1824e2842768e66c5361",
+      "capability_manifest_sha256": "9f1edfcab345643355b603bd8012ee4aca40ab2b50c941e2e8e8f92de81a0fe9",
+      "surface": "android"
+    }
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": ".......                                                                  [100%]\n7 passed in 4.05s"
+  },
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel_factory.py": "483e9d79dd3c4cb543a5a570b2cd179b4072d0d15b303ea7f9434762c54165a0",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/factory.py": "a15b78c1b82a6b93bc2e6705617446eafeb0a2c6d06abf220fe5e53a85ebee77",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_adapter.py": "7417f50b22ff67799c6297b4c31b99b8d3f6d6d9fd355e606b484977447eef84",
+    "cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py": "4a444fd271e7c31e39ca841516fdd7f32789ca7a7969d2c8ec17fabc77b15c55",
+    "apps/android/app/src/main/python/runtime_probe.py": "ea9232d7e17d190a2d59195217320b99ba6032682d7fbba26904634ab21a2088",
+    "cores/python/packages/drsai/tests/test_agent_kernel_factory.py": "66d03791ac72b16128da7933bca16f9d172380d38e7de6788a6757121a775631"
+  }
+}

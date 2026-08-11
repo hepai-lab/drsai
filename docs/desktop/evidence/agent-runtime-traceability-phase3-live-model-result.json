@@ -1,0 +1,66 @@
+{
+  "schema_version": "opendrsai.agent-runtime-phase3-live-model-failure/1",
+  "generated_at": "2026-08-05T09:44:42.488Z",
+  "invocation_nonce": "ff944935-9596-4b08-bed3-8b29a786c96d",
+  "failure_stage": "vision_transport_probe",
+  "error_code": "ERR_ASSERTION",
+  "diagnostics": {
+    "vision_transports": [
+      {
+        "model": "openai/gpt-5.4",
+        "wire_api": "openai",
+        "variants": [
+          {
+            "id": "text",
+            "status": 503,
+            "ok": false,
+            "error_code": "http_503"
+          },
+          {
+            "id": "image",
+            "status": 503,
+            "ok": false,
+            "error_code": "http_503"
+          }
+        ]
+      },
+      {
+        "model": "google/gemini-3-flash-preview",
+        "wire_api": "openai",
+        "variants": [
+          {
+            "id": "text",
+            "status": 503,
+            "ok": false,
+            "error_code": "http_503"
+          },
+          {
+            "id": "image",
+            "status": 503,
+            "ok": false,
+            "error_code": "http_503"
+          }
+        ]
+      },
+      {
+        "model": "anthropic/claude-sonnet-4-6",
+        "wire_api": "anthropic",
+        "variants": [
+          {
+            "id": "text",
+            "status": 503,
+            "ok": false,
+            "error_code": "http_503"
+          },
+          {
+            "id": "image",
+            "status": 503,
+            "ok": false,
+            "error_code": "http_503"
+          }
+        ]
+      }
+    ]
+  },
+  "failure_reason": "No OIDC vision model passed both minimal text and image transport probes."
+}

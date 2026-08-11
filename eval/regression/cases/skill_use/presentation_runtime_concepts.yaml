@@ -1,0 +1,172 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: skill.presentation
+revision: 1
+title: 创建 OpenDrSai Runtime 核心概念演示文稿
+description: 验证 Presentation Skill、可编辑 PPTX、渲染视觉检查和 Artifact 交付。
+owner: agent-runtime
+tags: [smoke, release, skill_use, presentation, artifact, visual]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: |
+            请创建一份中文演示文稿，主题为“OpenDrSai Runtime 核心概念”。
+
+            要求：
+            - 输出为可编辑的 PPTX；
+            - 16:9 宽屏；
+            - 共 4 页；
+            - 使用简洁的蓝色科技风格；
+            - 不使用外部图片；
+            - 每页必须包含页码；
+            - 完成后检查是否存在文字溢出、元素遮挡或内容被裁切。
+
+            页面内容如下：
+
+            第 1 页：标题页
+            标题：OpenDrSai Runtime 核心概念
+            副标题：Session、Run、OAEP 与可追溯执行
+
+            第 2 页：Session 与 Run
+            - Session 表示一段持续的用户会话
+            - Run 表示一次具体的智能体执行
+            - 一个 Session 可以包含多个 Run
+
+            第 3 页：OAEP
+            - OAEP 是统一智能体事件协议
+            - 描述消息、工具调用、审批、引用和产物
+            - 为不同客户端提供一致的结构化输出
+
+            第 4 页：可追溯执行
+            - Run Manifest 记录关键配置和资源摘要
+            - 原始 Run 证据不可变
+            - 重放或实验创建新的 Run
+
+environment:
+  network: disabled
+  session:
+    type: new
+    history: empty
+  required_skills: [presentations]
+  workspace:
+    isolation: required
+    allowed_write_paths:
+      - artifacts/
+      - tmp/presentation-render/
+  forbidden_capabilities:
+    - web_search
+    - knowledge_search
+    - image_generation
+
+baseline:
+  presentation:
+    path: ../../assets/presentation/opendrsai-runtime-core-concepts.pptx
+    sha256: 936939c311ff5a18730734a0bc3955d03db7b44acde547ef17eab1cc8389200a
+    role: accepted_reference
+    comparison: structural_and_visual_not_pixel_exact
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    skill_activations:
+      exact: 1
+      required:
+        - skill_id: presentations
+          status: completed
+          required_steps:
+            - instructions_loaded
+            - presentation_created
+            - presentation_rendered
+            - visual_check_completed
+            - artifact_registered
+    web_search_calls:
+      max: 0
+    knowledge_queries:
+      max: 0
+    image_generation_calls:
+      max: 0
+    external_writes:
+      max: 0
+
+  presentation:
+    format: pptx
+    editable: true
+    aspect_ratio:
+      width: 16
+      height: 9
+      tolerance: 0.01
+    slide_count:
+      exact: 4
+    page_numbers:
+      required_on_all_slides: true
+    required_slides:
+      - index: 1
+        required_text:
+          - OpenDrSai Runtime 核心概念
+          - Session、Run、OAEP 与可追溯执行
+      - index: 2
+        required_text:
+          - Session 与 Run
+          - Session 表示一段持续的用户会话
+          - Run 表示一次具体的智能体执行
+          - 一个 Session 可以包含多个 Run
+      - index: 3
+        required_text:
+          - OAEP
+          - OAEP 是统一智能体事件协议
+          - 消息
+          - 工具调用
+          - 审批
+          - 引用
+          - 产物
+          - 一致的结构化输出
+      - index: 4
+        required_text:
+          - 可追溯执行
+          - Run Manifest
+          - 原始 Run 证据不可变
+          - 重放或实验创建新的 Run
+    visual:
+      require_render_all_slides: true
+      forbidden_conditions:
+        - text_overflow
+        - element_out_of_bounds
+        - unintended_overlap
+        - clipped_content
+        - blank_slide
+      semantic_requirements:
+        - 四页使用一致的简洁蓝色科技风格
+        - 标题和正文层级清晰
+        - 内容易读且不过度拥挤
+
+  output:
+    type: text
+    require_artifact_link: true
+    artifact_link_interactive: true
+
+  artifacts:
+    exact: 1
+    required:
+      type: presentation
+      mime_type: application/vnd.openxmlformats-officedocument.presentationml.presentation
+      relative_path: artifacts/opendrsai-runtime-core-concepts.pptx
+      extension: .pptx
+      min_size_bytes: 10000
+      sha256_required: true
+      openable: true
+      editable_text_required: true
+      require_run_relation: true
+
+execution:
+  timeout_seconds: 300
+  attempts: 1
+  isolation: required

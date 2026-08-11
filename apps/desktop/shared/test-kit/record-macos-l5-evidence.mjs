@@ -4,6 +4,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { currentCommit } from "./acceptanceEvidence.mjs";
+import { catalogLevelReceipt } from "./platformFeatureEvidence.mjs";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("L5 evidence must be recorded on Apple Silicon macOS.");
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,7 @@ const receipts = testIds.map((testId) => {
   assert.equal(receipt.passed, true);
   return { path, receipt };
 });
+const catalog = catalogLevelReceipt("L5", readJson(resolve(acceptance, "feature-test-results.json")));
 const core = receipts.find(({ receipt }) => receipt.testId === "packaged-core-journeys").receipt;
 assert.ok(core.checks >= 4 && core.gatewayOrphans === 0 && core.ptyOrphans === 0);
 const product = receipts.find(({ receipt }) => receipt.testId === "packaged-product-journeys").receipt;
@@ -46,7 +48,7 @@ assert.equal(faults.unexpectedSideEffects, 0);
 const appExecutable = resolve(desktopRoot, "macos/release/mac-arm64/OpenDrSai.app/Contents/MacOS/OpenDrSai");
 assert.ok(existsSync(appExecutable), "packaged App executable is missing");
 const artifacts = [...receipts.map(({ path }) => artifact(path)), artifact(appExecutable)];
-const featureIds = verifiedFeatureIds(receipts.map(({ receipt }) => receipt));
+const featureIds = verifiedFeatureIds([...receipts.map(({ receipt }) => receipt), catalog]);
 const evidence = {
   schemaVersion: 2,
   level: "L5",
@@ -57,7 +59,7 @@ const evidence = {
   passed: true,
   featureIds,
   previousLevelEvidenceSha256: sha256(Buffer.from(JSON.stringify(l4))),
-  tests: receipts.map(({ receipt }) => ({ testId: receipt.testId, passed: true, featureIds: receipt.featureIds, generatedAt: receipt.generatedAt })),
+  tests: [...receipts.map(({ receipt }) => ({ testId: receipt.testId, passed: true, featureIds: receipt.featureIds, generatedAt: receipt.generatedAt })), catalog],
   artifacts,
   generatedAt: new Date().toISOString(),
 };

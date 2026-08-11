@@ -1,5 +1,16 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { IpcRendererEvent } from "electron";
+
+const desktopPlatform = process.platform === "darwin" ? "macos" : "windows";
+const applyDesktopPlatformMarker = (): void => {
+  document.documentElement.dataset.desktopPlatform = desktopPlatform;
+};
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", applyDesktopPlatformMarker, { once: true });
+} else {
+  applyDesktopPlatformMarker();
+}
+
 import type {
   DesktopApi,
   DesktopOpenRequest,
@@ -135,6 +146,8 @@ import type {
   DesktopThreadSnapshot,
   DesktopThreadContentSearchRequest,
   DesktopThreadContentSearchResult,
+  CreateThreadShareRequest,
+  DesktopThreadShareResult,
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionRequest,
@@ -246,10 +259,16 @@ import type {
   PdfPageOpenRequest,
   PdfPageOpenResult,
   MyDrSaiConfig,
+  MyDrSaiModelConfigPreview,
+  MyDrSaiModelConnection,
+  MyDrSaiModelDoctorResult,
+  MyDrSaiProviderTestResult,
   OidcLoginDebugEvent,
   SaveApiKeyResult,
   StartInstallOptions,
   UpdateMyDrSaiConfigRequest,
+  UpdateMyDrSaiModelConnectionRequest,
+  SaveMyDrSaiModelProviderRequest,
   UpdateThreadRequest,
   UpdateStatus,
   UpdateWorkspaceRequest,
@@ -281,11 +300,21 @@ import type {
   WorkspaceRevertFileResult,
   WorkspaceStageFileRequest,
   WorkspaceStageFileResult,
+  GatewaySkill,
+  GatewayAvailableSkill,
+  GatewaySkillInstallRequest,
+  GfsListRequest,
+  GfsListResult,
+  GfsObjectInfo,
+  GfsUploadRequest,
+  GfsDownloadRequest,
 } from "../api/desktopApi";
 
 const streamingVoicePorts = new Map<string, MessagePort>();
 
 const api: DesktopApi = {
+  isAppDialogE2eEnabled: () => process.env.OPENDRSAI_E2E_APP_DIALOG === "1",
+  isOperationalStateE2eEnabled: () => process.env.OPENDRSAI_E2E_OPERATIONAL_STATE === "1",
   getPlatformDescriptor: () => ipcRenderer.invoke("desktop:platform-descriptor"),
   onOpenRequest: (callback: (request: DesktopOpenRequest) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, request: DesktopOpenRequest): void => callback(request);
@@ -383,6 +412,16 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:get-gateway-status"),
   getCodexBackendStatus: (refresh = false) =>
     ipcRenderer.invoke("desktop:get-codex-backend-status", refresh),
+  restartCodexBackend: () => ipcRenderer.invoke("desktop:restart-codex-backend"),
+  syncCodexWorkspaceSessions: (workspaceId, workspacePath, requestId) =>
+    ipcRenderer.invoke("desktop:sync-codex-workspace-sessions", workspaceId, workspacePath, requestId),
+  cancelCodexWorkspaceSessionSync: (requestId) =>
+    ipcRenderer.invoke("desktop:cancel-codex-workspace-session-sync", requestId),
+  onCodexWorkspaceSessionSyncProgress: (callback) => {
+    const listener = (_event: IpcRendererEvent, progress: Parameters<typeof callback>[0]) => callback(progress);
+    ipcRenderer.on("desktop:codex-workspace-session-sync-progress", listener);
+    return () => ipcRenderer.removeListener("desktop:codex-workspace-session-sync-progress", listener);
+  },
   startCodexBackendLogin: (type = "chatgpt") =>
     ipcRenderer.invoke("desktop:start-codex-backend-login", type),
   cancelCodexBackendLogin: (loginId: string) =>
@@ -416,8 +455,18 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:stop-gateway"),
   getMobilePairingReadiness: () =>
     ipcRenderer.invoke("desktop:mobile-pairing-readiness"),
-  createMobilePairingGrant: () =>
-    ipcRenderer.invoke("desktop:mobile-pairing-create"),
+  enableMobileRemoteAccess: () =>
+    ipcRenderer.invoke("desktop:mobile-remote-enable"),
+  pauseMobileRemoteAccess: () =>
+    ipcRenderer.invoke("desktop:mobile-remote-pause"),
+  resumeMobileRemoteAccess: () =>
+    ipcRenderer.invoke("desktop:mobile-remote-resume"),
+  renameMobileRuntime: (displayName: string) =>
+    ipcRenderer.invoke("desktop:mobile-runtime-rename", displayName),
+  diagnoseMobileRemoteAccess: () =>
+    ipcRenderer.invoke("desktop:mobile-remote-diagnose"),
+  createMobilePairingGrant: (scope) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-create", scope),
   getMobilePairingGrant: (grantId: string) =>
     ipcRenderer.invoke("desktop:mobile-pairing-read", grantId),
   revokeMobilePairingGrant: (grantId: string) =>
@@ -426,6 +475,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:mobile-associations-list"),
   revokeMobileAssociation: (associationId: string) =>
     ipcRenderer.invoke("desktop:mobile-association-revoke", associationId),
+  shrinkMobileAssociation: (associationId, permissions) =>
+    ipcRenderer.invoke("desktop:mobile-association-shrink", associationId, permissions),
   revokeMobileRuntimeEnrollment: () =>
     ipcRenderer.invoke("desktop:mobile-enrollment-revoke"),
   listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
@@ -518,21 +569,61 @@ const api: DesktopApi = {
   listWorkspaces: () => ipcRenderer.invoke("desktop:list-workspaces"),
   createWorkspace: (request: CreateWorkspaceRequest) =>
     ipcRenderer.invoke("desktop:create-workspace", request),
+  createDefaultWorkspace: () => ipcRenderer.invoke("desktop:create-default-workspace"),
   updateWorkspace: (request: UpdateWorkspaceRequest) =>
     ipcRenderer.invoke("desktop:update-workspace", request),
   deleteWorkspace: (id: string) =>
     ipcRenderer.invoke("desktop:delete-workspace", id),
   listThreads: () => ipcRenderer.invoke("desktop:list-threads"),
   listAgents: (options) => ipcRenderer.invoke("desktop:list-agents", options),
+  getAgentCatalogSnapshot: (options) => ipcRenderer.invoke("desktop:get-agent-catalog-snapshot", options),
   setDefaultAgent: (agentId) => ipcRenderer.invoke("desktop:set-default-agent", agentId),
   recordAgentUsage: (agentId) => ipcRenderer.invoke("desktop:record-agent-usage", agentId),
   getPlatformAgentStatus: () => ipcRenderer.invoke("desktop:get-platform-agent-status"),
   getMyDrSaiConfig: (workspacePath?: string): Promise<MyDrSaiConfig> =>
     ipcRenderer.invoke("desktop:get-my-drsai-config", workspacePath),
+  getMyDrSaiRuntimeModelCatalog: () => ipcRenderer.invoke("desktop:get-my-drsai-runtime-model-catalog"),
+  getMyDrSaiAgentModelPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-policy", agentId),
+  getMyDrSaiAgentModelCapabilityStatus: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-capability-status", agentId),
+  updateMyDrSaiAgentModelPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-model-policy", agentId, policy),
+  migrateMyDrSaiAgentModelPolicy: (agentId, legacyModel, expectedRevision) => ipcRenderer.invoke("desktop:migrate-my-drsai-agent-model-policy", agentId, legacyModel, expectedRevision),
   updateMyDrSaiConfig: (
     request: UpdateMyDrSaiConfigRequest,
   ): Promise<MyDrSaiConfig> =>
     ipcRenderer.invoke("desktop:update-my-drsai-config", request),
+  updateMyDrSaiModelConnection: (
+    request: UpdateMyDrSaiModelConnectionRequest,
+  ): Promise<MyDrSaiModelConnection> =>
+    ipcRenderer.invoke("desktop:update-my-drsai-model-connection", request),
+  previewMyDrSaiModelConnection: (
+    request: UpdateMyDrSaiModelConnectionRequest,
+  ): Promise<MyDrSaiModelConfigPreview> =>
+    ipcRenderer.invoke("desktop:preview-my-drsai-model-connection", request),
+  diagnoseMyDrSaiModelConnection: (online?: boolean): Promise<MyDrSaiModelDoctorResult> =>
+    ipcRenderer.invoke("desktop:diagnose-my-drsai-model-connection", online),
+  restoreMyDrSaiModelConnection: (expectedRevision?: string): Promise<MyDrSaiModelConnection> =>
+    ipcRenderer.invoke("desktop:restore-my-drsai-model-connection", expectedRevision),
+  saveMyDrSaiModelProvider: (
+    provider: string, request: SaveMyDrSaiModelProviderRequest,
+  ): Promise<MyDrSaiModelConnection> =>
+    ipcRenderer.invoke("desktop:save-my-drsai-model-provider", provider, request),
+  testMyDrSaiModelProvider: (
+    provider: string,
+    model?: string,
+  ): Promise<MyDrSaiProviderTestResult> =>
+    ipcRenderer.invoke("desktop:test-my-drsai-model-provider", provider, model),
+  testMyDrSaiModelDraft: (request, mode) =>
+    ipcRenderer.invoke("desktop:test-my-drsai-model-draft", request, mode),
+  listMyDrSaiModelProviderPresets: () =>
+    ipcRenderer.invoke("desktop:list-my-drsai-model-provider-presets"),
+  discoverMyDrSaiProviderModels: (provider, refresh, draft) =>
+    ipcRenderer.invoke("desktop:discover-my-drsai-provider-models", provider, refresh, draft),
+  preflightMyDrSaiModelProviderDeletion: (provider) =>
+    ipcRenderer.invoke("desktop:preflight-my-drsai-model-provider-deletion", provider),
+  deleteMyDrSaiModelProvider: (
+    provider: string, deleteCredential?: boolean,
+  ): Promise<{ ok: boolean; active?: string }> =>
+    ipcRenderer.invoke("desktop:delete-my-drsai-model-provider", provider, deleteCredential),
   createThread: (request: CreateThreadRequest) =>
     ipcRenderer.invoke("desktop:create-thread", request),
   updateThread: (request: UpdateThreadRequest) =>
@@ -541,12 +632,115 @@ const api: DesktopApi = {
   setThreadArchived: (request) => ipcRenderer.invoke("desktop:set-thread-archived", request),
   getThreadSnapshot: (threadId: string): Promise<DesktopThreadSnapshot | null> =>
     ipcRenderer.invoke("desktop:get-thread-snapshot", threadId),
+  getThreadSnapshotEnvelope: (threadId: string, requestId?: string, options?: import("../api/desktopApi").DesktopThreadSnapshotRequest) =>
+    ipcRenderer.invoke("desktop:get-thread-snapshot-envelope", threadId, requestId, options),
+  cancelThreadSnapshotHydration: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:cancel-thread-snapshot-hydration", requestId),
+  subscribeThreadSnapshot: (threadId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:subscribe-thread-snapshot", threadId),
+  unsubscribeThreadSnapshot: (threadId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:unsubscribe-thread-snapshot", threadId),
+  onThreadSnapshot: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: Parameters<typeof callback>[0]): void => {
+      try { callback(event); }
+      catch (error) { console.error("thread_snapshot_subscriber_failed", error); }
+    };
+    ipcRenderer.on("desktop:thread-snapshot", listener);
+    return () => ipcRenderer.removeListener("desktop:thread-snapshot", listener);
+  },
+  onThreadSnapshotPatch: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: Parameters<typeof callback>[0]): void => {
+      try { callback(event); }
+      catch (error) { console.error("thread_snapshot_patch_subscriber_failed", error); }
+    };
+    ipcRenderer.on("desktop:thread-snapshot-patch", listener);
+    return () => ipcRenderer.removeListener("desktop:thread-snapshot-patch", listener);
+  },
+  onRuntimeLogEvent: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, value: Parameters<typeof callback>[0]): void => callback(value);
+    ipcRenderer.on("desktop:runtime-log", listener);
+    return () => ipcRenderer.removeListener("desktop:runtime-log", listener);
+  },
+  onThreadCatalogUpdate: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, value: Parameters<typeof callback>[0]): void => callback(value);
+    ipcRenderer.on("desktop:thread-catalog", listener);
+    return () => ipcRenderer.removeListener("desktop:thread-catalog", listener);
+  },
   searchThreadMessages: (
     request: DesktopThreadContentSearchRequest,
   ): Promise<DesktopThreadContentSearchResult[]> =>
     ipcRenderer.invoke("desktop:search-thread-messages", request),
   updateThreadSnapshot: (snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot> =>
     ipcRenderer.invoke("desktop:update-thread-snapshot", snapshot),
+  createThreadShare: (
+    request: CreateThreadShareRequest,
+  ): Promise<DesktopThreadShareResult> =>
+    ipcRenderer.invoke("desktop:create-thread-share", request),
+  openThreadShare: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:open-thread-share", filePath),
+  revealThreadShare: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:reveal-thread-share", filePath),
+  listInstalledSkills: (request?: { userId?: string }): Promise<GatewaySkill[]> =>
+    ipcRenderer.invoke("desktop:list-installed-skills", request),
+  listAvailableSkills: (request?: { userId?: string }): Promise<GatewayAvailableSkill[]> =>
+    ipcRenderer.invoke("desktop:list-available-skills", request),
+  getSkillContent: (request: { skillPath: string }): Promise<{ path: string; content: string }> =>
+    ipcRenderer.invoke("desktop:get-skill-content", request),
+  installSkill: (
+    request: GatewaySkillInstallRequest,
+  ): Promise<{ status: string; name: string; path: string }> =>
+    ipcRenderer.invoke("desktop:install-skill", request),
+  updateSkill: (request: {
+    name: string;
+    content: string;
+    userId?: string;
+  }): Promise<{ status: string; name: string; path: string }> =>
+    ipcRenderer.invoke("desktop:update-skill", request),
+  uninstallSkill: (request: {
+    name: string;
+    userId?: string;
+  }): Promise<{ status: string; name: string }> =>
+    ipcRenderer.invoke("desktop:uninstall-skill", request),
+  reloadSkills: (request?: {
+    threadId?: string;
+    userId?: string;
+  }): Promise<{ ok: boolean; reloaded: boolean }> =>
+    ipcRenderer.invoke("desktop:reload-skills", request),
+
+  gfsList: (request: GfsListRequest): Promise<GfsListResult> =>
+    ipcRenderer.invoke("desktop:gfs-list", request),
+  gfsStat: (request: { path: string }): Promise<GfsObjectInfo> =>
+    ipcRenderer.invoke("desktop:gfs-stat", request),
+  gfsRead: (request: { path: string }): Promise<{ path: string; content: string }> =>
+    ipcRenderer.invoke("desktop:gfs-read", request),
+  gfsWrite: (request: {
+    path: string;
+    content: string;
+    contentType?: string;
+  }): Promise<{ path: string; etag: string }> =>
+    ipcRenderer.invoke("desktop:gfs-write", request),
+  gfsUploadFile: (
+    request: GfsUploadRequest,
+  ): Promise<{ path: string; size: number }> =>
+    ipcRenderer.invoke("desktop:gfs-upload-file", request),
+  gfsDownloadFile: (
+    request: GfsDownloadRequest,
+  ): Promise<{ localPath: string; size: number }> =>
+    ipcRenderer.invoke("desktop:gfs-download-file", request),
+  gfsDelete: (request: { path: string }): Promise<{ path: string }> =>
+    ipcRenderer.invoke("desktop:gfs-delete", request),
+  gfsShareUrl: (request: {
+    path: string;
+    ttlMinutes?: number;
+    responseContentType?: string;
+  }): Promise<{ url: string; expiresAt: string }> =>
+    ipcRenderer.invoke("desktop:gfs-share-url", request),
+  gfsHealthcheck: (): Promise<{
+    ok: boolean;
+    bucket?: string;
+    mode?: string;
+    reason?: string;
+  }> => ipcRenderer.invoke("desktop:gfs-healthcheck"),
   prepareForkWorktree: (
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult> =>
@@ -562,6 +756,33 @@ const api: DesktopApi = {
   recoverChatRun: (request) => ipcRenderer.invoke("desktop:recover-chat-run", request),
   abortChat: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:abort-chat", requestId),
+  listSessionRuns: (request) => ipcRenderer.invoke("desktop:run-list", request),
+  getRunInspection: (request) => ipcRenderer.invoke("desktop:run-inspection", request),
+  locateRunItem: (request) => ipcRenderer.invoke("desktop:run-item-locator", request),
+  getRunReproductionManifest: (request) => ipcRenderer.invoke("desktop:run-manifest", request),
+  exportRunReproductionManifest: (request) => ipcRenderer.invoke("desktop:run-manifest-export", request),
+  getExperimentReleaseGate: () => ipcRenderer.invoke("desktop:experiment-release-gate"),
+  createRunExperiment: (request) => ipcRenderer.invoke("desktop:run-experiment-create", request),
+  getRunExperimentCapabilities: (request) => ipcRenderer.invoke("desktop:run-experiment-capabilities", request),
+  finalizeRunExperimentCandidate: (request) => ipcRenderer.invoke("desktop:run-experiment-candidate-snapshot", request),
+  getRunExperiment: (request) => ipcRenderer.invoke("desktop:run-experiment-get", request),
+  updateRunExperiment: (request) => ipcRenderer.invoke("desktop:run-experiment-update", request),
+  deleteRunExperiment: (request) => ipcRenderer.invoke("desktop:run-experiment-delete", request),
+  exportRunExperimentPackage: (request) => ipcRenderer.invoke("desktop:run-experiment-export", request),
+  createReplayPlan: (request) => ipcRenderer.invoke("desktop:replay-plan-create", request),
+  getReplayPlan: (request) => ipcRenderer.invoke("desktop:replay-plan-get", request),
+  getReplayBoundaries: (request) => ipcRenderer.invoke("desktop:replay-boundaries-get", request),
+  getRunRelations: (request) => ipcRenderer.invoke("desktop:run-relations-get", request),
+  executeReplayPlan: (request) => ipcRenderer.invoke("desktop:replay-plan-execute", request),
+  createRunComparison: (request) => ipcRenderer.invoke("desktop:run-comparison-create", request),
+  getRunComparison: (request) => ipcRenderer.invoke("desktop:run-comparison-get", request),
+  getWorktreeAdoptionPreview: (request) => ipcRenderer.invoke("desktop:worktree-adoption-preview", request),
+  applyWorktreeAdoption: (request) => ipcRenderer.invoke("desktop:worktree-adoption-apply", request),
+  getRunAdoptionPreview: (request) => ipcRenderer.invoke("desktop:run-adoption-preview", request),
+  applyRunAdoption: (request) => ipcRenderer.invoke("desktop:run-adoption-apply", request),
+  discardRunAdoption: (request) => ipcRenderer.invoke("desktop:run-adoption-discard", request),
+  decideRuntimeSecurityApproval: (request) => ipcRenderer.invoke("desktop:runtime-security-approval-decision", request),
+  decideRuntimeRunApproval: (request) => ipcRenderer.invoke("desktop:runtime-run-approval-decision", request),
   respondChatInput: (requestId, response) =>
     ipcRenderer.invoke("desktop:respond-chat-input", requestId, response),
   startVoiceTranscription: (
@@ -630,10 +851,11 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:abort-agent-run", requestId),
   recoverAgentRun: (threadId: string): Promise<AgentRunEvent[]> =>
     ipcRenderer.invoke("desktop:recover-agent-run", threadId),
-  saveApiKey: (apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult> =>
-    ipcRenderer.invoke("desktop:save-api-key", apiKey, defaultModel),
+  saveApiKey: (apiKey: string): Promise<SaveApiKeyResult> =>
+    ipcRenderer.invoke("desktop:save-api-key", apiKey),
   pickFiles: () => ipcRenderer.invoke("desktop:pick-files"),
   pickFolder: () => ipcRenderer.invoke("desktop:pick-folder"),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   getWorkspaceContextOverview: (
     workspacePath: string,
     workspaceId?: string,

@@ -9,16 +9,30 @@ from collections import defaultdict
 from typing import Any, Awaitable, Callable, Mapping
 
 from drsai.backend.runtime.agent import RuntimeExecutionError
+from drsai.backend.codex_adapter.jsonl_frames import parse_jsonl_object, read_jsonl_frame, require_jsonl_frame_size
 from drsai.backend.codex_adapter.app_server_process import CodexAppServerProcess
+from drsai.backend.codex_adapter.stable_contract import (
+    CLIENT_METHODS,
+    validate_client_method,
+    validate_server_request,
+)
 
 
 MessageHandler = Callable[[Mapping[str, Any]], Awaitable[Any] | Any]
+ConnectionFailureHandler = Callable[[RuntimeExecutionError], Awaitable[Any] | Any]
 
 
 class CodexJSONRPCClient:
-    def __init__(self, supervisor: CodexAppServerProcess, *, request_timeout: float = 15.0):
+    def __init__(
+        self,
+        supervisor: CodexAppServerProcess,
+        *,
+        request_timeout: float = 15.0,
+        enforce_stable_contract: bool = True,
+    ):
         self.supervisor = supervisor
         self.request_timeout = request_timeout
+        self.enforce_stable_contract = enforce_stable_contract
         self._process: asyncio.subprocess.Process | None = None
         self._generation = 0
         self._next_id = 1
@@ -30,7 +44,29 @@ class CodexJSONRPCClient:
         self._notification_handlers: dict[str, list[MessageHandler]] = defaultdict(list)
         self._route_handlers: dict[tuple[str | None, str | None], list[MessageHandler]] = defaultdict(list)
         self._server_handlers: dict[str, MessageHandler] = {}
+        self._connection_failure_handlers: list[ConnectionFailureHandler] = []
         self.unknown_notifications: list[dict[str, Any]] = []
+        self.protocol_violations: list[dict[str, str]] = []
+
+    @property
+    def generation(self) -> int:
+        """Public connection generation used by Adapter coordinators."""
+        return self._generation
+
+    @property
+    def state(self) -> str:
+        """Content-free connection state; callers must not inspect internals."""
+        return self._state
+
+    @property
+    def active_binary(self):
+        return self.supervisor.binary
+
+    def resolve_binary(self):
+        return self.supervisor.binary_provider.resolve()
+
+    async def health(self) -> Mapping[str, Any]:
+        return await self.supervisor.health()
 
     async def connect(self, *, client_version: str = "1.0.0") -> Mapping[str, Any]:
         async with self._connect_lock:
@@ -72,6 +108,15 @@ class CodexJSONRPCClient:
     ) -> Any:
         if not allow_before_ready and self._state != "ready":
             raise RuntimeExecutionError("codex_not_initialized", "Codex App Server is not initialized.")
+        if self.enforce_stable_contract:
+            try:
+                validate_client_method(method, dict(params))
+            except ValueError as exc:
+                raise RuntimeExecutionError(
+                    "codex_contract_client_request_invalid",
+                    "Codex request is outside the reviewed Stable Contract.",
+                    detail={"method": method},
+                ) from exc
         process = self._require_process()
         request_id = self._next_id
         self._next_id += 1
@@ -96,7 +141,17 @@ class CodexJSONRPCClient:
     async def notify(self, method: str, params: Mapping[str, Any] | None = None, *, allow_before_ready: bool = False) -> None:
         if not allow_before_ready and self._state != "ready":
             raise RuntimeExecutionError("codex_not_initialized", "Codex App Server is not initialized.")
-        await self._write({"method": method, "params": dict(params or {})}, self._require_process())
+        concrete = dict(params or {})
+        if self.enforce_stable_contract:
+            try:
+                validate_client_method(method, concrete)
+            except ValueError as exc:
+                raise RuntimeExecutionError(
+                    "codex_contract_client_request_invalid",
+                    "Codex notification is outside the reviewed Stable Contract.",
+                    detail={"method": method},
+                ) from exc
+        await self._write({"method": method, "params": concrete}, self._require_process())
 
     def on_notification(self, method: str, handler: MessageHandler) -> Callable[[], None]:
         self._notification_handlers[method].append(handler)
@@ -106,6 +161,10 @@ class CodexJSONRPCClient:
         key = (thread_id, turn_id)
         self._route_handlers[key].append(handler)
         return lambda: self._route_handlers[key].remove(handler)
+
+    def on_connection_failure(self, handler: ConnectionFailureHandler) -> Callable[[], None]:
+        self._connection_failure_handlers.append(handler)
+        return lambda: self._connection_failure_handlers.remove(handler) if handler in self._connection_failure_handlers else None
 
     def handle_server_request(self, method: str, handler: MessageHandler) -> None:
         self._server_handlers[method] = handler
@@ -139,6 +198,7 @@ class CodexJSONRPCClient:
         if process.returncode is not None or process.stdin is None:
             raise RuntimeExecutionError("codex_connection_eof", "Codex App Server connection is closed.", retryable=True)
         payload = json.dumps(dict(message), separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+        require_jsonl_frame_size(len(payload), source="OpenDrSai Codex request")
         async with self._write_lock:
             try:
                 process.stdin.write(payload)
@@ -150,13 +210,13 @@ class CodexJSONRPCClient:
         assert process.stdout
         try:
             while True:
-                line = await process.stdout.readline()
+                line = await read_jsonl_frame(process.stdout)
                 if not line:
                     break
                 if generation != self._generation:
                     continue
                 try:
-                    message = json.loads(line)
+                    message = await parse_jsonl_object(line)
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     await self._fail_connection("codex_json_invalid", "Codex App Server emitted invalid JSON.")
                     return
@@ -166,6 +226,9 @@ class CodexJSONRPCClient:
                 await self._handle_message(message, generation)
         except asyncio.CancelledError:
             raise
+        except RuntimeExecutionError as exc:
+            await self._fail_connection(exc.code, exc.message, retryable=exc.retryable)
+            return
         except Exception:
             await self._fail_connection("codex_reader_failed", "Codex App Server reader failed.")
             return
@@ -182,13 +245,21 @@ class CodexJSONRPCClient:
                 return
             pending = self._pending.pop(request_id, None)
             if not pending or pending[0] != generation:
+                self._record_protocol_violation("unexpected_response_id", str(request_id))
                 return
             future = pending[1]
-            if "error" in message:
+            has_error, has_result = "error" in message, "result" in message
+            if has_error == has_result:
+                future.set_exception(RuntimeExecutionError(
+                    "codex_response_invalid",
+                    "Codex App Server emitted an invalid JSON-RPC response.",
+                    detail={"request_id": request_id},
+                ))
+            elif has_error:
                 error = message.get("error") if isinstance(message.get("error"), Mapping) else {}
                 future.set_exception(RuntimeExecutionError(
                     "codex_jsonrpc_error", str(error.get("message", "Codex request failed.")),
-                    detail={"jsonrpc_code": error.get("code"), "data": error.get("data")},
+                    detail={"jsonrpc_code": error.get("code"), "data_present": "data" in error},
                 ))
             else:
                 future.set_result(message.get("result"))
@@ -198,8 +269,16 @@ class CodexJSONRPCClient:
             return
         method = message.get("method")
         if not isinstance(method, str):
+            self._record_protocol_violation("missing_method", "notification")
             return
-        params = message.get("params") if isinstance(message.get("params"), Mapping) else {}
+        if method in CLIENT_METHODS:
+            self._record_protocol_violation("wrong_direction", method)
+            return
+        raw_params = message.get("params", {})
+        if not isinstance(raw_params, Mapping):
+            self._record_protocol_violation("invalid_notification_params", method)
+            return
+        params = raw_params
         handlers = list(self._notification_handlers.get(method, ()))
         thread_id, turn_id = self._route_ids(params)
         handlers.extend(self._route_handlers.get((thread_id, turn_id), ()))
@@ -212,13 +291,20 @@ class CodexJSONRPCClient:
 
     async def _handle_server_request(self, message: Mapping[str, Any], generation: int) -> None:
         method, request_id = str(message["method"]), message["id"]
-        handler = self._server_handlers.get(method)
         try:
-            if handler is None:
+            params = message.get("params", {})
+            try:
+                validate_server_request(method, dict(params) if isinstance(params, Mapping) else params)
+            except ValueError:
+                self._record_protocol_violation("invalid_server_request", method)
                 response = {"id": request_id, "error": {"code": -32601, "message": "Method not supported by OpenDrSai."}}
             else:
-                result = await self._call(handler, message)
-                response = {"id": request_id, "result": result}
+                handler = self._server_handlers.get(method)
+                if handler is None:
+                    response = {"id": request_id, "error": {"code": -32601, "message": "Method not supported by OpenDrSai."}}
+                else:
+                    result = await self._call(handler, message)
+                    response = {"id": request_id, "result": result}
         except Exception as exc:
             response = {"id": request_id, "error": {"code": -32000, "message": type(exc).__name__}}
         if generation == self._generation and self._state != "closed":
@@ -227,10 +313,19 @@ class CodexJSONRPCClient:
             except RuntimeExecutionError:
                 pass
 
-    async def _fail_connection(self, code: str, message: str) -> None:
+    async def _fail_connection(self, code: str, message: str, *, retryable: bool = True) -> None:
         if self._state != "closed":
             self._state = "failed"
         await self._reject_pending(code, message)
+        error = RuntimeExecutionError(code, message, retryable=retryable)
+        for handler in list(self._connection_failure_handlers):
+            try:
+                result = handler(error)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                # One observer must never hide the connection failure from the others.
+                continue
 
     async def _reject_pending(self, code: str, message: str) -> None:
         pending, self._pending = self._pending, {}
@@ -242,6 +337,10 @@ class CodexJSONRPCClient:
         if not self._process:
             raise RuntimeExecutionError("codex_connection_missing", "Codex App Server process is missing.")
         return self._process
+
+    def _record_protocol_violation(self, code: str, identity: str) -> None:
+        self.protocol_violations.append({"code": code[:80], "identity": identity[:160]})
+        self.protocol_violations[:] = self.protocol_violations[-100:]
 
     @staticmethod
     async def _call(handler: MessageHandler, message: Mapping[str, Any]) -> Any:

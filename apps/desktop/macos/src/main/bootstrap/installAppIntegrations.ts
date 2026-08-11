@@ -21,10 +21,18 @@ export interface MacosAppIntegrationDependencies {
   reloadMainWindow(): void; publish(channel: string, event: unknown): void;
 }
 
+let packagedNetworkOnlineOverride: boolean | null = null;
+function networkIsOnline(): boolean { return packagedNetworkOnlineOverride ?? net.isOnline(); }
+export function setPackagedNetworkOnlineForE2e(online: boolean | null): void {
+  if (process.env.OPENDRSAI_E2E_AGENT_RUN !== "1" || process.env.OPENDRSAI_MACOS_PACKAGED_SCENARIO !== "system-events") throw new Error("Packaged network override is unavailable outside the system-events acceptance scenario.");
+  packagedNetworkOnlineOverride = online;
+}
+
 export function installMacosAppIntegrations(dependencies: MacosAppIntegrationDependencies): () => void {
   const { recovery } = dependencies;
   remoteGatewayInstaller.setPublisher((event) => dependencies.publish("desktop:remote-gateway-operation-event", event));
   remoteWorkspaceController.setPublisher((event) => dependencies.publish("desktop:remote-workspace-status-event", event));
+  remoteWorkspaceController.setFilePublisher((event) => dependencies.publish("desktop:workspace-file-change-event", event));
   portForwardRegistry.setPublisher((event) => dependencies.publish("desktop:port-forward-event", event));
   desktopDiagnostics.setPublisher((event) => { productionDiagnostics.observeEvent(Buffer.byteLength(JSON.stringify(event), "utf8"), event.workspaceId); dependencies.publish("desktop:diagnostics-event", event); });
   dependencies.interactiveDebugger.setPublisher((event) => dependencies.publish("desktop:interactive-debug-event", event));
@@ -45,13 +53,13 @@ export function installMacosAppIntegrations(dependencies: MacosAppIntegrationDep
   powerMonitor.on("shutdown", () => { recovery.beginShutdown(); managedProcessRegistry.beginShutdown(); killAllTerminalSessions(); cleanupAllVoiceTempFiles(); void managedProcessRegistry.shutdownAll(); void stopGateway().catch(() => undefined); });
   const handleDisplayChange = () => { dependencies.ensureWindowOnScreen(); dependencies.recover("display-change"); };
   screen.on("display-added", handleDisplayChange); screen.on("display-removed", handleDisplayChange); screen.on("display-metrics-changed", handleDisplayChange);
-  let networkOnline = net.isOnline(); recovery.setNetworkOnline(networkOnline);
+  let networkOnline = networkIsOnline(); recovery.setNetworkOnline(networkOnline);
   const networkMonitor = setInterval(() => {
-    const online = net.isOnline();
+    const online = networkIsOnline();
     if (!online) { recovery.setNetworkOnline(false); if (networkOnline) void portForwardRegistry.suspendAll(); networkOnline = false; recovery.observeInterruption(async () => (await getGatewayStatus()).ready); return; }
     const recovered = recovery.setNetworkOnline(true); if (!networkOnline) void portForwardRegistry.resumeAll(); networkOnline = true; if (recovered) dependencies.recover("network-online");
-  }, 5_000);
+  }, process.env.OPENDRSAI_MACOS_PACKAGED_SCENARIO === "system-events" ? 50 : 5_000);
   networkMonitor.unref?.();
   app.on("child-process-gone", (_event, details) => { if (details.type !== "GPU" || recovery.shuttingDown) return; dependencies.reloadMainWindow(); dependencies.recover("gpu-recovered"); });
-  return () => clearInterval(networkMonitor);
+  return () => { clearInterval(networkMonitor); packagedNetworkOnlineOverride = null; };
 }

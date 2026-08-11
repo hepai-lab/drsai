@@ -85,6 +85,7 @@ LOCAL_EVIDENCE: dict[str, tuple[str, str]] = {
     "M08-F07": ("apps/android/app/src/androidTest/java/ai/drsai/remote/LocalRemoteWorkspaceE2ETest.kt", "accept_mobile_remote_workspace_local_e2e_v2.py + local-emulator-e2e.json"),
     "M08-F08": ("cores/python/packages/drsai/src/drsai/backend/runtime/engine.py", "test_runtime_engine.py"),
     "M09-F02": ("apps/android/app/src/main/java/ai/drsai/remote/remote/model/RemoteModels.kt", "RemoteReliabilityTest"),
+    "M09-F05": ("cores/python/packages/drsai/src/drsai/backend/runtime/engine.py", "test_runtime_engine.py"),
     "M10-F01": ("scripts/generate_relay_contract.py", "test_relay_contract_codegen.py"),
 }
 
@@ -120,9 +121,17 @@ def generated() -> dict[str, Any]:
         seeded = LOCAL_EVIDENCE.get(source["id"])
         status = old.get("status", "unverified")
         evidence = old.get("evidence", [])
-        if seeded and status == "unverified" and not evidence:
+        if seeded and status in {"unverified", "local_pass"}:
             artifact, test = seeded
-            status = "local_pass"
+            status = "local_pass" if status == "unverified" else status
+            # These two entries are generated from the current repository
+            # topology.  Reconcile them on every generation so a module move
+            # cannot leave a green ledger pointing at deleted source files.
+            preserved = [
+                row
+                for row in evidence
+                if row.get("kind") not in {"code", "automated_test"}
+            ]
             evidence = [
                 {"kind": "code", "artifact": artifact},
                 {
@@ -130,6 +139,7 @@ def generated() -> dict[str, Any]:
                     "command": test,
                     "result": "passed",
                 },
+                *preserved,
             ]
         items.append({
             **source,

@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { startApprovalRuntimeFixture } from "./lib/opendrsai-approval-runtime-fixture.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repo = resolve(root, "../../..");
@@ -37,6 +38,7 @@ let stdout = "";
 let stderr = "";
 let timedOut = false;
 let exitCode = null;
+const runtimeFixture = await startApprovalRuntimeFixture();
 try {
   exitCode = await new Promise((resolvePromise, reject) => {
     let settled = false;
@@ -50,6 +52,8 @@ try {
         DRSAI_HOME: drsaiHome,
         DRSAI_REPO: workspace,
         OPENDRSAI_DEV_AUTH_BYPASS: "1",
+        DRSAI_GATEWAY_DEV_MANAGED: "1",
+        OPENDRSAI_GATEWAY_PORT: String(runtimeFixture.port),
         OPENDRSAI_PDF_PYTHON: python,
         OPENDRSAI_PDF_SCRIPT: extractor,
         OPENDRSAI_E2E_F3_APPROVALS: "1",
@@ -74,6 +78,7 @@ try {
     child.on("close", (code) => { if (!settled) { settled = true; clearTimeout(timer); resolvePromise(code); } });
   });
 } finally {
+  await runtimeFixture.close();
   writeFileSync(stdoutPath, stdout, "utf8");
   writeFileSync(stderrPath, stderr, "utf8");
 }

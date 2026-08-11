@@ -144,9 +144,10 @@ class RuntimeAuthority:
         return session
 
     def list_sessions(self, workspace_id: str, *, cursor: str | None = None, limit: int = 20,
-                      query: str | None = None) -> tuple[list[Session], str | None]:
+                      query: str | None = None,
+                      lifecycle: ResourceLifecycle = ResourceLifecycle.ACTIVE) -> tuple[list[Session], str | None]:
         rows = [item for item in self.sessions.values()
-                if item.workspace_id == workspace_id and item.lifecycle == ResourceLifecycle.ACTIVE]
+                if item.workspace_id == workspace_id and item.lifecycle == lifecycle]
         if query:
             rows = [item for item in rows if query.casefold() in item.title.casefold()]
         rows.sort(key=lambda item: item.updated_at, reverse=True)
@@ -155,16 +156,37 @@ class RuntimeAuthority:
         return rows[start:end], str(end) if end < len(rows) else None
 
     def list_sessions_for_subject(self, subject: str, workspace_id: str, *, cursor: str | None = None,
-                                  limit: int = 20, query: str | None = None):
+                                  limit: int = 20, query: str | None = None,
+                                  lifecycle: ResourceLifecycle = ResourceLifecycle.ACTIVE):
         # Runtime access is granted by the Relay association. Session ownership
         # must not hide existing Windows sessions from an associated Mobile
         # client; subject remains audit/idempotency metadata only.
-        return self.list_sessions(workspace_id, cursor=cursor, limit=limit, query=query)
+        return self.list_sessions(workspace_id, cursor=cursor, limit=limit, query=query, lifecycle=lifecycle)
 
     def authorize_session(self, subject: str, workspace_id: str, session_id: str) -> None:
         session = self._session(workspace_id, session_id)
         if session.lifecycle != ResourceLifecycle.ACTIVE:
             raise RelayRegistryError("session_forbidden", "Session is not active")
+
+    def update_session(self, subject: str, workspace_id: str, session_id: str, *,
+                       title: str | None = None, lifecycle: ResourceLifecycle | None = None) -> Session:
+        with self._lock:
+            session = self._session(workspace_id, session_id)
+            normalized_title = title.strip() if title is not None else session.title
+            if not normalized_title or len(normalized_title) > 200 or any(ch in normalized_title for ch in ("\x00", "\r", "\n")):
+                raise RelayRegistryError("session_title_invalid", "Session title is invalid")
+            wanted = lifecycle or session.lifecycle
+            allowed = {
+                ResourceLifecycle.ACTIVE: {ResourceLifecycle.ACTIVE, ResourceLifecycle.ARCHIVED},
+                ResourceLifecycle.ARCHIVED: {ResourceLifecycle.ARCHIVED, ResourceLifecycle.ACTIVE},
+                ResourceLifecycle.REMOVED: {ResourceLifecycle.REMOVED},
+            }
+            if wanted not in allowed[session.lifecycle]:
+                raise RelayRegistryError("session_lifecycle_invalid", "Session lifecycle transition is invalid")
+            session.title = normalized_title
+            session.lifecycle = wanted
+            session.updated_at = datetime.now(UTC)
+            return session
 
     def idempotency_result(self, subject: str, operation: str, idempotency_key: str) -> Any:
         if operation not in {"session.create", "run.create"}:
@@ -177,6 +199,7 @@ class RuntimeAuthority:
     def create_run(self, subject: str, workspace_id: str, session_id: str, *, message: str,
                    attachment_refs: list[str], idempotency_key: str, correlation_id: str,
                    retry_of: str | None = None) -> Run:
+        idempotency_key = f"retry:{retry_of}" if retry_of else idempotency_key
         key = (subject, "run.create", idempotency_key)
         if key in self.idempotency:
             return self.idempotency[key]

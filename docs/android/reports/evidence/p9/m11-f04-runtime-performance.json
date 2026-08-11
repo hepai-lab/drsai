@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "feature_id": "M11-F04",
+  "generated_at": "2026-08-05T14:53:50.529939+00:00",
+  "passed": true,
+  "candidate_apk_sha256": "2af5378301cfa4f2341adb74274297f4b6a9fae3c33f1eed66261b353668627f",
+  "matrix": [
+    {
+      "api_level": 26,
+      "abi": "x86_64",
+      "model": "Android SDK built for x86_64",
+      "cold_start_p95_ms": 340,
+      "foreground_pss_p95_mb": 49.3447265625,
+      "passed": true
+    },
+    {
+      "api_level": 30,
+      "abi": "x86_64",
+      "model": "sdk_gphone_x86_64",
+      "cold_start_p95_ms": 1217,
+      "foreground_pss_p95_mb": 120.87109375,
+      "passed": true
+    },
+    {
+      "api_level": 35,
+      "abi": "x86_64",
+      "model": "sdk_gphone64_x86_64",
+      "cold_start_p95_ms": 1331,
+      "foreground_pss_p95_mb": 123.20703125,
+      "passed": true
+    },
+    {
+      "api_level": 36,
+      "abi": "arm64-v8a",
+      "model": "SM-X936C",
+      "cold_start_p95_ms": 635,
+      "foreground_pss_p95_mb": 123.6708984375,
+      "passed": true
+    }
+  ],
+  "stress": {
+    "data_corruption": 0,
+    "database_bytes": 4149248,
+    "duplicate_side_effects": 0,
+    "duration_ms": 8940.429462,
+    "permanent_running": 0,
+    "recovery_p95_ms": 6.127923,
+    "recovery_runs": 20,
+    "recovery_samples_ms": [
+      2.549923,
+      1.990692,
+      2.707385,
+      2.412385,
+      2.577,
+      2.904,
+      2.554462,
+      2.860384,
+      2.684231,
+      2.539692,
+      2.171692,
+      2.689154,
+      2.758846,
+      2.364692,
+      1.139077,
+      6.127923,
+      2.591385,
+      1.053154,
+      1.014077,
+      1.601539
+    ],
+    "runs": 500,
+    "side_effect_executions": 50,
+    "tool_runs": 50
+  },
+  "gates": {
+    "frozen_api_matrix_is_exactly_26_30_35_36": true,
+    "frozen_abi_matrix_includes_x86_64_and_arm64_v8a": true,
+    "all_matrix_runs_use_one_current_candidate_apk": true,
+    "all_matrix_runs_bind_the_current_frozen_budget": true,
+    "all_44_device_budget_gates_are_green": true,
+    "each_device_records_ten_real_runtime_cold_starts": true,
+    "local_runtime_probe_has_no_unbudgeted_network": true,
+    "runtime_process_is_released_and_anr_count_is_zero": true,
+    "physical_arm64_run_covers_battery_and_thermal_budget": true,
+    "current_apk_passes_500_run_side_effect_and_recovery_stress": true,
+    "low_memory_and_thermal_resource_policy_suite_is_green": true,
+    "api26_process_name_path_is_guarded_below_api28": true
+  },
+  "source_sha256": {
+    "cores/protocol/android-runtime/p9-performance-budget-v1.json": "250e3f3cb14e5fc6681cf6f8f4b01bad8a8c0bfbfd0c8b1a47b924d3ac3102f1",
+    "scripts/collect_android_p9_runtime_performance.py": "f80fce0e9d392cde13d8778e3027d96361cbc1e660d41393b089eab6f4ec69b1",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/PythonRuntimePerformanceTest.kt": "e5f603134d8e581bcf923a11fae50e8ab6f94ca81b10d7664777a4aac9ef7e8b",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeService.kt": "dfccff58aaf5214cfe3b09e162bf75ddbacd62cebbef84173a191b2980652817",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RuntimeReliability.kt": "5b033ae792a85435fea0d8d0793c89ddebd48be70ff02a643a9b59a2621d8eb2",
+    "apps/android/app/src/test/java/ai/drsai/remote/RuntimeReliabilityTest.kt": "e489b9f7fbc51ccd99ea066a42aeb6355c645d39113ee9b90ea039bf1082a332",
+    "docs/android/reports/evidence/p9/pending/m11-f04-api26-x86_64.json": "2ef7ee28d99631085d2956514ef63ef5d0df71a3bdb533cb0b545fbdc3f8e9da",
+    "docs/android/reports/evidence/p9/pending/m11-f04-api30-x86_64.json": "7d97b70ce09d19eb973f58d9f0eafd3a0e3f445d3fc0700bbaf6d4b9498b31ec",
+    "docs/android/reports/evidence/p9/pending/m11-f04-api35-x86_64.json": "ea27297b8b99e10dabd5c8288dc5319f43f70e16bb4d4d483038150b4fbea4a3",
+    "docs/android/reports/evidence/p9/pending/m11-f04-api36-arm64-v8a.json": "7d0b6f7bc8bdd9e0320f63e5f7b58d3f2f77d4a0f594b1500065a3abf527ada1",
+    "docs/android/reports/evidence/p9/pending/m11-f04-stress-api36-arm64-v8a.json": "aa6748d6aec89a6bf51d828ede953e83e464277f8fb808e252c20a2968468bfa"
+  }
+}

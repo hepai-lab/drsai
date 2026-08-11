@@ -4,28 +4,25 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { parseChatOutput } from "../chatOutputModel";
 import { copyTextSafely } from "../clipboard";
+import { copyTextReliable } from "../threadShareClient";
 
 interface ChatMessageContentProps {
   content: string;
   streaming?: boolean;
   language: "en" | "zh";
   onOpenLink: (href: string | undefined) => void;
+  /** When true, treat the whole string as markdown and do not emit nested reasoning blocks. */
+  plainMarkdown?: boolean;
 }
 
 function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   async function copy(): Promise<void> {
+    if (!value) return;
     try {
       if (!await copyTextSafely(value)) throw new Error("Clipboard copy is not available.");
     } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = value;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      textarea.remove();
+      return;
     }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
@@ -123,11 +120,9 @@ function isSafeImageSource(src: string): boolean {
   }
 }
 
-function ReasoningPart({ text, complete, language }: { text: string; complete: boolean; language: "en" | "zh" }): React.JSX.Element {
+function ReasoningPart({ text, complete }: { text: string; complete: boolean; language: "en" | "zh" }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const labels = language === "zh"
-    ? { reasoning: "Reasoning", thinking: "Thinking" }
-    : { reasoning: "Reasoning", thinking: "Thinking" };
+  const labels = { reasoning: "Reasoning", thinking: "Thinking" };
   const title = complete ? labels.reasoning : labels.thinking;
   return (
     <details className="chat-reasoning" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -147,7 +142,17 @@ export const ChatMessageContent = memo(function ChatMessageContent({
   streaming = false,
   language,
   onOpenLink,
+  plainMarkdown = false,
 }: ChatMessageContentProps): React.JSX.Element {
+  if (plainMarkdown) {
+    return (
+      <div className="chat-output">
+        <div className="chat-markdown">
+          <MarkdownContent content={content} onOpenLink={onOpenLink} />
+        </div>
+      </div>
+    );
+  }
   const parts = parseChatOutput(content, { streaming });
   return (
     <div className="chat-output">

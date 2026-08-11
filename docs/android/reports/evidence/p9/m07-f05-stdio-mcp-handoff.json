@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F05",
+  "generated_at": "2026-08-05T14:15:40.378144+00:00",
+  "passed": true,
+  "gates": {
+    "android_http_and_desktop_stdio_are_distinct_capabilities": true,
+    "plain_http_mcp_is_not_intercepted_as_stdio": true,
+    "android_never_advertises_local_stdio": true,
+    "desktop_advertises_stdio_only_from_real_mcp_std_config": true,
+    "legacy_and_hai_relay_publish_negotiated_capabilities": true,
+    "relay_contract_and_generated_bindings_allow_stdio": true,
+    "android_decodes_persisted_relay_array_and_execution_capability": true,
+    "offline_or_generic_mcp_remote_fails_honestly": true,
+    "online_target_is_deterministic_and_explicit": true,
+    "handoff_package_requires_confirmation_and_binds_stdio_identity": true,
+    "product_preflight_and_ui_show_location_transport_and_approval": true,
+    "python_relay_and_android_product_suites_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": ".................................................................        [100%]\n65 passed in 9.87s"
+  },
+  "android_suites": {
+    "DesktopStdioMcpHandoffTest": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "name": "ai.drsai.remote.DesktopStdioMcpHandoffTest",
+      "sha256": "54ecb64ca7de512a006cb82a6e0a1f9d5ca3120a698243c0cad2003fb88f772c"
+    },
+    "HybridRuntimeCoordinatorTest": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "name": "ai.drsai.remote.HybridRuntimeCoordinatorTest",
+      "sha256": "37a37dff01037b824d1817477863ead4636ddf28afeed660f862ec865bc9c6e0"
+    },
+    "DesktopHandoffContractTest": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "name": "ai.drsai.remote.DesktopHandoffContractTest",
+      "sha256": "bb9598a7be8c48c96128bccdae38a1911f0b593fb9c164d5823212efbc8f9946"
+    },
+    "AndroidMcpClientTest": {
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "name": "ai.drsai.remote.AndroidMcpClientTest",
+      "sha256": "f461dc7eb3d1c8ed4951adadd7ad5bd8f9164377b5ff7d7be40f3b96c84b4bd0"
+    }
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeCoordinator.kt": "2e8570431e5fb4b73185d97515617947226c5eddb7c0801285f675d5e7fcc40f",
+    "apps/android/app/src/main/java/ai/drsai/remote/workbench/model/WorkbenchModels.kt": "19e6ec344dda8d2aff2a2004125fab8e19ed14560c9f966a0950a816cff83efb",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt": "5e78c7262c9456967e5f440ecfa593499ffb0e8b2ba90f1292bd6e8716d91baa",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/AndroidMcpClient.kt": "dbea54b40a3c58da6752b3cae3d2aec76cb4cb7e7a49ab3cb50e21ee11f638d3",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "cores/python/packages/drsai/src/drsai/relay/runtime_client.py": "b984be9a78feecdd0a3fb08fc1563bf8de6dec40e614c0b3a1fc12e598dcaf2f",
+    "cores/python/packages/drsai/src/drsai/backend/gateway.py": "59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835",
+    "cores/protocol/relay/runtime-relay.schema.json": "cb9712f6b740de6322ed91700afd589e028ac7d4f13f7e27feccddef86447526",
+    "cores/python/packages/drsai/src/drsai/relay/generated_contract.py": "ad110d2e0b9aaa4c5e5c8cfdfb4d1a79dcd0edddec5b08fa4951f9e597f0fa20",
+    "apps/android/app/src/main/java/ai/drsai/remote/remote/generated/RelayContractGenerated.kt": "c822a3375f591a8f9340adb152f8678b353b7b07ceb2dae2aef59adf2bdd65cc",
+    "apps/android/app/src/test/java/ai/drsai/remote/DesktopStdioMcpHandoffTest.kt": "3f5c334bb3815bdca1633cb73af569547c14326d98d90f023d3e94e74f8e40bc",
+    "cores/python/packages/drsai/tests/test_relay_runtime_client.py": "be39ff16e959a28b67c718729068c12adfbb54af98cb9c62d31c575b2ba629c3",
+    "cores/python/packages/drsai/tests/test_android_p9_stdio_mcp_handoff.py": "1445e878727494acbafce5436d5af644b371c8d04fb63814fb968885697d552e"
+  }
+}

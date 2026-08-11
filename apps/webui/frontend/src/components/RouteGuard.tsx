@@ -45,6 +45,12 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                     const loginPath = process.env.GATSBY_SERVICE_MODE === "DEV" ? "/login" : "/sso-login";
                     // 避免重复重定向（标准化后比较，兼容 /login 与 /login/）
                     if (normalizedPath !== normalizePath(loginPath)) {
+                        // 保存原始 URL 参数（agentId/agentName），登录后恢复
+                        // 用 cookie — 跨域重定向后不丢，max-age=600s 自动过期
+                        const search = location.search;
+                        if (search) {
+                            try { document.cookie = "drsai_pending_search=" + encodeURIComponent(search) + "; path=/; max-age=600; SameSite=Lax"; } catch {}
+                        }
                         navigate(loginPath, { replace: true });
                         return;
                     }

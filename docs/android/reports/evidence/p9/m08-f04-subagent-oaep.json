@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F04",
+  "generated_at": "2026-08-05T13:32:39.759091+00:00",
+  "passed": true,
+  "gates": {
+    "success_is_a_structured_subtask": true,
+    "parent_child_hierarchy_and_source_are_preserved": true,
+    "partial_success_preserves_each_child_status": true,
+    "timeout_is_scoped_to_the_child": true,
+    "subagent_failure_maps_to_oaep_item_failed": true,
+    "parent_cancel_emits_cancelled_and_has_no_orphans": true,
+    "failed_child_cannot_be_reported_as_parent_success": true,
+    "outbound_envelopes_are_frozen_for_replay": true,
+    "python_coordinator_and_mapper_regressions_are_green": true,
+    "api35_success_partial_timeout_and_false_success_journey_is_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": "...............................................                          [100%]\n47 passed in 3.80s"
+  },
+  "android_coordinator_suite": {
+    "tests": 22,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.PythonAgentLoopCoordinatorTest",
+    "sha256": "22a95822cf3544b36b672b2155e29d5b052c7fe7145281268a251e15b42794de"
+  },
+  "android_mapper_suite": {
+    "tests": 20,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.PythonRuntimeEventMapperTest",
+    "sha256": "3cf9ab944c0e8fc3f18800691ec3f851d4b4bcd39a967388d40735f6cef6538e"
+  },
+  "connected_suite": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+    "sha256": "368eeb7934961a277b9cdaec6350fa142e02a66dd634d7111f07841522132012"
+  },
+  "connected_report": "docs/android/reports/evidence/p9/m08-f04-subagent-oaep-instrumentation.xml",
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "cores/python/packages/drsai/tests/test_subagent_kernel_parity.py": "a2ff52de5742f8c2df11c8cb8e68560cd80ebc339b2786c4340dc42ae01204e0",
+    "cores/python/packages/drsai/tests/test_mobile_agent_core.py": "e28a759781773bed242010c218e01ef8e2040f0a56459dfa3f9a6de5f35a0b68",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonAgentLoopCoordinator.kt": "9626f5f1c8200c6ec7fd86ca32fdf4b081fc04a1cf17de98dd15409e111d344f",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeEventMapper.kt": "bcb730b9f05285290225f8f95969432c31a97517ff0ba3f154a95a257a5c7f93",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonAgentLoopCoordinatorTest.kt": "da796c0f871d701375635c0cf5765e725bf39d9b0de54a9c171a723d51d24ffa",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonRuntimeEventMapperTest.kt": "5c3822ae42302be6a581ace5d23f0511ffb2df8750da313bb6be48a9095de830",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/PythonRuntimeCriticalJourneyTest.kt": "0f440d91cfde36f9e00d53533ff273dcf54fe176a89f026f621b9dd099a976e5"
+  }
+}

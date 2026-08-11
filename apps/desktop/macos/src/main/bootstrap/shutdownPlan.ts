@@ -27,6 +27,7 @@ export function createMacosShutdownPlan(dependencies: MacosShutdownDependencies)
     { name: "terminal-sessions", run: dependencies.killTerminalSessions },
     { name: "voice-files", run: dependencies.cleanupVoiceFiles },
     { name: "runtime-install", run: dependencies.cancelRuntimeInstall },
+    { name: "gateway", run: dependencies.stopGateway },
     { name: "approval-store", run: dependencies.shutdownApprovalStore },
     { name: "interactive-debugger", run: dependencies.shutdownInteractiveDebugger },
     { name: "browser-tasks", run: dependencies.shutdownBrowserTasks },
@@ -40,6 +41,5 @@ export function createMacosShutdownPlan(dependencies: MacosShutdownDependencies)
     { name: "mobile-pairing", run: dependencies.closeMobilePairingControllers },
     { name: "agent-journal", run: dependencies.shutdownAgentJournal },
     { name: "chat-journal", run: dependencies.shutdownChatJournal },
-    { name: "gateway", run: dependencies.stopGateway },
   ];
 }

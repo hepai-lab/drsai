@@ -1,5 +1,7 @@
 param(
     [string]$DrsaiHome,
+    [ValidateRange(1, 65535)]
+    [int]$GatewayPort = 28642,
     [switch]$InstallPrerequisites,
     [switch]$InstallOnly,
     [switch]$ForceInstall,
@@ -19,7 +21,6 @@ $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..\..\..")).Path
 $DesktopWorkspaceDir = Join-Path $RepoRoot "apps\desktop"
 $DesktopDir = Join-Path $RepoRoot "apps\desktop\windows"
 $Installer = Join-Path $RepoRoot "scripts\install.ps1"
-$GatewayPort = 18642
 
 function Add-PathIfExists {
     param([string]$Path)
@@ -215,8 +216,15 @@ function Get-InstallTarget {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return $null }
     $item = Get-Item $Path -Force
+    $sourceMarker = Join-Path $Path ".dev-source"
+    if (Test-Path -LiteralPath $sourceMarker) {
+        $source = (Get-Content -LiteralPath $sourceMarker -Raw).Trim()
+        if (-not $source) { return $null }
+        if (Test-Path -LiteralPath $source) { return (Resolve-Path -LiteralPath $source).Path }
+        return $source
+    }
     if ($item.Target) { return [string]$item.Target }
-    return (Resolve-Path $Path).Path
+    return $null
 }
 
 function Test-DeveloperBackendReady {
@@ -224,6 +232,12 @@ function Test-DeveloperBackendReady {
         [string]$InstallPath,
         [string]$ExpectedRepo
     )
+
+    if (-not (Test-Path -LiteralPath $InstallPath)) { return $false }
+    $installItem = Get-Item -LiteralPath $InstallPath -Force
+    if (($installItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        return $false
+    }
 
     $target = Get-InstallTarget $InstallPath
     if (-not $target -or $target.TrimEnd("\") -ine $ExpectedRepo.TrimEnd("\")) {
@@ -396,14 +410,48 @@ function Invoke-StepProcess {
     throw "$Prefix failed with exit code $exitCode."
 }
 
+function Get-GatewayInstanceToken {
+    param([string]$DrsaiHome)
+
+    $tokenPath = Join-Path $DrsaiHome "runtime\instance-token"
+    if (Test-Path $tokenPath) {
+        $existing = (Get-Content -LiteralPath $tokenPath -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($existing -match '^[A-Za-z0-9_-]{32,128}$') { return $existing }
+    }
+    $bytes = New-Object byte[] 32
+    $generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $generator.GetBytes($bytes) } finally { $generator.Dispose() }
+    $token = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $tokenPath) | Out-Null
+    Set-Content -LiteralPath $tokenPath -Value $token -NoNewline -Encoding ascii
+    return $token
+}
+
+function Get-GatewayHeaders {
+    param([string]$Token)
+    return @{ "X-OpenDrSai-Gateway-Token" = $Token }
+}
+
 function Test-GatewayReady {
-    param([int]$Port)
+    param([int]$Port, [string]$Token)
 
     try {
-        $health = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 2 -UseBasicParsing
+        $headers = Get-GatewayHeaders -Token $Token
+        $health = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" -Headers $headers -TimeoutSec 2 -UseBasicParsing
         if ($health.StatusCode -ne 200) { return $false }
-        $models = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/v1/models" -TimeoutSec 2 -UseBasicParsing
+        $models = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/v1/models" -Headers $headers -TimeoutSec 2 -UseBasicParsing
         return $models.StatusCode -eq 200
+    } catch {
+        return $false
+    }
+}
+
+function Test-DevManagedGateway {
+    param([int]$Port, [string]$Token)
+
+    try {
+        $identity = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/v1/runtime" -Headers (Get-GatewayHeaders -Token $Token) -TimeoutSec 2
+        return $identity.dev_managed -eq $true
     } catch {
         return $false
     }
@@ -429,10 +477,30 @@ function Start-HotReloadGateway {
         [int]$Port
     )
 
+    $instanceToken = Get-GatewayInstanceToken -DrsaiHome $DrsaiHome
+    $gatewayHeaders = Get-GatewayHeaders -Token $instanceToken
     Write-Host "[2/3] Gateway hot reload" -ForegroundColor Yellow
-    if (Test-GatewayReady -Port $Port) {
-        Write-Host "    OK Gateway already ready at http://127.0.0.1:$Port." -ForegroundColor Green
-        return $null
+    if (Test-GatewayReady -Port $Port -Token $instanceToken) {
+        if (Test-DevManagedGateway -Port $Port -Token $instanceToken) {
+            # Windows intentionally runs uvicorn without --reload because its
+            # reload worker cannot launch Codex app-server. Reusing the prior
+            # process here would keep stale Adapter code after Desktop restarts.
+            Write-Host "    Restarting the source Gateway to load current Python code..." -ForegroundColor Yellow
+        } else {
+            Write-Host "    Replacing non-development Gateway on port $Port with the source Gateway..." -ForegroundColor Yellow
+        }
+        try {
+            Invoke-RestMethod -Uri "http://127.0.0.1:$Port/v1/runtime/shutdown" -Headers $gatewayHeaders -Method Post -TimeoutSec 2 | Out-Null
+        } catch {
+            throw "Port $Port is occupied by a Gateway that cannot be stopped through /v1/runtime/shutdown. Stop it and retry."
+        }
+        $deadline = (Get-Date).AddSeconds(10)
+        while ((Get-Date) -lt $deadline -and (Test-GatewayReady -Port $Port -Token $instanceToken)) {
+            Start-Sleep -Milliseconds 200
+        }
+        if (Test-GatewayReady -Port $Port -Token $instanceToken) {
+            throw "The non-development Gateway on port $Port did not stop."
+        }
     }
 
     if (-not (Test-Path $PythonPath)) {
@@ -448,18 +516,26 @@ function Start-HotReloadGateway {
 
     Add-PathIfExists (Split-Path -Parent $PythonPath)
     $env:DRSAI_HOME = $DrsaiHome
+    $env:DRSAI_API_PORT = [string]$Port
+    $env:OPENDRSAI_GATEWAY_PORT = [string]$Port
     $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
     $env:DRSAI_GATEWAY_HOT_RELOAD = "1"
+    $env:OPENDRSAI_GATEWAY_INSTANCE_TOKEN = $instanceToken
     $env:PYTHONPATH = if ($env:PYTHONPATH) { "$drsaiSrc$([IO.Path]::PathSeparator)$env:PYTHONPATH" } else { $drsaiSrc }
 
     $args = @(
         "-m", "uvicorn",
         "drsai.backend.gateway:app",
         "--host", "127.0.0.1",
-        "--port", [string]$Port,
-        "--reload",
-        "--reload-dir", $reloadDir
+        "--port", [string]$Port
     )
+    # uvicorn's Windows reload worker uses SelectorEventLoop, which cannot
+    # launch the Codex app-server subprocess required by CodexAdapter.
+    # Run the source Gateway directly on Windows; restart the dev command to
+    # pick up Python changes. Other platforms retain hot reload.
+    if (-not ($IsWindows -or $env:OS -eq "Windows_NT")) {
+        $args += @("--reload", "--reload-dir", $reloadDir)
+    }
 
     $proc = Start-Process `
         -FilePath $PythonPath `
@@ -476,9 +552,10 @@ function Start-HotReloadGateway {
         if ($proc.HasExited) {
             break
         }
-        if (Test-GatewayReady -Port $Port) {
+        if (Test-GatewayReady -Port $Port -Token $instanceToken) {
             [Console]::Write("`r$((' ' * 120))`r")
-            Write-Host "    OK Gateway ready at http://127.0.0.1:$Port (uvicorn --reload)." -ForegroundColor Green
+            $gatewayMode = if ($IsWindows -or $env:OS -eq "Windows_NT") { "Windows subprocess-compatible" } else { "uvicorn --reload" }
+            Write-Host "    OK Gateway ready at http://127.0.0.1:$Port ($gatewayMode)." -ForegroundColor Green
             Write-Host "    Logs: $stdout" -ForegroundColor DarkGray
             return $proc
         }
@@ -508,12 +585,17 @@ function Start-HotReloadGateway {
 }
 
 if (-not $DrsaiHome) {
-    $DrsaiHome = if ($env:DRSAI_HOME) { $env:DRSAI_HOME } else { Join-Path $env:USERPROFILE ".drsai" }
+    # Development must never mutate or attach to the production profile at
+    # %USERPROFILE%\.drsai unless the caller explicitly opts into that path.
+    $DrsaiHome = Join-Path $env:USERPROFILE ".drsai-dev"
 }
+$DrsaiHome = [IO.Path]::GetFullPath($DrsaiHome)
+$ElectronUserData = Join-Path $DrsaiHome "electron-user-data"
 
 # Desktop development must exercise the same OIDC-only credential boundary as
 # a clean packaged install. Static keys in the host environment or ~/.drsai/.env
 # must not mask missing request-scoped OIDC propagation.
+$env:OPENDRSAI_DESKTOP_DEV = "1"
 $env:OPENDRSAI_OIDC_ONLY = "1"
 Remove-Item Env:HEPAI_API_KEY, Env:OPENAI_API_KEY, Env:OPENAI_ADMIN_KEY -ErrorAction SilentlyContinue
 
@@ -545,10 +627,10 @@ if (-not (Test-Path $DesktopDir)) {
 $InstallDir = Join-Path $DrsaiHome "drsai-agent"
 if (Test-Path $InstallDir) {
     $existingRepo = Get-InstallTarget $InstallDir
-    if ($existingRepo.TrimEnd("\") -ine $RepoRoot.TrimEnd("\")) {
+    if ($existingRepo -and $existingRepo.TrimEnd("\") -ine $RepoRoot.TrimEnd("\")) {
         $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
         $backupDir = Join-Path $DrsaiHome "drsai-agent.backup-$stamp"
-        Write-Host "Existing developer backend is not linked to this checkout." -ForegroundColor Yellow
+        Write-Host "Existing developer backend belongs to another checkout." -ForegroundColor Yellow
         Write-Host "  Existing: $existingRepo" -ForegroundColor Yellow
         Write-Host "  Expected: $RepoRoot" -ForegroundColor Yellow
         Write-Host "  Moving existing backend to: $backupDir" -ForegroundColor Yellow
@@ -561,6 +643,8 @@ Write-Host ""
 Write-Host "OpenDrSai Windows desktop developer bootstrap" -ForegroundColor Cyan
 Write-Host "  Repository:  $RepoRoot" -ForegroundColor Green
 Write-Host "  DrSai home:  $DrsaiHome" -ForegroundColor Green
+Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
+Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
 Write-Host "  Desktop app: $DesktopDir" -ForegroundColor Green
 Write-Host ""
 
@@ -583,7 +667,7 @@ $backendFingerprint = Get-ValidationFingerprint -Paths @(
 )
 $cachedBackendReady = (-not $ForceInstall) -and (Test-Path $BackendValidationStamp) -and
     ((Get-Content -LiteralPath $BackendValidationStamp -Raw -ErrorAction SilentlyContinue) -eq $backendFingerprint) -and
-    (Test-Path (Join-Path $InstallDir "venv\Scripts\python.exe"))
+    (Test-DeveloperBackendReady -InstallPath $InstallDir -ExpectedRepo $RepoRoot)
 $backendReady = if ($cachedBackendReady) { $true } elseif ($ForceInstall) { $false } else {
     Test-DeveloperBackendReady -InstallPath $InstallDir -ExpectedRepo $RepoRoot
 }
@@ -600,7 +684,7 @@ if ($backendReady -and -not $ForceInstall) {
     Invoke-StepProcess `
         -FilePath "powershell" `
         -ArgumentList (@("-NoProfile") + $installArgs) `
-        -Prefix "Installing linked developer backend" `
+        -Prefix "Installing independent developer backend" `
         -LogName "backend-install" `
         -LogDir $DevLogDir `
         -ShowNestedSteps
@@ -683,14 +767,21 @@ try {
         exit 0
     }
 
-    Write-Host "    Starting Electron dev server..." -ForegroundColor Green
+    Write-Host "    Starting Electron dev server with hot reload..." -ForegroundColor Green
+    Write-Host "    Renderer: React/CSS hot module replacement; main/preload: automatic Electron restart." -ForegroundColor DarkGray
     Write-Host "    Startup preparation: $($StartupStopwatch.ElapsedMilliseconds) ms" -ForegroundColor DarkGray
     $env:DRSAI_HOME = $DrsaiHome
+    $env:OPENDRSAI_DEV_HOME = $DrsaiHome
+    $env:DRSAI_REPO = $RepoRoot
+    $env:OPENDRSAI_RUNTIME_ROOT = $InstallDir
+    $env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData
     $env:OPENDRSAI_GATEWAY_STARTUP = if ($StartGateway) { "eager" } else { "on-demand" }
+    $env:OPENDRSAI_DEV_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_VOICE_TTS_RUNTIME = "gateway-provider"
     if ($StartGateway) {
         $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
         $env:DRSAI_GATEWAY_HOT_RELOAD = "1"
+        $env:OPENDRSAI_GATEWAY_PORT = [string]$GatewayPort
     } else {
         Remove-Item Env:DRSAI_GATEWAY_DEV_MANAGED -ErrorAction SilentlyContinue
         Remove-Item Env:DRSAI_GATEWAY_HOT_RELOAD -ErrorAction SilentlyContinue

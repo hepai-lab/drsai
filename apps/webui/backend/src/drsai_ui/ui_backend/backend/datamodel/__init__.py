@@ -6,8 +6,10 @@ from .db import (
     RunStatus,
     Session,
     Settings,
+    SkillMeta,
     Team,
     UserAgents,
+    UserSkillMeta,
     DatabaseModel,
 )
 
@@ -46,6 +48,8 @@ __all__ = [
     "EnvironmentVariable",
     "Gallery",
     "Plan",
+    "SkillMeta",
     "UserAgents",
+    "UserSkillMeta",
     "DatabaseModel",
 ]

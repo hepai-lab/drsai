@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F03",
+  "generated_at": "2026-08-05T12:11:03.743387+00:00",
+  "passed": true,
+  "gates": {
+    "citation_policy_is_versioned_and_digest_bound": true,
+    "source_urls_are_bound_to_successful_retrieval_receipts": true,
+    "missing_citation_is_buffered_and_retried": true,
+    "fabricated_url_fails_closed": true,
+    "exact_tool_source_can_complete": true,
+    "checkpoint_preserves_and_verifies_evidence": true,
+    "oaep_exports_only_call_ids_and_digests": true,
+    "android_mapper_regression_passed": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": "....                                                                     [100%]\n4 passed in 3.70s"
+  },
+  "android_mapper": {
+    "tests": 20,
+    "failures": 0,
+    "errors": 0,
+    "sha256": "6e540d9959fbb5408b711e9f79bf9813c28274d9a2b084013a8de4c52ed79620",
+    "cases": [
+      "subagent lifecycle retains summary and result as structured subtask",
+      "verification required and unavailable are warning notices without task text",
+      "tool decision maps only redacted category and reason to OAEP notice",
+      "approval becomes normalized interaction while legacy projection stays silent",
+      "maps shared terminal text and tool events to existing UI contract",
+      "every frozen Python semantic kind has an explicit normalized mapping",
+      "run start exposes redacted prompt layer sources and digests",
+      "checkpoint remains internal host state rather than a public semantic event",
+      "citation provenance maps only call ids and URL digests",
+      "uncertain side effect becomes waiting reconciliation interaction",
+      "unknown runtime event becomes bounded OAEP notice instead of disappearing",
+      "run start exports allowlisted context diagnostics without prompt text or paths",
+      "unknown event diagnostics redact paths tokens payload and sensitive text",
+      "run start maps skill manifest to OAEP without instruction content",
+      "memory selection maps provenance without memory content",
+      "completed messages preserve commentary and final OAEP phases",
+      "wrong verification tool decision is a warning",
+      "run start exposes frozen capability categories as OAEP diagnostic notice",
+      "recovered runtime resumes the waiting OAEP run",
+      "reasoning plan command file and tool payloads remain fully structured"
+    ]
+  },
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeEventMapper.kt": "bcb730b9f05285290225f8f95969432c31a97517ff0ba3f154a95a257a5c7f93",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonRuntimeEventMapperTest.kt": "5c3822ae42302be6a581ace5d23f0511ffb2df8750da313bb6be48a9095de830",
+    "cores/python/packages/drsai/tests/test_citation_evidence.py": "c707caf4a497eca23ca26a9bccd59c479e7e99562c0e2006dc11efc276d0b104"
+  }
+}

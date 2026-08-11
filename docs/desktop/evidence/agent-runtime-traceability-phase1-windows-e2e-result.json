@@ -1,0 +1,87 @@
+{
+  "schema_version": "opendrsai.run-traceability-windows-e2e-result/1",
+  "generated_at": "2026-08-04T20:12:02.804Z",
+  "platform": "win32",
+  "architecture": "x64",
+  "scenarios": [
+    "A",
+    "B",
+    "C-waiting",
+    "C-denied",
+    "D",
+    "E",
+    "F"
+  ],
+  "checks": {
+    "bridge": true,
+    "login": true,
+    "gateway": true,
+    "api": true,
+    "identity": true,
+    "export": true,
+    "ui": true
+  },
+  "details": {
+    "scenarios": [
+      {
+        "id": "A",
+        "apiOk": true,
+        "identityOk": true,
+        "exportOk": true,
+        "uiOk": true,
+        "timelineCount": 5
+      },
+      {
+        "id": "B",
+        "apiOk": true,
+        "identityOk": true,
+        "exportOk": true,
+        "uiOk": true,
+        "timelineCount": 2
+      },
+      {
+        "id": "C-waiting",
+        "apiOk": true,
+        "identityOk": true,
+        "exportOk": true,
+        "uiOk": true,
+        "timelineCount": 2
+      },
+      {
+        "id": "C-denied",
+        "apiOk": true,
+        "identityOk": true,
+        "exportOk": true,
+        "uiOk": true,
+        "timelineCount": 2
+      },
+      {
+        "id": "D",
+        "apiOk": true,
+        "identityOk": true,
+        "exportOk": true,
+        "uiOk": true,
+        "timelineCount": 2
+      },
+      {
+        "id": "E",
+        "apiOk": true,
+        "identityOk": true,
+        "exportOk": true,
+        "uiOk": true,
+        "timelineCount": 2
+      },
+      {
+        "id": "F",
+        "apiOk": true,
+        "identityOk": true,
+        "exportOk": true,
+        "uiOk": true,
+        "timelineCount": 0
+      }
+    ],
+    "stage": "complete"
+  },
+  "offline_database_verification": true,
+  "security_audit_verification": true
+}

@@ -1,0 +1,36 @@
+schema_version: opendrsai.agent-regression-case/1
+id: p3.skill.presentation
+revision: 1
+title: P3 formal Skill and presentation Artifact
+owner: agent-runtime
+tags: [p3, release, smoke, skill_use, artifact]
+agent: {definition: regression-smoke@1, model_profile: default}
+input:
+  messages:
+    - role: user
+      parts: [{type: text, text: Create a presentation about the Runtime.}]
+environment:
+  network: disabled
+  required_skills: [presentations]
+  workspace:
+    isolation: required
+    fixture: ../../assets/presentation
+    fixture_sha256: 0ade3e30f0eb614a940628ebfd6f45e9e22f7006789d5a82587a97d5cb30ac69
+  tool_fixtures:
+    presentations:
+      successful_result: {status: completed, fixture: true}
+  session: {type: new, history: empty}
+expect:
+  run: {status: completed}
+  behavior:
+    skill_activations: {exact: 1, required: {tool_name: presentations, status: completed}}
+  output:
+    type: text
+    required_literals: [Presentation, artifact, published]
+  artifacts:
+    exact: 1
+    required:
+      mime_type: application/vnd.openxmlformats-officedocument.presentationml.presentation
+      relative_path: opendrsai-runtime-core-concepts.pptx
+      sha256_required: true
+execution: {timeout_seconds: 30, attempts: 1, isolation: required}

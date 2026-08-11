@@ -1,0 +1,89 @@
+{
+  "schema_version": "opendrsai.windows.phase3.model-convergence-evidence/1",
+  "captured_at": "2026-08-05T22:10:00+08:00",
+  "feature_id": "P3-MC08",
+  "status": "local_implementation_accepted_rc_pending",
+  "scope": "OpenDrSai native Full Agent Runtime model migration, retirement, security and release gates; Codex Adapter excluded",
+  "checks": {
+    "legacy_environment_cli_yaml_and_catalog_precedence_is_deterministic": true,
+    "legacy_source_files_remain_byte_identical": true,
+    "toml_migration_creates_old_version_rollback_backup": true,
+    "rollback_then_repeat_upgrade_is_deterministic": true,
+    "renderer_localstorage_migration_creates_single_backup": true,
+    "renderer_migration_is_exactly_once": true,
+    "local_opendrsai_stops_naked_default_model_writes": true,
+    "local_opendrsai_stops_legacy_model_and_image_model_writes": true,
+    "production_desktop_has_no_legacy_model_crud_calls": true,
+    "legacy_routes_are_deprecated_and_reader_is_independently_disableable": true,
+    "disabled_legacy_reader_returns_stable_replacement_contract": true,
+    "structured_logs_redact_credentials_and_inline_image_bodies": true,
+    "image_tool_results_cross_renderer_boundary_as_artifacts_not_base64": true,
+    "release_artifact_roots_were_scanned_for_available_live_secret_canaries": true,
+    "windows_packaged_path_cannot_resolve_codex": true,
+    "windows_packaged_full_runtime_completed_two_sessions_and_two_runs": true,
+    "windows_packaged_legacy_chat_and_model_catalog_calls_are_zero": true,
+    "windows_packaged_real_main_preload_ipc_smoke_passes": true,
+    "macos_shared_shell_runtime_keychain_and_signing_policy_contracts_pass": true,
+    "real_hai_matrix_executed": false,
+    "macos_signed_artifact_executed": false
+  },
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest -q <model Provider, catalog, policy, image, migration and retirement suites>",
+      "result": "172 passed, 1 skipped"
+    },
+    {
+      "command": "npm run verify:opendrsai-model-release-gates",
+      "result": "passed; old writes retired, rollback bounded, credential/image-body redaction and artifact scan"
+    },
+    {
+      "command": "npm run verify:model-provider-ui-e2e",
+      "result": "passed; localStorage backup, exactly-once migration, old-field removal and Provider UI regression"
+    },
+    {
+      "command": "npm run verify:opendrsai-unified-runtime-packaged",
+      "result": "passed 27/27 in a PATH where codex is not resolvable; 2 tasks = 2 Sessions = 2 Runs; legacy calls 0"
+    },
+    {
+      "command": "npm run verify:packaged",
+      "result": "passed in a no-Codex PATH with only required Git/System paths; real main/preload/IPC"
+    },
+    {
+      "command": "macOS model Provider, Runtime and shell contract verifiers",
+      "result": "passed on Windows source-contract inspection; signed/notarized artifact execution remains external"
+    }
+  ],
+  "environment_audit": {
+    "stored_oidc_auth_present": false,
+    "hepai_api_key_present": false,
+    "openai_api_key_present": false,
+    "anthropic_api_key_present": false,
+    "live_model_override_present": false,
+    "note": "Only presence booleans were inspected; no credential value was read or recorded."
+  },
+  "artifacts": {
+    "desktop_renderer": {"path": "apps/desktop/shared/renderer/src/App.tsx", "sha256": "a956eb1fde8c7eeb734e8bfe08d2a44dcc24c80140d15ddea77f6e2e6aeb239f"},
+    "structured_sensitive_data": {"path": "apps/desktop/shared/api/sensitiveData.ts", "sha256": "ea7ca3a70ee45c1438a18dd52412e436f4b9539e18479c8aaea5181253e8e614"},
+    "desktop_secret_redaction": {"path": "apps/desktop/shared/main/secretRedaction.ts", "sha256": "75f96f7213b8cb12d237e784bcc3be92f5a934993deb2f73d779274a95c9ebf1"},
+    "model_migration": {"path": "cores/python/packages/drsai/src/drsai/config/migration.py", "sha256": "12a1d77c6bbda57a45bdbd599caf3dae20b4da10a449c54e9572c643a7206feb"},
+    "gateway_compatibility_boundary": {"path": "cores/python/packages/drsai/src/drsai/backend/gateway.py", "sha256": "59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"},
+    "release_gate_verifier": {"path": "apps/desktop/windows/scripts/verify-opendrsai-model-release-gates.mts", "sha256": "dacd14dda79442da2b45ece23ee7570636815a671749d4c92807557a77a07153"},
+    "no_codex_full_runtime_packaged_verifier": {"path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs", "sha256": "8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"},
+    "packaged_backend_source": {"path": "apps/desktop/windows/resources/backend/backend-source.json", "sha256": "37eb18f527570184dfa159b7e9ba0bd5da0d61beb2a97b3bfd5c7bfb81b8f98f"},
+    "desktop_main_bundle": {"path": "apps/desktop/windows/out/main/index.js", "sha256": "29b84a6115460096f7c8e0f037a08b2853f07d11c0a7a2e2e8019c92c8b5f038"},
+    "desktop_renderer_bundle": {"path": "apps/desktop/windows/out/renderer/assets/index-BPPiaH7s.js", "sha256": "55ee55c4c1e4289819431432c473b1925c6d4675ceea58eb4fe77335fedc93c3"},
+    "unpacked_app_asar": {"path": "apps/desktop/windows/release/win-unpacked/resources/app.asar", "sha256": "ba1b886def06b12d83a4d257f649996b0e2fd1cd6d9b18be77eb4038b513de10"}
+  },
+  "release_gates_remaining": [
+    "Authenticate a real HAI account in the RC environment and execute discovery, text Full Runtime, vision input, image generation and image editing without Codex.",
+    "Build, sign, notarize and execute the macOS artifact on a macOS release host, including real Keychain/OIDC assertions."
+  ],
+  "progress": {
+    "model_convergence_local_implementation": "8/8 (100%)",
+    "model_convergence_release_acceptance": "pending external real-HAI and macOS signed-artifact gates",
+    "phase3_product_ledger": "29/50 (58%)",
+    "product_baseline": "82/93 (88.2%)",
+    "note": "The model-convergence sub-ledger is additive detail and does not inflate the fixed P3 or product-baseline ledgers."
+  },
+  "next": "Audit and implement the remaining 21 items in the fixed P3 product ledger while preserving the real-HAI and macOS release gates as unexecuted."
+}

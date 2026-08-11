@@ -1,0 +1,43 @@
+schema_version: opendrsai.agent-regression-case/1
+id: p3.knowledge.runtime
+revision: 1
+title: P3 formal Knowledge retrieval
+owner: agent-runtime
+tags: [p3, release, smoke, knowledge]
+agent: {definition: regression-smoke@1, model_profile: default}
+input:
+  messages:
+    - role: user
+      parts: [{type: text, text: "Can a Session contain multiple Runs?"}]
+environment:
+  network: disabled
+  required_capabilities: [knowledge_search]
+  knowledge_bases:
+    - id: regression.opendrsai-runtime
+      revision: 1
+      documents:
+        - path: ../../assets/knowledge_bases/opendrsai_runtime_overview_v1.md
+          sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
+  tool_fixtures:
+    knowledge_search:
+      successful_result:
+        documents:
+          - knowledge_base_id: regression.opendrsai-runtime
+            knowledge_base_revision: 1
+            document_path: opendrsai_runtime_overview_v1.md
+            sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
+  session: {type: new, history: empty}
+expect:
+  run: {status: completed}
+  behavior:
+    required_capabilities: [knowledge_search]
+    knowledge_queries: {exact: 1}
+    retrieved_documents:
+      required:
+        knowledge_base_id: regression.opendrsai-runtime
+        document_path: opendrsai_runtime_overview_v1.md
+  output:
+    type: text
+    required_literals: [Session, multiple Runs, new Run]
+  artifacts: {max: 0}
+execution: {timeout_seconds: 30, attempts: 1, isolation: required}

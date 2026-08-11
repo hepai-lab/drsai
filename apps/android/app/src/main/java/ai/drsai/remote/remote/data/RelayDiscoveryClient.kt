@@ -7,6 +7,9 @@ import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
 import ai.drsai.remote.remote.model.activeOnly
+import ai.drsai.remote.remote.security.RelayDeviceProof
+import ai.drsai.remote.remote.security.authorizeRelayRequest
+import ai.drsai.remote.remote.security.relayAssociationDevice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -24,13 +27,71 @@ data class DiscoveredRuntime(
     val connectionGeneration: Long,
     val state: RemoteConnectionState,
     val capabilities: Set<String> = emptySet(),
+    val lastSeenAt: String? = null,
 )
+
+data class WorkspaceCatalogSync(
+    val runtimeId: RuntimeId,
+    val catalogRevision: String,
+    val syncedAt: String,
+    val items: List<RemoteWorkspaceRef>,
+) {
+    init {
+        require(catalogRevision.isNotBlank()) { "relay_workspace_catalog_revision_invalid" }
+        java.time.Instant.parse(syncedAt)
+        require(items.all { it.runtimeId == runtimeId }) { "relay_workspace_runtime_mismatch" }
+        require(items.map { it.workspaceId }.distinct().size == items.size) {
+            "relay_workspace_duplicate_id"
+        }
+    }
+}
+
+internal const val MINIMUM_WINDOWS_RUNTIME_VERSION = "1.5.3"
+
+internal fun compatibleWindowsRuntimeVersion(version: String): Boolean {
+    fun parts(value: String): List<Int>? {
+        val core = value.trim().substringBefore('-')
+        val values = core.split('.')
+        if (values.size != 3 || values.any { it.isEmpty() || it.any { character -> !character.isDigit() } }) {
+            return null
+        }
+        return values.mapNotNull(String::toIntOrNull).takeIf { it.size == 3 }
+    }
+    val actual = parts(version) ?: return false
+    val minimum = checkNotNull(parts(MINIMUM_WINDOWS_RUNTIME_VERSION))
+    val comparison = actual.zip(minimum).firstOrNull { (left, right) -> left != right }
+        ?.let { (left, right) -> left > right }
+    return comparison ?: !version.trim().contains('-')
+}
+
+internal fun runtimeConnectionState(status: String, version: String): RemoteConnectionState {
+    val wireState = when (status) {
+        "online" -> RemoteConnectionState.ONLINE
+        "degraded" -> RemoteConnectionState.DEGRADED
+        "offline" -> RemoteConnectionState.OFFLINE
+        "paused" -> RemoteConnectionState.PAUSED
+        else -> RemoteConnectionState.INCOMPATIBLE
+    }
+    return if (
+        wireState in setOf(RemoteConnectionState.ONLINE, RemoteConnectionState.DEGRADED) &&
+        !compatibleWindowsRuntimeVersion(version)
+    ) {
+        RemoteConnectionState.INCOMPATIBLE
+    } else {
+        wireState
+    }
+}
 
 interface RelayDiscoveryService {
     suspend fun listRuntimes(cursor: String? = null, query: String? = null): Page<DiscoveredRuntime>
     suspend fun listWorkspaces(runtimeId: RuntimeId, cursor: String? = null, query: String? = null): Page<RemoteWorkspaceRef>
+    suspend fun syncWorkspaces(runtimeId: RuntimeId): WorkspaceCatalogSync =
+        throw UnsupportedOperationException("workspace_catalog_sync_not_supported")
     suspend fun associate(accessGrantPayload: String): RuntimeId
     suspend fun revokeAssociation(runtimeId: RuntimeId)
+    suspend fun recordPresence(runtimeId: RuntimeId, accessing: Boolean = false)
+    suspend fun rotateDeviceKey(runtimeId: RuntimeId): Unit =
+        throw UnsupportedOperationException("device_key_rotation_not_supported")
 }
 
 class HttpRelayDiscoveryService(
@@ -38,31 +99,30 @@ class HttpRelayDiscoveryService(
     private val accessToken: () -> String,
     private val refreshAfter: suspend (String) -> String? = { null },
     private val http: OkHttpClient = OkHttpClient(),
+    private val deviceProof: RelayDeviceProof? = null,
 ) : RelayDiscoveryService {
     private val root = baseUrl.trimEnd('/').toHttpUrl()
     private val pairingIssuer = "${root.scheme}://${root.host}"
 
     override suspend fun listRuntimes(cursor: String?, query: String?): Page<DiscoveredRuntime> =
-        getPage("v1/runtimes", cursor, query) { item ->
+        getPage("v1/runtimes", cursor, query, allowUnassociatedFallback = true) { item ->
             val identity = item.getJSONObject("runtime")
             val runtimeId = RuntimeId(identity.getString("runtime_id"))
+            val runtimeVersion = identity.getString("version")
             DiscoveredRuntime(
                 reference = RemoteRuntimeRef(runtimeId, item.getString("display_name")),
                 instanceId = identity.getString("instance_id"),
-                version = identity.getString("version"),
+                version = runtimeVersion,
                 protocolVersion = identity.getString("protocol_version"),
                 connectionGeneration = identity.getLong("connection_generation"),
-                state = when (identity.getString("status")) {
-                    "online" -> RemoteConnectionState.ONLINE
-                    "degraded" -> RemoteConnectionState.DEGRADED
-                    "offline" -> RemoteConnectionState.OFFLINE
-                    else -> RemoteConnectionState.INCOMPATIBLE
-                },
+                state = runtimeConnectionState(identity.getString("status"), runtimeVersion),
                 capabilities = item.optJSONArray("capabilities")
                     ?.let { values ->
                         (0 until values.length()).map(values::getString).toSet()
                     }
                     .orEmpty(),
+                lastSeenAt = identity.optString("last_seen_at")
+                    .takeIf { it.isNotBlank() && it != "null" },
             )
         }
 
@@ -71,6 +131,42 @@ class HttpRelayDiscoveryService(
         cursor: String?,
         query: String?,
     ): Page<RemoteWorkspaceRef> = listWorkspacePage(runtimeId, cursor, query)
+
+    override suspend fun syncWorkspaces(runtimeId: RuntimeId): WorkspaceCatalogSync =
+        withContext(Dispatchers.IO) {
+            require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
+            val url = root.newBuilder()
+                .addPathSegments("v1/runtimes/${runtimeId.value}/workspaces/sync")
+                .build()
+            val requestBody = "{}".toRequestBody("application/json".toMediaType())
+            fun execute(token: String) = http.newCall(
+                authorizeRelayRequest(
+                    deviceProof,
+                    Request.Builder().url(url)
+                        .header("Authorization", "Bearer $token")
+                        .post(requestBody)
+                        .build(),
+                    token,
+                )
+            ).execute()
+            val initialToken = accessToken()
+            var response = execute(initialToken)
+            if (response.code == 401) {
+                response.close()
+                val refreshed = refreshAfter(initialToken)
+                if (refreshed.isNullOrBlank()) {
+                    throw RelayHttpException(401, null, "oidc_auth_invalid")
+                }
+                response = execute(refreshed)
+            }
+            response.use {
+                if (!response.isSuccessful) throw relayHttpException(response)
+                decodeWorkspaceCatalogSync(
+                    requestedRuntime = runtimeId,
+                    payload = JSONObject(response.body?.string() ?: error("relay_empty_response")),
+                )
+            }
+        }
 
     suspend fun listWorkspacePage(
         runtimeId: RuntimeId,
@@ -84,28 +180,29 @@ class HttpRelayDiscoveryService(
             cursor,
             query,
             listOf("lifecycle" to "active", "limit" to limit.toString()),
-        ) { item ->
-            val returnedRuntime = RuntimeId(item.getString("runtime_id"))
-            require(returnedRuntime == runtimeId) { "relay_workspace_runtime_mismatch" }
-            RemoteWorkspaceRef(
-                returnedRuntime,
-                WorkspaceId(item.getString("workspace_id")),
-                item.getString("display_name"),
-                RemoteResourceLifecycle.fromWire(item.getString("lifecycle")),
-                item.getLong("revision"),
-                item.getString("updated_at"),
-            )
-        }.let { page -> page.copy(items = page.items.activeOnly()) }
+        ) { item -> decodeWorkspace(item, runtimeId) }
+            .let { page -> page.copy(items = page.items.activeOnly()) }
     }
 
     override suspend fun associate(accessGrantPayload: String): RuntimeId = withContext(Dispatchers.IO) {
         val code = parseAccessGrantCode(accessGrantPayload, pairingIssuer)
+        val device = relayAssociationDevice(deviceProof)
         val body = JSONObject().put("request_id", java.util.UUID.randomUUID().toString())
-            .put("correlation_id", java.util.UUID.randomUUID().toString()).put("code", code)
+            .put("correlation_id", java.util.UUID.randomUUID().toString())
+            .put("code", code)
+            .put("device_id", device.deviceId)
+            .put("device_name", device.deviceName)
+            .put("device_public_key", device.devicePublicKey)
         val url = root.newBuilder().addPathSegments("v1/associations").build()
         val encodedBody = body.toString().toRequestBody("application/json".toMediaType())
-        fun execute(token: String) = http.newCall(Request.Builder().url(url)
-            .header("Authorization", "Bearer $token").post(encodedBody).build()).execute()
+        // Association creation is the only Bearer endpoint that cannot require
+        // an existing device proof. The one-time grant binds this public key.
+        fun execute(token: String) = http.newCall(
+            Request.Builder().url(url)
+                .header("Authorization", "Bearer $token")
+                .post(encodedBody)
+                .build()
+        ).execute()
         val initialToken = accessToken()
         var response = execute(initialToken)
         if (response.code == 401) {
@@ -120,16 +217,50 @@ class HttpRelayDiscoveryService(
         }
     }
 
+    private fun decodeWorkspaceCatalogSync(
+        requestedRuntime: RuntimeId,
+        payload: JSONObject,
+    ): WorkspaceCatalogSync {
+        val returnedRuntime = RuntimeId(payload.getString("runtime_id"))
+        require(returnedRuntime == requestedRuntime) { "relay_workspace_runtime_mismatch" }
+        val values = payload.getJSONArray("items")
+        val items = List(values.length()) { index ->
+            decodeWorkspace(values.getJSONObject(index), requestedRuntime)
+        }.activeOnly()
+        return WorkspaceCatalogSync(
+            runtimeId = returnedRuntime,
+            catalogRevision = payload.getString("catalog_revision"),
+            syncedAt = payload.getString("synced_at"),
+            items = items,
+        )
+    }
+
+    private fun decodeWorkspace(item: JSONObject, requestedRuntime: RuntimeId): RemoteWorkspaceRef {
+        val returnedRuntime = RuntimeId(item.getString("runtime_id"))
+        require(returnedRuntime == requestedRuntime) { "relay_workspace_runtime_mismatch" }
+        return RemoteWorkspaceRef(
+            returnedRuntime,
+            WorkspaceId(item.getString("workspace_id")),
+            item.getString("display_name"),
+            RemoteResourceLifecycle.fromWire(item.getString("lifecycle")),
+            item.getLong("revision"),
+            item.get("updated_at").toString(),
+        )
+    }
     override suspend fun revokeAssociation(runtimeId: RuntimeId): Unit = withContext(Dispatchers.IO) {
         require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
         val url = root.newBuilder()
             .addPathSegments("v1/associations/${runtimeId.value}")
             .build()
         fun execute(token: String) = http.newCall(
-            Request.Builder().url(url)
+            authorizeRelayRequest(
+                deviceProof,
+                Request.Builder().url(url)
                 .header("Authorization", "Bearer $token")
                 .delete()
-                .build()
+                .build(),
+                token,
+            )
         ).execute()
         val initialToken = accessToken()
         var response = execute(initialToken)
@@ -146,11 +277,95 @@ class HttpRelayDiscoveryService(
         }
     }
 
+    override suspend fun recordPresence(runtimeId: RuntimeId, accessing: Boolean): Unit = withContext(Dispatchers.IO) {
+        require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
+        val url = root.newBuilder()
+            .addPathSegments("v1/associations/${runtimeId.value}/presence")
+            .build()
+        val encodedBody = JSONObject()
+            .put("accessing", accessing)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+        fun execute(token: String) = http.newCall(
+            authorizeRelayRequest(
+                deviceProof,
+                Request.Builder().url(url)
+                    .header("Authorization", "Bearer $token")
+                    .post(encodedBody)
+                    .build(),
+                token,
+            )
+        ).execute()
+        val initialToken = accessToken()
+        var response = execute(initialToken)
+        if (response.code == 401) {
+            response.close()
+            val refreshed = refreshAfter(initialToken)
+            if (refreshed.isNullOrBlank()) {
+                throw RelayHttpException(401, null, "oidc_auth_invalid")
+            }
+            response = execute(refreshed)
+        }
+        response.use {
+            if (!response.isSuccessful) throw relayHttpException(response)
+        }
+    }
+
+    override suspend fun rotateDeviceKey(runtimeId: RuntimeId): Unit = withContext(Dispatchers.IO) {
+        require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
+        val proof = requireNotNull(deviceProof) { "relay_device_proof_required" }
+        val rotation = proof.beginKeyRotation()
+        val url = root.newBuilder()
+            .addPathSegments("v1/associations/${runtimeId.value}/device-key/rotate")
+            .build()
+        val encodedBody = JSONObject()
+            .put("new_device_public_key", rotation.newDevicePublicKey)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+        fun execute(token: String, pendingKey: Boolean = false) = http.newCall(
+            Request.Builder().url(url)
+                .header("Authorization", "Bearer $token")
+                .post(encodedBody)
+                .build()
+                .let { request ->
+                    if (pendingKey) proof.authorizeWithPendingKey(request, token, rotation)
+                    else authorizeRelayRequest(proof, request, token)
+                },
+        ).execute()
+        val initialToken = accessToken()
+        var currentToken = initialToken
+        var response = execute(currentToken)
+        if (response.code == 401) {
+            response.close()
+            refreshAfter(initialToken)?.takeIf(String::isNotBlank)?.let { refreshed ->
+                currentToken = refreshed
+                response = execute(currentToken)
+            }
+        }
+        if (response.code == 401) {
+            // A prior process may have died after Relay committed the new key
+            // but before the local promotion. The pending key was persisted
+            // before the first request, so use it only to idempotently confirm
+            // the exact same rotation operation.
+            response.close()
+            response = execute(currentToken, pendingKey = true)
+        }
+        response.use {
+            if (!response.isSuccessful) {
+                val failure = relayHttpException(response)
+                if (response.code in setOf(400, 409, 422)) rotation.discard()
+                throw failure
+            }
+        }
+        rotation.commit()
+    }
+
     private suspend fun <T> getPage(
         path: String,
         cursor: String?,
         query: String?,
         extraQueries: List<Pair<String, String>> = emptyList(),
+        allowUnassociatedFallback: Boolean = false,
         decode: (JSONObject) -> T,
     ): Page<T> =
         withContext(Dispatchers.IO) {
@@ -160,15 +375,40 @@ class HttpRelayDiscoveryService(
                 extraQueries.forEach { addQueryParameter(it.first, it.second) }
             }.build()
             val initialToken = accessToken()
-            fun execute(token: String) = http.newCall(
-                Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
+            fun execute(token: String, includeDeviceProof: Boolean = true) = http.newCall(
+                authorizeRelayRequest(
+                    deviceProof.takeIf { includeDeviceProof },
+                    Request.Builder().url(url)
+                        .header("Authorization", "Bearer $token")
+                        .get()
+                        .build(),
+                    token,
+                )
             ).execute()
-            var response = execute(initialToken)
+            fun retryUnassociatedIfAllowed(
+                response: okhttp3.Response,
+                token: String,
+            ): okhttp3.Response {
+                if (!allowUnassociatedFallback || response.code != 401) return response
+                val body = runCatching {
+                    JSONObject(response.peekBody(64 * 1024).string())
+                }.getOrNull()
+                val detail = body?.optJSONObject("detail")
+                val errorCode = body?.optString("code")?.takeIf(String::isNotBlank)
+                    ?: detail?.optString("code")?.takeIf(String::isNotBlank)
+                return if (errorCode == "invalid_device_proof") {
+                    response.close()
+                    execute(token, includeDeviceProof = false)
+                } else {
+                    response
+                }
+            }
+            var response = retryUnassociatedIfAllowed(execute(initialToken), initialToken)
             if (response.code == 401) {
                 response.close()
                 val refreshed = refreshAfter(initialToken)
                 if (refreshed.isNullOrBlank()) throw RelayHttpException(401, null)
-                response = execute(refreshed)
+                response = retryUnassociatedIfAllowed(execute(refreshed), refreshed)
             }
             response.use {
                 if (!response.isSuccessful) throw relayHttpException(response)

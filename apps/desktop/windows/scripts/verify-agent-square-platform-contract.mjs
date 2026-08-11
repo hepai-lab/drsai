@@ -12,7 +12,7 @@ const fixture = JSON.parse(readFileSync(join(root, "tests/fixtures/platform-agen
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { fetchPlatformAgents, setPlatformDefaultAgent, recordPlatformAgentUsage, stopPlatformAgentThread, respondPlatformAgentInput } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+const { fetchPlatformAgents, stopPlatformAgentThread, respondPlatformAgentInput, respondDdfAgentInput } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 
 function response(status, body = {}) {
   return new Response(JSON.stringify(body), {
@@ -33,7 +33,7 @@ function harness(responses, { refreshFails = false } = {}) {
       baseUrl: "https://ai-dev.ihep.ac.cn",
       now: () => new Date("2026-07-14T00:00:00.000Z"),
       fetchImpl: async (url, init) => {
-        calls.push({ url, authorization: init.headers.Authorization, method: init.method, body: init.body });
+        calls.push({ url, authorization: init.headers.Authorization, idempotencyKey: init.headers["Idempotency-Key"], method: init.method, body: init.body });
         const next = responses.shift();
         if (!next) throw new Error("unexpected extra request");
         return next;
@@ -62,6 +62,7 @@ function harness(responses, { refreshFails = false } = {}) {
   assert.equal(result.agents[0].available, true);
   assert.equal(result.executionDescriptors[0].platformId, "fixture-ddf-1");
   assert.equal(result.executionDescriptors[0].mode, "ddf");
+  assert.deepEqual(result.executionDescriptors[0].capabilities, ["chat", "streaming"]);
   assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents?refresh=false");
   assert.equal(test.calls[0].authorization, "Bearer access-token-1");
   const publicPayload = JSON.stringify(result);
@@ -108,24 +109,6 @@ function harness(responses, { refreshFails = false } = {}) {
 }
 
 {
-  const test = harness([response(401), response(200)]);
-  const result = await setPlatformDefaultAgent(test.options, "owned-agent");
-  assert.equal(result.ok, true);
-  assert.equal(test.refreshes, 1);
-  assert.equal(test.calls[0].method, "PUT");
-  assert.equal(test.calls[0].body, JSON.stringify({ agent_id: "owned-agent" }));
-  assert.equal(test.calls[1].authorization, "Bearer access-token-2");
-}
-
-{
-  const test = harness([response(200)]);
-  const result = await recordPlatformAgentUsage(test.options, "agent/with space");
-  assert.equal(result.ok, true);
-  assert.equal(test.calls[0].method, "POST");
-  assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents/agent%2Fwith%20space/usage");
-}
-
-{
   const test = harness([response(200), response(200)]);
   assert.equal((await stopPlatformAgentThread(test.options, "agent/id", "thread:id")).ok, true);
   assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents/agent%2Fid/threads/thread%3Aid/stop");
@@ -139,6 +122,68 @@ function harness(responses, { refreshFails = false } = {}) {
   test.options.refresh = true;
   await fetchPlatformAgents(test.options);
   assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents?refresh=true");
+}
+
+{
+  const test = harness([response(200)]);
+  test.options.catalogBaseUrl = "https://ai-dev.ihep.ac.cn/apiv2";
+  const result = await respondDdfAgentInput(test.options, {
+    model: "drsai_v3_test",
+    chatId: "chat-1",
+    runId: "run-1",
+    requestId: "input-1",
+    response: { option_id: "mumu", value: "mumu" },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/apiv2/agents/input");
+  assert.equal(test.calls[0].authorization, "Bearer access-token-1");
+  assert.equal(test.calls[0].idempotencyKey, "input-1");
+  assert.equal(test.calls[0].body, JSON.stringify({
+    model: "drsai_v3_test",
+    chat_id: "chat-1",
+    run_id: "run-1",
+    request_id: "input-1",
+    response: { option_id: "mumu", value: "mumu" },
+  }));
+}
+
+{
+  const test = harness([
+    response(200, {
+      data: [{
+        id: "drsai_v3_test",
+        owner: "zdzhang@ihep.ac.cn",
+        examples: {
+          zh: ["检查 BESIII 事例选择", "生成 BESIII 分析方案"],
+          en: ["Review BESIII event selection", "Create a BESIII analysis plan"],
+        },
+      }],
+    }),
+  ]);
+  test.options.catalogBaseUrl = "https://ai-dev.ihep.ac.cn/apiv2";
+  test.options.refresh = true;
+  const result = await fetchPlatformAgents(test.options);
+  assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/apiv2/agents/list_agents?refresh=true");
+  assert.equal(test.calls.length, 1, "HAI discovery must not wait for a second Portal Native metadata request");
+  assert.deepEqual(result.agents.map((agent) => agent.id), ["platform:drsai_v3_test"]);
+  assert.deepEqual(result.agents[0].examples, [
+    { zh: "检查 BESIII 事例选择", en: "Review BESIII event selection" },
+    { zh: "生成 BESIII 分析方案", en: "Create a BESIII analysis plan" },
+  ]);
+  assert.deepEqual(result.status.capabilities, []);
+}
+
+{
+  const test = harness([response(200, {
+    agents: [
+      { id: "trusted-logo", name: "Trusted", availability: "available", capabilities: ["chat", "streaming"], logo: "/assets/agent.png" },
+      { id: "third-party-logo", name: "Third party", availability: "available", capabilities: ["chat", "streaming"], logo: "https://tracking.invalid/pixel.png" },
+    ],
+  })]);
+  test.options.catalogBaseUrl = "https://ai-dev.ihep.ac.cn/apiv2";
+  const result = await fetchPlatformAgents(test.options);
+  assert.equal(result.agents[0].logo, "https://ai-dev.ihep.ac.cn/assets/agent.png");
+  assert.equal(result.agents[1].logo, undefined, "untrusted third-party logo URLs must not reach the Renderer");
 }
 
 {
@@ -189,4 +234,4 @@ assert(agentsSource.includes("requireAuthContext()"), "platform catalog must use
 assert(authSource.includes("refreshAuthContextAfterUnauthorized"), "strict post-401 refresh entrypoint is missing");
 assert(!source.includes("console."), "platform client must not log tokens or request payloads");
 
-console.log("Agent square A1/A2/A3/E2 contract verification passed (OIDC primary path, one 401 retry, capability fallback, public DTO redaction, preference mutations).");
+console.log("Agent square platform contract verification passed (OIDC, one 401 retry, one-request HAI discovery, safe DTO and DDF input routing).");

@@ -1,0 +1,56 @@
+{
+  "schema_version": "opendrsai.windows.model-preview-evidence/1",
+  "captured_at": "2026-08-04T22:48:59.535Z",
+  "package": {
+    "version": "1.5.5",
+    "platform": "windows",
+    "arch": "x64"
+  },
+  "ui": {
+    "ok": true,
+    "checks": {
+      "login": true,
+      "productionSettingsReached": true,
+      "previewShowsProvider": true,
+      "previewShowsModel": true,
+      "previewShowsBaseUrl": true,
+      "previewShowsCredentialSource": true,
+      "previewShowsImpact": true,
+      "previewNeverRendersKey": true,
+      "cancelIsInitialDialogFocus": true,
+      "cancelClosesWithoutUiMutation": true,
+      "confirmCommitsAndClearsSecret": true,
+      "secretAbsentAfterCommit": true
+    },
+    "details": {
+      "firstPreview": {
+        "values": [
+          "deepseek",
+          "deepseek-chat",
+          "https://api.deepseek.com/v1",
+          "credential",
+          "从下一轮任务开始生效；正在运行的任务不会切换模型。"
+        ],
+        "secretRendered": false
+      },
+      "finalBodyHasSecret": false
+    }
+  },
+  "side_effects": {
+    "preview_calls": 2,
+    "writes_after_cancel": 0,
+    "writes_after_confirm": 1,
+    "confirmed_request_matches_preview": true,
+    "plaintext_key_in_evidence": false
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:8ba515a4314329c9373b426520bdf1d0fa9574119b463ccb160dbb1f106acce8"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:1acaf3271979cfb709fd17695e4db75e20fd2679cea0feac78d522f694ed2e85"
+    }
+  }
+}

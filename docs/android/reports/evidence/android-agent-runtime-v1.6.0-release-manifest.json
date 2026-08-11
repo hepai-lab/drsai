@@ -1,0 +1,53 @@
+{
+  "candidate": {
+    "bytes": 26501513,
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\mvp\\OpenDrSai-Android-v1.6.0.apk",
+    "sha256": "5f3e49b2c2620a3aaedd13f84d5879fdf99ca7ab999be0707b4faa3d372a4824"
+  },
+  "evidence_sha256": {
+    "docs/android/reports/evidence/android-agent-runtime-authority-retirement.json": "091044f22a57134129c8c75001f8d149e6ea1b221fe6494454bc90f7af28e652",
+    "docs/android/reports/evidence/android-agent-runtime-device-matrix.json": "e564992760d0aee36117db016b5f9125db59b80d9e565e3bb6414c6dcfdaae63",
+    "docs/android/reports/evidence/android-agent-runtime-oaep-local-e2e.json": "647ec819fdee9d74c4a2d09224469888f44032e2b9049e1759a0b6b7feb1e868",
+    "docs/android/reports/evidence/android-agent-runtime-oaep-parity.json": "06715dcc887dcd91177221ae5b569a95bd08ef67834fb4adb5a0c6d29c40e0a5",
+    "docs/android/reports/evidence/android-agent-runtime-rollback.json": "7692e1aaf1ec2ce8f677ea347fe53d63eadcade5cad39ce66f08d3174078039e",
+    "docs/android/reports/evidence/android-agent-runtime-rollout.json": "f853889832d7fd3b89ee9b4d6769dba1f35926b59b00c96e8325a68eabb15935",
+    "docs/android/reports/evidence/android-agent-runtime-security.json": "22dbc957aa7deaefff0043c463fcb1435362809e75f39498307169d32e95d7ef",
+    "docs/android/reports/evidence/android-agent-runtime-stress-performance.json": "79b77c09794eb4320cda87bcb1c2b69e59aa865c4e55e7b4167193fe75215362"
+  },
+  "gates": {
+    "apk_nonempty": true,
+    "mapping_nonempty": true,
+    "sbom_valid": true,
+    "source_identity_recorded": true,
+    "version_is_1_6_0": true
+  },
+  "generated_at": "2026-08-03T23:01:41.839709+00:00",
+  "mapping": {
+    "bytes": 48399165,
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\mapping\\mvp\\mapping.txt",
+    "sha256": "881b9cc3d4997ffe1b2db0a0fbbe67a5ba467420f1e24d8c7b8eedf5f53df26e"
+  },
+  "oaep_schema": {
+    "path": "cores/protocol/oaep/oaep.schema.json",
+    "sha256": "92020971b3fb9d549ff08e10221bf34db13213e5206a9aa4b5222461a9f011ae"
+  },
+  "passed": true,
+  "release": {
+    "name": "Android Agent Runtime",
+    "oaep_protocol": "1.0",
+    "version": "1.6.0",
+    "version_code": 10600
+  },
+  "sbom": {
+    "format": "CycloneDX 1.5",
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\docs\\android\\reports\\evidence\\android-agent-runtime-v1.6.0-cyclonedx-sbom.json",
+    "sha256": "e0e1537e4fe25af8378383c89647659eab0d3cafc330e17ca7288bf98530f813"
+  },
+  "schema_version": 1,
+  "source": {
+    "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+    "dirty": true,
+    "dirty_entry_count": 214,
+    "dirty_tree_sha256": "7445f13a70b69354d046f899104b31b98ba7ddf3d23d9a6f1909c7ce5c6416ee"
+  }
+}

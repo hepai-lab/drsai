@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-让 Windows App 用户在完成 HepAI OIDC 登录后，可以发现、查看、选择并使用 `opendrsai.ihep.ac.cn` 中的智能体，同时保留本地 `My DrSai` 的现有使用方式。
+让 Windows App 用户在完成 HepAI OIDC 登录后，可以发现、查看、选择并使用 `opendrsai.ihep.ac.cn` 中的智能体，同时保留本地 `OpenDrSai` 的现有使用方式。
 
 本方案优先复用：
 
@@ -47,7 +47,7 @@ Windows Renderer
                  │ 仅传 agentId 和公开信息
                  ▼
 Electron Main：PlatformAgentAdapter
-  ├─ My DrSai ─────────────────────> 本机 Gateway
+  ├─ OpenDrSai ────────────────────> 本机 Runtime / Gateway
   └─ 平台智能体 ───────────────────> OpenDrSai Native API
                                          │
                                          ├─ DDF/HepAI Worker
@@ -128,7 +128,7 @@ Content-Type: application/json
 - 广场支持本地/官方/我的智能体分组，按来源和可用性筛选，并按推荐、最近使用和名称排序；
 - 卡片支持平台 Logo 与失败回退、模式/能力标签、详情弹窗、设为默认和使用记录上报；
 - 服务端默认智能体可同步到聊天选择，Windows 偏好写入支持一次 401 刷新重试；
-- `ChatRequest` 已显式携带 `agentId`；My DrSai 保持本机 gateway 路由，平台分支复用同一 SSE/停止/超时处理，并受 `agent-chat` 能力开关保护；
+- `ChatRequest` 已显式携带 `agentId`；OpenDrSai 保持本机 Runtime 路由，平台分支复用同一 SSE/停止/超时处理，并受 `agent-chat` 能力开关保护；
 - 会话持久化绑定 agentId/name；历史会话恢复绑定，带上下文切换智能体时确认并新建会话；
 - Native SSE 接口复用现有 WebSocket 运行管理器，支持线程复用、断开和显式停止、工具/文件事件、人机输入与回复；
 - DDF、remote、custom 三种私有配置均由服务端按 agentId 注入运行管理器，公开 SSE 白名单测试确认不返回 API Key 和内部配置；
@@ -181,7 +181,7 @@ Windows 端请求体继续按 `messages`、`stream`、`thread_id`、`run_id`、`
 
 ### B. 智能体目录与数据适配（6 个）
 
-- **B1**：聚合本地 My DrSai 与平台默认、DDF、remote、custom 智能体。
+- **B1**：聚合本地 OpenDrSai 与平台默认、DDF、remote、custom 智能体。
 - **B2**：建立统一 `DesktopAgent` 公开 DTO，覆盖 mode、来源、状态、头像、示例和能力。
 - **B3**：在 Electron Main 建立按 agentId 索引的私有执行描述符，禁止发送密钥到 Renderer。
 - **B4**：智能体去重、稳定 ID、默认排序和不可用条目归一化。
@@ -202,7 +202,7 @@ Windows 端请求体继续按 `messages`、`stream`、`thread_id`、`run_id`、`
 
 - **D1**：`ChatRequest` 显式传递 agentId，不再以智能体名称作为执行依据。
 - **D2**：新会话绑定选中的智能体，并在会话标题区持续展示。
-- **D3**：My DrSai 继续路由到本机 gateway，保持现有功能兼容。
+- **D3**：OpenDrSai 继续路由到本机 Runtime / Gateway，保持现有功能兼容。
 - **D4**：平台智能体路由到 Native 云端执行接口。
 - **D5**：会话中切换智能体时提供新建会话或确认切换行为，避免上下文串线。
 - **D6**：本地与云端统一流式输出、停止、超时、错误、工具和文件事件。
@@ -230,7 +230,7 @@ Windows 端请求体继续按 `messages`、`stream`、`thread_id`、`run_id`、`
 
 ## 6. HAI 平台联调机制
 
-HAI 平台联调是本方案的必要环节，并作为 P1 开发的前置准入条件。智能体广场的静态界面、本地缓存和 My DrSai 可以独立开发，但以下能力必须在 HAI 开发环境完成真实验证：
+HAI 平台联调是本方案的必要环节，并作为 P1 开发的前置准入条件。智能体广场的静态界面、本地缓存和 OpenDrSai 可以独立开发，但以下能力必须在 HAI 开发环境完成真实验证：
 
 - Windows OIDC Access Token 对 HAI 智能体目录的访问权限；
 - `hai_api` scope、Token 刷新及 401/403 行为；
@@ -310,7 +310,7 @@ Windows OIDC 登录
 
 验收条件：
 
-- My DrSai 与平台智能体分别进入正确执行通道；
+- OpenDrSai 与平台智能体分别进入正确执行通道；
 - DDF、remote、custom 至少各有一个真实冒烟样例；
 - 流式回答、停止、超时、工具和文件事件可正常显示；
 - 会话之间不会发生智能体或上下文串线。
@@ -333,7 +333,7 @@ MVP 必须包含：
 
 - 统一平台目录；
 - 搜索、详情、最近使用和默认智能体；
-- My DrSai 本地执行；
+- OpenDrSai 本地执行；
 - DDF 平台智能体真实执行；
 - 身份刷新、密钥隔离、SSE 和基本错误处理。
 

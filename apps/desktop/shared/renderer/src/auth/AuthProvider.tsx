@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuthSession,
   DesktopA5ServiceGuidanceScenario,
@@ -16,6 +16,7 @@ interface AuthContextValue {
   serviceBusy: boolean;
   serviceReady: boolean;
   serviceBlocker: DesktopBootstrapBlocker | null;
+  loginFailed: boolean;
   message: string | null;
   session: AuthSession;
   login: (request: LoginRequest) => Promise<boolean>;
@@ -48,7 +49,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [serviceBusy, setServiceBusy] = useState(false);
   const [serviceReady, setServiceReady] = useState(false);
   const [serviceBlocker, setServiceBlocker] = useState<DesktopBootstrapBlocker | null>(null);
+  const serviceRetryCountRef = useRef(0);
+  const [loginFailed, setLoginFailed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const refreshPromiseRef = useRef<Promise<void> | null>(null);
+  const bootstrapPromiseRef = useRef<Promise<boolean> | null>(null);
+  const initialLoadPromiseRef = useRef<Promise<void> | null>(null);
 
   function applyA5ServiceGuidanceScenario(scenario: DesktopA5ServiceGuidanceScenario): void {
     setSession(scenario.session);
@@ -64,37 +70,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     return true;
   }
 
-  async function refresh(): Promise<void> {
-    const next = await desktopApi.getAuthSession();
-    setSession(next);
-    if (next.authenticated) {
-      if (next.authMode === "offline") {
-        setServiceReady(true);
-        setServiceBlocker(null);
-        setMessage("Developer workspace unlocked.");
-        return;
+  function refresh(): Promise<void> {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    const operation = (async () => {
+      const next = await desktopApi.getAuthSession();
+      setSession(next);
+      if (next.authenticated) {
+        if (next.authMode === "offline") {
+          setServiceReady(true);
+          setServiceBlocker(null);
+          setMessage("Developer workspace unlocked.");
+          return;
+        }
+        void retryBootstrap();
       }
-      void retryBootstrap();
-    }
+    })();
+    refreshPromiseRef.current = operation;
+    const clear = (): void => {
+      if (refreshPromiseRef.current === operation) refreshPromiseRef.current = null;
+    };
+    void operation.then(clear, clear);
+    return operation;
   }
 
-  async function retryBootstrap(): Promise<boolean> {
+  function retryBootstrap(): Promise<boolean> {
+    if (bootstrapPromiseRef.current) return bootstrapPromiseRef.current;
     setServiceBusy(true);
-    try {
-      const bootstrap = await desktopApi.bootstrapDesktop();
-      setServiceReady(bootstrap.ready);
-      setServiceBlocker(bootstrap.ready ? null : bootstrap.blocker ?? classifyBootstrapBlocker(bootstrap.message));
-      setMessage(bootstrap.message);
-      return bootstrap.ready;
-    } catch (error) {
-      setServiceReady(false);
-      const nextMessage = error instanceof Error ? error.message : "OpenDrSai service preparation failed.";
-      setServiceBlocker(classifyBootstrapBlocker(nextMessage));
-      setMessage(nextMessage);
-      return false;
-    } finally {
+    const operation = (async () => {
+      try {
+        const bootstrap = await desktopApi.bootstrapDesktop();
+        setServiceReady(bootstrap.ready);
+        setServiceBlocker(bootstrap.ready ? null : bootstrap.blocker ?? classifyBootstrapBlocker(bootstrap.message));
+        setMessage(bootstrap.message);
+        if (bootstrap.ready) serviceRetryCountRef.current = 0;
+        return bootstrap.ready;
+      } catch (error) {
+        setServiceReady(false);
+        const nextMessage = error instanceof Error ? error.message : "OpenDrSai service preparation failed.";
+        setServiceBlocker(classifyBootstrapBlocker(nextMessage));
+        setMessage(nextMessage);
+        return false;
+      }
+    })();
+    bootstrapPromiseRef.current = operation;
+    const clear = (): void => {
+      if (bootstrapPromiseRef.current === operation) bootstrapPromiseRef.current = null;
       setServiceBusy(false);
-    }
+    };
+    void operation.then(clear, clear);
+    return operation;
+  }
+
+  function loadInitialSession(): Promise<void> {
+    if (initialLoadPromiseRef.current) return initialLoadPromiseRef.current;
+    const operation = (async () => {
+      const handled = await loadA5ServiceGuidanceScenario();
+      if (!handled) await refresh();
+    })().catch((error) => {
+      setMessage(error instanceof Error ? error.message : "Could not read sign-in state.");
+      setSession(anonymousSession);
+    });
+    const tracked = operation.finally(() => setLoading(false));
+    initialLoadPromiseRef.current = tracked;
+    return tracked;
   }
 
   useEffect(() => {
@@ -112,16 +150,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       });
       setMessage("Your HepAI session is no longer valid. Sign in again.");
     });
-    loadA5ServiceGuidanceScenario()
-      .then((handled) => {
-        if (handled) return undefined;
-        return refresh();
-      })
-      .catch((error) => {
-        setMessage(error instanceof Error ? error.message : "Could not read sign-in state.");
-        setSession(anonymousSession);
-      })
-      .finally(() => setLoading(false));
+    void loadInitialSession();
     return unsubscribe;
   }, []);
 
@@ -135,9 +164,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     ) {
       return undefined;
     }
+    const count = serviceRetryCountRef.current;
+    if (count >= 2) {
+      return undefined; // Max retries exhausted — stop auto-retry.
+    }
+    const delays = [5000, 15000];
+    const delay = delays[count] ?? 15000;
     const timer = window.setTimeout(() => {
+      serviceRetryCountRef.current = count + 1;
       void retryBootstrap();
-    }, 1500);
+    }, delay);
     return () => window.clearTimeout(timer);
   }, [
     serviceBlocker?.kind,
@@ -149,11 +185,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
   async function login(request: LoginRequest): Promise<boolean> {
     setLoginBusy(true);
+    setLoginFailed(false);
     setMessage(null);
     try {
       const result = await desktopApi.login(request);
       setMessage(result.message);
       if (result.ok && result.session) {
+        setLoginFailed(false);
         setSession(result.session);
         setServiceBlocker(null);
         if (result.session.authMode === "offline") {
@@ -161,8 +199,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         }
         return true;
       }
+      setLoginFailed(true);
+      console.error("[auth] Sign-in failed:", result.message);
       return false;
     } catch (error) {
+      setLoginFailed(true);
+      console.error("[auth] Sign-in failed:", error);
       setMessage(error instanceof Error ? error.message : "Sign-in failed.");
       return false;
     } finally {
@@ -172,17 +214,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
   async function startOidcLogin(request?: { rememberMe?: boolean }): Promise<boolean> {
     setLoginBusy(true);
+    setLoginFailed(false);
     setMessage("Opening browser for HepAI sign-in...");
     try {
       const result = await desktopApi.startOidcLogin(request);
       if (result.ok && result.session) {
+        setLoginFailed(false);
         setSession(result.session);
         void retryBootstrap();
         return true;
       }
+      const cancelled = /cancel/i.test(result.message);
+      setLoginFailed(!cancelled);
+      if (!cancelled) console.error("[auth] HepAI sign-in failed:", result.message);
       setMessage(result.message);
       return false;
     } catch (error) {
+      setLoginFailed(true);
+      console.error("[auth] HepAI sign-in failed:", error);
       setMessage(error instanceof Error ? error.message : "OIDC sign-in failed.");
       return false;
     } finally {
@@ -191,6 +240,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   }
 
   async function cancelOidcLogin(): Promise<void> {
+    setLoginFailed(false);
     setMessage("Cancelling browser sign-in...");
     try {
       const cancelled = await desktopApi.cancelOidcLogin();
@@ -218,13 +268,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     fallback: string,
   ): Promise<DesktopSsoStartResult> {
     setLoginBusy(true);
+    setLoginFailed(false);
     setMessage(null);
     try {
       const result = await start();
       setMessage(result.message);
+      setLoginFailed(!result.ok);
+      if (!result.ok) console.error("[auth] Desktop sign-in failed:", result.message);
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : fallback;
+      setLoginFailed(true);
+      console.error("[auth] Desktop sign-in failed:", error);
       setMessage(message);
       return { ok: false, message };
     } finally {
@@ -237,11 +292,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       const result = await desktopApi.pollDesktopSsoLogin(deviceCode);
       setMessage(result.message);
       if (result.ok && result.state === "authorized" && result.session) {
+        setLoginFailed(false);
         setSession(result.session);
+      } else if (result.state === "error") {
+        setLoginFailed(true);
+        console.error("[auth] Desktop sign-in failed:", result.message);
       }
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "SSO login failed.";
+      setLoginFailed(true);
+      console.error("[auth] Desktop sign-in failed:", error);
       setMessage(message);
       return { ok: false, state: "error", message };
     }
@@ -257,6 +318,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
   async function logout(clearLocalData = false): Promise<void> {
     setLogoutBusy(true);
+    setLoginFailed(false);
     setMessage(null);
     try {
       const result = await desktopApi.logout({ clearLocalData });
@@ -279,6 +341,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       serviceBusy,
       serviceReady,
       serviceBlocker,
+      loginFailed,
       message,
       session,
       login,
@@ -291,9 +354,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       logout,
       refresh,
       retryBootstrap,
-      clearMessage: () => setMessage(null),
+      clearMessage: () => {
+        setLoginFailed(false);
+        setMessage(null);
+      },
     }),
-    [loading, loginBusy, logoutBusy, serviceBusy, serviceReady, serviceBlocker, message, session],
+    [loading, loginBusy, logoutBusy, serviceBusy, serviceReady, serviceBlocker, loginFailed, message, session],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

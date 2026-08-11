@@ -24,6 +24,22 @@ class Socket:
         })
 
 
+class HttpSocket:
+    def __init__(self, hub: RuntimeChannelHub, runtime_id: str) -> None:
+        self.hub = hub
+        self.runtime_id = runtime_id
+        self.sent: list[dict] = []
+
+    async def send_json(self, message: dict) -> None:
+        self.sent.append(message)
+        self.hub.accept_response(self.runtime_id, {
+            "type": "response",
+            "request_id": message["request_id"],
+            "status": 200,
+            "body": {"data": []},
+        })
+
+
 def test_runtime_channel_routes_request_and_fails_closed_when_detached() -> None:
     async def scenario() -> None:
         hub = RuntimeChannelHub(request_timeout=0.1)
@@ -49,5 +65,26 @@ def test_replacing_runtime_generation_does_not_detach_new_connection() -> None:
         await hub.detach("rt-one", first)
         assert await hub.request("rt-one", "identity", {}) == {"operation": "identity", "arguments": {}}
         await hub.detach("rt-one", second)
+
+    asyncio.run(scenario())
+
+
+def test_runtime_channel_routes_http_request_over_current_generation() -> None:
+    async def scenario() -> None:
+        hub = RuntimeChannelHub(request_timeout=0.1)
+        socket = HttpSocket(hub, "rt-one")
+        generation = await hub.attach("rt-one", socket)  # type: ignore[arg-type]
+        response, response_generation = await hub.request_http_current(
+            "rt-one",
+            "GET",
+            "/v1/workspaces?include_closed=true",
+            timeout_code="catalog_sync_timeout",
+        )
+        assert response == {"type": "response", "request_id": socket.sent[0]["request_id"], "status": 200,
+                            "body": {"data": []}}
+        assert response_generation == generation
+        assert socket.sent[0]["type"] == "request"
+        assert socket.sent[0]["method"] == "GET"
+        assert socket.sent[0]["path"] == "/v1/workspaces?include_closed=true"
 
     asyncio.run(scenario())

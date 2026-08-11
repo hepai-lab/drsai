@@ -8,6 +8,7 @@
 |------|------|
 | `智能体性能评测调研报告.md` | 综合调研报告，涵盖代码能力、深度检索、文档/电脑操作、工具使用等维度的评测方案与 Benchmark |
 | `gaia/` | GAIA benchmark 评测框架 — 对 DrSaiAssistant 进行实际测试 |
+| `regression/` | OpenDrSai 产品智能体回归测试：12 个代表任务、正式 Runtime 执行、证据断言与发布门禁 |
 | `data/gaia/` | GAIA 数据集存放目录（需手动下载） |
 | `results/gaia/` | GAIA 评测结果输出目录 |
 

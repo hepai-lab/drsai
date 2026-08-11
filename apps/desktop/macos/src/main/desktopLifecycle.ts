@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import type { DesktopBootstrapResult, DesktopHealth, InstallProgress, InstallStatus, PrerequisiteStatus } from "../../../shared/api/desktopApi";
 import { requireAuthContext } from "../../../shared/main/auth";
-import { getGatewayModels, getGatewayStatus, startGateway } from "./gateway";
+import { getGatewayModels, getGatewayStatus, startGateway, syncAuthIdentityToGateway } from "./gateway";
 import { DRSAI_CONFIG_FILE, DRSAI_ENV_FILE, DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, DRSAI_SCRIPT } from "../../../shared/main/paths";
 import { getUpdateStatus } from "./updater";
 import { ensureBundledRuntimeInstalled, hasBundledRuntime, inspectInstalledRuntime } from "./runtimeInstaller";
@@ -51,21 +51,24 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   if (!auth.session.user || auth.authMode !== "oidc" || !auth.accessToken) {
     throw new Error("HepAI OIDC sign-in is required before preparing OpenDrSai.");
   }
+  await syncAuthIdentityToGateway(auth.userId);
   await ensureBundledRuntimeInstalled();
   const ready = await startGateway();
-  const models = ready ? await getGatewayModels(auth.accessToken) : [];
+  const { models, dataLength } = ready ? await getGatewayModels(auth.accessToken) : { models: [] as Array<{ id: string; name: string }>, dataLength: 0 };
+  const blockerKind: "service_unavailable" | "permission_denied" | "runtime_missing" = ready ? (dataLength > 0 ? "service_unavailable" : "permission_denied") : "runtime_missing";
+  const blockerCode = ready ? (dataLength > 0 ? "model-list-invalid" : "account-no-model-service") : "runtime-missing";
   return {
     ready: ready && models.length > 0,
     message: ready ? (models.length ? "OpenDrSai is ready." : "No model service is available for this account.") : "The local runtime could not be started.",
     user: auth.session.user,
     blocker: ready && models.length ? null : {
-      kind: ready ? "permission_denied" : "runtime_missing",
-      title: ready ? "Account has no available service" : "Local runtime is unavailable",
-      message: ready ? "Sign in with an account that has model access." : "Install or repair the local runtime before starting tasks.",
-      retryable: true,
+      kind: blockerKind,
+      title: ready ? (dataLength > 0 ? "Model list format error" : "Account has no available service") : "Local runtime is unavailable",
+      message: ready ? (dataLength > 0 ? "The model service returned data that could not be parsed." : "Sign in with an account that has model access.") : "Install or repair the local runtime before starting tasks.",
+      retryable: ready ? false : true,
       canRepairRuntime: !ready,
       canSignInAgain: ready,
-      diagnosticCode: ready ? "account-no-model-service" : "runtime-missing",
+      diagnosticCode: blockerCode,
     },
     capabilities: { chat: ready && models.length > 0, agent: ready && models.length > 0, tools: ["files", "shell", "git"] },
     defaults: { agentId: "drsai", modelAlias: models[0]?.id ?? null },

@@ -1,0 +1,37 @@
+{
+  "schema_version": "opendrsai.p9-production-behavior-parity/1",
+  "identity": {
+    "kernel_id": "drsai-agent-kernel",
+    "kernel_version": "p9.1",
+    "kernel_sha256": "24f9bcbda9fe288d39a8e5c82c18d6d4fbae780e1b5e1824e2842768e66c5361",
+    "prompt_version": "p9-agent-kernel-v1",
+    "base_prompt_sha256": "48443cb3f6cf1357d34a199cbaa2b8274f6e77af264c58879b67bce36f9d7cf0"
+  },
+  "tool": {
+    "name": "parity.echo",
+    "version": 1,
+    "source": "shared-core",
+    "classification": "shared",
+    "description": "Echo deterministic text",
+    "parameters": {
+      "type": "object",
+      "properties": {"text": {"type": "string"}},
+      "required": ["text"]
+    },
+    "risk": "read_only",
+    "requires_approval": false,
+    "required_capabilities": [],
+    "schema_sha256": "e3dce8d1afb8d03604af3bc6729219a5cd7df05558807b6e44e391d56fdf75d9"
+  },
+  "skill_manifest_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "input": "Use the deterministic echo tool for hello.",
+  "final_text": "echo:hello",
+  "expected_semantic_events": [
+    "run.started",
+    "tool.decision",
+    "tool.started",
+    "tool.result",
+    "tool.decision",
+    "run.completed"
+  ]
+}

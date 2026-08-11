@@ -20,6 +20,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import ai.drsai.remote.remote.data.parseAccessGrantCode
+import ai.drsai.remote.remote.data.RemoteActionableState
+import ai.drsai.remote.remote.data.RemoteRecoveryAction
 
 class RemoteWorkspaceUiTest {
     @get:Rule
@@ -50,6 +52,7 @@ class RemoteWorkspaceUiTest {
     @Test
     fun computerExpandsWorkspaceAndRoutesByReference() {
         var opened: RemoteWorkspaceRef? = null
+        var refreshed: RuntimeId? = null
         val workspace = RemoteWorkspaceRef(RuntimeId("runtime-a"), WorkspaceId("workspace-a"), "OpenDrSai")
         composeRule.setContent {
             MaterialTheme {
@@ -65,22 +68,85 @@ class RemoteWorkspaceUiTest {
                                 instanceId = "boot-2",
                                 connectionGeneration = 2,
                                 workspaces = listOf(workspace),
+                                workspaceSyncStatus = "已同步 07-28 12:00",
                             )
                         )
                     ),
                     onBack = {},
                     onAssociate = {},
                     onRefresh = {},
+                    onRefreshWorkspaces = { refreshed = it },
                     onOpenWorkspace = { opened = it },
                 )
             }
         }
 
         composeRule.onNodeWithText("开发服务器").assertIsDisplayed()
-        composeRule.onNodeWithText("在线 · 刚刚").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
+        composeRule.onNodeWithText("刚刚").assertIsDisplayed()
         composeRule.onNodeWithText("OpenDrSai 1.4.6").assertIsDisplayed()
+        composeRule.onNodeWithText("已同步 07-28 12:00").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("刷新 开发服务器 的工作区")
+            .assertIsDisplayed()
+            .performClick()
         composeRule.onNodeWithText("OpenDrSai").assertIsDisplayed().performClick()
-        composeRule.runOnIdle { assertEquals(workspace, opened) }
+        composeRule.runOnIdle {
+            assertEquals(RuntimeId("runtime-a"), refreshed)
+            assertEquals(workspace, opened)
+        }
+    }
+
+    @Test
+    fun computerConnectionStatesUseAccessibleDotIndicators() {
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteHomeScreen(
+                    state = RemoteHomeUiState(
+                        computers = listOf(
+                            RemoteComputerUi(
+                                RuntimeId("online"),
+                                "在线计算机",
+                                RemoteConnectionState.ONLINE,
+                                "刚刚连接",
+                                emptyList(),
+                            ),
+                            RemoteComputerUi(
+                                RuntimeId("offline"),
+                                "离线计算机",
+                                RemoteConnectionState.OFFLINE,
+                                "缓存 · 上次同步 07-28 10:30",
+                                listOf(
+                                    RemoteWorkspaceRef(
+                                        RuntimeId("offline"),
+                                        WorkspaceId("cached"),
+                                        "缓存项目",
+                                    )
+                                ),
+                                workspacesCached = true,
+                            ),
+                            RemoteComputerUi(
+                                RuntimeId("connecting"),
+                                "连接中计算机",
+                                RemoteConnectionState.CONNECTING,
+                                "",
+                                emptyList(),
+                            ),
+                        ),
+                    ),
+                    onBack = {},
+                    onAssociate = {},
+                    onRefresh = {},
+                    onOpenWorkspace = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("连接状态：离线").assertIsDisplayed()
+        composeRule.onNodeWithText("缓存 · 上次同步 07-28 10:30").assertIsDisplayed()
+        composeRule.onNodeWithText("缓存项目").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("连接状态：正在连接").assertIsDisplayed()
+        composeRule.onNodeWithText("连接中…").assertIsDisplayed()
     }
 
     @Test fun associationQrDeepLinkExtractsOnlyOneTimeCode() {
@@ -180,5 +246,59 @@ class RemoteWorkspaceUiTest {
         ).assertIsDisplayed()
         composeRule.onAllNodesWithText("执行 Shell").assertCountEquals(0)
         composeRule.onAllNodesWithText("写入文件").assertCountEquals(0)
+    }
+
+    @Test
+    fun notificationPermissionGapIsActionableWithoutHidingWorkspaces() {
+        var enableCalls = 0
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteHomeScreen(
+                    state = RemoteHomeUiState(
+                        computers = listOf(
+                            RemoteComputerUi(
+                                runtimeId = RuntimeId("runtime-notify"),
+                                displayName = "开发电脑",
+                                state = RemoteConnectionState.ONLINE,
+                                lastSeenLabel = "刚刚",
+                                workspaces = emptyList(),
+                            ),
+                        ),
+                        notificationState = RemoteNotificationReadiness.PERMISSION_REQUIRED,
+                    ),
+                    onBack = {},
+                    onAssociate = {},
+                    onRefresh = {},
+                    onOpenWorkspace = {},
+                    onEnableNotifications = { enableCalls += 1 },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("允许系统通知后，App 关闭时也能收到任务结果和审批提醒").assertIsDisplayed()
+        composeRule.onNodeWithText("启用通知").assertIsDisplayed().performClick()
+        composeRule.runOnIdle { assertEquals(1, enableCalls) }
+        composeRule.onNodeWithText("开发电脑").assertIsDisplayed()
+    }
+
+    @Test fun actionableStateShowsOneSafePrimaryAction() {
+        var selected: RemoteRecoveryAction? = null
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteActionableStateCard(
+                    RemoteActionableState(
+                        "登录已过期",
+                        "重新登录后可继续使用原有设备授权。",
+                        RemoteRecoveryAction.SIGN_IN,
+                        "重新登录",
+                    ),
+                    onAction = { selected = it },
+                )
+            }
+        }
+        composeRule.onNodeWithText("登录已过期").assertIsDisplayed()
+        composeRule.onNodeWithText("重新登录").assertIsDisplayed().performClick()
+        composeRule.onAllNodesWithText("https://internal.example").assertCountEquals(0)
+        composeRule.runOnIdle { assertEquals(RemoteRecoveryAction.SIGN_IN, selected) }
     }
 }

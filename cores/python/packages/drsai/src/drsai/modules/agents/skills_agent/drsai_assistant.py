@@ -76,6 +76,9 @@ from drsai.modules.managers.messages import (
     UserInputRequestedEvent,
     ThoughtEvent,
     AgentLogEvent,Send_level,
+    FileInfo,
+    FilesContent,
+    FilesEvent,
     StructuredMessage,
     StructuredMessageFactory,
     MultiModalMessage,
@@ -105,6 +108,68 @@ from .utils.utils import HELP_TEXT
 from .managers import ScheduledTask, ScheduleType, TaskStatus
 from .daemon_subagent import DaemonSubagent
 from drsai.modules.components.memory import CuratedMemoryStore
+from drsai.backend.runtime.agent_kernel import DEFAULT_MAX_PARALLEL_TOOL_CALLS, DEFAULT_MAX_TOOL_ROUNDS, MAX_INLINE_TOOL_OUTPUT_CHARS, build_execution_tool_registry, classify_tool_error, desktop_production_parity_manifest, execution_tool_record, freeze_model_tool_snapshot, normalize_tool_loop_policy, normalize_tool_output, validate_tool_call_batch, verify_model_tool_calls
+
+
+_DESKTOP_READ_ONLY_TOOLS = {
+    "run_read", "run_grep", "run_glob", "get_bash_task", "list_bash_tasks",
+    "get_powershell_task", "list_powershell_tasks", "Skill",
+    "retrieve_from_memory", "read_session_memory_by_index",
+}
+_DESKTOP_LOCAL_WRITE_TOOLS = {"run_write", "run_edit", "TodoWrite", "UpdateUserConfig"}
+_DESKTOP_CONDITIONAL_TOOLS = {
+    "run_bash", "run_bash_background", "run_powershell", "kill_bash_task",
+    "kill_powershell_task",
+}
+_DESKTOP_REQUIRED_APPROVAL_TOOLS = {"Delegate", "ScheduledTaskManager"}
+
+
+def _tool_schema_name(value: Any) -> str:
+    schema = getattr(value, "schema", value)
+    if not isinstance(schema, dict) or not isinstance(schema.get("name"), str):
+        raise ValueError("desktop_tool_schema_invalid")
+    return schema["name"]
+
+
+def _desktop_execution_metadata(name: str, executor_id: str) -> dict[str, Any]:
+    if name in _DESKTOP_READ_ONLY_TOOLS:
+        risk, approval = "read_only", "none"
+    elif name in _DESKTOP_LOCAL_WRITE_TOOLS:
+        risk, approval = "local_write", "none"
+    elif name in _DESKTOP_CONDITIONAL_TOOLS:
+        risk, approval = "sensitive", "conditional"
+    elif name in _DESKTOP_REQUIRED_APPROVAL_TOOLS:
+        risk, approval = "sensitive", "required"
+    else:
+        # Dynamically loaded MCP/HepAI tools can have external side effects.
+        # They remain visible for compatibility but may not claim no-approval safety.
+        risk, approval = "external_write", "required"
+    return {
+        "version": 1,
+        "source": "desktop-host",
+        "classification": "local-equivalent",
+        "risk": risk,
+        "approval_mode": approval,
+        "executor_id": executor_id,
+        "required_capabilities": [],
+    }
+
+
+def _desktop_tool_error_code(value: Any) -> str:
+    status = getattr(value, "status_code", None)
+    if isinstance(status, int) and 400 <= status <= 599:
+        return f"http_{status}"
+    text = str(getattr(value, "content", value)).lower()
+    for status_code in (400, 401, 403, 408, 429, 500, 502, 503, 504):
+        if str(status_code) in text:
+            return f"http_{status_code}"
+    if "cancel" in text:
+        return "cancelled"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "rate limit" in text:
+        return "rate_limited"
+    return "tool_failed"
 
 
 def is_retryable_llm_error(error: BaseException) -> bool:
@@ -321,6 +386,10 @@ class DrSaiAssistant(DrSaiAgent):
         )
 
         self._developer_system_message = system_message or ""
+        self._active_model_tool_snapshot: Dict[str, Any] | None = None
+        self._active_execution_tool_registry: Dict[str, Any] | None = None
+        self._tool_approval_handler: Callable[[dict[str, Any], dict[str, Any]], Awaitable[bool]] | None = None
+        self._tool_output_artifact_handler: Callable[[dict[str, Any], bytes], Awaitable[dict[str, Any]]] | None = None
 
         # Injected prompt slots (set by inject_system_prompt or /inject command)
         self._injected_prefix: str = ""
@@ -513,6 +582,12 @@ class DrSaiAssistant(DrSaiAgent):
 
         # max_turn_count
         self._max_turn_count = max_turn_count
+        self._tool_loop_policy = normalize_tool_loop_policy({
+            "schema_version": 1,
+            "policy_version": "p9-tool-loop-v1",
+            "max_tool_rounds": min(max_turn_count, DEFAULT_MAX_TOOL_ROUNDS),
+            "max_parallel_tool_calls": min(max_agent_concurrent, DEFAULT_MAX_PARALLEL_TOOL_CALLS),
+        })
 
         # config file mtime cache for lazy reloading
         self._config_mtimes: Dict[str, float] = {}
@@ -704,6 +779,46 @@ class DrSaiAssistant(DrSaiAgent):
             return True
         return False
 
+    def _skills_tree_mtime(self, skills_dir: Path) -> float:
+        """Max mtime across skills dir + skill folders + SKILL.md files.
+
+        On Windows, creating/updating a nested ``skills/<name>/SKILL.md`` often
+        does not bump the parent directory mtime, so a plain ``stat`` on
+        ``skills_dir`` can miss newly installed skills.
+        """
+        try:
+            mtimes = [skills_dir.stat().st_mtime]
+        except OSError:
+            return -1.0
+        try:
+            for child in skills_dir.iterdir():
+                if not child.is_dir():
+                    continue
+                try:
+                    mtimes.append(child.stat().st_mtime)
+                except OSError:
+                    continue
+                skill_md = child / "SKILL.md"
+                try:
+                    if skill_md.exists():
+                        mtimes.append(skill_md.stat().st_mtime)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        return max(mtimes) if mtimes else -1.0
+
+    def _skills_dir_changed(self, skills_dir: Path) -> bool:
+        """Like ``_file_changed`` but sensitive to nested skill file updates."""
+        mtime = self._skills_tree_mtime(skills_dir)
+        if mtime < 0:
+            return True
+        key = str(skills_dir)
+        if self._config_mtimes.get(key) != mtime:
+            self._config_mtimes[key] = mtime
+            return True
+        return False
+
     async def _emit_notification(self, content: str) -> TextMessage:
         """Yield a notification to the user and inject it into the model context."""
         await self._model_context.add_message(
@@ -774,9 +889,9 @@ class DrSaiAssistant(DrSaiAgent):
                 )
 
         # load/update skills only if skills directories changed
-        skills_changed = self._file_changed(self._user_profile_manager.skills_dir)
+        skills_changed = self._skills_dir_changed(self._user_profile_manager.skills_dir)
         if self._skills_dir:
-            skills_changed = skills_changed or any(self._file_changed(Path(d)) for d in self._skills_dir)
+            skills_changed = skills_changed or any(self._skills_dir_changed(Path(d)) for d in self._skills_dir)
         if skills_changed or self._cached_skills_loader is None:
             skills_loader, skill_error = self.update_user_skills()
             if skill_error:
@@ -980,6 +1095,15 @@ class DrSaiAssistant(DrSaiAgent):
             else:
                 self._agent_skills_tools = []
 
+            # Keep the runtime Skill tool executor in sync with hot-reload.
+            # Without this, /v1/skills/reload updates tool *descriptions* but
+            # leaves _cached_skills_loader stale, so Skill("meeting_notes") fails.
+            self._cached_skills_loader = skills_loader
+            try:
+                self._config_mtimes[str(user_skills_dir)] = self._skills_tree_mtime(user_skills_dir)
+            except Exception:
+                pass
+
         except Exception as e:
             error_msg = f"Failed to load skills: {str(e)}"
             logger.error(f"Error in update_user_skills: {e}")
@@ -1136,6 +1260,29 @@ class DrSaiAssistant(DrSaiAgent):
         and the final task result as the last item in the stream."""
         if cancellation_token is None:
             cancellation_token = CancellationToken()
+        command_text = task if isinstance(task, str) else None
+        if isinstance(task, BaseChatMessage) and isinstance(task.content, str):
+            command_text = task.content
+        elif isinstance(task, Sequence) and task:
+            last_task = task[-1]
+            if isinstance(last_task, BaseChatMessage) and isinstance(last_task.content, str):
+                command_text = last_task.content
+        use_kernel_stream = (
+            getattr(self, "_shared_agent_kernel", None) is not None
+            and not (command_text is not None and self.is_commands_mode(command_text))
+        )
+        if use_kernel_stream:
+            from drsai.backend.runtime.desktop_agent_kernel_adapter import run_agent_through_kernel
+
+            async for event in run_agent_through_kernel(
+                self,
+                task=task,
+                cancellation_token=cancellation_token,
+                policy_resolver=_desktop_execution_metadata,
+                model_retryable=is_retryable_llm_error,
+            ):
+                yield event
+            return
         self._cancellation_token = cancellation_token
         input_messages: List[BaseChatMessage] = []
         output_messages: List[BaseAgentEvent | BaseChatMessage] = []
@@ -1554,7 +1701,8 @@ class DrSaiAssistant(DrSaiAgent):
                         yield message
 
                 turn_count += 1
-                if turn_count >= self._max_turn_count:
+                max_tool_rounds = getattr(self, "_tool_loop_policy", normalize_tool_loop_policy())["max_tool_rounds"]
+                if turn_count >= min(self._max_turn_count, max_tool_rounds):
                     yield Response(
                         chat_message=TextMessage(
                             content="\n\n(●'◡'●)抱歉，已达最大的任务循环次数，触发了保护措施，请重新调整您的询问方式或者更具体的告诉您的助手应该怎么做。",
@@ -1723,7 +1871,36 @@ class DrSaiAssistant(DrSaiAgent):
         if self._memory_function is not None:
             llm_messages = await self._call_memory_function(llm_messages, model_client, cancellation_token, agent_name)
 
-        all_tools = (await workbench.list_tools()) + handoff_tools + manager_tools
+        workbench_tools = await workbench.list_tools()
+        all_tools = workbench_tools + handoff_tools + manager_tools
+        model_tool_snapshot = freeze_model_tool_snapshot("desktop", all_tools)
+        self._active_model_tool_snapshot = model_tool_snapshot
+        registry_metadata: dict[str, dict[str, Any]] = {}
+        for tool in workbench_tools:
+            name = _tool_schema_name(tool)
+            registry_metadata[name] = _desktop_execution_metadata(name, f"workbench:{name}")
+        for tool in handoff_tools:
+            name = _tool_schema_name(tool)
+            registry_metadata[name] = _desktop_execution_metadata(name, f"handoff:{name}")
+        for tool in manager_tools:
+            name = _tool_schema_name(tool)
+            registry_metadata[name] = _desktop_execution_metadata(name, f"manager:{name}")
+        execution_registry = build_execution_tool_registry(
+            "desktop", all_tools, registry_metadata,
+            list((getattr(self, "_kernel_host_port", None) or {}).get("capabilities", [])),
+        )
+        self._active_execution_tool_registry = execution_registry
+        tool_loop_policy = getattr(self, "_tool_loop_policy", normalize_tool_loop_policy())
+        if isinstance(getattr(self, "_metadata", None), dict):
+            self._metadata.update({
+                "model_tool_snapshot_version": str(model_tool_snapshot["snapshot_version"]),
+                "model_tool_snapshot_sha256": str(model_tool_snapshot["sha256"]),
+                "model_tool_count": str(len(model_tool_snapshot["tools"])),
+                "execution_tool_registry_version": str(execution_registry["registry_version"]),
+                "execution_tool_registry_sha256": str(execution_registry["sha256"]),
+                "tool_loop_policy_version": str(tool_loop_policy["policy_version"]),
+                "tool_loop_policy_sha256": str(tool_loop_policy["sha256"]),
+            })
         # model_result: Optional[CreateResult] = None
         if self._reply_function is not None:
             # 自定义的reply_function，用于自定义对话回复的定制
@@ -2005,11 +2182,33 @@ class DrSaiAssistant(DrSaiAgent):
         Handle final or partial responses from model_result, including tool calls, handoffs,
         and reflection if needed. Now supports all special tools.
         """
+        verify_model_tool_calls(self._active_model_tool_snapshot or {}, model_result.content)
+        tool_loop_policy = getattr(self, "_tool_loop_policy", normalize_tool_loop_policy())
+        execution_records = list(validate_tool_call_batch(
+            self._active_execution_tool_registry or {},
+            model_result.content,
+            max_parallel_tool_calls=tool_loop_policy["max_parallel_tool_calls"],
+            allow_homogeneous_approval_batch=True,
+        ))
+        registry_metadata = {
+            "execution_registry_sha256": str((self._active_execution_tool_registry or {}).get("sha256", "")),
+            "tool_loop_policy_sha256": tool_loop_policy["sha256"],
+            "tool_policies": json.dumps([
+                {
+                    "name": record["name"],
+                    "risk": record["risk"],
+                    "approval_mode": record["approval_mode"],
+                    "executor_id": record["executor_id"],
+                }
+                for record in execution_records
+            ], separators=(",", ":"), sort_keys=True),
+        }
 
         tool_call_msg = ToolCallRequestEvent(
             content=model_result.content,
             source=agent_name,
             models_usage=model_result.usage,
+            metadata=registry_metadata,
         )
         inner_messages.append(tool_call_msg)
         logger.debug(tool_call_msg)
@@ -2019,13 +2218,16 @@ class DrSaiAssistant(DrSaiAgent):
             title="I am using tools: " + " ".join(tools_name),
             source=agent_name,
             content=str(tool_call_msg.content),
-            content_type="tools")
+            content_type="tools",
+            metadata=registry_metadata,
+        )
 
         # STEP 4B: Execute tool calls with special tool handling
         exec_results: List[FunctionExecutionResult] = []
 
         # ── Pre-scan: collect Delegate calls for potential parallel execution ──
         delegate_indices: Dict[int, Dict[str, Any]] = {}
+        registry_denied_call_ids: set[str] = set()
         for idx, tool_call in enumerate(model_result.content):
             if tool_call.name == "Delegate":
                 try:
@@ -2034,6 +2236,18 @@ class DrSaiAssistant(DrSaiAgent):
                         delegate_indices[idx] = args
                 except Exception:
                     pass  # parse error → handled in normal loop below
+
+        if len(delegate_indices) >= 2:
+            delegate_record = execution_tool_record(self._active_execution_tool_registry or {}, "Delegate")
+            approval_handler = self._tool_approval_handler
+            approved = approval_handler is not None and await approval_handler(delegate_record, {
+                "parallel_calls": [delegate_indices[index] for index in sorted(delegate_indices)],
+            })
+            if not approved:
+                registry_denied_call_ids.update(
+                    model_result.content[index].id for index in delegate_indices
+                )
+                delegate_indices = {}
 
         # ── Parallel path: >=2 Delegates in same turn → run concurrently ──
         if len(delegate_indices) >= 2:
@@ -2066,15 +2280,15 @@ class DrSaiAssistant(DrSaiAgent):
                 # Collect final results from metadata-tagged messages
                 if isinstance(message, TextMessage):
                     meta = getattr(message, "metadata", None) or {}
-                    if meta.get("subagent_result"):
-                        parallel_results[meta["subagent_result"]] = message.content or ""
+                    if meta.get("subagent_result_call_id"):
+                        parallel_results[meta["subagent_result_call_id"]] = message.content or ""
                 yield message
 
             # Build exec_results with actual subagent outputs
             for idx, args in delegate_indices.items():
                 tool_call = model_result.content[idx]
                 result_content = parallel_results.get(
-                    args["agent_type"],
+                    tool_call.id,
                     f"Subagent '{args['agent_type']}' completed (no output captured).",
                 )
                 exec_results.append(FunctionExecutionResult(
@@ -2124,6 +2338,36 @@ class DrSaiAssistant(DrSaiAgent):
                     is_error=True,
                 ))
                 continue
+
+            registry_record = execution_tool_record(self._active_execution_tool_registry or {}, tool_name)
+            if registry_record["approval_mode"] == "required":
+                if call_id in registry_denied_call_ids:
+                    exec_results.append(FunctionExecutionResult(
+                        content="Tool approval was denied or unavailable.",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    continue
+                approval_handler = self._tool_approval_handler
+                if approval_handler is None:
+                    exec_results.append(FunctionExecutionResult(
+                        content="Tool approval channel is unavailable; execution was blocked.",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    continue
+                if not await approval_handler(registry_record, {
+                    **dict(arguments), "_runtime_call_id": call_id,
+                }):
+                    exec_results.append(FunctionExecutionResult(
+                        content="Tool approval was denied.",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    continue
 
             # Handle special tools
             if tool_name == "Skill":
@@ -2481,22 +2725,93 @@ class DrSaiAssistant(DrSaiAgent):
             else:
                 # Normal tool execution through workbench or handoff
                 try:
-                    _, result = await self._execute_tool_call(
-                        tool_call=tool_call,
-                        workbench=workbench,
-                        handoff_tools=handoff_tools,
-                        agent_name=agent_name,
-                        cancellation_token=cancellation_token,
-                    )
+                    retry_policy = registry_record["retry_policy"]
+                    attempt = 0
+                    while True:
+                        attempt += 1
+                        _, result = await self._execute_tool_call(
+                            tool_call=tool_call,
+                            workbench=workbench,
+                            handoff_tools=handoff_tools,
+                            agent_name=agent_name,
+                            cancellation_token=cancellation_token,
+                        )
+                        code = _desktop_tool_error_code(result)
+                        if not result.is_error or attempt >= retry_policy["max_attempts"] or code not in retry_policy["retryable_error_codes"]:
+                            break
+                    if result.is_error:
+                        error = classify_tool_error(_desktop_tool_error_code(result), registry_record["risk"])
+                        result = FunctionExecutionResult(
+                            content=f"{result.content}\nAction: {error['actionable']}",
+                            name=result.name,
+                            call_id=result.call_id,
+                            is_error=True,
+                        )
                     exec_results.append(result)
                 except Exception as e:
                     logger.exception(f"Error executing tool {tool_name}: {e}")
+                    error = classify_tool_error(_desktop_tool_error_code(e), registry_record["risk"])
                     exec_results.append(FunctionExecutionResult(
-                        content=f"Error: {str(e)}",
+                        content=f"Error: {str(e)}\nAction: {error['actionable']}",
                         name=tool_name,
                         call_id=call_id,
                         is_error=True,
                     ))
+
+        # Large tool output must remain complete in a controlled Artifact.  Only a
+        # bounded preview and opaque Artifact ID may enter the model/UI stream.
+        controlled_results: List[FunctionExecutionResult] = []
+        for result in exec_results:
+            raw_content = str(result.content)
+            model_payload = {"content": raw_content}
+            encoded_payload = json.dumps(
+                model_payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
+            if len(encoded_payload) <= MAX_INLINE_TOOL_OUTPUT_CHARS:
+                controlled_results.append(result)
+                continue
+            artifact_handler = self._tool_output_artifact_handler
+            if artifact_handler is None:
+                controlled_results.append(FunctionExecutionResult(
+                    content="tool_output_artifact_channel_unavailable: complete tool output was not exposed",
+                    name=result.name,
+                    call_id=result.call_id,
+                    is_error=True,
+                ))
+                continue
+            descriptor = await artifact_handler({
+                "tool_name": result.name,
+                "call_id": result.call_id,
+                "mime_type": "text/plain; charset=utf-8",
+            }, raw_content.encode("utf-8"))
+            bounded, artifacts = normalize_tool_output(model_payload, [descriptor])
+            artifact = artifacts[0]
+            controlled_results.append(FunctionExecutionResult(
+                content=json.dumps(bounded, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                name=result.name,
+                call_id=result.call_id,
+                is_error=result.is_error,
+            ))
+            yield FilesEvent(
+                source=agent_name,
+                content=FilesContent(
+                    title="Tool output",
+                    description=f"Complete output from {result.name}",
+                    files=[FileInfo(
+                        artifact_id=artifact["artifact_id"],
+                        name=str(descriptor.get("display_name") or f"{result.name}-output.txt"),
+                        size=artifact["size"],
+                        mime_type=artifact["mime_type"],
+                        sha256=artifact["sha256"],
+                        previewable=True,
+                        downloadable=bool(descriptor.get("downloadable", True)),
+                        source_call_id=result.call_id,
+                        description=f"Complete output from {result.name}",
+                        download_method="none",
+                    )],
+                ),
+            )
+        exec_results = controlled_results
 
         # Add all execution results to model context (ensures tool calls and results are paired)
         await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
@@ -2985,7 +3300,7 @@ class DrSaiAssistant(DrSaiAgent):
         _DONE = object()
 
         # Collect per-subagent final results
-        subagent_results: Dict[str, str] = {}
+        subagent_results: Dict[str, tuple[str, str]] = {}
 
         async def run_one(call_id, sub_agent_name, prompt, context):
             async with semaphore:
@@ -3012,7 +3327,7 @@ class DrSaiAssistant(DrSaiAgent):
                     )))
                 finally:
                     # Store final result before signaling done
-                    subagent_results[sub_agent_name] = last_content
+                    subagent_results[call_id] = (sub_agent_name, last_content)
                     await queue.put((None, _DONE))
 
         # Launch all tasks
@@ -3036,12 +3351,12 @@ class DrSaiAssistant(DrSaiAgent):
         await asyncio.gather(*tasks, return_exceptions=True)
 
         # Yield collected results for the caller
-        for sub_agent_name, content in subagent_results.items():
+        for call_id, (sub_agent_name, content) in subagent_results.items():
             safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub_agent_name).strip('_') or 'subagent'
             yield TextMessage(
                 content=f"[{sub_agent_name}] {content}",
                 source=f"sub:{safe_name}",
-                metadata={"subagent_result": sub_agent_name},
+                metadata={"subagent_result": sub_agent_name, "subagent_result_call_id": call_id},
             )
 
     # ── End Subagent Infrastructure ─────────────────────────────────────────
@@ -3556,3 +3871,8 @@ class DrSaiAssistant(DrSaiAgent):
             learning_dataset_id = config.learning_dataset_id,
             **kwargs,
         )
+    def export_production_parity_manifest(self) -> Dict[str, Any]:
+        """Return a fresh, secret-free inventory after any lazy Tool/Skill/MCP reload."""
+        manifest = desktop_production_parity_manifest(self)
+        self._production_parity_manifest = manifest
+        return manifest

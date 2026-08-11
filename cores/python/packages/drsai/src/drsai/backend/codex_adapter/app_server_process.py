@@ -26,7 +26,7 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|cookie|authorization[_-]?code)\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"),
 )
-
+from drsai.backend.codex_adapter.jsonl_frames import CODEX_JSONL_FRAME_LIMIT
 
 def redact_secrets(value: str, explicit_secrets: Sequence[str] = ()) -> str:
     result = value
@@ -119,6 +119,7 @@ class CodexAppServerProcess:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    limit=CODEX_JSONL_FRAME_LIMIT,
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
                 )
             except (OSError, ValueError) as exc:

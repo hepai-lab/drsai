@@ -1,0 +1,62 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-evidence/1",
+  "captured_at": "2026-08-05T23:45:00+08:00",
+  "round": 45,
+  "status": "accepted_local",
+  "features": {
+    "M07-F05": {
+      "passed": true,
+      "directory_sessions": 1000,
+      "directory_p95_ms": 1.8,
+      "first_paint_body_reads": 0,
+      "selected_session_body_reads": 1,
+      "idle_directory_growth_bytes": 0,
+      "selection_feedback_budget_ms": 200,
+      "selection_state_committed_before_async_hydration": true,
+      "restored_active_session_hydrated": true,
+      "blank_session_body_reads": 0,
+      "renderer_cache": {
+        "sessions_after_churn": 128,
+        "maximum_sessions": 128,
+        "bytes_after_churn": 57089367,
+        "maximum_bytes": 67108864,
+        "inactive_churn_sessions": 1000,
+        "evictions": 873,
+        "unrelated_active_notifications": 0
+      },
+      "long_history": {
+        "turns": 500,
+        "messages": 1000,
+        "heavy_nodes": 12,
+        "scroll_ratio": 0.023071521717323705,
+        "active_delta_click_p95_ms": 25.5,
+        "focus_preserved": true,
+        "scroll_shift_px": 0,
+        "noisy_live_regions": 0
+      },
+      "build_unpack_passed": true,
+      "packaged_real_main_preload_ipc_passed": true
+    }
+  },
+  "tests": [
+    "npm run verify:opendrsai-thread-hydration-performance",
+    "npm run verify:conversation-performance",
+    "npm run typecheck",
+    "npm run build:unpack",
+    "node scripts/verify-packaged-app-smoke.mjs"
+  ],
+  "artifacts": {
+    "thread_directory_store": { "path": "apps/desktop/shared/main/threads.ts", "sha256": "2959ccc6192bb6a8f6bf613863f7f617dacd6d86229d8e0f2fd66a5bf88ba9cc" },
+    "renderer_hydration": { "path": "apps/desktop/shared/renderer/src/App.tsx", "sha256": "3fd343710d9f1b4d1448decaec34ff0dedcb6f759bda5950668a65b5ddb3bbd5" },
+    "renderer_snapshot_store": { "path": "apps/desktop/shared/renderer/src/threadSnapshotStore.ts", "sha256": "218b2f0f4281991c4b1214ac5fa509afe99e6e1c4d44e1e9f2d25683e9fdbd4a" },
+    "performance_verifier": { "path": "apps/desktop/windows/scripts/verify-opendrsai-thread-hydration-performance.mts", "sha256": "c97f08d9d846d6835bb7ea86383084787cc6bd4e3da22b1c4ee00114b3194ebd" },
+    "long_history_verifier": { "path": "apps/desktop/windows/scripts/verify-long-conversation-performance.mjs", "sha256": "de52228f23a30e4e3a11d06d69f029464495d3e4a997f589bc719bf577a1c95d" },
+    "app_asar": { "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar", "sha256": "9d93d4f4f1a9c0f531de1ebd8281049dbf189379bd44d28aa21a009b25a5217a" },
+    "executable": { "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe", "sha256": "f7ebfdfafddf143975b3f177a2ef8ce23d4e12997e0d8cdf23e521a010b8979d" }
+  },
+  "progress_after_acceptance": {
+    "accepted": 33,
+    "total": 50,
+    "percent": 66
+  }
+}

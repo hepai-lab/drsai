@@ -1,0 +1,41 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 24,
+  "captured_at": "2026-08-05",
+  "feature": "M05-F03",
+  "source_contracts": {
+    "risk_actions_classified": 18,
+    "policy_checks_passed": 63,
+    "f2_security_contract": true,
+    "f3_business_copy_contract": true
+  },
+  "low_risk_packaged": {
+    "checks_passed": 32,
+    "operations": 5,
+    "desktop_approvals": 0,
+    "browser_approvals": 0,
+    "approval_wait_ms": 0,
+    "evidence": "apps/desktop/windows/release/product-evidence/f1-low-risk-approvals/round24-final/packaged-f1-low-risk-summary.json"
+  },
+  "high_risk_packaged": {
+    "f2_scenarios": 6,
+    "f2_unauthorized_executions": 0,
+    "f2_authorized_executions": 6,
+    "f3_checks_passed": 71,
+    "f3_business_scenarios": 5,
+    "f3_unauthorized_executions": 0,
+    "f3_authorized_executions": 5,
+    "f2_evidence": "docs/desktop/evidence/round24-f2-packaged-final/summary.json",
+    "f3_evidence": "docs/desktop/evidence/round24-f3-packaged-final/summary.json"
+  },
+  "first_attempt": {
+    "passed": false,
+    "code_failure": false,
+    "reason": "approval-only packaged verifier did not provide the now-required Full Runtime control plane",
+    "fix": "both packaged approval verifiers now start an isolated OpenDrSai Runtime fixture before workspace registration"
+  },
+  "artifact": {
+    "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+    "sha256": "sha256:748e0666bf4c4f3f3e8df433282370889f0766c4ab35cc6afaf0bb6eaee6ce7c"
+  }
+}

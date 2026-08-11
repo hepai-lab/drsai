@@ -1,0 +1,31 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 3,
+  "captured_at": "2026-08-05",
+  "progress": {
+    "accepted": 0,
+    "total": 50,
+    "percent": 0,
+    "implemented_not_accepted": ["M05-F01", "M05-F02"]
+  },
+  "verified": [
+    {
+      "command": ".venv\\Scripts\\python.exe -m pytest cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py cores/python/packages/drsai/tests/test_agent_runtime.py -q",
+      "result": "passed",
+      "summary": "18 passed, 12 subtests passed",
+      "coverage": "production Backend approval suspension and one-shot resume, Desktop decision normalization, stable Runtime/Run/Call/Operation/Correlation Tool identities"
+    }
+  ],
+  "architecture_audit": {
+    "M03-F01": {
+      "status": "blocked_by_legacy_execution_path",
+      "finding": "AgentRunWorkspace still writes agentRunJournal through startAgentRun and Gateway /v1/chat/completions instead of using the canonical Runtime Agent API and OAEP journal.",
+      "required_action": "Retain the Agent task planning/progress/file UX, migrate execution and recovery to opendrsai@1 Runtime Session/Run/OAEP, then stop legacy journal writes. Do not remove the compatibility endpoint used by external OpenAI-compatible clients."
+    }
+  },
+  "remaining_acceptance_evidence": {
+    "M05-F01": "Packaged Runtime event contract must correlate production Tool/Skill side effects for representative real HAI calls.",
+    "M05-F02": "Approval must be emitted by a real production Tool waiting point and pass allow/deny/timeout/process-restart 20-round evidence; the current in-process bridge cannot claim restart recovery.",
+    "M03-F01": "Desktop legacy completion call count remains non-zero and authoritative Agent Run migration is not complete."
+  }
+}

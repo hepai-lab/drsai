@@ -170,6 +170,7 @@ enum class RemoteConnectionState {
     ONLINE,
     DEGRADED,
     OFFLINE,
+    PAUSED,
     AUTH_REQUIRED,
     INCOMPATIBLE,
 }

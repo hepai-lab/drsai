@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-04T17:30:19.129610+00:00",
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "dirty": true,
+  "apk": {
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+    "sha256": "6787c01c6f8122bc37608594b10f558cc2cd0c00cefc73aa9cbb88b2fadd5ce6"
+  },
+  "package": "ai.drsai.remote.debug",
+  "version": "1.5.6",
+  "device": {
+    "serial": "emulator-5560"
+  },
+  "tests": {
+    "jvm": {
+      "tests": 411,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 2
+    },
+    "instrumentation": {
+      "tests": 4,
+      "failures": 0
+    }
+  },
+  "checks": {
+    "unit_suite_green": true,
+    "tool_schema_contract": true,
+    "skill_capability_pinning": true,
+    "model_tool_error_is_explicit": true,
+    "approval_is_single_decision": true,
+    "device_registry_and_python_journey_4_tests": true,
+    "base_tools_execute_without_saf": true,
+    "forged_saf_fails_closed": true,
+    "live_provider_tool_chain": true
+  },
+  "features": {
+    "M05-F01": true,
+    "M05-F02": true,
+    "M05-F03": true,
+    "M05-F04": true,
+    "M05-F05": true,
+    "M05-F06": true
+  },
+  "provider": {
+    "apk_sha256": "6787c01c6f8122bc37608594b10f558cc2cd0c00cefc73aa9cbb88b2fadd5ce6",
+    "code": 200,
+    "device_kind": "physical",
+    "distinct_tools": [
+      "acceptance_tool_1",
+      "acceptance_tool_2",
+      "acceptance_tool_3",
+      "acceptance_tool_4",
+      "acceptance_tool_5"
+    ],
+    "generated_at": "2026-08-04T17:29:54.327255+00:00",
+    "model": "deepseek-v4-flash",
+    "model_id": "cd423f98-a494-3af2-ab7c-f9813c10af52",
+    "passed": true,
+    "provider": "智增增",
+    "provider_id": "a10daafc-d759-4e7c-8916-0d680fa81224",
+    "schema_version": 1,
+    "serial": "adb-R5GYB3S8ACH-VgdHyH._adb-tls-connect._tcp",
+    "status": "passed",
+    "tool_calls": 5
+  },
+  "passed": true,
+  "status": "passed"
+}

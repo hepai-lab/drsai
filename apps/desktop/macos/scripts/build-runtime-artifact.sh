@@ -24,6 +24,12 @@ if [[ ! -f "$LOCK_FILE" || ! -f "$BROWSER_LOCK_FILE" ]]; then
   echo "Missing reviewed Runtime dependency lock: $LOCK_FILE or $BROWSER_LOCK_FILE" >&2
   exit 1
 fi
+SOURCE_PYTHON_VERSION="$("$RUNTIME_PYTHON" -c 'import platform; print(platform.python_version())')"
+if [[ "$SOURCE_PYTHON_VERSION" != "$EXPECTED_PYTHON" ]]; then
+  echo "Runtime source interpreter must be Python $EXPECTED_PYTHON, got $SOURCE_PYTHON_VERSION from $RUNTIME_PYTHON." >&2
+  echo "Set OPENDRSAI_RUNTIME_PYTHON to the reviewed Python $EXPECTED_PYTHON executable." >&2
+  exit 1
+fi
 
 rm -rf "$STAGING"
 mkdir -p "$STAGING/drsai-agent" "$OUTPUT"

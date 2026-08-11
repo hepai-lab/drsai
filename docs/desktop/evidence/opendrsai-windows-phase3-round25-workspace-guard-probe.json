@@ -1,0 +1,31 @@
+{
+  "schema_version": "opendrsai.windows.workspace-guard-probe/1",
+  "captured_at": "2026-08-05T00:52:09Z",
+  "checks": {
+    "normal_file_write": true,
+    "normal_file_read": true,
+    "file_traversal_rejected": true,
+    "file_absolute_rejected": true,
+    "file_drive_rejected": true,
+    "file_unc_rejected": true,
+    "junction_read_rejected": true,
+    "junction_write_rejected": true,
+    "case_insensitive_root_allowed": true,
+    "case_prefix_escape_rejected": true,
+    "command_traversal_rejected": true,
+    "command_absolute_rejected": true,
+    "command_drive_rejected": true,
+    "command_unc_rejected": true,
+    "command_junction_rejected": true,
+    "parent_toctou_rejected": true,
+    "parent_toctou_no_outside_write": true,
+    "registered_root_swap_rejected": true,
+    "command_root_swap_rejected": true,
+    "root_swap_no_outside_write": true,
+    "outside_tree_unchanged": true
+  },
+  "passed_checks": 21,
+  "outside_before": "sha256:acc7fa6a909d978a5a2446a59215e736ddcb465fc58e7a6bf908cf2776fd89c4",
+  "outside_after": "sha256:acc7fa6a909d978a5a2446a59215e736ddcb465fc58e7a6bf908cf2776fd89c4",
+  "backend_source": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\desktop\\windows\\release\\win-unpacked\\resources\\app.asar.unpacked\\resources\\backend\\drsai-backend-source.zip"
+}

@@ -90,7 +90,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     clearAuthSession();
     // 根据GATSBY_SSO环境变量决定跳转目标
     if (process.env.GATSBY_SERVICE_MODE === "DEV") {
-      window.location.href = "/login";
+      window.location.href = "/login?logout=1";
     } else {
       window.location.href = "/umt/logout";
     }

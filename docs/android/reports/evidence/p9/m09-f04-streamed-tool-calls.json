@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "feature_id": "M09-F04",
+  "generated_at": "2026-08-05T11:47:03.663055+00:00",
+  "passed": true,
+  "gates": {
+    "fragmented_id_name_and_arguments_reconstruct_exactly": true,
+    "interleaved_multiple_calls_preserve_index_order": true,
+    "missing_id_or_name_fails_closed": true,
+    "duplicate_identity_fragments_fail_closed": true,
+    "invalid_json_fails_closed": true,
+    "index_gap_and_bounds_fail_closed": true,
+    "argument_buffer_is_bounded": true,
+    "production_host_uses_single_strict_assembler": true,
+    "focused_jvm_suites_are_green": true
+  },
+  "jvm_suites": {
+    "tests": 14,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "reports": [
+      {
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.StreamedToolCallAssemblerTest",
+        "sha256": "b3526d8ec4c4bdbcb54f550877a36113b4264e4a627493f65fd9896d2ccb9792"
+      },
+      {
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.AndroidPythonHostAdaptersTest",
+        "sha256": "25e3efcaf9706aee79187832a6909445bca64eca306f05969fb0766a2c8e0188"
+      }
+    ]
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/StreamedToolCallAssembler.kt": "fcf92d277bc839197882d37d25757c7bc7b6bac8f6a520a6398787f8e5617528",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/AndroidPythonHostAdapters.kt": "0755a605cc98bdef694a376e3e55e8ac7a0daabc2bd7163afbe6dbe2128da183",
+    "apps/android/app/src/test/java/ai/drsai/remote/StreamedToolCallAssemblerTest.kt": "032ecb0ef92f9e2dd04edd12521128294fab9c768156c1407abf9c44e44b558a",
+    "apps/android/app/src/test/java/ai/drsai/remote/AndroidPythonHostAdaptersTest.kt": "096571479c377768009d269b3c9088b5316c00cb5b7de533d3c30816802e86b7"
+  }
+}

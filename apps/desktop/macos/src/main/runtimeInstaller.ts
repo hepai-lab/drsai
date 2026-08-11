@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { execFile } from "node:child_process";
@@ -26,7 +26,16 @@ interface RuntimeManifest {
 let activeInstall: AbortController | null = null;
 
 export function bundledRuntimeManifestPath(): string { return join(process.resourcesPath, "runtime", "runtime-manifest.json"); }
-export function hasBundledRuntime(): boolean { return app.isPackaged && existsSync(bundledRuntimeManifestPath()); }
+export function hasBundledRuntime(): boolean {
+  if (!app.isPackaged || !existsSync(bundledRuntimeManifestPath())) return false;
+  try {
+    const manifest = JSON.parse(readFileSync(bundledRuntimeManifestPath(), "utf8")) as Partial<RuntimeManifest>;
+    if (!isSafeRelativePath(manifest.archive)) return false;
+    return existsSync(resolveResource(resolve(dirname(bundledRuntimeManifestPath())), manifest.archive));
+  } catch {
+    return false;
+  }
+}
 export function cancelBundledRuntimeInstall(): boolean {
   if (!activeInstall || activeInstall.signal.aborted) return false;
   activeInstall.abort();
@@ -103,14 +112,14 @@ export function runtimeExtractionTimeoutMs(archiveSize: number): number {
   return Math.min(MAX_EXTRACTION_TIMEOUT_MS, Math.max(MIN_EXTRACTION_TIMEOUT_MS, Math.ceil(archiveSize / MIN_ARCHIVE_BYTES_PER_SECOND) * 1_000));
 }
 
-export async function inspectInstalledRuntime(): Promise<{ version: string | null; healthy: boolean }> {
+export async function inspectInstalledRuntime(): Promise<{ version: string | null; archiveSha256: string | null; healthy: boolean }> {
   const marker = join(DRSAI_REPO, ".opendrsai-runtime.json");
-  if (!existsSync(marker) || !existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) return { version: null, healthy: false };
+  if (!existsSync(marker) || !existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) return { version: null, archiveSha256: null, healthy: false };
   try {
     const manifest = validateManifest(JSON.parse(await readFile(marker, "utf8")) as Partial<RuntimeManifest>);
     await verifyRuntimeContents(DRSAI_REPO, manifest.files, new AbortController().signal, true, manifest.pythonVersion);
-    return { version: manifest.version, healthy: true };
-  } catch { return { version: null, healthy: false }; }
+    return { version: manifest.version, archiveSha256: manifest.sha256, healthy: true };
+  } catch { return { version: null, archiveSha256: null, healthy: false }; }
 }
 
 async function readManifest(): Promise<RuntimeManifest> {

@@ -1,0 +1,95 @@
+{
+  "schema_version": "opendrsai.windows.phase3.model-convergence-evidence/1",
+  "captured_at": "2026-08-05T19:20:36+08:00",
+  "feature_id": "P3-MC06",
+  "status": "accepted_local",
+  "scope": "OpenDrSai native Full Agent Runtime Provider-declared image generation and editing; Codex Adapter excluded",
+  "checks": {
+    "provider_model_operations_are_the_only_capability_switch": true,
+    "operation_declarations_are_model_scoped_and_persisted": true,
+    "unsupported_protocol_is_rejected_without_endpoint_guessing": true,
+    "image_generation_and_image_edit_are_independent_capabilities": true,
+    "agent_image_model_policy_uses_explicit_model_ref": true,
+    "image_setting_is_hidden_without_eligible_models": true,
+    "image_setting_filters_input_output_operation_and_availability": true,
+    "image_model_can_be_explicitly_disabled": true,
+    "native_image_tools_are_injected_into_production_agent": true,
+    "run_context_is_bound_and_cleared_across_thread_boundary": true,
+    "external_image_calls_require_runtime_approval": true,
+    "real_tool_start_before_approval_order_is_supported": true,
+    "approval_and_call_id_bind_one_durable_side_effect": true,
+    "failed_tool_never_records_fake_side_effect_completion": true,
+    "generation_uses_exact_openai_compatible_route": true,
+    "editing_revalidates_workspace_resource_digest_and_image_decode": true,
+    "single_attached_image_can_be_edited_without_manual_resource_id": true,
+    "custom_provider_credentials_are_not_replaced_by_hepai_identity": true,
+    "redirect_and_url_only_image_results_are_rejected": true,
+    "result_bytes_dimensions_pixels_and_format_are_bounded": true,
+    "cancelled_or_unknown_outcome_is_not_automatically_replayed": true,
+    "successful_output_is_a_persistent_runtime_artifact": true,
+    "artifact_created_event_is_emitted_without_base64_body": true,
+    "desktop_renderer_e2e_exposes_only_declared_image_model": true,
+    "bundled_backend_wheel_install_passes": true,
+    "windows_unpacked_package_and_real_ipc_smoke_pass": true
+  },
+  "stable_errors": [
+    "image_model_unconfigured",
+    "image_operation_unsupported",
+    "image_operation_protocol_unsupported",
+    "image_edit_resource_invalid",
+    "image_provider_timeout",
+    "image_provider_rejected",
+    "image_provider_invalid_response",
+    "image_result_too_large",
+    "side_effect_outcome_unknown",
+    "run_cancelled"
+  ],
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest -q <MC06 provider, catalog, policy, image adapter, input-resource, production Agent and approval suites>",
+      "result": "143 passed, 1 skipped"
+    },
+    {
+      "command": "npm run typecheck && npm run verify:model-provider-config",
+      "result": "passed; Electron main/renderer types and capability-driven desktop contracts"
+    },
+    {
+      "command": "npm run verify:model-provider-ui-e2e",
+      "result": "passed; declared image model is visible in Agent configuration and Provider journeys remain valid"
+    },
+    {
+      "command": "npm run verify:bundled-backend-source",
+      "result": "passed; source archive verified and drsai-1.5.5 wheel built and installed"
+    },
+    {
+      "command": "npm run build:unpack",
+      "result": "passed; production main/preload/renderer and Windows x64 unpacked package rebuilt"
+    },
+    {
+      "command": "npm run verify:packaged",
+      "result": "passed; packaged app smoke with real main/preload/IPC"
+    }
+  ],
+  "artifacts": {
+    "image_operation_adapter": {"path": "cores/python/packages/drsai/src/drsai/backend/runtime/image_operations.py", "sha256": "f8930d3c9b142bdc37a453723dd81ed8db80a9266269ce96adef3c04bd11a04b"},
+    "runtime_input_resources": {"path": "cores/python/packages/drsai/src/drsai/backend/runtime/input_resources.py", "sha256": "a4eb21c63f2e0e44810311ed53f0b848f37771487a0ad22feb9bc85c98268b5c"},
+    "gateway": {"path": "cores/python/packages/drsai/src/drsai/backend/gateway.py", "sha256": "9be9583b58cbb27b015cd2e1812ad69c6896248766c2d6386297e1cefcf1e698"},
+    "production_agent_approval_binding": {"path": "cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/drsai_assistant.py", "sha256": "246fc0ddcea3cbb6f65a1a7b828afd738418e505ccdb9311816fd9cbe93ebb89"},
+    "desktop_renderer": {"path": "apps/desktop/shared/renderer/src/App.tsx", "sha256": "87cdbb2ac731f7fe2d8823ceb708e0644db2dd385a16d501dfed33e6fdb27a8f"},
+    "packaged_backend_source": {"path": "apps/desktop/windows/resources/backend/backend-source.json", "sha256": "38db6926fafc0dc4a3315c592fea24f0422cd910d41713b5cf79389dee890ea5"},
+    "desktop_main_bundle": {"path": "apps/desktop/windows/out/main/index.js", "sha256": "373c1f9078f1dfce87fdf91ff6a897eb93e7c33420c3c8c170b51418db059fb6"},
+    "desktop_renderer_bundle": {"path": "apps/desktop/windows/out/renderer/assets/index-DJtX7aRk.js", "sha256": "114695518f2dc1b0e0583f8886d216c8e7cf8ea2b316fc3de70e7060add745bf"},
+    "unpacked_app_asar": {"path": "apps/desktop/windows/release/win-unpacked/resources/app.asar", "sha256": "324c33107c63b31eb823f33ee4026da40598fd69aba90a6c30c15998dcb515a6"}
+  },
+  "release_gates_remaining": [
+    "A real authenticated HAI image Provider smoke for both generation and editing is required in the RC environment.",
+    "P3-MC07 usability/recovery and P3-MC08 migration/release gates remain open."
+  ],
+  "progress": {
+    "model_convergence": "6/8 (75%) local implementation acceptance",
+    "phase3_product_ledger": "29/50 (58%)",
+    "product_baseline": "82/93 (88.2%)",
+    "note": "The model-convergence sub-ledger is additive detail and does not inflate the fixed P3 or product-baseline ledgers."
+  },
+  "next": "P3-MC07 usability and recovery: Provider grouping, purpose/status filtering, stale model recovery, automatic refresh, and distinct empty-catalog guidance"
+}

@@ -1,0 +1,80 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 30,
+  "captured_at": "2026-08-05T03:03:11.341Z",
+  "feature": "M06-F04",
+  "result": "accepted",
+  "scope": "OpenDrSai Windows App with HAI configuration and OpenDrSai Full Agent Runtime; no Codex dependency",
+  "implementation": {
+    "shared_boundary": "apps/desktop/shared/renderer/src/userFacingLanguage.ts",
+    "business_fields": ["action", "object", "scope", "impact"],
+    "primary_flows": [
+      "chat activity",
+      "Approval Center",
+      "Run Inspector",
+      "model and agent settings",
+      "workspace actions",
+      "Agent Square",
+      "preview browser"
+    ],
+    "technical_disclosure": "Identifiers, redacted object data, diagnostics, and protocol details remain available only after an explicit technical-details action."
+  },
+  "focused_tests": {
+    "contract_checks": 23,
+    "hostile_term_and_error_checks": 14,
+    "f3_business_approval_contract": true,
+    "typescript": true,
+    "passed": true,
+    "commands": [
+      "npm run verify:m06-user-facing-language",
+      "npm run verify:f3-approval-business-info",
+      "npm run typecheck"
+    ]
+  },
+  "packaged_ui": {
+    "real_executable": true,
+    "passed_checks": 71,
+    "total_checks": 71,
+    "business_scenarios": 5,
+    "accessibility_tree_captured": true,
+    "real_keyboard_allow_and_reject": true,
+    "plain_language_checks": 5,
+    "accessible_business_card_names": 5,
+    "unauthorized_effects": 0,
+    "authorized_effects": 5,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "summary_sha256": "sha256:5527986ce0c6434ecd70eab3001de2e3df03e0b451033c54abad33b157f16751",
+    "evidence": "apps/desktop/windows/release/product-evidence/m06-user-facing-language/packaged-final/summary.json"
+  },
+  "acceptance": {
+    "business_action_object_scope_impact_visible": true,
+    "raw_json_absent_from_primary_run_details": true,
+    "raw_exceptions_absent_from_primary_flows": true,
+    "protocol_terms_rejected_from_primary_business_copy": true,
+    "call_identifiers_removed_from_chat_primary_copy": true,
+    "technical_details_explicitly_disclosed": true,
+    "codex_wording_removed_from_user_errors": true,
+    "screen_reader_business_context_complete": true
+  },
+  "global_release_blockers_not_claimed_by_this_feature": [
+    "Renderer UI legacy contract: agent change-set accept/reject wording",
+    "Renderer UI legacy contract: top-right message quick-copy control",
+    "Renderer UI legacy contract: new-chat example/composer markers",
+    "Renderer UI legacy contract: current right-panel static tab list"
+  ],
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:f300f6580cdfc5dbe2722f323f1566a3e66970c869e1bac612c43ab4f7894df8"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:1a5ae545abe49d617bb19ae0619dd9ffd471dc01b0c2fc553e91117d38e85bd4"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:aad5233fa8c9463ba145ba282357e867d20f72fcdbc8b4dae0ec4d7ee3fb9e1b"
+    }
+  }
+}

@@ -5,12 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import ai.drsai.remote.BuildConfig
-import ai.drsai.remote.data.AccessTokenCoordinator
-import ai.drsai.remote.data.OidcClient
-import ai.drsai.remote.data.SecureTokenStore
-import ai.drsai.remote.remote.data.RelayRemoteRepository
 import ai.drsai.remote.remote.data.RemoteAuditEntry
+import ai.drsai.remote.remote.data.RemoteWorkspaceContainer
+import ai.drsai.remote.remote.data.safeRemoteFailureMessage
 import ai.drsai.remote.remote.model.RunId
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
@@ -37,11 +34,7 @@ class RemoteAuditViewModel(
     runtimeName: String,
     workspaceName: String,
 ) : AndroidViewModel(app) {
-    private val tokens = SecureTokenStore(app)
-    private val auth = AccessTokenCoordinator(tokens, OidcClient(refreshClientId = { tokens.oidcClientId }))
-    private val repository = RelayRemoteRepository(
-        BuildConfig.RELAY_BASE_URL, auth::current, refreshAfter = auth::refreshAfter,
-    )
+    private val repository = RemoteWorkspaceContainer.get(app).repository
     private val mutableState = MutableStateFlow(RemoteAuditUiState(runtimeName, workspaceName))
     val state: StateFlow<RemoteAuditUiState> = mutableState.asStateFlow()
 
@@ -51,7 +44,7 @@ class RemoteAuditViewModel(
         mutableState.update { it.copy(loading = true, error = null) }
         runCatching { repository.audit(runtimeId, workspaceId, runId) }
             .onSuccess { entries -> mutableState.update { it.copy(entries = entries, loading = false) } }
-            .onFailure { failure -> mutableState.update { it.copy(loading = false, error = failure.message ?: "审计记录加载失败") } }
+            .onFailure { failure -> mutableState.update { it.copy(loading = false, error = safeRemoteFailureMessage(failure)) } }
     }
 
     companion object {

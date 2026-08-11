@@ -31,7 +31,7 @@ export function registerMacosRemoteAccessIpc(
   ipcMain.handle("desktop:remote-gateway-install-approval", async (_event, request) => {
     const normalized = validateRemoteGatewayInstallRequest(request);
     const stable = createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
-    return services.approvals.propose({ source: "network", actionKind: "external.service", title: `Remote Gateway ${normalized.action}`, detail: `Approve a verified, cancellable Remote Gateway transaction.\nHost: ${normalized.hostAlias}\nVersion: ${normalized.version ?? "rollback"}`, target: normalized.hostAlias, risk: "high", idempotencyKey: `remote-gateway:${stable}` }, async () => { await remoteGatewayInstaller.install(normalized); return true; });
+    return services.approvals.propose({ source: "connector", actionKind: "external.service", title: `Remote Gateway ${normalized.action}`, detail: `Approve a verified, cancellable Remote Gateway transaction.\nHost: ${normalized.hostAlias}\nVersion: ${normalized.version ?? "rollback"}`, target: normalized.hostAlias, risk: "high", idempotencyKey: `remote-gateway:${stable}` }, async () => { await remoteGatewayInstaller.install(normalized); return true; });
   });
   ipcMain.handle("desktop:remote-gateway-cancel", (_event, hostAlias) => remoteGatewayInstaller.cancel(hostAlias));
   ipcMain.handle("desktop:remote-workspace-connect", (_event, request) => remoteWorkspaceController.connect(request));

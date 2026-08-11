@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { appContext } from "../../../hooks/provider";
+import { useLang } from "../../../i18n/useLang";
 import { IStatus } from "../../../components/types/app";
 import { InputRequest, Session } from "../../../components/types/datamodel";
 import { IPlan } from "../../../components/types/plan";
@@ -37,7 +38,7 @@ import { usePlanSearch } from "./hooks/usePlanSearch";
 
 // Import components
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
-import { agentWorkerAPI, fileAPI, sessionAPI } from "@/components/views/api";
+import { agentWorkerAPI, skillsAPI, sessionAPI } from "@/components/views/api";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { useConfigStore } from "@/hooks/store";
 import DragDropOverlay from "./components/DragDropOverlay";
@@ -124,6 +125,7 @@ const ChatInput = React.forwardRef<
     const [text, setText] = React.useState("");
     const [dragOver, setDragOver] = React.useState(false);
     const [isDragActive, setIsDragActive] = React.useState(false);
+    const { t } = useLang();
     const { darkMode, user } = React.useContext(appContext) as {
       darkMode: string;
       user: { email: string };
@@ -228,11 +230,11 @@ const ChatInput = React.forwardRef<
       setSkillModalOpen(true);
       setSkillModalSearch("");
       setSkillModalLoading(true);
-      void fileAPI
-        .listHepaiFiles(userId)
+      void skillsAPI
+        .listUserSkills(userId)
         .then((rows) => {
           setSkillModalRows(
-            rows.map((r) => ({ id: r.id, filename: r.filename, url: r.url }))
+            rows.map((r) => ({ id: r.slug, filename: r.name, url: r.download_url }))
           );
           setSkillModalSelectedIds(new Set(attachedSkills.map((s) => s.id)));
         })
@@ -647,9 +649,15 @@ const ChatInput = React.forwardRef<
     // (e.g. RightPanel 模板库 "click-to-use" flow).
     React.useEffect(() => {
       const handler = (e: Event) => {
-        const detail = (e as CustomEvent<{ text?: string }>).detail;
+        const detail = (e as CustomEvent<{ text?: string; append?: boolean }>).detail;
         if (typeof detail?.text === "string") {
-          applyValue(detail.text);
+          if (detail.append) {
+            const current = textAreaRef.current?.value ?? text;
+            const separator = current.trim() ? "\n" : "";
+            applyValue(current + separator + detail.text);
+          } else {
+            applyValue(detail.text);
+          }
         }
       };
       window.addEventListener("drsai:chatinput:setValue", handler as EventListener);
@@ -1050,12 +1058,12 @@ const ChatInput = React.forwardRef<
                     }}
                     placeholder={
                       runStatus === "awaiting_input"
-                        ? "Type your response here..."
+                        ? t("chatInput.placeholder.response")
                         : enable_upload
                           ? dragOver
-                            ? "Drop files here..."
-                            : "Type your message here..."
-                          : "Type your message here..."
+                            ? t("chatInput.placeholder.dropFiles")
+                            : t("chatInput.placeholder.message")
+                          : t("chatInput.placeholder.message")
                     }
                     disabled={isInputDisabled}
                   />

@@ -5,11 +5,10 @@ import { readFile, stat } from "fs/promises";
 import { existsSync } from "fs";
 import { randomUUID } from "crypto";
 import { join } from "path";
-import type { AgentRunEvent, AgentRunFileEvent, AgentRunRequest, DesktopTaskPlanStep } from "../api/desktopApi";
+import type { AgentRunEvent, AgentRunFileEvent, AgentRunRequest, ChatAttachment, ChatEvent, DesktopTaskPlanStep } from "../api/desktopApi";
 import { buildAgentTaskDepthContract, isAgentTaskDepth } from "../api/agentTaskDepth";
 import { invalidateAuthSession, requireAuthContext, type AuthContext } from "./auth";
 import { getGatewayRequestHeaders, startGateway } from "./gateway";
-import { getDefaultModelAlias } from "./modelDefaults";
 import {
   ChatSseError,
   isCompletionDoneFrame,
@@ -19,7 +18,7 @@ import {
 } from "./sseParser";
 import { listThreads, updateThread, upsertThreadFromRun } from "./threads";
 import { createWorkspaceCheckpoint } from "./workspaceCheckpoints";
-import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
+import { createFailureEscalation } from "./failureRecovery";
 import {
   RecoverableStreamError,
   appendResumedContent,
@@ -31,11 +30,12 @@ import {
 } from "./networkRecovery";
 import { listRecordedAgentRunEvents, recordAgentRunEvent } from "./agentRunJournal";
 import { BoundedEventDispatcher } from "./boundedEventDispatcher";
+import { abortChat, startChat } from "./chat";
+import { createOaepAgentRunBridge } from "./oaepAgentRunBridge";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_RUNS = 3;
 const MAX_TASK_CHARS = 80_000;
-const MAX_MODEL_CHARS = 120;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
 const MAX_SSE_BUFFER_CHARS = 1_000_000;
 const MAX_ERROR_BODY_BYTES = 64_000;
@@ -62,6 +62,7 @@ function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatch
     capacity: 256,
     deliver: (event) => { if (!webContents.isDestroyed()) webContents.send("desktop:agent-run-event", event); },
     merge: (previous, next) => previous.requestId === next.requestId && previous.type === "chunk" && next.type === "chunk"
+      && previous.oaepItemId === next.oaepItemId
       ? { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` }
       : null,
   });
@@ -93,24 +94,12 @@ export async function startAgentRun(
     throw new Error("Agent run request is already active.");
   }
 
-  const auth = await requireAuthContext();
+  if (!request.workspacePath) {
+    throw new Error("Choose an OpenDrSai workspace before starting an Agent task.");
+  }
   const controller = new AbortController();
   activeRuns.set(requestId, { controller, request, webContents });
-
-  runAgent(webContents, requestId, sessionId, runId, request, auth, controller).catch((error) => {
-    const timedOut = controller.signal.aborted && controller.signal.reason === "timeout";
-    emit(webContents, {
-      requestId,
-      sessionId,
-      runId,
-      type: controller.signal.aborted && !timedOut ? "aborted" : "error",
-      error: timedOut
-        ? `Gateway agent run timed out after ${Math.round(AGENT_RUN_TIMEOUT_MS / 1000)} seconds. Check model/API key configuration.`
-        : error instanceof Error ? error.message : String(error),
-      failureRecovery: getFailureRecovery(error),
-    });
-    activeRuns.delete(requestId);
-  });
+  startRuntimeAgentSurface(webContents, requestId, sessionId, runId, request);
 
   return { requestId, sessionId, runId };
 }
@@ -122,7 +111,60 @@ export function abortAgentRun(requestId: string): boolean {
   const active = activeRuns.get(requestId);
   if (!active) return false;
   active.controller.abort("user");
-  return true;
+  return abortChat(requestId);
+}
+
+function startRuntimeAgentSurface(
+  webContents: WebContents,
+  requestId: string,
+  sessionId: string,
+  runId: string,
+  request: AgentRunRequest,
+): void {
+  const bridge = createOaepAgentRunBridge({ requestId, sessionId, runId });
+  const target = {
+    send(channel: string, event: unknown): void {
+      if (channel !== "desktop:chat-event" || !event || typeof event !== "object") return;
+      const mapped = bridge.map(event as ChatEvent);
+      for (const item of mapped) emit(webContents, item);
+      if (mapped.some((item) => item.type === "done" || item.type === "error" || item.type === "aborted")) {
+        activeRuns.delete(requestId);
+      }
+    },
+  };
+  startChat(target, {
+    requestId,
+    threadId: sessionId,
+    sessionId,
+    runId,
+    agentId: "my-drsai",
+    workspacePath: request.workspacePath,
+    attachments: normalizeAgentRunAttachments(request.files),
+    messages: [{ role: "user", content: buildAgentExecutionPrompt(request) }],
+    metadata: {
+      ...(request.metadata || {}),
+      desktop_surface: "agent_run",
+      desktop_request_id: requestId,
+      ...(request.executionDepth ? { execution_depth: request.executionDepth } : {}),
+      execution_plan: request.executionPlan || [],
+      team_config: request.teamConfig,
+      settings_config: request.settingsConfig,
+    },
+  });
+}
+
+function normalizeAgentRunAttachments(files: AgentRunRequest["files"]): ChatAttachment[] {
+  if (!Array.isArray(files)) return [];
+  return files.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const item = value as Record<string, unknown>;
+    if (typeof item.path !== "string" || !item.path.trim()) return [];
+    const kind = item.kind === "folder" ? "folder" : "file";
+    const name = typeof item.name === "string" && item.name.trim()
+      ? item.name.trim()
+      : item.path.split(/[\\/]/).filter(Boolean).at(-1) || item.path;
+    return [{ kind, path: item.path.trim(), name } satisfies ChatAttachment];
+  });
 }
 
 export async function recoverAgentRun(rawThreadId: unknown, eventTarget?: WebContents): Promise<AgentRunEvent[]> {
@@ -172,14 +214,6 @@ function validateAgentRunRequest(rawRequest: unknown): AgentRunRequest {
     throw new Error(`Agent run task cannot exceed ${MAX_TASK_CHARS} characters.`);
   }
   if (
-    request.model !== undefined &&
-    (typeof request.model !== "string" ||
-      request.model.length > MAX_MODEL_CHARS ||
-      /[\r\n]/.test(request.model))
-  ) {
-    throw new Error("Agent run model is invalid.");
-  }
-  if (
     request.workspacePath !== undefined &&
     (typeof request.workspacePath !== "string" ||
       request.workspacePath.length > MAX_WORKSPACE_PATH_CHARS ||
@@ -199,7 +233,6 @@ function validateAgentRunRequest(rawRequest: unknown): AgentRunRequest {
         ? request.executionDepth
         : (() => { throw new Error("Agent run execution depth is invalid."); })(),
     executionPlan: normalizeExecutionPlan(request.executionPlan),
-    model: request.model?.trim() || undefined,
     workspacePath: request.workspacePath?.trim() || undefined,
     files: Array.isArray(request.files) ? request.files : undefined,
     teamConfig: isRecord(request.teamConfig) ? request.teamConfig : null,
@@ -208,7 +241,7 @@ function validateAgentRunRequest(rawRequest: unknown): AgentRunRequest {
   };
 }
 
-async function runAgent(
+export async function runLegacyAgentCompatibility(
   webContents: WebContents,
   requestId: string,
   sessionId: string,
@@ -217,6 +250,10 @@ async function runAgent(
   auth: AuthContext,
   controller: AbortController,
 ): Promise<void> {
+  if (legacyAgentRuntimeDisabled()) {
+    throw new Error("Legacy Agent execution is unavailable; start the Run through the Agent Runtime so its model policy is enforced.");
+  }
+  /* c8 ignore start -- retained only while old callers are migrated */
   emit(webContents, { requestId, sessionId, runId, type: "start" });
   await upsertThreadFromRun({
     id: sessionId,
@@ -227,6 +264,9 @@ async function runAgent(
     lastRequestId: requestId,
     status: "running",
   });
+  if (process.env.OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE?.trim() && request.metadata?.packaged_crash_fixture === true) {
+    await new Promise<void>((_resolve, reject) => controller.signal.addEventListener("abort", () => reject(new DOMException("Packaged Agent crash fixture aborted.", "AbortError")), { once: true }));
+  }
 
   const timeout = setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS);
   const changeSetCheckpointId = await prepareAgentChangeSetCheckpoint(request, runId);
@@ -237,11 +277,7 @@ async function runAgent(
       throw new Error("Gateway is not ready. Install or start OpenDrSai first.");
     }
 
-    const model =
-      request.model ||
-      resolveModelFromSettings(request.settingsConfig) ||
-      getDefaultModelAlias() ||
-      "drsai";
+    const model = "legacy-agent-runtime-disabled";
     const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set(), planAdjustmentKeys: new Set() };
     const recoveryStartedAt = Date.now();
     const send = async (authContext: AuthContext, recoveryAttempt: number): Promise<boolean> => {
@@ -259,6 +295,8 @@ async function runAgent(
         body: JSON.stringify({
           model,
           messages: [{ role: "user", content: buildAgentExecutionPrompt(request) }],
+          display_message: request.task,
+          source_message_id: requestId,
           stream: true,
           user_id: authContext.userId,
           thread_id: sessionId,
@@ -363,6 +401,11 @@ async function runAgent(
   } finally {
     clearTimeout(timeout);
   }
+  /* c8 ignore stop */
+}
+
+function legacyAgentRuntimeDisabled(): boolean {
+  return true;
 }
 
 async function prepareAgentChangeSetCheckpoint(
@@ -706,11 +749,6 @@ async function readLimitedText(response: Response, maxBytes: number): Promise<st
   }
   await reader.cancel().catch(() => undefined);
   return new TextDecoder().decode(Buffer.concat(chunks));
-}
-
-function resolveModelFromSettings(settings: Record<string, unknown> | null | undefined): string | undefined {
-  const direct = settings?.defult_config_name || settings?.default_config_name;
-  return typeof direct === "string" && direct.trim() ? direct.trim() : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

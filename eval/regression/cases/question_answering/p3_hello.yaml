@@ -1,0 +1,24 @@
+schema_version: opendrsai.agent-regression-case/1
+id: p3.qa.hello
+revision: 1
+title: P3 formal simple question answering
+owner: agent-runtime
+tags: [p3, release, smoke, question_answering]
+agent: {definition: regression-smoke@1, model_profile: default}
+input:
+  messages:
+    - role: user
+      parts: [{type: text, text: hello}]
+environment:
+  network: disabled
+  session: {type: new, history: empty}
+expect:
+  run: {status: completed}
+  behavior:
+    tool_calls: {max: 0}
+    skill_activations: {max: 0}
+  output:
+    type: text
+    required_literals: [Hello, OpenDrSai, regression Agent]
+  artifacts: {max: 0}
+execution: {timeout_seconds: 30, attempts: 1, isolation: required}

@@ -16,6 +16,12 @@
 
 平台脚本位于 `scripts/`：`dev.sh` 启动本地 Gateway 与 Electron 热更新，`start.sh` 启动正式 macOS workspace，`setup-dev.sh` 在 `~/.drsai/drsai-agent` 创建隔离 venv、以 editable 模式安装真实 Python Runtime、验证 CLI/import，并安装和 typecheck Desktop 依赖。它不再创建可误报就绪状态的开发桩。
 
+与 Windows 根目录启动器对应的一键开发入口为：
+
+```bash
+./apps/desktop/macos-desktop-dev.sh
+```
+
 GitHub Channel 真实授权使用 Device OAuth。开发/打包环境必须提供 OAuth App 的 `OPENDRSAI_GITHUB_CLIENT_ID`；未配置时授权入口失败关闭。Device code 和 access token 不写入 Channel JSON，macOS 仅保存 Keychain reference；授权完成前 adapter 保持 `config_required`。
 
 在 `apps/desktop` 目录运行：
@@ -57,6 +63,8 @@ Runtime artifact 只能在 Apple Silicon macOS 构建。它包含隔离的 Pytho
 卸载应用只移除 `/Applications/OpenDrSai.app`，默认保留 `~/.drsai` 中的工作区、用户材料和登录外的本地数据；用户明确选择“删除全部本地数据”后才允许清理应用数据。更新器禁止降级安装，自动回滚只恢复上一个已签名 App，不回退或删除用户数据格式。
 
 应用更新使用 `electron-updater` 和签名 GitHub release 元数据，支持检查、下载、取消与退出安装。上一稳定版本回装、失败更新恢复和数据降级兼容仍必须在干净真机演练；静态契约不等于回滚验收已交付。
+
+CDN 优先、GitHub 回退、薄更新 Runtime 兼容策略、OSS 最小权限和首发/回滚操作见 [macOS 更新生产配置与首发手册](docs/macos-update-production-runbook.zh-CN.md)。
 
 ## 权限原则
 

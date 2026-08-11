@@ -1,0 +1,347 @@
+{
+  "schema": "opendrsai.codex-adapter-p9.ledger.v1",
+  "plan": "docs/remote_workespace/OpenDrSaiCodexAdapter_OAEP_P9真实增量与恢复闭环开发方案.md",
+  "total": 48,
+  "totals": {
+    "accepted": 48
+  },
+  "generatedAt": "2026-08-04T19:11:51.909Z",
+  "features": {
+    "M01-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-feature-ledger.mjs",
+      "suite": "p9-evidence",
+      "artifact": ".artifacts/codex-p9/results/p9-evidence.json",
+      "artifactDigest": "3bc9e92c1878d3b6ba5bba43167680a277e935a3b705f873b4d7a230e8644ea1"
+    },
+    "M01-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-feature-ledger.mjs",
+      "suite": "p9-evidence",
+      "artifact": ".artifacts/codex-p9/results/p9-evidence.json",
+      "artifactDigest": "3bc9e92c1878d3b6ba5bba43167680a277e935a3b705f873b4d7a230e8644ea1"
+    },
+    "M01-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-feature-ledger.mjs",
+      "suite": "p9-evidence",
+      "artifact": ".artifacts/codex-p9/results/p9-evidence.json",
+      "artifactDigest": "3bc9e92c1878d3b6ba5bba43167680a277e935a3b705f873b4d7a230e8644ea1"
+    },
+    "M01-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/run-codex-p9-live.mjs",
+      "suite": "p9-live",
+      "artifact": ".artifacts/codex-p9/results/p9-live.json",
+      "artifactDigest": "3d0537c5cc5d761bdeec8fd225df4dfaaf7ad86f3fa6502e6f7d9a395bb6d664"
+    },
+    "M01-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-feature-ledger.mjs",
+      "suite": "p9-electron",
+      "artifact": ".artifacts/codex-p9/results/p9-electron.json",
+      "artifactDigest": "266d90d838f68b7a2c48f79112fecb183727f0f41e844a16e25ea0d5dea46365"
+    },
+    "M01-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-feature-ledger.mjs",
+      "suite": "p9-evidence",
+      "artifact": ".artifacts/codex-p9/results/p9-evidence.json",
+      "artifactDigest": "3bc9e92c1878d3b6ba5bba43167680a277e935a3b705f873b4d7a230e8644ea1"
+    },
+    "M02-F01": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/runtime/agent_bindings.py",
+      "suite": "p9-binding",
+      "artifact": ".artifacts/codex-p9/results/p9-binding.json",
+      "artifactDigest": "b026ab6a59cd1d7ac5e110852fd04702531bc7fba850d2ef923d4384254bca6d"
+    },
+    "M02-F02": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/runtime/agent_bindings.py",
+      "suite": "p9-binding",
+      "artifact": ".artifacts/codex-p9/results/p9-binding.json",
+      "artifactDigest": "b026ab6a59cd1d7ac5e110852fd04702531bc7fba850d2ef923d4384254bca6d"
+    },
+    "M02-F03": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/runtime/agent_bindings.py",
+      "suite": "p9-binding",
+      "artifact": ".artifacts/codex-p9/results/p9-binding.json",
+      "artifactDigest": "b026ab6a59cd1d7ac5e110852fd04702531bc7fba850d2ef923d4384254bca6d"
+    },
+    "M02-F04": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/runtime/agent_bindings.py",
+      "suite": "p9-binding",
+      "artifact": ".artifacts/codex-p9/results/p9-binding.json",
+      "artifactDigest": "b026ab6a59cd1d7ac5e110852fd04702531bc7fba850d2ef923d4384254bca6d"
+    },
+    "M02-F05": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/runtime/agent_bindings.py",
+      "suite": "p9-binding",
+      "artifact": ".artifacts/codex-p9/results/p9-binding.json",
+      "artifactDigest": "b026ab6a59cd1d7ac5e110852fd04702531bc7fba850d2ef923d4384254bca6d"
+    },
+    "M02-F06": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/runtime/agent_bindings.py",
+      "suite": "p9-binding",
+      "artifact": ".artifacts/codex-p9/results/p9-binding.json",
+      "artifactDigest": "b026ab6a59cd1d7ac5e110852fd04702531bc7fba850d2ef923d4384254bca6d"
+    },
+    "M03-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p9-snapshot",
+      "artifact": ".artifacts/codex-p9/results/p9-snapshot.json",
+      "artifactDigest": "deaa5bbd87b497963c5b4649537fe458c2cc026e9d3a16fe2199c52e234a7e6e"
+    },
+    "M03-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p9-snapshot",
+      "artifact": ".artifacts/codex-p9/results/p9-snapshot.json",
+      "artifactDigest": "deaa5bbd87b497963c5b4649537fe458c2cc026e9d3a16fe2199c52e234a7e6e"
+    },
+    "M03-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p9-snapshot",
+      "artifact": ".artifacts/codex-p9/results/p9-snapshot.json",
+      "artifactDigest": "deaa5bbd87b497963c5b4649537fe458c2cc026e9d3a16fe2199c52e234a7e6e"
+    },
+    "M03-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p9-snapshot",
+      "artifact": ".artifacts/codex-p9/results/p9-snapshot.json",
+      "artifactDigest": "deaa5bbd87b497963c5b4649537fe458c2cc026e9d3a16fe2199c52e234a7e6e"
+    },
+    "M03-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p9-snapshot",
+      "artifact": ".artifacts/codex-p9/results/p9-snapshot.json",
+      "artifactDigest": "deaa5bbd87b497963c5b4649537fe458c2cc026e9d3a16fe2199c52e234a7e6e"
+    },
+    "M03-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/threadSnapshotPatch.ts",
+      "suite": "p9-snapshot",
+      "artifact": ".artifacts/codex-p9/results/p9-snapshot.json",
+      "artifactDigest": "deaa5bbd87b497963c5b4649537fe458c2cc026e9d3a16fe2199c52e234a7e6e"
+    },
+    "M04-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionViewStore.ts",
+      "suite": "p9-patch",
+      "artifact": ".artifacts/codex-p9/results/p9-patch.json",
+      "artifactDigest": "7256d6ed94ed8fc5a3f9b671854c813c3140e922a52efac301c6edc38c461efd"
+    },
+    "M04-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionViewStore.ts",
+      "suite": "p9-patch",
+      "artifact": ".artifacts/codex-p9/results/p9-patch.json",
+      "artifactDigest": "7256d6ed94ed8fc5a3f9b671854c813c3140e922a52efac301c6edc38c461efd"
+    },
+    "M04-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionViewStore.ts",
+      "suite": "p9-patch",
+      "artifact": ".artifacts/codex-p9/results/p9-patch.json",
+      "artifactDigest": "7256d6ed94ed8fc5a3f9b671854c813c3140e922a52efac301c6edc38c461efd"
+    },
+    "M04-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionViewStore.ts",
+      "suite": "p9-patch",
+      "artifact": ".artifacts/codex-p9/results/p9-patch.json",
+      "artifactDigest": "7256d6ed94ed8fc5a3f9b671854c813c3140e922a52efac301c6edc38c461efd"
+    },
+    "M04-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionViewStore.ts",
+      "suite": "p9-patch",
+      "artifact": ".artifacts/codex-p9/results/p9-patch.json",
+      "artifactDigest": "7256d6ed94ed8fc5a3f9b671854c813c3140e922a52efac301c6edc38c461efd"
+    },
+    "M04-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionViewStore.ts",
+      "suite": "p9-patch",
+      "artifact": ".artifacts/codex-p9/results/p9-patch.json",
+      "artifactDigest": "7256d6ed94ed8fc5a3f9b671854c813c3140e922a52efac301c6edc38c461efd"
+    },
+    "M05-F01": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p9-models",
+      "artifact": ".artifacts/codex-p9/results/p9-models.json",
+      "artifactDigest": "a2f68b55d72188192d273b9887e20acf135d60cbcda80b1cd89a975b91d717fd"
+    },
+    "M05-F02": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p9-models",
+      "artifact": ".artifacts/codex-p9/results/p9-models.json",
+      "artifactDigest": "a2f68b55d72188192d273b9887e20acf135d60cbcda80b1cd89a975b91d717fd"
+    },
+    "M05-F03": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p9-models",
+      "artifact": ".artifacts/codex-p9/results/p9-models.json",
+      "artifactDigest": "a2f68b55d72188192d273b9887e20acf135d60cbcda80b1cd89a975b91d717fd"
+    },
+    "M05-F04": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p9-models",
+      "artifact": ".artifacts/codex-p9/results/p9-models.json",
+      "artifactDigest": "a2f68b55d72188192d273b9887e20acf135d60cbcda80b1cd89a975b91d717fd"
+    },
+    "M05-F05": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p9-models",
+      "artifact": ".artifacts/codex-p9/results/p9-models.json",
+      "artifactDigest": "a2f68b55d72188192d273b9887e20acf135d60cbcda80b1cd89a975b91d717fd"
+    },
+    "M05-F06": {
+      "status": "accepted",
+      "source": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/models.py",
+      "suite": "p9-models",
+      "artifact": ".artifacts/codex-p9/results/p9-models.json",
+      "artifactDigest": "a2f68b55d72188192d273b9887e20acf135d60cbcda80b1cd89a975b91d717fd"
+    },
+    "M06-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionHistorySync.ts",
+      "suite": "p9-sync-identity",
+      "artifact": ".artifacts/codex-p9/results/p9-sync-identity.json",
+      "artifactDigest": "9ddff88311b07f5b33f0fac6209855776cdeee96a77422206f6eb0831fc1d3e5"
+    },
+    "M06-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionHistorySync.ts",
+      "suite": "p9-sync-identity",
+      "artifact": ".artifacts/codex-p9/results/p9-sync-identity.json",
+      "artifactDigest": "9ddff88311b07f5b33f0fac6209855776cdeee96a77422206f6eb0831fc1d3e5"
+    },
+    "M06-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionHistorySync.ts",
+      "suite": "p9-sync-identity",
+      "artifact": ".artifacts/codex-p9/results/p9-sync-identity.json",
+      "artifactDigest": "9ddff88311b07f5b33f0fac6209855776cdeee96a77422206f6eb0831fc1d3e5"
+    },
+    "M06-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionHistorySync.ts",
+      "suite": "p9-sync-identity",
+      "artifact": ".artifacts/codex-p9/results/p9-sync-identity.json",
+      "artifactDigest": "9ddff88311b07f5b33f0fac6209855776cdeee96a77422206f6eb0831fc1d3e5"
+    },
+    "M06-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionHistorySync.ts",
+      "suite": "p9-sync-identity",
+      "artifact": ".artifacts/codex-p9/results/p9-sync-identity.json",
+      "artifactDigest": "9ddff88311b07f5b33f0fac6209855776cdeee96a77422206f6eb0831fc1d3e5"
+    },
+    "M06-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/main/sessionHistorySync.ts",
+      "suite": "p9-sync-identity",
+      "artifact": ".artifacts/codex-p9/results/p9-sync-identity.json",
+      "artifactDigest": "9ddff88311b07f5b33f0fac6209855776cdeee96a77422206f6eb0831fc1d3e5"
+    },
+    "M07-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/App.tsx",
+      "suite": "p9-ux-security",
+      "artifact": ".artifacts/codex-p9/results/p9-ux-security.json",
+      "artifactDigest": "0364afeb3ce3d36239fa0568306c0aed6a81831178ab648a244e7aeee1835274"
+    },
+    "M07-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/App.tsx",
+      "suite": "p9-ux-security",
+      "artifact": ".artifacts/codex-p9/results/p9-ux-security.json",
+      "artifactDigest": "0364afeb3ce3d36239fa0568306c0aed6a81831178ab648a244e7aeee1835274"
+    },
+    "M07-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/App.tsx",
+      "suite": "p9-ux-security",
+      "artifact": ".artifacts/codex-p9/results/p9-ux-security.json",
+      "artifactDigest": "0364afeb3ce3d36239fa0568306c0aed6a81831178ab648a244e7aeee1835274"
+    },
+    "M07-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/App.tsx",
+      "suite": "p9-ux-security",
+      "artifact": ".artifacts/codex-p9/results/p9-ux-security.json",
+      "artifactDigest": "0364afeb3ce3d36239fa0568306c0aed6a81831178ab648a244e7aeee1835274"
+    },
+    "M07-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/App.tsx",
+      "suite": "p9-ux-security",
+      "artifact": ".artifacts/codex-p9/results/p9-ux-security.json",
+      "artifactDigest": "0364afeb3ce3d36239fa0568306c0aed6a81831178ab648a244e7aeee1835274"
+    },
+    "M07-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/shared/renderer/src/App.tsx",
+      "suite": "p9-ux-security",
+      "artifact": ".artifacts/codex-p9/results/p9-ux-security.json",
+      "artifactDigest": "0364afeb3ce3d36239fa0568306c0aed6a81831178ab648a244e7aeee1835274"
+    },
+    "M08-F01": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-release.mjs",
+      "suite": "p9-governance",
+      "artifact": ".artifacts/codex-p9/results/p9-governance.json",
+      "artifactDigest": "900b8d50e3a08e771d03a73e7b9f5c6c812b07f89c9109e339b3caa05bbf6dfd"
+    },
+    "M08-F02": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-release.mjs",
+      "suite": "p9-governance",
+      "artifact": ".artifacts/codex-p9/results/p9-governance.json",
+      "artifactDigest": "900b8d50e3a08e771d03a73e7b9f5c6c812b07f89c9109e339b3caa05bbf6dfd"
+    },
+    "M08-F03": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-release.mjs",
+      "suite": "p9-governance",
+      "artifact": ".artifacts/codex-p9/results/p9-governance.json",
+      "artifactDigest": "900b8d50e3a08e771d03a73e7b9f5c6c812b07f89c9109e339b3caa05bbf6dfd"
+    },
+    "M08-F04": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-release.mjs",
+      "suite": "p9-electron",
+      "artifact": ".artifacts/codex-p9/results/p9-electron.json",
+      "artifactDigest": "266d90d838f68b7a2c48f79112fecb183727f0f41e844a16e25ea0d5dea46365"
+    },
+    "M08-F05": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/run-codex-p9-live.mjs",
+      "suite": "p9-live",
+      "artifact": ".artifacts/codex-p9/results/p9-live.json",
+      "artifactDigest": "3d0537c5cc5d761bdeec8fd225df4dfaaf7ad86f3fa6502e6f7d9a395bb6d664"
+    },
+    "M08-F06": {
+      "status": "accepted",
+      "source": "apps/desktop/windows/scripts/verify-codex-p9-release.mjs",
+      "suite": "p9-release",
+      "artifact": ".artifacts/codex-p9/results/p9-release.json",
+      "artifactDigest": "a51135bdea7eff7e5ba078d40246b60b1479786d0b29cbadeb3b82acb37a1cef"
+    }
+  }
+}

@@ -55,6 +55,23 @@ def test_run_is_idempotent_scoped_and_forbids_android_local_paths() -> None:
     assert local_path.value.code == "attachment_reference_invalid"
 
 
+def test_retry_is_one_logical_run_across_clients_with_different_request_keys() -> None:
+    runtime = authority()
+    created_session = session(runtime)
+    first = runtime.create_run(
+        "alice", "ws-a", created_session.session_id,
+        message="retry", attachment_refs=[], idempotency_key="android-random-key",
+        correlation_id="android", retry_of="failed-run-one",
+    )
+    second = runtime.create_run(
+        "alice", "ws-a", created_session.session_id,
+        message="retry", attachment_refs=[], idempotency_key="desktop-random-key",
+        correlation_id="desktop", retry_of="failed-run-one",
+    )
+    assert second is first
+    assert len(runtime.runs) == 1
+
+
 def test_event_resume_all_kinds_runtime_terminal_authority_and_cancel_idempotency() -> None:
     runtime = authority()
     created = run(runtime)

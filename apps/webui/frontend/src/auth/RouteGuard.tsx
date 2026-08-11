@@ -6,6 +6,7 @@ import { authAPI } from "../components/views/api";
 import ScienceUserErrorPage from "./ScienceUserErrorPage";
 
 const PUBLIC_ROUTES = ["/welcome", "/login", "/auth", "/share"];
+const PUBLIC_ROUTE_PREFIXES = ["/share/skill"];
 
 const normalizePath = (path: string) => path.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
 
@@ -80,6 +81,8 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             const normalizedPath = normalizePath(location.pathname);
             const isPublicRoute = PUBLIC_ROUTES.some(
                 (route) => normalizePath(route) === normalizedPath
+            ) || PUBLIC_ROUTE_PREFIXES.some(
+                (prefix) => normalizedPath.startsWith(prefix)
             );
 
             // 用户主动退出后带 ?logout=1，跳过 verifyAuthSession 避免

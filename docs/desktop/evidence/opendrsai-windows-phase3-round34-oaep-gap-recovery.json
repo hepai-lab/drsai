@@ -1,0 +1,80 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 34,
+  "captured_at": "2026-08-05T04:22:00.000Z",
+  "feature": "M07-F03",
+  "result": "accepted",
+  "scope": "OpenDrSai Windows App with HAI configuration and OpenDrSai Full Agent Runtime",
+  "implementation": {
+    "subscription": "apps/desktop/shared/main/oaepSessionStream.ts",
+    "run_controller": "apps/desktop/shared/main/chat.ts",
+    "connection_contract": "apps/desktop/shared/api/desktopApi.ts",
+    "gap_policy": "A stream sequence gap re-enters paged replay from the last contiguous Session cursor; it does not skip missing Events by replacing state with a snapshot.",
+    "cursor_expiry_policy": "Only an explicit expired cursor replaces state from the canonical OAEP snapshot.",
+    "same_run_policy": "Recovery re-subscribes and replays only; it never calls Run execution again.",
+    "transport_ambiguity_policy": "A recoverable execute-response failure is cleared only when OAEP proves that the same Run completed.",
+    "recovery_window_ms_minimum": 184880,
+    "runtime_source_label": "opendrsai-runtime"
+  },
+  "focused_recovery": {
+    "formal_rounds": 20,
+    "passed_rounds": 20,
+    "failed_rounds": 0,
+    "logical_outage_seconds_min": 60,
+    "logical_outage_seconds_max": 180,
+    "expected_gap_reconnects": 20,
+    "actual_gap_reconnects": 20,
+    "delivered_sequences_per_round": [1, 2, 3, 4],
+    "preserved_prefix_failures": 0,
+    "duplicate_event_ids": 0,
+    "duplicate_item_events": 0,
+    "duplicate_tool_events": 0,
+    "duplicate_terminal_events": 0,
+    "run_execution_calls_during_recovery": 0,
+    "unauthorized_side_effects": 0,
+    "resnapshots_for_recoverable_gap": 0,
+    "same_session_and_run": true,
+    "command": "npm run verify:m07-oaep-gap-recovery"
+  },
+  "regression": {
+    "typescript": true,
+    "production_build": true,
+    "packaged_operational_checks": 39,
+    "packaged_operational_total": 39,
+    "stability_rounds": 20,
+    "stability_passed_rounds": 20,
+    "stability_packaged_checks": 780,
+    "configured_test_reruns": 0,
+    "actual_test_reruns": 0,
+    "commands": [
+      "npm run typecheck:windows",
+      "npm run build:unpack",
+      "npm run verify:m07-operational-state-packaged",
+      "npm run verify:m07-operational-state-stability"
+    ]
+  },
+  "acceptance": {
+    "received_content_preserved": true,
+    "missing_events_replayed_in_order": true,
+    "same_run_recovered": true,
+    "items_not_duplicated": true,
+    "tools_not_duplicated": true,
+    "side_effects_not_repeated": true,
+    "three_minute_outage_covered": true,
+    "completed_run_not_reexecuted_for_transport_acknowledgement": true
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:49516ac1eabee55047128fc30c1611d2b149cd96e3807a89f10304ce89551700"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:0d023602a634e1b48f044fa377eb8011d921852b54620807b331c451afbc54d7"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:8a72d7743ed51949932e8b30f4822266ea6d42c2a8e3302a44208d1b71c65070"
+    }
+  }
+}

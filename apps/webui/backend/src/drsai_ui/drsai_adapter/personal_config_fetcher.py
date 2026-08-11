@@ -11,6 +11,7 @@ from loguru import logger
 
 from hepai import HepAI
 from hepai.types import APIKeyInfo
+from drsai_ui.platform_config import get_active_platform
 
 
 def _extract_api_key_from_json(obj: object) -> Optional[str]:
@@ -34,9 +35,7 @@ class PersonalKeyConfigFetcher:
     """获取个人密钥配置"""
     def __init__(self) -> None:
         self.service_mode = os.getenv("SERVICE_MODE")
-        self._hepai_base_url = os.getenv(
-            "HEPAI_BASE_URL", "https://aiapi.ihep.ac.cn/apiv2"
-        ).rstrip("/")
+        self._hepai_base_url = get_active_platform().base_url
         if self.service_mode == "PROD":
             admin_api_key = os.getenv("HEPAI_APP_ADMIN_API_KEY")
             assert admin_api_key, (
@@ -138,7 +137,7 @@ class PersonalKeyConfigFetcher:
   provider: drsai.HepAIChatCompletionClient
   config:
     model: "openai/gpt-4.1"
-    base_url: "https://aiapi.ihep.ac.cn/apiv2"
+    base_url: "{self._hepai_base_url}"
     api_key: "{personal_key}"
     max_retries: 10
 

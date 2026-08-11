@@ -35,7 +35,7 @@ export function getMacosSystemPermission(kind: DesktopSystemPermissionKind): Des
 export async function requestMacosSystemPermission(value: unknown): Promise<DesktopSystemPermissionStatus> {
   const kind = assertKind(value);
   const native = invokeNativePermission(nativeHelperExecutablePath(), "permission.request", kind);
-  if (native && typeof native !== "boolean") return native;
+  if (native && typeof native !== "boolean" && !(kind === "automation" && native.state === "unknown")) return native;
   if (kind === "microphone") await systemPreferences.askForMediaAccess("microphone");
   else if (kind === "notifications") {
     if (Notification.isSupported()) new Notification({ title: "OpenDrSai", body: "Notifications are enabled for task completion.", silent: true }).show();
@@ -48,6 +48,10 @@ export async function requestMacosSystemPermission(value: unknown): Promise<Desk
       automationState = "denied";
     }
   } else await openMacosSystemPermissionSettings(kind);
+  // A fresh Helper process cannot reliably query the prior Apple Events result
+  // when TCC or Finder did not answer before its bounded request timeout. Preserve
+  // the explicit request outcome instead of replacing it with a later `unknown`.
+  if (kind === "automation") return status(kind, automationState, automationState === "unknown");
   return getMacosSystemPermission(kind);
 }
 

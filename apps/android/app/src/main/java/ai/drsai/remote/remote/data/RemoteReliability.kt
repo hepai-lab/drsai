@@ -9,17 +9,66 @@ import kotlin.random.Random
 enum class RemoteFailureSource { RELAY, RUNTIME, BUSINESS }
 data class RemoteFailure(val source: RemoteFailureSource, val code: String, val retryable: Boolean)
 
-class RemoteConnectionStateMachine(initial: RemoteConnectionState = RemoteConnectionState.CONNECTING) {
-    var state: RemoteConnectionState = initial
+enum class RemoteLifecycleState {
+    IDLE, LOADING, ONLINE, STALE, OFFLINE, AUTH_REQUIRED, REVOKED, INCOMPATIBLE,
+}
+
+private val REMOTE_LIFECYCLE_TRANSITIONS = mapOf(
+    RemoteLifecycleState.IDLE to setOf(RemoteLifecycleState.LOADING, RemoteLifecycleState.OFFLINE,
+        RemoteLifecycleState.AUTH_REQUIRED, RemoteLifecycleState.REVOKED, RemoteLifecycleState.INCOMPATIBLE),
+    RemoteLifecycleState.LOADING to setOf(RemoteLifecycleState.ONLINE, RemoteLifecycleState.STALE,
+        RemoteLifecycleState.OFFLINE, RemoteLifecycleState.AUTH_REQUIRED, RemoteLifecycleState.REVOKED,
+        RemoteLifecycleState.INCOMPATIBLE),
+    RemoteLifecycleState.ONLINE to setOf(RemoteLifecycleState.LOADING, RemoteLifecycleState.STALE,
+        RemoteLifecycleState.OFFLINE, RemoteLifecycleState.AUTH_REQUIRED, RemoteLifecycleState.REVOKED,
+        RemoteLifecycleState.INCOMPATIBLE),
+    RemoteLifecycleState.STALE to setOf(RemoteLifecycleState.LOADING, RemoteLifecycleState.ONLINE,
+        RemoteLifecycleState.OFFLINE, RemoteLifecycleState.AUTH_REQUIRED, RemoteLifecycleState.REVOKED,
+        RemoteLifecycleState.INCOMPATIBLE),
+    RemoteLifecycleState.OFFLINE to setOf(RemoteLifecycleState.LOADING, RemoteLifecycleState.AUTH_REQUIRED,
+        RemoteLifecycleState.REVOKED),
+    RemoteLifecycleState.AUTH_REQUIRED to setOf(RemoteLifecycleState.LOADING, RemoteLifecycleState.REVOKED),
+    RemoteLifecycleState.REVOKED to setOf(RemoteLifecycleState.IDLE),
+    RemoteLifecycleState.INCOMPATIBLE to setOf(RemoteLifecycleState.LOADING, RemoteLifecycleState.REVOKED),
+)
+
+fun canTransitionRemoteLifecycle(from: RemoteLifecycleState, to: RemoteLifecycleState): Boolean =
+    from == to || to in REMOTE_LIFECYCLE_TRANSITIONS.getValue(from)
+
+fun remoteLifecycleState(connection: RemoteConnectionState, hasCachedContent: Boolean = false): RemoteLifecycleState = when (connection) {
+    RemoteConnectionState.CONNECTING -> RemoteLifecycleState.LOADING
+    RemoteConnectionState.ONLINE -> RemoteLifecycleState.ONLINE
+    RemoteConnectionState.DEGRADED -> if (hasCachedContent) RemoteLifecycleState.STALE else RemoteLifecycleState.OFFLINE
+    RemoteConnectionState.OFFLINE -> if (hasCachedContent) RemoteLifecycleState.STALE else RemoteLifecycleState.OFFLINE
+    RemoteConnectionState.PAUSED -> RemoteLifecycleState.OFFLINE
+    RemoteConnectionState.AUTH_REQUIRED -> RemoteLifecycleState.AUTH_REQUIRED
+    RemoteConnectionState.INCOMPATIBLE -> RemoteLifecycleState.INCOMPATIBLE
+}
+
+class RemoteConnectionStateMachine(initial: RemoteLifecycleState = RemoteLifecycleState.IDLE) {
+    var state: RemoteLifecycleState = initial
         private set
     var lastFailure: RemoteFailure? = null
         private set
 
-    fun connected(compatible: Boolean = true) { state = if (compatible) RemoteConnectionState.ONLINE else RemoteConnectionState.INCOMPATIBLE; lastFailure = null }
-    fun degraded(failure: RemoteFailure) { state = RemoteConnectionState.DEGRADED; lastFailure = failure }
-    fun disconnected() { state = RemoteConnectionState.OFFLINE }
-    fun authenticationRequired(failure: RemoteFailure) { require(failure.source == RemoteFailureSource.RELAY); state = RemoteConnectionState.AUTH_REQUIRED; lastFailure = failure }
-    fun connecting() { state = RemoteConnectionState.CONNECTING }
+    fun transition(next: RemoteLifecycleState, failure: RemoteFailure? = null) {
+        if (next == state) return
+        require(canTransitionRemoteLifecycle(state, next)) {
+            "remote_lifecycle_transition_invalid:${state.name.lowercase()}:${next.name.lowercase()}"
+        }
+        if (next == RemoteLifecycleState.AUTH_REQUIRED) require(failure?.source == RemoteFailureSource.RELAY)
+        state = next
+        lastFailure = failure
+    }
+
+    fun connected(compatible: Boolean = true) = transition(
+        if (compatible) RemoteLifecycleState.ONLINE else RemoteLifecycleState.INCOMPATIBLE,
+    )
+    fun degraded(failure: RemoteFailure) = transition(RemoteLifecycleState.STALE, failure)
+    fun disconnected() = transition(RemoteLifecycleState.OFFLINE)
+    fun authenticationRequired(failure: RemoteFailure) = transition(RemoteLifecycleState.AUTH_REQUIRED, failure)
+    fun revoked(failure: RemoteFailure) = transition(RemoteLifecycleState.REVOKED, failure)
+    fun connecting() = transition(RemoteLifecycleState.LOADING)
 }
 
 enum class ResumeAction { NONE, REBUILD_TRANSPORT, QUERY_STATUS_THEN_RESUME_EVENTS, FULL_STATE_RECOVERY }
@@ -75,6 +124,62 @@ class BoundedRemoteEventBuffer<T>(private val capacity: Int = 512) {
     fun add(value: T) { if (values.size == capacity) values.removeFirst(); values.addLast(value) }
     fun snapshot(): List<T> = values.toList()
     val size: Int get() = values.size
+}
+
+data class RemoteDeltaChunk(val streamId: String, val text: String)
+
+enum class RemoteDownloadDecision { ALLOW, REQUIRE_CONFIRMATION, REJECT_TOO_LARGE }
+
+class RemoteNetworkPolicy(
+    private val meteredConfirmationBytes: Long = 10L * 1024 * 1024,
+    private val absoluteMaximumBytes: Long = 256L * 1024 * 1024,
+) {
+    init {
+        require(meteredConfirmationBytes >= 0 && absoluteMaximumBytes >= meteredConfirmationBytes) {
+            "remote_network_policy_invalid"
+        }
+    }
+
+    fun download(sizeBytes: Long, metered: Boolean, userConfirmed: Boolean = false): RemoteDownloadDecision = when {
+        sizeBytes < 0 || sizeBytes > absoluteMaximumBytes -> RemoteDownloadDecision.REJECT_TOO_LARGE
+        metered && sizeBytes >= meteredConfirmationBytes && !userConfirmed -> RemoteDownloadDecision.REQUIRE_CONFIRMATION
+        else -> RemoteDownloadDecision.ALLOW
+    }
+}
+
+/**
+ * Coalesces high-frequency text deltas before they reach Compose. The byte-like
+ * character threshold is deliberately small: crossing it forces a drain instead
+ * of dropping content, while control/terminal events can call [drain] as a barrier.
+ */
+class RemoteDeltaFrameBuffer(private val maxPendingChars: Int = 32 * 1024) {
+    private val pending = linkedMapOf<String, StringBuilder>()
+    private var pendingChars = 0
+
+    init { require(maxPendingChars > 0) { "remote_delta_capacity_invalid" } }
+
+    @Synchronized
+    fun offer(streamId: String, delta: String): List<RemoteDeltaChunk> {
+        require(streamId.isNotBlank()) { "remote_delta_stream_required" }
+        if (delta.isEmpty()) return emptyList()
+        pending.getOrPut(streamId, ::StringBuilder).append(delta)
+        pendingChars += delta.length
+        return if (pendingChars >= maxPendingChars) drainLocked() else emptyList()
+    }
+
+    @Synchronized
+    fun drain(): List<RemoteDeltaChunk> = drainLocked()
+
+    @Synchronized
+    fun sizeChars(): Int = pendingChars
+
+    private fun drainLocked(): List<RemoteDeltaChunk> {
+        if (pendingChars == 0) return emptyList()
+        val result = pending.map { (streamId, text) -> RemoteDeltaChunk(streamId, text.toString()) }
+        pending.clear()
+        pendingChars = 0
+        return result
+    }
 }
 
 class RemoteCommandGuard {

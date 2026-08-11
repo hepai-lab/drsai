@@ -1,6 +1,12 @@
 package ai.drsai.remote.remote.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -29,6 +36,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +55,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -55,6 +66,10 @@ import androidx.compose.ui.unit.dp
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RuntimeId
+import ai.drsai.remote.remote.data.RemoteActionableState
+import ai.drsai.remote.remote.data.RemoteRecoveryAction
+import ai.drsai.remote.remote.data.remoteActionableState
+import ai.drsai.remote.remote.data.RemoteSearchResult
 
 data class RemoteComputerUi(
     val runtimeId: RuntimeId,
@@ -66,6 +81,13 @@ data class RemoteComputerUi(
     val instanceId: String = "",
     val connectionGeneration: Long = 0,
     val pendingApprovalCount: Int = 0,
+    val unreadTurnCount: Int = 0,
+    val runningRunCount: Int = 0,
+    val lastActivityAt: String = "",
+    val workspacesCached: Boolean = false,
+    val lastSyncedAtMillis: Long? = null,
+    val workspaceSyncStatus: String? = null,
+    val workspaceSyncFailed: Boolean = false,
 )
 
 data class RemoteHomeUiState(
@@ -76,7 +98,28 @@ data class RemoteHomeUiState(
     val stale: Boolean = false,
     val error: String? = null,
     val recentlyAssociatedRuntimeId: RuntimeId? = null,
-)
+    val refreshingRuntimeIds: Set<RuntimeId> = emptySet(),
+    val searchResults: List<RemoteSearchResult> = emptyList(),
+    val notificationState: RemoteNotificationReadiness = RemoteNotificationReadiness.READY,
+) {
+    val lifecycleState: ai.drsai.remote.remote.data.RemoteLifecycleState get() = when {
+        loading -> ai.drsai.remote.remote.data.RemoteLifecycleState.LOADING
+        error?.let { "撤销" in it || "无权访问" in it } == true -> ai.drsai.remote.remote.data.RemoteLifecycleState.REVOKED
+        error?.let { "登录" in it } == true -> ai.drsai.remote.remote.data.RemoteLifecycleState.AUTH_REQUIRED
+        error?.let { "版本" in it || "不兼容" in it } == true -> ai.drsai.remote.remote.data.RemoteLifecycleState.INCOMPATIBLE
+        stale || refreshing && computers.isNotEmpty() -> ai.drsai.remote.remote.data.RemoteLifecycleState.STALE
+        computers.isNotEmpty() -> ai.drsai.remote.remote.data.RemoteLifecycleState.ONLINE
+        error != null -> ai.drsai.remote.remote.data.RemoteLifecycleState.OFFLINE
+        else -> ai.drsai.remote.remote.data.RemoteLifecycleState.IDLE
+    }
+}
+
+enum class RemoteNotificationReadiness {
+    READY,
+    PERMISSION_REQUIRED,
+    PROVIDER_NOT_CONFIGURED,
+    PLAY_SERVICES_UNAVAILABLE,
+}
 
 @Composable
 fun RemoteHomeScreen(
@@ -85,15 +128,28 @@ fun RemoteHomeScreen(
     onAssociate: () -> Unit,
     onRefresh: () -> Unit,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
+    onRefreshWorkspaces: (RuntimeId) -> Unit = {},
     onRevokeAssociation: (RuntimeId) -> Unit = {},
+    onRevokeAssociationAndClear: (RuntimeId) -> Unit = onRevokeAssociation,
     onQueryChange: (String) -> Unit = {},
+    onSignIn: () -> Unit = onBack,
+    onCheckUpdate: () -> Unit = {},
+    onOpenSearchResult: (RemoteSearchResult) -> Unit = {},
+    onEnableNotifications: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Box(modifier.fillMaxSize()) {
         when {
             state.loading && state.computers.isEmpty() -> RemoteLoadingState(Modifier.align(Alignment.Center))
             state.computers.isEmpty() -> RemoteEmptyState(onAssociate, Modifier.align(Alignment.Center))
-            else -> RemoteComputerList(state, onOpenWorkspace, onRevokeAssociation)
+            else -> RemoteComputerList(
+                state,
+                onOpenWorkspace,
+                onRevokeAssociation,
+                onRevokeAssociationAndClear,
+                onRefreshWorkspaces,
+                onOpenSearchResult,
+            )
         }
 
         Column(
@@ -117,7 +173,64 @@ fun RemoteHomeScreen(
                 placeholder = { Text("搜索计算机或工作区") },
             )
             if (state.stale) RemoteStatusBanner("当前显示上次同步内容")
-            state.error?.let { RemoteStatusBanner(it, error = true) }
+            if (state.computers.isNotEmpty() && state.notificationState != RemoteNotificationReadiness.READY) {
+                RemoteNotificationReadinessCard(state.notificationState, onEnableNotifications)
+            }
+            state.error?.let {
+                RemoteActionableStateCard(
+                    remoteActionableState(state.lifecycleState) ?: return@let,
+                    onAction = { action -> when (action) {
+                        RemoteRecoveryAction.REASSOCIATE -> onAssociate()
+                        RemoteRecoveryAction.SIGN_IN -> onSignIn()
+                        RemoteRecoveryAction.UPDATE_APP -> onCheckUpdate()
+                        else -> onRefresh()
+                    } },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RemoteNotificationReadinessCard(
+    state: RemoteNotificationReadiness,
+    onEnableNotifications: () -> Unit,
+) {
+    val message = when (state) {
+        RemoteNotificationReadiness.PERMISSION_REQUIRED -> "允许系统通知后，App 关闭时也能收到任务结果和审批提醒"
+        RemoteNotificationReadiness.PROVIDER_NOT_CONFIGURED -> "此安装包尚未配置后台通知；打开会话时仍会实时同步"
+        RemoteNotificationReadiness.PLAY_SERVICES_UNAVAILABLE -> "此设备缺少可用的 Google Play 服务，后台通知暂不可用"
+        RemoteNotificationReadiness.READY -> return
+    }
+    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(message, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            if (state == RemoteNotificationReadiness.PERMISSION_REQUIRED) {
+                TextButton(onClick = onEnableNotifications) { Text("启用通知") }
+            }
+        }
+    }
+}
+
+@Composable
+fun RemoteActionableStateCard(
+    state: RemoteActionableState,
+    onAction: (RemoteRecoveryAction) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.errorContainer) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(state.title, fontWeight = FontWeight.SemiBold)
+                Text(state.reason, style = MaterialTheme.typography.bodySmall)
+            }
+            state.actionLabel?.let { label ->
+                TextButton(onClick = { onAction(state.action) }) { Text(label) }
+            }
         }
     }
 }
@@ -228,17 +341,46 @@ private fun RemoteComputerList(
     state: RemoteHomeUiState,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
     onRevokeAssociation: (RuntimeId) -> Unit,
+    onRevokeAssociationAndClear: (RuntimeId) -> Unit,
+    onRefreshWorkspaces: (RuntimeId) -> Unit,
+    onOpenSearchResult: (RemoteSearchResult) -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, top = 146.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        if (state.query.isNotBlank() && state.searchResults.isNotEmpty()) {
+            item(key = "unified-search-results") {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("搜索结果", fontWeight = FontWeight.SemiBold)
+                    state.searchResults.forEach { result ->
+                        Surface(
+                            Modifier.fillMaxWidth().clickable { onOpenSearchResult(result) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(result.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(result.context, style = MaterialTheme.typography.labelSmall)
+                                }
+                                Text(result.source.label, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
         items(state.computers, key = { it.runtimeId.value }) { computer ->
             RemoteComputerCard(
                 computer,
                 computer.runtimeId == state.recentlyAssociatedRuntimeId,
                 onOpenWorkspace,
                 onRevokeAssociation,
+                onRevokeAssociationAndClear,
+                onRefreshWorkspaces,
+                computer.runtimeId in state.refreshingRuntimeIds,
             )
         }
     }
@@ -250,10 +392,14 @@ private fun RemoteComputerCard(
     recentlyAssociated: Boolean,
     onOpenWorkspace: (RemoteWorkspaceRef) -> Unit,
     onRevokeAssociation: (RuntimeId) -> Unit,
+    onRevokeAssociationAndClear: (RuntimeId) -> Unit,
+    onRefreshWorkspaces: (RuntimeId) -> Unit,
+    refreshingWorkspaces: Boolean,
 ) {
     var expanded by remember(computer.runtimeId) { mutableStateOf(true) }
     var menuOpen by remember(computer.runtimeId) { mutableStateOf(false) }
     var confirmRevoke by remember(computer.runtimeId) { mutableStateOf(false) }
+    var clearLocalCache by remember(computer.runtimeId) { mutableStateOf(false) }
     Surface(
         shape = RoundedCornerShape(20.dp),
         border = BorderStroke(if (recentlyAssociated) 2.dp else 1.dp,
@@ -272,11 +418,15 @@ private fun RemoteComputerCard(
                     if (recentlyAssociated) {
                         Text("刚刚关联", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
-                    Text(
-                        "${connectionLabel(computer.state)} · ${computer.lastSeenLabel}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    RemoteConnectionIndicator(computer.state, computer.lastSeenLabel)
+                    if (computer.workspacesCached && computer.state !in setOf(RemoteConnectionState.OFFLINE, RemoteConnectionState.PAUSED)) {
+                        Text(
+                            computer.lastSeenLabel.takeIf(String::isNotBlank)
+                                ?: "缓存的工作区目录",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (computer.version.isNotBlank()) {
                         Text(
                             "OpenDrSai ${computer.version}",
@@ -284,12 +434,52 @@ private fun RemoteComputerCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    computer.workspaceSyncStatus?.let { status ->
+                        Text(
+                            status,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (computer.workspaceSyncFailed) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                        )
+                    }
                 }
                 if (computer.pendingApprovalCount > 0) {
                     Text("待确认 ${computer.pendingApprovalCount}", color = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(8.dp))
                 }
-                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (expanded) "收起工作区" else "展开工作区")
+                if (computer.unreadTurnCount > 0) {
+                    Text("未读 ${computer.unreadTurnCount}", color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                }
+                if (computer.runningRunCount > 0) {
+                    Text("运行中 ${computer.runningRunCount}", color = MaterialTheme.colorScheme.tertiary)
+                    Spacer(Modifier.width(8.dp))
+                }
+                IconButton(
+                    enabled = !refreshingWorkspaces,
+                    onClick = { onRefreshWorkspaces(computer.runtimeId) },
+                ) {
+                    if (refreshingWorkspaces) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.Refresh,
+                            "刷新 ${computer.displayName} 的工作区",
+                        )
+                    }
+                }
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(
+                        if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        if (expanded) "收起工作区" else "展开工作区",
+                    )
+                }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Default.MoreVert, "计算机操作")
@@ -315,8 +505,13 @@ private fun RemoteComputerCard(
             if (expanded) {
                 HorizontalDivider()
                 computer.workspaces.forEach { workspace ->
+                    val compatible = computer.state != RemoteConnectionState.INCOMPATIBLE
                     Row(
-                        Modifier.fillMaxWidth().clickable { onOpenWorkspace(workspace) }.padding(horizontal = 18.dp, vertical = 14.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = compatible) { onOpenWorkspace(workspace) }
+                            .alpha(if (compatible) 1f else 0.55f)
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(Icons.Default.Folder, null, Modifier.size(20.dp))
@@ -331,14 +526,19 @@ private fun RemoteComputerCard(
         AlertDialog(
             onDismissRequest = { confirmRevoke = false },
             title = { Text("解除关联？") },
-            text = {
+            text = { Column {
                 Text("解除后，这台设备将立即停止接收 ${computer.displayName} 的会话和事件。重新扫码可以恢复访问。")
-            },
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(clearLocalCache, { clearLocalCache = it })
+                    Text("同时清除本机缓存、草稿和历史投影")
+                }
+            } },
             confirmButton = {
                 TextButton(
                     onClick = {
                         confirmRevoke = false
-                        onRevokeAssociation(computer.runtimeId)
+                        if (clearLocalCache) onRevokeAssociationAndClear(computer.runtimeId)
+                        else onRevokeAssociation(computer.runtimeId)
                     },
                 ) { Text("解除关联") }
             },
@@ -346,6 +546,69 @@ private fun RemoteComputerCard(
                 TextButton(onClick = { confirmRevoke = false }) { Text("取消") }
             },
         )
+    }
+}
+
+@Composable
+private fun RemoteConnectionIndicator(
+    state: RemoteConnectionState,
+    lastSeenLabel: String,
+) {
+    val connecting = state == RemoteConnectionState.CONNECTING
+    val pulseAlpha = if (connecting) {
+        rememberInfiniteTransition(label = "remote-connection-pulse").animateFloat(
+            initialValue = 0.38f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 850),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "remote-connection-alpha",
+        ).value
+    } else {
+        1f
+    }
+    val color = when (state) {
+        RemoteConnectionState.ONLINE -> Color(0xFF2F7D5B)
+        RemoteConnectionState.OFFLINE -> MaterialTheme.colorScheme.outline
+        RemoteConnectionState.PAUSED -> MaterialTheme.colorScheme.outline
+        RemoteConnectionState.CONNECTING -> MaterialTheme.colorScheme.primary
+        RemoteConnectionState.DEGRADED,
+        RemoteConnectionState.INCOMPATIBLE -> Color(0xFFB7791F)
+        RemoteConnectionState.AUTH_REQUIRED -> MaterialTheme.colorScheme.error
+    }
+    val detail = when (state) {
+        RemoteConnectionState.ONLINE -> lastSeenLabel.takeUnless {
+            it.isBlank() || it == "在线"
+        }
+        RemoteConnectionState.OFFLINE -> lastSeenLabel.takeIf(String::isNotBlank) ?: "离线"
+        RemoteConnectionState.PAUSED -> "此电脑已暂停"
+        RemoteConnectionState.CONNECTING -> "连接中…"
+        RemoteConnectionState.DEGRADED -> "连接异常"
+        RemoteConnectionState.AUTH_REQUIRED -> "需要登录"
+        RemoteConnectionState.INCOMPATIBLE -> "需要更新"
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.semantics {
+            contentDescription = "连接状态：${connectionLabel(state)}"
+        },
+    ) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .alpha(pulseAlpha)
+                .background(color, CircleShape),
+        )
+        detail?.let {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -364,6 +627,7 @@ private fun connectionLabel(state: RemoteConnectionState): String = when (state)
     RemoteConnectionState.ONLINE -> "在线"
     RemoteConnectionState.DEGRADED -> "连接异常"
     RemoteConnectionState.OFFLINE -> "离线"
+    RemoteConnectionState.PAUSED -> "此电脑已暂停"
     RemoteConnectionState.AUTH_REQUIRED -> "需要登录"
     RemoteConnectionState.INCOMPATIBLE -> "需要更新"
 }

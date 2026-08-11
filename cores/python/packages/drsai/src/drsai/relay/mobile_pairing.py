@@ -18,6 +18,7 @@ GRANT_CODE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 GRANT_STATUS = frozenset({"pending", "consumed", "expired", "revoked"})
 ASSOCIATION_ID = re.compile(r"^[A-Za-z0-9_.:-]{3,160}$")
 SUBJECT_SUMMARY = re.compile(r"^sub_[0-9a-f]{12}$")
+DEVICE_SUMMARY = re.compile(r"^dev_[0-9a-f]{12}$")
 TRUSTED_RELAY_HOSTS = frozenset({"ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"})
 
 
@@ -53,29 +54,53 @@ class MobilePairingGrant:
 class MobileAssociation:
     association_id: str
     subject_summary: str
+    device_summary: str
+    device_name: str
     status: str
+    access_state: str
     created_at: datetime
+    last_seen_at: datetime | None = None
     revoked_at: datetime | None = None
+    device_type: str = "android"
+    workspace_scope: str = "all"
+    permissions: tuple[str, ...] = ("read", "send", "approve", "files")
 
     def public(self) -> dict[str, Any]:
         return {
             "association_id": self.association_id,
             "subject_summary": self.subject_summary,
+            "device_summary": self.device_summary,
+            "device_name": self.device_name,
             "status": self.status,
+            "access_state": self.access_state,
             "created_at": self.created_at.isoformat(),
+            "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
             "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
+            "device_type": self.device_type,
+            "workspace_scope": self.workspace_scope,
+            "permissions": list(self.permissions),
         }
 
 
 class MobilePairingTransport(Protocol):
-    async def create(self, credential: RuntimeCredential) -> MobilePairingGrant: ...
+    async def create(
+        self,
+        credential: RuntimeCredential,
+        workspace_scope: str = "all",
+        workspace_ids: tuple[str, ...] = (),
+    ) -> MobilePairingGrant: ...
     async def read(self, credential: RuntimeCredential, grant_id: str) -> MobilePairingGrant: ...
     async def revoke(self, credential: RuntimeCredential, grant_id: str) -> MobilePairingGrant: ...
     async def list_associations(self, credential: RuntimeCredential) -> list[MobileAssociation]: ...
     async def revoke_association(
         self, credential: RuntimeCredential, association_id: str,
     ) -> MobileAssociation: ...
+    async def shrink_association(
+        self, credential: RuntimeCredential, association_id: str, permissions: tuple[str, ...],
+    ) -> MobileAssociation: ...
     async def revoke_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]: ...
+    async def pause_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]: ...
+    async def resume_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]: ...
     async def inject_connection_owner_restart(
         self, credential: RuntimeCredential, ttl_seconds: int,
     ) -> dict[str, Any]: ...
@@ -136,8 +161,19 @@ class AiohttpMobilePairingTransport:
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds, connect=min(timeout_seconds, 5.0))
         self.session_factory = session_factory
 
-    async def create(self, credential: RuntimeCredential) -> MobilePairingGrant:
-        return await self._request(credential, "POST", f"/v1/runtimes/{credential.runtime_id}/access-grants", True)
+    async def create(
+        self,
+        credential: RuntimeCredential,
+        workspace_scope: str = "all",
+        workspace_ids: tuple[str, ...] = (),
+    ) -> MobilePairingGrant:
+        return await self._request(
+            credential,
+            "POST",
+            f"/v1/runtimes/{credential.runtime_id}/access-grants",
+            True,
+            {"workspace_scope": workspace_scope, "workspace_ids": list(workspace_ids)},
+        )
 
     async def read(self, credential: RuntimeCredential, grant_id: str) -> MobilePairingGrant:
         self._validate_grant_id(grant_id)
@@ -173,6 +209,25 @@ class AiohttpMobilePairingTransport:
         )
         return self._decode_association(body)
 
+    async def shrink_association(
+        self,
+        credential: RuntimeCredential,
+        association_id: str,
+        permissions: tuple[str, ...],
+    ) -> MobileAssociation:
+        if not ASSOCIATION_ID.fullmatch(association_id):
+            raise MobilePairingError(
+                "association_id_invalid", "Association ID is invalid.",
+                retryable=False, action="refresh",
+            )
+        body = await self._request_json(
+            credential,
+            "PATCH",
+            f"/v1/runtimes/{credential.runtime_id}/associations/{association_id}",
+            {"permissions": list(permissions)},
+        )
+        return self._decode_association(body)
+
     async def revoke_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]:
         body = await self._request_json(
             credential, "DELETE", f"/v1/runtimes/{credential.runtime_id}/enrollment"
@@ -181,6 +236,34 @@ class AiohttpMobilePairingTransport:
             raise self._invalid_response()
         return {"runtime_id": credential.runtime_id, "status": "revoked",
                 "revoked_at": body.get("revoked_at")}
+
+    async def pause_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]:
+        return await self._set_enrollment_paused(credential, paused=True)
+
+    async def resume_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]:
+        return await self._set_enrollment_paused(credential, paused=False)
+
+    async def _set_enrollment_paused(
+        self, credential: RuntimeCredential, *, paused: bool,
+    ) -> dict[str, Any]:
+        operation = "pause" if paused else "resume"
+        body = await self._request_json(
+            credential,
+            "POST",
+            f"/v1/runtimes/{credential.runtime_id}/enrollment/{operation}",
+        )
+        expected = "paused" if paused else "active"
+        if (
+            not isinstance(body, dict)
+            or body.get("runtime_id") != credential.runtime_id
+            or body.get("status") != expected
+        ):
+            raise self._invalid_response()
+        return {
+            "runtime_id": credential.runtime_id,
+            "status": expected,
+            "updated_at": body.get("updated_at"),
+        }
 
     async def inject_connection_owner_restart(
         self, credential: RuntimeCredential, ttl_seconds: int,
@@ -275,6 +358,7 @@ class AiohttpMobilePairingTransport:
                         self._raise_http(
                             response.status,
                             response.headers.get("X-Correlation-ID") or correlation_id,
+                            await self._error_code(response),
                         )
                     return await response.json()
         except MobilePairingError:
@@ -288,12 +372,14 @@ class AiohttpMobilePairingTransport:
             raise self._invalid_response(correlation_id) from exc
 
     async def _request(self, credential: RuntimeCredential, method: str, path: str,
-                       include_code: bool) -> MobilePairingGrant:
+                       include_code: bool, json_body: dict[str, Any] | None = None) -> MobilePairingGrant:
         last_error: MobilePairingError | None = None
         for attempt in range(2):
             correlation_id = str(uuid4())
             try:
-                return await self._request_once(credential, method, path, include_code, correlation_id)
+                return await self._request_once(
+                    credential, method, path, include_code, correlation_id, json_body
+                )
             except MobilePairingError as exc:
                 last_error = exc
                 if not exc.retryable or attempt == 1:
@@ -302,15 +388,26 @@ class AiohttpMobilePairingTransport:
         raise last_error
 
     async def _request_once(self, credential: RuntimeCredential, method: str, path: str,
-                            include_code: bool, correlation_id: str) -> MobilePairingGrant:
+                            include_code: bool, correlation_id: str,
+                            json_body: dict[str, Any] | None = None) -> MobilePairingGrant:
         try:
             async with self.session_factory(timeout=self.timeout, raise_for_status=False) as session:
-                async with session.request(method, f"{self.root}{path}",
-                                           headers={"X-Runtime-Token": credential.registration_token,
-                                                    "X-Correlation-ID": correlation_id},
-                                           allow_redirects=False) as response:
+                request_args: dict[str, Any] = {
+                    "headers": {"X-Runtime-Token": credential.registration_token,
+                                "X-Correlation-ID": correlation_id},
+                    "allow_redirects": False,
+                }
+                if json_body is not None:
+                    request_args["json"] = json_body
+                async with session.request(
+                    method, f"{self.root}{path}", **request_args
+                ) as response:
                     if response.status >= 400:
-                        self._raise_http(response.status, response.headers.get("X-Correlation-ID") or correlation_id)
+                        self._raise_http(
+                            response.status,
+                            response.headers.get("X-Correlation-ID") or correlation_id,
+                            await self._error_code(response),
+                        )
                     body = await response.json()
         except MobilePairingError:
             raise
@@ -323,10 +420,55 @@ class AiohttpMobilePairingTransport:
         return self._decode(body, include_code)
 
     @staticmethod
-    def _raise_http(status: int, correlation_id: str | None = None) -> None:
-        if status in {401, 403}:
+    async def _error_code(response: Any) -> str | None:
+        try:
+            body = await response.json()
+        except Exception:
+            return None
+        if not isinstance(body, dict):
+            return None
+        candidates = [body]
+        for key in ("detail", "error"):
+            nested = body.get(key)
+            if isinstance(nested, dict):
+                candidates.append(nested)
+        for candidate in candidates:
+            value = candidate.get("code")
+            if (
+                isinstance(value, str)
+                and 2 <= len(value) <= 64
+                and value[0].islower()
+                and all(character.islower() or character.isdigit() or character == "_"
+                        for character in value)
+            ):
+                return value
+        return None
+
+    @staticmethod
+    def _raise_http(
+        status: int,
+        correlation_id: str | None = None,
+        server_code: str | None = None,
+    ) -> None:
+        if status == 401:
             raise MobilePairingError("runtime_credential_invalid", "Runtime Relay credential was rejected.",
                                      retryable=False, action="repair_runtime", correlation_id=correlation_id)
+        if status == 403:
+            if server_code == "fault_injection_disabled":
+                raise MobilePairingError(
+                    "fault_injection_disabled",
+                    "Runtime Relay fault injection is disabled.",
+                    retryable=False,
+                    action="enable_test_faults",
+                    correlation_id=correlation_id,
+                )
+            raise MobilePairingError(
+                "runtime_access_forbidden",
+                "Runtime Relay denied this operation.",
+                retryable=False,
+                action="check_runtime_access",
+                correlation_id=correlation_id,
+            )
         if status == 404:
             raise MobilePairingError("access_grant_not_found", "Access grant was not found.",
                                      retryable=False, action="refresh", correlation_id=correlation_id)
@@ -360,11 +502,18 @@ class AiohttpMobilePairingTransport:
             raise AiohttpMobilePairingTransport._invalid_response()
         association_id = str(body.get("association_id", ""))
         subject_summary = str(body.get("subject_summary", ""))
+        device_summary = str(body.get("device_summary", ""))
+        device_name = str(body.get("device_name", ""))
         status = str(body.get("status", ""))
+        access_state = str(body.get("access_state", ""))
         try:
             created_at = datetime.fromisoformat(
                 str(body.get("created_at", "")).replace("Z", "+00:00")
             )
+            last_seen_raw = body.get("last_seen_at")
+            last_seen_at = datetime.fromisoformat(
+                str(last_seen_raw).replace("Z", "+00:00")
+            ) if last_seen_raw else None
             revoked_raw = body.get("revoked_at")
             revoked_at = datetime.fromisoformat(
                 str(revoked_raw).replace("Z", "+00:00")
@@ -374,13 +523,33 @@ class AiohttpMobilePairingTransport:
         if (
             not ASSOCIATION_ID.fullmatch(association_id)
             or not SUBJECT_SUMMARY.fullmatch(subject_summary)
+            or not DEVICE_SUMMARY.fullmatch(device_summary)
+            or not 1 <= len(device_name) <= 128
+            or not device_name.strip()
             or status not in {"active", "revoked"}
+            or access_state not in {"online", "offline", "accessing", "revoked"}
+            or (status == "active" and access_state == "revoked")
+            or (status == "revoked" and access_state != "revoked")
             or (status == "active" and revoked_at is not None)
             or (status == "revoked" and revoked_at is None)
         ):
             raise AiohttpMobilePairingTransport._invalid_response()
         return MobileAssociation(
-            association_id, subject_summary, status, created_at, revoked_at
+            association_id=association_id,
+            subject_summary=subject_summary,
+            device_summary=device_summary,
+            device_name=device_name,
+            status=status,
+            access_state=access_state,
+            created_at=created_at,
+            last_seen_at=last_seen_at,
+            revoked_at=revoked_at,
+            device_type="android",
+            workspace_scope=str(body.get("workspace_scope") or "all"),
+            permissions=tuple(
+                item for item in body.get("permissions", ["read", "send", "approve", "files"])
+                if isinstance(item, str)
+            ),
         )
 
     @staticmethod
@@ -404,6 +573,7 @@ class MobilePairingService:
         self.credential_store = credential_store or RuntimeCredentialStore(self.relay_state / "credential.dpapi")
         self.transport_factory = transport_factory
         self._offline = False
+        self.paused_path = self.relay_state / "remote-access.paused"
 
     def readiness(self) -> dict[str, str]:
         credential_path, url_path = self.credential_store.path, self.relay_state / "relay-wss-url"
@@ -413,6 +583,9 @@ class MobilePairingService:
             credential = self.credential_store.load()
             relay_url = relay_https_from_wss(url_path.read_text(encoding="utf-8"))
             environment, _ = pairing_environment(relay_url)
+            if self.paused_path.is_file():
+                return {"state": "paused", "action": "resume", "runtime_id": credential.runtime_id,
+                        "environment": environment}
             if self._offline:
                 return {"state": "offline", "action": "retry", "runtime_id": credential.runtime_id,
                         "environment": environment}
@@ -421,9 +594,21 @@ class MobilePairingService:
         except Exception:
             return {"state": "credential_invalid", "action": "repair_runtime"}
 
-    async def create(self) -> MobilePairingGrant:
+    async def create(
+        self,
+        workspace_scope: str = "all",
+        workspace_ids: tuple[str, ...] = (),
+    ) -> MobilePairingGrant:
+        if self.paused_path.is_file():
+            raise MobilePairingError("runtime_paused", "Runtime remote access is paused.",
+                                     retryable=False, action="resume")
         credential, relay_url, transport = self._configured()
-        grant = await self._with_connectivity_state(transport.create(credential))
+        if workspace_scope == "all" and not workspace_ids:
+            # Preserve compatibility with existing injected transports.
+            pending = transport.create(credential)
+        else:
+            pending = transport.create(credential, workspace_scope, workspace_ids)
+        grant = await self._with_connectivity_state(pending)
         return MobilePairingGrant(grant.grant_id, None, grant.expires_at, grant.status,
                                   build_pairing_payload(grant.code or "", relay_url))
 
@@ -447,6 +632,19 @@ class MobilePairingService:
             transport.revoke_association(credential, association_id)
         )
 
+    async def shrink_association(
+        self, association_id: str, permissions: tuple[str, ...]
+    ) -> MobileAssociation:
+        if not permissions or not set(permissions).issubset({"read", "send", "approve", "files"}):
+            raise MobilePairingError(
+                "association_permissions_invalid", "Association permissions are invalid.",
+                retryable=False, action="refresh",
+            )
+        credential, _, transport = self._configured()
+        return await self._with_connectivity_state(
+            transport.shrink_association(credential, association_id, permissions)
+        )
+
     async def revoke_enrollment(self) -> dict[str, Any]:
         credential, _, transport = self._configured()
         result = await self._with_connectivity_state(
@@ -454,6 +652,26 @@ class MobilePairingService:
         )
         self.credential_store.path.unlink(missing_ok=True)
         (self.relay_state / "relay-wss-url").unlink(missing_ok=True)
+        self.paused_path.unlink(missing_ok=True)
+        return result
+
+    async def pause_enrollment(self) -> dict[str, Any]:
+        credential, _, transport = self._configured()
+        result = await self._with_connectivity_state(
+            transport.pause_enrollment(credential)
+        )
+        self.relay_state.mkdir(parents=True, exist_ok=True)
+        temporary = self.paused_path.with_suffix(".tmp")
+        temporary.write_text("paused\n", encoding="utf-8")
+        temporary.replace(self.paused_path)
+        return result
+
+    async def resume_enrollment(self) -> dict[str, Any]:
+        credential, _, transport = self._configured()
+        result = await self._with_connectivity_state(
+            transport.resume_enrollment(credential)
+        )
+        self.paused_path.unlink(missing_ok=True)
         return result
 
     async def inject_connection_owner_restart(

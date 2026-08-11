@@ -277,3 +277,19 @@ async def get_skill_catalog_entry(slug: str) -> dict:
             "body": parsed["body"],
         },
     }
+
+
+# ── private skills (HepAI Files backed) ──────────────────────────────────────
+
+@router.get("/private")
+async def list_private_skills() -> dict:
+    """Placeholder: private skills are managed through HepAI Files API.
+
+    The frontend fetches private skills directly via the fileAPI (hepai files upload).
+    This endpoint serves as a documentation anchor and can be extended later.
+    """
+    return {
+        "status": True,
+        "data": [],
+        "message": "Private skills are managed via HepAI Files. Use fileAPI endpoints for CRUD.",
+    }

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T09:21:41.383984+00:00",
+  "variants": {
+    "debug": {
+      "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.4.apk",
+      "bytes": 57742588,
+      "abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
+      "python_enabled": false
+    },
+    "acceptance": {
+      "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\acceptance\\OpenDrSai-Android-v1.5.4.apk",
+      "bytes": 55958109,
+      "abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
+      "python_enabled": true
+    },
+    "release": {
+      "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\release\\OpenDrSai-Android-v1.5.4.apk",
+      "bytes": 25994105,
+      "abis": [
+        "arm64-v8a"
+      ],
+      "python_enabled": false
+    }
+  },
+  "checks": {
+    "debug_dual_abi": true,
+    "acceptance_dual_abi": true,
+    "acceptance_python_enabled": true,
+    "release_arm64_only": true,
+    "release_python_default_off": true,
+    "acceptance_under_90_mib": true
+  },
+  "result": "passed"
+}

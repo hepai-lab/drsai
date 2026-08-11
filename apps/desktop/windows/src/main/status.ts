@@ -146,6 +146,8 @@ export function fallbackUpdateStatus(error: unknown): UpdateStatus {
     errorCode: "desktop-health",
     error: error instanceof Error ? error.message : String(error),
     recovery: null,
+    source: null,
+    fallbackUsed: false,
   };
 }
 

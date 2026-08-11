@@ -1,0 +1,26 @@
+{
+  "apk": "OpenDrSai-Android-v1.5.6.apk",
+  "device_checks": {
+    "checkpoint_receipt_token_findings": 0,
+    "cross_account_reads": 0,
+    "oaep_absolute_path_findings": 0,
+    "oaep_token_findings": 0
+  },
+  "dynamic_findings": {
+    "apk": 0,
+    "app_data": 0,
+    "logcat": 0
+  },
+  "gates": {
+    "apk_generic_secret_scan": true,
+    "checkpoint_receipt_no_token": true,
+    "cross_account_isolation": true,
+    "dynamic_canary_absent_from_apk_logcat_app_data": true,
+    "oaep_no_token_or_absolute_path": true
+  },
+  "generated_at": "2026-08-04T04:52:19.675083+00:00",
+  "generic_apk_findings": [],
+  "passed": true,
+  "schema_version": 1,
+  "serial": "192.168.3.78:45171"
+}

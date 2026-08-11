@@ -22,6 +22,7 @@ def anyio_backend():
 
 class SecurityRPC:
     def __init__(self):
+        self.generation = 1
         self.handlers = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.responses: dict[str, Any] = {}
@@ -133,6 +134,46 @@ async def test_permission_denial_happens_before_approval_creation(tmp_path: Path
 
 
 @pytest.mark.anyio
+async def test_duplicate_native_approval_requests_share_one_item_decision_and_audit(tmp_path: Path):
+    engine, _, context, rpc, bridge = _fixture(tmp_path)
+    bridge.timeout_seconds = 3
+    method = "item/fileChange/requestApproval"
+    message = {
+        "id": 42, "method": method,
+        "params": {"threadId": "thread-security", "turnId": "turn-security", "itemId": "same-item"},
+    }
+    tasks = [asyncio.create_task(rpc.handlers[method](message)) for _ in range(100)]
+    approval = await _wait_pending(engine)
+    await asyncio.sleep(0)
+    assert len(engine.list_pending_approvals(context.run_id)) == 1
+    await bridge.respond(context.run_id, approval["approval_id"], "accept")
+    assert await asyncio.gather(*tasks) == [{"decision": "accept"}] * 100
+    events = engine.list_events(context.run_id)
+    assert len([item for item in events if item["type"] == "audit.codex.approval.requested"]) == 1
+    assert len([item for item in events if item["type"] == "audit.codex.approval.approved"]) == 1
+
+
+@pytest.mark.anyio
+async def test_transport_disconnect_invalidates_old_approval_generation(tmp_path: Path):
+    engine, _, context, rpc, bridge = _fixture(tmp_path)
+    method = "item/fileChange/requestApproval"
+    message = {
+        "id": 43, "method": method,
+        "params": {"threadId": "thread-security", "turnId": "turn-security", "itemId": "generation-item"},
+    }
+    task = asyncio.create_task(rpc.handlers[method](message))
+    approval = await _wait_pending(engine)
+    await bridge.disconnect_run(context.run_id)
+    assert await task == {"decision": "cancel"}
+    assert engine.get_approval(approval["approval_id"])["status"] == "disconnected"
+    await bridge.respond(context.run_id, approval["approval_id"], "accept")
+    assert engine.get_approval(approval["approval_id"])["status"] == "disconnected"
+    disconnected = [item for item in engine.list_events(context.run_id)
+                    if item["type"] == "audit.codex.approval.disconnected"]
+    assert len(disconnected) == 1
+
+
+@pytest.mark.anyio
 async def test_permission_subset_session_scope_timeout_and_cancel(tmp_path: Path):
     engine, _, context, rpc, bridge = _fixture(tmp_path)
     method = "item/permissions/requestApproval"
@@ -157,6 +198,28 @@ async def test_permission_subset_session_scope_timeout_and_cancel(tmp_path: Path
     assert timeout_engine.get_run(timeout_context.run_id)["status"] == "failed"
 
 
+@pytest.mark.anyio
+async def test_cancel_and_approval_decision_race_is_idempotent_for_100_requests(tmp_path: Path):
+    engine, _, context, rpc, bridge = _fixture(tmp_path)
+    method = "item/fileChange/requestApproval"
+    for index in range(100):
+        task = asyncio.create_task(rpc.handlers[method]({
+            "id": 1000 + index, "method": method,
+            "params": {"threadId": "thread-security", "turnId": "turn-security", "itemId": f"race-{index}"},
+        }))
+        approval = await _wait_pending(engine)
+        results = await asyncio.gather(
+            bridge.cancel_run(context.run_id),
+            bridge.respond(context.run_id, approval["approval_id"], "accept"),
+            return_exceptions=True,
+        )
+        assert not any(isinstance(result, Exception) for result in results)
+        assert (await task)["decision"] in {"cancel", "accept"}
+        assert engine.list_pending_approvals(context.run_id) == []
+        assert bridge.pending == {}
+        assert engine.get_run(context.run_id)["status"] == "running"
+
+
 def test_restart_fails_orphaned_pending_approval_closed(tmp_path: Path):
     engine, _, context, _, bridge = _fixture(tmp_path)
     approval = engine.request_approval(context.run_id, {
@@ -164,7 +227,7 @@ def test_restart_fails_orphaned_pending_approval_closed(tmp_path: Path):
     })
     assert engine.get_run(context.run_id)["status"] == "waiting_approval"
     assert bridge.recover_orphaned_pending() == 1
-    assert engine.get_approval(approval["approval_id"])["status"] == "timeout"
+    assert engine.get_approval(approval["approval_id"])["status"] == "expired"
     assert engine.get_run(context.run_id)["status"] == "failed"
     assert bridge.recover_orphaned_pending() == 0
 
@@ -174,15 +237,15 @@ async def test_account_state_and_managed_login_actions_never_return_raw_credenti
     rpc = SecurityRPC()
     manager = CodexAccountManager(rpc)
     fixtures = [
-        ({"account": None, "requiresOpenaiAuth": True}, False, None),
+        ({"account": None, "requiresOpenaiAuth": True}, "signed_out", False, None),
         ({"account": {"type": "chatgpt", "email": "user@example.com", "planType": "plus",
-                      "accessToken": "SECRET"}, "requiresOpenaiAuth": True}, True, "chatgpt"),
-        ({"account": {"type": "apiKey", "apiKey": "sk-secret"}, "requiresOpenaiAuth": True}, True, "apiKey"),
+                      "accessToken": "SECRET"}, "requiresOpenaiAuth": True}, "signed_in", True, "chatgpt"),
+        ({"account": {"type": "apiKey", "apiKey": "sk-secret"}, "requiresOpenaiAuth": True}, "signed_in", True, "apiKey"),
     ]
-    for response, logged_in, mode in fixtures:
+    for response, state, logged_in, mode in fixtures:
         rpc.responses["account/read"] = response
         status = await manager.status(refresh=True)
-        assert status["logged_in"] is logged_in and status["auth_mode"] == mode
+        assert status["state"] == state and status["logged_in"] is logged_in and status["auth_mode"] == mode
         assert "SECRET" not in str(status) and "sk-secret" not in str(status)
     rpc.responses["account/login/start"] = {
         "type": "chatgptDeviceCode", "loginId": "login-1", "verificationUrl": "https://auth.example",
@@ -197,4 +260,10 @@ async def test_account_state_and_managed_login_actions_never_return_raw_credenti
         RuntimeExecutionError("token_expired", "expired", retryable=True)
     )
     expired = await manager.status(refresh=True)
-    assert expired["logged_in"] is False and expired["reason"] == "token_expired" and expired["retryable"] is True
+    assert expired["state"] == "unknown" and expired["logged_in"] is False
+    assert expired["reason"] == "token_expired" and expired["retryable"] is True
+    rpc.responses["account/read"] = lambda _params: (_ for _ in ()).throw(
+        RuntimeExecutionError("codex_connection_eof", "disconnected", retryable=True)
+    )
+    unavailable = await manager.status()
+    assert unavailable["state"] == "unavailable" and unavailable["logged_in"] is False

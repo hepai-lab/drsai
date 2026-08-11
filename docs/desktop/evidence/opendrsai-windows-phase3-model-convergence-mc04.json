@@ -1,0 +1,103 @@
+{
+  "schema_version": "opendrsai.windows.phase3.model-convergence-evidence/1",
+  "captured_at": "2026-08-05T17:59:46+08:00",
+  "feature_id": "P3-MC04",
+  "status": "accepted_local",
+  "scope": "OpenDrSai local Full Agent Runtime exact model resolution, request-scoped Provider client binding, admission validation, Manifest evidence, and replay revision consistency; Codex Adapter excluded",
+  "checks": {
+    "structured_model_selection_is_authoritative": true,
+    "legacy_model_is_confined_to_default_provider": true,
+    "catalog_revision_revalidated_before_execution": true,
+    "removed_model_rejected_before_generation": true,
+    "unauthorized_catalog_state_rejected_before_generation": true,
+    "unknown_agent_capabilities_fail_closed": true,
+    "provider_and_canonical_model_reach_agent_factory": true,
+    "upstream_model_mapping_is_exact": true,
+    "client_not_reused_across_provider_binding": true,
+    "running_stream_not_interrupted_by_config_update": true,
+    "next_run_uses_new_config_revision": true,
+    "manifest_records_effective_provider": true,
+    "manifest_records_upstream_model_id": true,
+    "manifest_records_config_and_catalog_revision": true,
+    "manifest_records_capability_provenance": true,
+    "replay_preserves_provider_aware_selection": true,
+    "replay_exact_revision_match_is_explicit": true,
+    "replay_degradation_reasons_are_explicit": true,
+    "renderer_model_provider_e2e": true,
+    "production_build": true
+  },
+  "stable_errors": [
+    "model_catalog_changed",
+    "model_unavailable",
+    "model_unauthorized",
+    "model_catalog_unavailable",
+    "model_capability_unsupported"
+  ],
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest -q <MC04 model, runtime, replay, inspection, and compatibility suites>",
+      "result": "147 passed, 12 subtests passed in 143.92s"
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest -q cores/python/packages/drsai/tests/test_phase2_controlled_execute_e2e.py",
+      "result": "2 passed in 8.23s"
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest -q <model discovery, gateway, and factory MC04 focus>",
+      "result": "43 passed in 5.13s"
+    },
+    {
+      "command": "npm run verify:opendrsai-model-convergence-p3",
+      "result": "passed; includes exact Runtime binding, fail-closed admission, Manifest, and replay contracts"
+    },
+    {
+      "command": "npm run verify:model-provider-ui-e2e",
+      "result": "passed"
+    },
+    {
+      "command": "npm run build",
+      "result": "passed; backend source archive, TypeScript typecheck, Electron main/preload/renderer production bundles"
+    }
+  ],
+  "artifacts": {
+    "gateway": {
+      "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+      "sha256": "7d3a729953bdb9b784cac65f4337c400e8e202d39eed37f0f1160d80e6e81c63"
+    },
+    "agent_factory": {
+      "path": "cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py",
+      "sha256": "4a444fd271e7c31e39ca841516fdd7f32789ca7a7969d2c8ec17fabc77b15c55"
+    },
+    "runtime_agent": {
+      "path": "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+      "sha256": "ab1471946ae81befaee6afdf3480257dcaecd55113164398d4f0fecf83bf52a7"
+    },
+    "replay_execution": {
+      "path": "cores/python/packages/drsai/src/drsai/backend/runtime/replay_execution.py",
+      "sha256": "fad2a5a48c9a3c609a8f83bddad6016868e465a25cc1438288125fba63c8cd90"
+    },
+    "model_discovery": {
+      "path": "cores/python/packages/drsai/src/drsai/config/model_discovery.py",
+      "sha256": "45b0a60d4f00ed46a27728ef07b167dce7ec4a66eabbd0189cfb2525c5a6be5b"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/resources/backend/backend-source.json",
+      "sha256": "83251005493b49eb6515def51bd9ac0776e9761cd45fb7de2d7fac9717c16a49"
+    },
+    "desktop_main_bundle": {
+      "path": "apps/desktop/windows/out/main/index.js",
+      "sha256": "9728066a0704a475bda01b1dee2a71273d634ed621d77da930f956697b158b99"
+    },
+    "desktop_renderer_bundle": {
+      "path": "apps/desktop/windows/out/renderer/assets/index-CZBbhl2n.js",
+      "sha256": "0750c19acc9db6bcec2a6e6a6a3b60d763f2c57327be599684b7997cd765efdc"
+    }
+  },
+  "progress": {
+    "model_convergence": "4/8 (50%) local implementation acceptance",
+    "phase3_product_ledger": "29/50 (58%)",
+    "product_baseline": "82/93 (88.2%)",
+    "note": "The model-convergence sub-ledger is additive detail and does not inflate the existing 50-feature P3 product ledger. Live HAI release gates remain separate and are not fabricated."
+  },
+  "next": "P3-MC05 native multimodal image understanding: bounded image preflight, Provider-native content blocks, non-vision recovery, and privacy-safe evidence"
+}

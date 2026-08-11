@@ -1,0 +1,16 @@
+{
+  "run": {"status": "completed"},
+  "run_id": "fixture-qa-greeting-hello-001",
+  "session_id": "fixture-session-qa-greeting-hello-001",
+  "output": "Hello! How can I help you today?",
+  "tool_calls": [],
+  "skill_activations": [],
+  "knowledge_queries": [],
+  "approvals": [],
+  "artifacts": [],
+  "semantic_judgments": {"对用户做出自然、友好的问候": true},
+  "manifest": {"agent_definition": "opendrsai@1", "fixture_revision": 1},
+  "available": {"run": true, "manifest": true, "items": true},
+  "missing": [],
+  "evidence_complete": true
+}

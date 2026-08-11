@@ -1,0 +1,46 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 5,
+  "captured_at": "2026-08-05",
+  "scope": "OpenDrSai Full Agent Runtime first-run setup; Codex Adapter excluded",
+  "progress": {
+    "accepted": 0,
+    "total": 50,
+    "percent": 0,
+    "implemented_not_accepted": ["M01-F01"],
+    "in_progress": ["M01-F02", "M01-F03", "M01-F04"]
+  },
+  "implemented": [
+    "Deterministic identity, Runtime, model, and workspace setup state machine with one recovery action per blocker.",
+    "Production first-run UI with Chinese and English copy, progress semantics, live state announcements, and direct model-provider deep-link.",
+    "Explicit HAI model connection test gate before first task.",
+    "Explicit real user workspace and trust gate; internal installation path no longer auto-registers as the user's task workspace.",
+    "Creating an OpenDrSai workspace no longer triggers Codex session synchronization.",
+    "Completion state persists locally without storing credentials or model secrets."
+  ],
+  "verified": [
+    {
+      "command": "npm run verify:opendrsai-first-run-setup",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "13 state transitions and priority cases + 8 production UI/integration contracts"
+    },
+    {
+      "command": "npm run typecheck",
+      "cwd": "apps/desktop/windows",
+      "result": "passed"
+    },
+    {
+      "command": "npm run verify:opendrsai-phase3-ledger",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "strict progress remains 0/50 accepted (0%)"
+    }
+  ],
+  "remaining_acceptance_evidence": {
+    "M01-F01": "Packaged Windows restart/resume E2E across every setup state is still required.",
+    "M01-F02": "Cold-start 3-second interactivity, automatic task-input focus, visual regression, and A1 accessibility evidence are incomplete.",
+    "M01-F03": "Real packaged HAI OIDC login-to-model transition has not yet been recorded.",
+    "M01-F04": "Missing/corrupt/port-conflict/version-mismatch Runtime repair matrix and proof of bounded loading remain incomplete."
+  }
+}
