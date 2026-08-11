@@ -628,7 +628,9 @@ def main() -> int:
             runtime_log.write_text(
                 "\n".join([
                     str(redact_sensitive(
-                        f"Authorization: Bearer {bearer}; token={registration_token}"
+                        f"Authorization: Bearer {bearer}; token={registration_token}",
+                        "",
+                        "audit",
                     )),
                     redact_secrets(
                         f"access_grant_code={grant_code}; message={message_canary}; command={approve_canary}"

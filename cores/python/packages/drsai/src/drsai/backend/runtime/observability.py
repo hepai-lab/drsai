@@ -108,7 +108,7 @@ class RuntimeObservability:
                dimensions: Mapping[str, Any] | None = None) -> None:
         if metric not in METRICS or not isinstance(value, (int, float)):
             raise ValueError("unsupported Runtime metric")
-        safe_dimensions = redact_sensitive(dict(dimensions or {}))
+        safe_dimensions = redact_sensitive(dict(dimensions or {}), "", "audit")
         # Resource identities are indexed dimensions; bodies, paths and commands are forbidden.
         forbidden = _FORBIDDEN_RUNTIME_METRIC_DIMENSIONS.intersection(safe_dimensions)
         if forbidden:
@@ -211,7 +211,7 @@ class RuntimeObservability:
             raise ValueError("duration_ms must be finite")
         if duration_ms < 0 or duration_ms > 300_000:
             raise ValueError("duration_ms is outside the bounded range")
-        safe_dimensions = redact_sensitive(dict(dimensions or {}))
+        safe_dimensions = redact_sensitive(dict(dimensions or {}), "", "audit")
         forbidden = _FORBIDDEN_DIMENSIONS.intersection(safe_dimensions)
         if forbidden:
             raise ValueError(

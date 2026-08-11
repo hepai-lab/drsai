@@ -1698,10 +1698,10 @@ class RuntimeEngine:
         evidence: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         run = self.get_run(run_id)
-        safe_message = str(redact_sensitive(redact_secrets(message)))
+        safe_message = str(redact_sensitive(redact_secrets(message), "", "content"))
         from drsai.backend.runtime.input_resources import normalize_input_resources, serializable_input_resources
         normalized_resources = normalize_input_resources(input_resources or [])
-        encoded = json.dumps(redact_sensitive(attachment_refs or []), separators=(",", ":"))
+        encoded = json.dumps(redact_sensitive(attachment_refs or [], "", "content"), separators=(",", ":"))
         encoded_resources = json.dumps(
             serializable_input_resources(normalized_resources), ensure_ascii=False, separators=(",", ":"),
         )
@@ -1900,7 +1900,7 @@ class RuntimeEngine:
         ended = _timestamp(run.get("completed_at")) or _timestamp(_now())
         response = {
             "schema_version": INSPECTION_SCHEMA_VERSION,
-            "run": redact_sensitive(run),
+            "run": redact_sensitive(run, "", "audit"),
             "summary": {
                 "duration_ms": max(0, round((ended - started) * 1000)) if started else None,
                 "counts_by_item_type": counts,
@@ -2928,7 +2928,7 @@ class RuntimeEngine:
         return [dict(row) for row in rows]
 
     def append_event(self, run_id: str, event_type: str, data: dict[str, Any]) -> dict[str, Any]:
-        safe_data = redact_sensitive(data)
+        safe_data = redact_sensitive(data, "", "content")
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = db.execute(
@@ -2984,7 +2984,7 @@ class RuntimeEngine:
                 "SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_events WHERE run_id=?", (run_id,)
             ).fetchone()[0]
             event_id, created = f"event-{uuid.uuid4()}", _now()
-            safe_data = redact_sensitive(data)
+            safe_data = redact_sensitive(data, "", "content")
             db.execute(
                 "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,?)",
                 (event_id, run_id, sequence, event_type,
@@ -3039,7 +3039,7 @@ class RuntimeEngine:
             NormalizedEventKind.SESSION_DELETED: "removed",
         }.get(event.kind)
         event_type, data, dedupe_key = normalized_runtime_write(event)
-        compatibility_data = redact_sensitive({**dict(audit or {}), **data})
+        compatibility_data = redact_sensitive({**dict(audit or {}), **data}, "", "content")
         created = _now()
         journal_created = False
         with self._lock, self._connect() as db:
@@ -3244,7 +3244,7 @@ class RuntimeEngine:
                         continue
                     sequence += 1
                     event_id, created = f"event-{uuid.uuid4()}", _now()
-                    safe_data = redact_sensitive(data)
+                    safe_data = redact_sensitive(data, "", "content")
                     inserted_rows.append((
                         event_id, run_id, sequence, event_type,
                         json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key,
@@ -3318,7 +3318,7 @@ class RuntimeEngine:
                     results.append(self._event(existing)); continue
                 sequence += 1
                 event_id, created = f"event-{uuid.uuid4()}", _now()
-                safe_data = redact_sensitive(data)
+                safe_data = redact_sensitive(data, "", "content")
                 db.execute(
                     "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,?)",
                     (event_id, run_id, sequence, event_type, json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key),
@@ -3382,7 +3382,7 @@ class RuntimeEngine:
 
     def request_approval(self, run_id: str, request: dict[str, Any], deadline_at: str | None = None) -> dict[str, Any]:
         approval_id, created = f"approval-{uuid.uuid4()}", _now()
-        safe_request = redact_sensitive(request)
+        safe_request = redact_sensitive(request, "", "audit")
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = db.execute(
@@ -3553,7 +3553,7 @@ class RuntimeEngine:
     def complete_side_effect(self, approval_id: str, result: Mapping[str, Any]) -> dict[str, Any]:
         completed_at = _now()
         result_digest = "sha256:" + hashlib.sha256(
-            json.dumps(redact_sensitive(dict(result)), separators=(",", ":"), sort_keys=True, default=str).encode("utf-8")
+            json.dumps(redact_sensitive(dict(result), "", "audit"), separators=(",", ":"), sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
         with self._lock, self._connect() as db:
             updated = db.execute(

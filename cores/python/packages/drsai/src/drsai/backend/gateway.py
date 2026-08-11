@@ -3166,7 +3166,7 @@ def _remote_audit(event: str, **fields: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists() and path.stat().st_size > 5_000_000:
             os.replace(path, path.with_suffix(".jsonl.1"))
-        safe = redact_sensitive({key: value for key, value in fields.items() if key not in {"content", "data"}})
+        safe = redact_sensitive({key: value for key, value in fields.items() if key not in {"content", "data"}}, "", "audit")
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"at": datetime.now().astimezone().isoformat(), "event": event, **safe}, ensure_ascii=False) + "\n")
     except OSError:
@@ -6390,7 +6390,7 @@ async def runtime_run_diagnostics(run_id: str, raw_request: Request):
         "run": run,
         "trace": {"correlation_ids": correlations, "events": events, "audit": audit},
         "metrics": {"event_count": len(events), "audit_count": len(audit), "terminal": run["status"] in {"completed", "cancelled", "failed"}},
-    })
+    }, "", "audit")
     serialized = json.dumps(bundle, ensure_ascii=False)
     unsafe = bool(re.search(r"-----BEGIN [^-]*PRIVATE KEY-----|(?i:Bearer\s+(?!\[REDACTED\])\S+)|(?i:(?:password|secret|token|api[_-]?key)\s*[:=]\s*(?!\[REDACTED\])\S+)", serialized))
     if unsafe:
@@ -8392,7 +8392,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
             while current_error is not None and id(current_error) not in seen_errors and len(diagnostic_parts) < 4:
                 seen_errors.add(id(current_error))
                 status_code = getattr(current_error, "status_code", None)
-                safe_message = str(redact_sensitive(str(current_error))).strip()[:240]
+                safe_message = str(redact_sensitive(str(current_error), "", "audit")).strip()[:240]
                 diagnostic_parts.append(
                     f"{type(current_error).__name__}"
                     + (f"(HTTP {status_code})" if status_code is not None else "")

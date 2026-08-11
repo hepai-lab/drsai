@@ -133,7 +133,9 @@ def collect(
                 "token": canary_values[0],
                 "command": "command=" + canary_values[-1],
                 "status": "fixture",
-            }
+            },
+            "",
+            "audit",
         )
         diagnostics.mkdir()
         (diagnostics / "runtime-diagnostic.json").write_text(

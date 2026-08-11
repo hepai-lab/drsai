@@ -14,12 +14,12 @@ _WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
 _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
-def _safe_text(value: Any, *, limit: int = 4096) -> str:
+def _safe_text(value: Any, *, limit: int = 1_048_576) -> str:
     # Preserve stable diagnostic fields such as ``error_code`` inside JSON
     # text while still removing credentials. ``redact_secrets`` treats every
     # generic ``code`` value as OAuth-sensitive and corrupts public Runtime
     # error contracts (for example service_unavailable).
-    redacted = redact_sensitive(redact_credentials("" if value is None else str(value)))
+    redacted = redact_sensitive(redact_credentials("" if value is None else str(value)), "", "content")
     text = str(redacted)
     return text if len(text) <= limit else f"{text[:limit]}[TRUNCATED {len(text) - limit} CHARS]"
 
@@ -50,7 +50,7 @@ def _safe_value(value: Any, *, key: str = "") -> Any:
         return [_safe_value(item) for item in list(value)[:100]]
     if isinstance(value, str):
         return _safe_text(value)
-    return redact_sensitive(value, key)
+    return redact_sensitive(value, key, "content")
 
 
 def safe_error(value: Any) -> dict[str, Any]:
