@@ -17,8 +17,8 @@ const keychainGate = join(macRoot, "scripts", "verify-model-provider-keychain.py
 assert.match(builder, /hardenedRuntime:\s*true/);
 assert.match(builder, /notarize:\s*true/);
 assert.match(builder, /onlyLoadAppFromAsar:\s*true/);
-assert.ok(credentials.includes('["/usr/bin/security", "add-generic-password"'));
-assert.ok(credentials.includes("input=f\"{secret}\\n\""));
+assert.ok(credentials.includes("SecKeychainAddGenericPassword"));
+assert.ok(credentials.includes("Security.framework/Security"));
 assert.ok(!credentials.includes('"-w", secret') && !credentials.includes("'-w', secret"));
 assert.ok(catalogIpc.includes("desktop:test-my-drsai-model-draft"));
 assert.ok(catalogIpc.includes("desktop:delete-my-drsai-model-provider"));
@@ -27,7 +27,7 @@ assert.ok(packageJson.scripts["verify:model-provider-keychain"]);
 assert.ok(packageJson.scripts["verify:model-provider-release-gate"]);
 
 if (contractOnly) {
-  console.log("macOS model Provider release contract passed (signing/notarization policy, IPC, packaged gate, and Keychain stdin boundary)." );
+  console.log("macOS model Provider release contract passed (signing/notarization policy, IPC, packaged gate, and native Keychain boundary)." );
   process.exit(0);
 }
 
