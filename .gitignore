@@ -347,3 +347,13 @@ docs/desktop/evidence/round*/
 
 # Desktop renderer bundles are reproducible build output.
 apps/desktop/shared/renderer/out/
+
+########################
+# Reasonix（个人配置，不提交）
+########################
+.reasonix/
+
+########################
+# E2E 测试（个人使用，不提交）
+########################
+apps/webui/e2e/
