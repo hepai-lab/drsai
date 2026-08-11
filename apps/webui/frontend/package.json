@@ -8,15 +8,14 @@
     "gatsby"
   ],
   "scripts": {
-    "develop": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8000} --host 0.0.0.0",
-    "develop-clean": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
-    "develop:8001": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port 8001 --host 0.0.0.0",
-    "dev": "npm run develop",
-    "start": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
-    "build": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && rm -rf ../backend/src/drsai_ui/ui_backend/backend/web/ui/ && NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby build && (rsync -a --delete public/ ../backend/src/drsai_ui/ui_backend/backend/web/ui/ || (mkdir -p ../backend/src/drsai_ui/ui_backend/backend/web/ui/ && rm -rf ../backend/src/drsai_ui/ui_backend/backend/web/ui/* && cp -a public/. ../backend/src/drsai_ui/ui_backend/backend/web/ui/))",
-    "build:dev": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && rm -rf ../backend/src/drsai_ui/ui_backend/backend/web/ui/ && NODE_ENV=development GATSBY_SERVICE_MODE=DEV NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby build --no-uglify && (rsync -a --delete public/ ../backend/src/drsai_ui/ui_backend/backend/web/ui/ || (mkdir -p ../backend/src/drsai_ui/ui_backend/backend/web/ui/ && rm -rf ../backend/src/drsai_ui/ui_backend/backend/web/ui/* && cp -a public/. ../backend/src/drsai_ui/ui_backend/backend/web/ui/))",
-    "serve": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby serve",
-    "clean": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean",
+    "dev": "NODE_OPTIONS=--max-old-space-size=32768 gatsby develop --port ${GATSBY_DEV_PORT:-8000} --host 0.0.0.0",
+    "dev:8001": "NODE_OPTIONS=--max-old-space-size=32768 gatsby develop --port 8001 --host 0.0.0.0",
+    "build": "npm run clean && npm run clean:ui && NODE_OPTIONS=--max-old-space-size=32768 gatsby build && npm run sync-build",
+    "build:dev": "npm run clean && npm run clean:ui && NODE_ENV=development GATSBY_SERVICE_MODE=DEV NODE_OPTIONS=--max-old-space-size=32768 gatsby build --no-uglify && npm run sync-build",
+    "serve": "NODE_OPTIONS=--max-old-space-size=32768 gatsby serve --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
+    "clean": "NODE_OPTIONS=--max-old-space-size=32768 gatsby clean",
+    "clean:ui": "rm -rf ../backend/src/drsai_ui/ui_backend/backend/web/ui/",
+    "sync-build": "rsync -a --delete public/ ../backend/src/drsai_ui/ui_backend/backend/web/ui/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
