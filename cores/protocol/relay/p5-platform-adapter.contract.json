@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.org/cores/protocol/relay/p5-platform-adapter.contract.json",
+  "version": "p5-platform/1",
+  "additive_to": "runtime-relay/2.0.0",
+  "endpoints": {
+    "session_catalog_event_stream": {
+      "method": "GET",
+      "path": "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/session-catalog-events/stream",
+      "authorization": ["oidc", "device_proof", "active_association", "workspace.read"],
+      "content_type": "text/event-stream",
+      "event": "session.catalog.changed",
+      "data_schema": "#/$defs/session_catalog_event"
+    },
+    "protocol_usage_metrics": {
+      "method": "GET",
+      "path": "/v1/metrics/protocol-usage",
+      "authorization": ["operator.metrics.read"],
+      "response_schema": "#/$defs/protocol_usage_report"
+    },
+    "push_registration_upsert": {
+      "method": "PUT",
+      "path": "/v1/associations/{runtime_id}/push-registration",
+      "authorization": ["oidc", "device_proof", "active_association"],
+      "request_schema": "#/$defs/push_registration_request",
+      "response_schema": "#/$defs/push_registration_result"
+    },
+    "push_registration_revoke": {
+      "method": "DELETE",
+      "path": "/v1/associations/{runtime_id}/push-registration",
+      "authorization": ["oidc", "device_proof", "active_association"],
+      "response_schema": "#/$defs/push_registration_result"
+    }
+  },
+  "push_delivery": {
+    "source_event_types": [
+      "event.run.completed",
+      "event.run.failed",
+      "event.run.cancelled",
+      "event.run.waiting"
+    ],
+    "dedupe_key": ["event_id", "device_id"],
+    "destination": "active_association.device_id",
+    "payload_schema": "#/$defs/opaque_push_payload",
+    "provider_resolves_token": true,
+    "registration_storage": {
+      "relay": "sha256_digest_only",
+      "provider_adapter": "encrypted_token_or_opaque_provider_handle",
+      "logs_and_audit": "never"
+    },
+    "lease_seconds": 30,
+    "max_attempts": 8,
+    "max_backoff_seconds": 300
+  },
+  "$defs": {
+    "session_catalog_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "session_id", "type", "sequence"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "session_id": {"type": "string", "minLength": 1},
+        "type": {"enum": ["event.session.updated", "event.session.archived", "event.session.removed"]},
+        "sequence": {"type": "integer", "minimum": 1}
+      }
+    },
+    "protocol_usage_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "dimensions", "total_requests", "oaep_request_ratio", "legacy_request_ratio", "rows", "retirement_decision"],
+      "properties": {
+        "schema_version": {"const": "p5-protocol-usage/1"},
+        "dimensions": {"const": ["protocol", "runtime_version", "fallback_reason"]},
+        "total_requests": {"type": "integer", "minimum": 0},
+        "oaep_request_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "legacy_request_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/protocol_usage_row"}},
+        "retirement_decision": {"$ref": "#/$defs/retirement_decision"}
+      }
+    },
+    "protocol_usage_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "runtime_version", "fallback_reason", "request_count"],
+      "properties": {
+        "protocol": {"enum": ["oaep", "legacy"]},
+        "runtime_version": {"type": "string", "minLength": 1, "maxLength": 32},
+        "fallback_reason": {"enum": ["selected", "operator_rollback", "oaep_unavailable", "schema_mismatch", "version_incompatible", "other"]},
+        "request_count": {"type": "integer", "minimum": 0, "maximum": 1000000000}
+      }
+    },
+    "retirement_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eligible", "reason"],
+      "properties": {
+        "eligible": {"const": false},
+        "reason": {"const": "requires_release_cycles_observation_days_and_migration_evidence"}
+      }
+    },
+    "opaque_push_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "runtime_id", "workspace_id", "session_id", "event_id"],
+      "properties": {
+        "version": {"const": "1"},
+        "kind": {"enum": ["run_completed", "run_failed", "run_cancelled", "approval_required"]},
+        "runtime_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "session_id": {"type": "string", "minLength": 1},
+        "event_id": {"type": "string", "minLength": 1},
+        "item_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "push_registration_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "token", "generation"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 2, "maxLength": 32, "pattern": "^[a-z][a-z0-9_-]+$"},
+        "token": {"type": "string", "minLength": 32, "maxLength": 4096, "pattern": ".*\\S.*", "writeOnly": true},
+        "generation": {"type": "integer", "minimum": 1}
+      }
+    },
+    "push_registration_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_id", "device_summary", "provider", "generation", "status", "updated_at"],
+      "properties": {
+        "runtime_id": {"type": "string", "minLength": 1},
+        "device_summary": {"type": "string", "pattern": "^dev_[0-9a-f]{12}$"},
+        "provider": {"type": "string", "minLength": 2, "maxLength": 32, "pattern": "^[a-z][a-z0-9_-]+$"},
+        "generation": {"type": "integer", "minimum": 1},
+        "status": {"enum": ["active", "revoked"]},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}
