@@ -18,6 +18,7 @@ const thinPackageVerifier = read("scripts/verify-thin-update-package.mjs");
 const metadataAnnotator = read("scripts/annotate-update-metadata.mjs");
 const runtimeInstaller = read("src/main/runtimeInstaller.ts");
 const runtimeBuilder = read("scripts/build-runtime-artifact.sh");
+const runtimeNotarizationSigner = read("scripts/sign-runtime-for-notarization.mjs");
 const adhocHook = read("scripts/after-pack.cjs");
 const nativePermissionsHook = read("scripts/after-pack-native-permissions.cjs");
 const updatePackHook = read("scripts/after-pack-update.cjs");
@@ -132,6 +133,7 @@ for (const contract of ["sha256", "runtime-manifest.json", '"/usr/bin/tar"', '"i
 for (const contract of ["afterPack: scripts/after-pack-update.cjs", "target: zip"]) assert.ok(updateBuilder.includes(contract), `Thin update builder omits ${contract}`);
 for (const contract of ["normalizeNativePermissions", 'name.endsWith(".tar.gz")', "rmSync", "runtime-manifest.json", "Thin update package still contains"]) assert.ok(updatePackHook.includes(contract), `Thin update packaging hook omits ${contract}`);
 for (const contract of ["readFileSync(bundledRuntimeManifestPath()", "isSafeRelativePath(manifest.archive)", "existsSync(resolveResource"]) assert.ok(runtimeInstaller.includes(contract), `Thin update Runtime availability policy omits ${contract}`);
+assert.match(runtimeNotarizationSigner, /new Set\(matches\)/, "Runtime signing identity discovery must deduplicate identical certificate hashes returned through multiple keychain paths.");
 assert.ok(read("scripts/verify-update-assets.mjs").includes("2 * 1024 * 1024 * 1024"), "Update asset gate must enforce GitHub's 2 GiB per-file limit");
 for (const contract of ["Runtime compatibility metadata", 'manifest.archive.endsWith(".tar.gz")', "bundled archive absent by design", "64 * 1024 * 1024"]) assert.ok(thinPackageVerifier.includes(contract), `Thin update package verifier omits ${contract}`);
 assert.ok(packageJson.scripts["verify:update-thin-package"], "macOS package omits thin update structure verification");
