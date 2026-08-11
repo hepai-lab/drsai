@@ -16,8 +16,8 @@ const keyId = required("APPLE_API_KEY_ID");
 const issuer = required("APPLE_API_ISSUER");
 const submission = JSON.parse(run("/usr/bin/xcrun", ["notarytool", "submit", dmg, "--key", key, "--key-id", keyId, "--issuer", issuer, "--wait", "--output-format", "json"]));
 assert.equal(submission.status, "Accepted", `Apple rejected DMG notarization submission ${submission.id || "<unknown>"}: ${submission.message || submission.status}`);
-run("/usr/bin/xcrun", ["stapler", "staple", dmg]);
-const validation = run("/usr/bin/xcrun", ["stapler", "validate", dmg]);
+await runWithRetry("/usr/bin/xcrun", ["stapler", "staple", dmg], 5);
+const validation = await runWithRetry("/usr/bin/xcrun", ["stapler", "validate", dmg], 5);
 assert.match(validation, /worked|valid/i, "Stapled DMG ticket did not validate.");
 
 const evidencePath = join(root, "build", "acceptance", "dmg-notarization.json");
@@ -44,4 +44,19 @@ function required(name) {
 
 function run(command, args) {
   return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 1_800_000 });
+}
+
+async function runWithRetry(command, args, attempts) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try { return run(command, args); }
+    catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+      const delayMs = 5_000 * 2 ** (attempt - 1);
+      console.warn(`${args.slice(0, 2).join(" ")} attempt ${attempt} failed; retrying in ${delayMs}ms.`);
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
+    }
+  }
+  throw lastError;
 }
