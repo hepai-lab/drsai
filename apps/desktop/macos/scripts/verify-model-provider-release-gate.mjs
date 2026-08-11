@@ -1,7 +1,8 @@
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,7 +35,18 @@ if (contractOnly) {
 assert.equal(process.platform, "darwin", "Signed model Provider release gate must run on macOS.");
 assert.equal(process.arch, "arm64", "Signed model Provider release gate must run on Apple Silicon.");
 
-const appPath = resolve(process.env.OPENDRSAI_MACOS_APP_PATH || join(macRoot, "release", "mac-arm64", "OpenDrSai.app"));
+let mounted = false;
+let mountRoot;
+let appPath = resolve(process.env.OPENDRSAI_MACOS_APP_PATH || join(macRoot, "release", "mac-arm64", "OpenDrSai.app"));
+if (!process.env.OPENDRSAI_MACOS_APP_PATH && !hasRuntimeArchive(appPath)) {
+  const dmg = join(macRoot, "release", `OpenDrSai-macOS-v${packageJson.version}-arm64.dmg`);
+  assert.ok(existsSync(dmg), `Full Runtime DMG is missing: ${dmg}`);
+  mountRoot = mkdtempSync(join(tmpdir(), "opendrsai-model-provider-gate-"));
+  run("/usr/bin/hdiutil", ["attach", dmg, "-readonly", "-nobrowse", "-mountpoint", mountRoot]);
+  mounted = true;
+  appPath = join(mountRoot, "OpenDrSai.app");
+}
+process.once("exit", cleanupMount);
 const contents = join(appPath, "Contents");
 assert.ok(existsSync(join(contents, "MacOS", "OpenDrSai")), `Signed application executable is missing: ${appPath}`);
 assert.ok(existsSync(join(contents, "Resources", "app.asar")), "Packaged app.asar is missing.");
@@ -47,7 +59,7 @@ run("/usr/bin/xcrun", ["stapler", "validate", appPath]);
 const python = process.env.OPENDRSAI_MODEL_PROVIDER_TEST_PYTHON || join(repoRoot, ".venv", "bin", "python");
 assert.ok(existsSync(python), `Python for Keychain gate is missing: ${python}`);
 run(python, [keychainGate], { OPENDRSAI_MACOS_APP_PATH: appPath });
-run(process.execPath, [join(macRoot, "scripts", "verify-packaged-smoke.mjs")]);
+run(process.execPath, [join(macRoot, "scripts", "verify-packaged-smoke.mjs")], { OPENDRSAI_MACOS_APP_PATH: appPath }, 1_020_000);
 
 const executable = join(contents, "MacOS", "OpenDrSai");
 const evidencePath = resolve(process.env.OPENDRSAI_MODEL_PROVIDER_MACOS_EVIDENCE || join(macRoot, "build", "acceptance", "model-provider-release-gate.json"));
@@ -73,12 +85,33 @@ writeFileSync(evidencePath, `${JSON.stringify({
 }, null, 2)}\n`, "utf8");
 
 console.log(`Signed macOS model Provider release gate passed: ${appPath}; evidence: ${evidencePath}`);
+cleanupMount();
 
-function run(command, args, extraEnv = {}) {
+function hasRuntimeArchive(candidateApp) {
+  const runtimeRoot = join(candidateApp, "Contents", "Resources", "runtime");
+  const manifestPath = join(runtimeRoot, "runtime-manifest.json");
+  if (!existsSync(manifestPath)) return false;
+  try {
+    const runtimeManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    return Boolean(runtimeManifest.archive && existsSync(join(runtimeRoot, runtimeManifest.archive)));
+  } catch {
+    return false;
+  }
+}
+
+function cleanupMount() {
+  if (mounted && mountRoot) {
+    execFileSync("/usr/bin/hdiutil", ["detach", mountRoot, "-force"], { stdio: "ignore" });
+    mounted = false;
+  }
+  if (mountRoot) rmSync(mountRoot, { recursive: true, force: true });
+}
+
+function run(command, args, extraEnv = {}, timeout = 180_000) {
   execFileSync(command, args, {
     cwd: repoRoot,
     env: { ...process.env, ...extraEnv },
     stdio: "inherit",
-    timeout: 180_000,
+    timeout,
   });
 }
