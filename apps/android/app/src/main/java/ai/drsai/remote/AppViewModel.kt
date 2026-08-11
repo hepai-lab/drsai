@@ -2063,6 +2063,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val remote = ai.drsai.remote.remote.data.RemoteWorkspaceContainer.get(getApplication())
                 runCatching { remote.drafts.clearSubject(subject) }
                 runCatching { remote.activity.clearSubject(subject) }
+                runCatching { remote.runControls.clearSubject(subject) }
+                runCatching { remote.approvalDecisions.clearSubject(subject) }
             }
             tokenStore.clear()
             update { AppState(destination = AppDestination.Login) }

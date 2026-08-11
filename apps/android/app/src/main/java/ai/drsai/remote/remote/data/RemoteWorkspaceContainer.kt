@@ -17,6 +17,7 @@ import ai.drsai.remote.data.MIGRATION_9_10
 import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.data.MIGRATION_11_12
 import ai.drsai.remote.data.MIGRATION_12_13
+import ai.drsai.remote.data.MIGRATION_13_14
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.model.RuntimeId
@@ -48,6 +49,7 @@ class RemoteWorkspaceContainer private constructor(private val app: Application)
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
             MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
             MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
+            MIGRATION_13_14,
         )
         .build()
     val repository = RelayRemoteRepository(
@@ -81,6 +83,8 @@ class RemoteWorkspaceContainer private constructor(private val app: Application)
     val drafts = RemoteDraftStore(app)
     val unifiedSearch = RemoteUnifiedSearch(database)
     val activity = RemoteActivityStore(app)
+    val runControls = RemoteRunControlLedger(app)
+    val approvalDecisions = RemoteApprovalDecisionLedger(app)
     val protocolTelemetry = RemoteProtocolTelemetry(app)
 
     fun workspace(runtimeId: RuntimeId): RelayWorkspaceOperationsClient = RelayWorkspaceOperationsClient(

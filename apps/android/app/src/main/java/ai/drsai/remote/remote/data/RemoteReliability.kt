@@ -128,6 +128,48 @@ class BoundedRemoteEventBuffer<T>(private val capacity: Int = 512) {
 
 data class RemoteDeltaChunk(val streamId: String, val text: String)
 
+/**
+ * Single-consumer, latest-value mailbox for frame-coalesced projections.
+ *
+ * [offer] returns true exactly when the caller must start a worker. Values
+ * offered while that worker is rendering replace the pending value, and
+ * [finishCycle] keeps the same worker alive when another value arrived during
+ * the render. This closes the race where a late delta could be persisted after
+ * the current Room query but then lose its only scheduled UI refresh.
+ */
+class LatestFrameMailbox<T : Any> {
+    private var pending: T? = null
+    private var workerActive = false
+
+    @Synchronized
+    fun offer(value: T): Boolean {
+        pending = value
+        if (workerActive) return false
+        workerActive = true
+        return true
+    }
+
+    @Synchronized
+    fun take(): T? = pending.also { pending = null }
+
+    /** Returns true when this worker owns a clean transition to idle. */
+    @Synchronized
+    fun finishCycle(): Boolean {
+        if (pending != null) return false
+        workerActive = false
+        return true
+    }
+
+    @Synchronized
+    fun cancel() {
+        pending = null
+        workerActive = false
+    }
+
+    @Synchronized
+    fun hasPending(): Boolean = pending != null
+}
+
 enum class RemoteDownloadDecision { ALLOW, REQUIRE_CONFIRMATION, REJECT_TOO_LARGE }
 
 class RemoteNetworkPolicy(

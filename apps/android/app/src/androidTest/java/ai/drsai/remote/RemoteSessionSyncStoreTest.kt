@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import ai.drsai.remote.data.ChatDatabase
 import ai.drsai.remote.remote.data.EventDecision
 import ai.drsai.remote.remote.data.RemoteCacheRepository
+import ai.drsai.remote.remote.data.RemoteDeliveryState
 import ai.drsai.remote.remote.generated.GeneratedConversationSnapshot
 import ai.drsai.remote.remote.generated.GeneratedSessionConversationItem
 import ai.drsai.remote.remote.generated.GeneratedSessionEvent
@@ -159,6 +160,32 @@ class RemoteSessionSyncStoreTest {
     }
 
     @Test
+    fun optimistic_delivery_state_never_regresses_under_out_of_order_callbacks() = runTest {
+        store.saveOptimisticOaepMessage(
+            "user", "", "rt", "ws", "session", "source-1", "hello", 1,
+        )
+        suspend fun mark(state: RemoteDeliveryState, at: Long) = store.markOptimisticOaepDelivery(
+            "user", "", "rt", "session", "source-1", state, at,
+        )
+        suspend fun state() = org.json.JSONObject(
+            store.oaepSessionItems("user", "", "rt", "session").single().contentJson,
+        ).getString("delivery_state")
+
+        mark(RemoteDeliveryState.SENDING, 2)
+        mark(RemoteDeliveryState.ACCEPTED, 3)
+        mark(RemoteDeliveryState.SENDING, 4) // late request-start callback
+        mark(RemoteDeliveryState.UNCERTAIN, 5) // late transport failure
+        assertEquals("accepted", state())
+
+        mark(RemoteDeliveryState.RUNNING, 6)
+        mark(RemoteDeliveryState.ACCEPTED, 7) // late HTTP response
+        assertEquals("running", state())
+        mark(RemoteDeliveryState.COMPLETED, 8)
+        mark(RemoteDeliveryState.FAILED, 9) // stale failure must not replace terminal truth
+        assertEquals("completed", state())
+    }
+
+    @Test
     fun oaep_older_snapshot_window_merges_without_replacing_newer_items_or_cursor() = runTest {
         val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
         val run = OaepRun(
@@ -193,6 +220,100 @@ class RemoteSessionSyncStoreTest {
             store.oaepSessionItems("user", "", "rt", "session").map { it.itemId }.toSet(),
         )
         assertEquals(30, store.oaepSessionCursor("user", "", "rt", "session")!!.lastSequence)
+    }
+
+    @Test
+    fun refreshed_leading_window_preserves_loaded_history_but_full_snapshot_replaces_it() = runTest {
+        val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
+        val run = OaepRun(
+            id = "run-1", sessionId = "session", parentRunId = null,
+            status = "running", createdAt = "now", updatedAt = "now", completedAt = null,
+        )
+        fun checkpoint(sequence: Long, count: Long) = OaepSnapshotCheckpoint(
+            sequence, sequence.toString().padStart(64, 'a').takeLast(64), count,
+        )
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run), listOf(oaepMessageItem("running")), 30,
+                checkpoint(30, 2), OaepSnapshotWindow(1, true, "older-page"),
+            ),
+            1,
+        )
+        val older = oaepMessageItem("completed").copy(
+            id = "item-older", sequence = 0, createdAt = "before", updatedAt = "before",
+            source = OaepSource("runtime", runtimeId = "rt"),
+        )
+        store.mergeOaepSnapshotWindow(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run), listOf(older), 30,
+                checkpoint(30, 2), OaepSnapshotWindow(1, false, null),
+            ),
+        )
+
+        val refreshed = oaepMessageItem("completed").copy(updatedAt = "later")
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run.copy(status = "completed")), listOf(refreshed), 31,
+                checkpoint(31, 2), OaepSnapshotWindow(1, true, "older-page-2"),
+            ),
+            2,
+        )
+        assertEquals(
+            setOf("item-1", "item-older"),
+            store.oaepSessionItems("user", "", "rt", "session").map { it.itemId }.toSet(),
+        )
+        assertEquals(31, store.oaepSessionCursor("user", "", "rt", "session")!!.lastSequence)
+
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run), listOf(refreshed), 32,
+                checkpoint = null, window = null,
+            ),
+            3,
+        )
+        assertEquals(
+            listOf("item-1"),
+            store.oaepSessionItems("user", "", "rt", "session").map { it.itemId },
+        )
+    }
+
+    @Test
+    fun capacity_trim_is_rebuilt_from_full_snapshot_and_account_clear_is_complete() = runTest {
+        val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
+        val run = OaepRun(
+            id = "run-1", sessionId = "session", parentRunId = null,
+            status = "completed", createdAt = "now", updatedAt = "now", completedAt = "now",
+        )
+        val items = (1L..5L).map { sequence ->
+            oaepMessageItem("completed").copy(
+                id = "item-$sequence", sequence = sequence,
+                source = OaepSource("runtime", runtimeId = "rt"),
+            )
+        }
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot("1.0", session, listOf(run), items, 5, checkpoint = null, window = null),
+            1,
+        )
+        store.maintainAccountIfDue(
+            "user", "", nowMillis = 2_000_000_000_000,
+            intervalMillis = 1, maxEvents = 0, maxTerminalItems = 2,
+        )
+        assertEquals(2, store.oaepSessionItems("user", "", "rt", "session").size)
+
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot("1.0", session, listOf(run), items, 6, checkpoint = null, window = null),
+            2,
+        )
+        assertEquals(5, store.oaepSessionItems("user", "", "rt", "session").size)
+        store.clearAccount("user", "")
+        assertEquals(0, store.oaepSessionItems("user", "", "rt", "session").size)
+        assertEquals(null, store.oaepSessionCursor("user", "", "rt", "session"))
     }
 
     @Test

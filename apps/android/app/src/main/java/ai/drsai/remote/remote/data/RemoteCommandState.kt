@@ -39,6 +39,22 @@ fun RemoteDeliveryState.userLabel(): String = when (this) {
 
 enum class RemoteApprovalDecisionState { PENDING, DECIDING, APPROVED, DENIED, CANCELLED, EXPIRED }
 
+data class RemoteApprovalProjectionState(
+    val decisionState: RemoteApprovalDecisionState,
+    val outcome: String?,
+)
+
+fun convergeApprovalProjection(
+    currentApprovalId: String?,
+    currentState: RemoteApprovalDecisionState,
+    currentOutcome: String?,
+    pendingApprovalId: String?,
+): RemoteApprovalProjectionState = when {
+    pendingApprovalId == null || pendingApprovalId == currentApprovalId ->
+        RemoteApprovalProjectionState(currentState, currentOutcome)
+    else -> RemoteApprovalProjectionState(RemoteApprovalDecisionState.PENDING, null)
+}
+
 fun approvalDecisionState(statusOrAction: String?): RemoteApprovalDecisionState? = when (
     statusOrAction?.trim()?.lowercase()
 ) {
@@ -60,4 +76,4 @@ fun RemoteApprovalDecisionState.userLabel(): String = when (this) {
     RemoteApprovalDecisionState.EXPIRED -> "已过期"
 }
 
-enum class RemoteRunControlState { IDLE, CANCELLING, RETRYING }
+enum class RemoteRunControlState { IDLE, CANCELLING, RETRYING, RECONCILING }

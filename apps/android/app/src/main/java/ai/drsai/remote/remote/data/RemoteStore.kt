@@ -16,6 +16,7 @@ import ai.drsai.remote.remote.generated.OaepEvent
 import ai.drsai.remote.remote.generated.OaepItem
 import ai.drsai.remote.remote.generated.OaepSnapshot
 import org.json.JSONObject
+import java.time.Instant
 
 @Entity(
     tableName = "remote_runtimes",
@@ -485,6 +486,8 @@ fun offlineRemotePolicy(online: Boolean): OfflineRemotePolicy = if (online) {
 }
 
 class RemoteCacheRepository(private val database: ChatDatabase) {
+    private val maintenanceLock = Any()
+    private val lastMaintenanceByAccount = mutableMapOf<Pair<String, String>, Long>()
     suspend fun oaepSessionCursor(
         subject: String, organization: String, runtimeId: String, sessionId: String,
     ): RemoteEventCursorEntity? =
@@ -522,8 +525,16 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
             subject, organization, runtimeId, "oaep-session", snapshot.session.id,
         )?.lastSequence ?: 0L
         require(snapshot.snapshotSequence >= committed) { "oaep_snapshot_sequence_regression" }
-        dao.clearOaepRuns(subject, organization, runtimeId, snapshot.session.id)
-        dao.clearAuthoritativeOaepItems(subject, organization, runtimeId, snapshot.session.id)
+        // A windowed Snapshot contains only the newest page. Clearing the
+        // projection here would discard older pages the user already loaded
+        // every time a live Event triggers a leading-window refresh. OAEP
+        // Items are stable identities and the following upserts replace newer
+        // revisions safely, so retain older windows. A non-windowed Snapshot
+        // is explicitly complete and may replace the whole projection.
+        if (snapshot.window == null) {
+            dao.clearOaepRuns(subject, organization, runtimeId, snapshot.session.id)
+            dao.clearAuthoritativeOaepItems(subject, organization, runtimeId, snapshot.session.id)
+        }
         snapshot.items.forEach { item ->
             item.source.messageId?.let {
                 dao.clearOptimisticOaepMessage(subject, organization, runtimeId, snapshot.session.id, it)
@@ -609,7 +620,15 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
         val dao = database.remoteDao()
         val item = dao.optimisticOaepItem(subject, organization, runtimeId, sessionId, sourceMessageId)
             ?: return@withTransaction
-        val content = JSONObject(item.contentJson).put("delivery_state", delivery.name.lowercase())
+        val content = JSONObject(item.contentJson)
+        val current = runCatching {
+            RemoteDeliveryState.valueOf(content.getString("delivery_state").uppercase())
+        }.getOrElse { error("remote_delivery_state_invalid") }
+        // Network callbacks, idempotency recovery and OAEP projection updates
+        // can arrive out of order. Never let a late callback regress a user
+        // message to an older state inside the authoritative Room transaction.
+        if (!canTransitionDelivery(current, delivery)) return@withTransaction
+        content.put("delivery_state", delivery.name.lowercase())
         dao.saveOaepItems(listOf(item.copy(contentJson = content.toString(), updatedAt = syncedAt.toString())))
     }
 
@@ -884,6 +903,44 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
             pruneExpiredApprovals(subject, organization, eventBeforeTimestamp)
             pruneStaleCursors(subject, organization, cursorBeforeMillis)
         }
+    }
+
+    suspend fun maintainAccountIfDue(
+        subject: String,
+        organization: String,
+        nowMillis: Long = System.currentTimeMillis(),
+        intervalMillis: Long = RemoteCachePolicy.MAINTENANCE_INTERVAL_MS,
+        maxEvents: Int = RemoteCachePolicy.MAX_EVENTS_PER_ACCOUNT,
+        maxTerminalItems: Int = RemoteCachePolicy.MAX_TERMINAL_ITEMS_PER_ACCOUNT,
+    ): Boolean {
+        require(subject.isNotBlank() && nowMillis >= 0 && intervalMillis > 0) {
+            "remote_cache_maintenance_input_invalid"
+        }
+        val account = subject to organization
+        val reserved = synchronized(maintenanceLock) {
+            val previous = lastMaintenanceByAccount[account]
+            if (previous != null && nowMillis - previous < intervalMillis) {
+                false
+            } else {
+                // Reserve before suspension so concurrent Session refreshes do
+                // not launch duplicate global Room pruning transactions. A
+                // failed attempt remains rate-limited instead of causing a hot
+                // retry loop; the next interval retries normally.
+                lastMaintenanceByAccount[account] = nowMillis
+                true
+            }
+        }
+        if (!reserved) return false
+        val cutoffMillis = nowMillis - RemoteCachePolicy.JOURNAL_RETENTION_MS
+        maintainAccount(
+            subject,
+            organization,
+            Instant.ofEpochMilli(cutoffMillis).toString(),
+            cutoffMillis,
+            maxEvents,
+            maxTerminalItems,
+        )
+        return true
     }
 }
 

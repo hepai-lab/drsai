@@ -509,6 +509,33 @@ class LocalStoreTest {
         assertEquals(0, dao.oaepItemCount("alice", "ihep"))
     }
 
+    @Test fun remote_cache_maintenance_is_automatic_bounded_and_single_flight_per_account() = runBlocking {
+        val dao = database.remoteDao()
+        repeat(5) { index ->
+            dao.insertOaepEvent(RemoteOaepEventEntity(
+                "alice", "ihep", "rt", "ws", "session", "run", "item",
+                "event-maintenance-$index", (index + 1).toLong(), "event.item.delta",
+                "2026-01-01T00:00:0${index}Z", "dedupe-maintenance-$index", "{}",
+            ))
+        }
+        val repository = RemoteCacheRepository(database)
+        assertTrue(repository.maintainAccountIfDue(
+            "alice", "ihep", nowMillis = 2_000_000_000_000,
+            intervalMillis = 1_000, maxEvents = 2, maxTerminalItems = 2,
+        ))
+        assertEquals(2, dao.oaepEventCount("alice", "ihep"))
+        assertTrue(!repository.maintainAccountIfDue(
+            "alice", "ihep", nowMillis = 2_000_000_000_500,
+            intervalMillis = 1_000, maxEvents = 0, maxTerminalItems = 0,
+        ))
+        assertEquals(2, dao.oaepEventCount("alice", "ihep"))
+        assertTrue(repository.maintainAccountIfDue(
+            "alice", "ihep", nowMillis = 2_000_000_001_000,
+            intervalMillis = 1_000, maxEvents = 1, maxTerminalItems = 1,
+        ))
+        assertEquals(1, dao.oaepEventCount("alice", "ihep"))
+    }
+
     @Test fun malformed_non_authoritative_projection_is_cleared_for_only_that_account() = runBlocking {
         val dao = database.remoteDao()
         dao.saveRuntimes(listOf(

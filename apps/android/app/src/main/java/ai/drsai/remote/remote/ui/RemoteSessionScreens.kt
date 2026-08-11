@@ -290,6 +290,7 @@ data class RemoteChatUiState(
     val approvalDecisionState: RemoteApprovalDecisionState = RemoteApprovalDecisionState.PENDING,
     val approvalOutcome: String? = null,
     val runControlState: RemoteRunControlState = RemoteRunControlState.IDLE,
+    val runControlOutcome: String? = null,
     val canRetry: Boolean = false,
     val pendingArtifactConfirmation: String? = null,
     val historyCursor: String? = null,
@@ -374,6 +375,9 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             state.correlationId?.let { TextButton(onClick = onOpenAudit) { Text("审计") } }
         }
         if (!state.online) Text("连接已中断，任务可能仍在运行", color = MaterialTheme.colorScheme.error)
+        state.runControlOutcome?.let {
+            Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             RemoteTranscriptFilter.entries.forEach { filter ->
                 FilterChip(
@@ -450,7 +454,11 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             Spacer(Modifier.width(8.dp))
             if (state.running) Button(onClick = onCancelRun,
                 enabled = state.online && state.runControlState == RemoteRunControlState.IDLE) {
-                Text(if (state.runControlState == RemoteRunControlState.CANCELLING) "停止中" else "停止")
+                Text(when (state.runControlState) {
+                    RemoteRunControlState.CANCELLING -> "停止中"
+                    RemoteRunControlState.RECONCILING -> "确认状态中"
+                    else -> "停止"
+                })
             }
             else Button(onClick = { onSend(input) }, enabled = state.online && input.isNotBlank()) { Text("发送") }
         }
@@ -458,7 +466,11 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             OutlinedButton(onClick = onRetryRun,
                 enabled = state.online && state.runControlState == RemoteRunControlState.IDLE,
                 modifier = Modifier.fillMaxWidth()) {
-                Text(if (state.runControlState == RemoteRunControlState.RETRYING) "重试中" else "重试上次运行")
+                Text(when (state.runControlState) {
+                    RemoteRunControlState.RETRYING -> "重试中"
+                    RemoteRunControlState.RECONCILING -> "确认状态中"
+                    else -> "重试上次运行"
+                })
             }
         }
     }

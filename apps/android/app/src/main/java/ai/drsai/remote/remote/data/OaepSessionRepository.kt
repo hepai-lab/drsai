@@ -12,7 +12,11 @@ import kotlinx.coroutines.flow.Flow
 class OaepSessionRepository(
     private val relay: RelayRemoteRepository,
     private val stream: RelaySseClient,
+    private val wallClockMs: () -> Long = System::currentTimeMillis,
 ) {
+    private val latencyLock = Any()
+    private val receivedAtMs = LinkedHashMap<String, Long>()
+
     suspend fun snapshot(
         runtimeId: RuntimeId,
         workspaceId: WorkspaceId,
@@ -44,14 +48,37 @@ class OaepSessionRepository(
         onReceived,
     )
 
-    suspend fun recordLatency(
+    fun markLatencyReceived(event: OaepEvent) {
+        val receivedAt = wallClockMs().coerceAtLeast(0)
+        synchronized(latencyLock) {
+            receivedAtMs.putIfAbsent(event.eventId, receivedAt)
+            while (receivedAtMs.size > MAX_PENDING_LATENCY_EVENTS) {
+                receivedAtMs.remove(receivedAtMs.keys.first())
+            }
+        }
+    }
+
+    suspend fun recordLatencyRendered(
         runtimeId: RuntimeId,
         workspaceId: WorkspaceId,
         sessionId: SessionId,
         event: OaepEvent,
-        stage: String,
-        durationMs: Double,
-    ) = relay.recordConversationLatency(
-        runtimeId, workspaceId, sessionId, event.eventId, stage, durationMs,
-    )
+    ) {
+        val renderedAt = wallClockMs().coerceAtLeast(0)
+        val receivedAt = synchronized(latencyLock) {
+            receivedAtMs.remove(event.eventId)
+        } ?: renderedAt
+        relay.recordConversationLatency(
+            runtimeId,
+            workspaceId,
+            sessionId,
+            event.eventId,
+            receivedAt.coerceAtMost(renderedAt),
+            renderedAt,
+        )
+    }
+
+    private companion object {
+        const val MAX_PENDING_LATENCY_EVENTS = 4096
+    }
 }

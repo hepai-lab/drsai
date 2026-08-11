@@ -358,6 +358,8 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                             directory.removeCachedRuntime(subject, runtimeId)
                             container.drafts.clearRuntime(subject, runtimeId.value)
                             container.activity.clearRuntime(subject, runtimeId.value)
+                            container.runControls.clearRuntime(subject, runtimeId.value)
+                            container.approvalDecisions.clearRuntime(subject, runtimeId.value)
                             instructionVersions.clearRuntime(subject, runtimeId)
                         }.exceptionOrNull() else null
                     }

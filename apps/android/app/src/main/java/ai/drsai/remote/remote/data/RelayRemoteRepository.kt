@@ -308,21 +308,22 @@ class RelayRemoteRepository(
         workspaceId: WorkspaceId,
         sessionId: SessionId,
         eventId: String,
-        stage: String,
-        durationMs: Double,
+        clientReceiveAtMs: Long,
+        renderAtMs: Long,
     ) {
-        require(stage in setOf("client_receive", "client_render")) { "latency_stage_invalid" }
-        require(eventId.isNotBlank() && durationMs.isFinite() && durationMs >= 0.0) {
+        require(
+            eventId.isNotBlank() && clientReceiveAtMs >= 0 && renderAtMs >= clientReceiveAtMs
+        ) {
             "latency_observation_invalid"
         }
         val body = JSONObject()
-            .put("correlation_id", eventId)
-            .put("operation_id", eventId)
-            .put("stage", stage)
-            .put("duration_ms", durationMs)
-        postNoContent(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/"
-                + "${sessionId.value}/conversation-latency",
+            .put("client_receive_at_ms", clientReceiveAtMs)
+            .put("render_at_ms", renderAtMs)
+        postSegments(
+            listOf(
+                "v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+                "sessions", sessionId.value, "events", eventId, "latency-observation",
+            ),
             body,
         )
     }
@@ -461,19 +462,46 @@ class RelayRemoteRepository(
     suspend fun decide(runtimeId: RuntimeId, approvalId: ApprovalId, decision: String): String {
         val idempotencyKey = "approval:${approvalId.value}:$decision"
         val path = "v1/runtimes/${runtimeId.value}/approvals/${approvalId.value}/decision"
-        var lastFailure: IOException? = null
+        var lastFailure: Throwable? = null
         repeat(APPROVAL_DECISION_ATTEMPTS) { attempt ->
             try {
                 return post(path, JSONObject().control(idempotencyKey).put("decision", decision))
                     .getString("status")
-            } catch (uncertain: IOException) {
+            } catch (uncertain: Throwable) {
+                val outcomeUnknown = uncertain is IOException ||
+                    uncertain is RelayHttpException && uncertain.status >= 500
+                if (!outcomeUnknown) throw uncertain
                 lastFailure = uncertain
+                recoverApprovalDecision(runtimeId, approvalId, decision)?.let { return it }
                 if (attempt + 1 < APPROVAL_DECISION_ATTEMPTS) {
                     delay(APPROVAL_DECISION_RETRY_MILLIS[attempt])
                 }
             }
         }
         throw checkNotNull(lastFailure)
+    }
+
+    suspend fun recoverApprovalDecision(
+        runtimeId: RuntimeId,
+        approvalId: ApprovalId,
+        decision: String,
+    ): String? {
+        val idempotencyKey = "approval:${approvalId.value}:$decision"
+        val response = try {
+            get("v1/runtimes/${runtimeId.value}/idempotency/approval.decide/$idempotencyKey")
+        } catch (failure: RelayHttpException) {
+            if (failure.status == 404 || failure.status >= 500 ||
+                failure.errorCode == "idempotency_result_not_found") return null
+            throw failure
+        }
+        val row = response.getJSONObject("resource")
+        require(row.getString("runtime_id") == runtimeId.value) {
+            "remote_approval_runtime_scope_mismatch"
+        }
+        require(row.getString("approval_id") == approvalId.value) {
+            "remote_approval_id_scope_mismatch"
+        }
+        return row.getString("status")
     }
 
     suspend fun approvals(runtimeId: RuntimeId, workspaceId: WorkspaceId): List<RemoteApprovalRecord> =
@@ -525,6 +553,16 @@ class RelayRemoteRepository(
     private suspend fun post(path: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
         execute(Request.Builder().url(root.newBuilder().addPathSegments(path).build()).post(body.toString().toRequestBody(json)).build())
     }
+    private suspend fun postSegments(segments: List<String>, body: JSONObject): JSONObject =
+        withContext(Dispatchers.IO) {
+            require(segments.isNotEmpty() && segments.all(String::isNotEmpty)) {
+                "relay_path_segments_invalid"
+            }
+            val url = root.newBuilder().apply {
+                segments.forEach(::addPathSegment)
+            }.build()
+            execute(Request.Builder().url(url).post(body.toString().toRequestBody(json)).build())
+        }
     private suspend fun postNoContent(path: String, body: JSONObject) = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(root.newBuilder().addPathSegments(path).build())
             .post(body.toString().toRequestBody(json)).build()

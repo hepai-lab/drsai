@@ -339,19 +339,34 @@ class RelayRemoteRepositoryTest {
         assertTrue(server.takeRequest().path!!.endsWith("/audit?run_id=r"))
     }
 
-    @Test fun `approval lost response retries with one stable idempotency key`() = runTest {
+    @Test fun `approval lost response recovers by idempotency query without duplicate post`() = runTest {
         server.enqueue(MockResponse().setBody("""{"status":"approved"}""")
             .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
-        server.enqueue(MockResponse().setBody("""{"status":"approved"}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"succeeded","operation":"approval.decide","resource":{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","approval_id":"approval-1","backend_id":"opendrsai","status":"approved"}}"""))
 
         assertEquals("approved", repository.decide(RuntimeId("rt"), ApprovalId("approval-1"), "approve"))
 
         val first = JSONObject(server.takeRequest().body.readUtf8())
-        val second = JSONObject(server.takeRequest().body.readUtf8())
+        val recovery = server.takeRequest()
         assertEquals("approval:approval-1:approve", first.getString("idempotency_key"))
-        assertEquals(first.getString("idempotency_key"), second.getString("idempotency_key"))
-        assertNotEquals(first.getString("request_id"), second.getString("request_id"))
+        assertEquals("GET", recovery.method)
+        assertEquals(
+            "/v1/runtimes/rt/idempotency/approval.decide/approval:approval-1:approve",
+            recovery.path,
+        )
         assertEquals(2, server.requestCount)
+    }
+
+    @Test fun `approval recovery tolerates runtime restart and validates authority scope`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(503).setBody("""{"code":"runtime_offline"}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"succeeded","operation":"approval.decide","resource":{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","approval_id":"approval-1","backend_id":"opendrsai","status":"denied"}}"""))
+
+        assertNull(repository.recoverApprovalDecision(
+            RuntimeId("rt"), ApprovalId("approval-1"), "deny",
+        ))
+        assertEquals("denied", repository.recoverApprovalDecision(
+            RuntimeId("rt"), ApprovalId("approval-1"), "deny",
+        ))
     }
 
     @Test fun `session run history and rest events retain complete authority scope`() = runTest {
@@ -425,29 +440,30 @@ class RelayRemoteRepositoryTest {
     }
 
     @Test fun `conversation latency report is content free and event correlated`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(204))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"ready":true,"stages_present":["client_receive","client_render"],"latencies_ms":{"client_receive_to_render":5}}"""
+        ))
 
         repository.recordConversationLatency(
             RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"),
-            eventId = "event-one", stage = "client_render", durationMs = 4.25,
+            eventId = "event/one", clientReceiveAtMs = 1_000, renderAtMs = 1_005,
         )
 
         val request = server.takeRequest()
         assertEquals(
-            "/v1/runtimes/rt/workspaces/ws/sessions/s/conversation-latency",
+            "/v1/runtimes/rt/workspaces/ws/sessions/s/events/event%2Fone/latency-observation",
             request.path,
         )
         val body = JSONObject(request.body.readUtf8())
-        assertEquals("event-one", body.getString("correlation_id"))
-        assertEquals("event-one", body.getString("operation_id"))
-        assertEquals("client_render", body.getString("stage"))
-        assertEquals(setOf("correlation_id", "operation_id", "stage", "duration_ms"), body.keySet())
-        val invalidStage = runCatching {
+        assertEquals(1_000, body.getLong("client_receive_at_ms"))
+        assertEquals(1_005, body.getLong("render_at_ms"))
+        assertEquals(setOf("client_receive_at_ms", "render_at_ms"), body.keySet())
+        val invalidOrder = runCatching {
             repository.recordConversationLatency(
                 RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"),
-                eventId = "event-one", stage = "message", durationMs = 1.0,
+                eventId = "event-one", clientReceiveAtMs = 2, renderAtMs = 1,
             )
         }.exceptionOrNull()
-        assertTrue(invalidStage is IllegalArgumentException)
+        assertTrue(invalidOrder is IllegalArgumentException)
     }
 }

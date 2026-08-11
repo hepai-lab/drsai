@@ -549,6 +549,34 @@ tasks.named("preBuild").configure {
     dependsOn("verifyAndroidOwopBindings", "verifyAndroidRelayBindings")
 }
 
+val verifyFirebasePushConfig = tasks.register("verifyFirebasePushConfig") {
+    group = "verification"
+    description = "Fail closed when a release-like APK has no coherent Firebase Android App configuration."
+    doLast {
+        check(Regex("^AIza[0-9A-Za-z_-]{35}$").matches(firebaseApiKey)) {
+            "push_build_invalid:firebase_api_key"
+        }
+        val application = Regex("^\\d+:(\\d+):android:[0-9a-fA-F]+$").matchEntire(firebaseApplicationId)
+            ?: error("push_build_invalid:firebase_application_id")
+        check(Regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$").matches(firebaseProjectId)) {
+            "push_build_invalid:firebase_project_id"
+        }
+        check(firebaseSenderId.all(Char::isDigit) && firebaseSenderId.isNotEmpty()) {
+            "push_build_invalid:firebase_sender_id"
+        }
+        check(application.groupValues[1] == firebaseSenderId) {
+            "push_build_invalid:firebase_sender_mismatch"
+        }
+    }
+}
+
+// Debug/acceptance intentionally retain the NOT_CONFIGURED product state so
+// its UI and negative tests remain reproducible. Public release and the
+// installable MVP artifact must never silently ship with push disabled.
+tasks.matching { it.name == "preReleaseBuild" || it.name == "preMvpBuild" }.configureEach {
+    dependsOn(verifyFirebasePushConfig)
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.10.0")
@@ -589,5 +617,8 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
+    // AndroidJUnitRunner calls androidx.tracing.Trace before the first test.
+    // Keep it explicit so a minified release-like test APK is self-contained.
+    androidTestImplementation("androidx.tracing:tracing:1.2.0")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
