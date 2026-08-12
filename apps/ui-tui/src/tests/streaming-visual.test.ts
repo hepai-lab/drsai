@@ -21,7 +21,7 @@ const SIM_ROWS = 24
 
 // ── Replicate the logic from streamingAssistant.tsx ──────────────────
 
-const RESERVED_ROWS = 8
+const RESERVED_ROWS = 12
 const MIN_STREAM_ROWS = 3
 
 function visualWrap(line: string, cols: number): string[] {
@@ -173,7 +173,7 @@ function renderTurn(
   toolDetail: 'compact' | 'expanded' = 'compact',
 ): string[] {
   const effectiveCols = Math.max(20, cols - 4)
-  const budget = Math.max(MIN_STREAM_ROWS, rows - RESERVED_ROWS - 1 - 1)
+  const budget = Math.max(MIN_STREAM_ROWS, rows - RESERVED_ROWS - 1 - 1 - 1 /* safety */)
 
   const { visible, hiddenRows, firstPartMaxRows } = clipContentParts(parts, tools, budget, effectiveCols, toolDetail)
 
