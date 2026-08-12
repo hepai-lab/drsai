@@ -11274,7 +11274,12 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
       } else if (scenario === "timeout") {
         const outcome = await collectAgentRun("e2e-agent-failure-timeout", "timeout agent run", { waitMs: 10000 });
         details.timeout = summarizeOutcome(outcome);
-        checks.timeoutStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
+        // A timeout may occur while the Runtime is still creating the
+        // authoritative Run. In that case emitting a synthetic start event
+        // would expose a Run id that the Runtime never persisted. Accept the
+        // fail-closed error-only lifecycle and verify that no completion leaks.
+        checks.timeoutStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"))
+          || ["error", "aborted"].includes(outcome.events[0]?.type);
         checks.timeoutTerminated = outcome.events.some((event) => event.type === "aborted" || (event.type === "error" && /timed out|cancel/i.test(String(event.error || ""))) || (event.type === "structured" && ["turn.error", "turn.cancelled"].includes(event.structuredEvent?.type)));
         checks.timeoutTerminal = ["error", "aborted"].includes(details.timeout.terminalEventType);
         checks.timeoutThreadError = details.timeout.thread && details.timeout.thread.status === "error";

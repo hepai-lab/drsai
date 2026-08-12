@@ -282,15 +282,15 @@ export function MobilePairingDialog({
           <small>{zh ? "授权范围会写入一次性配对授权，Android 无法自行扩大。" : "The one-time grant binds this scope; Android cannot expand it."}</small>
         </fieldset>
 
-        {busy ? <div className="mobile-pairing-state" role="status"><RefreshCw className="spin" size={28} />{zh ? "正在创建安全连接…" : "Creating a secure connection…"}</div> : null}
+        {busy ? <div className="mobile-pairing-state" role="status" aria-live="polite" aria-atomic="true"><RefreshCw className="spin" size={28} aria-hidden="true" />{zh ? "正在创建安全连接…" : "Creating a secure connection…"}</div> : null}
         {!busy && readiness && readiness.state !== "ready" ? <div className="mobile-pairing-state mobile-pairing-warning" role="alert"><p>{readinessText[readiness.state] ?? readiness.action}</p></div> : null}
         {!busy && error ? <div className="mobile-pairing-state mobile-pairing-warning" role="alert"><p>{error}</p></div> : null}
         {!busy && readiness?.state === "ready" && scopeMode === "selected" && selectedWorkspaceIds.size === 0 ? <div className="mobile-pairing-state" role="status"><p>{zh ? "请选择至少一个工作区后生成二维码。" : "Select at least one workspace to create the QR code."}</p></div> : null}
-        {!busy && grant?.status === "consumed" ? <div className="mobile-pairing-state mobile-pairing-success" role="status"><Check size={42} /><h3>{zh ? "已连接" : "Connected"}</h3><p>{zh ? "Android 设备现在可以访问此 Runtime。" : "The Android device can now access this Runtime."}</p></div> : null}
-        {!busy && (expired || grant?.status === "revoked") ? <div className="mobile-pairing-state" role="status"><h3>{expired ? (zh ? "二维码已过期" : "QR code expired") : (zh ? "连接已取消" : "Pairing cancelled")}</h3></div> : null}
+        {!busy && grant?.status === "consumed" ? <div className="mobile-pairing-state mobile-pairing-success" role="status" aria-live="polite" aria-atomic="true"><Check size={42} aria-hidden="true" /><h3>{zh ? "已连接" : "Connected"}</h3><p>{zh ? "Android 设备现在可以访问此 Runtime。" : "The Android device can now access this Runtime."}</p></div> : null}
+        {!busy && (expired || grant?.status === "revoked") ? <div className="mobile-pairing-state" role="status" aria-live="polite" aria-atomic="true"><h3>{expired ? (zh ? "二维码已过期" : "QR code expired") : (zh ? "连接已取消" : "Pairing cancelled")}</h3></div> : null}
         {!busy && grant?.status === "pending" && !expired ? <>
           <div className="mobile-pairing-qr" aria-label={zh ? "Android 配对二维码" : "Android pairing QR code"}>{qrDataUrl ? <img src={qrDataUrl} alt={zh ? "用于连接此电脑的一次性二维码" : "One-time QR code for connecting this computer"} /> : null}</div>
-          <div className="mobile-pairing-countdown" role="status"><span>{zh ? "剩余时间" : "Time remaining"}</span><strong>{Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}</strong><progress max={120} value={Math.min(120, secondsLeft)} aria-label={zh ? "二维码剩余有效时间" : "QR validity remaining"} /></div>
+          <div className="mobile-pairing-countdown" role="timer" aria-live="off"><span>{zh ? "剩余时间" : "Time remaining"}</span><strong aria-hidden="true">{Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}</strong><progress max={120} value={Math.min(120, secondsLeft)} aria-label={zh ? "二维码剩余有效时间" : "QR validity remaining"} aria-valuetext={zh ? `剩余 ${secondsLeft} 秒` : `${secondsLeft} seconds remaining`} /></div>
         </> : null}
 
         <p className="mobile-pairing-privacy">{zh ? "二维码仅包含短时、单次使用的授权码，不包含密码、工作区路径或 Runtime 凭据。" : "The QR contains only a short-lived, single-use grant. It contains no password, workspace path, or Runtime credential."}</p>

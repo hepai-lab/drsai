@@ -4,6 +4,7 @@ param(
     [string]$RuntimePath = "",
     [string]$RuntimeSha256 = "",
     [Int64]$RuntimeSizeBytes = 0,
+    [Int64]$EstimatedSizeKB = 0,
     [string]$BootstrapperVersion = "",
     [string]$ExtraInstallArgs = "",
     [string]$WixDir = "",
@@ -30,6 +31,35 @@ function Resolve-FullPath([string]$Path) {
         return (Resolve-Path $Path).Path
     }
     return [System.IO.Path]::GetFullPath($Path)
+}
+
+function Get-InstalledSizeKB([string]$RuntimeArchivePath) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archiveItem = Get-Item -LiteralPath $RuntimeArchivePath
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($archiveItem.FullName)
+    try {
+        [Int64]$expandedBytes = 0
+        foreach ($entry in $archive.Entries) {
+            $expandedBytes += [Int64]$entry.Length
+        }
+    } finally {
+        $archive.Dispose()
+    }
+
+    # The installer keeps the verified Runtime ZIP in INSTALLFOLDER\cache and
+    # installs its expanded payload beside the MSI support scripts. ARPSIZE is
+    # expressed in KiB, so account for both copies instead of letting Windows
+    # Installer report only the small set of files authored in the File table.
+    [Int64]$supportBytes = 0
+    foreach ($name in @(
+        "install-opendrsai.ps1",
+        "uninstall-opendrsai.ps1",
+        "run-opendrsai-install.vbs",
+        "run-opendrsai-uninstall.vbs"
+    )) {
+        $supportBytes += [Int64](Get-Item -LiteralPath (Join-Path $PSScriptRoot $name)).Length
+    }
+    return [Int64][Math]::Ceiling(($expandedBytes + [Int64]$archiveItem.Length + $supportBytes) / 1KB)
 }
 
 $windowsAppDir = Resolve-FullPath (Join-Path $PSScriptRoot "..\..\windows")
@@ -169,12 +199,20 @@ if ($RuntimePath) {
     if ($RuntimeSizeBytes -le 0) {
         $RuntimeSizeBytes = [Int64]$runtimeItem.Length
     }
+    if ($EstimatedSizeKB -le 0) {
+        $EstimatedSizeKB = Get-InstalledSizeKB $runtimeItem.FullName
+    }
 }
 if (-not $RuntimeSha256 -or -not ($RuntimeSha256 -match "^[A-Fa-f0-9]{64}$")) {
     throw "RuntimeSha256 is required. Pass -RuntimePath or -RuntimeSha256."
 }
 if ($RuntimeSizeBytes -le 0) {
     throw "RuntimeSizeBytes is required. Pass -RuntimePath or -RuntimeSizeBytes."
+}
+if ($EstimatedSizeKB -le 0) {
+    # Remote-only builds cannot inspect the archive's expanded entries. At
+    # minimum, report the known downloaded payload instead of the MSI scripts.
+    $EstimatedSizeKB = [Int64][Math]::Ceiling($RuntimeSizeBytes / 1KB)
 }
 
 $productVersion = $BootstrapperVersion
@@ -194,6 +232,7 @@ $msi = Join-Path $outDir $OutputName
     "-dRuntimeUrl=$RuntimeUrl" `
     "-dRuntimeSha256=$RuntimeSha256" `
     "-dRuntimeSizeBytes=$RuntimeSizeBytes" `
+    "-dEstimatedSizeKB=$EstimatedSizeKB" `
     "-dBootstrapperVersion=$BootstrapperVersion" `
     "-dExtraInstallArgs=$wixExtraInstallArgs" `
     "-dInstallerActionsPath=$packedActionsDll" `

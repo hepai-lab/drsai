@@ -1,0 +1,14 @@
+**
+!cores/
+!cores/python/
+!cores/python/packages/
+!cores/python/packages/drsai/
+!cores/python/packages/drsai/**
+!cores/protocol/
+!cores/protocol/**
+!apps/
+!apps/desktop/
+!apps/desktop/windows/
+!apps/desktop/windows/tests/
+!apps/desktop/windows/tests/remote-ssh/
+!apps/desktop/windows/tests/remote-ssh/fake_codex_app_server.py

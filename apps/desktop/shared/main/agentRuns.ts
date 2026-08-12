@@ -145,10 +145,21 @@ async function startRuntimeAgentSurface(
     send(channel: string, event: unknown): void {
       if (channel !== "desktop:chat-event" || !event || typeof event !== "object") return;
       const mapped = bridge.map(event as ChatEvent);
-      for (const item of mapped) emit(webContents, item);
-      if (mapped.some((item) => item.type === "done" || item.type === "error" || item.type === "aborted")) {
-        activeRuns.delete(requestId);
+      const terminal = mapped.find((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+      if (!terminal) {
+        for (const item of mapped) emit(webContents, item);
+        return;
       }
+      // The Agent surface treats a terminal event as permission to reload the
+      // thread immediately. Persist the matching terminal state first so that
+      // listThreads can never observe a completed/failed Run as still running.
+      void updateThread({
+        id: sessionId,
+        status: terminal.type === "done" || terminal.type === "aborted" ? "idle" : "error",
+      }).catch(() => undefined).then(() => {
+        for (const item of mapped) emit(webContents, item);
+        activeRuns.delete(requestId);
+      });
     },
   };
   startChat(target, {

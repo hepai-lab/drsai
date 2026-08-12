@@ -23,6 +23,7 @@ export const RELAY_ERROR_ACTIONS = Object.freeze({
   "backend_unavailable": "retry",
   "backpressure_overflow": "retry",
   "capability_unknown": "update",
+  "catalog_order_invalid": "contact-admin",
   "catalog_sync_timeout": "retry",
   "client_update_required": "update",
   "cursor_expired": "retry",

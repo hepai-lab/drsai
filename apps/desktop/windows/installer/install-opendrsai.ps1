@@ -7,7 +7,9 @@ param(
     [string]$Platform = "windows-x64",
     [string]$BootstrapperVersion = "0.1.0",
     [string]$LogFileOverride = "",
-    [ValidateSet("All", "Download", "Verify", "Extract", "Install", "Complete")]
+    [string]$ProgressFile = "",
+    [string]$InstallSessionId = "standalone",
+    [ValidateSet("All", "Download", "Verify", "Extract", "Install", "Complete", "Rollback")]
     [string]$Stage = "All",
     [switch]$MachineInstall,
     [switch]$NoShortcuts,
@@ -18,11 +20,19 @@ param(
 $ErrorActionPreference = "Stop"
 $InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
 
-function Get-Sha256Hex([string]$Path) {
+function Get-Sha256Hex([string]$Path, [scriptblock]$OnProgress = $null) {
     $stream = [System.IO.File]::OpenRead($Path)
     $sha256 = [System.Security.Cryptography.SHA256]::Create()
     try {
-        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+        $buffer = New-Object byte[] (1024 * 1024)
+        [Int64]$processed = 0
+        while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $null = $sha256.TransformBlock($buffer, 0, $read, $null, 0)
+            $processed += $read
+            if ($OnProgress) { & $OnProgress $processed $stream.Length }
+        }
+        $null = $sha256.TransformFinalBlock($buffer, 0, 0)
+        return ([System.BitConverter]::ToString($sha256.Hash)).Replace("-", "").ToLowerInvariant()
     } finally {
         $sha256.Dispose()
         $stream.Dispose()
@@ -39,12 +49,14 @@ if (-not $RuntimeUrl) {
 $CacheDir = Join-Path $InstallRoot "cache"
 $AgentDir = Join-Path $InstallRoot "drsai-agent"
 $tempRoot = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
-$StagingRoot = Join-Path $tempRoot "OpenDrSaiStaging"
+$safeSessionId = $InstallSessionId -replace '[^A-Za-z0-9._-]', '_'
+$StagingRoot = Join-Path $tempRoot "OpenDrSaiStaging\$safeSessionId"
 $machineDataRoot = Join-Path $env:ProgramData "OpenDrSai\Installer"
 $LogDir = if ($MachineInstall) { Join-Path $machineDataRoot "logs" } else { Join-Path $DrsaiHome "logs\bootstrapper" }
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $LogFile = if ($LogFileOverride) { $LogFileOverride } else { Join-Path $LogDir "install-$BootstrapperVersion.log" }
 $ExpandedRoot = Join-Path $StagingRoot "runtime-current"
+$RollbackStatePath = Join-Path $StagingRoot "install-rollback.json"
 
 function New-Directory([string]$Path) {
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
@@ -57,6 +69,16 @@ function Write-Log([string]$Message) {
     if (-not $Quiet) {
         Write-Host $Message
     }
+}
+
+function Write-StageProgress([int]$Percent, [string]$Detail) {
+    if (-not $ProgressFile) { return }
+    $boundedPercent = [Math]::Max(0, [Math]::Min(100, $Percent))
+    $payload = "$boundedPercent`t$($Detail -replace '[\r\n]+', ' ')"
+    New-Directory (Split-Path -Parent $ProgressFile)
+    $temporaryProgressFile = "$ProgressFile.$PID.tmp"
+    [IO.File]::WriteAllText($temporaryProgressFile, $payload, (New-Object Text.UTF8Encoding($false)))
+    Move-Item -LiteralPath $temporaryProgressFile -Destination $ProgressFile -Force
 }
 
 function Stop-InstalledProcessTrees {
@@ -190,20 +212,75 @@ function Assert-RuntimeArchive {
         throw "OpenDrSai Runtime size mismatch. Expected $RuntimeSizeBytes bytes, got $actualSize."
     }
 
-    $actualHash = Get-Sha256Hex $target
+    $actualHash = Get-Sha256Hex $target {
+        param([Int64]$Processed, [Int64]$Total)
+        $percent = if ($Total -gt 0) { [int](90 * $Processed / $Total) } else { 0 }
+        Write-StageProgress $percent ("{0}%   {1:N1} / {2:N1} MB checked" -f $percent, ($Processed / 1MB), ($Total / 1MB))
+    }
     $expectedHash = $RuntimeSha256.ToLowerInvariant()
     if ($actualHash -ne $expectedHash) {
         Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
         throw "OpenDrSai Runtime SHA256 mismatch. Expected $expectedHash, got $actualHash."
     }
-
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($target)
+    try {
+        [Int64]$expandedBytes = ($archive.Entries | Measure-Object -Property Length -Sum).Sum
+    } finally {
+        $archive.Dispose()
+    }
+    $marginBytes = 256MB
+    $installDrive = New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($InstallRoot))
+    $stagingDrive = New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($StagingRoot))
+    [Int64]$installRequired = $expandedBytes + $marginBytes
+    if ($installDrive.Name -eq $stagingDrive.Name) { $installRequired += $expandedBytes }
+    if ($installDrive.AvailableFreeSpace -lt $installRequired) {
+        throw ("OpenDrSai needs {0:N1} GB free on {1}, but only {2:N1} GB is available." -f ($installRequired / 1GB), $installDrive.Name, ($installDrive.AvailableFreeSpace / 1GB))
+    }
+    if ($installDrive.Name -ne $stagingDrive.Name -and $stagingDrive.AvailableFreeSpace -lt ($expandedBytes + $marginBytes)) {
+        throw ("OpenDrSai staging needs {0:N1} GB free on {1}, but only {2:N1} GB is available." -f (($expandedBytes + $marginBytes) / 1GB), $stagingDrive.Name, ($stagingDrive.AvailableFreeSpace / 1GB))
+    }
+    Write-StageProgress 100 ("100%   Package verified; {0:N1} MB will be installed" -f ($expandedBytes / 1MB))
 }
 
 function Expand-ZipClean([string]$Archive, [string]$Destination) {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Destination
     New-Directory $Destination
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($Archive, $Destination)
+    $archiveFile = [System.IO.Compression.ZipFile]::OpenRead($Archive)
+    try {
+        [Int64]$totalBytes = ($archiveFile.Entries | Measure-Object -Property Length -Sum).Sum
+        [Int64]$expandedBytes = 0
+        $destinationRoot = [IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
+        $buffer = New-Object byte[] (1024 * 1024)
+        foreach ($entry in $archiveFile.Entries) {
+            $targetPath = [IO.Path]::GetFullPath((Join-Path $Destination $entry.FullName))
+            if (-not $targetPath.StartsWith($destinationRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Runtime archive contains an unsafe path: $($entry.FullName)"
+            }
+            if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) {
+                New-Directory $targetPath
+                continue
+            }
+            New-Directory (Split-Path -Parent $targetPath)
+            $source = $entry.Open()
+            $target = [IO.File]::Open($targetPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try {
+                while (($read = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    $target.Write($buffer, 0, $read)
+                    $expandedBytes += $read
+                    $percent = if ($totalBytes -gt 0) { [int](100 * $expandedBytes / $totalBytes) } else { 100 }
+                    Write-StageProgress $percent ("{0}%   {1:N1} / {2:N1} MB extracted" -f $percent, ($expandedBytes / 1MB), ($totalBytes / 1MB))
+                }
+            } finally {
+                $target.Dispose()
+                $source.Dispose()
+            }
+        }
+        Write-StageProgress 100 ("100%   {0:N1} MB extracted" -f ($totalBytes / 1MB))
+    } finally {
+        $archiveFile.Dispose()
+    }
 }
 
 function Resolve-RuntimeRoot([string]$ExpandedRoot) {
@@ -236,6 +313,9 @@ function Assert-RuntimePayload([string]$RuntimeRoot, $RuntimeManifest) {
     if ($RuntimeManifest.platform -and $RuntimeManifest.platform -ne $Platform) {
         throw "Runtime platform $($RuntimeManifest.platform) does not match installer platform $Platform."
     }
+    if ([string]$RuntimeManifest.version -ne $BootstrapperVersion) {
+        throw "Runtime version $($RuntimeManifest.version) does not match Setup version $BootstrapperVersion."
+    }
     $appExe = Join-Path $RuntimeRoot "app\OpenDrSai.exe"
     $agentDir = Join-Path $RuntimeRoot "drsai-agent"
     $pythonExe = Join-Path $agentDir "venv\Scripts\python.exe"
@@ -259,6 +339,36 @@ function Swap-Directory([string]$Source, [string]$Destination) {
     }
     New-Directory (Split-Path -Parent $Destination)
     Move-Item -LiteralPath $Source -Destination $Destination -Force
+}
+
+function Copy-DirectoryWithProgress([string]$Source, [string]$Destination, [int]$StartPercent, [int]$EndPercent) {
+    Remove-PathWithRetry $Destination
+    New-Directory $Destination
+    $files = @(Get-ChildItem -LiteralPath $Source -File -Recurse -Force)
+    [Int64]$totalBytes = ($files | Measure-Object -Property Length -Sum).Sum
+    [Int64]$copiedBytes = 0
+    $buffer = New-Object byte[] (1024 * 1024)
+    foreach ($file in $files) {
+        $relativePath = $file.FullName.Substring($Source.TrimEnd('\').Length).TrimStart('\')
+        $targetPath = Join-Path $Destination $relativePath
+        New-Directory (Split-Path -Parent $targetPath)
+        $input = [IO.File]::OpenRead($file.FullName)
+        $output = [IO.File]::Open($targetPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $output.Write($buffer, 0, $read)
+                $copiedBytes += $read
+                $fraction = if ($totalBytes -gt 0) { $copiedBytes / $totalBytes } else { 1 }
+                $percent = [int]($StartPercent + (($EndPercent - $StartPercent) * $fraction))
+                Write-StageProgress $percent ("{0}%   {1:N1} / {2:N1} MB installed" -f $percent, ($copiedBytes / 1MB), ($totalBytes / 1MB))
+            }
+        } finally {
+            $output.Dispose()
+            $input.Dispose()
+        }
+        [IO.File]::SetLastWriteTimeUtc($targetPath, $file.LastWriteTimeUtc)
+        [IO.File]::SetAttributes($targetPath, $file.Attributes)
+    }
 }
 
 function Remove-PreviousDirectories {
@@ -369,12 +479,22 @@ function Install-RuntimePayload {
     $runtimeManifest = $expandedRuntime[1]
 
     $appDir = Join-Path $InstallRoot "app"
+    $appCandidate = Join-Path $InstallRoot "app.installing"
+    $agentCandidate = Join-Path $InstallRoot "drsai-agent.installing"
     Write-Log "Installing desktop app..."
-    Swap-Directory (Join-Path $runtimeRoot "app") $appDir
+    Write-StageProgress 2 "Preparing the desktop application..."
+    Copy-DirectoryWithProgress (Join-Path $runtimeRoot "app") $appCandidate 2 48
 
     Write-Log "Installing OpenDrSai agent runtime..."
-    Swap-Directory (Join-Path $runtimeRoot "drsai-agent") $AgentDir
+    Copy-DirectoryWithProgress (Join-Path $runtimeRoot "drsai-agent") $agentCandidate 48 90
+    Write-RollbackState
+    Stop-InstalledProcessTrees
+    Write-StageProgress 92 "Activating the desktop application..."
+    Swap-Directory $appCandidate $appDir
+    Write-StageProgress 95 "Activating the OpenDrSai agent runtime..."
+    Swap-Directory $agentCandidate $AgentDir
     Repair-InstalledWrappers $AgentDir
+    Write-StageProgress 97 "Installing default configuration..."
     Copy-DefaultHomeFiles $runtimeRoot
 
     $desktopExe = Join-Path $appDir "OpenDrSai.exe"
@@ -401,6 +521,49 @@ function Install-RuntimePayload {
     }
 
     Write-InstallState $runtimeManifest $desktopExe $AgentDir
+    Write-StageProgress 100 "100%   OpenDrSai files installed"
+}
+
+function Remove-PathsWithProgress([string[]]$Paths, [int]$StartPercent, [int]$EndPercent) {
+    $existingPaths = @($Paths | Where-Object { Test-Path -LiteralPath $_ })
+    $files = @($existingPaths | ForEach-Object { Get-ChildItem -LiteralPath $_ -File -Recurse -Force -ErrorAction SilentlyContinue })
+    $total = [Math]::Max(1, $files.Count)
+    for ($index = 0; $index -lt $files.Count; $index++) {
+        Remove-Item -LiteralPath $files[$index].FullName -Force -ErrorAction SilentlyContinue
+        $percent = [int]($StartPercent + (($EndPercent - $StartPercent) * (($index + 1) / $total)))
+        Write-StageProgress $percent ("{0}%   {1} / {2} temporary files removed" -f $percent, ($index + 1), $total)
+    }
+    foreach ($path in $existingPaths) {
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Write-RollbackState {
+    $state = [ordered]@{
+        appExisted = Test-Path -LiteralPath (Join-Path $InstallRoot "app")
+        agentExisted = Test-Path -LiteralPath $AgentDir
+    }
+    [IO.File]::WriteAllText($RollbackStatePath, (($state | ConvertTo-Json -Compress) + [Environment]::NewLine), (New-Object Text.UTF8Encoding($false)))
+}
+
+function Rollback-RuntimeInstall {
+    if (-not (Test-Path -LiteralPath $RollbackStatePath)) { return }
+    $state = Get-Content -LiteralPath $RollbackStatePath -Raw | ConvertFrom-Json
+    Stop-InstalledProcessTrees
+    foreach ($item in @(
+        @{ Current = (Join-Path $InstallRoot "app"); Previous = (Join-Path $InstallRoot "app.previous"); Existed = [bool]$state.appExisted },
+        @{ Current = $AgentDir; Previous = "$AgentDir.previous"; Existed = [bool]$state.agentExisted }
+    )) {
+        if (Test-Path -LiteralPath $item.Previous) {
+            Remove-PathWithRetry $item.Current
+            Move-Item -LiteralPath $item.Previous -Destination $item.Current -Force
+        } elseif (-not $item.Existed) {
+            Remove-PathWithRetry $item.Current
+        }
+    }
+    Remove-PathWithRetry (Join-Path $InstallRoot "app.installing")
+    Remove-PathWithRetry (Join-Path $InstallRoot "drsai-agent.installing")
+    Remove-Item -LiteralPath $RollbackStatePath -Force -ErrorAction SilentlyContinue
 }
 
 function Complete-RuntimeInstall {
@@ -408,14 +571,21 @@ function Complete-RuntimeInstall {
     if (-not (Test-Path -LiteralPath $desktopExe)) {
         throw "OpenDrSai executable was not installed: $desktopExe"
     }
-    Remove-PreviousDirectories
-    Remove-Item -LiteralPath $ExpandedRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Write-StageProgress 20 "Checking the installed application..."
+    Remove-PathsWithProgress @(
+        (Join-Path $InstallRoot "app.previous"),
+        "$AgentDir.previous",
+        $ExpandedRoot
+    ) 20 97
+    Remove-Item -LiteralPath $RollbackStatePath -Force -ErrorAction SilentlyContinue
+    Write-StageProgress 99 "Cleaning temporary installation files..."
 
     Write-Log "OpenDrSai Runtime installation complete."
     if (-not $NoLaunch) {
         Write-Log "Launching OpenDrSai..."
         Start-Process -FilePath $desktopExe -WorkingDirectory (Split-Path -Parent $desktopExe)
     }
+    Write-StageProgress 100 "100%   OpenDrSai installation complete"
 }
 
 try {
@@ -432,21 +602,27 @@ try {
         Download-RuntimeArchive
     }
     if ($Stage -in @("All", "Verify")) {
+        Write-StageProgress 0 "Checking the Runtime package..."
         Write-Log "Verifying OpenDrSai Runtime..."
         Assert-RuntimeArchive
     }
     if ($Stage -in @("All", "Extract")) {
+        Write-StageProgress 0 "Preparing to extract the Runtime..."
         Write-Log "Extracting OpenDrSai Runtime..."
         Expand-ZipClean (Get-RuntimeArchivePath) $ExpandedRoot
         $null = Get-ExpandedRuntime
     }
     if ($Stage -in @("All", "Install")) {
-        Write-Log "Stopping an existing OpenDrSai runtime before installation..."
-        Stop-InstalledProcessTrees
+        Write-StageProgress 0 "Preparing to install OpenDrSai..."
+        Write-Log "Preparing the new OpenDrSai runtime before activation..."
         Install-RuntimePayload
     }
     if ($Stage -in @("All", "Complete")) {
+        Write-StageProgress 0 "Finishing OpenDrSai installation..."
         Complete-RuntimeInstall
+    }
+    if ($Stage -eq "Rollback") {
+        Rollback-RuntimeInstall
     }
     exit 0
 } catch {
