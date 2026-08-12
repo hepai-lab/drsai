@@ -4,7 +4,7 @@ import re
 import yaml
 from dotenv import load_dotenv
 
-from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, desktop_auth, docmaster, files, local_login, models, native, plans, releases, runs, sessions, settingsroute, skills, teams, users, validation
+from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, cloud, desktop_auth, docmaster, files, local_login, models, native, plans, releases, runs, sessions, settingsroute, skills, skills_gfs, skills_share, teams, users, validation
 load_dotenv()
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -391,9 +391,16 @@ api.include_router(
 )
 
 api.include_router(
+<<<<<<<<< Temporary merge branch 1
     releases.router,
     prefix="/releases",
     tags=["releases"],
+=========
+    cloud.router,
+    prefix="/cloud",
+    tags=["cloud"],
+    responses={404: {"description": "Not found"}},
+>>>>>>>>> Temporary merge branch 2
 )
 
 # Version endpoint
