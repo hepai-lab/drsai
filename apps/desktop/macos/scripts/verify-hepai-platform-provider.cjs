@@ -24,9 +24,9 @@ if (!process.env.OPENDRSAI_MACOS_APP_PATH && !hasRuntimeArchive(appBundle)) {
 }
 const executable = join(appBundle, "Contents", "MacOS", "OpenDrSai");
 const runtimeManifest = JSON.parse(readFileSync(join(appBundle, "Contents", "Resources", "runtime", "runtime-manifest.json"), "utf8"));
-const runtimeArchive = statSync(join(appBundle, "Contents", "Resources", "runtime", runtimeManifest.archive));
-const runtimeGiB = Math.ceil(runtimeArchive.size / (1024 ** 3));
-const timeoutMs = Math.min(900_000, 300_000 + runtimeGiB * 600_000);
+const runtimeArchivePath = join(appBundle, "Contents", "Resources", "runtime", runtimeManifest.archive);
+const runtimeGiB = existsSync(runtimeArchivePath) ? Math.ceil(statSync(runtimeArchivePath).size / (1024 ** 3)) : 0;
+const timeoutMs = runtimeGiB > 0 ? Math.min(900_000, 300_000 + runtimeGiB * 600_000) : 420_000;
 
 main().catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }).finally(cleanup);
 
