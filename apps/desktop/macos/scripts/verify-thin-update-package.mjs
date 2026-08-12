@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Thin update package verification requires Apple Silicon macOS.");
-const app = resolve(valueAfter("--app") || "release-unsigned-update/mac-arm64/OpenDrSai.app");
+const app = resolve(valueAfter("--app") || "release/mac-arm64/OpenDrSai.app");
 const runtime = join(app, "Contents", "Resources", "runtime");
 const manifestPath = join(runtime, "runtime-manifest.json");
 assert.ok(existsSync(app), `Missing update App: ${app}`);
