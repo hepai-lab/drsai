@@ -54,7 +54,9 @@ USER_SLO_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "event_to_render": {
         "threshold_ms": 1_000.0,
-        "stages": CONVERSATION_LATENCY_STAGES,
+        "stages": (
+            "runtime_receive", "runtime_commit", "relay_fanout", "android_receive", "android_render",
+        ),
     },
     "operation_confirmation": {
         "threshold_ms": 2_000.0,
@@ -419,6 +421,7 @@ class RuntimeObservability:
 
     @staticmethod
     def _slo_journey_report(
+        journey: str,
         definition: Mapping[str, Any],
         samples: Mapping[str, Mapping[str, float]],
         minimum_complete_samples: int,
@@ -443,21 +446,23 @@ class RuntimeObservability:
         total_p95 = totals[max(0, math.ceil(len(totals) * 0.95) - 1)] if totals else 0.0
         ready = len(complete) >= minimum_complete_samples
         threshold = float(definition["threshold_ms"])
-        status = "insufficient_samples" if not ready else (
-            "within_slo" if total_p95 <= threshold else "over_slo"
-        )
+        within_threshold = ready and total_p95 <= threshold
         bottleneck = max(
             stages, key=lambda candidate: float(stage_reports[candidate]["p95_ms"])
         ) if complete else None
         return {
+            "journey": journey,
+            "sample_count": len(samples),
+            "complete_count": len(complete),
+            "incomplete_count": len(samples) - len(complete),
+            "invalid_count": 0,
+            "worker_count": 1 if samples else 0,
             "ready": ready,
-            "status": status,
+            "within_threshold": within_threshold,
             "threshold_ms": threshold,
-            "complete_sample_count": len(complete),
-            "incomplete_sample_count": len(samples) - len(complete),
-            "total_p50_ms": round(total_p50, 3),
-            "total_p95_ms": round(total_p95, 3),
-            "p95_bottleneck": bottleneck,
+            "p50_ms": round(total_p50, 3) if complete else None,
+            "p95_ms": round(total_p95, 3) if complete else None,
+            "bottleneck": bottleneck,
             "stages": stage_reports,
         }
 
@@ -486,26 +491,28 @@ class RuntimeObservability:
             ] = float(row["duration_ms"])
         # Event-to-render reuses the authoritative five-stage conversation
         # observations instead of accepting a second, contradictory data path.
+        public_stages = {
+            "runtime_wss_send": "runtime_receive",
+            "journal_append": "runtime_commit",
+            "relay_fanout": "relay_fanout",
+            "client_receive": "android_receive",
+            "client_render": "android_render",
+        }
         for row in conversation_rows:
             sample = f'{row["correlation_id"]}:{row["operation_id"]}'
-            grouped["event_to_render"].setdefault(sample, {})[str(row["stage"])] = float(
-                row["duration_ms"]
-            )
+            stage = public_stages.get(str(row["stage"]))
+            if stage is not None:
+                grouped["event_to_render"].setdefault(sample, {})[stage] = float(row["duration_ms"])
         journeys = {
             journey: self._slo_journey_report(
-                definition, grouped[journey], minimum_complete_samples
+                journey, definition, grouped[journey], minimum_complete_samples
             )
             for journey, definition in USER_SLO_DEFINITIONS.items()
         }
-        breaches = sorted(
-            journey for journey, report in journeys.items() if report["status"] == "over_slo"
-        )
         return {
-            "schema_version": "user-slo/1",
-            "privacy": "aggregate_only",
+            "schema_version": "p6-user-slo/1",
             "minimum_complete_samples": minimum_complete_samples,
             "ready": all(report["ready"] for report in journeys.values()),
-            "breaches": breaches,
             "journeys": journeys,
         }
 

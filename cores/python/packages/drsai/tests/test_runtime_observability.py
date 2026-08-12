@@ -160,16 +160,14 @@ def test_user_slo_report_has_four_aggregate_journeys_and_locates_bottlenecks(tmp
             metrics.record_conversation_latency(stage, duration, event)
 
     report = metrics.user_slo_report()
-    assert report["schema_version"] == "user-slo/1"
-    assert report["privacy"] == "aggregate_only"
+    assert report["schema_version"] == "p6-user-slo/1"
     assert report["ready"] is True
-    assert report["breaches"] == ["event_to_render", "operation_confirmation"]
     assert set(report["journeys"]) == set(USER_SLO_DEFINITIONS)
-    assert report["journeys"]["first_screen"]["status"] == "within_slo"
-    assert report["journeys"]["operation_confirmation"]["status"] == "over_slo"
-    assert report["journeys"]["operation_confirmation"]["p95_bottleneck"] == "runtime_commit"
-    assert report["journeys"]["event_to_render"]["p95_bottleneck"] == "relay_fanout"
-    assert report["journeys"]["reconnect"]["total_p50_ms"] > 0
+    assert report["journeys"]["first_screen"]["within_threshold"] is True
+    assert report["journeys"]["operation_confirmation"]["within_threshold"] is False
+    assert report["journeys"]["operation_confirmation"]["bottleneck"] == "runtime_commit"
+    assert report["journeys"]["event_to_render"]["bottleneck"] == "relay_fanout"
+    assert report["journeys"]["reconnect"]["p50_ms"] > 0
     serialized = str(report)
     assert "sample-" not in serialized
     assert "event-" not in serialized

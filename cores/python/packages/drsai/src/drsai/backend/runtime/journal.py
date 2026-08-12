@@ -19,6 +19,7 @@ from drsai.backend.runtime.oaep import (
     project_item,
     project_run,
     project_session,
+    sanitize_persisted_item,
 )
 from drsai.backend.runtime.observability import ResourceCorrelation, RuntimeObservability
 from drsai.oaep.digest import canonical_oaep_item
@@ -1400,7 +1401,7 @@ class RuntimeConversationJournal:
                 "ORDER BY run_id,run_sequence,item_id",
                 (session_id, through_sequence),
             ).fetchall()
-        return [json.loads(str(row["envelope_json"])) for row in rows]
+        return [sanitize_persisted_item(json.loads(str(row["envelope_json"]))) for row in rows]
 
     def oaep_items_window(
         self,
@@ -1438,10 +1439,21 @@ class RuntimeConversationJournal:
             (int(selected[-1]["latest_sequence"]), str(selected[-1]["item_id"]))
             if len(rows) > bounded and selected else None
         )
-        return (
-            [json.loads(str(row["envelope_json"])) for row in reversed(selected)],
-            continuation,
-        )
+        # ``latest_sequence`` is the stable keyset boundary, but is not the
+        # presentation order: revising an early Item moves its latest journal
+        # sequence past later Items.  OAEP requires each Run's Item sequence to
+        # remain monotonic, so sort the bounded page by canonical Run order
+        # without changing the continuation key selected above.
+        items = [
+            sanitize_persisted_item(json.loads(str(row["envelope_json"])))
+            for row in selected
+        ]
+        items.sort(key=lambda item: (
+            str(item.get("run_id") or ""),
+            int(item.get("sequence") or 0),
+            str(item.get("id") or ""),
+        ))
+        return items, continuation
 
     def snapshot_waterline(self, session_id: str) -> int:
         with self._connect() as db:
@@ -1471,7 +1483,7 @@ class RuntimeConversationJournal:
             for row in rows:
                 if item_count:
                     digest_state.update(b",")
-                item = json.loads(str(row["envelope_json"]))
+                item = sanitize_persisted_item(json.loads(str(row["envelope_json"])))
                 digest_state.update(canonical_oaep_item(item).encode())
                 item_count += 1
             digest_state.update(b"]")
@@ -1501,7 +1513,7 @@ class RuntimeConversationJournal:
                 "WHERE run_id=? ORDER BY run_sequence,item_id",
                 (run_id,),
             ).fetchall()
-        return [json.loads(str(row["envelope_json"])) for row in rows]
+        return [sanitize_persisted_item(json.loads(str(row["envelope_json"]))) for row in rows]
 
     def oaep_run_items_page(
         self,
@@ -1540,7 +1552,10 @@ class RuntimeConversationJournal:
                 parameters,
             ).fetchall()
         return (
-            [json.loads(str(row["envelope_json"])) for row in rows[:bounded]],
+            [
+                sanitize_persisted_item(json.loads(str(row["envelope_json"])))
+                for row in rows[:bounded]
+            ],
             len(rows) > bounded,
         )
 
@@ -1593,7 +1608,10 @@ class RuntimeConversationJournal:
                 "output_tokens": output_tokens,
                 "total_tokens": total_tokens,
             },
-            "error_item": json.loads(str(error_row["envelope_json"])) if error_row else None,
+            "error_item": (
+                sanitize_persisted_item(json.loads(str(error_row["envelope_json"])))
+                if error_row else None
+            ),
         }
 
     def oaep_run_item_predecessor(
@@ -1616,7 +1634,9 @@ class RuntimeConversationJournal:
             ).fetchone()
             if target is None:
                 raise KeyError(item_id)
-            target_envelope = json.loads(str(target["envelope_json"]))
+            target_envelope = sanitize_persisted_item(
+                json.loads(str(target["envelope_json"]))
+            )
             if item_type and target_envelope.get("type") != item_type:
                 raise KeyError(item_id)
             if status and target_envelope.get("status") != status:

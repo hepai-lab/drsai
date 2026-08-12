@@ -10,7 +10,7 @@ import tempfile
 import time
 from datetime import date
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 from uuid import uuid4
 from dataclasses import asdict
 
@@ -255,6 +255,42 @@ class ProtocolDeletionDecision(_StrictBody):
         return self
 
 
+class UserSloStageReport(_StrictBody):
+    sample_count: int = Field(ge=0)
+    p50_ms: float = Field(ge=0, allow_inf_nan=False)
+    p95_ms: float = Field(ge=0, allow_inf_nan=False)
+
+
+class UserSloJourneyResponse(_StrictBody):
+    journey: Literal["first_screen", "event_to_render", "operation_confirmation", "reconnect"]
+    threshold_ms: float = Field(gt=0, allow_inf_nan=False)
+    sample_count: int = Field(ge=0)
+    complete_count: int = Field(ge=0)
+    incomplete_count: int = Field(ge=0)
+    invalid_count: int = Field(ge=0)
+    worker_count: int = Field(ge=0)
+    ready: bool
+    within_threshold: bool
+    stages: dict[str, UserSloStageReport]
+    p50_ms: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    p95_ms: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    bottleneck: str | None = None
+
+
+class UserSloJourneysResponse(_StrictBody):
+    first_screen: UserSloJourneyResponse
+    event_to_render: UserSloJourneyResponse
+    operation_confirmation: UserSloJourneyResponse
+    reconnect: UserSloJourneyResponse
+
+
+class UserSloReportResponse(_StrictBody):
+    schema_version: Literal["p6-user-slo/1"]
+    minimum_complete_samples: Literal[20]
+    ready: bool
+    journeys: UserSloJourneysResponse
+
+
 def create_relay_app(registry: RelayRegistry | None = None,
                      runtimes: dict[str, RuntimeAuthority] | None = None,
                      channels: RuntimeChannelHub | None = None,
@@ -406,9 +442,11 @@ def create_relay_app(registry: RelayRegistry | None = None,
     async def protocol_usage_metrics() -> dict:
         return protocol_usage.report()
 
-    @app.get("/v1/metrics/user-slo")
-    async def user_slo_metrics() -> dict:
-        return conversation_latency.user_slo_report()
+    @app.get("/v1/metrics/user-slo", response_model=UserSloReportResponse)
+    async def user_slo_metrics() -> UserSloReportResponse:
+        return UserSloReportResponse.model_validate(
+            conversation_latency.user_slo_report()
+        )
 
     @app.get(
         "/v1/metrics/protocol-usage/deletion-decision",

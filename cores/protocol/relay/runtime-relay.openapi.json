@@ -2728,6 +2728,197 @@
         "title": "ResourceLifecycle",
         "type": "string"
       },
+      "UserSloJourneyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bottleneck": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bottleneck"
+          },
+          "complete_count": {
+            "minimum": 0.0,
+            "title": "Complete Count",
+            "type": "integer"
+          },
+          "incomplete_count": {
+            "minimum": 0.0,
+            "title": "Incomplete Count",
+            "type": "integer"
+          },
+          "invalid_count": {
+            "minimum": 0.0,
+            "title": "Invalid Count",
+            "type": "integer"
+          },
+          "journey": {
+            "enum": [
+              "first_screen",
+              "event_to_render",
+              "operation_confirmation",
+              "reconnect"
+            ],
+            "title": "Journey",
+            "type": "string"
+          },
+          "p50_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Ms"
+          },
+          "p95_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Ms"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "sample_count": {
+            "minimum": 0.0,
+            "title": "Sample Count",
+            "type": "integer"
+          },
+          "stages": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/UserSloStageReport"
+            },
+            "title": "Stages",
+            "type": "object"
+          },
+          "threshold_ms": {
+            "exclusiveMinimum": 0.0,
+            "title": "Threshold Ms",
+            "type": "number"
+          },
+          "within_threshold": {
+            "title": "Within Threshold",
+            "type": "boolean"
+          },
+          "worker_count": {
+            "minimum": 0.0,
+            "title": "Worker Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "journey",
+          "threshold_ms",
+          "sample_count",
+          "complete_count",
+          "incomplete_count",
+          "invalid_count",
+          "worker_count",
+          "ready",
+          "within_threshold",
+          "stages"
+        ],
+        "title": "UserSloJourneyResponse",
+        "type": "object"
+      },
+      "UserSloJourneysResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "event_to_render": {
+            "$ref": "#/components/schemas/UserSloJourneyResponse"
+          },
+          "first_screen": {
+            "$ref": "#/components/schemas/UserSloJourneyResponse"
+          },
+          "operation_confirmation": {
+            "$ref": "#/components/schemas/UserSloJourneyResponse"
+          },
+          "reconnect": {
+            "$ref": "#/components/schemas/UserSloJourneyResponse"
+          }
+        },
+        "required": [
+          "first_screen",
+          "event_to_render",
+          "operation_confirmation",
+          "reconnect"
+        ],
+        "title": "UserSloJourneysResponse",
+        "type": "object"
+      },
+      "UserSloReportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "journeys": {
+            "$ref": "#/components/schemas/UserSloJourneysResponse"
+          },
+          "minimum_complete_samples": {
+            "const": 20,
+            "title": "Minimum Complete Samples",
+            "type": "integer"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "const": "p6-user-slo/1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "minimum_complete_samples",
+          "ready",
+          "journeys"
+        ],
+        "title": "UserSloReportResponse",
+        "type": "object"
+      },
+      "UserSloStageReport": {
+        "additionalProperties": false,
+        "properties": {
+          "p50_ms": {
+            "minimum": 0.0,
+            "title": "P50 Ms",
+            "type": "number"
+          },
+          "p95_ms": {
+            "minimum": 0.0,
+            "title": "P95 Ms",
+            "type": "number"
+          },
+          "sample_count": {
+            "minimum": 0.0,
+            "title": "Sample Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sample_count",
+          "p50_ms",
+          "p95_ms"
+        ],
+        "title": "UserSloStageReport",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -3386,9 +3577,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response User Slo Metrics V1 Metrics User Slo Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/UserSloReportResponse"
                 }
               }
             },

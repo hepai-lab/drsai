@@ -424,6 +424,7 @@ def test_approval_terminal_runs_finalize_manifest(
 def test_session_run_pagination_and_status_filter(engine: RuntimeEngine) -> None:
     session = engine.create_session("workspace-one", "Many runs")
     runs = [engine.create_run(session["session_id"], "agent@v1", f"key-{index}", "codex")[0] for index in range(5)]
+    engine.set_run_input(runs[1]["run_id"], "mobile input", attachment_refs=["attachment-safe"])
     engine.transition_run(runs[0]["run_id"], "running")
     engine.transition_run(runs[0]["run_id"], "completed")
 
@@ -431,6 +432,10 @@ def test_session_run_pagination_and_status_filter(engine: RuntimeEngine) -> None
     second = engine.list_session_runs_page(session["session_id"], cursor=first["next_cursor"], limit=2)
     third = engine.list_session_runs_page(session["session_id"], cursor=second["next_cursor"], limit=2)
     assert [row["run_id"] for row in [*first["data"], *second["data"], *third["data"]]] == [row["run_id"] for row in runs]
+    assert first["data"][0]["message"] == ""
+    assert first["data"][0]["attachment_refs"] == []
+    assert first["data"][1]["message"] == "mobile input"
+    assert first["data"][1]["attachment_refs"] == ["attachment-safe"]
     assert third["has_more"] is False
     completed = engine.list_session_runs_page(session["session_id"], status="completed")
     assert [row["run_id"] for row in completed["data"]] == [runs[0]["run_id"]]

@@ -127,10 +127,40 @@ def _safe_operation_ref(value: Any) -> dict[str, Any] | None:
     required = ("operation_id", "workspace_id", "operation", "correlation_id")
     if value.get("protocol") not in {None, "owop/1"} or not all(value.get(key) for key in required):
         return None
+    # Historical adapters could persist free-form tool names here.  An invalid
+    # optional OWOP reference must not invalidate the entire OAEP Snapshot.
+    # Drop the reference at the projection boundary; the Tool Item remains
+    # authoritative and its content is preserved.
+    operation = str(value["operation"]).strip()
+    if len(operation) > 128 or re.fullmatch(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*", operation) is None:
+        return None
     return {
         "protocol": "owop/1",
         **{key: _safe_text(value[key], limit=256) for key in required},
     }
+
+
+def sanitize_persisted_item(value: Any) -> dict[str, Any]:
+    """Normalize optional references on a canonical Item loaded from storage.
+
+    Older Runtime versions allowed free-form OWOP operation names and extra
+    reference properties.  Those rows are still valid conversation history,
+    but their optional reference does not satisfy the frozen OAEP schema.  A
+    read-boundary repair keeps the Item authoritative while omitting an
+    unusable reference, and avoids mutating the durable journal in place.
+    """
+    if not isinstance(value, dict):
+        return {}
+    item = copy.deepcopy(value)
+    content = item.get("content")
+    if not isinstance(content, dict) or "operation_ref" not in content:
+        return item
+    operation_ref = _safe_operation_ref(content.get("operation_ref"))
+    if operation_ref is None:
+        content.pop("operation_ref", None)
+    else:
+        content["operation_ref"] = operation_ref
+    return item
 
 
 def _safe_resource_refs(value: Any) -> list[dict[str, Any]]:

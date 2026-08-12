@@ -28,7 +28,7 @@ def verify() -> dict[str, object]:
             "first_screen", "cache_load", 10, sample_id="incomplete-sample-0000"
         )
         initial = metrics.user_slo_report()
-        if initial["ready"] or initial["journeys"]["first_screen"]["status"] != "insufficient_samples":
+        if initial["ready"] or initial["journeys"]["first_screen"]["ready"] is not False:
             raise RuntimeError("p6_user_slo_empty_or_incomplete_false_positive")
 
         for index in range(20):
@@ -53,13 +53,13 @@ def verify() -> dict[str, object]:
         journeys = report.get("journeys", {})
         if (
             report.get("ready") is not True
-            or report.get("breaches") != ["operation_confirmation"]
             or set(journeys) != set(USER_SLO_DEFINITIONS)
-            or journeys["operation_confirmation"].get("p95_bottleneck") != "runtime_commit"
+            or journeys["operation_confirmation"].get("within_threshold") is not False
+            or journeys["operation_confirmation"].get("bottleneck") != "runtime_commit"
             or any(
-                journey.get("complete_sample_count") != 20
-                or float(journey.get("total_p50_ms", 0)) <= 0
-                or float(journey.get("total_p95_ms", 0)) <= 0
+                journey.get("complete_count") != 20
+                or float(journey.get("p50_ms", 0)) <= 0
+                or float(journey.get("p95_ms", 0)) <= 0
                 for journey in journeys.values()
             )
         ):

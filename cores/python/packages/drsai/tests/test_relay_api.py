@@ -184,10 +184,11 @@ def test_user_slo_metrics_are_aggregate_only_and_locate_over_threshold_stage(tmp
     assert response.status_code == 200
     report = response.json()
     assert report["ready"] is True
-    assert report["breaches"] == ["operation_confirmation"]
-    assert report["journeys"]["operation_confirmation"]["p95_bottleneck"] == "runtime_commit"
-    assert report["journeys"]["first_screen"]["total_p50_ms"] > 0
-    assert report["journeys"]["event_to_render"]["total_p95_ms"] > 0
+    assert report["schema_version"] == "p6-user-slo/1"
+    assert report["journeys"]["operation_confirmation"]["within_threshold"] is False
+    assert report["journeys"]["operation_confirmation"]["bottleneck"] == "runtime_commit"
+    assert report["journeys"]["first_screen"]["p50_ms"] > 0
+    assert report["journeys"]["event_to_render"]["p95_ms"] > 0
     serialized = json.dumps(report)
     assert "opaque-sample" not in serialized
     assert "private-event" not in serialized
@@ -212,7 +213,7 @@ def test_user_slo_observation_requires_workspace_authorization_before_body_or_st
     )
     assert response.status_code == 401
     report = client.get("/v1/metrics/user-slo").json()
-    assert report["journeys"]["first_screen"]["complete_sample_count"] == 0
+    assert report["journeys"]["first_screen"]["complete_count"] == 0
 
 
 def test_user_slo_timestamp_routes_are_scoped_strict_and_replace_legacy_stage_api(tmp_path) -> None:
@@ -260,7 +261,7 @@ def test_user_slo_timestamp_routes_are_scoped_strict_and_replace_legacy_stage_ap
 
     report = client.get("/v1/metrics/user-slo").json()
     assert all(
-        report["journeys"][journey]["complete_sample_count"] == 1
+        report["journeys"][journey]["complete_count"] == 1
         for journey in ("first_screen", "operation_confirmation", "reconnect")
     )
     assert client.post(
