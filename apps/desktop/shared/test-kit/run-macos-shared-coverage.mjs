@@ -43,4 +43,11 @@ assert.equal(verification.status, 0, `coverage threshold verification failed wit
 const integrity = spawnSync(process.execPath, [integrityVerifier], { cwd: macosRoot, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 process.stdout.write(integrity.stdout ?? "");
 process.stderr.write(integrity.stderr ?? "");
-process.exitCode = integrity.status ?? 1;
+assert.equal(integrity.status, 0, `coverage receipt integrity failed with exit code ${integrity.status}`);
+if (process.env.OPENDRSAI_V157_RECORD_SCOPE) {
+  const recorder = resolve(macosRoot, "scripts/record-v157-acceptance.mjs");
+  const recorded = spawnSync(process.execPath, [recorder, process.env.OPENDRSAI_V157_RECORD_SCOPE], { cwd: macosRoot, encoding: "utf8" });
+  process.stdout.write(recorded.stdout ?? "");
+  process.stderr.write(recorded.stderr ?? "");
+  assert.equal(recorded.status, 0, `v1.5.7 acceptance recorder failed with exit code ${recorded.status}`);
+}

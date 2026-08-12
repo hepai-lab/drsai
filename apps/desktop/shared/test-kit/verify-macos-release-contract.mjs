@@ -222,7 +222,7 @@ for (const path of [
   "scripts/verify-packaged-l5.mjs",
   "scripts/verify-sleep-wake-real-device.mjs",
   "scripts/verify-keychain-lock-cycle.mjs",
-  "scripts/verify-v157-acceptance.mjs",
+  "scripts/record-v157-acceptance.mjs",
   "../shared/test-kit/record-macos-l5-evidence.mjs",
   "../shared/test-kit/record-macos-stability-matrix.mjs",
   "scripts/verify-release-l6.mjs",
