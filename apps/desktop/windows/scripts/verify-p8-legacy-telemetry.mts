@@ -21,7 +21,6 @@ for (let index = 0; index < 1_000; index += 1) {
 }
 assert.equal(versionBound.snapshot().length, 128, "version cardinality must remain bounded");
 assert.equal(legacyProtocolCanRetire([
-  { version: "1.5.2", legacyUses: 0, supportedRuntimeRequiresLegacy: false },
   { version: "1.5.3", legacyUses: 0, supportedRuntimeRequiresLegacy: false },
 ]), true);
 assert.equal(legacyProtocolCanRetire([
@@ -47,8 +46,8 @@ const ready = buildLegacyDeletionDecisionReport(readyRows.snapshot(), {
 assert.equal(ready.eligible, true);
 assert.deepEqual(ready.versions, { oaep: { "1.6.0": 10_000 } });
 assert.equal(legacyProtocolCanRetire([
-  { version: "1.5.2", legacyUses: 0, supportedRuntimeRequiresLegacy: false },
   { version: "1.5.3", legacyUses: 0, supportedRuntimeRequiresLegacy: true },
 ]), false);
+assert.equal(legacyProtocolCanRetire([]), false, "no supported Runtime evidence must fail closed");
 rmSync(directory, { recursive: true, force: true });
-console.log("P8 bounded persistent legacy telemetry and two-release retirement policy verified.");
+console.log("P8 bounded persistent legacy telemetry and evidence-based retirement policy verified.");

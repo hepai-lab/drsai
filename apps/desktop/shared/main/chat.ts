@@ -36,6 +36,7 @@ import { startGateway } from "./gateway";
 import { resolveGatewayPort } from "./gatewayEnvironment";
 import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, type OaepEvent, type OaepItem, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal } from "./runtimeClient";
 import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
+import { isUncertainRunCreateFailure, recoverRunCreation } from "./messageDelivery";
 import {
   RecoverableStreamError,
   appendResumedContent,
@@ -295,8 +296,32 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   const sessionId = request.sessionId;
   const existingTurn = chatTurns.get(requestId);
   if (eventTarget && existingTurn) existingTurn.eventTarget = eventTarget;
-  const thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
-  if (!thread?.lastRunId) return [];
+  let thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
+  if (!thread) return [];
+  // Electron may stop after Runtime committed Run creation but before the
+  // POST response and Run ID reached the thread projection. Recover that
+  // acknowledgement by the durable outbox key; never issue the POST again.
+  if (!thread.lastRunId && thread.runtimeSessionId && thread.workspacePath) {
+    const outbox = (await sessionSyncState.get(thread.runtimeSessionId)).outbox;
+    if (outbox) {
+      const resolved = await connectRuntimeClientForWorkspace(
+        thread.workspacePath, thread.execution?.workspaceId,
+      );
+      const recoveredRun = await recoverRunCreation(
+        () => (resolved.client as RuntimeClient).getAgentRunByIdempotency(
+          thread!.runtimeSessionId!, outbox.idempotencyKey,
+        ),
+      );
+      if (recoveredRun) {
+        await sessionSyncState.attachRun(
+          thread.runtimeSessionId, outbox.sourceMessageId, recoveredRun.run_id,
+        );
+        await updateThread({ id: thread.id, lastRunId: recoveredRun.run_id, status: "running" });
+        thread = { ...thread, lastRunId: recoveredRun.run_id, status: "running" };
+      }
+    }
+  }
+  if (!thread.lastRunId) return [];
   if (!thread.runtimeSessionId || !thread.workspacePath) {
     const journal = await listRecordedChatRunEvents(thread.lastRunId);
     const recovered = journal.map((event, index) => ({ ...event, requestId, sessionId, seq: index + 1 }));
@@ -308,6 +333,16 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   }
   const resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
   const client = resolved.client as RuntimeClient;
+  const completeRecoveredOutbox = async () => {
+    const outbox = (await sessionSyncState.get(thread!.runtimeSessionId!)).outbox;
+    if (!outbox) return;
+    await sessionSyncState.markOutboxDelivery(
+      thread!.runtimeSessionId!, outbox.sourceMessageId, "terminal",
+    ).catch(() => undefined);
+    await sessionSyncState.completeOutbox(
+      thread!.runtimeSessionId!, outbox.sourceMessageId,
+    ).catch(() => undefined);
+  };
   const [authoritativeRun, runtimeIdentity] = await Promise.all([
     client.getAgentRun(thread.lastRunId),
     client.getRuntime(),
@@ -352,6 +387,7 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
       recoveredSubscription?.stop();
       chatTurns.delete(requestId);
       chatEventSequences.delete(requestId);
+      await completeRecoveredOutbox();
       await updateThread({ id: thread.id, status: event.type === "event.run.completed" ? "idle" : "error" });
     }
   };
@@ -423,9 +459,11 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
         redacted_details: { previous_status: recoveryDecision.status },
       },
     });
+    await completeRecoveredOutbox();
     await updateThread({ id: thread.id, status: "error" });
   } else if (hasOaepTerminal) {
     recoveredSubscription?.stop();
+    await completeRecoveredOutbox();
     await updateThread({
       id: thread.id,
       status: authoritativeRun.status === "completed" ? "idle" : "error",
@@ -1623,6 +1661,7 @@ async function runRuntimeBackendChat(
     },
   });
   let run;
+  await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "sending");
   try {
     run = await client.createAgentRun(
       runtimeSessionId,
@@ -1630,8 +1669,19 @@ async function runRuntimeBackendChat(
       idempotencyKey,
     );
   } catch (error) {
-    liveSubscription.stop();
-    throw error;
+    if (!isUncertainRunCreateFailure(error)) {
+      await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "failed").catch(() => undefined);
+      liveSubscription.stop();
+      throw error;
+    }
+    await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "uncertain").catch(() => undefined);
+    run = await recoverRunCreation(
+      () => client.getAgentRunByIdempotency(runtimeSessionId, idempotencyKey),
+    );
+    if (!run) {
+      liveSubscription.stop();
+      throw error;
+    }
   }
   const awaitWithSubscriptionCleanup = async <T>(operation: Promise<T>): Promise<T> => {
     try {
@@ -1803,6 +1853,9 @@ async function runRuntimeBackendChat(
       : auth.authMode === "offline"
         ? { authMode: "offline", userId: auth.userId }
         : undefined;
+  await awaitWithSubscriptionCleanup(
+    sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "running"),
+  );
   const execution = (async () => {
     let provenance = executionProvenance;
     for (;;) {
@@ -1883,6 +1936,9 @@ async function runRuntimeBackendChat(
   const runtimeReachedTerminal = runtimeTerminalStatus !== undefined;
   try {
     if ((!failure && sourceMessageObserved) || runtimeReachedTerminal) {
+      if (runtimeReachedTerminal) {
+        await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "terminal").catch(() => undefined);
+      }
       await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
     }
   } finally {

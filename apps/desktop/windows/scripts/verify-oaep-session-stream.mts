@@ -12,13 +12,18 @@ import {
   type OaepDeltaShadow,
 } from "../../shared/main/oaepSessionStream";
 import {
+  assertOaepEventIntegrity,
+  assertOaepSnapshotIntegrity,
+  oaepProjectionDigest,
+} from "../../shared/main/oaepIntegrity";
+import {
   createRuntimeEndpointKey,
   getRuntimeClientRegistryDiagnostics,
   invalidateRuntimeClientRegistry,
   LocalRuntimeClient,
   retainRuntimeClient,
 } from "../../shared/main/runtimeClient";
-import type { OaepEvent, OaepItem, OaepRun, RuntimeClient } from "../../shared/main/runtimeClient";
+import type { OaepEvent, OaepItem, OaepRun, OaepSnapshot, RuntimeClient } from "../../shared/main/runtimeClient";
 import {
   isRuntimeGenerationInvalidated,
   runtimeGenerationRetryDelayMs,
@@ -28,6 +33,37 @@ const sessionId = "session-v6";
 const runId = "run-v6";
 const itemId = "item-v6";
 const source = { backend: "codex" };
+const integrityItem = {
+  id: "integrity-item", session_id: sessionId, run_id: runId, type: "message", status: "completed",
+  sequence: 1, created_at: "2026-08-04T00:00:00Z", updated_at: "2026-08-04T00:00:01Z", source,
+  content: { role: "assistant", text: "canonical", phase: "final", parts: [], citations: [] },
+} as OaepItem;
+const integrityDigest = oaepProjectionDigest([integrityItem]);
+const integritySnapshot = {
+  version: "1.0", session: { id: sessionId, workspace_id: "workspace", status: "active",
+    created_at: "2026-08-04T00:00:00Z", updated_at: "2026-08-04T00:00:01Z" },
+  runs: [{ id: runId, session_id: sessionId, status: "completed", created_at: "2026-08-04T00:00:00Z",
+    updated_at: "2026-08-04T00:00:01Z" }], items: [integrityItem], snapshot_sequence: 4,
+  checkpoint: { sequence: 4, snapshot_hash: integrityDigest, item_count: 1 },
+  window: { limit: 100, has_more: false, next_cursor: null },
+} as OaepSnapshot;
+assert.doesNotThrow(() => assertOaepSnapshotIntegrity(integritySnapshot));
+assert.throws(() => assertOaepSnapshotIntegrity({ ...integritySnapshot,
+  checkpoint: { ...integritySnapshot.checkpoint, snapshot_hash: "0".repeat(64) } }),
+  /oaep_snapshot_checkpoint_digest_mismatch/);
+assert.throws(() => assertOaepEventIntegrity({
+  version: "1.0", event_id: "scope", session_id: sessionId, run_id: runId, item_id: "outer",
+  sequence: 1, type: "event.item.completed", timestamp: "2026-08-04T00:00:00Z", dedupe_key: "scope", source,
+  data: { item: { ...integrityItem, id: "inner" } },
+} as OaepEvent, sessionId), /oaep_event_item_scope_invalid/);
+const windowFixture = JSON.parse(await readFile(resolve(
+  process.cwd(), "../../../cores/protocol/oaep/snapshot-window.examples.json",
+), "utf8")) as { expected_snapshot_hash: string; pages: Array<{ items: OaepItem[] }> };
+assert.equal(
+  oaepProjectionDigest(windowFixture.pages.flatMap((page) => page.items)),
+  windowFixture.expected_snapshot_hash,
+  "Desktop and Runtime must calculate the same canonical transcript hash",
+);
 const parityItems = new Map<string, OaepItem>();
 const parityShadows = new Map<string, OaepDeltaShadow>();
 const parityRuns = new Map<string, OaepRun>();
@@ -51,8 +87,9 @@ reduceOaepEvent(parityItems, parityRuns, {
   data: { delta: { kind: "reasoning.text.append", segment_id: "analysis-1", text: "private-canary",
     reasoning_kind: "analysis", visibility: "hidden", reasoning_source: "backend" } },
 } as OaepEvent, parityShadows);
-assert.equal(parityShadows.has("hidden-reasoning"), false,
-  "non-user reasoning must never enter live presentation shadows");
+assert.deepEqual(parityShadows.get("hidden-reasoning")?.content.segments, [{
+  id: "analysis-1", text: "private-canary", kind: "analysis", visibility: "hidden", source: "backend",
+}], "hidden reasoning must remain in canonical reduction while presentation filters it");
 const toolDelta = {
   version: "1.0", event_id: "tool1", session_id: sessionId, run_id: runId, item_id: "tool",
   sequence: 3, type: "event.item.delta", timestamp: "2026-08-04T00:00:02Z", dedupe_key: "tool-d1", source,
@@ -164,11 +201,14 @@ assert.equal(subscription.metrics.replayEvents, 0);
 assert.equal(subscription.metrics.streamEvents, 3);
 assert.equal(subscription.metrics.protocolViolations, 0);
 assert.deepEqual(phases.slice(0, 3), ["snapshot", "replay", "connected"]);
+assert.doesNotThrow(() => assertOaepStreamTransition("retrying", "snapshot"));
 assert.doesNotThrow(() => assertOaepStreamTransition("retrying", "resnapshot"));
 assert.doesNotThrow(() => assertOaepStreamTransition("retrying", "degraded"));
 assert.throws(() => assertOaepStreamTransition("fatal", "connected"), /transition_invalid/);
 assert.equal(classifyOaepStreamError(Object.assign(new Error("EOF"), { retryable: true })), "retryable");
 assert.equal(classifyOaepStreamError(Object.assign(new Error("expired"), { status: 410 })), "cursor_expired");
+assert.equal(classifyOaepStreamError(new Error("oaep_snapshot_item_scope_invalid")), "fatal",
+  "deterministic OAEP integrity failures must not consume the network retry window");
 for (const status of [401, 403, 404, 405, 422]) {
   assert.equal(classifyOaepStreamError(Object.assign(new Error(String(status)), { status })), "fatal");
 }
@@ -252,15 +292,13 @@ const recoveryClient = {
   streamIdentity: "runtime:test-gap-recovery",
   getOaepSnapshot: async () => {
     recoverySnapshotCalls += 1;
-    return recoverySnapshotCalls === 1
-      ? { version: "1.0", session: { id: sessionId }, runs: [], items: [], snapshot_sequence: 0 }
-      : { version: "1.0", session: { id: sessionId }, runs: [], items: [item("completed", "Recovered")], snapshot_sequence: 2 };
+    return { version: "1.0", session: { id: sessionId }, runs: [], items: [], snapshot_sequence: 0 };
   },
   listOaepEvents: async () => {
     recoveryReplayCalls += 1;
     return recoveryReplayCalls === 1
       ? { version: "1.0", object: "list", data: [events[1]], next_sequence: 2, has_more: false }
-      : { version: "1.0", object: "list", data: [], next_sequence: 2, has_more: false };
+      : { version: "1.0", object: "list", data: events.slice(0, 2), next_sequence: 2, has_more: false };
   },
   openOaepEventStream: async () => ({ response: new Response(null, { status: 200 }), events: recoveryStream }),
 } as unknown as RuntimeClient;
@@ -270,10 +308,12 @@ const recoverySubscription = await Promise.race([
   new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("gap recovery timed out")), 750)),
 ]);
 assert.equal(recoverySubscription.cursor, 2);
-assert.equal(recoverySubscription.state.items.get(itemId)?.content.text, "Recovered");
+assert.equal(recoverySubscription.state.items.get(itemId)?.content.text, "Hel");
 assert.equal(recoverySubscription.metrics.protocolViolations, 1);
-assert.equal(recoverySubscription.metrics.resnapshots, 1);
-assert(recoveryPhases.includes("retrying") && recoveryPhases.includes("resnapshot"));
+assert.equal(recoverySnapshotCalls, 1,
+  "a transient replay gap must retry from the last contiguous cursor instead of skipping Events with a snapshot");
+assert.equal(recoverySubscription.metrics.resnapshots, 0);
+assert(recoveryPhases.includes("retrying") && recoveryPhases.filter((phase) => phase === "replay").length >= 2);
 recoverySubscription.stop();
 await recoverySubscription.done;
 
@@ -341,7 +381,10 @@ const raceClient = {
   location: "local",
   streamIdentity: "runtime:test-snapshot-stream-race",
   getOaepSnapshot: async () => ({
-    version: "1.0", session: { id: sessionId }, runs: [], items: [item("running", "")], snapshot_sequence: 1,
+    version: "1.0", session: { id: sessionId },
+    runs: [{ id: runId, session_id: sessionId, status: "running", created_at: "2026-08-04T00:00:00Z",
+      updated_at: "2026-08-04T00:00:01Z" }],
+    items: [item("running", "")], snapshot_sequence: 1,
   }),
   listOaepEvents: async () => {
     raceReplayPage += 1;

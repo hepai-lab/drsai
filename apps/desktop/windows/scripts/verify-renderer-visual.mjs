@@ -12,7 +12,7 @@ const l3Only = process.env.OPENDRSAI_RENDERER_L3_ONLY === "1";
 const modelProviderOnly = process.argv.includes("--model-provider-only");
 const axePath = join(root, "node_modules", "axe-core", "axe.min.js");
 const disabledFeatures = new Set((process.env.OPENDRSAI_RENDERER_DISABLED_FEATURES || "").split(",").map((value) => value.trim()).filter(Boolean));
-const featureKeys = ["auth", "runtime", "chat", "agents", "threads", "workspaceFiles", "git", "terminal", "serialVoice", "streamingVoice", "approvals", "browser", "debugger", "mcp", "remoteWorkspace", "portForwarding", "checkpoints", "worktrees", "automation", "collaboration", "channels", "diagnostics", "codexBackend"];
+const featureKeys = ["auth", "runtime", "chat", "agents", "threads", "workspaceFiles", "git", "terminal", "serialVoice", "streamingVoice", "duplexVoice", "approvals", "browser", "debugger", "mcp", "remoteWorkspace", "portForwarding", "checkpoints", "worktrees", "automation", "collaboration", "channels", "diagnostics", "codexBackend"];
 const featureCapabilities = Object.fromEntries(featureKeys.map((key) => [key, !disabledFeatures.has(key)]));
 const artifactDir =
   process.env.OPENDRSAI_VISUAL_ARTIFACT_DIR ||

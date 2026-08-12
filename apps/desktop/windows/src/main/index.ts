@@ -17,6 +17,7 @@ import {
   dialog,
   ipcMain,
   protocol,
+  powerMonitor,
   screen,
   session as electronSession,
   shell,
@@ -67,6 +68,7 @@ import type {
   CreateReplayPlanRequest,
   CreateRunExperimentRequest,
   CreateRunComparisonRequest,
+  CreateRunComparisonEvaluationRequest,
   DeleteRunExperimentRequest,
   ExecuteReplayPlanRequest,
   GetReplayBoundariesRequest,
@@ -75,6 +77,7 @@ import type {
   FinalizeRunExperimentCandidateRequest,
   GetRunExperimentRequest,
   GetRunComparisonRequest,
+  ListRunComparisonEvaluationsRequest,
   GetRunRelationsRequest,
   GetWorktreeAdoptionPreviewRequest,
   ApplyWorktreeAdoptionRequest,
@@ -89,6 +92,10 @@ import type {
 import { MobilePairingController } from "../../../shared/main/mobilePairingController";
 import { assertExperimentReleaseEnabled, readExperimentReleaseGate } from "../../../shared/main/experimentReleaseGate";
 import { classifyMobileRemoteDiagnostics } from "../../../shared/main/mobileRemoteDiagnostics";
+import {
+  consumeWorkspaceSessionCatalogStream,
+  WorkspaceSessionCatalogGate,
+} from "../../../shared/main/workspaceSessionCatalog";
 import { RemoteProtocolError } from "../../../shared/api/remoteSshProtocol";
 import { desktopDiagnostics } from "./diagnostics";
 import { productionDiagnostics } from "../../../shared/main/productionDiagnostics";
@@ -179,6 +186,7 @@ import {
 } from "./executionPolicyGate";
 import {
   createThread,
+  appendDuplexVoiceHistory,
   deleteThread,
   getThreadSnapshot,
   listThreads,
@@ -413,6 +421,18 @@ import {
   stopStreamingVoiceTranscription,
 } from "./voice/streaming";
 import {
+  attachDuplexVoiceAudioPort,
+  cancelDuplexVoiceSession,
+  disposeDuplexVoiceSession,
+  disposeAllDuplexVoiceSessions,
+  getDuplexVoiceCapabilities,
+  interruptDuplexVoiceSession,
+  startDuplexVoiceSession,
+  stopDuplexVoiceSession,
+  submitDuplexVoiceToolResult,
+  updateDuplexVoiceSession,
+} from "./voice/duplex";
+import {
   cancelVoiceSynthesis,
   cancelVoiceSynthesisForSender,
   getVoiceSynthesisRuntimeStatus,
@@ -517,6 +537,10 @@ import type {
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptionRequest,
   DesktopStreamingVoiceStartRequest,
+  DesktopDuplexVoiceSessionStartRequest,
+  DesktopDuplexVoiceInterruptRequest,
+  DesktopDuplexVoiceHistoryAppendRequest,
+  DesktopDuplexVoiceToolResultRequest,
   DesktopVoiceSynthesisRequest,
   DesktopBootstrapBlockerKind,
   WorkspaceCheckpointRestoreRequest,
@@ -574,6 +598,85 @@ const threadSnapshotHydrations = new Map<string, AbortController>();
 const runtimeThreadCatalogTimers = new Map<number, NodeJS.Timeout>();
 const runtimeThreadCatalogBusy = new Set<number>();
 const runtimeThreadCleanupRegistered = new Set<number>();
+const runtimeWorkspaceCatalogSubscriptions = new Map<string, AbortController>();
+
+function runtimeWorkspaceCatalogKey(webContents: WebContents, workspaceId: string): string {
+  return `${webContents.id}:${workspaceId}`;
+}
+
+async function applyRuntimeWorkspaceCatalogEvent(
+  webContents: WebContents,
+  workspaceId: string,
+  sessionId: string,
+): Promise<void> {
+  if (webContents.isDestroyed()) return;
+  const client = await LocalRuntimeClient.connect();
+  const [session, workspaces] = await Promise.all([
+    client.getSession(sessionId),
+    listWorkspaces(),
+  ]);
+  if (session.workspace_id !== workspaceId) throw new Error("session_catalog_workspace_mismatch");
+  const workspace = workspaces.find((item) => item.id === workspaceId);
+  if (!workspace) return;
+  const thread = await upsertThreadFromRun({
+    id: session.session_id,
+    kind: "chat",
+    title: session.title,
+    workspacePath: workspace.path,
+    runtimeSessionId: session.session_id,
+    status: "idle",
+    messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+  });
+  const updated = await updateThread({
+    id: thread.id,
+    archived: session.archived === true || session.lifecycle === "archived" || session.lifecycle === "removed",
+    archiveSource: session.archived === true || session.lifecycle === "archived" ? "opendrsai" : undefined,
+  });
+  if (!webContents.isDestroyed()) webContents.send("desktop:thread-catalog", {
+    thread: updated,
+    source: "runtime-session",
+  });
+}
+
+function startRuntimeWorkspaceCatalogSubscription(
+  webContents: WebContents,
+  workspaceId: string,
+): void {
+  const key = runtimeWorkspaceCatalogKey(webContents, workspaceId);
+  if (runtimeWorkspaceCatalogSubscriptions.has(key)) return;
+  const controller = new AbortController();
+  runtimeWorkspaceCatalogSubscriptions.set(key, controller);
+  const gate = new WorkspaceSessionCatalogGate();
+  void (async () => {
+    let retryMillis = 500;
+    while (!controller.signal.aborted && !webContents.isDestroyed()) {
+      try {
+        const stream = await (await LocalRuntimeClient.connect())
+          .openWorkspaceSessionCatalogStream(workspaceId, controller.signal);
+        retryMillis = 500;
+        await consumeWorkspaceSessionCatalogStream(stream.events, async (event) => {
+          if (gate.accept(event) !== "apply") return;
+          await applyRuntimeWorkspaceCatalogEvent(webContents, workspaceId, event.session_id);
+        });
+      } catch {
+        if (controller.signal.aborted) break;
+        await new Promise((resolve) => setTimeout(resolve, retryMillis));
+        retryMillis = Math.min(retryMillis * 2, 15_000);
+      }
+    }
+  })().finally(() => {
+    if (runtimeWorkspaceCatalogSubscriptions.get(key) === controller) {
+      runtimeWorkspaceCatalogSubscriptions.delete(key);
+    }
+  });
+}
+
+async function ensureRuntimeWorkspaceCatalogSubscriptions(webContents: WebContents): Promise<void> {
+  if (webContents.isDestroyed()) return;
+  const workspaces = await (await LocalRuntimeClient.connect()).listWorkspaces(false);
+  for (const workspace of workspaces) startRuntimeWorkspaceCatalogSubscription(webContents, workspace.workspace_id);
+  ensureRuntimeThreadCleanup(webContents);
+}
 
 function runtimeThreadSubscriptionKey(webContents: WebContents, threadId: string): string {
   return `${webContents.id}:${threadId}`;
@@ -590,7 +693,19 @@ function stopRuntimeThreadSubscriptions(webContentsId?: number): void {
       runtimeThreadSubscriptions.delete(key);
     }
   }
+  if (webContentsId === undefined) {
+    for (const controller of runtimeWorkspaceCatalogSubscriptions.values()) {
+      controller.abort(new DOMException("Workspace catalog subscriber closed.", "AbortError"));
+    }
+    runtimeWorkspaceCatalogSubscriptions.clear();
+  }
   if (webContentsId !== undefined) {
+    for (const [key, controller] of runtimeWorkspaceCatalogSubscriptions) {
+      if (key.startsWith(`${webContentsId}:`)) {
+        controller.abort(new DOMException("Workspace catalog subscriber closed.", "AbortError"));
+        runtimeWorkspaceCatalogSubscriptions.delete(key);
+      }
+    }
     const timer = runtimeThreadCatalogTimers.get(webContentsId);
     if (timer) clearInterval(timer);
     runtimeThreadCatalogTimers.delete(webContentsId);
@@ -3668,6 +3783,10 @@ async function runPhase3LiveAcceptance(nonce: string): Promise<void> {
     if (auth.authMode !== "oidc" || !auth.accessToken) {
       throw new Error("A current OIDC Desktop session is required.");
     }
+    if (!(await startGateway())) {
+      throw new Error("The App-owned Gateway could not be started for Phase 3 live acceptance.");
+    }
+    await syncAuthIdentityToGateway(auth.userId);
     const verifier = resolve(
       DRSAI_REPO,
       "apps/desktop/windows/scripts/verify-run-traceability-phase3-live-model.mjs",
@@ -3753,7 +3872,7 @@ async function diagnoseMobileRemoteAccess() {
     runtimeResult = await (await LocalRuntimeClient.connect()).getMobileRemoteDiagnostics();
   } catch {
     return classifyMobileRemoteDiagnostics({
-      runtime: "failed", relay: "unknown", oidc: "unknown", wss: "unknown", heartbeat: "unknown", protocol: "unknown",
+      runtime: "failed", relay: "unknown", oidc: "unknown", device_proof: "unknown", wss: "unknown", heartbeat: "unknown", protocol: "unknown", push: "unknown",
     });
   }
   let oidc: "ok" | "failed" = "failed";
@@ -4677,8 +4796,9 @@ function registerIpc(): void {
       event,
       associationId: string,
       permissions: Array<"read" | "send" | "approve" | "files">,
+      scope: import("../../../shared/api/desktopApi").DesktopMobilePairingScope | undefined,
     ) =>
-      mobilePairingControllerFor(event.sender).shrinkAssociation(associationId, permissions),
+      mobilePairingControllerFor(event.sender).shrinkAssociation(associationId, permissions, scope),
     );
   secureHandle("desktop:mobile-enrollment-revoke", (event) =>
     mobilePairingControllerFor(event.sender).revokeEnrollment(),
@@ -5162,7 +5282,10 @@ function registerIpc(): void {
   secureHandle("desktop:fork-conflict-draft-write", async (_event, request) =>
     requestForkConflictDraftWrite(request),
   );
-  secureHandle("desktop:list-threads", () => listThreads());
+  secureHandle("desktop:list-threads", async (event) => {
+    void ensureRuntimeWorkspaceCatalogSubscriptions(event.sender).catch(() => undefined);
+    return listThreads();
+  });
   secureHandle("desktop:list-agents", (_event, options) => listAgents(
     options && typeof options === "object"
       ? {
@@ -5346,6 +5469,7 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),
   );
+  secureHandle("desktop:append-duplex-voice-history", (_event, request: DesktopDuplexVoiceHistoryAppendRequest) => appendDuplexVoiceHistory(request));
   secureHandle("desktop:create-thread-share", (_event, request) =>
     createThreadShare(request),
   );
@@ -5810,6 +5934,16 @@ function registerIpc(): void {
     const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
     return resolved.client.getRunComparison(request.comparisonId, await requireAuthContext());
   });
+  secureHandle("desktop:run-comparison-evaluations-list", async (_event, request: ListRunComparisonEvaluationsRequest) => {
+    await requireExperimentReleaseGate();
+    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+    return resolved.client.listRunComparisonEvaluations(request.comparisonId, await requireAuthContext());
+  });
+  secureHandle("desktop:run-comparison-evaluation-create", async (_event, request: CreateRunComparisonEvaluationRequest) => {
+    await requireExperimentReleaseGate();
+    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+    return resolved.client.createRunComparisonEvaluation(request, await requireAuthContext());
+  });
   secureHandle("desktop:worktree-adoption-preview", async (_event, request: GetWorktreeAdoptionPreviewRequest) => {
     await requireExperimentReleaseGate();
     const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
@@ -5884,6 +6018,14 @@ function registerIpc(): void {
     "desktop:voice-streaming-capabilities",
     () => getStreamingVoiceCapabilities(),
   );
+  secureHandle("desktop:voice-duplex-capabilities", () => getDuplexVoiceCapabilities());
+  secureHandle("desktop:voice-duplex-start", (event, request: DesktopDuplexVoiceSessionStartRequest) => startDuplexVoiceSession(event.sender, request));
+  secureHandle("desktop:voice-duplex-update", (event, request: DesktopDuplexVoiceSessionStartRequest) => updateDuplexVoiceSession(event.sender, request));
+  secureHandle("desktop:voice-duplex-interrupt", (event, request: DesktopDuplexVoiceInterruptRequest) => interruptDuplexVoiceSession(event.sender, request));
+  secureHandle("desktop:voice-duplex-tool-result", (event, request: DesktopDuplexVoiceToolResultRequest) => submitDuplexVoiceToolResult(event.sender, request));
+  secureHandle("desktop:voice-duplex-stop", (event, sessionId: string) => stopDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
+  secureHandle("desktop:voice-duplex-cancel", (event, sessionId: string) => cancelDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
+  secureHandle("desktop:voice-duplex-dispose", (event, sessionId: string) => disposeDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
   secureHandle(
     "desktop:voice-streaming-start",
     (event, request: DesktopStreamingVoiceStartRequest) => startStreamingVoiceTranscription(event.sender, request),
@@ -5912,6 +6054,13 @@ function registerIpc(): void {
       return;
     }
     attachStreamingVoiceAudioPort(event.sender, sessionId, port);
+  });
+  ipcMain.on("desktop:voice-duplex-audio-port", (event: IpcMainEvent, request: unknown) => {
+    if (!isTrustedSender(event as unknown as IpcMainInvokeEvent)) { event.ports[0]?.close(); return; }
+    const sessionId = getStringProperty(request, "sessionId");
+    const port = event.ports[0];
+    if (!sessionId || !port) { port?.close(); return; }
+    attachDuplexVoiceAudioPort(event.sender, sessionId, port);
   });
   secureHandle(
     "desktop:voice-synthesis-start",
@@ -6410,6 +6559,14 @@ app.whenReady().then(async () => {
     });
   });
   registerIpc();
+  const publishLifecycle = (reason: import("../../../shared/api/desktopApi").DesktopLifecycleEvent["reason"]): void => {
+    const event = { reason, recoveredGateway: false, at: new Date().toISOString() };
+    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:lifecycle-event", event);
+  };
+  powerMonitor.on("suspend", () => { disposeAllDuplexVoiceSessions(); publishLifecycle("suspend"); });
+  powerMonitor.on("lock-screen", () => { disposeAllDuplexVoiceSessions(); publishLifecycle("lock-screen"); });
+  powerMonitor.on("resume", () => publishLifecycle("resume"));
+  powerMonitor.on("unlock-screen", () => publishLifecycle("unlock-screen"));
   setRemoteWorkspaceStatusPublisher((status) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-workspace-status-event", status);
     desktopDiagnostics.registerHealth({

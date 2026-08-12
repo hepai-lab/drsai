@@ -20923,6 +20923,12 @@ button.structured-activity-compact:hover > span {
 .mobile-pairing-icon-button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .mobile-pairing-device { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 10px 0; padding: 8px 12px; border-radius: 10px; background: var(--surface-muted); font-size: 12px; }
 .mobile-pairing-device > span { color: var(--text-secondary); }
+.mobile-pairing-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 12px 0; padding: 0; list-style: none; }
+.mobile-pairing-steps li { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
+.mobile-pairing-steps li > span { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--border-subtle); border-radius: 50%; }
+.mobile-pairing-steps li[data-state="current"] { color: var(--text-primary); font-weight: 650; }
+.mobile-pairing-steps li[data-state="current"] > span { border-color: var(--app-accent); background: var(--app-accent); color: #fff; }
+.mobile-pairing-steps li[data-state="complete"] > span { border-color: var(--success, #27864a); color: var(--success, #27864a); }
 .mobile-pairing-scope { display: grid; gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 10px; }
 .mobile-pairing-scope > label, .mobile-pairing-workspaces label { display: flex; align-items: center; gap: 8px; }
 .mobile-pairing-workspaces { display: grid; gap: 6px; max-height: 132px; overflow: auto; padding-inline-start: 24px; }
@@ -22794,6 +22800,21 @@ button.structured-activity-compact:hover > span {
 .replay-plan-estimate dd { margin: 3px 0 0; overflow-wrap: anywhere; }
 .comparison-outcomes { grid-template-columns: 1fr 1fr; }
 .comparison-outcomes strong { display: block; margin-top: 4px; }
+.comparison-metrics,
+.comparison-evaluation table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12px; }
+.comparison-metrics th,
+.comparison-metrics td,
+.comparison-evaluation th,
+.comparison-evaluation td { border: 1px solid var(--border, #dbe2ea); padding: 7px 8px; text-align: left; vertical-align: top; }
+.comparison-metrics thead,
+.comparison-evaluation thead { background: color-mix(in srgb, var(--accent, #2563eb) 6%, transparent); }
+.comparison-evaluation { margin: 14px 0; border: 1px solid var(--border, #dbe2ea); border-radius: 8px; padding: 10px; }
+.comparison-evaluation > summary { cursor: pointer; font-weight: 650; }
+.comparison-evaluation th small { display: block; max-width: 280px; margin-top: 3px; color: var(--text-secondary, #64748b); font-weight: 400; }
+.comparison-evaluation select { min-width: 78px; }
+.comparison-evidence-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 5px; }
+.comparison-evidence-actions label { display: inline-flex; align-items: center; gap: 3px; }
+.comparison-evidence-actions button { border: 0; background: transparent; color: var(--accent, #2563eb); padding: 2px; cursor: pointer; }
 .comparison-adoption-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
 .run-adoption-dialog {
   position: fixed;
@@ -22906,3 +22927,18 @@ button.structured-activity-compact:hover > span {
 .operational-state-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 10px 10px; }
 .operational-state-actions button { min-height: 32px; }
 .operational-state-actions span { flex-basis: 100%; color: var(--app-text-secondary); }
+.android-device-scope-editor {
+  flex: 1 0 100%;
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+}
+
+.android-device-scope-editor label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

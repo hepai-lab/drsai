@@ -65,6 +65,10 @@ for (const marker of ["describeInspectionError", "Technical details", "Runtime s
 for (const marker of ["listSessionRuns", "next_cursor", "dedupeRuns", "waiting_approval", "aria-current"]) {
   assert.ok(history.includes(marker), `Session Run History is missing ${marker}`);
 }
+for (const marker of ["run.relation_type", "Experiment replay", "Subagent", "Retry"]) {
+  assert.ok(history.includes(marker), `Truthful Run relationship UI is missing ${marker}`);
+}
+assert.ok(!history.includes("typeof run.parent_run_id"), "Run History must not infer Replay from parent_run_id");
 for (const marker of ["slice(visibleStart, visibleStart + 50)", "data-rendered-runs", "Previous window", "本会话运行历史", "加载更多"]) {
   assert.ok(history.includes(marker), `Bounded/localized Session Run History is missing ${marker}`);
 }
@@ -105,7 +109,7 @@ for (const unsupportedLabel of ["Temperature", "Prompt reference", "Agent refere
 }
 assert.ok(experiment.includes("getRunExperimentCapabilities"), "Experiment UI must use the Runtime model catalog");
 assert.ok(experiment.includes("const current = draft ?? await desktopApi.createRunExperiment"), "Experiment draft must be created lazily on save");
-for (const marker of ["getRunRelations", "Restored the last saved experiment draft", "status === \"draft\"", "setDraft(recovered)"]) {
+for (const marker of ["getRunRelations", "Restored the last saved experiment draft", "Restored the last executed experiment", "setDraft(recovered)", "deleteRunExperiment", "Discard draft", "You have unsaved edits", "View candidate Run"]) {
   assert.ok(experiment.includes(marker), `Saved experiment recovery is missing ${marker}`);
 }
 for (const legacyMode of ['value="fresh"', 'value="reuse_pure"', 'value="resume_checkpoint"', 'value="review_each_step"']) {
@@ -114,8 +118,11 @@ for (const legacyMode of ['value="fresh"', 'value="reuse_pure"', 'value="resume_
 for (const marker of ["plan.executable", "plan.stale", "plan.blockers", "Unknown (not shown as zero)"]) {
   assert.ok(planReview.includes(marker), `Replay plan review is missing ${marker}`);
 }
-for (const marker of ["comparison.files", "comparison.attribution", "Baseline unknown", "missing steps are not force-aligned", "getRunAdoptionPreview", "applyRunAdoption", "discardRunAdoption", "run-adoption-dialog", "Approval Center"]) {
+for (const marker of ["comparison.files", "comparison.attribution", "Automatic metrics", "missing steps are not force-aligned", "getRunAdoptionPreview", "applyRunAdoption", "discardRunAdoption", "run-adoption-dialog", "Approval Center"]) {
   assert.ok(comparison.includes(marker), `Run comparison UI is missing ${marker}`);
+}
+for (const marker of ["listRunComparisonEvaluations", "createRunComparisonEvaluation", "Human evaluation", "Save new evaluation revision", "Revision history", "View baseline evidence", "View candidate evidence", "metrics.delta"]) {
+  assert.ok(comparison.includes(marker), `Run comparison Evaluation UI is missing ${marker}`);
 }
 
 assert.ok(structured.includes("onOpenRun?: (runId: string, itemId?: string) => void"));
@@ -136,14 +143,14 @@ assert.ok(
   "Manifest hydration must reject request IDs and non-Runtime run IDs",
 );
 const createRuntimeRun = chatMain.indexOf("run = await client.createAgentRun(");
-const bindAuthoritativeRun = chatMain.indexOf("runId: run.run_id,\n    type: \"start\",");
+const bindAuthoritativeRun = chatMain.search(/runId: run\.run_id,\r?\n\s+type: "start",/);
 assert.ok(createRuntimeRun >= 0, "Runtime chat must create an authoritative Run");
 assert.ok(
   bindAuthoritativeRun > createRuntimeRun,
   "Renderer must only receive its Runtime Run ID after createAgentRun succeeds",
 );
 assert.ok(
-  !chatMain.includes('emit(webContents, { requestId, sessionId, runId, type: "start" });\n  await upsertThreadFromRun'),
+  !/emit\(webContents, \{ requestId, sessionId, runId, type: "start" \}\);\r?\n\s+await upsertThreadFromRun/.test(chatMain),
   "Runtime chat must not publish the provisional request ID as a Runtime Run ID",
 );
 assert.ok(app.includes('setActiveRightTab("run")'));
@@ -158,6 +165,8 @@ for (const selector of [
   ".run-experiment-overlay",
   ".replay-plan-review",
   ".run-comparison-view",
+  ".comparison-metrics",
+  ".comparison-evaluation",
   ".run-adoption-dialog",
 ]) assert.ok(styles.includes(selector), `Run Inspector stylesheet is missing ${selector}`);
 

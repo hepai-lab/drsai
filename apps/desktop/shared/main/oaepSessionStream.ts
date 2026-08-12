@@ -1,5 +1,6 @@
 import type { OaepEvent, OaepItem, OaepRun, OaepSnapshot, RuntimeClient } from "./runtimeClient";
 import { retainRuntimeClient } from "./runtimeClient";
+import { assertOaepEventIntegrity, assertOaepSnapshotIntegrity } from "./oaepIntegrity";
 
 export interface OaepSessionState {
   sessionId: string;
@@ -35,7 +36,10 @@ const OAEP_STREAM_TRANSITIONS: Record<OaepStreamPhase, ReadonlySet<OaepStreamPha
   snapshot: new Set(["replay", "retrying", "degraded", "fatal", "closed"]),
   replay: new Set(["connected", "retrying", "degraded", "fatal", "closed"]),
   connected: new Set(["retrying", "degraded", "fatal", "closed"]),
-  retrying: new Set(["replay", "connected", "resnapshot", "retrying", "degraded", "fatal", "closed"]),
+  // A transport failure can happen before the very first snapshot has been
+  // accepted.  In that case recovery must retry the initial snapshot rather
+  // than misclassifying it as a resnapshot or degrading the subscription.
+  retrying: new Set(["snapshot", "replay", "connected", "resnapshot", "retrying", "degraded", "fatal", "closed"]),
   resnapshot: new Set(["replay", "retrying", "degraded", "fatal", "closed"]),
   degraded: new Set(["closed"]),
   closed: new Set(),
@@ -94,6 +98,10 @@ export type OaepStreamErrorDisposition = "retryable" | "cursor_expired" | "fatal
 
 export function classifyOaepStreamError(error: unknown): OaepStreamErrorDisposition {
   if (isCursorExpired(error)) return "cursor_expired";
+  // Local OAEP integrity/shape failures are deterministic protocol failures.
+  // Retrying the same bytes cannot repair them and only leaves the user on a
+  // misleading reconnecting state until the network recovery window expires.
+  if (error instanceof Error && error.message.startsWith("oaep_")) return "fatal";
   if (error && typeof error === "object") {
     const candidate = error as { code?: unknown; retryable?: unknown; status?: unknown; name?: unknown };
     if (candidate.retryable === false) return "fatal";
@@ -177,10 +185,6 @@ function appendDelta(
   if (!event.item_id) return;
   const id = event.item_id;
   const text = textFromDelta(event);
-  const rawDelta = event.data.delta;
-  const reasoningVisibility = rawDelta && typeof rawDelta === "object"
-    ? String(rawDelta.visibility ?? "user") : "user";
-  if (deltaType(event) === "reasoning" && reasoningVisibility !== "user") return;
   const existing = items.get(id);
   if (existing) {
     if (["completed", "failed", "cancelled"].includes(existing.status)) {
@@ -312,6 +316,7 @@ export function reduceOaepEvent(
   event: OaepEvent,
   shadows: Map<string, OaepDeltaShadow> = new Map(),
 ): void {
+  assertOaepEventIntegrity(event, event.session_id);
   const run = event.data.run;
   if (run && typeof run === "object" && "id" in run) {
     const incoming = run as OaepRun;
@@ -528,6 +533,7 @@ class SharedOaepSessionController {
   }
 
   private replaceSnapshot(snapshot: OaepSnapshot): void {
+    assertOaepSnapshotIntegrity(snapshot);
     if (snapshot.session.id !== this.sessionId || snapshot.snapshot_sequence < 0) {
       throw new Error("Runtime OAEP snapshot is invalid.");
     }
@@ -540,6 +546,7 @@ class SharedOaepSessionController {
   }
 
   private async accept(event: OaepEvent, source: "replay" | "stream"): Promise<void> {
+    assertOaepEventIntegrity(event, this.sessionId);
     if (event.session_id !== this.sessionId) throw new Error("Cross-Session OAEP Event rejected.");
     if (event.sequence <= this.cursor) return;
     if (event.sequence !== this.cursor + 1) throw new OaepEventGap();

@@ -442,6 +442,12 @@ export function projectOaepThreadSnapshot(
 ): DesktopThreadSnapshot {
   const allItems = [...items];
   const runById = new Map([...runs].map((run) => [run.id, run]));
+  const itemsByRun = new Map<string, OaepItem[]>();
+  for (const item of allItems) {
+    const grouped = itemsByRun.get(item.run_id);
+    if (grouped) grouped.push(item);
+    else itemsByRun.set(item.run_id, [item]);
+  }
   let runIds = [...new Set([...runById.keys(), ...allItems.map((item) => item.run_id)])];
   const runsByBackendId = new Map<string, string[]>();
   for (const runId of runIds) {
@@ -466,7 +472,7 @@ export function projectOaepThreadSnapshot(
   runIds = runIds.filter((runId) => !supersededRuns.has(runId));
   let projectionWarnings = 0;
   for (const runId of runIds) {
-    const sequences = allItems.filter((item) => item.run_id === runId).map((item) => item.sequence).sort((left, right) => left - right);
+    const sequences = (itemsByRun.get(runId) ?? []).map((item) => item.sequence).sort((left, right) => left - right);
     for (let index = 0; index < sequences.length; index += 1) {
       if (sequences[index] <= 0 || (index > 0 && sequences[index] === sequences[index - 1])) projectionWarnings += 1;
       if (index > 0 && sequences[index] > sequences[index - 1] + 1) projectionWarnings += 1;
@@ -483,7 +489,7 @@ export function projectOaepThreadSnapshot(
   });
   const messages: DesktopThreadMessageSnapshot[] = [];
   for (const runId of runIds) {
-    const runItems = allItems.filter((item) => item.run_id === runId)
+    const runItems = [...(itemsByRun.get(runId) ?? [])]
       .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
     const run = runById.get(runId);
     let assistantItems: OaepItem[] = [];

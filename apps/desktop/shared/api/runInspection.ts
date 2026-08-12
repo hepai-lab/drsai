@@ -109,7 +109,11 @@ export interface SessionRunsReadRequest {
 export interface SessionRunList {
   schema_version: typeof RUN_INSPECTION_SCHEMA_VERSION;
   object: "list";
-  data: Array<Record<string, unknown> & { run_id: string; manifest: RunReproductionManifest }>;
+  data: Array<Record<string, unknown> & {
+    run_id: string;
+    relation_type: "root" | "subagent" | "experiment_replay" | "retry" | "unknown";
+    manifest: RunReproductionManifest;
+  }>;
   next_cursor: string | null;
   has_more: boolean;
 }

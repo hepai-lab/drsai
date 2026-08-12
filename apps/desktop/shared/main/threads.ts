@@ -9,6 +9,7 @@ import type {
   DesktopThreadContentSearchResult,
   DesktopThreadMessageSnapshot,
   DesktopThreadSnapshot,
+  DesktopDuplexVoiceHistoryAppendRequest,
   ChatAttachment,
   ChatToolTimelineEvent,
   ChatMessagePart,
@@ -226,6 +227,23 @@ export async function updateThreadSnapshot(rawRequest: unknown): Promise<Desktop
   return serializeJsonMutation(path, async () => {
     await writeThreadSnapshotShard(snapshot);
     return snapshot;
+  });
+}
+
+export async function appendDuplexVoiceHistory(rawRequest: DesktopDuplexVoiceHistoryAppendRequest): Promise<DesktopThreadSnapshot> {
+  if (!rawRequest || !THREAD_ID_PATTERN.test(rawRequest.threadId) || !Array.isArray(rawRequest.messages) || rawRequest.messages.length > 100) throw new Error("Duplex voice history request is invalid.");
+  const messages = rawRequest.messages.map((message) => {
+    if (!message || typeof message.id !== "string" || !message.id.startsWith("duplex:") || message.id.length > 500 || !["user", "assistant"].includes(message.role) || typeof message.content !== "string") throw new Error("Duplex voice history message is invalid.");
+    return { id: message.id, role: message.role, content: message.content.replace(/\0/g, "").slice(0, 20_000), ...(message.statusContent ? { statusContent: message.statusContent.replace(/\0/g, "").slice(0, 20_000) } : {}) } as DesktopThreadMessageSnapshot;
+  });
+  const path = threadSnapshotPath(rawRequest.threadId);
+  return serializeJsonMutation(path, async () => {
+    const current = await readThreadSnapshotShard(rawRequest.threadId) ?? { threadId: rawRequest.threadId, title: rawRequest.threadId, messages: [], updatedAt: Date.now(), messageCount: 0 };
+    const merged = new Map(current.messages.map((message) => [message.id, message]));
+    for (const message of messages) merged.set(message.id, { ...merged.get(message.id), ...message });
+    const nextMessages = [...merged.values()].slice(-MAX_SNAPSHOT_MESSAGES);
+    const next = validateThreadSnapshot({ ...current, messages: nextMessages, messageCount: nextMessages.length, updatedAt: Date.now() });
+    await writeThreadSnapshotShard(next); return next;
   });
 }
 

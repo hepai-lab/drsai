@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { listPackage, extractFile } from "@electron/asar";
+const root = resolve(import.meta.dirname, ".."); const executable = resolve(root, "release/win-unpacked/OpenDrSai.exe"); const archive = resolve(root, "release/win-unpacked/resources/app.asar");
+assert.ok(existsSync(executable) && readFileSync(executable).byteLength > 1_000_000, "Current unpacked executable is missing."); assert.ok(existsSync(archive));
+const entries = listPackage(archive); const files = entries.map((value) => value.replaceAll("\\", "/"));
+const mainPath = entries.find((value) => /\/out\/main\/index\.js$/.test(value.replaceAll("\\", "/"))); const rendererPath = entries.find((value) => /\/out\/renderer\/assets\/index-.*\.js$/.test(value.replaceAll("\\", "/")));
+assert.ok(mainPath && rendererPath, "Packaged Main/Renderer bundles are missing.");
+const main = extractFile(archive, mainPath.replace(/^\\/, "")).toString("utf8"); const renderer = extractFile(archive, rendererPath.replace(/^\\/, "")).toString("utf8");
+for (const marker of ["desktop:voice-duplex-start", "/v1/audio/duplex", "gpt-realtime", "OPENDRSAI_ENABLE_DUPLEX_VOICE"]) assert.ok(main.includes(marker), `Packaged Main omits ${marker}`);
+for (const marker of ["Realtime voice sends microphone audio", "duplex-voice-status", "I understand—start Realtime voice", "opendrsai-duplex-pcm-capture"]) assert.ok(renderer.includes(marker), `Packaged Renderer omits ${marker}`);
+console.log("Current unpacked artifact contains the Duplex Main route, Renderer privacy/UI route, Realtime model-family binding, and AudioWorklet asset.");
