@@ -319,10 +319,20 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                       onRetryRun: () -> Unit = {}, onConfirmArtifact: (Boolean) -> Unit = {},
                       onLoadOlderHistory: () -> Unit = {}, onSearchTranscript: (String) -> Unit = {},
                       focusItemId: String? = null, onFocusResolved: () -> Unit = {},
-                      onSignIn: () -> Unit = {}) {
+                      onSignIn: () -> Unit = {}, onRendered: () -> Unit = {}) {
     var input by remember(state.scopeKey) { mutableStateOf(state.draft) }
     LaunchedEffect(state.scopeKey, state.draft) {
         if (input != state.draft) input = state.draft
+    }
+    LaunchedEffect(
+        state.scopeKey,
+        state.authority.generation,
+        state.messages,
+        state.artifacts,
+        state.approval,
+    ) {
+        withFrameNanos { }
+        onRendered()
     }
     val transcriptListState = rememberLazyListState()
     if (state.pendingArtifactConfirmation != null) {

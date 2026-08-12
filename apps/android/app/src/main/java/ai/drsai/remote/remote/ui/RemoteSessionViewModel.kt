@@ -24,7 +24,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -79,6 +78,7 @@ class RemoteSessionViewModel(
     private val draftStateMachine = SessionDraftStateMachine()
     private val uiAuthorityReducer = RemoteSessionUiAuthorityReducer()
     private val uiAuthorityGeneration = AtomicLong(0)
+    private val userSlo = RemoteUserSloTracker(clockMs = time::wallClockMillis)
     @Volatile private var oaepEnabled = false
     @Volatile private var foreground = true
     private val lifecycleObserver = object : DefaultLifecycleObserver {
@@ -101,10 +101,11 @@ class RemoteSessionViewModel(
         runCatching { activity.markSessionRead(subject, runtimeId.value, sessionId.value) }
         ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
         viewModelScope.launch {
-            connectivity.online.drop(1).collect { online ->
-                syncStateMachine.accept(SessionSyncEvent.Network(online))
+            connectivity.state.collect { network ->
+                if (!network.online) userSlo.disconnected()
+                syncStateMachine.accept(SessionSyncEvent.Network(network.online))
                 mutableState.update { it.copy(authority = authoritativeConnection(
-                    if (online) RemoteConnectionState.CONNECTING else RemoteConnectionState.OFFLINE,
+                    if (network.online) RemoteConnectionState.CONNECTING else RemoteConnectionState.OFFLINE,
                 )) }
                 reconcileSessionStream()
             }
@@ -116,14 +117,40 @@ class RemoteSessionViewModel(
                 draftStateMachine.restore(draft)
                 mutableState.update { it.copy(draft = draft) }
             }
-        refresh()
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val (messages, artifacts) = cachedOaepProjection()
+                if (messages.isNotEmpty() || artifacts.isNotEmpty()) {
+                    mutableState.update { it.copy(messages = messages, artifacts = artifacts) }
+                }
+            }
+            userSlo.cacheLoaded()
+            refresh()
+        }
+    }
+
+    /** Called after Compose commits the latest authoritative UI state. */
+    fun onUiRendered() {
+        val firstScreen = userSlo.firstRendered()
+        val operations = userSlo.operationsRendered()
+        if (firstScreen == null && operations.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            firstScreen?.let { observation ->
+                runCatching { oaep.recordFirstScreen(runtimeId, workspaceId, sessionId, observation) }
+            }
+            operations.forEach { observation ->
+                runCatching {
+                    oaep.recordOperationConfirmation(runtimeId, workspaceId, sessionId, observation)
+                }
+            }
+        }
     }
 
     private fun reconcileSessionStream() {
         val policy = ai.drsai.remote.remote.device.remoteBackgroundPolicy(
-            foreground = foreground,
-            online = connectivity.online.value,
-            pushReady = false,
+            foreground,
+            connectivity.online.value,
+            false,
         )
         if (policy.keepForegroundSse) startSessionSync() else streamJob?.cancel()
     }
@@ -290,6 +317,7 @@ class RemoteSessionViewModel(
                 // soon as the authoritative Snapshot arrives; slow Run or
                 // Approval metadata must not leave the chat blank.
                     if (requestGeneration == refreshGeneration.get()) {
+                        userSlo.authorityRefreshed()
                         mutableState.update {
                             it.copy(
                                 sessionTitle = session.title,
@@ -392,11 +420,13 @@ class RemoteSessionViewModel(
                 renderCachedOaepItems()
             }
             sideEffectRequestStarted = true
+            userSlo.operationDispatched(sourceMessageId)
             runs.createRun(
                 session, message, emptyList(), sourceMessageId,
                 sourceMessageId = sourceMessageId,
             )
         }.onSuccess { identity ->
+            userSlo.operationCommitted(sourceMessageId)
             activeRun = identity
             cache.markOptimisticOaepDelivery(subject, organization, runtimeId.value, sessionId.value,
                 sourceMessageId, RemoteDeliveryState.ACCEPTED, time.wallClockMillis())
@@ -1000,8 +1030,7 @@ class RemoteSessionViewModel(
         syncStateMachine.accept(SessionSyncEvent.Connecting)
         streamJob?.cancel()
         streamJob = viewModelScope.launch(Dispatchers.IO) {
-            var attempt = 0
-            var retryWindowStartedNanos = 0L
+            val retry = RemoteStreamRetryState(retryPolicy)
             while (isActive) {
                 try {
                     if (oaepEnabled) {
@@ -1014,14 +1043,23 @@ class RemoteSessionViewModel(
                         mutableState.update {
                             it.copy(authority = authoritativeConnection(RemoteConnectionState.ONLINE))
                         }
-                        retryWindowStartedNanos = 0L
-                        attempt = 0
                         oaep.eventStream(
                             runtimeId, workspaceId, sessionId, after,
+                            onConnected = {
+                                userSlo.transportRestored()
+                                userSlo.replayCaughtUp()?.let { observation ->
+                                    viewModelScope.launch(Dispatchers.IO) {
+                                        runCatching {
+                                            oaep.recordReconnect(runtimeId, workspaceId, sessionId, observation)
+                                        }
+                                    }
+                                }
+                            },
                             onReceived = { event, _ ->
                                 oaep.markLatencyReceived(event)
                             },
                         ).collect { event ->
+                            retry.reset()
                             projectionStateMachine.observe(event.sequence)
                             val renderedNow = when (cache.applyOaepEvent(
                                 subject, organization, runtimeId.value, workspaceId.value,
@@ -1063,9 +1101,8 @@ class RemoteSessionViewModel(
                     mutableState.update {
                         it.copy(authority = authoritativeConnection(RemoteConnectionState.ONLINE))
                     }
-                    retryWindowStartedNanos = 0L
-                    attempt = 0
                     legacy.eventStream(runtimeId, workspaceId, sessionId, after).collect { event ->
+                        retry.reset()
                         projectionStateMachine.observe(event.sessionSequence)
                         when (
                             cache.applySessionEvent(
@@ -1084,6 +1121,7 @@ class RemoteSessionViewModel(
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
+                    userSlo.disconnected()
                     if (handleAuthoritativeRevocation(failure)) break
                     if (failure is RelayHttpException && failure.requiresSnapshotRecovery()) {
                         reloadSessionProjection()
@@ -1094,25 +1132,8 @@ class RemoteSessionViewModel(
                     mutableState.update {
                         it.copy(authority = authoritativeConnection(RemoteConnectionState.DEGRADED))
                     }
-                    if (retryWindowStartedNanos == 0L) retryWindowStartedNanos = time.monotonicNanos()
-                    val retryFailure = when (failure) {
-                        is RelayHttpException -> RemoteFailure(
-                            RemoteFailureSource.RELAY,
-                            failure.errorCode ?: "http_${failure.status}",
-                            failure.status == 429 || failure.status >= 500,
-                        )
-                        is java.io.IOException -> RemoteFailure(
-                            RemoteFailureSource.RELAY, "network_unavailable", true,
-                        )
-                        else -> RemoteFailure(RemoteFailureSource.BUSINESS, "stream_failed", false)
-                    }
-                    val retryDelay = retryPolicy.delay(
-                        attempt,
-                        time.monotonicElapsedMillis(retryWindowStartedNanos),
-                        retryFailure,
-                    ) ?: break
+                    val retryDelay = retry.nextDelay(failure, time.monotonicNanos()) ?: break
                     time.waitFor(retryDelay)
-                    attempt += 1
                 }
             }
         }
@@ -1183,13 +1204,13 @@ class RemoteSessionViewModel(
         )
         synchronizer = sequence
         streamJob = viewModelScope.launch(Dispatchers.IO) {
-            var attempt = 0
+            val retry = RemoteStreamRetryState(retryPolicy)
             while (isActive && activeRun == identity && mutableState.value.running) {
                 try {
                     sequence.reconcile()
                     mutableState.update { it.copy(authority = authoritativeConnection(RemoteConnectionState.ONLINE)) }
-                    attempt = 0
                     runEvents.stream(identity, sequence.lastSequence).collect {
+                        retry.reset()
                         sequence.accept(it)
                         authRefreshAttempted = false
                     }
@@ -1207,8 +1228,8 @@ class RemoteSessionViewModel(
                     if (mutableState.value.connectionState == RemoteConnectionState.AUTH_REQUIRED) break
                     if (settleCompletedStream(identity, sequence)) break
                     mutableState.update { it.copy(authority = authoritativeConnection(RemoteConnectionState.DEGRADED)) }
-                    time.waitFor((500L * (1L shl attempt.coerceAtMost(6))).coerceAtMost(30_000L))
-                    attempt += 1
+                    val retryDelay = retry.nextDelay(failure, time.monotonicNanos()) ?: break
+                    time.waitFor(retryDelay)
                 }
             }
         }

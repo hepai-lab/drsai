@@ -719,6 +719,7 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                             remoteFocusItemId = null
                             viewModel.consumeRequestedRoute(focusedItemId = state.requestedRemoteItemId)
                         },
+                        onRendered = sessionViewModel::onUiRendered,
                         onSignIn = viewModel::login,
                         onOpenAudit = {
                             remoteChatState.activeRunId?.let { runId ->

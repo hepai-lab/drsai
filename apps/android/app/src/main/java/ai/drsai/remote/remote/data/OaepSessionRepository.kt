@@ -67,4 +67,36 @@ class OaepSessionRepository(
         )
     }
 
+    suspend fun recordFirstScreen(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        observation: FirstScreenSloObservation,
+    ) = relay.recordFirstScreenSlo(
+        runtimeId, workspaceId, sessionId, observation.sampleId,
+        observation.cacheLoadAtMs, observation.authorityRefreshAtMs, observation.firstRenderAtMs,
+    )
+
+    suspend fun recordOperationConfirmation(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        observation: OperationConfirmationSloObservation,
+    ) = relay.recordOperationConfirmationSlo(
+        runtimeId, workspaceId, sessionId, observation.sampleId,
+        observation.requestDispatchAtMs, observation.runtimeCommitAtMs,
+        observation.confirmationRenderAtMs,
+    )
+
+    suspend fun recordReconnect(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        observation: ReconnectSloObservation,
+    ) = relay.recordReconnectSlo(
+        runtimeId, workspaceId, sessionId, observation.sampleId,
+        observation.disconnectDetectAtMs, observation.transportRestoreAtMs,
+        observation.replayCatchupAtMs,
+    )
+
 }

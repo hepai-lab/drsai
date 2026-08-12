@@ -234,6 +234,7 @@ class HaiModelClient(
             reasoning = false, source = "configured",
         )
         val wireTools = tools?.let { ModelToolSchemaProtocolAdapter.adapt(providerCapabilities, it) }
+            ?.let { ModelToolChoiceProtocolAdapter.constrainOpenAiTools(toolChoice, it) }
         val body = JSONObject()
             .put("model", upstreamModel)
             .put("messages", JSONArray(messages.map(::messageJson)))
@@ -242,7 +243,7 @@ class HaiModelClient(
         if (requestTemperature != null) body.put("temperature", requestTemperature)
         if (wireTools != null && wireTools.length() > 0) {
             body.put("tools", wireTools)
-            body.put("tool_choice", ModelToolChoiceProtocolAdapter.openAi(toolChoice))
+            ModelToolChoiceProtocolAdapter.openAi(toolChoice)?.let { body.put("tool_choice", it) }
         }
         val requestFactory: (String, String) -> Request = { endpoint, token -> Request.Builder()
                 .url("${endpoint.trimEnd('/')}/chat/completions")
