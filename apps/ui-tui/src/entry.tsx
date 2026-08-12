@@ -190,6 +190,7 @@ if (!process.stdin.isTTY) {
   //
   // Color: #FFD700 (gold) = theme.primary, applied via ANSI true-colour.
   process.stdout.write('\x1b[1m\x1b[38;2;255;215;0m⚡ OpenDrSai\x1b[0m\n')
+  process.stdout.write('\x1b[2m  Website: https://opendrsai.ihep.ac.cn/  ·  Guide: https://note.ihep.ac.cn/s/QgtE3Nlx2\x1b[0m\n')
 
   // Install the single global resize listener BEFORE mounting the app,
   // so all components can subscribe via the nanostore atom instead of
