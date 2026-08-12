@@ -49,11 +49,13 @@ const recoveryEnd = chat.indexOf("export async function respondChatInput", recov
 const recovery = chat.slice(recoveryStart, recoveryEnd);
 assert.ok(recovery.includes("decideRuntimeRestartRecovery(authoritativeRun, runtimeIdentity)"));
 assert.ok(recovery.includes('recoveryDecision.kind === "reconnect"') && recovery.includes("subscribeOaepSession"));
-assert.ok(recovery.includes("listOaepEvents(thread.runtimeSessionId, cursor, 2_000)"), "Recovery must page the complete OAEP journal.");
-assert.ok(recovery.includes('recoveryDecision.kind === "interrupted"') && recovery.includes("cancelAgentRun(thread.lastRunId)"));
+assert.ok(recovery.includes("current.listOaepEvents(thread!.runtimeSessionId!, cursor, 2_000)"), "Recovery must page the complete OAEP journal.");
+assert.ok(recovery.includes("withCurrentRecoveryClient") && recovery.includes("isRuntimeClientGenerationInvalidated(error)") && recovery.includes("attempt >= 4"), "Recovery must reconnect with a bounded retry when the Runtime generation changes.");
+assert.ok(recovery.includes('recoveryDecision.kind === "interrupted"') && recovery.includes("current.cancelAgentRun(thread!.lastRunId!)"));
 assert.ok(recovery.includes('recovery_actions: ["continue", "redo", "abandon"]'));
-assert.equal(recovery.includes("executeAgentRun("), false, "Restart recovery must never execute an existing Run.");
-assert.ok(recovery.indexOf('recoveryDecision.kind === "interrupted"') < recovery.indexOf("cancelAgentRun(thread.lastRunId)"));
+assert.equal(recovery.includes("runChat("), false, "Restart recovery must never resend the original chat turn.");
+assert.ok(recovery.includes("waitingForCapability && authoritativeRun.input_message"), "Only an explicit recovered capability choice may continue an existing Run.");
+assert.ok(recovery.indexOf('recoveryDecision.kind === "interrupted"') < recovery.indexOf("current.cancelAgentRun(thread!.lastRunId!)"));
 
 const app = readFileSync(resolve(repoRoot, "apps/desktop/shared/renderer/src/App.tsx"), "utf8");
 assert.ok(app.includes('action === "continue"') && app.includes("不要重复已经发生的副作用"));

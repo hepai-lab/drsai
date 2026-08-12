@@ -34,7 +34,7 @@ import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCirc
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
 import { startGateway } from "./gateway";
 import { resolveGatewayPort } from "./gatewayEnvironment";
-import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, type OaepEvent, type OaepItem, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal } from "./runtimeClient";
+import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, retainRuntimeClient, type OaepEvent, type OaepItem, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal } from "./runtimeClient";
 import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import { isUncertainRunCreateFailure, recoverRunCreation } from "./messageDelivery";
 import {
@@ -298,6 +298,11 @@ function validateChatTurnIdentity(value: unknown): ChatTurnIdentity | null {
   return identity;
 }
 
+function isRuntimeClientGenerationInvalidated(error: unknown): boolean {
+  return Boolean(error && typeof error === "object"
+    && (error as { code?: unknown }).code === "runtime_client_generation_invalidated");
+}
+
 /**
  * Rebuild the Desktop-facing portion of a Runtime chat after Electron restarts.
  * The authoritative Run and its event log remain in the Runtime, so recovery
@@ -350,8 +355,27 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
     }
     return recovered;
   }
-  const resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
-  const client = resolved.client as RuntimeClient;
+  let resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
+  let client = resolved.client as RuntimeClient;
+  const withCurrentRecoveryClient = async <T>(operation: (current: RuntimeClient) => Promise<T>): Promise<T> => {
+    for (let attempt = 0; ; attempt += 1) {
+      let release: (() => void) | undefined;
+      try {
+        // A sibling OAEP subscription may finish while recovery is paging the
+        // same shared client. Hold an explicit registry lease so that sibling
+        // release cannot dispose the transport in the middle of this read.
+        release = retainRuntimeClient(client);
+        return await operation(client);
+      } catch (error) {
+        if (!isRuntimeClientGenerationInvalidated(error) || attempt >= 4) throw error;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, 50 * 2 ** attempt)));
+        resolved = await connectRuntimeClientForWorkspace(thread!.workspacePath!, thread!.execution?.workspaceId);
+        client = resolved.client as RuntimeClient;
+      } finally {
+        release?.();
+      }
+    }
+  };
   const completeRecoveredOutbox = async () => {
     const outbox = (await sessionSyncState.get(thread!.runtimeSessionId!)).outbox;
     if (!outbox) return;
@@ -362,17 +386,17 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
       thread!.runtimeSessionId!, outbox.sourceMessageId,
     ).catch(() => undefined);
   };
-  const [authoritativeRun, runtimeIdentity] = await Promise.all([
-    client.getAgentRun(thread.lastRunId),
-    client.getRuntime(),
-  ]);
+  const [authoritativeRun, runtimeIdentity] = await withCurrentRecoveryClient((current) => Promise.all([
+    current.getAgentRun(thread!.lastRunId!),
+    current.getRuntime(),
+  ]));
   const recoveryDecision = decideRuntimeRestartRecovery(authoritativeRun, runtimeIdentity);
   // A non-terminal Run owned by an older Runtime instance no longer has an
   // execution task behind it. Seal it as interrupted before presenting user
   // choices. This never touches an already terminal Run and never re-executes
   // work merely to recover an HTTP acknowledgement.
   if (recoveryDecision.kind === "interrupted") {
-    await client.cancelAgentRun(thread.lastRunId).catch(() => undefined);
+    await withCurrentRecoveryClient((current) => current.cancelAgentRun(thread!.lastRunId!)).catch(() => undefined);
   }
   const recovered: ChatEvent[] = [];
   let sequence = 0;
@@ -412,7 +436,7 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   };
   if (recoveryDecision.kind === "reconnect" && eventTarget) {
     chatTurns.get(requestId)?.subscription?.stop();
-    recoveredSubscription = await subscribeOaepSession(client, thread.runtimeSessionId, {
+    recoveredSubscription = await withCurrentRecoveryClient((current) => subscribeOaepSession(current, thread!.runtimeSessionId!, {
       onEvent(event) { void settleRecoveredSubscription(event); },
       onConnection(status, attempt) {
         if (!liveReady) return;
@@ -423,13 +447,13 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
           timestamp: new Date().toISOString(), source: authoritativeRun.backend_id === "opendrsai" ? "opendrsai-runtime" : "codex-runtime",
         } });
       },
-    });
+    }));
   }
   const events: OaepEvent[] = [];
   let cursor = 0;
   for (let pageIndex = 0; pageIndex < 10_000; pageIndex += 1) {
     const previousCursor = cursor;
-    const page = await client.listOaepEvents(thread.runtimeSessionId, cursor, 2_000);
+    const page = await withCurrentRecoveryClient((current) => current.listOaepEvents(thread!.runtimeSessionId!, cursor, 2_000));
     for (const event of page.data) {
       cursor = Math.max(cursor, event.sequence);
       if (event.run_id === thread.lastRunId) events.push(event);

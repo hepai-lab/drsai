@@ -16,6 +16,7 @@ import {
   assertOaepSnapshotIntegrity,
   oaepProjectionDigest,
 } from "../../shared/main/oaepIntegrity";
+import { canonicalOaepItems } from "../../shared/main/oaepDigest";
 import {
   createRuntimeEndpointKey,
   getRuntimeClientRegistryDiagnostics,
@@ -48,6 +49,20 @@ const integritySnapshot = {
   window: { limit: 100, has_more: false, next_cursor: null },
 } as OaepSnapshot;
 assert.doesNotThrow(() => assertOaepSnapshotIntegrity(integritySnapshot));
+const binaryOrderedItems = [
+  { ...integrityItem, id: "item-underscore", run_id: "run_1" },
+  { ...integrityItem, id: "item-hyphen", run_id: "run-2" },
+] as OaepItem[];
+assert.equal(
+  oaepProjectionDigest(binaryOrderedItems),
+  oaepProjectionDigest([...binaryOrderedItems].reverse()),
+  "OAEP digest ordering must be input independent for multi-Run snapshots",
+);
+assert.equal(
+  canonicalOaepItems(binaryOrderedItems).indexOf("run-2") < canonicalOaepItems(binaryOrderedItems).indexOf("run_1"),
+  true,
+  "Desktop OAEP digest must use Runtime binary ordering instead of locale collation",
+);
 assert.throws(() => assertOaepSnapshotIntegrity({ ...integritySnapshot,
   checkpoint: { ...integritySnapshot.checkpoint, snapshot_hash: "0".repeat(64) } }),
   /oaep_snapshot_checkpoint_digest_mismatch/);

@@ -23,7 +23,7 @@ function canonical(value: unknown): string {
 
 export function canonicalOaepItems(items: readonly OaepItem[]): string {
   const ordered = [...items].sort((left, right) =>
-    left.run_id.localeCompare(right.run_id) || left.sequence - right.sequence || left.id.localeCompare(right.id));
+    compareCanonicalString(left.run_id, right.run_id) || left.sequence - right.sequence || compareCanonicalString(left.id, right.id));
   return canonical(ordered.map((item) => {
     const value: Record<string, unknown> = Object.fromEntries(
       fields.map((field) => [field, item[field]]),
@@ -48,6 +48,15 @@ export function canonicalOaepItems(items: readonly OaepItem[]): string {
     value.content = content;
     return value;
   }));
+}
+
+// Runtime orders persisted OAEP rows with SQLite/Python's binary code-point
+// ordering. `localeCompare` is locale/collation dependent and, for example,
+// sorts `run_1` before `run-2`, while Runtime sorts the same values in the
+// opposite order. A multi-Run Snapshot would therefore hash identical Items
+// in a different order and be rejected during packaged recovery.
+function compareCanonicalString(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function oaepItemsDigest(items: readonly OaepItem[]): string {
