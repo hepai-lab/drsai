@@ -84,7 +84,7 @@ def valid_long_session_report(
             key: True for key in (
                 "checkpoint_item_count", "cold_window_items", "cold_start", "cold_memory",
                 "full_history", "full_history_time", "history_hash", "delta_count",
-                "delta_time", "main_responsive", "delta_hash", "terminal",
+                "delta_time", "delta_throughput", "main_responsive", "delta_hash", "terminal",
                 "worker_bounded", "render_bounded",
             )
         },
@@ -96,7 +96,8 @@ def valid_long_session_report(
                 "history_hash": "7" * 64,
             },
             "delta": {
-                "delta_count": 10_000, "duration_ms": 1000, "main_ticks": 40,
+                "delta_count": 10_000, "duration_ms": 1000,
+                "throughput_per_second": 10_000, "main_ticks": 40,
                 "worker_starts": 10, "render_cycles": 10, "content_hash": "6" * 64,
                 "terminal_barrier_complete": True,
             },
@@ -104,7 +105,8 @@ def valid_long_session_report(
         "budgets": {
             "cold_start_max_ms": 3000, "cold_pss_max_kb": 32 * 1024,
             "history_max_ms": 180_000, "delta_count": 10_000,
-            "delta_duration_max_ms": 5000, "minimum_main_ticks": 20,
+            "delta_duration_max_ms": 5000,
+            "delta_min_throughput_per_second": 10_000, "minimum_main_ticks": 20,
         },
     }
 
@@ -142,9 +144,12 @@ def valid() -> dict:
                 "observation_days": 1, "release_cycles": 0, "oaep_ratio": 1.0,
                 "legacy_ratio": 0.0, "migration_ratio": 1.0,
                 "fallback_error_ratio": 0.0, "gap_days": 0,
+                "supported_runtime_count": 1,
+                "supported_runtime_requires_legacy": False,
                 "requirements": {"observation_days": 0, "release_cycles": 0,
                                  "oaep_ratio": 0.999, "legacy_ratio": 0.001,
-                                 "migration_ratio": 1.0, "fallback_error_ratio": 0.001},
+                                 "migration_ratio": 1.0, "fallback_error_ratio": 0.001,
+                                 "supported_runtime_requires_legacy": False},
                 "eligible": True,
             },
             "migration": {
@@ -548,6 +553,10 @@ def test_legacy_removal_requires_real_eligible_decision_and_matching_migration()
     boundary = valid()
     boundary["legacy_removal"]["decision"]["legacy_ratio"] = 0.001
     assert "p5_legacy_deletion_not_eligible" in finalize(boundary)["errors"]
+
+    dependency = valid()
+    dependency["legacy_removal"]["decision"]["supported_runtime_requires_legacy"] = True
+    assert "p5_legacy_deletion_not_eligible" in finalize(dependency)["errors"]
 
 
 def test_experience_report_requires_all_checks_scenarios_and_same_physical_devices() -> None:

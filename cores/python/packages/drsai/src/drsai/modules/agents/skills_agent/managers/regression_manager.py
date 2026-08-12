@@ -5,16 +5,23 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 class RegressionManager:
     """Read-only Agent adapter for the canonical regression catalog and history."""
 
-    def __init__(self, storage_dir: str | Path):
+    def __init__(
+        self,
+        storage_dir: str | Path,
+        workspace_resolver: Callable[[], str | Path | None] | None = None,
+        workspace_id_resolver: Callable[[], str | None] | None = None,
+    ):
         agent_storage = Path(storage_dir).resolve()
         profile = agent_storage.name
         self.workspace_path = agent_storage.parent
+        self._workspace_resolver = workspace_resolver
+        self._workspace_id_resolver = workspace_id_resolver
         data_home = os.environ.get("DRSAI_HOME")
         self.storage_dir = (
             Path(data_home).expanduser().resolve() / "regression" / "agent-p4" / profile
@@ -40,6 +47,14 @@ class RegressionManager:
             result = service.history(limit=int(arguments.get("limit", 50)))
         elif tool_name == "regression_get":
             result = service.get(str(arguments["evaluation_id"]))
+            references = (result.get("result") or {}).get("references") if isinstance(result, dict) else None
+            if result.get("status") in {"passed", "failed", "error", "inconclusive", "cancelled"} and references:
+                result = dict(result)
+                result["agent_reporting"] = {
+                    "required": True,
+                    "instruction": "Include every returned reference URI verbatim in the final user-visible answer.",
+                    "references": references,
+                }
         elif tool_name == "regression_events":
             result = service.events(str(arguments["evaluation_id"]), int(arguments.get("after_cursor", 0)))
         elif tool_name == "regression_cancel":
@@ -74,9 +89,17 @@ class RegressionManager:
             sys.path.insert(0, str(source))
         catalog_module = importlib.import_module("opendrsai_regression.catalog_api")
         agent_module = importlib.import_module("opendrsai_regression.agent_service")
+        workspace_path = self.workspace_path
+        if self._workspace_resolver is not None:
+            resolved = self._workspace_resolver()
+            if resolved:
+                workspace_path = Path(resolved).resolve()
+        workspace_id = self._workspace_id_resolver() if self._workspace_id_resolver else None
         return (
             catalog_module.RegressionCatalogApi(root),
-            agent_module.AgentRegressionService(root, self.storage_dir, workspace_path=self.workspace_path),
+            agent_module.AgentRegressionService(
+                root, self.storage_dir, workspace_path=workspace_path, workspace_id=workspace_id,
+            ),
         )
 
 

@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from drsai.relay.generated_contract import CAPABILITIES, PROTOCOL_VERSION
 from drsai.relay.models import ResourceLifecycle, RuntimeStatus, Workspace
 from drsai.relay.registry import RelayRegistry, RelayRegistryError
+from drsai.oaep.selection import OAEP_REQUIRED
 
 
 def b64(value: bytes) -> str:
@@ -56,6 +57,18 @@ def heartbeat(registry: RelayRegistry, private: Ed25519PrivateKey, runtime_id: s
     return registry.heartbeat(runtime_id, token, instance_id=instance, version="1.4.6",
                               capabilities=frozenset(CAPABILITIES), backend_health={"codex": "healthy"},
                               nonce=nonce, signature=signature)
+
+
+def test_supported_runtime_capability_summary_fails_closed_until_full_oaep_profile() -> None:
+    registry = RelayRegistry()
+    private, runtime_id, token = registered(registry)
+    assert registry.supported_runtime_capability_summary(OAEP_REQUIRED) == (1, 1)
+    heartbeat(registry, private, runtime_id, token)
+    assert registry.supported_runtime_capability_summary(OAEP_REQUIRED) == (1, 0)
+    registry.revoke(runtime_id)
+    assert registry.supported_runtime_capability_summary(OAEP_REQUIRED) == (0, 0)
+    with pytest.raises(ValueError, match="required_runtime_capabilities_empty"):
+        registry.supported_runtime_capability_summary(frozenset())
 
 
 def test_registration_is_short_lived_single_use_and_idempotent() -> None:
@@ -471,9 +484,47 @@ def test_pagination_search_offline_and_revoke_audit() -> None:
         Workspace(runtime_id=runtime_id, workspace_id=f"ws-{i}", display_name=f"Project {i}") for i in range(3)
     ])
     page, cursor = registry.list_workspaces("alice", runtime_id, limit=2, query="Project")
-    assert len(page) == 2 and cursor == "2"
-    assert len(registry.list_workspaces("alice", runtime_id, cursor=cursor, limit=2)[0]) == 1
+    assert len(page) == 2 and cursor and cursor != "2"
+    assert len(registry.list_workspaces(
+        "alice", runtime_id, cursor=cursor, limit=2, query="Project"
+    )[0]) == 1
+    with pytest.raises(RelayRegistryError, match="cursor"):
+        registry.list_workspaces("alice", runtime_id, cursor=cursor, limit=2)
     registry.revoke(runtime_id)
     with pytest.raises(RelayRegistryError):
         registry.identity("alice", runtime_id)
     assert registry.audit[-1] == {"action": "runtime.revoke", "runtime_id": runtime_id}
+
+
+def test_workspace_keyset_cursor_is_opaque_bound_and_stable_across_catalog_mutation() -> None:
+    registry = RelayRegistry(cursor_secret=b"k" * 32)
+    _, runtime_id, token = registered(registry)
+    _, grant, _ = registry.issue_access_grant(runtime_id, token)
+    associate(registry, "alice", grant)
+    original = [
+        Workspace(runtime_id=runtime_id, workspace_id=f"ws-{index:03d}", display_name="Project")
+        for index in range(5)
+    ]
+    registry.publish_workspaces(runtime_id, token, original)
+    first, cursor = registry.list_workspaces(
+        "alice", runtime_id, query="Project", limit=2
+    )
+    assert [item.workspace_id for item in first] == ["ws-000", "ws-001"]
+    assert cursor and cursor != "2" and "ws-001" not in cursor
+
+    # Delete the boundary item and insert an item before it. Keyset paging
+    # still resumes strictly after the last observed key, with no duplicate.
+    registry.publish_workspaces(runtime_id, token, [
+        original[0],
+        Workspace(runtime_id=runtime_id, workspace_id="ws-000a", display_name="Project"),
+        *original[2:],
+    ])
+    second, _ = registry.list_workspaces(
+        "alice", runtime_id, cursor=cursor, query="Project", limit=2
+    )
+    assert [item.workspace_id for item in second] == ["ws-002", "ws-003"]
+    with pytest.raises(RelayRegistryError, match="cursor"):
+        registry.list_workspaces(
+            "alice", runtime_id, cursor=cursor[:-1] + ("A" if cursor[-1] != "A" else "B"),
+            query="Project", limit=2,
+        )

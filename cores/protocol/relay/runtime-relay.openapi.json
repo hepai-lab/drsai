@@ -491,6 +491,30 @@
         "title": "GeneratedApprovalProjection",
         "type": "object"
       },
+      "GeneratedFirstScreenObservationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "authority_refresh_at_ms": {
+            "title": "Authority Refresh At Ms",
+            "type": "integer"
+          },
+          "cache_load_at_ms": {
+            "title": "Cache Load At Ms",
+            "type": "integer"
+          },
+          "first_render_at_ms": {
+            "title": "First Render At Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cache_load_at_ms",
+          "authority_refresh_at_ms",
+          "first_render_at_ms"
+        ],
+        "title": "GeneratedFirstScreenObservationRequest",
+        "type": "object"
+      },
       "GeneratedLatencyObservationRequest": {
         "additionalProperties": false,
         "properties": {
@@ -545,6 +569,54 @@
           "latencies_ms"
         ],
         "title": "GeneratedLatencyObservationResponse",
+        "type": "object"
+      },
+      "GeneratedOperationConfirmationObservationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation_render_at_ms": {
+            "title": "Confirmation Render At Ms",
+            "type": "integer"
+          },
+          "request_dispatch_at_ms": {
+            "title": "Request Dispatch At Ms",
+            "type": "integer"
+          },
+          "runtime_commit_at_ms": {
+            "title": "Runtime Commit At Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_dispatch_at_ms",
+          "runtime_commit_at_ms",
+          "confirmation_render_at_ms"
+        ],
+        "title": "GeneratedOperationConfirmationObservationRequest",
+        "type": "object"
+      },
+      "GeneratedReconnectObservationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "disconnect_detect_at_ms": {
+            "title": "Disconnect Detect At Ms",
+            "type": "integer"
+          },
+          "replay_catchup_at_ms": {
+            "title": "Replay Catchup At Ms",
+            "type": "integer"
+          },
+          "transport_restore_at_ms": {
+            "title": "Transport Restore At Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "disconnect_detect_at_ms",
+          "transport_restore_at_ms",
+          "replay_catchup_at_ms"
+        ],
+        "title": "GeneratedReconnectObservationRequest",
         "type": "object"
       },
       "GeneratedRunCreateRequest": {
@@ -857,6 +929,43 @@
           "correlation_id"
         ],
         "title": "GeneratedSessionUpdateRequest",
+        "type": "object"
+      },
+      "GeneratedUserSloObservationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "latencies_ms": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencies Ms"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "stages_present": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stages Present",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ready",
+          "stages_present",
+          "latencies_ms"
+        ],
+        "title": "GeneratedUserSloObservationResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2333,10 +2442,28 @@
               "history_gap",
               "insufficient_window",
               "threshold_failed",
+              "runtime_compatibility_unknown",
+              "supported_runtime_requires_legacy",
               "eligible"
             ],
             "title": "Status",
             "type": "string"
+          },
+          "supported_runtime_count": {
+            "minimum": 0.0,
+            "title": "Supported Runtime Count",
+            "type": "integer"
+          },
+          "supported_runtime_requires_legacy": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supported Runtime Requires Legacy"
           }
         },
         "required": [
@@ -2350,6 +2477,8 @@
           "legacy_ratio",
           "fallback_error_ratio",
           "gap_days",
+          "supported_runtime_count",
+          "supported_runtime_requires_legacy",
           "requirements",
           "eligible"
         ],
@@ -2388,6 +2517,11 @@
             "const": 0,
             "title": "Release Cycles",
             "type": "integer"
+          },
+          "supported_runtime_requires_legacy": {
+            "const": false,
+            "title": "Supported Runtime Requires Legacy",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2396,7 +2530,8 @@
           "oaep_ratio",
           "legacy_ratio",
           "migration_ratio",
-          "fallback_error_ratio"
+          "fallback_error_ratio",
+          "supported_runtime_requires_legacy"
         ],
         "title": "ProtocolDeletionRequirements",
         "type": "object"
@@ -3148,6 +3283,26 @@
         "summary": "Upsert User Push Registration"
       }
     },
+    "/v1/metrics/capacity": {
+      "get": {
+        "operationId": "capacity_metrics_v1_metrics_capacity_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Capacity Metrics V1 Metrics Capacity Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Capacity Metrics"
+      }
+    },
     "/v1/metrics/oaep": {
       "get": {
         "operationId": "oaep_metrics_v1_metrics_oaep_get",
@@ -3200,7 +3355,7 @@
           }
         },
         "summary": "Protocol Usage Deletion Decision",
-        "x-p5-platform-contract-sha256": "490afae079e65acf2344f8a5a0bdd662f13a1cd175177f3e7dd57a35fdc77050"
+        "x-p5-platform-contract-sha256": "1b4722299b660ac687dea112b2e53cb41b580a2cb3878a73c8ae61d2d83b95ec"
       }
     },
     "/v1/metrics/relay-latency": {
@@ -3221,6 +3376,26 @@
           }
         },
         "summary": "Conversation Latency Metrics"
+      }
+    },
+    "/v1/metrics/user-slo": {
+      "get": {
+        "operationId": "user_slo_metrics_v1_metrics_user_slo_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response User Slo Metrics V1 Metrics User Slo Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "User Slo Metrics"
       }
     },
     "/v1/push/readiness": {
@@ -5944,6 +6119,313 @@
         },
         "summary": "Create Run"
       }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/first-screen/{sample_id}": {
+      "post": {
+        "operationId": "record_first_screen_slo_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__slo_first_screen__sample_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sample_id",
+            "required": true,
+            "schema": {
+              "title": "Sample Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedFirstScreenObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedUserSloObservationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record First Screen Slo"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/operation-confirmation/{sample_id}": {
+      "post": {
+        "operationId": "record_operation_confirmation_slo_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__slo_operation_confirmation__sample_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sample_id",
+            "required": true,
+            "schema": {
+              "title": "Sample Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedOperationConfirmationObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedUserSloObservationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Operation Confirmation Slo"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/reconnect/{sample_id}": {
+      "post": {
+        "operationId": "record_reconnect_slo_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__slo_reconnect__sample_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sample_id",
+            "required": true,
+            "schema": {
+              "title": "Sample Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedReconnectObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedUserSloObservationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Reconnect Slo"
+      }
     }
+  },
+  "x-relay-latency-observability": {
+    "authorization_precedes_body_and_storage": true,
+    "content_free": true,
+    "correlation_key": "sha256(runtime_id\u0000workspace_id\u0000session_id\u0000event_id)",
+    "failure_modes": [
+      "missing_stage",
+      "single_worker",
+      "duplicate_conflict",
+      "out_of_order"
+    ],
+    "minimum_complete_correlations": 20,
+    "minimum_worker_count": 2,
+    "multi_worker_ready_requires": [
+      "complete_correlations",
+      "worker_count"
+    ],
+    "persistent_layers": [
+      "redis",
+      "postgresql"
+    ],
+    "public_worker_dimension": "worker_count",
+    "retention_days": 30,
+    "sample_limit": 100000,
+    "schema_version": "p6-relay-latency/1",
+    "stages": [
+      "runtime_receive",
+      "runtime_commit",
+      "relay_fanout",
+      "android_receive",
+      "android_render"
+    ],
+    "worker_identity": "internal_sha256_only"
+  },
+  "x-user-slo": {
+    "authorization_precedes_body_and_storage": true,
+    "bottleneck": "highest_stage_p95_ms",
+    "content_free": true,
+    "identity_dimensions": [],
+    "journeys": {
+      "event_to_render": {
+        "stages": [
+          "runtime_receive",
+          "runtime_commit",
+          "relay_fanout",
+          "android_receive",
+          "android_render"
+        ],
+        "threshold_ms": 1000
+      },
+      "first_screen": {
+        "stages": [
+          "cache_load",
+          "authority_refresh",
+          "first_render"
+        ],
+        "threshold_ms": 2000
+      },
+      "operation_confirmation": {
+        "stages": [
+          "request_dispatch",
+          "runtime_commit",
+          "confirmation_render"
+        ],
+        "threshold_ms": 2000
+      },
+      "reconnect": {
+        "stages": [
+          "disconnect_detect",
+          "transport_restore",
+          "replay_catchup"
+        ],
+        "threshold_ms": 30000
+      }
+    },
+    "minimum_complete_samples": 20,
+    "readiness": "each_journey_complete_samples_gte_20",
+    "schema_version": "p6-user-slo/1",
+    "scope_hash": "sha256"
   }
 }

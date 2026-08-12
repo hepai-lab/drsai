@@ -31,10 +31,16 @@ def valid_report() -> dict[str, object]:
             "full_history_items": 100_000,
             "full_history_ms": 10_000,
             "history_hash": "a" * 64,
+            "offline_search_matches": 1,
+            "offline_search_literal_metacharacters": True,
+            "reading_anchor_stable": True,
+            "search_anchor_stable": True,
+            "history_restore_anchor_stable": True,
         },
         "delta": {
             "delta_count": 10_000,
             "duration_ms": 1000,
+            "throughput_per_second": 10_000,
             "main_ticks": 40,
             "worker_starts": 10,
             "render_cycles": 10,
@@ -47,6 +53,7 @@ def valid_report() -> dict[str, object]:
             "history_max_ms": 180_000,
             "delta_count": 10_000,
             "delta_duration_max_ms": 5000,
+            "delta_min_throughput_per_second": 10_000,
             "minimum_main_ticks": 20,
         },
     }
@@ -98,6 +105,15 @@ def test_host_acceptance_report_binds_features_physical_device_and_build() -> No
     with pytest.raises(ValueError, match="release_build_required"):
         module.validate_acceptance_report(report, required_build_type="release")
 
+    mvp = copy.deepcopy(report)
+    mvp["artifacts"]["app_build_type"] = "mvp"
+    mvp["instrumentation"]["runner"] = (
+        "ai.drsai.remote.test/androidx.test.runner.AndroidJUnitRunner"
+    )
+    assert module.validate_acceptance_report(
+        mvp, expected_build_sha256="a" * 64, required_build_type="mvp",
+    )
+
 
 def test_content_free_report_is_read_from_release_instrumentation_status() -> None:
     device = valid_report()
@@ -144,8 +160,14 @@ def test_host_acceptance_report_fails_closed(mutation, error: str) -> None:
         ("history", "cold_pss_delta_kb", 32 * 1024 + 1),
         ("history", "full_history_items", 99_999),
         ("history", "history_hash", "not-a-hash"),
+        ("history", "offline_search_matches", 0),
+        ("history", "offline_search_literal_metacharacters", False),
+        ("history", "reading_anchor_stable", False),
+        ("history", "search_anchor_stable", False),
+        ("history", "history_restore_anchor_stable", False),
         ("delta", "delta_count", 9999),
         ("delta", "duration_ms", 5001),
+        ("delta", "throughput_per_second", 9999),
         ("delta", "main_ticks", 19),
         ("delta", "terminal_barrier_complete", False),
     ],

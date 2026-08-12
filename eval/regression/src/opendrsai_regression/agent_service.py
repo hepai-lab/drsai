@@ -30,12 +30,13 @@ _LOCK = threading.RLock()
 class AgentRegressionService:
     """Persistent, conversational regression orchestration for the Agent Skill."""
 
-    def __init__(self, catalog_root: str | Path, output_root: str | Path, workspace_path: str | Path | None = None):
+    def __init__(self, catalog_root: str | Path, output_root: str | Path, workspace_path: str | Path | None = None, workspace_id: str | None = None):
         self.catalog_root = Path(catalog_root).resolve()
         self.output_root = Path(output_root).resolve()
         self.output_root.mkdir(parents=True, exist_ok=True)
         self.catalog = RegressionCatalogApi(self.catalog_root)
         self.workspace_path = Path(workspace_path).resolve() if workspace_path else None
+        self.workspace_id = str(workspace_id).strip() if workspace_id else None
 
     def preflight(self, suite_id: str, case_ids: list[str]) -> dict[str, Any]:
         listing = self.catalog.list_cases(suite_id)
@@ -384,6 +385,8 @@ class AgentRegressionService:
         return max(valid, key=lambda path: path.stat().st_mtime) if valid else None
 
     def _workspace_id(self) -> str | None:
+        if self.workspace_id:
+            return self.workspace_id
         configured = os.getenv("OPENDRSAI_REGRESSION_WORKSPACE_ID")
         if configured:
             return configured

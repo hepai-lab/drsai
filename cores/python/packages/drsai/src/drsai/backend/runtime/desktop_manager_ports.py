@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
@@ -87,8 +88,19 @@ class DesktopAgentManagerPorts:
                 call_id, False, {"content": "Regression manager unavailable"},
                 "regression_manager_unavailable",
             )
+        runtime_workspace_path = getattr(self._agent, "_runtime_workspace_path", None)
+        if isinstance(runtime_workspace_path, (str, Path)):
+            # The Manager's storage root belongs to the Agent profile, while
+            # preflight and execution must target the Workspace bound to the
+            # current Desktop Run.  Refresh this immediately before dispatch
+            # so the native Kernel port cannot observe a stale profile path.
+            manager.workspace_path = Path(runtime_workspace_path).resolve()
         try:
-            return self._success(call_id, manager.execute(name, arguments))
+            # Catalog and preflight adapters perform bounded filesystem and
+            # loopback Gateway reads. Never block the Gateway event loop while
+            # querying that same Gateway from an ordinary Agent tool call.
+            result = await asyncio.to_thread(manager.execute, name, arguments)
+            return self._success(call_id, result)
         except Exception as exc:
             # Preserve a stable public code while keeping arbitrary catalog or
             # filesystem exception text out of the Kernel tool envelope.

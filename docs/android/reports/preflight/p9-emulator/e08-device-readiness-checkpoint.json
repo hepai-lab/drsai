@@ -2,10 +2,10 @@
   "schema_version": "opendrsai.p9-e08-device-readiness-checkpoint/1",
   "evidence_tier": "emulator_preflight",
   "release_evidence": false,
-  "generated_at": "2026-08-11T21:37:24.0760354Z",
+  "generated_at": "2026-08-12T09:00:00Z",
   "candidate": {
-    "app_apk_sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24",
-    "test_apk_sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5"
+    "app_apk_sha256": "20c2474096a4115cda3d8c108680d23a6c1c91f03e53d2315dea999015a3b3e0",
+    "test_apk_sha256": "7dd9c3563fb4b1875a6a9c0d0832cabd59dccfb072bb751538904ed0c578cb1d"
   },
   "features": {
     "E08-F01": {
@@ -47,7 +47,8 @@
         "current_api35_lifecycle_hash_matches_candidate": true,
         "current_functional_hash_matches_candidate": true,
         "four_api_matrix_matches_candidate": true,
-        "real_model_reports_match_candidate": false
+        "real_model_reports_match_candidate": true,
+        "prompt_tool_kernel_fixture_digests_match": true
       },
       "evidence": {
         "api35_manifest": {
@@ -57,9 +58,17 @@
         "api_matrix": {
           "path": "docs/android/reports/preflight/p9-emulator/python-runtime-api-matrix-resolution.json",
           "sha256": "13e75034a3bfed78956087b05e47da2243edda408f74e3d80e055bbe48c66995"
+        },
+        "real_model_manifest": {
+          "path": "docs/android/reports/preflight/p9-emulator/round133-full-180-v2/manifest.json",
+          "sha256": "f7e48a5f8e7bd2c0b0db26a6e1bcc82e7773d4045b888411d5311a2ded5ce173"
+        },
+        "real_model_statistics": {
+          "path": "docs/android/reports/preflight/p9-emulator/round133-full-180-v2/real-model-statistics.json",
+          "sha256": "ca85a6ae804280f16744f426f51cbe941ef10af0a2d86f066f31a16e43c26edd"
         }
       },
-      "passed": false
+      "passed": true
     },
     "E08-F05": {
       "gates": {
@@ -71,6 +80,7 @@
   },
   "passed_features": [
     "E08-F01",
-    "E08-F03"
+    "E08-F03",
+    "E08-F04"
   ]
 }

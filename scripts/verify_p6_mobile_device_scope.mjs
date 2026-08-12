@@ -47,17 +47,17 @@ const workspaces = [
   { id: "workspace-three", name: "Three" },
 ];
 const allEditor = mobileAssociationScopeEditorState(
-  { workspace_scope: "all", workspace_ids: [] }, workspaces,
+  { workspace_scope: "all", workspace_ids: [], permissions: ["read", "send", "approve", "files"] }, workspaces,
 );
 assert.equal(allEditor.workspaces.length, 3);
 assert.equal(allEditor.canSave, true);
 const selectedEditor = mobileAssociationScopeEditorState(
-  { workspace_scope: "selected", workspace_ids: ["workspace-one", "workspace-two"] }, workspaces,
+  { workspace_scope: "selected", workspace_ids: ["workspace-one", "workspace-two"], permissions: ["read", "send", "approve", "files"] }, workspaces,
 );
 assert.deepEqual(selectedEditor.workspaces.map(({ id }) => id), ["workspace-one", "workspace-two"]);
 assert.equal(selectedEditor.canSave, false);
 const reducedEditor = mobileAssociationScopeEditorState(
-  { workspace_scope: "selected", workspace_ids: ["workspace-one", "workspace-two"] }, workspaces,
+  { workspace_scope: "selected", workspace_ids: ["workspace-one", "workspace-two"], permissions: ["read", "send", "approve", "files"] }, workspaces,
   new Set(["workspace-one"]),
 );
 assert.equal(reducedEditor.canSave, true);

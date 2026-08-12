@@ -21,6 +21,35 @@ RUN_ITEM = "/runtimes/{runtime_id}/runs/{run_id}"
 RUN_CANCEL = "/runtimes/{runtime_id}/workspaces/{workspace_id}/runs/{run_id}/cancel"
 APPROVAL_DECISION = "/runtimes/{runtime_id}/approvals/{approval_id}/decision"
 APPROVAL_RECOVERY = "/runtimes/{runtime_id}/idempotency/approval.decide/{idempotency_key}"
+RUN_RECOVERY = "/runtimes/{runtime_id}/idempotency/run.create/{idempotency_key}"
+MESSAGE_DELIVERY_RECOVERY = {
+    "delivery_states": ["optimistic", "sending", "accepted", "running", "terminal"],
+    "recovery_states": ["pending", "accepted", "running", "terminal", "unknown"],
+    "scope_binding": ["issuer", "subject", "runtime_id", "workspace_id", "session_id"],
+    "identity_binding": ["source_message_id", "idempotency_key"],
+    "persistent_recovery": True,
+    "runtime_lookup_before_retry": True,
+    "cross_worker_single_side_effect": True,
+    "authorization_precedes_body_and_ledger": True,
+    "scope_shrink_immediate": True,
+    "result_at_rest": "authenticated_encryption",
+}
+RUN_APPROVAL_RACE_CONSISTENCY = {
+    "approval_terminal_states": ["approved", "denied", "cancelled", "expired"],
+    "authorization_precedes_body_and_ledger": True,
+    "decisions": ["approve", "deny", "cancel"],
+    "generation_fencing": True,
+    "mutual_exclusion": "runtime_authoritative",
+    "persistent_recovery": True,
+    "revision_monotonic": True,
+    "run_terminal_states": ["completed", "failed", "cancelled"],
+    "scope_binding": [
+        "issuer", "subject", "runtime_id", "workspace_id", "session_id",
+        "run_id", "approval_id", "idempotency_key", "decision",
+    ],
+    "single_side_effect": True,
+    "single_terminal": True,
+}
 
 
 class SmokeFailure(RuntimeError):
@@ -122,6 +151,18 @@ def validate_contract(openapi: dict[str, Any]) -> dict[str, str]:
     return refs
 
 
+def validate_message_delivery_recovery(openapi: dict[str, Any]) -> None:
+    if openapi.get("x-message-delivery-recovery") != MESSAGE_DELIVERY_RECOVERY:
+        raise SmokeFailure("message delivery recovery contract drift")
+    if "get" not in openapi.get("paths", {}).get(RUN_RECOVERY, {}):
+        raise SmokeFailure("message delivery recovery path drift")
+
+
+def validate_run_approval_race_consistency(openapi: dict[str, Any]) -> None:
+    if openapi.get("x-run-approval-race-consistency") != RUN_APPROVAL_RACE_CONSISTENCY:
+        raise SmokeFailure("run approval race consistency contract drift")
+
+
 async def _request(
     session: aiohttp.ClientSession,
     method: str,
@@ -158,6 +199,8 @@ async def run(base_url: str) -> dict[str, Any]:
         checks.append({"name": "health", "passed": True, "latency_ms": latency})
         openapi, latency = await _request(session, "GET", base + "/openapi.json", 200)
         refs = validate_contract(openapi)
+        validate_message_delivery_recovery(openapi)
+        validate_run_approval_race_consistency(openapi)
         canonical = json.dumps(
             {name: openapi["components"]["schemas"][schema] for name, schema in sorted(refs.items())},
             sort_keys=True,
@@ -193,6 +236,7 @@ async def run(base_url: str) -> dict[str, Any]:
             ("approval_decision_anonymous_401", "POST", APPROVAL_DECISION,
              {**valid_control, "decision": "deny"}),
             ("approval_recovery_anonymous_401", "GET", APPROVAL_RECOVERY, None),
+            ("run_recovery_anonymous_401", "GET", RUN_RECOVERY, None),
         )
         for name, method, path, body in anonymous:
             payload, latency = await _request(session, method, base + path.format(**values), 401, body)

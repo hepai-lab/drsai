@@ -478,8 +478,11 @@ def main() -> int:
             ),
             "p5_oaep_local_capacity_governance_missing")
     require("if (!syncStateMachine.state.shouldSubscribe || !foreground || !connectivity.online.value) return" in android_session_view_model
-            and "if (online && foreground) startSessionSync()" in android_session_view_model
-            and "retryPolicy.delay(" in android_session_view_model,
+            and "reconcileSessionStream()" in android_session_view_model
+            and "if (policy.keepForegroundSse) startSessionSync() else streamJob?.cancel()" in android_session_view_model
+            and "RemoteBackgroundSync.kt" in read("scripts/p5_legacy_rollback.py")
+            and "RemoteStreamRetryState(retryPolicy)" in android_session_view_model
+            and "retry.nextDelay(failure, time.monotonicNanos()) ?: break" in android_session_view_model,
             "p5_android_background_or_weak_network_policy_missing")
     require("EncryptedSharedPreferences.create" in run_control_ledger
             and "PendingRemoteRunControl" in run_control_ledger
@@ -537,8 +540,8 @@ def main() -> int:
             "p5_approval_refresh_identity_convergence_missing")
     require('"approval.decide"' in runtime_domain
             and "return result[2]" in runtime_domain
-            and 'if operation == "approval.decide"' in relay_api
-            and 'authorize_runtime_permission(x_subject, runtime_id, "approve")' in relay_api
+            and '"approval.decide": "approve"' in relay_api
+            and 'authorize_runtime_permission(x_subject, runtime_id, required_permission)' in relay_api
             and "SELECT result_json FROM relay_approval_decisions" in gateway_control
             and "recoverApprovalDecision" in android_repository
             and '"idempotency", "approval.decide"' in android_repository
@@ -610,7 +613,7 @@ def main() -> int:
             and "RemoteNotificationReadiness.PLATFORM_UNAVAILABLE" in remote_push_readiness
             and "允许系统通知后" in remote_host_status
             and "打开 App 后会自动同步最新进度" in remote_host_status
-            and "启用通知" in remote_screens,
+            and "requireNotNull(presentation.actionLabel)" in remote_screens,
             "p5_android_notification_readiness_ui_missing")
     require("DEFAULT_KEY_MAX_AGE_SECONDS" in android_device_proof
             and "key_created_at_epoch_seconds" in android_device_proof
@@ -674,8 +677,9 @@ def main() -> int:
             "p5_audit_ui_exposes_internal_trace")
     require("oaep_client_ratio >= 0.999" in legacy_compatibility
             and "legacy_request_ratio < 0.001" in legacy_compatibility
-            and "transcript_hash_preserved" in legacy_compatibility
-            and "database_migration_verified" in legacy_compatibility,
+             and "transcript_hash_preserved" in legacy_compatibility
+             and "database_migration_verified" in legacy_compatibility
+             and "supported_runtimes_are_oaep_capable" in legacy_compatibility,
             "p5_legacy_removal_threshold_too_weak")
     require("two_release_cycles" not in legacy_compatibility
             and "fourteen_observation_days" not in legacy_compatibility

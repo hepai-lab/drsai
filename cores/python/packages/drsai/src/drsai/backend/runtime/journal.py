@@ -134,10 +134,17 @@ class RuntimeConversationJournal:
         database: Path,
         runtime_id: str,
         observability: RuntimeObservability | None = None,
+        *,
+        max_events_per_session: int = 100_000,
+        retained_events_per_session: int = 90_000,
     ):
+        if not 1 <= retained_events_per_session < max_events_per_session:
+            raise ValueError("runtime_journal_capacity_invalid")
         self.database = Path(database)
         self.runtime_id = runtime_id
         self.observability = observability
+        self.max_events_per_session = max_events_per_session
+        self.retained_events_per_session = retained_events_per_session
         self.database.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._changed = threading.Condition(self._lock)
@@ -956,6 +963,7 @@ class RuntimeConversationJournal:
             db.commit()
             if created:
                 self._changed.notify_all()
+        self.enforce_capacity(session_id)
         return event, created
 
     def append_event_in_transaction(
@@ -1042,6 +1050,7 @@ class RuntimeConversationJournal:
 
     def notify_committed(self) -> None:
         """Wake local subscribers after a caller-owned transaction commits."""
+        self.enforce_capacity()
         with self._changed:
             self._changed.notify_all()
 
@@ -1081,7 +1090,55 @@ class RuntimeConversationJournal:
             db.commit()
             if created:
                 self._changed.notify_all()
+        self.enforce_capacity(session_id)
         return item, event, created
+
+    def capacity_policy(self) -> dict[str, Any]:
+        return {
+            "max_events_per_session": self.max_events_per_session,
+            "retained_events_per_session": self.retained_events_per_session,
+            "overflow_strategy": "checkpoint_then_compact",
+            "cursor_gap": "cursor_expired",
+            "recovery": "authoritative_snapshot_then_replay",
+        }
+
+    def enforce_capacity(self, session_id: str | None = None) -> dict[str, int]:
+        """Bound retained append history without deleting the Item projection.
+
+        A checkpoint of the complete authoritative projection is committed
+        before old events are removed.  Slow clients therefore receive
+        ``cursor_expired`` and recover from Snapshot; terminal and Approval
+        Items remain present in ``runtime_conversation_items``/OAEP Items.
+        """
+        with self._connect() as db:
+            if session_id is None:
+                rows = db.execute(
+                    "SELECT session_id,last_sequence,earliest_retained_sequence "
+                    "FROM runtime_session_sequences WHERE "
+                    "last_sequence-earliest_retained_sequence+1>?",
+                    (self.max_events_per_session,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT session_id,last_sequence,earliest_retained_sequence "
+                    "FROM runtime_session_sequences WHERE session_id=?",
+                    (session_id,),
+                ).fetchall()
+        compacted_sessions = removed_events = 0
+        for row in rows:
+            retained = int(row["last_sequence"]) - int(row["earliest_retained_sequence"]) + 1
+            if retained <= self.max_events_per_session:
+                continue
+            selected = str(row["session_id"])
+            through = int(row["last_sequence"]) - self.retained_events_per_session
+            self.checkpoint(selected)
+            result = self.compact(selected, through_sequence=through)
+            compacted_sessions += 1
+            removed_events += int(result["removed_events"])
+        return {
+            "compacted_sessions": compacted_sessions,
+            "removed_events": removed_events,
+        }
 
     def upsert_item_in_transaction(
         self,

@@ -103,7 +103,7 @@ def test_every_semantic_notification_has_one_machine_readable_disposition() -> N
 def test_contract_binding_is_generated_deterministically_from_the_only_manifest() -> None:
     manifest_path = REPOSITORY / "cores/protocol/codex-app-server-stable-contract.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["contractVersion"] == 5
+    assert manifest["contractVersion"] == 6
     assert len(CONTRACT_DIGEST) == 64
     script = REPOSITORY / "cores/python/packages/drsai/scripts/generate_codex_stable_contract.py"
     result = subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True)
@@ -136,9 +136,9 @@ def test_schema_contract_verifier_reports_complete_current_coverage() -> None:
     report = json.loads(result.stdout)
     assert report == {
         "bundleSha256": "80cecd56a6883f2c9c39580122f2adc08b7cc0ad1f24705fd7d917c1651d598c",
-        "clientMethods": 15,
+        "clientMethods": 16,
         "codexVersion": "0.147.0-alpha.6.6",
-        "contractVersion": 5,
+        "contractVersion": 6,
         "notifications": 70,
         "passed": True,
         "semanticDispositions": 23,

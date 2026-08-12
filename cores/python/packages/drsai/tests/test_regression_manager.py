@@ -49,6 +49,22 @@ def test_regression_manager_uses_application_data_not_the_user_workspace(tmp_pat
     assert not (workspace / "regression").exists()
 
 
+def test_regression_manager_resolves_current_runtime_workspace_per_call(tmp_path: Path, monkeypatch) -> None:
+    root = Path(__file__).resolve().parents[5] / "eval" / "regression"
+    monkeypatch.setenv("OPENDRSAI_REGRESSION_ROOT", str(root))
+    first = tmp_path / "workspace-a"
+    second = tmp_path / "workspace-b"
+    current = [first]
+    manager = RegressionManager(tmp_path / "profile", workspace_resolver=lambda: current[0])
+
+    _, first_service = manager._services()
+    current[0] = second
+    _, second_service = manager._services()
+
+    assert first_service.workspace_path == first.resolve()
+    assert second_service.workspace_path == second.resolve()
+
+
 def test_regression_manager_uses_explicitly_marked_last_known_good_catalog(tmp_path: Path) -> None:
     manager = RegressionManager(tmp_path)
     fresh = manager._catalog_call("suites", lambda: {"schema_version": "test", "suites": [{"id": "p3"}]})
@@ -79,6 +95,9 @@ def test_regression_events_use_monotonic_cursor(tmp_path: Path, monkeypatch) -> 
 
     first = json.loads(manager.execute("regression_events", {"evaluation_id": evaluation["evaluation_id"]}))
     second = json.loads(manager.execute("regression_events", {"evaluation_id": evaluation["evaluation_id"], "after_cursor": first["next_cursor"]}))
+    terminal = json.loads(manager.execute("regression_get", {"evaluation_id": evaluation["evaluation_id"]}))
     assert first["next_cursor"] >= 1
     assert first["events"][0]["type"] == "evaluation_started"
     assert second == {"events": [], "next_cursor": first["next_cursor"]}
+    assert terminal["agent_reporting"]["required"] is True
+    assert terminal["agent_reporting"]["references"] == terminal["result"]["references"]

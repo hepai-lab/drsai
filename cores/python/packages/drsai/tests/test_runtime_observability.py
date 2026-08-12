@@ -10,6 +10,7 @@ from drsai.backend.runtime.observability import (
     METRICS,
     ResourceCorrelation,
     RuntimeObservability,
+    USER_SLO_DEFINITIONS,
 )
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 
@@ -63,6 +64,9 @@ def test_conversation_latency_report_finds_p95_bottleneck_without_content(tmp_pa
     assert report["incomplete_sample_count"] == 1
     assert report["p95_bottleneck"] == "relay_fanout"
     assert report["stages"]["relay_fanout"]["p95_ms"] == 54
+    assert report["stages"]["relay_fanout"]["p50_ms"] == 49
+    assert report["relay_worker_count"] == 0
+    assert report["multi_worker_ready"] is False
     serialized = str(report)
     assert "corr-" not in serialized
     assert "workspace-1" not in serialized
@@ -132,6 +136,63 @@ def test_conversation_latency_database_uses_wal_for_cross_worker_visibility(tmp_
     }]
     with second._connect() as db:
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_user_slo_report_has_four_aggregate_journeys_and_locates_bottlenecks(tmp_path):
+    metrics = RuntimeObservability(tmp_path / "slo.sqlite3")
+    for index in range(20):
+        sample_id = f"sample-{index:04d}"
+        values = {
+            "first_screen": (100, 300, 200),
+            "operation_confirmation": (100, 2_100 + index, 100),
+            "reconnect": (200, 4_000, 500),
+        }
+        for journey, durations in values.items():
+            for stage, duration in zip(USER_SLO_DEFINITIONS[journey]["stages"], durations):
+                assert metrics.record_user_slo_stage(
+                    journey, stage, duration, sample_id=sample_id
+                )
+                assert not metrics.record_user_slo_stage(
+                    journey, stage, 299_999, sample_id=sample_id
+                )
+        event = ResourceCorrelation(f"event-{index}", f"operation-{index}")
+        for stage, duration in zip(CONVERSATION_LATENCY_STAGES, (10, 20, 1_100, 10, 20)):
+            metrics.record_conversation_latency(stage, duration, event)
+
+    report = metrics.user_slo_report()
+    assert report["schema_version"] == "user-slo/1"
+    assert report["privacy"] == "aggregate_only"
+    assert report["ready"] is True
+    assert report["breaches"] == ["event_to_render", "operation_confirmation"]
+    assert set(report["journeys"]) == set(USER_SLO_DEFINITIONS)
+    assert report["journeys"]["first_screen"]["status"] == "within_slo"
+    assert report["journeys"]["operation_confirmation"]["status"] == "over_slo"
+    assert report["journeys"]["operation_confirmation"]["p95_bottleneck"] == "runtime_commit"
+    assert report["journeys"]["event_to_render"]["p95_bottleneck"] == "relay_fanout"
+    assert report["journeys"]["reconnect"]["total_p50_ms"] > 0
+    serialized = str(report)
+    assert "sample-" not in serialized
+    assert "event-" not in serialized
+    with metrics._connect() as db:
+        stored = str(db.execute("SELECT * FROM user_slo_stages").fetchall())
+    assert "sample-" not in stored
+
+
+@pytest.mark.parametrize(
+    ("journey", "stage", "sample_id"),
+    [
+        ("unknown", "cache_load", "sample-0001"),
+        ("first_screen", "runtime_commit", "sample-0001"),
+        ("reconnect", "transport_restore", "short"),
+        ("reconnect", "transport_restore", "sample/with/path"),
+    ],
+)
+def test_user_slo_rejects_unknown_mismatched_or_identifying_input(
+    tmp_path, journey, stage, sample_id
+):
+    metrics = RuntimeObservability(tmp_path / "slo.sqlite3")
+    with pytest.raises(ValueError):
+        metrics.record_user_slo_stage(journey, stage, 1, sample_id=sample_id)
 
 
 @pytest.mark.parametrize("capacity", [0, 4, 1_000_001])

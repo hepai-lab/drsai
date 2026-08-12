@@ -39,9 +39,11 @@ def test_protocol_deletion_decision_is_low_dimension_and_fail_closed() -> None:
         "data_start": None, "data_end": None, "observation_days": 0, "release_cycles": 0,
         "oaep_ratio": 0.0, "legacy_ratio": 0.0, "migration_ratio": None,
         "fallback_error_ratio": 0.0, "gap_days": 0,
+        "supported_runtime_count": 0, "supported_runtime_requires_legacy": None,
         "requirements": {"observation_days": 0, "release_cycles": 0, "oaep_ratio": 0.999,
                          "legacy_ratio": 0.001, "migration_ratio": 1.0,
-                         "fallback_error_ratio": 0.001},
+                         "fallback_error_ratio": 0.001,
+                         "supported_runtime_requires_legacy": False},
         "eligible": False,
     }
     validator.validate(base)
@@ -50,10 +52,15 @@ def test_protocol_deletion_decision_is_low_dimension_and_fail_closed() -> None:
         **base, "status": "eligible", "data_start": "2026-07-01", "data_end": "2026-07-01",
         "observation_days": 1, "release_cycles": 0, "oaep_ratio": 0.999,
         "legacy_ratio": 0.0009, "migration_ratio": 1.0,
-        "fallback_error_ratio": 0.001, "gap_days": 7, "eligible": True,
+        "fallback_error_ratio": 0.001, "gap_days": 7,
+        "supported_runtime_count": 1, "supported_runtime_requires_legacy": False,
+        "eligible": True,
     }
     validator.validate(eligible)
     assert list(validator.iter_errors({**eligible, "legacy_ratio": 0.001}))
+    assert list(validator.iter_errors({**eligible, "supported_runtime_requires_legacy": True}))
+    assert list(validator.iter_errors({**eligible, "supported_runtime_count": 0,
+                                       "supported_runtime_requires_legacy": None}))
     assert list(validator.iter_errors({**base, "subject": "forbidden"}))
     encoded = json.dumps(contract["$defs"]["protocol_deletion_decision"], sort_keys=True).lower()
     assert not any(key in encoded for key in ('"subject"', '"workspace"', '"session"', '"message"', '"path"'))

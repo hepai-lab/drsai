@@ -40,6 +40,7 @@ PYTHON_TESTS = (
     "cores/python/packages/drsai/tests/test_oaep_snapshot_window.py",
     "scripts/test_preflight_remote_workspace_push.py",
     "scripts/test_accept_mobile_remote_workspace_long_session_p5.py",
+    "scripts/test_accept_p6_capacity_recovery_physical.py",
     "scripts/test_accept_mobile_remote_workspace_session_catalog_p5.py",
     "scripts/test_accept_mobile_remote_workspace_interaction_p5.py",
     "scripts/test_p5_android_apk.py",
@@ -64,6 +65,35 @@ PYTHON_TESTS = (
     "scripts/test_verify_p6_push_readiness.py",
     "scripts/test_verify_p6_safe_notification_navigation.py",
     "scripts/test_verify_p6_android_background_policy.py",
+    "scripts/test_verify_p6_android_network_recovery.py",
+    "scripts/test_verify_p6_device_proof_lifecycle.py",
+    "scripts/test_verify_p6_minimum_authorization.py",
+    "scripts/test_verify_p6_sensitive_storage.py",
+    "cores/python/packages/drsai/tests/test_remote_workspace_secret_canary_scan.py",
+    "scripts/test_p5_secret_canary.py",
+    "scripts/test_assemble_remote_workspace_secret_scan_p5.py",
+    "scripts/test_collect_android_secret_scan_p5.py",
+    "scripts/test_verify_p6_full_boundary_secret_scan.py",
+    "scripts/test_verify_p6_revocation_audit.py",
+    "scripts/test_verify_p6_multi_worker_latency.py",
+    "scripts/test_verify_p6_user_slo.py",
+    "scripts/test_verify_p6_large_scale_performance.py",
+    "scripts/test_verify_p6_capacity_backpressure.py",
+    "scripts/test_verify_p6_p5_legacy_transition.py",
+    "scripts/test_verify_p6_accessibility_localization.py",
+    "scripts/test_verify_p6_legacy_conditional_removal.py",
+    "scripts/test_finalize_remote_workspace_p6.py",
+    "scripts/test_verify_p6_evidence_finalizer.py",
+    "scripts/test_finalize_remote_workspace_p6_product_acceptance.py",
+    "scripts/test_verify_p6_product_acceptance.py",
+    "scripts/test_finalize_remote_workspace_stability_p6.py",
+    "scripts/test_verify_p6_two_device_stability.py",
+    "scripts/test_smoke_runtime_relay_p6_retirement.py",
+    "scripts/test_smoke_runtime_relay_p6_authorization.py",
+    "scripts/test_preflight_remote_workspace_p6_devices.py",
+    "scripts/test_smoke_runtime_relay_p6_session_catalog.py",
+    "scripts/test_smoke_runtime_relay_public_v4.py",
+    "scripts/test_verify_p6_progress.py",
     "scripts/test_p5_legacy_rollback.py",
     "scripts/test_collect_oaep_legacy_migration_evidence.py",
     "scripts/test_check_oaep_legacy_removal.py",
@@ -169,6 +199,58 @@ def suite_catalog() -> list[tuple[str, list[str], Path, dict[str, str] | None]]:
         ], ROOT, None),
         ("android_background_policy", [
             project_python, str(ROOT / "scripts/verify_p6_android_background_policy.py"),
+        ], ROOT, None),
+        ("android_network_recovery", [
+            project_python, str(ROOT / "scripts/verify_p6_android_network_recovery.py"),
+        ], ROOT, None),
+        ("device_proof_lifecycle", [
+            project_python, str(ROOT / "scripts/verify_p6_device_proof_lifecycle.py"),
+        ], ROOT, None),
+        ("minimum_authorization", [
+            project_python, str(ROOT / "scripts/verify_p6_minimum_authorization.py"),
+        ], ROOT, None),
+        ("desktop_authorization_editor", [
+            "node", str(ROOT / "apps/desktop/shared/test-kit/run-bundled-test.mjs"),
+            str(ROOT / "apps/desktop/shared/test-kit/verify-mobile-association-authorization.mts"),
+        ], ROOT, None),
+        ("sensitive_storage", [
+            project_python, str(ROOT / "scripts/verify_p6_sensitive_storage.py"),
+        ], ROOT, None),
+        ("full_boundary_secret_scan", [
+            project_python, str(ROOT / "scripts/verify_p6_full_boundary_secret_scan.py"),
+        ], ROOT, None),
+        ("revocation_audit", [
+            project_python, str(ROOT / "scripts/verify_p6_revocation_audit.py"),
+        ], ROOT, None),
+        ("multi_worker_latency", [
+            project_python, str(ROOT / "scripts/verify_p6_multi_worker_latency.py"),
+        ], ROOT, None),
+        ("user_slo", [
+            project_python, str(ROOT / "scripts/verify_p6_user_slo.py"),
+        ], ROOT, None),
+        ("large_scale_performance", [
+            project_python, str(ROOT / "scripts/verify_p6_large_scale_performance.py"),
+        ], ROOT, None),
+        ("capacity_backpressure", [
+            project_python, str(ROOT / "scripts/verify_p6_capacity_backpressure.py"),
+        ], ROOT, None),
+        ("p5_legacy_transition", [
+            project_python, str(ROOT / "scripts/verify_p6_p5_legacy_transition.py"),
+        ], ROOT, None),
+        ("accessibility_localization", [
+            project_python, str(ROOT / "scripts/verify_p6_accessibility_localization.py"),
+        ], ROOT, None),
+        ("legacy_conditional_removal", [
+            project_python, str(ROOT / "scripts/verify_p6_legacy_conditional_removal.py"),
+        ], ROOT, None),
+        ("p6_evidence_finalizer", [
+            project_python, str(ROOT / "scripts/verify_p6_evidence_finalizer.py"),
+        ], ROOT, None),
+        ("p6_product_acceptance", [
+            project_python, str(ROOT / "scripts/verify_p6_product_acceptance.py"),
+        ], ROOT, None),
+        ("p6_two_device_stability", [
+            project_python, str(ROOT / "scripts/verify_p6_two_device_stability.py"),
         ], ROOT, None),
         ("android_unit", [wrapper, ":app:testDebugUnitTest", *GRADLE_ISOLATION], android, _java_environment()),
         ("android_test_compile", [wrapper, ":app:compileDebugAndroidTestKotlin", *GRADLE_ISOLATION], android, _java_environment()),

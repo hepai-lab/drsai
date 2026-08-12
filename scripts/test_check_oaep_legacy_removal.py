@@ -22,6 +22,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
         "release_cycles": 0, "observation_days": 0, "oaep_client_ratio": 0.999,
         "migration_ratio": 1.0, "legacy_request_ratio": 0.0009,
         "fallback_error_rate": 0.001, "rollback_artifact_verified": True,
+        "supported_runtime_requires_legacy": False,
         "rollback_artifact_sha256": hashlib.sha256(rollback.read_bytes()).hexdigest(),
         "migration_transcript_before_sha256": "b" * 64,
         "migration_transcript_after_sha256": "b" * 64,
@@ -55,6 +56,19 @@ def test_digest_mismatch_and_threshold_boundary_fail_closed(tmp_path: Path) -> N
     report, rollback, migration = _fixture(tmp_path)
     rollback.write_bytes(b"changed")
     assert _run(report, rollback, migration).returncode != 0
+
+
+def test_any_supported_runtime_dependency_blocks_removal(tmp_path: Path) -> None:
+    report, rollback, migration = _fixture(tmp_path)
+    value = json.loads(report.read_text())
+    value["supported_runtime_requires_legacy"] = True
+    report.write_text(json.dumps(value), encoding="utf-8")
+    result = _run(report, rollback, migration)
+    assert result.returncode == 1
+    assert "supported_runtimes_are_oaep_capable" in result.stdout
+
+
+def test_threshold_boundary_fails_closed(tmp_path: Path) -> None:
     report, rollback, migration = _fixture(tmp_path / "boundary")
     value = json.loads(report.read_text())
     value["legacy_request_ratio"] = 0.001
@@ -80,6 +94,18 @@ def test_migration_evidence_must_bind_the_same_rollback_and_preserved_transcript
     value["rollback_artifact_sha256"] = "0" * 64
     migration.write_text(json.dumps(value), encoding="utf-8")
     assert "p5_legacy_migration_evidence_invalid" in _run(report, rollback, migration).stderr
+
+
+def test_duplicate_json_key_is_rejected(tmp_path: Path) -> None:
+    report, rollback, migration = _fixture(tmp_path)
+    source = report.read_text()
+    report.write_text(source.replace("{", '{"oaep_client_ratio":0.999,', 1))
+    result = _run(report, rollback, migration)
+    assert result.returncode != 0
+    assert "oaep_legacy_removal_report_invalid" in result.stderr
+
+
+def test_migration_transcript_mismatch_fails_closed(tmp_path: Path) -> None:
 
     report, rollback, migration = _fixture(tmp_path / "transcript")
     value = json.loads(migration.read_text())

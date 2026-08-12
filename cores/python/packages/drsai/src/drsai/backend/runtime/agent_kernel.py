@@ -126,10 +126,14 @@ def _tool_decision_domain(name: str) -> str | None:
         return "memory"
     if lowered == "core.update_plan":
         return "plan"
+    if lowered == "delegate":
+        return "delegate"
     if lowered == "image_generation":
         return "image_generation"
     if lowered == "image_edit":
         return "image_edit"
+    if lowered.startswith("regression_"):
+        return "regression"
     return None
 
 
@@ -159,6 +163,10 @@ def _build_tool_decision_requirement_v1(input_text: str, available_tools: Sequen
     domains: set[str] = set()
     reason = "stable_or_transformational_request"
     patterns = {
+        "regression": (
+            "regression test", "regression case", "regression suite",
+            "\u56de\u5f52\u6d4b\u8bd5", "\u56de\u5f52\u6848\u4f8b", "\u56de\u5f52\u5957\u4ef6",
+        ),
         "retrieval": (
             "latest", "today", "current news", "verify", "source", "citation", "cite",
             "最新", "今天", "新闻", "核实", "查证", "来源", "引用",
@@ -222,6 +230,10 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
     domains: set[str] = set()
 
     patterns = {
+        "regression": (
+            "regression test", "regression case", "regression suite",
+            "\u56de\u5f52\u6d4b\u8bd5", "\u56de\u5f52\u6848\u4f8b", "\u56de\u5f52\u5957\u4ef6",
+        ),
         "retrieval": (
             "latest", "today", "current news", "breaking", "recent", "as of", "verify", "source",
             "citation", "cite", "look up", "search for", "最新", "今天", "今日", "新闻",
@@ -243,10 +255,51 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
             "记住", "已保存", "保存过", "保存的", "我的偏好", "偏好中",
         ),
         "plan": ("create a plan", "make a plan", "multi-step", "step by step", "制定计划", "多步骤", "分步骤"),
+        "delegate": (
+            "delegate", "parallel investigation", "parallel research", "分别交给", "专门分析者", "并行调查",
+        ),
+        "process": ("powershell", "run a shell", "execute a command", "执行命令", "查看进程"),
     }
     for domain, needles in patterns.items():
         if any(needle in folded for needle in needles):
             domains.add(domain)
+
+    preferred_tool: str | None = None
+    available = set(names)
+    preferred_rules = (
+        ("delegate", ("delegate", "parallel investigation", "parallel research", "分别交给", "专门分析者", "并行调查")),
+        ("core.update_plan", ("create a plan", "make a plan", "执行计划", "建立计划", "计划：", "制定计划")),
+        ("save_memory", ("remember that", "请记住", "记一下", "保存这个偏好")),
+        ("search_memory", ("saved memory", "saved preference", "保存过", "已保存偏好", "偏好中找出")),
+        ("core.text_stats", ("count characters", "count words", "count lines", "精确统计", "精确计算")),
+    )
+    for tool_name, needles in preferred_rules:
+        if tool_name in available and any(needle in folded for needle in needles):
+            preferred_tool = tool_name
+            break
+    if preferred_tool is None and any(name.startswith("workspace.") for name in names):
+        workspace_rules = (
+            ("workspace.write", ("write file", "create file", "创建 ", "创建notes", "内容写", "改成")),
+            ("workspace.read", ("read file", "open file", "读取", "打开")),
+            ("workspace.list", ("list files", "列出", "根目录", "目录下有哪些", "目录下有")),
+            ("workspace.search", ("find file", "定位名称", "找到授权项目", "名称包含", "名称带")),
+        )
+        compact = folded.replace(" ", "")
+        for tool_name, needles in workspace_rules:
+            if tool_name in available and any(needle in folded or needle.replace(" ", "") in compact for needle in needles):
+                preferred_tool = tool_name
+                break
+    if preferred_tool is not None:
+        domain = _tool_decision_domain(preferred_tool)
+        if domain is not None:
+            domains.add(domain)
+
+    # Regression result references are local, persisted product resources.
+    # Do not turn them into a public-Web requirement unless Web is explicit.
+    if "regression" in domains and not any(value in folded for value in (
+        "public web", "website", "web search", "source link", "latest news",
+    )):
+        domains.discard("retrieval")
 
     # “Current” is not intrinsically a web-fact request. In particular,
     # workspace-exploration phrasing must select local workspace tools rather
@@ -351,12 +404,21 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
     )
     if entity_question and (re.search(r"20\d{2}", folded) or unfamiliar_identifier):
         domains.add("retrieval")
+    # Apply the local Regression resource rule after every classifier pass.
+    # Entity and named-tool heuristics above may add domains after the first
+    # normalization, but a regression_* request still addresses persisted
+    # local product state unless it explicitly asks for public Web evidence.
+    if "regression" in domains and any(name.casefold() in folded for name in names if name.casefold().startswith("regression_")) and not any(
+        value in folded for value in ("public web", "website", "web search", "source link", "latest news")
+    ):
+        domains.discard("retrieval")
     reason = "task_requires_external_or_host_fact" if domains else "stable_or_transformational_request"
     available_domains = sorted({domain for name in names if (domain := _tool_decision_domain(name)) is not None})
     unsigned = {
         "policy_version": TOOL_DECISION_POLICY_VERSION,
         "required_domains": sorted(domains),
         "available_domains": available_domains,
+        "preferred_tools": [preferred_tool] if preferred_tool is not None else [],
         "reason": reason,
     }
     return {**unsigned, "sha256": _canonical_digest(unsigned)}
@@ -429,11 +491,23 @@ def build_tool_choice_policy(
     required = set(requirement.get("required_domains", ()))
     prior_domains = {str(value) for value in (prior_tool_domains or ()) if isinstance(value, str)}
     remaining = required - prior_domains
-    matching = sorted(name for name in names if _tool_decision_domain(name) in remaining)
+    preferred = [
+        str(value) for value in requirement.get("preferred_tools", ())
+        if isinstance(value, str) and value in names
+    ]
+    matching = preferred if preferred and not prior_tool_use else sorted(
+        name for name in names if _tool_decision_domain(name) in remaining
+    )
     if disabled or not names:
         mode, selected, reason = "none", None, "tools_disabled_or_unavailable"
     elif specified_tool is not None:
         mode, selected, reason = "specified", specified_tool, "kernel_selected_specific_tool"
+    elif preferred and not prior_tool_use:
+        mode, selected, reason = "specified", preferred[0], "task_matches_specific_host_tool"
+    elif required and not remaining:
+        mode, selected, reason = "none", None, "required_host_fact_already_available"
+    elif remaining and not matching:
+        mode, selected, reason = "none", None, "required_capability_unavailable"
     elif remaining and (not prior_tool_use or prior_tool_domains is not None) and len(matching) == 1:
         mode, selected, reason = "specified", matching[0], "task_requires_exact_matching_host_tool"
     elif remaining and (not prior_tool_use or prior_tool_domains is not None) and matching:

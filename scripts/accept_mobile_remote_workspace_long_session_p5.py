@@ -27,6 +27,13 @@ BUILD_VARIANTS = {
         "apk_directory": "release",
         "test_apk_directory": "release",
     },
+    # Installable, minified release-derived artifact for physical performance gates.
+    # It is intentionally not equivalent to an organization-signed public release.
+    "mvp": {
+        "package": "ai.drsai.remote",
+        "apk_directory": "mvp",
+        "test_apk_directory": "mvp",
+    },
 }
 PACKAGE = str(BUILD_VARIANTS["debug"]["package"])
 RUNNER = f"{PACKAGE}.test/androidx.test.runner.AndroidJUnitRunner"
@@ -42,12 +49,18 @@ EXPECTED_ACCEPTANCE_TOP_LEVEL = {
     "schema_version", "feature_ids", "generated_at", "passed", "environment",
     "artifacts", "instrumentation", "gates", "metrics", "budgets",
 }
-EXPECTED_HISTORY_KEYS = {
+LEGACY_HISTORY_KEYS = {
     "checkpoint_item_count", "cold_window_items", "cold_start_ms", "cold_pss_delta_kb",
     "full_history_items", "full_history_ms", "history_hash",
 }
+EXTENDED_HISTORY_KEYS = {
+    "offline_search_matches",
+    "offline_search_literal_metacharacters", "reading_anchor_stable",
+    "search_anchor_stable", "history_restore_anchor_stable",
+}
+EXPECTED_HISTORY_KEYS = LEGACY_HISTORY_KEYS | EXTENDED_HISTORY_KEYS
 EXPECTED_DELTA_KEYS = {
-    "delta_count", "duration_ms", "main_ticks", "worker_starts", "render_cycles",
+    "delta_count", "duration_ms", "throughput_per_second", "main_ticks", "worker_starts", "render_cycles",
     "content_hash", "terminal_barrier_complete",
 }
 EXPECTED_BUDGETS = {
@@ -56,12 +69,14 @@ EXPECTED_BUDGETS = {
     "history_max_ms": 180_000,
     "delta_count": 10_000,
     "delta_duration_max_ms": 5_000,
+    "delta_min_throughput_per_second": 10_000,
     "minimum_main_ticks": 20,
 }
 EXPECTED_GATE_KEYS = {
     "checkpoint_item_count", "cold_window_items", "cold_start", "cold_memory",
     "full_history", "full_history_time", "history_hash", "delta_count", "delta_time",
-    "main_responsive", "delta_hash", "terminal", "worker_bounded", "render_bounded",
+    "delta_throughput", "main_responsive", "delta_hash", "terminal", "worker_bounded", "render_bounded",
+    "offline_search", "reading_anchor", "search_anchor", "history_restore_anchor",
 }
 
 
@@ -130,7 +145,9 @@ def validate_device_report(value: Any) -> dict[str, Any]:
     history, delta, budgets = value.get("history"), value.get("delta"), value.get("budgets")
     if not all(isinstance(item, dict) for item in (history, delta, budgets)):
         raise ValueError("p5_long_session_metrics_missing")
-    if set(history) != EXPECTED_HISTORY_KEYS or set(delta) != EXPECTED_DELTA_KEYS \
+    history_keys = frozenset(history)
+    if history_keys not in {frozenset(LEGACY_HISTORY_KEYS), frozenset(EXPECTED_HISTORY_KEYS)} \
+            or set(delta) != EXPECTED_DELTA_KEYS \
             or budgets != EXPECTED_BUDGETS:
         raise ValueError("p5_long_session_metrics_shape_invalid")
     checks = {
@@ -143,12 +160,22 @@ def validate_device_report(value: Any) -> dict[str, Any]:
         "history_hash": isinstance(history.get("history_hash"), str) and len(history["history_hash"]) == 64,
         "delta_count": delta.get("delta_count") == budgets.get("delta_count") == 10_000,
         "delta_time": 0 <= int(delta.get("duration_ms", -1)) <= int(budgets.get("delta_duration_max_ms", -1)),
+        "delta_throughput": int(delta.get("throughput_per_second", -1))
+        >= int(budgets.get("delta_min_throughput_per_second", -1)) >= 10_000,
         "main_responsive": int(delta.get("main_ticks", -1)) >= int(budgets.get("minimum_main_ticks", -1)) >= 1,
         "delta_hash": isinstance(delta.get("content_hash"), str) and len(delta["content_hash"]) == 64,
         "terminal": delta.get("terminal_barrier_complete") is True,
         "worker_bounded": 1 <= int(delta.get("worker_starts", -1)) <= 10,
         "render_bounded": 1 <= int(delta.get("render_cycles", -1)) <= 10,
     }
+    if history_keys == frozenset(EXPECTED_HISTORY_KEYS):
+        checks.update({
+            "offline_search": history.get("offline_search_matches") == 1
+            and history.get("offline_search_literal_metacharacters") is True,
+            "reading_anchor": history.get("reading_anchor_stable") is True,
+            "search_anchor": history.get("search_anchor_stable") is True,
+            "history_restore_anchor": history.get("history_restore_anchor_stable") is True,
+        })
     if not all(checks.values()):
         failed = ",".join(name for name, passed in checks.items() if not passed)
         raise ValueError(f"p5_long_session_gate_failed:{failed}")
@@ -218,8 +245,7 @@ def validate_acceptance_report(
         raise ValueError("p5_long_session_instrumentation_invalid")
 
     gates = value.get("gates")
-    if not isinstance(gates, dict) or set(gates) != EXPECTED_GATE_KEYS \
-            or any(item is not True for item in gates.values()):
+    if not isinstance(gates, dict) or any(item is not True for item in gates.values()):
         raise ValueError("p5_long_session_gate_attestation_invalid")
     metrics = value.get("metrics")
     budgets = value.get("budgets")
@@ -233,7 +259,7 @@ def validate_acceptance_report(
         "delta": metrics.get("delta"),
         "budgets": budgets,
     })
-    if gates != validated:
+    if set(gates) != set(validated) or gates != validated:
         raise ValueError("p5_long_session_gate_attestation_mismatch")
     return validated
 
