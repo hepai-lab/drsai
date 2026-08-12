@@ -1,9 +1,22 @@
 # OpenDrSai Codex Adapter OAEP P10：语义完整性与用户可信交互收敛开发方案
 
-状态：已完成（60/60，100%）  
+状态：重新验收中（实现已完成；当前源码快照尚未形成新的 60/60 发布证据）  
 制定日期：2026-08-05  
 阶段：Codex Adapter 第 10 阶段（P10）  
 上游基线：`OpenDrSaiCodexAdapter_OAEP_P9真实增量与恢复闭环开发方案.md`（48/48 已完成）
+
+> 2026-08-12 复核说明：Codex App Server 已升级到 `0.147.0-alpha.6.6`，Stable Contract
+> 已在规范化 Schema 差异审计后升级为 v5；新版本仅新增 4 个当前未调用的 Section 管理方法，
+> 已审核的 15 个 Client 方法、70 个通知、10 个 Server Request 及其 OAEP 语义未发生破坏性变化。P10
+> 源码闭包发生变化。2026-08-05 生成的 60/60 结果及源码摘要仅作为历史证据，不能证明
+> 当前工作区可发布。必须在源码停止变化后重新完整执行
+> `npm run verify:codex-adapter:release`，由生成器更新台账后才能恢复“已完成”状态。
+
+当前重新验收进展（2026-08-12）：Contract v5 的 47 项协议测试和真实 Codex 30 轮连续
+会话验收已通过；Contract、输入/Session、错误、Snapshot、审批、历史、资源压力、Bridge
+单元测试、架构边界及 Electron 套件已生成当前源码证据。最终 SSH→Linux loopback Bridge
+等价验收因本机 Docker Desktop Linux Engine 未启动而失败关闭；在 Engine 启动并完成整套
+release runner 前，历史 60/60 台账不得作为当前发布结论。
 
 ## 1. 阶段结论
 

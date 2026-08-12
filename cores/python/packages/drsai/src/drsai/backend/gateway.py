@@ -290,7 +290,8 @@ from drsai.config.model_catalog import AgentModelPolicy, AgentModelSelection, Mo
 from drsai.config.model_registry import find_model_capabilities
 from drsai.config.audio_operation_adapter import OpenAIAudioOperationAdapter
 from drsai.config.streaming_audio_adapter import OpenAIStreamingTranscriptionAdapter, MAX_STREAM_AUDIO_FRAME_BYTES
-from drsai.config.capability_probe import CapabilityProbeResult, CapabilityProbeService
+from drsai.config.realtime_audio_adapter import OpenAIRealtimeAudioAdapter, MAX_REALTIME_EVENT_BYTES
+from drsai.config.capability_probe import CapabilityProbeResult, CapabilityProbeService, ProbeAssertion
 from drsai.config.model_operation_adapters import ModelProtocolError, OpenAITextOperationAdapter
 from drsai.config.gemini_operation_adapter import GeminiGenerateContentAdapter
 from drsai.config.model_operation_routing import ModelOperationRoute, ModelOperationRoutePlan, ModelOperationRoutingError, ResolvedAgentOperation, default_operation_routes, resolve_agent_operation
@@ -2641,6 +2642,33 @@ class GatewayOpenDrSaiAgentBackend:
                                 "regression_write_proposal_invalid",
                                 "Controlled regression write requires a safe approval proposal.",
                             )
+                        # JSON-generating models commonly omit a terminal LF
+                        # even when the user requests a line ending. For this
+                        # one frozen safety fixture, canonicalize only that
+                        # semantically identical omission from trusted Host
+                        # control before approval. The proposal thus hashes
+                        # exactly the bytes that will be written.
+                        for resource in context.input_resources:
+                            if resource.get("name") != "OpenDrSai regression control":
+                                continue
+                            try:
+                                regression_control = json.loads(str(resource.get("content") or ""))
+                            except json.JSONDecodeError:
+                                continue
+                            target = regression_control.get("controlled_write_target") if isinstance(regression_control, dict) else None
+                            if not isinstance(target, dict):
+                                continue
+                            expected_path = str(target.get("relative_path") or "")
+                            expected_content = target.get("content_utf8")
+                            if (
+                                relative_path == expected_path
+                                and isinstance(expected_content, str)
+                                and expected_content.endswith("\n")
+                                and content == expected_content[:-1]
+                            ):
+                                content = expected_content
+                                _arguments["content"] = content
+                            break
                         approval_payload["proposal"] = {
                             "tool": operation,
                             "effect": "write_local_mutable",
@@ -3431,6 +3459,12 @@ async def _understand_runtime_images(
             role="image_understanding_model", operation="chat", require_credentials=True,
         )
     except (ModelProviderConfigError, ModelOperationRoutingError) as exc:
+        logger.warning(
+            "Image-understanding model resolution failed: agent={} error_type={} error_code={}",
+            policy.agent_id,
+            type(exc).__name__,
+            str(getattr(exc, "code", "model_resolution_failed")),
+        )
         raise RuntimeExecutionError(
             "image_understanding_model_unavailable",
             "The Agent image-understanding model is not configured or available.",
@@ -3482,7 +3516,7 @@ async def _understand_runtime_images(
                         input_value=[{"role": "user", "content": [
                             {"type": "input_text", "text": prompt},
                             {"type": "input_image", "image_url": f"data:{mime};base64,{base64.b64encode(content).decode('ascii')}"},
-                        ]}], max_output_tokens=512,
+                        ]}], max_output_tokens=2048,
                     )
                 elif protocol == "openai_chat_completions":
                     response = await OpenAITextOperationAdapter().create(
@@ -3490,7 +3524,7 @@ async def _understand_runtime_images(
                         input_value=[{"role": "user", "content": [
                             {"type": "text", "text": prompt},
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(content).decode('ascii')}"}},
-                        ]}], max_output_tokens=512,
+                        ]}], max_output_tokens=2048,
                     )
                 else:
                     continue
@@ -3508,6 +3542,13 @@ async def _understand_runtime_images(
         else:
             last_error = last_error or RuntimeError("no supported vision route")
         if not completed and last_error is not None:
+            logger.warning(
+                "Image-understanding route failed: provider={} model={} error_code={} retryable={}",
+                resolved.ref.provider_id,
+                resolved.ref.model_id,
+                str(getattr(last_error, "code", "runtime_integration_failed")),
+                bool(getattr(last_error, "retryable", False)),
+            )
             raise RuntimeExecutionError(
                 "image_understanding_failed", "The Agent image-understanding operation failed.",
                 retryable=bool(getattr(last_error, "retryable", False)),
@@ -3572,6 +3613,24 @@ class RuntimeReplayExecuteRequest(BaseModel):
 class RuntimeRunComparisonCreateRequest(BaseModel):
     baseline_run_id: str = Field(min_length=1, max_length=256)
     candidate_run_id: str = Field(min_length=1, max_length=256)
+
+
+class RuntimeRunComparisonEvaluationScore(BaseModel):
+    baseline: int = Field(ge=1, le=5)
+    candidate: int = Field(ge=1, le=5)
+
+
+class RuntimeRunComparisonEvaluationEvidenceRef(BaseModel):
+    run_id: str = Field(min_length=1, max_length=256)
+    item_id: str = Field(min_length=1, max_length=500)
+
+
+class RuntimeRunComparisonEvaluationCreateRequest(BaseModel):
+    expected_latest_revision: int = Field(default=0, ge=0)
+    verdict: str = Field(pattern="^(baseline_better|candidate_better|tie|inconclusive)$")
+    scores: dict[str, RuntimeRunComparisonEvaluationScore]
+    note: str = Field(default="", max_length=4_000)
+    evidence_refs: list[RuntimeRunComparisonEvaluationEvidenceRef] = Field(default_factory=list, max_length=20)
 
 
 class RuntimeAdoptionApplyRequest(BaseModel):
@@ -3873,6 +3932,22 @@ async def authenticate_desktop_gateway(request: Request, call_next):
                 metric_operation, (time.perf_counter() - metric_started) * 1000,
                 error_code=getattr(exc, "code", type(exc).__name__),
             )
+        # Keep an actionable local diagnostic without logging the exception
+        # message or request body: either may contain Provider credentials or
+        # user content. Starlette's generic 500 response intentionally exposes
+        # neither detail to the caller.
+        traceback_tail = exc.__traceback__
+        while traceback_tail is not None and traceback_tail.tb_next is not None:
+            traceback_tail = traceback_tail.tb_next
+        location = (
+            f"{Path(traceback_tail.tb_frame.f_code.co_filename).name}:"
+            f"{traceback_tail.tb_lineno}:{traceback_tail.tb_frame.f_code.co_name}"
+            if traceback_tail is not None else "unknown"
+        )
+        logger.error(
+            "Unhandled Gateway request failure: method={} path={} error_type={} location={}",
+            request.method, request.url.path, type(exc).__name__, location,
+        )
         raise
     if metric_operation:
         _runtime_engine().operation_metrics.record(
@@ -3894,6 +3969,7 @@ def _runtime_metric_operation(method: str, path: str) -> str | None:
         (r"^/v1/experiments/[^/]+/plan$", "POST", "replay.plan"),
         (r"^/v1/replay-plans/[^/]+/execute$", "POST", "replay.execute"),
         (r"^/v1/run-comparisons$", "POST", "comparison.create"),
+        (r"^/v1/run-comparisons/[^/]+/evaluations$", "POST", "comparison.evaluate"),
         (r"^/v1/run-comparisons/[^/]+/adoption-preview$", "GET", "adoption.preview"),
         (r"^/v1/adoptions/[^/]+/apply$", "POST", "adoption.apply"),
         (r"^/v1/adoptions/[^/]+/discard$", "POST", "adoption.discard"),
@@ -4189,9 +4265,11 @@ async def runtime_mobile_pairing_diagnostics():
             "runtime": "ok",
             "relay": "ok" if readiness.get("state") in {"ready", "paused"} else "failed",
             "oidc": "unknown",
+            "device_proof": "unknown",
             "wss": "ok" if connected else "failed",
             "heartbeat": transport["heartbeat"],
             "protocol": "ok" if _RUNTIME_PROTOCOLS["relay"]["version"] == "2.0.0" else "failed",
+            "push": "unknown",
         },
         "bridge": {
             "state": _runtime_relay_bridge_state["state"],
@@ -4271,6 +4349,8 @@ async def runtime_mobile_pairing_revoke_enrollment():
 
 class MobileAssociationShrinkRequest(BaseModel):
     permissions: list[str] = Field(min_length=1, max_length=4)
+    workspace_scope: str | None = Field(default=None, pattern="^(all|selected)$")
+    workspace_ids: list[str] | None = Field(default=None, max_length=1000)
 
 
 @app.patch("/v1/mobile-pairing/associations/{association_id}")
@@ -4281,7 +4361,10 @@ async def runtime_mobile_pairing_shrink_association(
     try:
         return (
             await _mobile_pairing_service().shrink_association(
-                association_id, tuple(request.permissions)
+                association_id,
+                tuple(request.permissions),
+                request.workspace_scope,
+                tuple(request.workspace_ids) if request.workspace_ids is not None else None,
             )
         ).public()
     except MobilePairingError as exc:
@@ -4613,6 +4696,46 @@ async def runtime_session_list(workspace_id: str, offset: int = Query(default=0,
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.get("/v1/workspaces/{workspace_id}/session-catalog-events/stream")
+async def runtime_workspace_session_catalog_event_stream(
+    workspace_id: str,
+    raw_request: Request,
+):
+    """Drive trusted local clients from the same committed Session Journal as Relay."""
+    try:
+        if _runtime_registry().get_workspace(workspace_id, include_closed=True) is None:
+            raise KeyError("Workspace not found")
+        journal = _runtime_engine().conversation_journal
+        cursor = journal.workspace_catalog_watermark(workspace_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    async def stream():
+        nonlocal cursor
+        yield ": connected\n\n"
+        while not await raw_request.is_disconnected():
+            events = await asyncio.to_thread(
+                journal.wait_for_workspace_catalog_events,
+                workspace_id,
+                after_cursor=cursor,
+                timeout=15.0,
+                limit=500,
+            )
+            if not events:
+                yield ": heartbeat\n\n"
+                continue
+            for event in events:
+                cursor = int(event["cursor"])
+                public = {key: value for key, value in event.items() if key != "cursor"}
+                payload = json.dumps(public, ensure_ascii=False, separators=(",", ":"))
+                yield f"id: {public['event_id']}\nevent: session.catalog.changed\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/v1/sessions/{session_id}")
 async def runtime_session_get(session_id: str):
     try:
@@ -4806,6 +4929,23 @@ async def runtime_run_create(session_id: str, request: RuntimeRunCreateRequest, 
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeExecutionError as exc:
         raise HTTPException(status_code=400, detail=exc.as_dict()) from exc
+
+
+@app.get("/v1/sessions/{session_id}/runs/by-idempotency/{idempotency_key}")
+async def runtime_run_idempotency_result(session_id: str, idempotency_key: str):
+    """Read the result of Run creation; never retries Run creation."""
+    try:
+        return _runtime_engine().get_run_by_idempotency(session_id, idempotency_key)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "idempotency_result_not_found", "message": "Run creation result was not found"},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "idempotency_key_invalid", "message": str(exc)},
+        ) from exc
 
 
 @app.get("/v1/sessions/{session_id}/runs")
@@ -5693,6 +5833,57 @@ async def runtime_run_comparison_get(comparison_id: str, raw_request: Request):
         raise _experiment_http_error(exc) from exc
 
 
+@app.get("/v1/run-comparisons/{comparison_id}/evaluations")
+async def runtime_run_comparison_evaluations_list(comparison_id: str, raw_request: Request):
+    try:
+        comparison = _runtime_engine().run_comparisons.get(comparison_id)
+        baseline = _runtime_engine().get_run(comparison["baseline_run_id"])
+        _authorize_request(
+            raw_request, str(baseline["workspace_id"]), "workspace.read",
+            {"session_id": str(baseline["session_id"]), "run_id": str(baseline["run_id"]),
+             "operation": "run.comparison-evaluation.read", "comparison_id": comparison_id},
+        )
+        return _runtime_engine().run_comparison_evaluations.list(comparison_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "run_not_found", "message": "Run not found"}) from exc
+    except HTTPException:
+        raise
+    except (ExperimentError, sqlite3.DatabaseError) as exc:
+        raise _experiment_http_error(exc) from exc
+
+
+@app.post("/v1/run-comparisons/{comparison_id}/evaluations")
+async def runtime_run_comparison_evaluation_create(
+    comparison_id: str,
+    request: RuntimeRunComparisonEvaluationCreateRequest,
+    raw_request: Request,
+):
+    try:
+        comparison = _runtime_engine().run_comparisons.get(comparison_id)
+        baseline = _runtime_engine().get_run(comparison["baseline_run_id"])
+        principal = _authorize_request(
+            raw_request, str(baseline["workspace_id"]), "run.execute",
+            {"session_id": str(baseline["session_id"]), "run_id": str(baseline["run_id"]),
+             "operation": "run.comparison-evaluation.create", "comparison_id": comparison_id},
+        )
+        return _runtime_engine().run_comparison_evaluations.create(
+            comparison_id,
+            expected_latest_revision=request.expected_latest_revision,
+            scores={key: value.model_dump() for key, value in request.scores.items()},
+            verdict=request.verdict,
+            note=request.note,
+            evidence_refs=[value.model_dump() for value in request.evidence_refs],
+            created_by=principal.principal_id if principal else "local-runtime",
+            idempotency_key=raw_request.headers.get("idempotency-key", ""),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "run_not_found", "message": "Run not found"}) from exc
+    except HTTPException:
+        raise
+    except (ExperimentError, sqlite3.DatabaseError) as exc:
+        raise _experiment_http_error(exc) from exc
+
+
 @app.get("/v1/run-comparisons/{comparison_id}/adoption-preview")
 async def runtime_run_comparison_adoption_preview(comparison_id: str, raw_request: Request):
     try:
@@ -6236,7 +6427,11 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                     "name": "OpenDrSai trusted evidence",
                     "permission": "read",
                     "status": "encoded",
-                    "content": "{\"satisfied_capability_domains\":[\"retrieval\"]}",
+                    # The trusted vision summary may itself contain UI text
+                    # such as source-file paths. That supplied evidence must
+                    # not be reclassified as a request to inspect the Host
+                    # workspace (or to retrieve the same facts again).
+                    "content": "{\"satisfied_capability_domains\":[\"retrieval\",\"workspace\"]}",
                     "captured_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
@@ -6473,6 +6668,11 @@ async def runtime_workspace_approval_list(workspace_id: str):
                 "expires_at": approval.get("deadline_at") or "",
                 "correlation_id": run.get("correlation_id") or "",
                 "status": approval["status"],
+                # request_json is already reduced to the public, redacted
+                # approval contract at creation time. The Desktop approval UI
+                # and regression Harness need this immutable proposal to show
+                # and verify the exact operation before deciding.
+                "request": request,
             }
         )
     return {"items": rows}
@@ -6496,7 +6696,19 @@ async def runtime_backend_approval_decision(run_id: str, approval_id: str, reque
         })
     try:
         current = _runtime_engine().get_approval(approval_id)
-        if str(current["run_id"]) != run_id or str(current["status"]) != "pending":
+        if str(current["run_id"]) != run_id:
+            raise ValueError("Approval does not match an active pending Run.")
+        if str(current["status"]) == decision:
+            # Network retries and duplicate Desktop Continue actions must be
+            # idempotent. The immutable approval already binds this decision
+            # to the same Run; replaying the same normalized decision cannot
+            # broaden authorization or execute the side effect again.
+            return {
+                "run_id": run_id, "approval_id": approval_id,
+                "decision": decision, "status": current["status"],
+                "replayed": True,
+            }
+        if str(current["status"]) != "pending":
             raise ValueError("Approval does not match an active pending Run.")
         try:
             await _runtime_agent_service().respond_approval(run_id, approval_id, decision)
@@ -7487,6 +7699,87 @@ async def list_models():
 
 
 _streaming_audio_adapter_factory = OpenAIStreamingTranscriptionAdapter
+_realtime_audio_adapter_factory = OpenAIRealtimeAudioAdapter
+
+
+@app.websocket("/v1/audio/duplex")
+async def audio_duplex_stream(websocket: WebSocket):
+    """Authenticated, bounded relay to the Agent-bound Realtime voice model."""
+    await websocket.accept()
+    adapter: OpenAIRealtimeAudioAdapter | None = None
+    try:
+        try:
+            start = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+        except (asyncio.TimeoutError, WebSocketDisconnect, ValueError):
+            await websocket.close(code=4401); return
+        if not isinstance(start, dict) or start.get("type") != "start" or not verify_gateway_instance(start.get("token")):
+            await websocket.close(code=4401); return
+        if start.get("protocolVersion") != 1:
+            await websocket.close(code=4400, reason="Unsupported Duplex audio protocol"); return
+        if not all(isinstance(start.get(key), str) and 0 < len(start[key]) <= 128 for key in ("sessionId", "providerId", "modelId")):
+            await websocket.close(code=4400, reason="Invalid Duplex Session identity"); return
+        auth_context = None
+        if start.get("authorization") is not None or start.get("principalId") is not None:
+            try:
+                auth_context = context_from_bearer(str(start.get("authorization") or ""), str(start.get("principalId") or ""))
+            except ValueError:
+                await websocket.close(code=4401, reason="Invalid authentication context"); return
+
+        with platform_auth_scope(auth_context) if auth_context else nullcontext():
+            config = await asyncio.to_thread(load_model_provider_config)
+            policy = (await asyncio.to_thread(load_agent_model_policy, current_agent_name())).policy
+            selection = policy.realtime_voice_model
+            if selection is None or selection.mode != "explicit" or selection.ref is None:
+                raise ModelOperationRoutingError("agent_model_unbound", "Agent realtime voice model must be explicit")
+            if selection.ref.provider_id != start["providerId"] or selection.ref.model_id != start["modelId"]:
+                raise ModelOperationRoutingError("model_binding_mismatch", "Requested Realtime model does not match Agent policy")
+            resolved = await asyncio.to_thread(resolve_model_ref, config, provider_id=selection.ref.provider_id, model_id=selection.ref.model_id, require_credentials=True)
+            adapter = _realtime_audio_adapter_factory()
+            await adapter.connect(resolved)
+
+        allowed_client_types = {
+            "session.update", "input_audio_buffer.append", "input_audio_buffer.commit", "input_audio_buffer.clear",
+            "response.create", "response.cancel", "conversation.item.create", "conversation.item.truncate",
+        }
+
+        async def relay_client_events() -> None:
+            while True:
+                incoming = await websocket.receive()
+                if incoming.get("type") == "websocket.disconnect": return
+                text = incoming.get("text")
+                if text is None or len(text.encode("utf-8")) > MAX_REALTIME_EVENT_BYTES:
+                    raise ValueError("Invalid Realtime client frame")
+                payload = json.loads(text)
+                if not isinstance(payload, dict) or payload.get("type") not in allowed_client_types:
+                    raise ValueError("Unknown Realtime client event")
+                await adapter.send_json(payload)
+                event_id = payload.get("event_id")
+                if payload.get("type") == "input_audio_buffer.append" and isinstance(event_id, str) and event_id.startswith("opendrsai_audio_"):
+                    sequence_text = event_id.removeprefix("opendrsai_audio_")
+                    if not sequence_text.isdigit(): raise ValueError("Invalid Realtime audio sequence")
+                    await websocket.send_json({"type": "opendrsai.input_audio_ack", "sequence": int(sequence_text), "buffered_audio_ms": 0})
+
+        async def relay_provider_events() -> None:
+            async for event in adapter.events():
+                sanitized = {key: value for key, value in event.items() if key not in {"token", "authorization", "api_key"}}
+                await websocket.send_json(sanitized)
+
+        client_task = asyncio.create_task(relay_client_events())
+        provider_task = asyncio.create_task(relay_provider_events())
+        done, pending = await asyncio.wait({client_task, provider_task}, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending: task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        for task in done: task.result()
+    except WebSocketDisconnect:
+        pass
+    except (ModelOperationRoutingError, ModelProtocolError) as exc:
+        try: await websocket.send_json({"type": "error", "error": {"code": getattr(exc, "code", "provider_error"), "message": "Realtime voice is unavailable."}})
+        except Exception: pass
+    except (ValueError, TypeError, json.JSONDecodeError):
+        try: await websocket.close(code=4400, reason="Invalid Realtime event")
+        except Exception: pass
+    finally:
+        if adapter is not None: await adapter.close()
 
 
 @app.websocket("/v1/audio/transcriptions/stream")
@@ -10460,6 +10753,7 @@ class AgentModelPolicyUpdateRequest(BaseModel):
     image_understanding_model: Optional[AgentModelSelectionRequest] = None
     image_generation_model: Optional[AgentModelSelectionRequest] = None
     text_to_speech_model: Optional[AgentModelSelectionRequest] = None
+    realtime_voice_model: Optional[AgentModelSelectionRequest] = None
     speech_to_text_model: Optional[AgentModelSelectionRequest] = None
     reasoning_effort: Optional[Literal["none", "low", "medium", "high", "xhigh", "max"]] = None
     # Deprecated request alias retained during migration.
@@ -10770,6 +11064,7 @@ def _agent_model_policy_payload(policy: AgentModelPolicy, revision: str, config:
         "image_understanding_model": policy.image_understanding_model,
         "image_generation_model": policy.image_generation_model or policy.image_model,
         "text_to_speech_model": policy.text_to_speech_model,
+        "realtime_voice_model": policy.realtime_voice_model,
         "speech_to_text_model": policy.speech_to_text_model,
     }
     for role, capability_selection in capability_selections.items():
@@ -10812,6 +11107,7 @@ def _agent_model_policy_payload(policy: AgentModelPolicy, revision: str, config:
         "effective_image_understanding_ref": effective_capability_refs["image_understanding_model"],
         "effective_image_generation_ref": effective_capability_refs["image_generation_model"],
         "effective_text_to_speech_ref": effective_capability_refs["text_to_speech_model"],
+        "effective_realtime_voice_ref": effective_capability_refs["realtime_voice_model"],
         "effective_speech_to_text_ref": effective_capability_refs["speech_to_text_model"],
         "reasoning_effort": effective_reasoning_effort,
         "revision": revision,
@@ -10832,10 +11128,13 @@ def _normalize_agent_reasoning_effort(effort: str, supported: tuple[str, ...]) -
 def _descriptor_supports_agent_role(descriptor: Mapping[str, object], role: str) -> bool:
     inputs = set(descriptor.get("input_modalities") or [])
     outputs = set(descriptor.get("output_modalities") or [])
+    model_ref = descriptor.get("ref")
+    model_id = str(model_ref.get("model_id") or "").lower() if isinstance(model_ref, Mapping) else ""
     return {
         "image_understanding_model": "image" in inputs and "text" in outputs,
         "image_generation_model": "image" in outputs,
         "text_to_speech_model": "text" in inputs and "audio" in outputs,
+        "realtime_voice_model": ("audio" in inputs and "audio" in outputs) or model_id.startswith("gpt-realtime"),
         "speech_to_text_model": "audio" in inputs and "text" in outputs,
     }.get(role, False)
 
@@ -11254,6 +11553,7 @@ async def get_agent_model_policy(agent_id: str):
                         image_understanding_model=snapshot.policy.image_understanding_model,
                         image_generation_model=snapshot.policy.image_generation_model,
                         text_to_speech_model=snapshot.policy.text_to_speech_model,
+                        realtime_voice_model=snapshot.policy.realtime_voice_model,
                         speech_to_text_model=snapshot.policy.speech_to_text_model,
                         reasoning_effort=snapshot.policy.reasoning_effort,
                     )
@@ -11292,6 +11592,7 @@ async def put_agent_model_policy(agent_id: str, req: AgentModelPolicyUpdateReque
         image_understanding_selection = capability_selection(req.image_understanding_model, "Image understanding model")
         image_generation_selection = capability_selection(req.image_generation_model or req.image_model, "Image generation model")
         text_to_speech_selection = capability_selection(req.text_to_speech_model, "Text-to-speech model")
+        realtime_voice_selection = capability_selection(req.realtime_voice_model, "Realtime voice model")
         speech_to_text_selection = capability_selection(req.speech_to_text_model, "Speech-to-text model")
         config = await asyncio.to_thread(load_model_provider_config)
         if ref is not None:
@@ -11306,6 +11607,7 @@ async def put_agent_model_policy(agent_id: str, req: AgentModelPolicyUpdateReque
             image_understanding_model=image_understanding_selection,
             image_generation_model=image_generation_selection,
             text_to_speech_model=text_to_speech_selection,
+            realtime_voice_model=realtime_voice_selection,
             speech_to_text_model=speech_to_text_selection,
             reasoning_effort=req.reasoning_effort,
         )
@@ -11349,6 +11651,7 @@ async def migrate_legacy_agent_model_policy(agent_id: str, req: LegacyAgentModel
             image_understanding_model=snapshot.policy.image_understanding_model if snapshot is not None else None,
             image_generation_model=snapshot.policy.image_generation_model if snapshot is not None else None,
             text_to_speech_model=snapshot.policy.text_to_speech_model if snapshot is not None else None,
+            realtime_voice_model=snapshot.policy.realtime_voice_model if snapshot is not None else None,
             speech_to_text_model=snapshot.policy.speech_to_text_model if snapshot is not None else None,
             reasoning_effort=snapshot.policy.reasoning_effort if snapshot is not None else None,
         )
@@ -11653,10 +11956,46 @@ async def probe_model_provider_capability(name: str, req: ModelCapabilityProbeRe
                 tts, agent_id=agent_id, protocol="openai_audio_speech", revisions=revisions,
             )
             if tts_result.status != "verified" or synthesized is None:
-                public = tts_result.public_dict()
+                # The TTS call is only a fixture dependency for the STT probe.
+                # Returning its result directly changes the requested model and
+                # operation identities, causing matrix runners to abort instead
+                # of recording an auditable STT failure. Preserve the requested
+                # STT identity and expose only bounded dependency metadata.
+                dependency_code = tts_result.error_code or "capability_assertion_failed"
+                public = CapabilityProbeResult(
+                    probe_id=f"probe-{uuid.uuid4()}",
+                    agent_id=agent_id,
+                    provider_id=resolved.ref.provider_id,
+                    model_id=resolved.ref.model_id,
+                    upstream_model_id=resolved.ref.model_id,
+                    operation="speech_to_text",
+                    protocol=protocol,  # type: ignore[arg-type]
+                    status="unavailable" if tts_result.status == "unavailable" else "error",
+                    started_at=datetime.now(timezone.utc).isoformat(),
+                    duration_ms=tts_result.duration_ms,
+                    assertions=(ProbeAssertion(
+                        "text_to_speech_fixture",
+                        False,
+                        f"dependency_status={tts_result.status}; dependency_error={dependency_code}",
+                    ),),
+                    may_incur_cost=tts_result.may_incur_cost,
+                    error_code="speech_to_text_fixture_dependency_failed",
+                    http_status=tts_result.http_status,
+                    retryable=tts_result.retryable,
+                    request_bytes=tts_result.request_bytes,
+                    output_bytes=0,
+                    revisions=revisions,
+                ).public_dict()
                 _model_capability_probe_results[str(public["probe_id"])] = public
                 _record_verified_model_protocol(public)
-                return {"result": public, "dependency": "text_to_speech"}
+                return {
+                    "result": public,
+                    "dependency": {
+                        "operation": "text_to_speech",
+                        "status": tts_result.status,
+                        "error_code": dependency_code,
+                    },
+                }
             audio_input = synthesized.content
         result, _ = await CapabilityProbeService().probe(
             resolved,

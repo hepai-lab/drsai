@@ -54,6 +54,8 @@ environment:
           content:
             type: string
   approval_harness:
+    requires_scope_confirmation: true
+    allowed_operations: [regression_controlled_write]
     decision: approved
     duplicate_continue_requests: 1
 

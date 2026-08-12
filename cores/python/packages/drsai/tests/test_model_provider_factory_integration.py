@@ -48,8 +48,8 @@ def test_factory_uses_custom_openai_provider_for_initial_and_switched_model(monk
         "capabilities": [
             {"id": value, "version": 1, "required": value == "chat"}
             for value in [
-                "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
-                "web_search", "web_fetch", "network.public_https",
+                    "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+                    "web_search", "web_fetch", "network.public_https", "image_generation", "image_edit",
             ]
         ],
     }, surface="desktop")

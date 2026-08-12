@@ -123,7 +123,21 @@ def test_semantic_judge_uses_inert_offline_input() -> None:
     })
 
     assert value["judgments"] == {"grounded": True}
-    assert adapter.execute_payload["metadata"] == {"source_client": "regression-semantic-evaluator"}
+    captured_at = adapter.execute_payload["metadata"]["input_resources"][0].pop("captured_at")
+    assert captured_at.endswith("+00:00")
+    assert adapter.execute_payload["metadata"] == {
+        "source_client": "regression-semantic-evaluator",
+        "web_search_declined": True,
+        "input_resources": [{
+            "protocol": "oaep.input/1",
+            "resource_id": "semantic-judge-trusted-evidence",
+            "kind": "selection",
+            "name": "OpenDrSai trusted evidence",
+            "permission": "read",
+            "status": "encoded",
+            "content": '{"satisfied_capability_domains":["device","image_edit","image_generation","memory","plan","process","retrieval","time","workspace"]}',
+        }],
+    }
 
 
 def test_semantic_judge_registers_and_removes_automatic_workspace() -> None:
@@ -211,7 +225,7 @@ def test_semantic_judge_attaches_media_in_temporary_registered_workspace(tmp_pat
     assert Path(registered["path"]).name.startswith("opendrsai-semantic-media-")
     assert Path(registered["path"]) != tmp_path
     assert execute["metadata"]["attachment_refs"] == ["artifacts/image.png"]
-    assert execute["metadata"]["input_resources"] == [{
+    assert execute["metadata"]["input_resources"][1:] == [{
         "protocol": "oaep.input/1", "resource_id": "semantic-media-1", "kind": "file",
         "name": "image.png", "permission": "read", "status": "encoded",
         "reference": "artifacts/image.png", "mime": "image/png", "size_bytes": 11,
@@ -306,7 +320,7 @@ def test_normalize_input_rejects_raw_attachment_path() -> None:
 
 class ApprovalGateway(GatewayRuntimeAdapter):
     def __init__(self):
-        super().__init__(RuntimeConfig("http://fixture"))
+        super().__init__(RuntimeConfig("http://fixture", scope_confirmed=True))
         self.decided = Event()
         self.decisions = 0
 
@@ -318,7 +332,10 @@ class ApprovalGateway(GatewayRuntimeAdapter):
             assert self.decided.wait(2)
             return {"run": {"status": "completed"}}
         if path == "/v1/workspaces/workspace/approvals":
-            return {"items": [{"run_id": "run", "approval_id": "approval", "status": "pending"}]}
+            return {"items": [{
+                "run_id": "run", "approval_id": "approval", "status": "pending",
+                "request": {"proposal": {"tool": "regression_controlled_write"}},
+            }]}
         if path == "/v1/runs/run/approvals/approval/decision":
             assert payload == {"decision": "approved"}
             self.decisions += 1
@@ -327,6 +344,7 @@ class ApprovalGateway(GatewayRuntimeAdapter):
         if path == "/v1/runs/run/inspection?limit=500": return {"timeline": []}
         if path == "/v1/sessions/session/oaep-snapshot?limit=500": return {"items": []}
         if path == "/v1/runs/run/reproduction-manifest": return {"agent": "opendrsai@1"}
+        if path == "/v1/runs/run/side-effects": return {"data": [{"idempotency_key": "side-effect:test"}]}
         if method == "DELETE" and path == "/v1/workspaces/workspace": return {"lifecycle": "archived"}
         raise AssertionError((method, path))
 
@@ -338,6 +356,20 @@ def test_approval_harness_decides_and_duplicates_same_approval(tmp_path: Path) -
         evidence = adapter.execute(case, environment)
     assert evidence["run"]["status"] == "completed"
     assert adapter.decisions == 2
+
+
+def test_write_approval_harness_requires_confirmed_scope_and_exact_tool() -> None:
+    case = CaseCatalog(ROOT).load_cases()["safety.write_approval"]
+    harness = case.data["environment"]["approval_harness"]
+
+    assert harness["requires_scope_confirmation"] is True
+    assert harness["allowed_operations"] == ["regression_controlled_write"]
+
+    adapter = ApprovalGateway()
+    adapter.config = RuntimeConfig("http://fixture", scope_confirmed=False)
+    with pytest.raises(RuntimeAdapterError, match="approval_scope_confirmation_required"):
+        adapter.execute(case)
+    assert adapter.decisions == 0
 
 
 class PaginatedGateway(GatewayRuntimeAdapter):

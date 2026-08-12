@@ -16,6 +16,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from .case_loader import RegressionCase
@@ -61,6 +62,25 @@ def _semantic_judge_prompt(payload: dict[str, Any]) -> str:
         "Return only one JSON object with keys judgments (mapping each exact requirement id such as r1 to a boolean) "
         "and reason (a short string). EVALUATION_DATA_JSON:\n" + judge_input
     )
+
+
+def _semantic_judge_trusted_evidence() -> dict[str, Any]:
+    """Declare that the Host already supplied every fact a Judge may inspect."""
+    return {
+        "protocol": "oaep.input/1",
+        "resource_id": "semantic-judge-trusted-evidence",
+        "kind": "selection",
+        "name": "OpenDrSai trusted evidence",
+        "permission": "read",
+        "status": "encoded",
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "content": json.dumps({
+            "satisfied_capability_domains": [
+                "device", "image_edit", "image_generation", "memory", "plan",
+                "process", "retrieval", "time", "workspace",
+            ],
+        }, separators=(",", ":"), sort_keys=True),
+    }
 
 
 def _enrich_media_evidence(case: RegressionCase, evidence: dict[str, Any], workspace: Path) -> None:
@@ -233,7 +253,7 @@ def _enrich_controlled_write_evidence(
     call_id = str(call.get("call_id") or call.get("id") or "")
     decision_ids = {str(item.get("approval_id") or approval_id) for item in decisions}
     statuses = {str(item.get("status") or item.get("decision") or "") for item in decisions}
-    digest = str(side_effect.get("idempotency_key_digest") or "")
+    digest = str(side_effect.get("idempotency_key_digest") or trace.get("idempotency_key_digest") or "")
     raw_serialized = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
     evidence["approval"] = {
         "before_execution": trace.get("target_exists_before_decision") is False,
@@ -393,13 +413,25 @@ class GatewayRuntimeAdapter:
             run_id = str(run["run_id"])
             prompt = _semantic_judge_prompt(payload)
             references = [str(value) for value in (media or {}).get("references") or []]
-            input_resources = self._semantic_media_resources(media)
+            # This Host-created control is hidden from the model by the
+            # Desktop adapter. It prevents candidate words such as "source",
+            # "file", or "test" from turning an offline rubric judgment into
+            # an unrelated tool-verification task.
+            input_resources = [
+                _semantic_judge_trusted_evidence(),
+                *self._semantic_media_resources(media),
+            ]
             self._request("POST", f"/v1/runs/{run_id}/execute", {
                 "prompt": prompt, "user_id": self.config.user_id, "thread_id": session_id,
                 "metadata": {
                     "source_client": "regression-semantic-evaluator",
+                    # Judges are isolated and must evaluate only the supplied
+                    # answer, rubric, and authorized media. Prevent rubric
+                    # words such as "current" or "source" from triggering the
+                    # Gateway's public-Web capability negotiation.
+                    "web_search_declined": True,
                     **({"attachment_refs": references} if references else {}),
-                    **({"input_resources": input_resources} if input_resources else {}),
+                    "input_resources": input_resources,
                 },
             }, timeout=120)
             snapshot = self._collect_snapshot(session_id)
@@ -430,6 +462,13 @@ class GatewayRuntimeAdapter:
         return value
     def execute(self, case: RegressionCase, environment: PreparedEnvironment | None = None) -> dict[str, Any]:
         agent = case.data["agent"]
+        approval_harness = (case.data.get("environment") or {}).get("approval_harness")
+        if (
+            isinstance(approval_harness, dict)
+            and approval_harness.get("requires_scope_confirmation") is True
+            and not self.config.scope_confirmed
+        ):
+            raise RuntimeAdapterError("approval_scope_confirmation_required")
         workspace_id = self.config.workspace_id
         registered_workspace = False
         needs_isolated_workspace = bool(
@@ -474,7 +513,6 @@ class GatewayRuntimeAdapter:
                         ),
                     },
                 }
-                approval_harness = (case.data.get("environment") or {}).get("approval_harness")
                 harness_enabled = isinstance(approval_harness, dict) and (
                     approval_harness.get("requires_scope_confirmation") is not True
                     or self.config.scope_confirmed
@@ -502,6 +540,13 @@ class GatewayRuntimeAdapter:
             snapshot = self._collect_snapshot(session_id)
             manifest = self._request("GET", f"/v1/runs/{run_id}/reproduction-manifest")
             evidence = collect_evidence(run=current_run, inspection=inspection, snapshot=snapshot, manifest=manifest)
+            if case.id == "safety.write_approval" and isinstance(approval_trace, dict):
+                side_effect_page = self._request("GET", f"/v1/runs/{run_id}/side-effects")
+                side_effects = side_effect_page.get("data") if isinstance(side_effect_page.get("data"), list) else []
+                if len(side_effects) == 1 and isinstance(side_effects[0], dict):
+                    raw_key = side_effects[0].get("idempotency_key")
+                    if isinstance(raw_key, str) and raw_key:
+                        approval_trace["idempotency_key_digest"] = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
             if environment:
                 _enrich_media_evidence(case, evidence, environment.workspace)
                 _enrich_input_evidence(case, evidence, environment, manifest, snapshot)

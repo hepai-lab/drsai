@@ -65,17 +65,45 @@ def test_recent_tool_call_and_results_are_never_split_by_compaction() -> None:
     assert result[assistant_index + 1]["tool_call_id"] == "call-1"
 
 
-def test_active_tool_chain_overflow_fails_closed_instead_of_silently_dropping_it() -> None:
+def test_active_tool_chain_long_result_is_bounded_without_dropping_receipt_identity() -> None:
     call = {"id": "call-large", "type": "function", "function": {"name": "read", "arguments": "{}"}}
-    with pytest.raises(ValueError, match="context_active_tool_chain_overflow"):
-        assemble_agent_context(
-            [
-                {"role": "assistant", "content": "", "tool_calls": [call]},
-                {"role": "tool", "tool_call_id": "call-large", "content": "x" * 20_000},
-            ],
-            "finish",
-            context_budget=budget(window=2_048, reserve=512),
-        )
+    original = "数据😀" * 8_000
+    result = assemble_agent_context(
+        [
+            {"role": "assistant", "content": "", "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": "call-large", "content": original},
+        ],
+        "finish",
+        context_budget=budget(window=2_048, reserve=512),
+    )
+    assistant_index = next(index for index, value in enumerate(result) if value.get("tool_calls"))
+    receipt = result[assistant_index + 1]
+    bounded = __import__("json").loads(receipt["content"])
+    assert receipt["tool_call_id"] == "call-large"
+    assert bounded["truncated"] is True
+    assert bounded["original_chars"] == len(original)
+    assert len(bounded["sha256"]) == 64
+    assert bounded["preview"] and bounded["preview"] in original
+    assert context_cost(result) <= 1_536
+
+
+def test_multiple_active_tool_receipts_remain_ordered_when_bounded() -> None:
+    calls = [
+        {"id": "call-a", "type": "function", "function": {"name": "read", "arguments": "{}"}},
+        {"id": "call-b", "type": "function", "function": {"name": "search", "arguments": "{}"}},
+    ]
+    result = assemble_agent_context(
+        [
+            {"role": "assistant", "content": "", "tool_calls": calls},
+            {"role": "tool", "tool_call_id": "call-a", "content": "A" * 20_000},
+            {"role": "tool", "tool_call_id": "call-b", "content": "B" * 20_000},
+        ],
+        "finish",
+        context_budget=budget(window=2_048, reserve=512),
+    )
+    assistant_index = next(index for index, value in enumerate(result) if value.get("tool_calls"))
+    assert [value["tool_call_id"] for value in result[assistant_index + 1:assistant_index + 3]] == ["call-a", "call-b"]
+    assert all(__import__("json").loads(value["content"])["truncated"] for value in result[assistant_index + 1:assistant_index + 3])
 
 
 def test_context_observability_is_redacted_and_explains_absent_and_trimmed_layers() -> None:

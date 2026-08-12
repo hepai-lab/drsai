@@ -9,6 +9,7 @@ import yaml
 from jsonschema import Draft202012Validator
 
 from .models import RegressionCase, RegressionSuite
+from .workspace_digest import directory_digest, directory_snapshot
 
 
 class DefinitionError(ValueError):
@@ -152,13 +153,12 @@ class CaseCatalog:
                 raise DefinitionError(f"Workspace fixture escapes regression root: {workspace['fixture']}") from exc
             if not fixture.is_dir():
                 raise DefinitionError(f"Workspace fixture not found: {workspace['fixture']}")
-            aggregate = hashlib.sha256()
-            for item in sorted(path for path in fixture.rglob("*") if path.is_file()):
-                relative = item.relative_to(fixture).as_posix()
-                digest = hashlib.sha256(item.read_bytes()).digest()
-                aggregate.update(relative.encode("utf-8"))
-                aggregate.update(b"\0")
-                aggregate.update(digest)
-                aggregate.update(b"\0")
-            if aggregate.hexdigest() != workspace.get("fixture_sha256"):
-                raise DefinitionError(f"Workspace fixture digest mismatch: {workspace['fixture']}")
+            actual_fixture_sha256 = directory_digest(fixture)
+            expected_fixture_sha256 = workspace.get("fixture_sha256")
+            if actual_fixture_sha256 != expected_fixture_sha256:
+                fixture_entries = directory_snapshot(fixture)
+                raise DefinitionError(
+                    f"Workspace fixture digest mismatch: {workspace['fixture']}:"
+                    f"expected={expected_fixture_sha256}:actual={actual_fixture_sha256}:"
+                    f"files={','.join(f'{relative}={digest}' for relative, digest in fixture_entries.items())}"
+                )

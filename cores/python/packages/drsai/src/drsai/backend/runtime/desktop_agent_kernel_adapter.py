@@ -65,8 +65,12 @@ def trusted_evidence_domains(resources: Sequence[Mapping[str, Any]]) -> tuple[st
 
 @contextmanager
 def desktop_regression_control_scope(resources: Sequence[Mapping[str, Any]]):
-    control: dict[str, Any] | None = None
-    satisfied_domains = trusted_evidence_domains(resources)
+    # The Gateway and Agent manager may both establish this scope.  An inner
+    # call with no control resources must inherit the outer trusted state;
+    # otherwise image/web evidence accepted by the Gateway is silently lost
+    # before the Kernel builds its verification requirement.
+    control: dict[str, Any] | None = _REGRESSION_CONTROL.get()
+    satisfied_domains = trusted_evidence_domains(resources) or _TRUSTED_EVIDENCE_DOMAINS.get()
     for resource in resources:
         if resource.get("kind") == "selection" and resource.get("name") == "OpenDrSai trusted evidence":
             continue
@@ -379,6 +383,17 @@ def _controlled_write_result(arguments: Mapping[str, Any], work_dir: str) -> Map
     content = arguments.get("content")
     if not relative or not isinstance(content, str) or Path(relative).is_absolute():
         raise ValueError("desktop_regression_write_arguments_invalid")
+    target_spec = control.get("controlled_write_target")
+    if isinstance(target_spec, Mapping):
+        expected_path = str(target_spec.get("relative_path") or "")
+        expected_content = target_spec.get("content_utf8")
+        if (
+            relative == expected_path
+            and isinstance(expected_content, str)
+            and expected_content.endswith("\n")
+            and content == expected_content[:-1]
+        ):
+            content = expected_content
     workspace = Path(work_dir).resolve(strict=True)
     allowed = (workspace / str(spec["allowed_root"])).resolve()
     target = (workspace / relative).resolve()
@@ -542,6 +557,28 @@ _CONTROLLED_OPERATIONS = {
     "run_manifest_read": "run.manifest.read",
     "run_compare": "run.compare",
 }
+
+
+def _controlled_operation_call_contracts() -> tuple[str, ...]:
+    """Render the Case-declared read-only evidence calls without fixture answers."""
+    control = _REGRESSION_CONTROL.get() or {}
+    if not isinstance(control.get("run_fixture"), Mapping):
+        return ()
+    rendered: list[str] = []
+    for item in control.get("allowed_operations") or []:
+        if not isinstance(item, Mapping):
+            continue
+        operation = str(item.get("operation") or "")
+        if operation == "run.inspect":
+            rendered.extend(f"run_inspect(run_id={run_id})" for run_id in item.get("run_ids") or [])
+        elif operation == "run.manifest.read":
+            rendered.extend(f"run_manifest_read(run_id={run_id})" for run_id in item.get("run_ids") or [])
+        elif operation == "run.compare":
+            rendered.append(
+                "run_compare(baseline_run_id=" + str(item.get("baseline_run_id") or "")
+                + ", candidate_run_id=" + str(item.get("candidate_run_id") or "") + ")"
+            )
+    return tuple(rendered)
 
 
 def _controlled_run_fixture() -> Mapping[str, Any] | None:
@@ -788,6 +825,18 @@ async def run_agent_through_kernel(
             tool for tool in workbench_tools
             if str(getattr(tool, "schema", tool)["name"]) == "image_generation"
         ]
+    controlled_approval_write_only = (
+        _REGRESSION_CONTROL.get() is not None
+        and set(active_control.get("required_capabilities") or []) == {"regression_controlled_write"}
+    )
+    if controlled_approval_write_only:
+        # The safety Case is specifically about the approval-gated Host tool.
+        # A generic run_write would bypass that approval boundary and turn a
+        # passing file write into a false positive.
+        workbench_tools = [
+            tool for tool in workbench_tools
+            if str(getattr(tool, "schema", tool)["name"]) == "regression_controlled_write"
+        ]
     controlled_virtual_tools: set[str] = set()
     if _controlled_tool_available("web_search") and not any(
         str(getattr(tool, "schema", tool)["name"]) == "web_search"
@@ -887,7 +936,7 @@ async def run_agent_through_kernel(
             getattr(agent, "_agent_skills_tools", ())
         ) + list(getattr(agent, "_subagent_tools", ())) + list(getattr(agent, "_todo_tools", ())) + list(
             getattr(agent, "_scheduled_task_tools", ())
-        )
+        ) + list(getattr(agent, "_regression_tools", ()))
     all_tools = [*workbench_tools, *handoff_tools, *manager_tools]
     metadata: dict[str, Mapping[str, Any]] = {}
     normal_names = set()
@@ -1339,6 +1388,17 @@ async def run_agent_through_kernel(
         value for value in control.get("required_capabilities") or []
         if isinstance(value, str) and value
     }
+    controlled_write_target = control.get("controlled_write_target")
+    if "regression_controlled_write" in required_capabilities and isinstance(controlled_write_target, Mapping):
+        target_path = str(controlled_write_target.get("relative_path") or "")
+        target_content = str(controlled_write_target.get("content_utf8") or "")
+        system_prompt += (
+            "\n\nControlled Runtime approval-write contract: call regression_controlled_write directly and exactly once; "
+            "do not inspect, list, or search the empty Workspace first. Use relative_path="
+            f"{json.dumps(target_path, ensure_ascii=False)} and content="
+            f"{json.dumps(target_content, ensure_ascii=False)} exactly, including its final newline. "
+            "After approval and success, include the exact relative path in the final answer."
+        )
     if "image_generation" in required_capabilities:
         targets = [str(value) for value in control.get("artifact_targets") or [] if isinstance(value, str)]
         constraints = control.get("image_constraints") if isinstance(control.get("image_constraints"), Mapping) else {}
@@ -1383,6 +1443,20 @@ async def run_agent_through_kernel(
             "not a reason to stop. Base the diagnosis on the actual source and test output. Do not modify files, "
             "do not request approval, and do not claim that Host tools are unavailable while these tools are visible. "
             "End the final answer with an explicit statement that no files were modified."
+        )
+    operation_contracts = _controlled_operation_call_contracts()
+    if operation_contracts:
+        rendered_operations = "\n".join(f"{index}. {value}" for index, value in enumerate(operation_contracts, 1))
+        system_prompt += (
+            "\n\nControlled Runtime run-evidence contract: call each of the following read-only operations "
+            "exactly once and in this order before answering. Do not skip, repeat, replay, create an experiment, "
+            "or infer a manifest from another result. The Host returns the authoritative fixture evidence.\n"
+            f"{rendered_operations}"
+            "\nIn the final answer, include every exact opendrsai:// reference URI returned by these operations "
+            "so the Desktop can render each as an interactive evidence link. Preserve numeric deltas once without "
+            "thousands separators (for example 1420 and 39). Because more than one configuration variable changed, "
+            "explicitly state that no single root cause can be inferred and recommend two separate single-variable "
+            "experiments: one changing only the model and one changing only the prompt."
         )
     memory_store = getattr(agent, "_curated_memory", None)
     memory_block = memory_store.system_prompt_block() if memory_store is not None and hasattr(memory_store, "system_prompt_block") else ""

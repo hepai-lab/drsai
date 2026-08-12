@@ -196,6 +196,61 @@ def test_collect_evidence_derives_read_only_workspace_and_test_execution() -> No
     }
 
 
+def test_collect_evidence_projects_desktop_command_execution_items() -> None:
+    result = {
+        "result": {
+            "command": "python -B tests/test_runtime_metrics.py",
+            "argv": ["python", "-B", "tests/test_runtime_metrics.py"],
+            "output": "test_success_rate_empty_returns_zero\nZeroDivisionError",
+            "exit_code": 1,
+            "policy": "read_only",
+        },
+        "_inspection": {"version": 1, "kind": "test_execution"},
+    }
+    evidence = collect_evidence(
+        run={"status": "completed"}, manifest={"model": "x"},
+        inspection={"timeline": [{"id": "read-1", "type": "tool_call", "content": {
+            "tool_name": "run_read", "arguments": {"path": "src/runtime_metrics.py"},
+        }}]},
+        snapshot={"items": [{
+            "id": "command-1",
+            "type": "command_execution",
+            "content": {
+                "operation_ref": {"operation": "run_powershell"},
+                "output": __import__("json").dumps(result),
+            },
+        }]},
+    )
+    assert evidence["workspace_reads"][0]["tool"] == "run_read"
+    assert evidence["shell_commands"] == [{
+        "tool": "run_powershell",
+        "command": "python -B tests/test_runtime_metrics.py",
+        "argv": ["python", "-B", "tests/test_runtime_metrics.py"],
+        "exit_code": 1,
+        "output": "test_success_rate_empty_returns_zero\nZeroDivisionError",
+        "policy": "read_only",
+    }]
+    assert evidence["test_execution"]["exit_code"] == 1
+
+
+def test_collect_evidence_does_not_count_command_policy_denial_as_execution() -> None:
+    denied = {
+        "result": {"error": "desktop_regression_command_shell_control_denied", "policy": "regression_allowlist"},
+        "_inspection": {"version": 1, "kind": "command_policy_denial"},
+    }
+    evidence = collect_evidence(
+        run={"status": "completed"}, manifest={"model": "x"}, inspection={},
+        snapshot={"items": [{
+            "id": "denied-command", "type": "command_execution", "content": {
+                "operation_ref": {"operation": "run_powershell"},
+                "output": __import__("json").dumps(denied),
+            },
+        }]},
+    )
+    assert evidence["shell_commands"] == []
+    assert evidence["test_execution"] is None
+
+
 def test_recursive_redaction_catches_secret_names() -> None:
     value = redact({"nested": [{"gateway_token": "one", "my_api_key_value": "two", "safe": "ok"}]})
     assert value["nested"][0] == {"gateway_token": "[REDACTED]", "my_api_key_value": "[REDACTED]", "safe": "ok"}

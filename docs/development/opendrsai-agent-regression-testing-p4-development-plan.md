@@ -670,3 +670,86 @@ P4 完成必须同时满足：
 - 真实 Provider 生成可能接近三分钟，案例总预算由 180 秒调整为 360 秒，为生成后的三轮独立裁判保留明确预算。命令行不得把 Gateway 根地址误传为外部裁判 URL；Gateway Adapter 默认使用带认证、原生媒体资源和隔离工作区的 `semantic_judge` 路径。
 
 下一步执行案例 10 `workspace.readonly.diagnose`，验证 Agent 在只读工作区中完成真实检索、问题定位和证据化诊断，同时保持零写入、零审批和零越权修复。
+
+### 第 47 轮：案例 8 原生截图理解与三轮视觉 Judge 正式验收（2026-08-12，通过）
+
+- 总体进度保持 99%；真实 Runtime 正式验收累计提升为 10/12。正式通过结果位于 `tmp/eval-results/regression/round47-case8-rev2/round47-case8-rev2`，主 Run 为 `run-577c104a-85ec-472e-89e2-e126d90f0744`。
+- 用户明确授权把案例 8 的固定 OpenDrSai Desktop 截图发送给 Agent 绑定的图像理解模型，以及最多 3 个独立视觉 Judge；授权不扩展到其他图片或其他外部服务。正式输入证据为 235,735 字节 PNG、1598×1021，SHA-256 为 `b3742a0f7997e8ef07fdba9fee167a4141088b5da779cc08056ae82c333e7919`。
+- `gpt-5.6-luna` 图像理解实测使用已验证路由 `openai_chat_completions`。原 512-token 输出预算会被该模型的推理消耗而返回空正文，图像理解的 Responses/Chat 输出预算统一提升到 2048；模型路由解析现在可读取进程环境中的 Provider 凭据，HTTPX 依赖增加 SOCKS 支持。
+- Gateway 成功取得图像摘要后，以不可见于模型的可信证据资源标记 `retrieval` 与 `workspace` 已满足。嵌套的 Gateway/Agent manager 控制作用域现在继承外层可信证据和回归控制，不再把截图摘要中的“源文件/路径”等 UI 文字误判为必须再次读取工作区或联网验证。
+- 独立 Judge 显式声明 `web_search_declined=true`，只依据候选回答、rubric 与已授权媒体评审；这避免 rubric 中“当前/来源”等数据触发公共 Web 能力配置审批。三轮 Judge 均一次成功，9 项语义要求全部为真。
+- 案例 revision 提升为 2。第 3 问明确询问“优先检查什么，身份恢复后应怎么做”，使“身份恢复后重新运行”的验收项与输入意图一致，没有删除或放宽语义要求。
+- 正式结果 34/34 自动断言通过：Run completed；附件哈希、MIME、尺寸、Manifest 引用与 OAEP User Message Image Part 完整；禁止 OCR 文本注入；Tool、Skill、Knowledge、审批、外部写入与 Artifact 均为 0；错误类型、Backend、模型、脱敏/截断边界和恢复建议全部通过。
+- 定向门禁包括 Runtime 图像理解、模型路由/适配器、Desktop Kernel 可信证据、Judge 离线输入和案例目录校验，分组结果为 `63 passed`、`35 passed`、`18 passed`、`9 passed`。诊断期间发现 `.tmp.key` 是多行 dotenv 文件，启动脚本必须只解析 `ZHIZENGZENG_API_KEY=` 条目，不能把整份文件当成 Authorization 值。
+
+下一步回到案例 10 `workspace.readonly.diagnose` 的真实 Runtime 验收，再完成案例 11、12及 P1–P4 全量审计。由于本轮一次诊断输出意外显示了 dotenv 中的凭据内容，继续外部模型测试前必须轮换相关密钥。
+
+### 第 48 轮：案例 10 预验收与 Agent 原生工具面闭环（2026-08-12，等待真实模型）
+
+- 总体进度保持 99%，正式真实 Runtime 通过保持 10/12；本轮没有用离线测试替代剩余真实验收。
+- 案例 10 的 YAML 已是 revision 2，当前 Fixture 权威摘要为 `1b5e588ea393b89b1ab78f7862c2398f8cc2152209a24ee9b8c4e7d328060966`。配套说明仍停留在 revision 1 和旧摘要，现已同步修正；Provisioner 会在每次运行前重新计算并与 YAML 绑定值比较。
+- 案例 10 的隔离、输入、Workspace 前后摘要、只读命令、预期失败测试证据和确定性断言定向门禁为 `68 passed`。它已具备真实运行所需代码基础，但仍须由 Agent 实际读取至少两处文件、执行精确 Pytest 命令并生成零写入诊断结果后才可计为通过。
+- 修复 Agent 原生回归工具面遗漏：普通 Desktop Kernel 现在把 `_regression_tools` 加入最终模型工具快照；回归控制中的被测 Agent Run 仍不暴露这组编排工具，避免测试递归启动测试。
+- `DesktopAgentManagerPorts` 新增九个 `regression_*` 工具的受控分发，调用 Agent 持有的 `RegressionManager`；失败只返回稳定错误码和异常类型，不向模型泄漏任意路径或底层异常正文。新增工具可见性与真实 Manager DTO 分发测试，相关门禁为 `41 passed`。
+- 当前 `.tmp.key` 修改时间仍为 2026-08-10，未显示已轮换。由于第 47 轮诊断输出曾暴露旧凭据，本轮未再次读取或调用该密钥；正式案例 10–12 和普通 Desktop Skill 对话验收须使用轮换后的凭据。
+
+下一步在密钥轮换后启动隔离源码 Gateway，先通过普通 Agent 对话实证 `Skill → regression_list_* → preflight/start/events/get`，再依次完成案例 10、11、12 的真实 Runtime、审批/副作用和可交互引用验收。
+
+### 第 49 轮：案例 11 审批边界与案例 12 证据采集契约（2026-08-12，等待真实模型）
+
+- 总体进度保持 99%，正式真实 Runtime 通过保持 10/12；跨模块自动门禁更新为 `207 passed`。
+- 案例 11 的自动审批 Harness 现在显式要求 `requires_scope_confirmation=true`，并把可批准操作限制为 `regression_controlled_write`。Gateway Adapter 在创建 Workspace、Session 或 Run 之前检查确认状态；未确认时以稳定错误 `approval_scope_confirmation_required` 失败，不会进入等待审批或产生副作用。
+- Harness 收到同一 Run 的其他待审批操作时强制拒绝，不能把“测试 Run”当作通配授权。批准路径仍验证审批前目标不存在、同一 approval/logical operation/idempotency digest、重复 Continue 只执行一次、目标摘要正确且无越界写入。
+- 案例 12 新增受控 Run Evidence 系统契约。Runtime 从 YAML 已签名的 `allowed_operations` 投影且只投影操作名与 Run ID，要求依次各调用一次：两个 `run_inspect`、两个 `run_manifest_read`、一个 `run_compare`；不得跳过、重复、Replay 或创建实验。该契约不包含输出、差值、结论或 Fixture 答案。
+- 进一步审计确认案例 12 的引用仍需真实交互验收：Fixture 返回的 `opendrsai://runs/...` 与 `opendrsai://run-comparisons/...` 当前已有结构和 Evidence 断言，但 Desktop Markdown 通用处理器只明确支持 Evaluation 引用，且 Fixture Run 不是 Runtime 数据库中的真实 Run。最终验收前必须证明点击能打开对应受控证据，或把引用收敛到可解析的 Evaluation Evidence 资源；不能用 URI 语法正确冒充可交互。
+- `.tmp.key` 仍未显示轮换，因此本轮没有读取或调用已暴露的外部模型凭据。案例 10–12 真实模型执行和普通 Desktop Skill 对话继续等待安全凭据。
+
+下一轮优先完成案例 12 的受控引用解析设计与自动测试；密钥轮换后立即执行案例 10、11、12 和普通 Desktop 对话终验。
+
+### 第 50–51 轮：案例 12 Evaluation Evidence 引用闭环与 Skill 终检（2026-08-12，等待真实模型）
+
+- 总体进度保持 99%，正式真实 Runtime 通过保持 10/12；未以本地测试替代案例 10–12 的真实模型验收。
+- Agent Service 将案例证据中的 Run 与 Run Comparison 引用重新绑定为持久化 Evaluation Evidence URI：`opendrsai://regression/evaluations/{evaluation_id}/evidence/{case_id}/{reference_type}/{reference_id}`。每个引用对应一个脱敏 JSON 证据文档，保存引用描述、对比结论、受控操作调用和最终输出；不再依赖 Fixture Run 存在于正式 Runtime 数据库。
+- Desktop 主进程的引用解析器仅接受 `eval-*`、`summary|evidence` 和受限安全路径段；细粒度引用只允许位于 `evidence` 下，并在打开前执行真实路径包含性检查。Traversal、外部协议、未知资源和在 `summary` 下伪造细粒度路径均被拒绝。
+- 同一案例重复报告相同类型和 ID 的来源引用时，安全摘要只返回一个可交互引用，避免 Agent 最终回答重复引用同一证据。引用文档采用临时文件加原子替换写入。
+- 回归测试包门禁为 `122 passed`；Agent Service 定向门禁为 `23 passed`；Skill 发现、Regression Manager、Desktop Manager Ports 与 Kernel Adapter 门禁为 `45 passed`；Desktop 引用解析器验证通过。
+- 产品 Skill 已按 Skill Creator 规范终检。`SKILL.md` 保持原生对话入口，要求通过 `regression_*` 工具列出、预检、启动、观察和读取权威终态，并使用工具返回的 Result、Evidence、来源证据与 Artifact 引用。`quick_validate.py` 在 `PYTHONUTF8=1` 下验证通过；Windows 默认 GBK 直接启动该脚本会误读 UTF-8 文件，属于校验启动环境约束。
+- 用户再次确认案例 8 可将约 230 KB 的固定 OpenDrSai Desktop 测试截图发送给 Agent 绑定的图像理解模型和最多 3 个独立视觉 Judge；该最小范围授权与第 47 轮已保存并正式通过的 235,735 字节输入证据一致，不扩展到其他媒体或服务。
+- `.tmp.key` 的长度和修改时间仍与已暴露的旧文件一致（最后修改时间为 2026-08-10）。本轮只检查元数据，没有读取内容或发起外部调用。安全轮换仍是剩余真实模型与 Desktop 对话验收的唯一人工配置项。
+
+下一轮在凭据轮换后启动隔离源码 Gateway，依次完成案例 10、11、12 的真实 Runtime 验收和普通 Desktop 对话中的 `Skill → regression_list_* → preflight/start/events/get → 可点击证据` 终验；随后执行 P1–P4 逐项完成审计。
+
+### 第 52 轮：P4 产品表面防回退门禁与当前完成审计（2026-08-12）
+
+- 总体进度保持 99%，正式真实 Runtime 通过保持 10/12。18 个案例和 4 个 Suite 的定义重新通过 CLI Schema 验证，`p3-desktop` 动态目录仍按 Suite 顺序返回 12 项。
+- 新增 P4 产品表面自动门禁，禁止重新引入 `RegressionPanel`、`RegressionTab`、Renderer 回归控制 Bridge/Service、回归 Composer 自动填充或自动发送标记。Desktop 只允许保留普通聊天中的 Evaluation Evidence 引用解析入口。
+- 新增 Skill 动态目录门禁：权威 Suite 必须包含 12 项，且 12 个稳定 Case ID 均不得硬编码进 `SKILL.md`；Skill 必须通过 `regression_list_suites`、`regression_list_cases` 和 `regression_get_case` 动态获取事实。
+- 新门禁定向结果为 `2 passed`；完整 `eval/regression` 门禁更新为 `124 passed`；相关改动 `git diff --check` 无错误。
+- 按当前权威证据重新审计 Definition of Done：第 3、4、7、9、10 项已由自动化和源码证据证明完成；第 1、2、5、6、8、11、12 项仍含真实 Desktop 对话或剩余案例证据，不能提前标记完成。其中案例 10–12 的真实 Runtime、普通聊天中的 Skill 自然语言触发/运行/停止/续查、过程可见性和证据实际点击仍是硬性验收项。
+- 凭据文件仍未轮换，因此本轮没有外部模型调用。现阶段没有发现另一个必须人工配置的 P4 阻塞项；Desktop/Gateway 端口、Agent 模型绑定、Skill/Tool 可见性、Fixture、Judge、审批 Harness 与证据 Resolver 均已有实现和本地门禁。
+
+下一轮在安全凭据可用后直接进入真实终验；若凭据仍未轮换，则继续完成发布构建、归档内容和 P1–P3 门禁的当前状态审计，但不会以这些本地证据替代 12/12 真实通过。
+
+### 第 53 轮：P1–P3 发布依赖审计与 Sandbox 安全修复（2026-08-12）
+
+- 总体进度保持 99%，正式真实 Runtime 通过保持 10/12。P1/P2 结果、Gate、CLI 与 P3 Desktop 定向测试为 `32 passed`；P3 Windows Sandbox 启动合同验证通过。
+- 审计发现 P3 Sandbox 启动器和验证器仍硬编码 Runtime `v1.5.6`，而当前 Desktop 包版本为 `1.5.7`；旧验证器因此可能对历史 Runtime 假绿。启动器现在从当前 `package.json` 解析语义版本，构造并记录同版本 Runtime 文件名；验证器要求动态绑定并明确拒绝旧版本常量。
+- 当前宿主已经存在 `1.5.7` Runtime ZIP 和 current-source MSI，因此版本修复后没有新增构建产物缺失项。最终 P3 仍必须在新 Windows Sandbox 中运行，历史 1.5.6 证据不能用于当前源码放行。
+- 历史 Sandbox 目录中发现 2 个遗留的 `developer-provider-private` staging。它们已在验证精确路径位于 `tmp/eval-results/p3-sandbox/<run-id>/developer-provider-private` 后删除；所有脱敏证据、Runtime 和 MSI 均保留。当前剩余该类目录为 0。
+- 新运行的 Provider 私有 staging 已移到宿主临时根 `OpenDrSaiP3Provider/<run-id>`，不再位于证据树。启动失败时同步删除；启动成功后由隐藏监视进程跟踪精确 Sandbox Session，Session 消失后验证目录边界并只删除该 staging。超时或控制器不可读时 fail closed，不删除未确认目标。
+- 启动器与清理器 PowerShell 语法、Sandbox 合同验证和相关 `git diff --check` 通过。P3 进度文档同步记录本次安全修复。
+
+下一轮继续审计当前 P2 能力快照、Backend Source 归档和 P1 Release Gate 的真实证据新鲜度；外部凭据轮换后再执行案例 10–12、普通 Desktop Skill 对话和新的 P3 Sandbox 全量验收。
+
+### 第 54–55 轮：当前源码 Runtime、MSI 与人工阻塞审计（2026-08-12）
+
+- 总体进度保持 99%，正式真实 Runtime 通过保持 10/12；没有用构建产物或本地单元测试替代案例 10–12 的真实模型验收。
+- 当前 P2 持久化能力快照不能用于放行：它绑定 `my-drsai`、旧 Agent model policy revision，且已过 24 小时新鲜度窗口；当前 `opendrsai` 配置还缺少 `gpt-5.6-luna` 的 chat/tool-calling 与 Runtime 绑定证据。密钥轮换后必须重新执行五模型矩阵并生成当前 Agent、当前策略修订的快照。
+- 重新生成内嵌 Backend Source，共 577 个源文件；隔离 Python 3.11 环境完成 wheel 构建和安装验证。修复 CI Agent 准备脚本误选 PATH 中 Python 3.9 的问题：默认模式优先使用仓库 `.venv` 的 Python 3.11，避免生成不满足项目 `>=3.11` 约束的伪发布产物。
+- 从当前工作树完成 Runtime `1.5.7+2d654f9e79782e53` 封装和最终解压验证，共 17,663 个文件。Runtime ZIP 为 336,274,187 字节，SHA-256 `0081c394dd2c7129184e7e515c8f644c4cb7495b2bb07cf4baa8a3496e69b673`；完成收据已同步写入。
+- 从 Runtime 内嵌 `drsai-backend-source.zip` 重新抽检 `agent_service.py`、`test_p4_product_surface.py` 和 `opendrsai-regression-testing/SKILL.md`，三者 SHA-256 均与当前工作树完全一致；P4 产品表面防回退测试已实际进入发布归档。
+- 标准 Bootstrapper 构建只刷新通用 MSI，而 P3 Sandbox 启动器明确引用 `OpenDrSaiSetup-P3-current-source.msi`。历史同名文件不能冒充当前源码，本轮通过官方 `build-msi.ps1 -RequireTrustedRuntime -OutputName OpenDrSaiSetup-P3-current-source.msi` 独立重建；新 MSI 为 643,072 字节，SHA-256 `c8ae668b7c803acba1ea8bbeda85d449d02ba97509b704bb3b12d1eeb095a2fd`，并在构建中再次通过完整 Runtime 可信解压门禁。
+- 本轮自动门禁为：`eval/regression` 124/124 通过、Evaluation Evidence 引用 Resolver 通过、P3 Windows Sandbox 启动合同通过；P4 相关文件的差异检查无新增格式错误。工作树中另有其他功能分支的未提交修改和两个既有文档尾随空格，不属于本轮回归实现，未擅自修改。
+- 案例 8 的固定约 230 KB Desktop 截图外发授权已满足，不再是阻塞。当前剩余人工配置只有：轮换此前暴露的智增增/Tavily 凭据并在 Desktop 重新录入；P3 最终纯净环境验收时由用户在新 Windows Sandbox 内完成一次性 HepAI/OIDC 登录。后者不阻止先完成案例 10–12。
+
+下一轮在安全凭据可用后重建 P2 能力快照，依次完成案例 10、11、12 的真实 Runtime 验收，以及普通 Desktop 对话中的 Skill 自然语言触发、过程可见性和证据点击终验；随后用本轮 current-source Runtime/MSI 启动全新 Windows Sandbox 完成 P3 全量验收和 P1–P4 逐项完成审计。

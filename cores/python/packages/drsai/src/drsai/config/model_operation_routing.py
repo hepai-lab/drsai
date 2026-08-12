@@ -7,6 +7,7 @@ routes without pretending that those protocols are interchangeable.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Literal, Mapping
 
@@ -180,6 +181,7 @@ def resolve_agent_operation(
             config,
             provider_id=selection.ref.provider_id,
             model_id=selection.ref.model_id,
+            environ=os.environ,
             require_credentials=require_credentials,
         )
     except ValueError as exc:

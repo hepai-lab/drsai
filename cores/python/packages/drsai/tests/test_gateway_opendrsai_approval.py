@@ -356,6 +356,29 @@ def test_backend_approval_endpoint_persists_restart_decision_when_waiter_is_gone
     assert state.resolve_count == 1
 
 
+def test_backend_approval_endpoint_replays_same_decision_without_resuming_side_effect(monkeypatch) -> None:
+    class Service:
+        async def respond_approval(self, *_args):
+            raise AssertionError("an already-resolved approval must not be resumed")
+
+    class Engine:
+        def get_approval(self, approval_id):
+            return {
+                "approval_id": approval_id, "run_id": "run", "status": "approved",
+                "decision": {"idempotency_key": "desktop-owned-key"},
+            }
+
+    monkeypatch.setattr(gateway, "_runtime_agent_service", lambda: Service())
+    monkeypatch.setattr(gateway, "_runtime_engine", lambda: Engine())
+    result = asyncio.run(gateway.runtime_backend_approval_decision(
+        "run", "approval-1", gateway.RuntimeApprovalDecisionRequest(decision="accept"),
+    ))
+    assert result == {
+        "run_id": "run", "approval_id": "approval-1", "decision": "approved",
+        "status": "approved", "replayed": True,
+    }
+
+
 @pytest.mark.parametrize("mode,iteration", [
     (mode, iteration) for mode in ("allow", "deny", "timeout", "restart") for iteration in range(5)
 ])

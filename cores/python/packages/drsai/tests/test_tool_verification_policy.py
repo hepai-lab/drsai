@@ -113,7 +113,7 @@ def test_stable_arithmetic_common_knowledge_and_opinion_are_not_forced_to_use_to
     }))
     completed = core.handle(_command(MessageType.MODEL_COMPLETED, 1, {"content": "direct"}))
 
-    assert _kinds(completed) == ["tool.decision", "run.completed"]
+    assert _kinds(completed) == ["tool.decision", "message.completed", "run.completed"]
     decision = next(item.payload for item in completed if item.payload.get("kind") == "tool.decision")
     assert decision["category"] == "direct_answer"
 

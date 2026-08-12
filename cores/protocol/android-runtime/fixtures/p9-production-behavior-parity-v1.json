@@ -3,9 +3,9 @@
   "identity": {
     "kernel_id": "drsai-agent-kernel",
     "kernel_version": "p9.1",
-    "kernel_sha256": "24f9bcbda9fe288d39a8e5c82c18d6d4fbae780e1b5e1824e2842768e66c5361",
+    "kernel_sha256": "f375b909d7c2b003701683b4ed98687512d58e7468d4c7a92800de2c08097fc7",
     "prompt_version": "p9-agent-kernel-v1",
-    "base_prompt_sha256": "48443cb3f6cf1357d34a199cbaa2b8274f6e77af264c58879b67bce36f9d7cf0"
+    "base_prompt_sha256": "208b33c5b9b774273133d95bc2cf8c1e2b41aba855d82950dc6135d947096fee"
   },
   "tool": {
     "name": "parity.echo",

@@ -725,6 +725,24 @@ def test_public_inspection_scrubs_embedded_private_paths_and_reasoning_aliases()
     assert serialized.count("REDACTED PRIVATE PATH") == 2
 
 
+def test_public_inspection_preserves_serialized_json_while_scrubbing_windows_paths() -> None:
+    envelope = json.dumps({
+        "result": {
+            "output": 'File "C:\\Users\\private-user\\workspace\\test.py", line 3',
+            "exit_code": 1,
+        },
+        "_inspection": {"kind": "test_execution"},
+    })
+    safe = safe_inspection_item({
+        "id": "command-one", "type": "command_execution", "status": "completed",
+        "content": {"output": envelope}, "event_refs": [],
+    })
+    decoded = json.loads(safe["content"]["output"])
+    assert decoded["result"]["exit_code"] == 1
+    assert decoded["_inspection"]["kind"] == "test_execution"
+    assert decoded["result"]["output"] == 'File "[REDACTED PRIVATE PATH]", line 3'
+
+
 def test_inspection_uses_run_index_and_bounds_a_10k_timeline(
     engine: RuntimeEngine,
 ) -> None:

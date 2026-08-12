@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .case_loader import RegressionCase
+from .workspace_digest import directory_digest, directory_snapshot
 
 
 class EnvironmentError(RuntimeError):
@@ -177,6 +178,10 @@ class EnvironmentProvisioner:
                 "required": list((((case.data.get("expect") or {}).get("image") or {}).get("visual_requirements") or [])),
                 "forbidden": list((((case.data.get("expect") or {}).get("image") or {}).get("visual_forbidden") or [])),
             } if (case.data.get("expect") or {}).get("image") else {},
+            "controlled_write_target": (
+                dict((case.data.get("baseline") or {}).get("target") or {})
+                if case.id == "safety.write_approval" else {}
+            ),
         }
         # A plain conversational case must remain runnable against the normal
         # Desktop Runtime. Only attach the privileged regression envelope when
@@ -188,6 +193,7 @@ class EnvironmentProvisioner:
             "tools",
             "artifact_targets",
             "image_constraints",
+            "controlled_write_target",
             "run_fixture", "allowed_operations", "forbidden_operations",
         ))
         if needs_control:
@@ -218,23 +224,6 @@ def safe_join(root: Path, relative: str) -> Path:
 
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def directory_digest(root: Path) -> str:
-    aggregate = hashlib.sha256()
-    for item in sorted(path for path in root.rglob("*") if path.is_file()):
-        aggregate.update(item.relative_to(root).as_posix().encode("utf-8"))
-        aggregate.update(b"\0")
-        aggregate.update(hashlib.sha256(item.read_bytes()).digest())
-        aggregate.update(b"\0")
-    return aggregate.hexdigest()
-
-
-def directory_snapshot(root: Path) -> dict[str, str]:
-    return {
-        item.relative_to(root).as_posix(): sha256_file(item)
-        for item in sorted(path for path in root.rglob("*") if path.is_file())
-    }
 
 
 def write_environment_manifest(environment: PreparedEnvironment, path: Path) -> None:

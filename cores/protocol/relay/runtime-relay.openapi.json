@@ -370,6 +370,495 @@
         "title": "AssociationResult",
         "type": "object"
       },
+      "GeneratedApprovalDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "deny",
+              "cancel"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "decision"
+        ],
+        "title": "GeneratedApprovalDecisionRequest",
+        "type": "object"
+      },
+      "GeneratedApprovalProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_definition_id": {
+            "title": "Agent Definition Id",
+            "type": "string"
+          },
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "backend_id": {
+            "title": "Backend Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "risk_summary": {
+            "title": "Risk Summary",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "cancelled",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "workspace_id",
+          "session_id",
+          "run_id",
+          "approval_id",
+          "agent_definition_id",
+          "backend_id",
+          "operation",
+          "risk_summary",
+          "scope",
+          "expires_at",
+          "correlation_id",
+          "status"
+        ],
+        "title": "GeneratedApprovalProjection",
+        "type": "object"
+      },
+      "GeneratedLatencyObservationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "client_receive_at_ms": {
+            "title": "Client Receive At Ms",
+            "type": "integer"
+          },
+          "render_at_ms": {
+            "title": "Render At Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "client_receive_at_ms",
+          "render_at_ms"
+        ],
+        "title": "GeneratedLatencyObservationRequest",
+        "type": "object"
+      },
+      "GeneratedLatencyObservationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "latencies_ms": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencies Ms"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "stages_present": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stages Present",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ready",
+          "stages_present",
+          "latencies_ms"
+        ],
+        "title": "GeneratedLatencyObservationResponse",
+        "type": "object"
+      },
+      "GeneratedRunCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Attachment Refs",
+            "type": "array"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          },
+          "source_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Message Id"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "idempotency_key",
+          "message"
+        ],
+        "title": "GeneratedRunCreateRequest",
+        "type": "object"
+      },
+      "GeneratedRunProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Attachment Refs",
+            "type": "array"
+          },
+          "backend_id": {
+            "title": "Backend Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_approval",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "workspace_id",
+          "session_id",
+          "run_id",
+          "backend_id",
+          "status",
+          "correlation_id",
+          "created_at",
+          "message",
+          "attachment_refs"
+        ],
+        "title": "GeneratedRunProjection",
+        "type": "object"
+      },
+      "GeneratedSessionCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_definition_id": {
+            "title": "Agent Definition Id",
+            "type": "string"
+          },
+          "agent_definition_version": {
+            "title": "Agent Definition Version",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "idempotency_key",
+          "title",
+          "agent_definition_id",
+          "agent_definition_version"
+        ],
+        "title": "GeneratedSessionCreateRequest",
+        "type": "object"
+      },
+      "GeneratedSessionProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_definition_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Definition Id"
+          },
+          "agent_definition_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Definition Version"
+          },
+          "backend_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend Id"
+          },
+          "last_run_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Status"
+          },
+          "lifecycle": {
+            "enum": [
+              "active",
+              "archived",
+              "removed"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "workspace_id",
+          "session_id",
+          "title",
+          "lifecycle",
+          "updated_at"
+        ],
+        "title": "GeneratedSessionProjection",
+        "type": "object"
+      },
+      "GeneratedSessionUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "lifecycle": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "archived",
+                  "removed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id"
+        ],
+        "title": "GeneratedSessionUpdateRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1912,6 +2401,43 @@
         "title": "ProtocolDeletionRequirements",
         "type": "object"
       },
+      "PushProviderReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "fcm": {
+            "title": "Fcm",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fcm"
+        ],
+        "title": "PushProviderReadiness",
+        "type": "object"
+      },
+      "PushReadinessResult": {
+        "additionalProperties": false,
+        "properties": {
+          "providers": {
+            "$ref": "#/components/schemas/PushProviderReadiness"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "worker_running": {
+            "title": "Worker Running",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "providers",
+          "worker_running"
+        ],
+        "title": "PushReadinessResult",
+        "type": "object"
+      },
       "PushRegistrationRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2228,62 +2754,6 @@
         "title": "WorkspacePublishRequest",
         "type": "object"
       },
-      "_ApprovalDecision": {
-        "additionalProperties": false,
-        "properties": {
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "decision": {
-            "title": "Decision",
-            "type": "string"
-          },
-          "idempotency_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Idempotency Key"
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "request_id",
-          "correlation_id",
-          "decision"
-        ],
-        "title": "_ApprovalDecision",
-        "type": "object"
-      },
-      "_LatencyObservationRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "client_receive_at_ms": {
-            "minimum": 0.0,
-            "title": "Client Receive At Ms",
-            "type": "integer"
-          },
-          "render_at_ms": {
-            "minimum": 0.0,
-            "title": "Render At Ms",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "client_receive_at_ms",
-          "render_at_ms"
-        ],
-        "title": "_LatencyObservationRequest",
-        "type": "object"
-      },
       "_OwopRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2319,65 +2789,6 @@
         "title": "_OwopRequest",
         "type": "object"
       },
-      "_RunCreate": {
-        "additionalProperties": false,
-        "properties": {
-          "attachment_refs": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Attachment Refs",
-            "type": "array"
-          },
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "idempotency_key": {
-            "title": "Idempotency Key",
-            "type": "string"
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
-          },
-          "retry_of": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Retry Of"
-          },
-          "source_message_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Message Id"
-          }
-        },
-        "required": [
-          "request_id",
-          "correlation_id",
-          "idempotency_key",
-          "message"
-        ],
-        "title": "_RunCreate",
-        "type": "object"
-      },
       "_RuntimeRename": {
         "additionalProperties": false,
         "properties": {
@@ -2390,85 +2801,6 @@
           "display_name"
         ],
         "title": "_RuntimeRename",
-        "type": "object"
-      },
-      "_SessionCreate": {
-        "additionalProperties": false,
-        "properties": {
-          "agent_definition_id": {
-            "title": "Agent Definition Id",
-            "type": "string"
-          },
-          "agent_definition_version": {
-            "title": "Agent Definition Version",
-            "type": "string"
-          },
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "idempotency_key": {
-            "title": "Idempotency Key",
-            "type": "string"
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "request_id",
-          "correlation_id",
-          "idempotency_key",
-          "title",
-          "agent_definition_id",
-          "agent_definition_version"
-        ],
-        "title": "_SessionCreate",
-        "type": "object"
-      },
-      "_SessionUpdate": {
-        "additionalProperties": false,
-        "properties": {
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "lifecycle": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResourceLifecycle"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          }
-        },
-        "required": [
-          "request_id",
-          "correlation_id"
-        ],
-        "title": "_SessionUpdate",
         "type": "object"
       }
     }
@@ -2889,6 +3221,24 @@
           }
         },
         "summary": "Conversation Latency Metrics"
+      }
+    },
+    "/v1/push/readiness": {
+      "get": {
+        "operationId": "push_readiness_v1_push_readiness_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushReadinessResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Push Readiness"
       }
     },
     "/v1/runtime-connections/{runtime_id}/heartbeat": {
@@ -3413,7 +3763,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/_ApprovalDecision"
+                "$ref": "#/components/schemas/GeneratedApprovalDecisionRequest"
               }
             }
           },
@@ -3423,7 +3773,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedApprovalProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -3912,7 +4264,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedRunProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -4441,7 +4795,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedRunProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -4630,7 +4986,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/_SessionCreate"
+                "$ref": "#/components/schemas/GeneratedSessionCreateRequest"
               }
             }
           },
@@ -4640,7 +4996,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedSessionProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -4695,7 +5053,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedSessionProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -4748,7 +5108,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/_SessionUpdate"
+                "$ref": "#/components/schemas/GeneratedSessionUpdateRequest"
               }
             }
           },
@@ -4758,7 +5118,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedSessionProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -5105,9 +5467,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Latency Observation V1 Runtimes  Runtime Id  Workspaces  Workspace Id  Sessions  Session Id  Events  Event Id  Latency Observation Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GeneratedLatencyObservationResponse"
                 }
               }
             },
@@ -5170,7 +5530,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/_LatencyObservationRequest"
+                "$ref": "#/components/schemas/GeneratedLatencyObservationRequest"
               }
             }
           },
@@ -5181,9 +5541,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Record Latency Observation V1 Runtimes  Runtime Id  Workspaces  Workspace Id  Sessions  Session Id  Events  Event Id  Latency Observation Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GeneratedLatencyObservationResponse"
                 }
               }
             },
@@ -5556,7 +5914,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/_RunCreate"
+                "$ref": "#/components/schemas/GeneratedRunCreateRequest"
               }
             }
           },
@@ -5566,7 +5924,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedRunProjection"
+                }
               }
             },
             "description": "Successful Response"

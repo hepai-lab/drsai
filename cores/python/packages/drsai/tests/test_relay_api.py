@@ -229,6 +229,32 @@ def test_oaep_metrics_are_content_free_and_expose_schema_identity() -> None:
     assert not ({"event", "payload", "body", "token"} & payload.keys())
 
 
+@pytest.mark.parametrize(
+    ("providers", "worker_running", "expected"),
+    [
+        (frozenset(), False, {"ready": False, "providers": {"fcm": False}, "worker_running": False}),
+        (frozenset(), True, {"ready": False, "providers": {"fcm": False}, "worker_running": True}),
+        (frozenset({"fcm"}), False, {"ready": False, "providers": {"fcm": True}, "worker_running": False}),
+        (frozenset({"fcm"}), True, {"ready": True, "providers": {"fcm": True}, "worker_running": True}),
+    ],
+)
+def test_push_readiness_is_public_exact_and_never_claims_partial_setup_ready(
+    providers: frozenset[str], worker_running: bool, expected: dict[str, object],
+) -> None:
+    client = TestClient(create_relay_app(
+        registry=RelayRegistry(supported_push_providers=providers),
+        push_worker_running=worker_running,
+    ))
+    response = client.get("/v1/push/readiness")
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+def test_push_readiness_rejects_non_boolean_worker_configuration() -> None:
+    with pytest.raises(TypeError, match="push_worker_running must be bool"):
+        create_relay_app(push_worker_running=1)  # type: ignore[arg-type]
+
+
 def test_device_bound_push_registration_route_rotates_and_revokes_without_token_echo() -> None:
     registry = RelayRegistry(supported_push_providers=frozenset({"fcm"}))
     app = create_relay_app(
@@ -652,7 +678,7 @@ def test_device_key_rotation_is_atomic_across_all_runtime_associations() -> None
     assert recovered.status_code == 200
 
 
-def test_device_bound_workspace_allowlist_filters_catalog_and_denies_before_proxy() -> None:
+def test_two_device_workspace_idor_matrix_filters_catalog_and_denies_before_proxy() -> None:
     app = _testing_app()
     client = TestClient(app)
     _, runtime_id, runtime_token = register(client)
@@ -683,9 +709,9 @@ def test_device_bound_workspace_allowlist_filters_catalog_and_denies_before_prox
         assert response.status_code == 200
 
     selected_private = Ed25519PrivateKey.generate()
-    all_private = Ed25519PrivateKey.generate()
+    second_private = Ed25519PrivateKey.generate()
     pair("android-selected-0001", selected_private, "selected", ["workspace-one"])
-    pair("android-all-workspaces", all_private, "all", [])
+    pair("android-selected-0002", second_private, "selected", ["workspace-two"])
     access_token = "test-access-token"
     catalog_url = f"/v1/runtimes/{runtime_id}/workspaces"
 
@@ -708,16 +734,24 @@ def test_device_bound_workspace_allowlist_filters_catalog_and_denies_before_prox
     assert forbidden.status_code == 403
     assert forbidden.json()["code"] == "workspace_forbidden"
 
-    all_workspaces = client.get(catalog_url, headers={
+    second_catalog = client.get(catalog_url, headers={
         "x-subject": "alice",
         **device_proof_headers(
-            all_private, "android-all-workspaces", "GET", catalog_url, access_token,
+            second_private, "android-selected-0002", "GET", catalog_url, access_token,
         ),
     })
-    assert all_workspaces.status_code == 200
-    assert [item["workspace_id"] for item in all_workspaces.json()["items"]] == [
-        "workspace-one", "workspace-two",
-    ]
+    assert second_catalog.status_code == 200
+    assert [item["workspace_id"] for item in second_catalog.json()["items"]] == ["workspace-two"]
+
+    second_forbidden_url = f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions"
+    second_forbidden = client.get(second_forbidden_url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(
+            second_private, "android-selected-0002", "GET", second_forbidden_url, access_token,
+        ),
+    })
+    assert second_forbidden.status_code == 403
+    assert second_forbidden.json()["code"] == "workspace_forbidden"
 
 
 def test_authorization_shrink_closes_stream_and_new_requests_use_reduced_permissions() -> None:

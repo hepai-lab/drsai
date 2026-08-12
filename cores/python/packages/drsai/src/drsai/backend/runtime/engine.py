@@ -21,6 +21,7 @@ from drsai.backend.runtime.experiments import RuntimeExperimentStore
 from drsai.backend.runtime.replay_planner import ReplayPlanStore
 from drsai.backend.runtime.replay_execution import ReplayExecutionStore
 from drsai.backend.runtime.run_comparison import RunComparisonStore
+from drsai.backend.runtime.run_comparison_evaluation import RunComparisonEvaluationStore
 from drsai.backend.runtime.oaep import project_event, project_snapshot, safe_error
 from drsai.backend.runtime.run_inspection import (
     INSPECTION_SCHEMA_VERSION,
@@ -288,6 +289,9 @@ class RuntimeEngine:
             self.database, self.get_run,
             lambda run_id: self.get_run_manifest(run_id, safe=False),
             self.inspect_run, self.experiments,
+        )
+        self.run_comparison_evaluations = RunComparisonEvaluationStore(
+            self.database, self.run_comparisons.get,
         )
         from drsai.backend.runtime.adoptions import RuntimeAdoptionStore
         self.adoptions = RuntimeAdoptionStore(self.database)
@@ -1060,6 +1064,26 @@ class RuntimeEngine:
             raise KeyError("Run not found")
         return self._run(row)
 
+    def get_run_by_idempotency(self, session_id: str, idempotency_key: str) -> dict[str, Any]:
+        """Resolve an already-created Run without reissuing its side effect.
+
+        This is the recovery read used when a client cannot know whether the
+        create response was lost.  Both values are checked so a key cannot be
+        used as a cross-Session lookup oracle.
+        """
+        if not idempotency_key or len(idempotency_key) > 200 or any(
+            character in idempotency_key for character in "\r\n\0"
+        ):
+            raise ValueError("A valid Idempotency-Key is required")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM runtime_runs WHERE session_id=? AND idempotency_key=?",
+                (session_id, idempotency_key),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Run idempotency result not found")
+        return self._run(row)
+
     def revise_goal(
         self, run_id: str, goal: Mapping[str, Any], *, expected_version: int,
     ) -> dict[str, Any]:
@@ -1413,8 +1437,11 @@ class RuntimeEngine:
         parameters.append(bounded + 1)
         with self._connect() as db:
             rows = db.execute(
-                f"SELECT rowid AS inspection_rowid,* FROM runtime_runs WHERE {where} "
-                "ORDER BY rowid LIMIT ?",
+                f"SELECT rowid AS inspection_rowid,*,"
+                "COALESCE((SELECT relation_type FROM runtime_run_relations "
+                "WHERE target_run_id=runtime_runs.run_id ORDER BY created_at DESC LIMIT 1),"
+                "CASE WHEN parent_run_id IS NOT NULL THEN 'subagent' ELSE 'root' END) AS relation_type "
+                f"FROM runtime_runs WHERE {where} ORDER BY rowid LIMIT ?",
                 parameters,
             ).fetchall()
         page = rows[:bounded]
@@ -2384,7 +2411,48 @@ class RuntimeEngine:
                 db.rollback(); raise ValueError(f"Illegal Run transition: {row['status']} -> {status}")
             started = row["started_at"] or (_now() if status == "running" else None)
             completed = _now() if status in {"completed", "cancelled", "failed"} else None
+            pending_approvals = []
             if completed:
+                pending_approvals = db.execute(
+                    "SELECT approval_id,request_json,deadline_at FROM runtime_approvals "
+                    "WHERE run_id=? AND status='pending' ORDER BY created_at",
+                    (run_id,),
+                ).fetchall()
+                if pending_approvals:
+                    db.execute(
+                        "UPDATE runtime_approvals SET status='cancelled',decision_json=?,resolved_at=? "
+                        "WHERE run_id=? AND status='pending'",
+                        (
+                            json.dumps({"reason": f"run_{status}"}, separators=(",", ":")),
+                            completed,
+                            run_id,
+                        ),
+                    )
+                db.execute(
+                    "UPDATE runtime_side_effects SET status='rejected',completed_at=? "
+                    "WHERE run_id=? AND status IN ('requested','approved')",
+                    (completed, run_id),
+                )
+                for approval in pending_approvals:
+                    approval_id = str(approval["approval_id"])
+                    self.conversation_journal.upsert_item_in_transaction(
+                        db,
+                        str(row["session_id"]),
+                        item_id=f"approval:{approval_id}",
+                        kind="approval",
+                        role=None,
+                        revision=2,
+                        source_client="runtime",
+                        payload={
+                            "approval_id": approval_id,
+                            "status": "cancelled",
+                            "request": json.loads(str(approval["request_json"])),
+                            "decision": {"reason": f"run_{status}"},
+                            "deadline_at": approval["deadline_at"],
+                        },
+                        run_id=run_id,
+                        updated_at=completed,
+                    )
                 self._finalize_active_run_items_in_transaction(
                     db,
                     session_id=str(row["session_id"]),
@@ -2421,6 +2489,37 @@ class RuntimeEngine:
                 dedupe_key=f"runtime-event:{runtime_event_id}",
                 created_at=event_created,
             )
+            for approval in pending_approvals:
+                sequence += 1
+                approval_id = str(approval["approval_id"])
+                approval_event_id = f"event-{uuid.uuid4()}"
+                approval_detail = {"approval_id": approval_id, "reason": f"run_{status}"}
+                db.execute(
+                    "INSERT INTO runtime_events("
+                    "event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key"
+                    ") VALUES(?,?,?,?,?,?,NULL)",
+                    (
+                        approval_event_id,
+                        run_id,
+                        sequence,
+                        "approval.cancelled",
+                        json.dumps(approval_detail, separators=(",", ":"), sort_keys=True),
+                        event_created,
+                    ),
+                )
+                self.conversation_journal.append_event_in_transaction(
+                    db,
+                    str(row["session_id"]),
+                    "approval.decided",
+                    {
+                        "approval_id": approval_id,
+                        "decision": "cancelled",
+                        "detail": {"reason": f"run_{status}"},
+                    },
+                    run_id=run_id,
+                    dedupe_key=f"runtime-event:{approval_event_id}",
+                    created_at=event_created,
+                )
             if status in {"completed", "cancelled", "failed"}:
                 self._merge_run_manifest_in_transaction(
                     db,
@@ -2452,6 +2551,45 @@ class RuntimeEngine:
                 db.commit()
                 return self._run(row)
             first_request = row["cancel_requested_at"] is None
+            pending_approvals = db.execute(
+                "SELECT approval_id,request_json,deadline_at FROM runtime_approvals "
+                "WHERE run_id=? AND status='pending' ORDER BY created_at",
+                (run_id,),
+            ).fetchall()
+            if pending_approvals:
+                db.execute(
+                    "UPDATE runtime_approvals SET status='denied',decision_json=?,resolved_at=? "
+                    "WHERE run_id=? AND status='pending'",
+                    (json.dumps({"reason": "run_cancelled"}, separators=(",", ":")), now, run_id),
+                )
+            # Cancellation atomically revokes every side effect that has not
+            # started. An approval that won just before this transaction must
+            # not remain claimable after the Run is terminal.
+            db.execute(
+                "UPDATE runtime_side_effects SET status='rejected',completed_at=? "
+                "WHERE run_id=? AND status IN ('requested','approved')",
+                (now, run_id),
+            )
+            for approval in pending_approvals:
+                approval_id = str(approval["approval_id"])
+                self.conversation_journal.upsert_item_in_transaction(
+                    db,
+                    str(row["session_id"]),
+                    item_id=f"approval:{approval_id}",
+                    kind="approval",
+                    role=None,
+                    revision=2,
+                    source_client="runtime",
+                    payload={
+                        "approval_id": approval_id,
+                        "status": "denied",
+                        "request": json.loads(str(approval["request_json"])),
+                        "decision": {"reason": "run_cancelled"},
+                        "deadline_at": approval["deadline_at"],
+                    },
+                    run_id=run_id,
+                    updated_at=now,
+                )
             self._finalize_active_run_items_in_transaction(
                 db,
                 session_id=str(row["session_id"]),
@@ -2468,16 +2606,6 @@ class RuntimeEngine:
                 current = db.execute("SELECT * FROM runtime_runs WHERE run_id=?", (run_id,)).fetchone()
                 db.commit()
                 return self._run(current)
-            pending_approvals = db.execute(
-                "SELECT approval_id FROM runtime_approvals WHERE run_id=? AND status='pending' ORDER BY created_at",
-                (run_id,),
-            ).fetchall()
-            if pending_approvals:
-                db.execute(
-                    "UPDATE runtime_approvals SET status='denied',decision_json=?,resolved_at=? "
-                    "WHERE run_id=? AND status='pending'",
-                    (json.dumps({"reason": "run_cancelled"}, separators=(",", ":")), now, run_id),
-                )
             sequence = int(db.execute(
                 "SELECT COALESCE(MAX(sequence),0) FROM runtime_events WHERE run_id=?",
                 (run_id,),
@@ -3507,7 +3635,14 @@ class RuntimeEngine:
 
     def get_side_effect(self, approval_id: str) -> dict[str, Any]:
         with self._connect() as db:
-            row = db.execute("SELECT * FROM runtime_side_effects WHERE approval_id=?", (approval_id,)).fetchone()
+            row = db.execute(
+                "SELECT e.*,r.status AS run_status,a.status AS approval_status "
+                "FROM runtime_side_effects e "
+                "JOIN runtime_runs r ON r.run_id=e.run_id "
+                "JOIN runtime_approvals a ON a.approval_id=e.approval_id "
+                "WHERE e.approval_id=?",
+                (approval_id,),
+            ).fetchone()
         if row is None:
             raise KeyError("Side effect not found")
         return self._side_effect(row)
@@ -3523,7 +3658,14 @@ class RuntimeEngine:
         claimed_at = _now()
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM runtime_side_effects WHERE approval_id=?", (approval_id,)).fetchone()
+            row = db.execute(
+                "SELECT e.*,r.status AS run_status,a.status AS approval_status "
+                "FROM runtime_side_effects e "
+                "JOIN runtime_runs r ON r.run_id=e.run_id "
+                "JOIN runtime_approvals a ON a.approval_id=e.approval_id "
+                "WHERE e.approval_id=?",
+                (approval_id,),
+            ).fetchone()
             if row is None:
                 db.rollback()
                 raise KeyError("Side effect not found")
@@ -3539,9 +3681,13 @@ class RuntimeEngine:
             if str(row["status"]) != "approved":
                 db.rollback()
                 raise ValueError("Side effect is not approved for execution")
+            if str(row["run_status"]) != "running" or str(row["approval_status"]) != "approved":
+                db.rollback()
+                raise ValueError("Side effect authorization is no longer active")
             updated = db.execute(
                 "UPDATE runtime_side_effects SET status='executing',execution_started_at=?,recovered_at=? "
-                "WHERE approval_id=? AND status='approved'",
+                "WHERE approval_id=? AND status='approved' "
+                "AND EXISTS(SELECT 1 FROM runtime_runs r WHERE r.run_id=runtime_side_effects.run_id AND r.status='running')",
                 (claimed_at, claimed_at if recovered else row["recovered_at"], approval_id),
             )
             if updated.rowcount != 1:

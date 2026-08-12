@@ -119,6 +119,39 @@ def _knowledge_retrieval_sources(messages: Sequence[Mapping[str, Any]]) -> list[
     return list(sources)
 
 
+def _memory_retrieval_sources(messages: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return exact, bounded memory markers supplied by successful memory tools."""
+    sources: dict[str, None] = {}
+    for message in messages:
+        if message.get("role") != "tool" or message.get("succeeded") is False:
+            continue
+        if str(message.get("name", "")).casefold() not in {
+            "search_memory", "retrieve_from_memory", "read_session_memory_by_index",
+        }:
+            continue
+        content = message.get("content", {})
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except (TypeError, json.JSONDecodeError):
+                content = {}
+        if not isinstance(content, Mapping):
+            continue
+        rows = content.get("items", content.get("results", []))
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            continue
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            source_id = str(row.get("source_id") or "").strip()
+            if not source_id:
+                memory_id = str(row.get("id") or "").strip()
+                source_id = f"memory:{memory_id}" if memory_id else ""
+            if re.fullmatch(r"memory:[A-Za-z0-9._:-]{1,160}", source_id):
+                sources.setdefault(f"[{source_id}]", None)
+    return list(sources)
+
+
 def _web_search_query_terms(query: str) -> frozenset[str]:
     normalized = query.casefold()
     normalized = re.sub(r"(?<=[a-z])(?=[0-9])|(?<=[0-9])(?=[a-z])", " ", normalized)
@@ -317,7 +350,15 @@ class DrSaiAgentKernel:
         ):
             raise ValueError("run_satisfied_capability_domains_invalid")
         satisfied_domains = set(raw_satisfied_domains)
-        if not satisfied_domains.issubset({"retrieval", "workspace", "device", "time", "memory"}):
+        # Keep this set aligned with agent_kernel._tool_decision_domain. A
+        # trusted Host may satisfy any domain with already-captured evidence;
+        # restricting this to the original five domains made isolated
+        # regression Judges re-run process/image/plan capabilities even though
+        # their complete candidate evidence was supplied inline.
+        if not satisfied_domains.issubset({
+            "retrieval", "workspace", "process", "device", "time", "memory",
+            "plan", "image_generation", "image_edit",
+        }):
             raise ValueError("run_satisfied_capability_domains_invalid")
         if satisfied_domains:
             requirement = dict(state.tool_decision_requirement)
@@ -983,7 +1024,8 @@ class DrSaiAgentKernel:
                     # trusted Tool result and validate the repaired answer again.
                     source_urls = _public_retrieval_source_urls(state.messages)
                     knowledge_sources = _knowledge_retrieval_sources(state.messages)
-                    trusted_sources = [*source_urls, *knowledge_sources]
+                    memory_sources = _memory_retrieval_sources(state.messages)
+                    trusted_sources = [*source_urls, *knowledge_sources, *memory_sources]
                     if trusted_sources:
                         # Remove every model-authored URL before attaching trusted
                         # Tool URLs. This also safely handles subtly altered paths,
@@ -1031,8 +1073,9 @@ class DrSaiAgentKernel:
                     state.messages.append({
                         "role": "system",
                         "content": "Your answer must cite at least one exact source reference from the successful retrieval "
-                                   "tool results (an HTTPS URL or an internal knowledge source URI) and must not invent sources. "
-                                   "Revise the answer now.",
+                                   "tool results (an HTTPS URL, an internal knowledge source URI, or every exact "
+                                   "[memory:<id>] marker returned by memory search) and must not invent sources. "
+                                   "For conflicting memory results, state the conflict rather than silently choosing one. Revise the answer now.",
                     })
                     state.phase = RunPhase.WAITING_MODEL
                     return (*reasoning_events, decision_event,
@@ -1132,12 +1175,12 @@ class DrSaiAgentKernel:
                 )
             state.phase = RunPhase.COMPLETED
             self._active_run_by_session.pop(state.session_id, None)
-            verified_message = ()
-            if decision["category"] == "required_tool_satisfied" and content:
-                verified_message = (self._event(state, "message.completed", {
+            completed_message = ()
+            if content:
+                completed_message = (self._event(state, "message.completed", {
                     "item_id": f"{state.run_id}:assistant", "role": "assistant", "text": content, "phase": "final",
                 }),)
-            return (*reasoning_events, decision_event, *citation_event, *verified_message,
+            return (*reasoning_events, decision_event, *citation_event, *completed_message,
                 self._event(state, "run.completed", {"status": "completed"}),
                 self._checkpoint(state, "terminal"),
             )
@@ -1491,7 +1534,14 @@ class DrSaiAgentKernel:
             )]
             safe_names = {str(tool["name"]) for tool in safe_tools}
             if requested_tools is not None:
-                requested = set(requested_tools)
+                # OpenAI-compatible providers may encode punctuation in nested
+                # string arguments using the same reversible spelling used for
+                # function names. Resolve only exact aliases of already-safe
+                # tools; this cannot expand a child beyond the parent allowlist.
+                requested = {
+                    value.replace("__dot__", ".") if value.replace("__dot__", ".") in safe_names else value
+                    for value in requested_tools
+                }
                 if not requested <= safe_names:
                     raise ValueError("subagent_tool_whitelist_denied")
                 safe_tools = [tool for tool in safe_tools if tool["name"] in requested]

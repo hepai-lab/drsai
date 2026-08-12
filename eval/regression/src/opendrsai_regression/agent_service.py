@@ -591,6 +591,27 @@ def _safe_summary(summary: dict[str, Any], evaluation_id: str, requested_case_id
         } for assertion in item.get("assertions") or []]
         evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
         manifest = evidence.get("manifest") if isinstance(evidence.get("manifest"), dict) else {}
+        source_references = []
+        seen_source_references: set[tuple[str, str]] = set()
+        for reference in evidence.get("references") or []:
+            if not isinstance(reference, dict):
+                continue
+            reference_type = _safe_reference_segment(reference.get("type"))
+            reference_id = _safe_reference_segment(reference.get("id"))
+            case_id = _safe_reference_segment(item.get("case_id"))
+            if not (reference_type and reference_id and case_id):
+                continue
+            reference_key = (reference_type, reference_id)
+            if reference_key in seen_source_references:
+                continue
+            seen_source_references.add(reference_key)
+            source_references.append({
+                "type": reference_type, "id": reference_id, "interactive": True,
+                "uri": (
+                    f"opendrsai://regression/evaluations/{evaluation_id}/evidence/"
+                    f"{case_id}/{reference_type}/{reference_id}"
+                ),
+            })
         results.append({
             "case_id": item.get("case_id"), "case_revision": item.get("case_revision"),
             "case_snapshot_sha256": item.get("case_snapshot_sha256"),
@@ -599,6 +620,7 @@ def _safe_summary(summary: dict[str, Any], evaluation_id: str, requested_case_id
             "duration_seconds": item.get("duration_seconds"),
             "error_category": item.get("error_category"), "error": _safe_scalar(item.get("error")),
             "assertions": assertions, "model": _safe_tree(manifest.get("model")),
+            "references": source_references,
         })
     completed = {str(item.get("case_id")) for item in summary.get("results") or []}
     not_run = [case_id for case_id in (requested_case_ids or []) if case_id not in completed]
@@ -651,6 +673,45 @@ def _write_reference_documents(directory: Path, safe_summary: dict[str, Any], ra
         temporary = directory / f"{name}.tmp"
         temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         os.replace(temporary, directory / name)
+    reference_root = directory / "references"
+    for item in raw_summary.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        case_id = _safe_reference_segment(item.get("case_id"))
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        if not case_id:
+            continue
+        for reference in evidence.get("references") or []:
+            if not isinstance(reference, dict):
+                continue
+            reference_type = _safe_reference_segment(reference.get("type"))
+            reference_id = _safe_reference_segment(reference.get("id"))
+            if not (reference_type and reference_id):
+                continue
+            target_dir = reference_root / case_id / reference_type
+            target_dir.mkdir(parents=True, exist_ok=True)
+            document = {
+                "schema_version": "opendrsai.regression-reference/1",
+                "kind": "source_evidence", "evaluation_id": evaluation_id,
+                "case_id": case_id, "reference": _safe_tree(reference),
+                "evidence": {
+                    "comparison": _safe_tree(evidence.get("comparison")),
+                    "operation_calls": _safe_tree(evidence.get("operation_calls")),
+                    "references": _safe_tree(evidence.get("references")),
+                    "output": _safe_scalar(evidence.get("output")),
+                },
+            }
+            target = target_dir / f"{reference_id}.json"
+            temporary = target.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(temporary, target)
+
+
+def _safe_reference_segment(value: Any) -> str | None:
+    text = str(value or "")
+    if not text or len(text) > 160 or re.fullmatch(r"[A-Za-z0-9._-]+", text) is None:
+        return None
+    return text
 
 
 def _safe_tree(value: Any, depth: int = 0) -> Any:

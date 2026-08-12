@@ -217,6 +217,23 @@ def _scrub_public(value: Any, key: str = "") -> Any:
     if isinstance(value, list):
         return [_scrub_public(item, key) for item in value]
     if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith(("{", "[")):
+            try:
+                structured = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                structured = None
+            if isinstance(structured, (dict, list)):
+                # Scrubbing a serialized JSON envelope as opaque text can
+                # consume the backslash that escapes a quote after a Windows
+                # path, corrupting otherwise valid OAEP evidence. Preserve
+                # the envelope by scrubbing its values structurally.
+                return json.dumps(
+                    _scrub_public(structured, key),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
         if key.lower() in {"path", "root", "cwd", "workspace_path"} and (
             value.startswith("/")
             or _WINDOWS_ABSOLUTE.match(value)

@@ -19,10 +19,25 @@ from drsai.backend.runtime.oaep import (
     project_openai_chat_completion_chunks,
     reduce_oaep_events,
 )
+from drsai.oaep.digest import oaep_items_digest
 from drsai.relay.models import ConversationSnapshot, SessionEvent
 
 ROOT = Path(__file__).resolve().parents[5]
 OAEP_SCHEMA = ROOT / "cores" / "protocol" / "oaep" / "oaep.schema.json"
+OAEP_WINDOW_FIXTURE = ROOT / "cores" / "protocol" / "oaep" / "snapshot-window.examples.json"
+
+
+def test_oaep_window_fixture_freezes_cross_client_projection_hash() -> None:
+    fixture = json.loads(OAEP_WINDOW_FIXTURE.read_text(encoding="utf-8"))
+    items = sorted(
+        [item for page in fixture["pages"] for item in page["items"]],
+        key=lambda item: (item["run_id"], item["sequence"], item["id"]),
+    )
+    assert oaep_items_digest(items) == fixture["expected_snapshot_hash"]
+    assert all(
+        page["checkpoint"]["snapshot_hash"] == fixture["expected_snapshot_hash"]
+        for page in fixture["pages"]
+    )
 
 
 def test_journal_redaction_preserves_diagnostic_codes_and_removes_credentials() -> None:
@@ -93,6 +108,36 @@ def test_concurrent_session_sequence_is_strictly_monotonic_and_survives_restart(
         run_id=run["run_id"],
     )
     assert created and last["session_sequence"] == baseline + 101
+
+
+def test_workspace_catalog_waits_for_four_content_free_committed_transitions(
+    runtime: tuple[RuntimeEngine, RuntimeConversationJournal],
+) -> None:
+    engine, journal = runtime
+    session = engine.create_session("workspace-one", "Original")
+    cursor = journal.workspace_catalog_watermark("workspace-one")
+
+    engine.update_session(session["session_id"], title="Temporary")
+    engine.update_session(session["session_id"], lifecycle="archived")
+    engine.update_session(session["session_id"], lifecycle="active")
+    engine.update_session(session["session_id"], title="Original")
+
+    events = journal.wait_for_workspace_catalog_events(
+        "workspace-one", after_cursor=cursor, timeout=0, limit=10
+    )
+    assert [event["type"] for event in events] == [
+        "event.session.updated",
+        "event.session.archived",
+        "event.session.updated",
+        "event.session.updated",
+    ]
+    assert [event["sequence"] for event in events] == [2, 3, 4, 5]
+    assert len({event["event_id"] for event in events}) == 4
+    assert all(event["session_id"] == session["session_id"] for event in events)
+    assert all(set(event) == {"cursor", "event_id", "session_id", "type", "sequence"} for event in events)
+    assert journal.wait_for_workspace_catalog_events(
+        "workspace-one", after_cursor=events[-1]["cursor"], timeout=0, limit=10
+    ) == []
 
 
 def test_windows_and_android_concurrent_sends_share_one_ordered_session(

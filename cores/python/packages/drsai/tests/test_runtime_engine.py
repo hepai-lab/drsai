@@ -128,6 +128,12 @@ def test_run_state_idempotency_cancel_and_identity(engine: RuntimeEngine) -> Non
     run, created = engine.create_run(session["session_id"], "agent@v1", "same-key")
     repeated, repeated_created = engine.create_run(session["session_id"], "agent@v1", "same-key")
     assert created and not repeated_created and repeated["run_id"] == run["run_id"]
+    assert engine.get_run_by_idempotency(session["session_id"], "same-key")["run_id"] == run["run_id"]
+    other_session = engine.create_session("workspace-one", "Other Session")
+    with pytest.raises(KeyError, match="idempotency result"):
+        engine.get_run_by_idempotency(other_session["session_id"], "same-key")
+    with pytest.raises(ValueError, match="Idempotency-Key"):
+        engine.get_run_by_idempotency(session["session_id"], "bad\nkey")
     assert run["runtime_id"] == "runtime-test" and run["workspace_id"] == "workspace-one" and run["agent_definition"] == "agent@v1"
     assert run["backend_id"] == "opendrsai"
     with engine._connect() as db, pytest.raises(Exception):
@@ -587,6 +593,89 @@ def test_concurrent_approval_decisions_have_one_atomic_winner(engine: RuntimeEng
     assert len(decision_events) == 1
 
 
+def test_sixty_four_way_approval_cancel_race_has_one_terminal_projection(engine: RuntimeEngine) -> None:
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "approval-cancel-race")
+    engine.transition_run(run["run_id"], "running")
+    approval = engine.request_approval(run["run_id"], {"operation": "tool:write"})
+
+    def race(index: int) -> str:
+        try:
+            if index % 3 == 0:
+                return engine.resolve_approval(approval["approval_id"], "approved")["status"]
+            if index % 3 == 1:
+                return engine.resolve_approval(approval["approval_id"], "denied")["status"]
+            return engine.cancel_run(run["run_id"])["status"]
+        except ValueError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=64) as pool:
+        results = list(pool.map(race, range(64)))
+    assert len(results) == 64
+    assert engine.get_run(run["run_id"])["status"] == "cancelled"
+    stored = engine.get_approval(approval["approval_id"])
+    assert stored["status"] in {"approved", "denied"}
+    assert engine.get_side_effect(approval["approval_id"])["status"] == "rejected"
+    events = engine.list_events(run["run_id"])
+    assert len([event for event in events if event["type"].startswith("approval.") and event["type"] != "approval.requested"]) == 1
+    assert len([event for event in events if event["type"] == "run.cancelled"]) == 1
+    item = next(
+        item for item in engine.conversation_snapshot(session["session_id"])["items"]
+        if item["item_id"] == f"approval:{approval['approval_id']}"
+    )
+    assert item["payload"]["status"] == stored["status"]
+
+
+def test_approved_side_effect_claim_and_cancel_race_executes_at_most_once(engine: RuntimeEngine) -> None:
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "claim-cancel-race")
+    engine.transition_run(run["run_id"], "running")
+    approval = engine.request_approval(run["run_id"], {"operation": "tool:write"})
+    engine.resolve_approval(approval["approval_id"], "approved")
+
+    def race(index: int) -> str:
+        try:
+            if index % 2 == 0:
+                return engine.claim_side_effect(
+                    approval["approval_id"], run["run_id"], "tool:write",
+                )["status"]
+            return engine.cancel_run(run["run_id"])["status"]
+        except ValueError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=64) as pool:
+        results = list(pool.map(race, range(64)))
+    assert results.count("executing") <= 1
+    effect = engine.get_side_effect(approval["approval_id"])
+    if effect["status"] == "executing":
+        effect = engine.complete_side_effect(approval["approval_id"], {"ok": True})
+    assert effect["status"] in {"completed", "rejected"}
+    assert engine.get_run(run["run_id"])["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("terminal", ["cancelled", "failed"])
+def test_terminal_run_atomically_closes_pending_approval_and_unclaimed_effect(
+    engine: RuntimeEngine, terminal: str,
+) -> None:
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", f"terminal-{terminal}")
+    engine.transition_run(run["run_id"], "running")
+    approval = engine.request_approval(run["run_id"], {"operation": "tool:write"})
+
+    assert engine.transition_run(run["run_id"], terminal)["status"] == terminal
+    assert engine.get_approval(approval["approval_id"])["status"] == "cancelled"
+    assert engine.get_side_effect(approval["approval_id"])["status"] == "rejected"
+    with pytest.raises(ValueError, match="not approved|authorization is no longer active"):
+        engine.claim_side_effect(approval["approval_id"], run["run_id"], "tool:write")
+    events = engine.list_events(run["run_id"])
+    assert len([event for event in events if event["type"] == "approval.cancelled"]) == 1
+    item = next(
+        item for item in engine.conversation_snapshot(session["session_id"])["items"]
+        if item["item_id"] == f"approval:{approval['approval_id']}"
+    )
+    assert item["payload"]["status"] == "cancelled"
+
+
 def test_checkpoint_and_run_survive_runtime_restart(tmp_path: Path) -> None:
     database = tmp_path / "runtime.sqlite3"
     first = RuntimeEngine(database, RuntimeEngineIdentity("runtime-test", "instance-one"), lambda _: True)
@@ -597,6 +686,7 @@ def test_checkpoint_and_run_survive_runtime_restart(tmp_path: Path) -> None:
     saved = first.save_checkpoint(run["run_id"], state)
     second = RuntimeEngine(database, RuntimeEngineIdentity("runtime-test", "instance-two"), lambda _: True)
     assert second.get_run(run["run_id"])["status"] == "running"
+    assert second.get_run_by_idempotency(session["session_id"], "restart-key")["run_id"] == run["run_id"]
     assert second.get_run(run["run_id"])["backend_id"] == "opendrsai"
     assert second.latest_checkpoint(run["run_id"])["state"] == state
     second.append_event(run["run_id"], "run.resumed", {"checkpoint_id": saved["checkpoint_id"]})
