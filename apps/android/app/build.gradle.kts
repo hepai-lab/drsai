@@ -1,5 +1,6 @@
 import com.android.build.api.variant.impl.VariantOutputImpl
 import groovy.json.JsonSlurper
+import java.security.MessageDigest
 
 val systemVersionFile = rootProject.file(
     "../../cores/VERSION"
@@ -36,9 +37,17 @@ val desktopAgentParityComplete = p9AcceptanceItems.all {
         (it["tests"] as? List<*>)?.isNotEmpty() == true &&
         (it["evidence"] as? List<*>)?.isNotEmpty() == true
 }
-val androidBuildPython = providers.gradleProperty("opendrsai.android.buildPython")
+val androidBuildPythonOverride = providers.gradleProperty("opendrsai.android.buildPython")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_BUILD_PYTHON"))
-    .getOrElse(rootProject.file("../../.venv/Scripts/python.exe").absolutePath)
+    .orNull
+val androidRuntimePythonVersion = providers.gradleProperty("opendrsai.android.pythonVersion")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_PYTHON_VERSION"))
+    .getOrElse("3.12")
+    .also {
+        require(it in setOf("3.11", "3.12", "3.13", "3.14")) {
+            "Unsupported Android Runtime Python version: $it"
+        }
+    }
 val runtimePolicyPublicKey = providers.gradleProperty("opendrsai.android.runtimePolicyPublicKey")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_RUNTIME_POLICY_PUBLIC_KEY"))
     .getOrElse("")
@@ -145,8 +154,14 @@ plugins {
 
 chaquopy {
     defaultConfig {
-        version = "3.11"
-        buildPython(androidBuildPython)
+        version = androidRuntimePythonVersion
+        if (androidBuildPythonOverride != null) {
+            buildPython(androidBuildPythonOverride)
+        } else if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+            buildPython("py", "-$androidRuntimePythonVersion")
+        } else {
+            buildPython("python$androidRuntimePythonVersion")
+        }
     }
     sourceSets {
         getByName("main") {
@@ -524,10 +539,21 @@ data class GeneratedRuntimeSessionEventFrame(
 
 tasks.register("generateAndroidRelayBindings") {
     inputs.file(relaySchemaFile)
+    inputs.file(rootProject.file("../../scripts/generate_relay_contract.py"))
     outputs.file(generatedRelayFile)
     doLast {
-        generatedRelayFile.parentFile.mkdirs()
-        generatedRelayFile.writeText(renderAndroidRelayBindings())
+        val repositoryRoot = rootProject.file("../..")
+        val windowsPython = repositoryRoot.resolve(".venv/Scripts/python.exe")
+        val unixPython = repositoryRoot.resolve(".venv/bin/python")
+        val python = when {
+            windowsPython.isFile -> windowsPython.absolutePath
+            unixPython.isFile -> unixPython.absolutePath
+            else -> "python3"
+        }
+        exec {
+            workingDir(repositoryRoot)
+            commandLine(python, "scripts/generate_relay_contract.py")
+        }
     }
 }
 
@@ -537,10 +563,17 @@ tasks.register("verifyAndroidRelayBindings") {
     inputs.file(generatedRelayFile)
     doLast {
         check(generatedRelayFile.exists()) {
-            "Missing generated Android Relay bindings. Run generateAndroidRelayBindings."
+            "Missing generated Android Relay bindings. Run scripts/generate_relay_contract.py."
         }
-        check(generatedRelayFile.readText().replace("\r\n", "\n") == renderAndroidRelayBindings().replace("\r\n", "\n")) {
-            "Android Relay bindings drifted from cores/protocol/relay/runtime-relay.schema.json."
+        val expectedHash = MessageDigest.getInstance("SHA-256")
+            .digest(relaySchemaFile.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        val generatedHash = Regex(
+            "SOURCE_SCHEMA_SHA256: String = \\\"([0-9a-f]{64})\\\""
+        ).find(generatedRelayFile.readText())?.groupValues?.get(1)
+        check(generatedHash == expectedHash) {
+            "Android Relay bindings drifted from cores/protocol/relay/runtime-relay.schema.json. " +
+                "Run scripts/generate_relay_contract.py."
         }
     }
 }

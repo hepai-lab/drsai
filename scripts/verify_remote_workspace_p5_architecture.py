@@ -32,6 +32,12 @@ def main() -> int:
     gateway_control = read(
         "cores/python/packages/drsai/src/drsai/relay/gateway_control.py"
     )
+    mobile_pairing = read(
+        "cores/python/packages/drsai/src/drsai/relay/mobile_pairing.py"
+    )
+    python_relay_url = read(
+        "cores/python/packages/drsai/src/drsai/relay/url_path.py"
+    )
     runtime_domain = read(
         "cores/python/packages/drsai/src/drsai/relay/runtime_domain.py"
     )
@@ -42,6 +48,13 @@ def main() -> int:
     generated_relay_android = read(
         "apps/android/app/src/main/java/ai/drsai/remote/remote/generated/RelayContractGenerated.kt"
     )
+    generated_relay_desktop = read(
+        "apps/desktop/shared/api/runtimeRelayErrorActions.generated.ts"
+    )
+    android_actionable_state = read(
+        "apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteActionableState.kt"
+    )
+    desktop_relay_api = read("apps/desktop/shared/api/runtimeRelay.ts")
     runtime_compat = read(
         "cores/python/packages/drsai/src/drsai/compatibility/runtime_legacy_conversation.py"
     )
@@ -53,11 +66,27 @@ def main() -> int:
     legacy_models = read(
         "cores/python/packages/drsai/src/drsai/compatibility/relay_legacy_models.py"
     )
+    legacy_inventory_generator = read(
+        "scripts/generate_remote_workspace_legacy_inventory_p6.py"
+    )
+    legacy_inventory = json.loads(read(
+        "cores/protocol/relay/remote-workspace-legacy-inventory.json"
+    ))
+    legacy_rollback = read("scripts/p5_legacy_rollback.py")
+    desktop_legacy_telemetry = read(
+        "apps/desktop/shared/main/legacyProtocolTelemetry.ts"
+    )
     remote_home = read(
         "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHomeViewModel.kt"
     )
     remote_screens = read(
         "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteWorkspaceScreens.kt"
+    )
+    remote_host_status = read(
+        "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHostStatusPresentation.kt"
+    )
+    remote_push_readiness = read(
+        "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemotePushReadinessPolicy.kt"
     )
     remote_session_screens = read(
         "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionScreens.kt"
@@ -85,6 +114,15 @@ def main() -> int:
     )
     android_repository = read(
         "apps/android/app/src/main/java/ai/drsai/remote/remote/data/RelayRemoteRepository.kt"
+    )
+    android_discovery = read(
+        "apps/android/app/src/main/java/ai/drsai/remote/remote/data/RelayDiscoveryClient.kt"
+    )
+    android_owop_transport = read(
+        "apps/android/app/src/main/java/ai/drsai/remote/remote/data/HttpOwopRelayTransport.kt"
+    )
+    android_relay_url = read(
+        "apps/android/app/src/main/java/ai/drsai/remote/remote/data/RelayUrl.kt"
     )
     android_session_view_model = read(
         "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionViewModel.kt"
@@ -163,11 +201,27 @@ def main() -> int:
     public_oaep_smoke = read("scripts/smoke_runtime_relay_public_v4.py")
     protocol_usage = read("cores/python/packages/drsai/src/drsai/oaep/usage.py")
 
+    require('"x-relay-error-actions"' in relay_schema
+            and all(f'"{action}"' in relay_schema for action in (
+                "retry", "login", "re-pair", "update", "contact-admin",
+            ))
+            and "RELAY_ERROR_ACTIONS" in generated_relay_python
+            and "ERROR_ACTIONS" in generated_relay_android
+            and "RELAY_ERROR_ACTIONS" in generated_relay_desktop
+            and "RelayContractGenerated.errorAction" in android_actionable_state
+            and "remoteActionableFailure(failure)" in remote_home
+            and "actionableError" in remote_screens
+            and '"登录" in it' not in remote_screens
+            and '"版本" in it' not in remote_screens
+            and "relayActionableError" in desktop_relay_api
+            and "verify_p6_relay_error_actions.py" in p5_local_gate,
+            "p6_generated_error_action_contract_missing")
     require("GeneratedSessionEvent" not in oaep and "GeneratedConversationSnapshot" not in oaep,
             "p5_oaep_imports_legacy_dto")
     require("GeneratedSessionEvent" in legacy and "GeneratedConversationSnapshot" in legacy,
             "p5_legacy_adapter_not_explicit")
-    require("container.oaepSessions" in session_vm and "container.legacyConversations" in session_vm,
+    require("container.boundaries.session.oaep" in session_vm
+            and "container.boundaries.session.legacy" in session_vm,
             "p5_session_vm_protocol_boundary_missing")
     for forbidden in ("repository.oaepSnapshot(", "repository.oaepEvents(",
                       "repository.conversationSnapshot(", "repository.sessionEvents("):
@@ -218,7 +272,8 @@ def main() -> int:
             and "$env:OPENDRSAI_GATEWAY_INSTANCE_TOKEN = $token" in gateway_watcher
             and "^[A-Za-z0-9_-]{32,128}$" in gateway_watcher
             and "[string]$InstanceToken," not in gateway_watcher
-            and "-WithGateway" in desktop_dev_entry,
+            and "[switch]$NoGateway" in desktop_dev
+            and "-NoGateway" not in desktop_dev_entry,
             "p5_desktop_source_watcher_drops_runtime_identity")
     require('"stage": stage' in bridge_startup_probe
             and '"error_type": type(exc).__name__' in bridge_startup_probe
@@ -308,12 +363,36 @@ def main() -> int:
             and '"multi_worker_ready"' in relay_api
             and "configured_latency_database.is_absolute()" in relay_api,
             "p5_latency_multi_worker_aggregation_missing")
-    require("onReceived(event" in android_sse and "System.nanoTime()" in android_sse,
+    require("onReceived(event" in android_sse
+            and "time.monotonicNanos()" in android_sse
+            and "time.monotonicElapsedMillis(decodeStarted)" in android_sse
+            and "System.nanoTime()" not in android_sse,
             "p5_android_receive_latency_missing")
+    relay_http_clients = android_sse + android_repository + android_discovery + android_owop_transport
+    require("fun HttpUrl.withRelayPath" in android_relay_url
+            and "segments.forEach(::addPathSegment)" in android_relay_url
+            and "withRelayPath" in android_sse
+            and "withRelayPath" in android_repository
+            and "withRelayPath" in android_discovery
+            and "withRelayPath" in android_owop_transport
+            and 'addPathSegments("v1/runtimes/${' not in relay_http_clients
+            and '"v1/runtimes/${' not in relay_http_clients
+            and 'addPathSegments("v1/associations/${' not in relay_http_clients,
+            "p6_android_relay_opaque_path_not_segment_safe")
+    require("def encoded_path(" in python_relay_url
+            and 'quote(value, safe="")' in python_relay_url
+            and "encoded_path" in gateway_control
+            and "encoded_path" in mobile_pairing
+            and 'f"/v1/sessions/{' not in gateway_control
+            and 'f"/v1/runs/{' not in gateway_control
+            and 'f"/v1/approvals/{' not in gateway_control
+            and 'f"/v1/runtimes/{' not in mobile_pairing,
+            "p6_python_relay_opaque_path_not_segment_safe")
     require("recordConversationLatency" in android_repository
             and "latency-observation" in android_repository
-            and "client_receive_at_ms" in android_repository
-            and "render_at_ms" in android_repository
+            and "GeneratedLatencyObservationRequest" in android_repository
+            and "client_receive_at_ms" in generated_relay_android
+            and "render_at_ms" in generated_relay_android
             and '"/v1/metrics/relay-latency"' in relay_api,
             "p5_android_latency_reporter_missing")
     require("snapshot.window?.nextCursor" in android_session_view_model
@@ -330,10 +409,11 @@ def main() -> int:
             and "oaep_snapshot_window_checkpoint_missing" in android_codec,
             "p5_android_snapshot_window_validation_missing")
     require('event.type == "event.item.delta"' in android_session_view_model
-            and "scheduleOaepProjectionReload(event, renderStarted)" in android_session_view_model
-            and "delay(16L)" in android_session_view_model
+            and "scheduleOaepProjectionReload(event)" in android_session_view_model
+            and android_session_view_model.count("time.awaitFrame()") == 2
+            and "delay(16L)" not in android_session_view_model
             and "flushOaepProjectionReload()" in android_session_view_model
-            and "LatestFrameMailbox<Pair<OaepEvent, Long>>" in android_session_view_model
+            and "LatestFrameMailbox<OaepEvent>" in android_session_view_model
             and "oaepRenderMailbox.finishCycle()" in android_session_view_model
             and "class LatestFrameMailbox" in remote_reliability
             and "if (pending != null) return false" in remote_reliability,
@@ -397,7 +477,7 @@ def main() -> int:
                 "apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteCachePolicy.kt"
             ),
             "p5_oaep_local_capacity_governance_missing")
-    require("if (!foreground || !connectivity.online.value) return" in android_session_view_model
+    require("if (!syncStateMachine.state.shouldSubscribe || !foreground || !connectivity.online.value) return" in android_session_view_model
             and "if (online && foreground) startSessionSync()" in android_session_view_model
             and "retryPolicy.delay(" in android_session_view_model,
             "p5_android_background_or_weak_network_policy_missing")
@@ -412,11 +492,11 @@ def main() -> int:
             and "if (!current.sameOperation(value))" in run_control_ledger
             and "runControls.begin" in android_session_view_model
             and "reconcilePendingRunControl" in android_session_view_model
-            and "repository.recoverRun" in android_session_view_model
-            and "runControls.clearSubject" in read(
+            and "runs.recoverRun" in android_session_view_model
+            and "boundaries.run.controls.clearSubject" in read(
                 "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt"
             )
-            and "runControls.clearRuntime" in read(
+            and "boundaries.run.controls.clearRuntime" in read(
                 "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHomeViewModel.kt"
             ),
             "p5_run_control_process_death_recovery_missing")
@@ -438,8 +518,8 @@ def main() -> int:
             "p5_optimistic_delivery_state_missing")
     require("uncertainOaepSourceMessageIds" in remote_store
             and "recoverUncertainRuns()" in android_session_view_model
-            and "repository.recoverRun(" in android_session_view_model
-            and "/idempotency/run.create/" in android_repository,
+            and "runs.recoverRun(" in android_session_view_model
+            and '"idempotency", "run.create"' in android_repository,
             "p5_uncertain_result_query_recovery_missing")
     require("canTransitionDelivery(current, delivery)" in remote_store
             and "remote_delivery_state_invalid" in remote_store,
@@ -461,15 +541,15 @@ def main() -> int:
             and 'authorize_runtime_permission(x_subject, runtime_id, "approve")' in relay_api
             and "SELECT result_json FROM relay_approval_decisions" in gateway_control
             and "recoverApprovalDecision" in android_repository
-            and "idempotency/approval.decide" in android_repository
-            and "repository.recoverApprovalDecision" in android_session_view_model
+            and '"idempotency", "approval.decide"' in android_repository
+            and "approvals.recoverApprovalDecision" in android_session_view_model
             and "EncryptedSharedPreferences.create" in approval_decision_ledger
             and "remote_approval_decision_conflict" in approval_decision_ledger
             and "sameDecision" in approval_decision_ledger
             and "if (!current.sameDecision(value))" in approval_decision_ledger
             and "reconcilePendingApprovalDecision" in android_session_view_model
-            and "approvalDecisions.clearSubject" in app_view_model
-            and "approvalDecisions.clearRuntime" in remote_home
+            and "boundaries.approval.decisions.clearSubject" in app_view_model
+            and "boundaries.approval.decisions.clearRuntime" in remote_home
             and '"approval_decision_recovery"' in relay_schema
             and "approval_decision_recovery" in generated_relay_python
             and "approval_decision_recovery" in generated_relay_android
@@ -523,9 +603,13 @@ def main() -> int:
             and "test_relay_oaep_performance.py" in p5_local_gate
             and "test_oaep_snapshot_window.py" in p5_local_gate,
             "p5_local_acceptance_must_execute_components")
-    require("RemoteNotificationReadiness.PERMISSION_REQUIRED" in remote_home
+    require("RemoteNotificationReadiness.PERMISSION_REQUIRED" in remote_push_readiness
             and "NotificationManagerCompat" in remote_home
-            and "允许系统通知后" in remote_screens
+            and "pushReadiness()" in remote_home
+            and "notificationReadinessGeneration" in remote_home
+            and "RemoteNotificationReadiness.PLATFORM_UNAVAILABLE" in remote_push_readiness
+            and "允许系统通知后" in remote_host_status
+            and "打开 App 后会自动同步最新进度" in remote_host_status
             and "启用通知" in remote_screens,
             "p5_android_notification_readiness_ui_missing")
     require("DEFAULT_KEY_MAX_AGE_SECONDS" in android_device_proof
@@ -741,6 +825,18 @@ def main() -> int:
             and "response_model=ProtocolDeletionDecision" in relay_api
             and "x-p5-platform-contract-sha256" in relay_api,
             "p5_protocol_usage_daily_evidence_missing")
+    require(legacy_inventory.get("schema_version")
+            == "opendrsai.remote-workspace-legacy-inventory/1"
+            and legacy_inventory.get("policy", {}).get(
+                "long_observation_window_required") is False
+            and len(legacy_inventory.get("items", [])) == 11
+            and all(item.get("rollback_owner_included") is True
+                    for item in legacy_inventory.get("items", []))
+            and "p6_oaep_core_depends_on_legacy" in legacy_inventory_generator
+            and "remote-workspace-legacy-inventory.json" in legacy_rollback
+            and "two_release_cycles" not in desktop_legacy_telemetry
+            and "fourteen_observation_days" not in desktop_legacy_telemetry,
+            "p6_legacy_inventory_or_retirement_boundary_invalid")
 
     print("P5 remote workspace architecture verification passed.")
     return 0

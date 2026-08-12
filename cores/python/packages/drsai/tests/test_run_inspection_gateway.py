@@ -439,6 +439,24 @@ def test_experiment_plan_execute_compare_audit_chain_is_content_free(tmp_path: P
         _AuthorizedRequest(editor, secret),
     ))
     assert comparison["candidate_run_id"] == executed["run"]["run_id"]
+    evaluation = asyncio.run(gateway.runtime_run_comparison_evaluation_create(
+        comparison["comparison_id"],
+        gateway.RuntimeRunComparisonEvaluationCreateRequest(
+            expected_latest_revision=0,
+            verdict="candidate_better",
+            scores={criterion: {"baseline": 3, "candidate": 4} for criterion in (
+                "outcome_quality", "execution_quality", "safety_reproducibility",
+            )},
+            note="Candidate is clearer.",
+        ),
+        _AuthorizedRequest(editor, secret, extra_headers={"idempotency-key": "audit-evaluation"}),
+    ))
+    assert evaluation["revision"] == 1
+    evaluations = asyncio.run(gateway.runtime_run_comparison_evaluations_list(
+        comparison["comparison_id"], _AuthorizedRequest(editor, secret),
+    ))
+    assert evaluations["latest_revision"] == 1
+    assert evaluations["evaluations"][0]["verdict"] == "candidate_better"
     exported = asyncio.run(gateway.runtime_experiment_export(
         experiment["experiment_id"], _AuthorizedRequest(editor, secret),
     ))
@@ -455,7 +473,8 @@ def test_experiment_plan_execute_compare_audit_chain_is_content_free(tmp_path: P
     }
     assert {
         "run.experiment.create", "run.experiment.update", "run.replay-plan.create",
-        "run.replay.execute", "run.comparison.create", "run.experiment.export",
+        "run.replay.execute", "run.comparison.create", "run.comparison-evaluation.create",
+        "run.experiment.export",
     } <= operation_ids
     serialized = json.dumps(audit, ensure_ascii=False)
     assert canary not in serialized

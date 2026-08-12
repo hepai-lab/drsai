@@ -1,0 +1,116 @@
+{
+  "items": [
+    {
+      "consumer": "cores/python/packages/drsai/src/drsai/relay/api.py",
+      "id": "relay-conversation-routes",
+      "kind": "route",
+      "owner": "cores/python/packages/drsai/src/drsai/compatibility/relay_legacy_conversation.py",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+      "id": "runtime-conversation-routes",
+      "kind": "route",
+      "owner": "cores/python/packages/drsai/src/drsai/compatibility/runtime_legacy_conversation.py",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "cores/python/packages/drsai/src/drsai/relay/models.py",
+      "id": "conversation-dtos",
+      "kind": "dto",
+      "owner": "cores/python/packages/drsai/src/drsai/compatibility/relay_legacy_models.py",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+      "id": "runtime-conversation-items",
+      "kind": "table",
+      "owner": "cores/python/packages/drsai/src/drsai/backend/runtime/journal.py",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+      "id": "runtime-session-journal",
+      "kind": "table",
+      "owner": "cores/python/packages/drsai/src/drsai/backend/runtime/journal.py",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+      "id": "legacy-session-migrations",
+      "kind": "table",
+      "owner": "cores/python/packages/drsai/src/drsai/backend/runtime/migrations.py",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "cores/python/packages/drsai/src/drsai/relay/runtime_client.py",
+      "id": "runtime-session-event-forwarder",
+      "kind": "subscription",
+      "owner": "cores/python/packages/drsai/src/drsai/relay/runtime_client.py",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionViewModel.kt",
+      "id": "android-conversation-adapter",
+      "kind": "adapter",
+      "owner": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/LegacyConversationAdapter.kt",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "apps/desktop/shared/main/threadRuntimeSubscription.ts",
+      "id": "desktop-conversation-adapter",
+      "kind": "adapter",
+      "owner": "apps/desktop/shared/main/legacyConversationAdapter.ts",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "apps/desktop/shared/main/threadRuntimeSubscription.ts",
+      "id": "desktop-protocol-selector",
+      "kind": "selector",
+      "owner": "apps/desktop/shared/main/runtimeProtocolSelection.ts",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    },
+    {
+      "consumer": "apps/desktop/shared/main/threadRuntimeSubscription.ts",
+      "id": "desktop-legacy-telemetry",
+      "kind": "telemetry",
+      "owner": "apps/desktop/shared/main/legacyProtocolTelemetry.ts",
+      "removal_state": "retained_until_threshold_passes",
+      "rollback_owner_included": true,
+      "usage_telemetry": "protocol/runtime_version/fallback_reason"
+    }
+  ],
+  "policy": {
+    "delete_only_when": [
+      "oaep_client_ratio>=0.999",
+      "legacy_request_ratio<0.001",
+      "fallback_error_rate<=0.001",
+      "migration_ratio=1",
+      "supported_runtime_requires_legacy=false",
+      "rollback_artifact_verified=true",
+      "transcript_hash_preserved=true"
+    ],
+    "long_observation_window_required": false
+  },
+  "schema_version": "opendrsai.remote-workspace-legacy-inventory/1"
+}

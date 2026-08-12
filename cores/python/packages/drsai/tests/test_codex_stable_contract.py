@@ -103,7 +103,7 @@ def test_every_semantic_notification_has_one_machine_readable_disposition() -> N
 def test_contract_binding_is_generated_deterministically_from_the_only_manifest() -> None:
     manifest_path = REPOSITORY / "cores/protocol/codex-app-server-stable-contract.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["contractVersion"] == 4
+    assert manifest["contractVersion"] == 5
     assert len(CONTRACT_DIGEST) == 64
     script = REPOSITORY / "cores/python/packages/drsai/scripts/generate_codex_stable_contract.py"
     result = subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True)
@@ -117,8 +117,9 @@ def test_contract_classifies_current_schema_and_blocks_unreviewed_versions() -> 
     assert compatibility_for_version("0.142.5") is CodexCompatibility.REVIEWED_COMPATIBLE
     assert compatibility_for_version("0.144.5") is CodexCompatibility.REVIEWED_COMPATIBLE
     assert compatibility_for_version("0.146.0-alpha.9.2") is CodexCompatibility.REVIEWED_COMPATIBLE
+    assert compatibility_for_version("0.147.0-alpha.1.2") is CodexCompatibility.REVIEWED_COMPATIBLE
     assert compatibility_for_version("999.0.0") is CodexCompatibility.BLOCKED
-    assert compatibility_for_identity(baseline, "sha256:e8b1a177553c52620c4735ebd890578dd5333803428af73d33ef02edf02a43ff") is CodexCompatibility.EXACT
+    assert compatibility_for_identity(baseline, "sha256:7d79fe309dd7520843459070f3884ecf0e39cee2620c1c49aad6efb4eca76ecb") is CodexCompatibility.EXACT
     assert compatibility_for_identity(baseline, "sha256:" + "0" * 64) is CodexCompatibility.BLOCKED
     assert compatibility_for_identity("0.144.5", "0da5949167c30a09e459d94559e1ada6910d6ca503a5b5f0e09c0f8eae5ae931") is CodexCompatibility.REVIEWED_COMPATIBLE
     assert classify_notification("thread/environment/connected") is NotificationClass.KNOWN_IGNORED
@@ -134,10 +135,10 @@ def test_schema_contract_verifier_reports_complete_current_coverage() -> None:
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report == {
-        "bundleSha256": "2eee4cd807d04e17934ee7be6d6d946a654677915d0aed3830d64aa5e2bdadf0",
+        "bundleSha256": "80cecd56a6883f2c9c39580122f2adc08b7cc0ad1f24705fd7d917c1651d598c",
         "clientMethods": 15,
-        "codexVersion": "0.147.0-alpha.1.2",
-        "contractVersion": 4,
+        "codexVersion": "0.147.0-alpha.6.6",
+        "contractVersion": 5,
         "notifications": 70,
         "passed": True,
         "semanticDispositions": 23,

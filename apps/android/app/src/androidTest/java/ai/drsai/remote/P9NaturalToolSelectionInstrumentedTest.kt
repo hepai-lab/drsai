@@ -16,6 +16,7 @@ import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.data.MIGRATION_11_12
 import ai.drsai.remote.data.MIGRATION_12_13
 import ai.drsai.remote.data.MIGRATION_13_14
+import ai.drsai.remote.data.MIGRATION_14_15
 import ai.drsai.remote.data.ModelProviderRepository
 import ai.drsai.remote.data.ModelProviderStore
 import ai.drsai.remote.data.OidcClient
@@ -107,7 +108,7 @@ class P9NaturalToolSelectionInstrumentedTest {
                 MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                 MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                 MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
-                MIGRATION_13_14,
+                MIGRATION_13_14, MIGRATION_14_15,
             )
             .build()
         val runtime = PythonRuntimeClient(context, idleTimeoutMs = -1)
@@ -167,6 +168,8 @@ class P9NaturalToolSelectionInstrumentedTest {
                     var terminal = "unknown"
                     var errorCode: String? = null
                     var errorDetail: String? = null
+                    var failureCategory: String? = null
+                    var providerError: String? = null
                     val runId = "p9-m04-f06-${UUID.randomUUID()}"
                     val stateStore = InMemoryCheckpointStore()
                     val recordingModel = RecordingModelPort(
@@ -220,9 +223,16 @@ class P9NaturalToolSelectionInstrumentedTest {
                             errorDetail = terminalEvent?.payload?.toString()?.take(240)
                         }
                     } catch (error: Throwable) {
-                        errorCode = when (error) {
-                            is ApiException -> error.code ?: "provider_http_${error.status}"
-                            else -> "runtime_${error.javaClass.simpleName}"
+                        when (error) {
+                            is ApiException -> {
+                                failureCategory = "provider_http"
+                                providerError = error.code ?: "provider_http_${error.status}"
+                                errorCode = providerError
+                            }
+                            else -> {
+                                failureCategory = classifyRuntimeFailure(error)
+                                errorCode = "runtime_${error.javaClass.simpleName}"
+                            }
                         }
                         errorDetail = error.message?.take(240)
                     }
@@ -232,7 +242,9 @@ class P9NaturalToolSelectionInstrumentedTest {
                         .put("selected_tools", JSONArray(selectedTools))
                         .put("selected_tool_calls", selectedToolCalls)
                         .put("terminal", terminal)
-                        .putOpt("provider_error", errorCode)
+                        .putOpt("failure_category", failureCategory)
+                        .putOpt("failure_code", errorCode)
+                        .putOpt("provider_error", providerError)
                         .putOpt("error_detail", errorDetail))
                 }
             }
@@ -350,6 +362,20 @@ class P9NaturalToolSelectionInstrumentedTest {
         "workspace.search" -> JSONObject().put("matches", JSONArray())
         "workspace.write" -> JSONObject().put("written", true)
         else -> JSONObject().put("ok", true)
+    }
+
+    private fun classifyRuntimeFailure(error: Throwable): String {
+        val message = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(":")
+            .lowercase()
+        return when {
+            listOf("saf_", "workspace_", "approval_", "artifact_", "tool_execution").any(message::contains) ->
+                "host_execution"
+            listOf("oaep_", "event_", "projection_", "terminal_").any(message::contains) ->
+                "oaep_projection"
+            else -> "runtime_policy"
+        }
     }
 
     private fun sha256(bytes: ByteArray): String =

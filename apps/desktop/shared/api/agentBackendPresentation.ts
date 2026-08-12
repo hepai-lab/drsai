@@ -76,7 +76,7 @@ export function backendFailureRecovery(code: string): DesktopFailureRecovery {
     exhausted: !auth && !crashed,
     escalationLevel: incompatible ? "administrator" : "user_action",
     reason: code,
-    affectedObject: "Codex Agent Backend Run",
+    affectedObject: "Codex Agent Runtime Run",
     suggestedAction: message,
     recoveryAction: "retry",
     message,

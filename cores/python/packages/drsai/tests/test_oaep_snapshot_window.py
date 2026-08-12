@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 import tracemalloc
@@ -10,6 +9,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.oaep.digest import oaep_items_digest
 
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -97,14 +97,9 @@ def test_snapshot_window_is_checkpoint_bound_complete_and_tamper_proof(tmp_path:
         for item in engine.oaep_snapshot(session["session_id"])["items"]
         if item["id"] != "new-after-checkpoint"
     }
-    canonical_items = sorted(
-        [item for page in pages for item in page["items"]],
-        key=lambda item: (str(item["run_id"]), int(item["sequence"]), str(item["id"])),
-    )
-    canonical = json.dumps(
-        canonical_items, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
-    )
-    assert hashlib.sha256(canonical.encode()).hexdigest() == first["checkpoint"]["snapshot_hash"]
+    assert oaep_items_digest(
+        [item for page in pages for item in page["items"]]
+    ) == first["checkpoint"]["snapshot_hash"]
 
     token = str(first["window"]["next_cursor"])
     replacement = "A" if token[-1] != "A" else "B"

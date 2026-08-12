@@ -292,7 +292,6 @@ export function WorkspaceShell({
   onWorkspaceChange,
   onWorkspaceSortModeChange,
 }: WorkspaceShellProps): React.JSX.Element {
-  const [desktopStatusOpen, setDesktopStatusOpen] = useState(false);
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
   const [shortcutDrafts, setShortcutDrafts] = useState<Record<ShortcutId, string>>(() => loadShortcutSettings());
   const [capturingShortcut, setCapturingShortcut] = useState<ShortcutId | null>(null);
@@ -634,7 +633,7 @@ export function WorkspaceShell({
         return;
       }
       if (event.key === "Escape") {
-        setDesktopStatusOpen(false);
+        setAboutDialogOpen(false);
         setOpenWorkbenchMenu(null);
         setCommandPaletteOpen(false);
         setThreadMenu(null);
@@ -703,12 +702,6 @@ export function WorkspaceShell({
   async function performEditCommand(command: DesktopEditCommand): Promise<void> {
     closeWorkbenchMenu();
     await desktopApi.performEditCommand(command).catch(() => false);
-  }
-
-  async function checkUpdatesFromMenu(): Promise<void> {
-    closeWorkbenchMenu();
-    setDesktopStatusOpen(true);
-    await desktopApi.checkForUpdates().catch(() => undefined);
   }
 
   useEffect(() => {
@@ -1963,25 +1956,12 @@ export function WorkspaceShell({
           },
         })}
         {renderMenuItem({
-          label: zh ? "查看诊断信息" : "View diagnostics",
-          icon: HelpCircle,
-          onClick: () => {
-            closeWorkbenchMenu();
-            setDesktopStatusOpen(true);
-          },
-        })}
-        {renderMenuItem({
           label: zh ? "打开日志文件夹" : "Open log folder",
           icon: FileText,
           onClick: () => {
             closeWorkbenchMenu();
             void desktopApi.openLogFolder();
           },
-        })}
-        {renderMenuItem({
-          label: zh ? "检查更新" : "Check for updates",
-          icon: RefreshCw,
-          onClick: () => void checkUpdatesFromMenu(),
         })}
         <div className="workbench-menu-separator" role="separator" />
         {renderMenuItem({
@@ -3383,25 +3363,6 @@ export function WorkspaceShell({
           </section>
         </div>
       )}
-      {desktopStatusOpen && (
-        <div className="desktop-status-overlay" role="presentation" onMouseDown={() => setDesktopStatusOpen(false)}>
-          <section
-            className="desktop-status-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={zh ? "诊断信息" : "Diagnostics"}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="desktop-status-modal-header">
-              <h2>{zh ? "诊断信息" : "Diagnostics"}</h2>
-              <button type="button" onClick={() => setDesktopStatusOpen(false)} aria-label={zh ? "关闭" : "Close"}>
-                ×
-              </button>
-            </div>
-            <div className="desktop-status-modal-body">{desktopStatusPanel}</div>
-          </section>
-        </div>
-      )}
       {aboutDialogOpen && (
         <div className="desktop-status-overlay" role="presentation" onMouseDown={() => setAboutDialogOpen(false)}>
           <section
@@ -3425,6 +3386,7 @@ export function WorkspaceShell({
                   <span>{zh ? "面向科研工作的桌面智能体工作台" : "A desktop agent workbench for research workflows"}</span>
                 </div>
               </div>
+              {desktopStatusPanel}
             </div>
           </section>
         </div>

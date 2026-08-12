@@ -1,0 +1,76 @@
+{
+  "schema_version": "opendrsai.p9-e08-device-readiness-checkpoint/1",
+  "evidence_tier": "emulator_preflight",
+  "release_evidence": false,
+  "generated_at": "2026-08-11T21:37:24.0760354Z",
+  "candidate": {
+    "app_apk_sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24",
+    "test_apk_sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5"
+  },
+  "features": {
+    "E08-F01": {
+      "gates": {
+        "targeted_python_jvm_instrumentation_compose_green": true,
+        "full_frozen_regression_green": true,
+        "test_count_not_below_baseline": true
+      },
+      "evidence": {
+        "path": "docs/android/reports/preflight/p9-emulator/e08-full-regression-api35.json",
+        "sha256": "fd2c639cb513e423ed3f8bb7e42f96d05f2173049c0365856b787b38ac3dcf94"
+      },
+      "passed": true
+    },
+    "E08-F02": {
+      "gates": {
+        "current_candidate_builds": true,
+        "independent_clean_worktree": false,
+        "candidate_commit_and_clean_status_recorded": false
+      },
+      "passed": false
+    },
+    "E08-F03": {
+      "gates": {
+        "formal_runner_arguments_validated_without_device_access": true,
+        "physical_arm64_and_adb_authorization_requirements_explicit": true,
+        "provider_confirmation_explicit": true,
+        "exact_180_observation_count_and_output_paths_validated": true,
+        "dry_run_cannot_write_formal_evidence": true
+      },
+      "evidence": {
+        "path": "docs/android/reports/preflight/p9-emulator/p9-physical-device-handoff-dry-run.json",
+        "sha256": "6c301e1ef71fdcfd01cafc3f81b7dd4c474cce8b59c64e921c63b5ec744cf07b"
+      },
+      "passed": true
+    },
+    "E08-F04": {
+      "gates": {
+        "current_api35_lifecycle_hash_matches_candidate": true,
+        "current_functional_hash_matches_candidate": true,
+        "four_api_matrix_matches_candidate": true,
+        "real_model_reports_match_candidate": false
+      },
+      "evidence": {
+        "api35_manifest": {
+          "path": "docs/android/reports/preflight/p9-emulator/manifest.json",
+          "sha256": "2eb8e1b41399b56d2bba5b4ececcf6ab5f60d15897cf196e2e5dec631bf78fec"
+        },
+        "api_matrix": {
+          "path": "docs/android/reports/preflight/p9-emulator/python-runtime-api-matrix-resolution.json",
+          "sha256": "13e75034a3bfed78956087b05e47da2243edda408f74e3d80e055bbe48c66995"
+        }
+      },
+      "passed": false
+    },
+    "E08-F05": {
+      "gates": {
+        "strict_feature_count_is_40": false,
+        "go_to_device": false
+      },
+      "passed": false
+    }
+  },
+  "passed_features": [
+    "E08-F01",
+    "E08-F03"
+  ]
+}

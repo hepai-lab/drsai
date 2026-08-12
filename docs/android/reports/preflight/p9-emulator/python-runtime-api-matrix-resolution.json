@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "evidence_tier": "emulator_preflight",
+  "generated_at": "2026-08-11T20:27:00Z",
+  "decision": "use_cpython_3_12_for_android_full_runtime",
+  "candidate": {
+    "application_id": "ai.drsai.remote.debug",
+    "version_name": "1.5.6",
+    "python_version": "3.12",
+    "abis": [
+      "arm64-v8a",
+      "x86_64"
+    ],
+    "app_apk_sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24",
+    "test_apk_sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5"
+  },
+  "experiments": [
+    {
+      "python_version": "3.11",
+      "api": 36,
+      "result": "failed",
+      "failure_category": "native_runtime_compatibility",
+      "failure": "SIGABRT during Py_InitializeEx after loading libpython3.11.so; destroying mutex with owner or contenders"
+    },
+    {
+      "python_version": "3.13",
+      "api": 36,
+      "result": "passed",
+      "tests": 4
+    },
+    {
+      "python_version": "3.13",
+      "api": 26,
+      "result": "failed",
+      "failure_category": "native_runtime_compatibility",
+      "failure": "SIGSYS/SYS_SECCOMP during native constructor; API 26 blocked a disallowed x86_64 syscall"
+    },
+    {
+      "python_version": "3.12",
+      "api": 26,
+      "result": "passed",
+      "tests": 4
+    },
+    {
+      "python_version": "3.12",
+      "api": 30,
+      "result": "passed",
+      "tests": 4
+    },
+    {
+      "python_version": "3.12",
+      "api": 35,
+      "result": "passed",
+      "tests": 4
+    },
+    {
+      "python_version": "3.12",
+      "api": 36,
+      "result": "passed",
+      "tests": 4
+    }
+  ],
+  "accepted_features": [
+    "E01-F02",
+    "E02-F02"
+  ],
+  "matrix_gate": {
+    "apis": [
+      26,
+      30,
+      35,
+      36
+    ],
+    "tests_per_api": 5,
+    "total_tests": 20,
+    "failures": 0,
+    "all_manifests_bind_same_artifacts": true,
+    "manifests": {
+      "api26": "f2c91e7cd04b5990219d24d921842c0c1bec9addc9c5f831476cf97c1e46a721",
+      "api30": "ad2b274468b442b93dee9a7840cff5d48bc41eb75a04d0055df4da46c1a034cb",
+      "api35": "1002b600e53fc089e080412fb55640d94bd37215bf97b8f6d9d35b96597afc13",
+      "api36": "0b8df6f69235837a691a00fbc1eed5b6f3a1ce8bcdc84b77ad2e6bf58dac572a"
+    }
+  }
+}

@@ -21,6 +21,7 @@ from drsai.backend.runtime.oaep import (
     project_session,
 )
 from drsai.backend.runtime.observability import ResourceCorrelation, RuntimeObservability
+from drsai.oaep.digest import canonical_oaep_item
 from drsai.relay.security import redact_credentials
 
 
@@ -1414,7 +1415,7 @@ class RuntimeConversationJournal:
                 if item_count:
                     digest_state.update(b",")
                 item = json.loads(str(row["envelope_json"]))
-                digest_state.update(_canonical_json(item).encode())
+                digest_state.update(canonical_oaep_item(item).encode())
                 item_count += 1
             digest_state.update(b"]")
             digest = digest_state.hexdigest()
@@ -1695,6 +1696,66 @@ class RuntimeConversationJournal:
                 )
                 if events:
                     return events
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return []
+                self._changed.wait(remaining)
+
+    def workspace_catalog_watermark(self, workspace_id: str) -> int:
+        """Return an opaque local cursor for content-free Session catalog events."""
+        if not workspace_id:
+            raise ValueError("workspace_id_required")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT COALESCE(MAX(rowid),0) AS watermark FROM runtime_session_journal "
+                "WHERE workspace_id=? AND event_kind IN "
+                "('session.updated','session.archived','session.unarchived','session.removed')",
+                (workspace_id,),
+            ).fetchone()
+        return int(row["watermark"] if row is not None else 0)
+
+    def wait_for_workspace_catalog_events(
+        self,
+        workspace_id: str,
+        *,
+        after_cursor: int,
+        timeout: float = 15.0,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Wait for committed, content-free catalog invalidations in append order."""
+        if not workspace_id:
+            raise ValueError("workspace_id_required")
+        if after_cursor < 0 or limit < 1 or limit > 2_000:
+            raise ValueError("workspace_catalog_cursor_invalid")
+        deadline = time.monotonic() + max(0.0, timeout)
+        kind_map = {
+            "session.updated": "event.session.updated",
+            "session.archived": "event.session.archived",
+            "session.unarchived": "event.session.unarchived",
+            "session.removed": "event.session.deleted",
+        }
+        with self._changed:
+            while True:
+                with self._connect() as db:
+                    rows = db.execute(
+                        "SELECT rowid,event_id,session_id,session_sequence,event_kind "
+                        "FROM runtime_session_journal WHERE workspace_id=? AND rowid>? "
+                        "AND event_kind IN "
+                        "('session.updated','session.archived','session.unarchived','session.removed') "
+                        "ORDER BY rowid LIMIT ?",
+                        (workspace_id, after_cursor, limit),
+                    ).fetchall()
+                if rows:
+                    return [
+                        {
+                            "cursor": int(row["rowid"]),
+                            "event_id": str(row["event_id"]),
+                            "session_id": str(row["session_id"]),
+                            "type": kind_map[str(row["event_kind"])],
+                            "sequence": int(row["session_sequence"]),
+                        }
+                        for row in rows
+                    ]
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return []

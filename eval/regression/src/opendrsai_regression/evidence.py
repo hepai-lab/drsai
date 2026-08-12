@@ -34,9 +34,28 @@ def redact(value: Any) -> Any:
 def collect_evidence(*, run: dict[str, Any], inspection: dict[str, Any], snapshot: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
     timeline, timeline_available = _items(inspection)
     snapshot_items, snapshot_available = _items(snapshot)
-    items = timeline if timeline_available else snapshot_items
+    # Run inspection is an operation-oriented projection and Desktop may keep
+    # Host command executions only in the canonical OAEP Snapshot.  Merge both
+    # complete views by stable Item id instead of discarding Snapshot-only
+    # evidence whenever inspection is available.
+    if timeline_available and snapshot_available:
+        items = []
+        seen_item_ids: set[str] = set()
+        for item in [*timeline, *snapshot_items]:
+            item_id = str(item.get("id") or "")
+            if item_id and item_id in seen_item_ids:
+                continue
+            if item_id:
+                seen_item_ids.add(item_id)
+            items.append(item)
+    else:
+        items = timeline if timeline_available else snapshot_items
     type_groups = {
-        "tool_calls": {"tool", "tool_call", "tool.call"},
+        # Desktop OAEP projects Host shell calls as ``command_execution``
+        # rather than a generic ``tool_call``.  They still carry the same
+        # tool_name/result/inspection envelope and must participate in command
+        # and test-execution evidence.
+        "tool_calls": {"tool", "tool_call", "tool.call", "command_execution"},
         "tool_attempts": {"tool_attempt", "tool.attempt"},
         "citations": {"citation", "citation.added"},
         "artifacts": {"artifact", "artifact.created"},
@@ -62,6 +81,13 @@ def collect_evidence(*, run: dict[str, Any], inspection: dict[str, Any], snapsho
         "unrelated_skill_activations": {"unrelated_skill_activation"},
     }
     groups = {name: _of_types(items, types) for name, types in type_groups.items()}
+    groups["approvals"].extend(
+        {**item, **(item.get("content") or {})}
+        for item in items
+        if str(item.get("type") or "") == "interaction"
+        and isinstance(item.get("content"), dict)
+        and item["content"].get("interaction_type") == "approval"
+    )
     # OAEP stores citations on the assistant Message rather than as standalone
     # Items. Project them into the evidence collection without losing their
     # stable IDs or relation to the rendered Markdown part.
@@ -147,12 +173,16 @@ def collect_evidence(*, run: dict[str, Any], inspection: dict[str, Any], snapsho
             groups["workspace_reads"].append({"tool": name, "arguments": arguments, "status": call.get("status")})
         if name in {"run_powershell", "run_bash"}:
             command = result.get("command") or arguments.get("command")
-            groups["shell_commands"].append({
-                "tool": name, "command": command, "argv": result.get("argv"),
-                "exit_code": result.get("exit_code"), "output": result.get("output"),
-                "policy": result.get("policy"),
-            })
             inspection_value = _tool_inspection(call)
+            # A policy denial proves that no process was started. Keep it in
+            # the canonical Item trail, but do not miscount it as an executed
+            # shell command or subject it to executed-command policy checks.
+            if inspection_value.get("kind") != "command_policy_denial":
+                groups["shell_commands"].append({
+                    "tool": name, "command": command, "argv": result.get("argv"),
+                    "exit_code": result.get("exit_code"), "output": result.get("output"),
+                    "policy": result.get("policy"),
+                })
             if inspection_value.get("kind") == "test_execution":
                 derived_test_execution = {
                     "command": {
@@ -165,7 +195,20 @@ def collect_evidence(*, run: dict[str, Any], inspection: dict[str, Any], snapsho
         operation = operation_names.get(_name(call))
         if operation is None:
             continue
-        groups["operation_calls"].append({"operation": operation, **arguments})
+        operation_arguments = dict(arguments)
+        # Desktop inspection intentionally redacts raw model arguments. The
+        # controlled operation result repeats the authorized immutable IDs, so
+        # derive the auditable call identity from that trusted result.
+        if operation == "run.inspect" and not operation_arguments.get("run_id"):
+            run_value = result.get("run") if isinstance(result.get("run"), dict) else {}
+            operation_arguments["run_id"] = run_value.get("run_id")
+        elif operation == "run.manifest.read" and not operation_arguments.get("run_id"):
+            operation_arguments["run_id"] = result.get("run_id")
+        elif operation == "run.compare":
+            comparison_value = result.get("comparison") if isinstance(result.get("comparison"), dict) else {}
+            operation_arguments.setdefault("baseline_run_id", comparison_value.get("baseline_run_id"))
+            operation_arguments.setdefault("candidate_run_id", comparison_value.get("candidate_run_id"))
+        groups["operation_calls"].append({"operation": operation, **operation_arguments})
         derived_references.extend(
             dict(item) for item in result.get("references") or [] if isinstance(item, dict)
         )
@@ -178,6 +221,12 @@ def collect_evidence(*, run: dict[str, Any], inspection: dict[str, Any], snapsho
             for call in groups["tool_calls"]
             for attempt in ((call.get("attempts") or []) or (_tool_result(call).get("attempts") or []))
             if isinstance(attempt, dict)
+        ]
+    if not attempts:
+        attempts = [
+            {"tool": _name(call), "status": call.get("status") or "completed"}
+            for call in groups["tool_calls"]
+            if _name(call) == "regression_controlled_write"
         ]
     groups["tool_attempts"] = attempts
     capabilities = {_name(item) for item in groups["tool_calls"] + groups["skill_activations"]}
@@ -276,11 +325,14 @@ def _of_types(items: list[dict[str, Any]], types: set[str]) -> list[dict[str, An
 
 
 def _name(item: dict[str, Any]) -> str:
-    return str(item.get("tool") or item.get("tool_name") or item.get("skill") or item.get("skill_id") or item.get("operation") or item.get("name") or "")
+    operation_ref = item.get("operation_ref") if isinstance(item.get("operation_ref"), dict) else {}
+    return str(item.get("tool") or item.get("tool_name") or item.get("skill") or item.get("skill_id") or item.get("operation") or operation_ref.get("operation") or item.get("name") or "")
 
 
 def _tool_result(call: dict[str, Any]) -> dict[str, Any]:
     value = call.get("result")
+    if value is None and str(call.get("type") or "") == "command_execution":
+        value = call.get("output")
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -310,6 +362,8 @@ def _tool_inspection(call: dict[str, Any]) -> dict[str, Any]:
     if isinstance(direct, dict):
         return dict(direct)
     value = call.get("result")
+    if value is None and str(call.get("type") or "") == "command_execution":
+        value = call.get("output")
     if isinstance(value, str):
         try:
             value = json.loads(value)

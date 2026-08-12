@@ -19,6 +19,7 @@ SUITE_PATH = ROOT / "cores/protocol/android-runtime/fixtures/p9-natural-tool-sel
 POLICY_PATH = ROOT / "cores/protocol/android-runtime/fixtures/p9-real-model-statistical-gate-v1.json"
 DEFAULT_OUTPUT = ROOT / "docs/android/reports/evidence/p9/m09-f06-real-model-statistics.json"
 DEFAULT_M04_OUTPUT = ROOT / "docs/android/reports/evidence/p9/m04-f06-natural-tool-selection.json"
+DEFAULT_DRY_RUN_OUTPUT = ROOT / "docs/android/reports/preflight/p9-emulator/p9-physical-device-handoff-dry-run.json"
 PACKAGE = "ai.drsai.remote.debug"
 RUNNER = f"{PACKAGE}.test/androidx.test.runner.AndroidJUnitRunner"
 TEST_CLASS = "ai.drsai.remote.P9NaturalToolSelectionInstrumentedTest"
@@ -97,6 +98,52 @@ def score_m04_observations(suite: dict, document: dict) -> dict:
     return evaluate_tool_selection_gate(suite, scored)
 
 
+def build_device_handoff_dry_run(
+    *, serial: str, adb_path: Path, app_apk: Path, test_apk: Path,
+    suite: dict, policy: dict, output: Path, m04_output: Path,
+) -> dict[str, object]:
+    """Validate the formal handoff without contacting or mutating a device."""
+    if not serial.strip() or serial.startswith("emulator-"):
+        raise ValueError("physical_device_serial_required_for_dry_run")
+    formal_root = (ROOT / "docs/android/reports/evidence/p9").resolve()
+    for path in (output.resolve(), m04_output.resolve()):
+        if formal_root != path.parent and formal_root not in path.parents:
+            raise ValueError("formal_output_path_invalid")
+    models = list(policy["candidate_models"])
+    attempts = int(policy["minimum_attempts_per_case"])
+    case_count = len(suite["cases"])
+    return {
+        "schema_version": "opendrsai.p9-physical-device-handoff-dry-run/1",
+        "evidence_tier": "emulator_preflight",
+        "release_evidence": False,
+        "passed": True,
+        "device_requirements": {
+            "serial": serial, "state": "device", "kind": "physical_device", "abi_prefix": "arm64",
+            "user_actions": ["authorize_adb", "confirm_zhizengzeng_provider_configuration", "run_formal_command"],
+        },
+        "artifacts": {
+            "app_apk": {"path": str(app_apk.resolve()), "sha256": sha256(app_apk)},
+            "test_apk": {"path": str(test_apk.resolve()), "sha256": sha256(test_apk)},
+        },
+        "inputs": {
+            "adb": str(adb_path.resolve()),
+            "suite": str(SUITE_PATH.relative_to(ROOT)).replace("\\", "/"),
+            "suite_sha256": suite["sha256"],
+            "policy": str(POLICY_PATH.relative_to(ROOT)).replace("\\", "/"),
+            "policy_sha256": sha256(POLICY_PATH),
+            "models": models, "case_count": case_count, "attempts_per_case": attempts,
+            "expected_observations": case_count * attempts * len(models),
+        },
+        "outputs": {"m09": str(output.resolve()), "m04": str(m04_output.resolve())},
+        "formal_command": [
+            sys.executable, str(Path(__file__).resolve()), "--serial", serial,
+            "--adb", str(adb_path.resolve()), "--app-apk", str(app_apk.resolve()),
+            "--test-apk", str(test_apk.resolve()), "--output", str(output.resolve()),
+            "--m04-output", str(m04_output.resolve()),
+        ],
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sdk_default = Path(os.environ.get("ANDROID_HOME", Path.home() / "AppData/Local/Android/Sdk"))
@@ -107,6 +154,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--m04-output", type=Path, default=DEFAULT_M04_OUTPUT)
     parser.add_argument("--skip-install", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--dry-run-output", type=Path, default=DEFAULT_DRY_RUN_OUTPUT)
     parser.add_argument("--timeout-seconds-per-model", type=int, default=7200)
     options = parser.parse_args()
 
@@ -119,6 +168,21 @@ def main() -> int:
     for path in (options.adb, app_apk, test_apk):
         if not path.is_file():
             raise FileNotFoundError(path)
+    if options.dry_run:
+        report = build_device_handoff_dry_run(
+            serial=options.serial, adb_path=options.adb, app_apk=app_apk, test_apk=test_apk,
+            suite=suite, policy=policy, output=options.output, m04_output=options.m04_output,
+        )
+        dry_run_output = options.dry_run_output.resolve()
+        formal_root = (ROOT / "docs/android/reports/evidence/p9").resolve()
+        if dry_run_output == formal_root or formal_root in dry_run_output.parents:
+            raise ValueError("dry_run_cannot_write_formal_evidence")
+        dry_run_output.parent.mkdir(parents=True, exist_ok=True)
+        dry_run_output.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8",
+        )
+        print(json.dumps({"passed": True, "dry_run": True, "output": str(dry_run_output)}, indent=2))
+        return 0
     environment = device_identity(options.adb, options.serial)
     if not options.skip_install:
         # Preserve the user's encrypted provider configuration. Never use uninstall or pm clear here.

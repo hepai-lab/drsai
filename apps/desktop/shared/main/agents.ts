@@ -234,7 +234,7 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
     const executable = capability?.available === true && capability.contract_compatible !== false
       && account.state === "signed_in" && modelCatalog.stale !== true && visibleModels.length > 0;
     agents.push({
-      id: "my-codex", name: "Codex", description: "Codex Agent Backend running in this Workspace Runtime.",
+      id: "my-codex", name: "Codex", description: "Codex Agent Runtime running in this Workspace Runtime.",
       owner: "Local", source: "local", status: executable ? "running" : "stopped", mode: "local",
       available: executable, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local",
       model: defaultModel, models: visibleModels.map((model) => model.id),

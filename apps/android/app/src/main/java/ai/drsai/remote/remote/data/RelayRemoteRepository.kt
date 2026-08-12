@@ -2,6 +2,17 @@ package ai.drsai.remote.remote.data
 
 import ai.drsai.remote.remote.model.*
 import ai.drsai.remote.remote.generated.GeneratedConversationSnapshot
+import ai.drsai.remote.remote.generated.GeneratedApprovalDecisionRecoveryResponse
+import ai.drsai.remote.remote.generated.GeneratedApprovalDecisionRequest
+import ai.drsai.remote.remote.generated.GeneratedApprovalProjection
+import ai.drsai.remote.remote.generated.GeneratedLatencyObservationRequest
+import ai.drsai.remote.remote.generated.GeneratedRunCreateRecoveryResponse
+import ai.drsai.remote.remote.generated.GeneratedRunCreateRequest
+import ai.drsai.remote.remote.generated.GeneratedRunProjection
+import ai.drsai.remote.remote.generated.GeneratedSessionCreateRecoveryResponse
+import ai.drsai.remote.remote.generated.GeneratedSessionCreateRequest
+import ai.drsai.remote.remote.generated.GeneratedSessionProjection
+import ai.drsai.remote.remote.generated.GeneratedSessionUpdateRequest
 import ai.drsai.remote.remote.generated.GeneratedSessionConversationItem
 import ai.drsai.remote.remote.generated.GeneratedSessionEvent
 import ai.drsai.remote.remote.generated.OaepEventPage
@@ -11,7 +22,6 @@ import ai.drsai.remote.remote.security.RelayDeviceProof
 import ai.drsai.remote.remote.security.authorizeRelayRequest
 import ai.drsai.remote.runtime.oaep.AndroidOaepCompatibility
 import ai.drsai.remote.runtime.oaep.AndroidOaepReleaseGate
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -85,9 +95,11 @@ class RelayRemoteRepository(
         .build(),
     private val refreshAfter: suspend (String) -> String? = { null },
     private val deviceProof: RelayDeviceProof? = null,
-) : PushRegistrationClient {
+    private val time: RemoteTimeScheduler = RemoteTimeScheduler(),
+) : PushRegistrationClient, PushReadinessClient {
     private val root = baseUrl.trimEnd('/').toHttpUrl()
     private val json = "application/json".toMediaType()
+    private fun segments(vararg values: String): List<String> = values.toList()
 
     override suspend fun upsertPushRegistration(
         runtimeId: RuntimeId,
@@ -99,7 +111,7 @@ class RelayRemoteRepository(
         require(token.length in 32..4096 && token.any { !it.isWhitespace() }) { "push_token_invalid" }
         require(generation >= 1) { "push_generation_invalid" }
         val row = put(
-            "v1/associations/${runtimeId.value}/push-registration",
+            segments("v1", "associations", runtimeId.value, "push-registration"),
             JSONObject().put("provider", provider).put("token", token).put("generation", generation),
         )
         return decodePushRegistration(row, runtimeId)
@@ -107,11 +119,35 @@ class RelayRemoteRepository(
 
     override suspend fun revokePushRegistration(runtimeId: RuntimeId): RemotePushRegistration =
         decodePushRegistration(
-            delete("v1/associations/${runtimeId.value}/push-registration"), runtimeId,
+            delete(segments("v1", "associations", runtimeId.value, "push-registration")), runtimeId,
         )
 
+    override suspend fun pushReadiness(): RemotePushReadiness {
+        val row = get(segments("v1", "push", "readiness"))
+        require(row.keys().asSequence().toSet() == setOf("ready", "providers", "worker_running")) {
+            "push_readiness_fields_invalid"
+        }
+        require(row.get("ready") is Boolean && row.get("worker_running") is Boolean) {
+            "push_readiness_type_invalid"
+        }
+        val providers = row.optJSONObject("providers")
+            ?: throw IllegalArgumentException("push_readiness_providers_invalid")
+        require(providers.keys().asSequence().toSet() == setOf("fcm") && providers.get("fcm") is Boolean) {
+            "push_readiness_providers_invalid"
+        }
+        val result = RemotePushReadiness(
+            ready = row.getBoolean("ready"),
+            fcm = providers.getBoolean("fcm"),
+            workerRunning = row.getBoolean("worker_running"),
+        )
+        require(result.ready == (result.fcm && result.workerRunning)) {
+            "push_readiness_inconsistent"
+        }
+        return result
+    }
+
     suspend fun protocolSelection(runtimeId: RuntimeId): RemoteProtocolSelection {
-        val result = get("v1/runtimes/${runtimeId.value}/capabilities")
+        val result = get(segments("v1", "runtimes", runtimeId.value, "capabilities"))
         val capabilities = result.optJSONArray("capabilities")?.strings().orEmpty()
         val profiles = result.optJSONArray("profiles")?.strings().orEmpty()
         val protocols = result.optJSONObject("protocols")
@@ -150,7 +186,7 @@ class RelayRemoteRepository(
     }
 
     suspend fun agentDefinitions(runtimeId: RuntimeId): List<RemoteAgentDefinition> =
-        get("v1/runtimes/${runtimeId.value}/agent-definitions").array("items") { row ->
+        get(segments("v1", "runtimes", runtimeId.value, "agent-definitions")).array("items") { row ->
             RemoteAgentDefinition(row.getString("definition_id"), row.getString("version"), row.getString("display_name"),
                 row.getString("backend_id"), row.getString("backend_health"), row.getJSONArray("capabilities").strings())
         }
@@ -159,21 +195,22 @@ class RelayRemoteRepository(
                          query: String? = null,
                          lifecycle: RemoteResourceLifecycle = RemoteResourceLifecycle.ACTIVE): Page<RemoteSessionSummary> {
         val result = get(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions",
+            segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value, "sessions"),
             cursor,
             query,
             extraQuery = "lifecycle" to lifecycle.toWire(),
         )
+
         val items = result.array("items") { row ->
-            val returnedRuntime = RuntimeId(row.getString("runtime_id")); val returnedWorkspace = WorkspaceId(row.getString("workspace_id"))
-            require(returnedRuntime == runtimeId && returnedWorkspace == workspaceId) { "remote_session_scope_mismatch" }
-            RemoteSessionSummary(RemoteSessionRef(returnedRuntime, returnedWorkspace, SessionId(row.getString("session_id")),
-                row.getString("title"), row.nullableString("backend_id") ?: "opendrsai",
-                RemoteResourceLifecycle.fromWire(row.getString("lifecycle")), row.getString("updated_at")),
-                row.nullableString("agent_definition_id").orEmpty(),
-                row.nullableString("agent_definition_version").orEmpty(),
-                row.nullableString("last_run_status"),
-                row.getString("updated_at"), row.getString("lifecycle"))
+            val projection = GeneratedSessionProjection.fromJson(row)
+            RemoteSessionSummary(
+                decodeSession(projection, runtimeId, workspaceId),
+                projection.agentDefinitionId.orEmpty(),
+                projection.agentDefinitionVersion.orEmpty(),
+                projection.lastRunStatus,
+                projection.updatedAt,
+                projection.lifecycle,
+            )
         }.filter { it.reference.lifecycle == lifecycle }
         return Page(items, result.nullableString("next_cursor"))
     }
@@ -181,18 +218,29 @@ class RelayRemoteRepository(
     suspend fun createSession(runtimeId: RuntimeId, workspaceId: WorkspaceId, title: String,
                               definition: RemoteAgentDefinition, idempotencyKey: String): RemoteSessionRef {
         require(definition.version != "latest" && definition.backendHealth == "healthy") { "agent_definition_unavailable" }
-        val body = JSONObject().control(idempotencyKey).put("title", title).put("agent_definition_id", definition.id)
-            .put("agent_definition_version", definition.version)
-        val row = try {
-            post("v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions", body)
+        val body = GeneratedSessionCreateRequest(
+            requestId = UUID.randomUUID().toString(),
+            correlationId = UUID.randomUUID().toString(),
+            idempotencyKey = idempotencyKey,
+            title = title,
+            agentDefinitionId = definition.id,
+            agentDefinitionVersion = definition.version,
+        ).toJson()
+        val projection = try {
+            GeneratedSessionProjection.fromJson(post(
+                segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value, "sessions"), body,
+            ))
         } catch (uncertain: IOException) {
-            get("v1/runtimes/${runtimeId.value}/idempotency/session.create/$idempotencyKey").getJSONObject("resource")
+            GeneratedSessionCreateRecoveryResponse.fromJson(get(
+                segments("v1", "runtimes", runtimeId.value, "idempotency", "session.create", idempotencyKey),
+            )).resource
         }
-        return decodeSession(row, runtimeId, workspaceId)
+        return decodeSession(projection, runtimeId, workspaceId)
     }
 
     suspend fun session(runtimeId: RuntimeId, workspaceId: WorkspaceId, sessionId: SessionId): RemoteSessionRef =
-        decodeSession(get("v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}"),
+        decodeSession(get(segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+            "sessions", sessionId.value)),
             runtimeId, workspaceId).also { require(it.sessionId == sessionId) { "remote_session_scope_mismatch" } }
 
     suspend fun updateSession(
@@ -204,15 +252,17 @@ class RelayRemoteRepository(
         require(normalizedTitle == null || normalizedTitle.isNotEmpty() && normalizedTitle.length <= 200 &&
             normalizedTitle.none { it == '\u0000' || it == '\r' || it == '\n' }) { "session_title_invalid" }
         require(normalizedTitle != null || lifecycle != null) { "session_update_empty" }
-        val body = JSONObject()
-            .put("request_id", UUID.randomUUID().toString())
-            .put("correlation_id", UUID.randomUUID().toString())
-        normalizedTitle?.let { body.put("title", it) }
-        lifecycle?.let { body.put("lifecycle", it.toWire()) }
-        return decodeSession(patch(
-            "v1/runtimes/${reference.runtimeId.value}/workspaces/${reference.workspaceId.value}/sessions/${reference.sessionId.value}",
+        val body = GeneratedSessionUpdateRequest(
+            requestId = UUID.randomUUID().toString(),
+            correlationId = UUID.randomUUID().toString(),
+            title = normalizedTitle,
+            lifecycle = lifecycle?.toWire(),
+        ).toJson()
+        return decodeSession(GeneratedSessionProjection.fromJson(patch(
+            segments("v1", "runtimes", reference.runtimeId.value, "workspaces", reference.workspaceId.value,
+                "sessions", reference.sessionId.value),
             body,
-        ), reference.runtimeId, reference.workspaceId)
+        )), reference.runtimeId, reference.workspaceId)
     }
 
     suspend fun conversation(
@@ -224,7 +274,8 @@ class RelayRemoteRepository(
     ): RemoteConversationProjection {
         require(limit in 1..500) { "conversation_limit_invalid" }
         val result = get(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/conversation",
+            segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+                "sessions", sessionId.value, "conversation"),
             cursor = cursor,
             extraQuery = "limit" to limit.toString(),
         )
@@ -249,7 +300,8 @@ class RelayRemoteRepository(
     ): GeneratedConversationSnapshot {
         require(limit in 1..500) { "conversation_limit_invalid" }
         val result = get(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-snapshot",
+            segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+                "sessions", sessionId.value, "oaep-snapshot"),
             cursor = cursor,
             extraQuery = "limit" to limit.toString(),
         )
@@ -271,7 +323,8 @@ class RelayRemoteRepository(
     ): OaepSnapshot {
         require(limit in 1..500) { "oaep_snapshot_limit_invalid" }
         val result = get(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-snapshot",
+            segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+                "sessions", sessionId.value, "oaep-snapshot"),
             cursor = cursor,
             extraQuery = "limit" to limit.toString(),
         )
@@ -290,7 +343,8 @@ class RelayRemoteRepository(
     ): OaepEventPage {
         require(afterSequence >= 0 && limit in 1..500)
         val result = get(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-events",
+            segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+                "sessions", sessionId.value, "oaep-events"),
             extraQueries = listOf(
                 "after_sequence" to afterSequence.toString(),
                 "limit" to limit.toString(),
@@ -316,10 +370,11 @@ class RelayRemoteRepository(
         ) {
             "latency_observation_invalid"
         }
-        val body = JSONObject()
-            .put("client_receive_at_ms", clientReceiveAtMs)
-            .put("render_at_ms", renderAtMs)
-        postSegments(
+        val body = GeneratedLatencyObservationRequest(
+            clientReceiveAtMs = clientReceiveAtMs,
+            renderAtMs = renderAtMs,
+        ).toJson()
+        post(
             listOf(
                 "v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
                 "sessions", sessionId.value, "events", eventId, "latency-observation",
@@ -337,7 +392,8 @@ class RelayRemoteRepository(
     ): Page<GeneratedSessionEvent> {
         require(afterSequence >= 0 && limit in 1..500)
         val result = get(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-events",
+            segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+                "sessions", sessionId.value, "oaep-events"),
             extraQueries = listOf(
                 "after_sequence" to afterSequence.toString(),
                 "limit" to limit.toString(),
@@ -351,22 +407,24 @@ class RelayRemoteRepository(
 
     suspend fun runs(runtimeId: RuntimeId, workspaceId: WorkspaceId, sessionId: SessionId,
                      cursor: String? = null): Page<RemoteRunSummary> {
-        val result = get("v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/runs", cursor)
+        val result = get(segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+            "sessions", sessionId.value, "runs"), cursor)
         return Page(result.array("items") { row ->
-            val identity = RemoteRunIdentity(RuntimeId(row.getString("runtime_id")), WorkspaceId(row.getString("workspace_id")),
-                SessionId(row.getString("session_id")), RunId(row.getString("run_id")), row.getString("backend_id"))
+            val projection = GeneratedRunProjection.fromJson(row)
+            val identity = projection.toIdentity()
             require(identity.runtimeId == runtimeId) { "remote_run_runtime_scope_mismatch" }
             require(identity.workspaceId == workspaceId) { "remote_run_workspace_scope_mismatch" }
             require(identity.sessionId == sessionId) { "remote_run_session_scope_mismatch" }
-            RemoteRunSummary(identity, RemoteRunStatus.valueOf(row.getString("status").uppercase()),
-                row.getString("correlation_id"), row.getString("created_at"), row.optString("message"),
-                row.optJSONArray("attachment_refs")?.strings()?.toList().orEmpty())
+            RemoteRunSummary(identity, RemoteRunStatus.valueOf(projection.status.uppercase()),
+                projection.correlationId, projection.createdAt, projection.message,
+                projection.attachmentRefs)
         }, result.nullableString("next_cursor"))
     }
 
     suspend fun events(identity: RemoteRunIdentity, afterSequence: Long = 0, limit: Int = 500): Page<RelayStreamEvent> {
         require(afterSequence >= 0 && limit in 1..500)
-        val result = get("v1/runtimes/${identity.runtimeId.value}/runs/${identity.runId.value}/events",
+        val result = get(segments("v1", "runtimes", identity.runtimeId.value, "runs",
+            identity.runId.value, "events"),
             extraQueries = listOf("after_sequence" to afterSequence.toString(), "limit" to limit.toString()))
         return Page(result.array("items") { row ->
             val returned = RemoteRunIdentity(RuntimeId(row.getString("runtime_id")), WorkspaceId(row.getString("workspace_id")),
@@ -384,12 +442,20 @@ class RelayRemoteRepository(
                           idempotencyKey: String, retryOf: RunId? = null,
                           sourceMessageId: String = idempotencyKey): RemoteRunIdentity {
         RemoteRunRequest(session.runtimeId, session.workspaceId, session.sessionId, message, attachmentRefs, idempotencyKey, retryOf)
-        val body = JSONObject().control(idempotencyKey).put("message", message)
-            .put("source_message_id", sourceMessageId)
-            .put("attachment_refs", JSONArray(attachmentRefs))
-            .apply { retryOf?.let { put("retry_of", it.value) } }
-        val row = try {
-            post("v1/runtimes/${session.runtimeId.value}/workspaces/${session.workspaceId.value}/sessions/${session.sessionId.value}/runs", body)
+        val body = GeneratedRunCreateRequest(
+            requestId = UUID.randomUUID().toString(),
+            correlationId = UUID.randomUUID().toString(),
+            idempotencyKey = idempotencyKey,
+            message = message,
+            sourceMessageId = sourceMessageId,
+            attachmentRefs = attachmentRefs,
+            retryOf = retryOf?.value,
+        ).toJson()
+        val projection = try {
+            GeneratedRunProjection.fromJson(post(
+                segments("v1", "runtimes", session.runtimeId.value, "workspaces",
+                    session.workspaceId.value, "sessions", session.sessionId.value, "runs"), body,
+            ))
         } catch (uncertain: Throwable) {
             val outcomeUnknown = uncertain is IOException ||
                 uncertain is RelayHttpException && uncertain.status >= 500
@@ -400,12 +466,11 @@ class RelayRemoteRepository(
                     session.runtimeId, session.workspaceId, session.sessionId, idempotencyKey,
                 )
                 if (recovered != null) return recovered
-                delay(waitMillis)
+                time.waitFor(waitMillis)
             }
             throw uncertain
         }
-        return RemoteRunIdentity(RuntimeId(row.getString("runtime_id")), WorkspaceId(row.getString("workspace_id")),
-            SessionId(row.getString("session_id")), RunId(row.getString("run_id")), row.getString("backend_id")).also {
+        return projection.toIdentity().also {
                 require(it.runtimeId == session.runtimeId) { "remote_run_runtime_scope_mismatch" }
                 require(it.workspaceId == session.workspaceId) { "remote_run_workspace_scope_mismatch" }
                 require(it.sessionId == session.sessionId) { "remote_run_session_scope_mismatch" }
@@ -419,20 +484,13 @@ class RelayRemoteRepository(
         idempotencyKey: String,
     ): RemoteRunIdentity? {
         val response = try {
-            get("v1/runtimes/${runtimeId.value}/idempotency/run.create/$idempotencyKey")
+            get(segments("v1", "runtimes", runtimeId.value, "idempotency", "run.create", idempotencyKey))
         } catch (failure: RelayHttpException) {
             if (failure.status == 404 || failure.status >= 500 ||
                 failure.errorCode == "idempotency_result_not_found") return null
             throw failure
         }
-        val row = response.getJSONObject("resource")
-        return RemoteRunIdentity(
-            RuntimeId(row.getString("runtime_id")),
-            WorkspaceId(row.getString("workspace_id")),
-            SessionId(row.getString("session_id")),
-            RunId(row.getString("run_id")),
-            row.getString("backend_id"),
-        ).also {
+        return GeneratedRunCreateRecoveryResponse.fromJson(response).resource.toIdentity().also {
             require(it.runtimeId == runtimeId) { "remote_run_runtime_scope_mismatch" }
             require(it.workspaceId == workspaceId) { "remote_run_workspace_scope_mismatch" }
             require(it.sessionId == sessionId) { "remote_run_session_scope_mismatch" }
@@ -440,33 +498,40 @@ class RelayRemoteRepository(
     }
 
     suspend fun cancel(identity: RemoteRunIdentity): String {
-        val row = post(
-            "v1/runtimes/${identity.runtimeId.value}/workspaces/${identity.workspaceId.value}/runs/${identity.runId.value}/cancel",
+        val row = GeneratedRunProjection.fromJson(post(
+            segments("v1", "runtimes", identity.runtimeId.value, "workspaces", identity.workspaceId.value,
+                "runs", identity.runId.value, "cancel"),
             JSONObject(),
-        )
-        require(row.getString("runtime_id") == identity.runtimeId.value) { "remote_run_runtime_scope_mismatch" }
-        require(row.getString("workspace_id") == identity.workspaceId.value) { "remote_run_workspace_scope_mismatch" }
-        require(row.getString("run_id") == identity.runId.value) { "remote_run_id_scope_mismatch" }
-        return row.getString("status")
+        ))
+        require(row.runtimeId == identity.runtimeId.value) { "remote_run_runtime_scope_mismatch" }
+        require(row.workspaceId == identity.workspaceId.value) { "remote_run_workspace_scope_mismatch" }
+        require(row.runId == identity.runId.value) { "remote_run_id_scope_mismatch" }
+        return row.status
     }
 
     suspend fun getRun(runtimeId: RuntimeId, runId: RunId): Pair<RemoteRunIdentity, String> {
-        val row = get("v1/runtimes/${runtimeId.value}/runs/${runId.value}")
-        val identity = RemoteRunIdentity(RuntimeId(row.getString("runtime_id")), WorkspaceId(row.getString("workspace_id")),
-            SessionId(row.getString("session_id")), RunId(row.getString("run_id")), row.getString("backend_id"))
+        val row = GeneratedRunProjection.fromJson(get(segments("v1", "runtimes", runtimeId.value, "runs", runId.value)))
+        val identity = row.toIdentity()
         require(identity.runtimeId == runtimeId) { "remote_run_runtime_scope_mismatch" }
         require(identity.runId == runId) { "remote_run_id_scope_mismatch" }
-        return identity to row.getString("status")
+        return identity to row.status
     }
 
     suspend fun decide(runtimeId: RuntimeId, approvalId: ApprovalId, decision: String): String {
         val idempotencyKey = "approval:${approvalId.value}:$decision"
-        val path = "v1/runtimes/${runtimeId.value}/approvals/${approvalId.value}/decision"
+        val path = segments("v1", "runtimes", runtimeId.value, "approvals", approvalId.value, "decision")
         var lastFailure: Throwable? = null
         repeat(APPROVAL_DECISION_ATTEMPTS) { attempt ->
             try {
-                return post(path, JSONObject().control(idempotencyKey).put("decision", decision))
-                    .getString("status")
+                return GeneratedApprovalProjection.fromJson(post(
+                    path,
+                    GeneratedApprovalDecisionRequest(
+                        requestId = UUID.randomUUID().toString(),
+                        correlationId = UUID.randomUUID().toString(),
+                        idempotencyKey = idempotencyKey,
+                        decision = decision,
+                    ).toJson(),
+                )).status
             } catch (uncertain: Throwable) {
                 val outcomeUnknown = uncertain is IOException ||
                     uncertain is RelayHttpException && uncertain.status >= 500
@@ -474,7 +539,7 @@ class RelayRemoteRepository(
                 lastFailure = uncertain
                 recoverApprovalDecision(runtimeId, approvalId, decision)?.let { return it }
                 if (attempt + 1 < APPROVAL_DECISION_ATTEMPTS) {
-                    delay(APPROVAL_DECISION_RETRY_MILLIS[attempt])
+                    time.waitFor(APPROVAL_DECISION_RETRY_MILLIS[attempt])
                 }
             }
         }
@@ -488,44 +553,46 @@ class RelayRemoteRepository(
     ): String? {
         val idempotencyKey = "approval:${approvalId.value}:$decision"
         val response = try {
-            get("v1/runtimes/${runtimeId.value}/idempotency/approval.decide/$idempotencyKey")
+            get(segments("v1", "runtimes", runtimeId.value, "idempotency", "approval.decide", idempotencyKey))
         } catch (failure: RelayHttpException) {
             if (failure.status == 404 || failure.status >= 500 ||
                 failure.errorCode == "idempotency_result_not_found") return null
             throw failure
         }
-        val row = response.getJSONObject("resource")
-        require(row.getString("runtime_id") == runtimeId.value) {
+        val row = GeneratedApprovalDecisionRecoveryResponse.fromJson(response).resource
+        require(row.runtimeId == runtimeId.value) {
             "remote_approval_runtime_scope_mismatch"
         }
-        require(row.getString("approval_id") == approvalId.value) {
+        require(row.approvalId == approvalId.value) {
             "remote_approval_id_scope_mismatch"
         }
-        return row.getString("status")
+        return row.status
     }
 
     suspend fun approvals(runtimeId: RuntimeId, workspaceId: WorkspaceId): List<RemoteApprovalRecord> =
-        get("v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/approvals").array("items") { row ->
+        get(segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value, "approvals"))
+            .array("items") { row ->
+            val projection = GeneratedApprovalProjection.fromJson(row)
             val record = RemoteApprovalRecord(
-                runtimeId = RuntimeId(row.getString("runtime_id")),
-                workspaceId = WorkspaceId(row.getString("workspace_id")),
-                sessionId = SessionId(row.getString("session_id")),
-                runId = RunId(row.getString("run_id")),
-                approvalId = ApprovalId(row.getString("approval_id")),
-                backendId = row.getString("backend_id"),
-                operation = row.getString("operation"),
-                riskSummary = row.getString("risk_summary"),
-                scope = row.getString("scope"),
-                expiresAt = row.getString("expires_at"),
-                correlationId = row.getString("correlation_id"),
-                status = row.getString("status"),
+                runtimeId = RuntimeId(projection.runtimeId),
+                workspaceId = WorkspaceId(projection.workspaceId),
+                sessionId = SessionId(projection.sessionId),
+                runId = RunId(projection.runId),
+                approvalId = ApprovalId(projection.approvalId),
+                backendId = projection.backendId,
+                operation = projection.operation,
+                riskSummary = projection.riskSummary,
+                scope = projection.scope,
+                expiresAt = projection.expiresAt,
+                correlationId = projection.correlationId,
+                status = projection.status,
             )
             require(record.runtimeId == runtimeId && record.workspaceId == workspaceId) { "remote_approval_scope_mismatch" }
             record
         }
 
     suspend fun audit(runtimeId: RuntimeId, workspaceId: WorkspaceId, runId: RunId? = null): List<RemoteAuditEntry> {
-        val path = "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/audit"
+        val path = segments("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value, "audit")
         val result = get(path, extraQuery = runId?.let { "run_id" to it.value })
         return result.array("items") { row ->
             val entry = RemoteAuditEntry(
@@ -550,47 +617,47 @@ class RelayRemoteRepository(
             extraQueries.forEach { addQueryParameter(it.first, it.second) } }.build()
         execute(Request.Builder().url(url).get().build())
     }
+    private suspend fun get(path: List<String>, cursor: String? = null, query: String? = null,
+                            extraQuery: Pair<String, String>? = null,
+                            extraQueries: List<Pair<String, String>> = emptyList()): JSONObject =
+        withContext(Dispatchers.IO) {
+            val queries = buildList {
+                cursor?.let { add("cursor" to it) }
+                query?.let { add("query" to it) }
+                extraQuery?.let(::add)
+                addAll(extraQueries)
+            }
+            execute(Request.Builder().url(root.withRelayPath(path, queries)).get().build())
+        }
     private suspend fun post(path: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
         execute(Request.Builder().url(root.newBuilder().addPathSegments(path).build()).post(body.toString().toRequestBody(json)).build())
     }
-    private suspend fun postSegments(segments: List<String>, body: JSONObject): JSONObject =
+    private suspend fun post(path: List<String>, body: JSONObject): JSONObject =
         withContext(Dispatchers.IO) {
-            require(segments.isNotEmpty() && segments.all(String::isNotEmpty)) {
-                "relay_path_segments_invalid"
-            }
-            val url = root.newBuilder().apply {
-                segments.forEach(::addPathSegment)
-            }.build()
-            execute(Request.Builder().url(url).post(body.toString().toRequestBody(json)).build())
+            execute(Request.Builder().url(root.withRelayPath(path))
+                .post(body.toString().toRequestBody(json)).build())
         }
-    private suspend fun postNoContent(path: String, body: JSONObject) = withContext(Dispatchers.IO) {
-        val request = Request.Builder().url(root.newBuilder().addPathSegments(path).build())
-            .post(body.toString().toRequestBody(json)).build()
-        val initialToken = accessToken()
-        fun call(token: String) = http.newCall(authorizeRelayRequest(
-            deviceProof,
-            request.newBuilder().header("Authorization", "Bearer $token").build(),
-            token,
-        )).execute()
-        var response = call(initialToken)
-        if (response.code == 401) {
-            response.close()
-            val refreshed = refreshAfter(initialToken)
-            if (refreshed.isNullOrBlank()) throw RelayHttpException(401, null, "oidc_auth_invalid")
-            response = call(refreshed)
-        }
-        response.use { if (!it.isSuccessful) throw relayHttpException(it) }
-    }
     private suspend fun patch(path: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
         execute(Request.Builder().url(root.newBuilder().addPathSegments(path).build())
+            .patch(body.toString().toRequestBody(json)).build())
+    }
+    private suspend fun patch(path: List<String>, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        execute(Request.Builder().url(root.withRelayPath(path))
             .patch(body.toString().toRequestBody(json)).build())
     }
     private suspend fun put(path: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
         execute(Request.Builder().url(root.newBuilder().addPathSegments(path).build())
             .put(body.toString().toRequestBody(json)).build())
     }
+    private suspend fun put(path: List<String>, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        execute(Request.Builder().url(root.withRelayPath(path))
+            .put(body.toString().toRequestBody(json)).build())
+    }
     private suspend fun delete(path: String): JSONObject = withContext(Dispatchers.IO) {
         execute(Request.Builder().url(root.newBuilder().addPathSegments(path).build()).delete().build())
+    }
+    private suspend fun delete(path: List<String>): JSONObject = withContext(Dispatchers.IO) {
+        execute(Request.Builder().url(root.withRelayPath(path)).delete().build())
     }
     private suspend fun execute(request: Request): JSONObject {
         var networkAttempt = 0
@@ -625,20 +692,35 @@ class RelayRemoteRepository(
                 if (request.method != "GET" || networkAttempt >= 1) throw failure
                 networkAttempt += 1
                 http.connectionPool.evictAll()
-                delay(250)
+                time.waitFor(250)
             }
         }
     }
 
-    private fun decodeSession(row: JSONObject, runtimeId: RuntimeId, workspaceId: WorkspaceId): RemoteSessionRef {
-        val session = RemoteSessionRef(RuntimeId(row.getString("runtime_id")), WorkspaceId(row.getString("workspace_id")),
-            SessionId(row.getString("session_id")), row.getString("title"),
-            row.nullableString("backend_id") ?: "opendrsai",
-            row.nullableString("lifecycle")?.let(RemoteResourceLifecycle::fromWire) ?: RemoteResourceLifecycle.ACTIVE,
-            row.nullableString("updated_at").orEmpty())
+    private fun decodeSession(row: JSONObject, runtimeId: RuntimeId, workspaceId: WorkspaceId): RemoteSessionRef =
+        decodeSession(GeneratedSessionProjection.fromJson(row), runtimeId, workspaceId)
+
+    private fun decodeSession(
+        row: GeneratedSessionProjection,
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+    ): RemoteSessionRef {
+        val session = RemoteSessionRef(RuntimeId(row.runtimeId), WorkspaceId(row.workspaceId),
+            SessionId(row.sessionId), row.title,
+            row.backendId ?: "opendrsai",
+            RemoteResourceLifecycle.fromWire(row.lifecycle),
+            row.updatedAt)
         require(session.runtimeId == runtimeId && session.workspaceId == workspaceId) { "remote_session_scope_mismatch" }
         return session
     }
+
+    private fun GeneratedRunProjection.toIdentity(): RemoteRunIdentity = RemoteRunIdentity(
+        RuntimeId(runtimeId),
+        WorkspaceId(workspaceId),
+        SessionId(sessionId),
+        RunId(runId),
+        backendId,
+    )
 
     private fun decodeConversationItem(row: JSONObject) = GeneratedSessionConversationItem(
         itemId = row.getString("item_id"),
@@ -676,9 +758,6 @@ class RelayRemoteRepository(
         require(it.runtimeId == runtimeId.value && it.workspaceId == workspaceId.value &&
             it.sessionId == sessionId.value) { "remote_session_event_scope_mismatch" }
     }
-    private fun JSONObject.control(idempotency: String? = null): JSONObject = put("request_id", UUID.randomUUID().toString())
-        .put("correlation_id", UUID.randomUUID().toString()).apply { idempotency?.let { put("idempotency_key", it) } }
-
     private companion object {
         const val APPROVAL_DECISION_ATTEMPTS = 4
         val APPROVAL_DECISION_RETRY_MILLIS = longArrayOf(100, 250, 500)

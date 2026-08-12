@@ -39,12 +39,14 @@ def fake_resolve(_config, _policy, *, role, operation, require_credentials):
 
 client = TestClient(gateway.app)
 originals = (
+    gateway.verify_gateway_instance,
     gateway.load_model_provider_config,
     gateway.load_agent_model_policy,
     gateway.resolve_agent_operation,
     gateway.OpenAIAudioOperationAdapter,
 )
 try:
+    gateway.verify_gateway_instance = lambda _token: True
     gateway.load_model_provider_config = lambda: object()
     gateway.load_agent_model_policy = lambda _agent: SimpleNamespace(policy=object())
     gateway.resolve_agent_operation = fake_resolve
@@ -96,6 +98,7 @@ try:
     assert response.status_code == 403, response.text
 finally:
     (
+        gateway.verify_gateway_instance,
         gateway.load_model_provider_config,
         gateway.load_agent_model_policy,
         gateway.resolve_agent_operation,

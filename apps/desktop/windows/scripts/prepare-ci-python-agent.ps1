@@ -8,6 +8,12 @@ param(
 $ErrorActionPreference = "Stop"
 $windowsRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $repoRoot = (Resolve-Path (Join-Path $windowsRoot "..\..\..")).Path
+if ($Python -eq "python") {
+    $repositoryPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
+    if (Test-Path -LiteralPath $repositoryPython -PathType Leaf) {
+        $Python = $repositoryPython
+    }
+}
 if (-not $AgentDir) {
     $AgentDir = Join-Path $windowsRoot ".tmp\bootstrapper-msi3\.drsai\drsai-agent"
 }

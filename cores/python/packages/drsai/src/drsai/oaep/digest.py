@@ -27,6 +27,8 @@ def _semantic_item(item: Mapping[str, Any]) -> dict[str, Any]:
     # are the same OAEP semantic value (matching Android canonicalization).
     if content.get("parts") == []:
         content.pop("parts")
+    if value["type"] in {"command_execution", "tool_call"} and content.get("replay_policy") == {}:
+        content.pop("replay_policy")
     value["content"] = content
     return value
 
@@ -58,6 +60,19 @@ def canonical_oaep_items(items: Sequence[Mapping[str, Any]]) -> str:
             raise ValueError("oaep_digest_item_invalid:" + ",".join(missing))
         rows.append(_normalize(_semantic_item(item)))
     return json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_oaep_item(item: Mapping[str, Any]) -> str:
+    """Canonicalize one already ordered Item for bounded-memory checkpoints."""
+    missing = [field for field in _FIELDS if field not in item]
+    if missing:
+        raise ValueError("oaep_digest_item_invalid:" + ",".join(missing))
+    return json.dumps(
+        _normalize(_semantic_item(item)),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def oaep_items_digest(items: Sequence[Mapping[str, Any]]) -> str:

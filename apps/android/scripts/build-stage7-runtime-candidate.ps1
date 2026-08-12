@@ -14,10 +14,18 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $android = Join-Path $repo "apps\android"
 $python = if ($PythonExecutable) {
     if ([IO.Path]::IsPathRooted($PythonExecutable)) { [IO.Path]::GetFullPath($PythonExecutable) } else { [IO.Path]::GetFullPath((Join-Path $repo $PythonExecutable)) }
-} else { Join-Path $repo ".venv\Scripts\python.exe" }
+} else {
+    $launcher = Get-Command py -ErrorAction SilentlyContinue
+    if (-not $launcher) { throw "android_build_python_3_12_missing" }
+    $resolved = & $launcher.Source -3.12 -c "import sys; print(sys.executable)"
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolved)) { throw "android_build_python_3_12_missing" }
+    $resolved.Trim()
+}
 $javaHome = "C:\Program Files\Android\Android Studio\jbr"
 $androidSdkPath = if ($AndroidSdk) { [IO.Path]::GetFullPath($AndroidSdk) } elseif ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA "Android\Sdk" }
 if (-not (Test-Path -LiteralPath $python)) { throw "workspace_python_missing" }
+$pythonVersion = & $python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+if ($LASTEXITCODE -ne 0 -or $pythonVersion.Trim() -ne "3.12") { throw "android_build_python_must_be_3_12" }
 if (-not (Test-Path -LiteralPath (Join-Path $javaHome "bin\java.exe"))) { throw "android_jbr_missing" }
 if (-not (Test-Path -LiteralPath $androidSdkPath)) { throw "android_sdk_missing" }
 if ((git -C $repo status --porcelain).Count -ne 0) { throw "trusted_build_requires_clean_checkout" }

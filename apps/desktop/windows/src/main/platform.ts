@@ -3,6 +3,7 @@ import {
   FULL_DESKTOP_FEATURE_CAPABILITIES,
   type DesktopPlatformDescriptor,
 } from "../../../shared/api/platform";
+import { isDuplexVoiceEnabled } from "../../../shared/main/voice/duplex";
 
 export const WINDOWS_PLATFORM_DESCRIPTOR: DesktopPlatformDescriptor = {
   id: "windows",
@@ -14,7 +15,10 @@ export const WINDOWS_PLATFORM_DESCRIPTOR: DesktopPlatformDescriptor = {
     permissions: true,
     install: true,
     update: true,
-    features: FULL_DESKTOP_FEATURE_CAPABILITIES,
+    features: {
+      ...FULL_DESKTOP_FEATURE_CAPABILITIES,
+      duplexVoice: isDuplexVoiceEnabled(),
+    },
   },
 };
 

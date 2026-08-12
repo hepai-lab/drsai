@@ -18,19 +18,22 @@ import ai.drsai.remote.remote.data.RuntimeInstanceTracker
 import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.associationErrorMessage
+import ai.drsai.remote.remote.data.remoteActionableFailure
 import ai.drsai.remote.remote.data.RemoteSearchResult
 import ai.drsai.remote.remote.data.RemoteSearchKind
 import ai.drsai.remote.remote.data.RemoteSearchSource
+import ai.drsai.remote.remote.data.RemotePairingJourneyEvent
+import ai.drsai.remote.remote.data.RemotePairingJourneyReducer
 import ai.drsai.remote.remote.data.SharedPreferencesPushRegistrationStateStore
 import ai.drsai.remote.remote.device.RemotePushProvider
 import ai.drsai.remote.remote.device.RemotePushProviderStatus
 import ai.drsai.remote.remote.device.RemotePushRegistrationScheduler
+import ai.drsai.remote.remote.device.AndroidRemoteBackgroundSync
 import ai.drsai.remote.BuildConfig
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,8 +45,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
     private val container = RemoteWorkspaceContainer.get(app)
-    private val tokenStore = container.tokenStore
-    private val relay = container.relayDiscovery
+    private val time = container.time
+    private val tokenStore = container.boundaries.auth.tokens
+    private val relay = container.boundaries.catalog.discovery
+    private val associations = container.boundaries.association.service
     private val connectivity = container.connectivity
     private val lifecycleCoordinator = RemoteLifecycleCoordinator()
     private val instances = RuntimeInstanceTracker()
@@ -56,7 +61,9 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
     private val mutableState = MutableStateFlow(RemoteHomeUiState(loading = true))
     private var searchJob: Job? = null
     private val refreshGeneration = AtomicLong(0)
+    private val notificationReadinessGeneration = AtomicLong(0)
     private val keyRotationInFlight = AtomicBoolean(false)
+    private val pairingReducer = RemotePairingJourneyReducer()
     val state: StateFlow<RemoteHomeUiState> = mutableState.asStateFlow()
 
     init {
@@ -66,12 +73,15 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             connectivity.online.drop(1).collect { online ->
                 lifecycleCoordinator.networkChanged()
-                if (online) refresh() else mutableState.update { it.copy(stale = it.computers.isNotEmpty(), error = "网络已断开") }
+                if (online) refresh() else mutableState.update {
+                    it.copy(stale = it.computers.isNotEmpty(), error = "网络已断开")
+                }
             }
         }
     }
 
     fun refreshNotificationReadiness() {
+        val generation = notificationReadinessGeneration.incrementAndGet()
         val app = getApplication<Application>()
         val provider = RemotePushProvider.initialize(app)
         val notificationsEnabled = NotificationManagerCompat.from(app).areNotificationsEnabled() &&
@@ -79,21 +89,74 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                 app,
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED)
-        val readiness = when {
-            provider == RemotePushProviderStatus.NOT_CONFIGURED ->
-                RemoteNotificationReadiness.PROVIDER_NOT_CONFIGURED
-            provider == RemotePushProviderStatus.PLAY_SERVICES_UNAVAILABLE ->
-                RemoteNotificationReadiness.PLAY_SERVICES_UNAVAILABLE
-            !notificationsEnabled -> RemoteNotificationReadiness.PERMISSION_REQUIRED
-            else -> RemoteNotificationReadiness.READY
+        val local = localRemoteNotificationReadiness(provider, notificationsEnabled)
+        mutableState.update { it.copy(notificationState = local) }
+        AndroidRemoteBackgroundSync.updatePushReady(false)
+        if (local != RemoteNotificationReadiness.CHECKING) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val platform = runCatching { container.boundaries.push.readiness.pushReadiness() }.getOrNull()
+            if (generation == notificationReadinessGeneration.get()) {
+                mutableState.update {
+                    it.copy(notificationState = resolvedRemoteNotificationReadiness(local, platform))
+                }
+                AndroidRemoteBackgroundSync.updatePushReady(
+                    mutableState.value.notificationState == RemoteNotificationReadiness.READY,
+                )
+            }
         }
-        mutableState.update { it.copy(notificationState = readiness) }
+    }
+
+    /** Foreground is the lossless fallback when background push is unavailable. */
+    fun onForeground() {
+        refreshNotificationReadiness()
+        RemotePushRegistrationScheduler.schedule(getApplication())
+        refresh()
+    }
+
+    fun diagnoseConnection() {
+        refreshNotificationReadiness()
+        val current = mutableState.value
+        val signedIn = tokenStore.user() != null
+        val proofReady = runCatching {
+            val device = container.boundaries.auth.deviceProof.associationDevice
+            device.deviceId.isNotBlank() && device.devicePublicKey.isNotBlank()
+        }.getOrDefault(false)
+        val checks = RemoteConnectionDiagnosticInput(
+            computer = when {
+                current.computers.isEmpty() -> RemoteDiagnosticCheck.UNKNOWN
+                current.computers.all { it.state == RemoteConnectionState.OFFLINE } -> RemoteDiagnosticCheck.FAILED
+                else -> RemoteDiagnosticCheck.OK
+            },
+            platform = if (current.error != null && current.computers.isEmpty()) {
+                RemoteDiagnosticCheck.FAILED
+            } else RemoteDiagnosticCheck.OK,
+            account = if (signedIn) RemoteDiagnosticCheck.OK else RemoteDiagnosticCheck.FAILED,
+            deviceIdentity = when {
+                !proofReady -> RemoteDiagnosticCheck.FAILED
+                signedIn && current.computers.isEmpty() && !current.loading -> RemoteDiagnosticCheck.FAILED
+                else -> RemoteDiagnosticCheck.OK
+            },
+            protocol = if (current.computers.any { it.state == RemoteConnectionState.INCOMPATIBLE }) {
+                RemoteDiagnosticCheck.FAILED
+            } else RemoteDiagnosticCheck.OK,
+            notifications = if (current.notificationState == RemoteNotificationReadiness.READY) {
+                RemoteDiagnosticCheck.OK
+            } else RemoteDiagnosticCheck.FAILED,
+        )
+        mutableState.update { it.copy(diagnostic = diagnoseRemoteConnection(checks)) }
     }
 
     fun refresh(query: String? = mutableState.value.query) = viewModelScope.launch(Dispatchers.IO) {
         val generation = refreshGeneration.incrementAndGet()
         val normalizedQuery = query?.trim().orEmpty()
-        mutableState.update { it.copy(loading = it.computers.isEmpty(), refreshing = it.computers.isNotEmpty(), error = null) }
+        mutableState.update {
+            it.copy(
+                loading = it.computers.isEmpty(),
+                refreshing = it.computers.isNotEmpty(),
+                error = null,
+                actionableError = null,
+            )
+        }
         runCatching {
             val subject = tokenStore.user()?.id ?: error("remote_subject_required")
             val cached = directory.cached(subject)
@@ -126,6 +189,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                         "workspace_catalog_unavailable" -> "部分工作区暂时无法刷新，当前显示缓存"
                         else -> null
                     },
+                    actionableError = null,
                     recentlyAssociatedRuntimeId = mutableState.value.recentlyAssociatedRuntimeId,
                     searchResults = onlineSearchResults(result.entries, normalizedQuery) + cachedSearch,
                     notificationState = mutableState.value.notificationState,
@@ -146,6 +210,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                                 "HepAI 登录已过期，请重新登录"
                             else -> "远程目录刷新失败，当前显示上次同步内容"
                         },
+                        actionableError = remoteActionableFailure(failure),
                     )
                 }
             }
@@ -153,7 +218,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun scheduleDeviceKeyRotation(entries: List<RemoteDirectoryEntry>) {
-        if (!container.deviceProof.isKeyRotationDue() ||
+        if (!container.boundaries.auth.deviceProof.isKeyRotationDue() ||
             !keyRotationInFlight.compareAndSet(false, true)
         ) return
         // The synchronized catalog contains only currently associated
@@ -164,7 +229,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { relay.rotateDeviceKey(runtimeId) }
+            runCatching { associations.rotateDeviceKey(runtimeId) }
                 .onFailure {
                     mutableState.update { state ->
                         state.copy(error = "设备安全密钥暂时无法更新，将自动重试")
@@ -197,8 +262,6 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
             displayName = runtime.reference.displayName,
             state = state,
             version = runtime.version,
-            instanceId = runtime.instanceId,
-            connectionGeneration = runtime.connectionGeneration,
             lastSeenLabel = when {
                 cached && entry.lastSyncedAt != null ->
                     "缓存 · 上次同步 ${formatSyncTime(entry.lastSyncedAt)}"
@@ -229,7 +292,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         mutableState.update { it.copy(query = query) }
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            delay(250)
+            time.waitFor(250)
             refresh(query)
         }
     }
@@ -325,28 +388,55 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                 }
         }
 
+    fun beginAssociationScan() {
+        mutableState.update { it.copy(pairing = pairingReducer.reduce(it.pairing, RemotePairingJourneyEvent.ScanStarted)) }
+    }
+
+    fun cancelAssociationScan() {
+        mutableState.update { it.copy(pairing = pairingReducer.reduce(it.pairing, RemotePairingJourneyEvent.Cancelled)) }
+    }
+
     fun associate(payload: String) = viewModelScope.launch(Dispatchers.IO) {
-        mutableState.update { it.copy(refreshing = true, error = null) }
-        runCatching { relay.associate(payload) }
+        mutableState.update { it.copy(
+            refreshing = true,
+            error = null,
+            actionableError = null,
+            pairing = pairingReducer.reduce(it.pairing, RemotePairingJourneyEvent.PayloadAccepted),
+        ) }
+        runCatching { associations.associate(payload) }
             .onSuccess { runtimeId ->
-                runCatching { relay.recordPresence(runtimeId) }
+                runCatching { associations.recordPresence(runtimeId) }
                 RemotePushRegistrationScheduler.schedule(getApplication())
-                mutableState.update { it.copy(recentlyAssociatedRuntimeId = runtimeId) }
+                mutableState.update { it.copy(
+                    recentlyAssociatedRuntimeId = runtimeId,
+                    pairing = pairingReducer.reduce(it.pairing, RemotePairingJourneyEvent.Connected),
+                ) }
                 refresh()
             }
-            .onFailure { failure -> mutableState.update { it.copy(refreshing = false, error = associationErrorMessage(failure)) } }
+            .onFailure { failure -> mutableState.update { state ->
+                val actionable = remoteActionableFailure(failure)
+                state.copy(
+                    refreshing = false,
+                    error = associationErrorMessage(failure),
+                    actionableError = actionable,
+                    pairing = pairingReducer.reduce(
+                        state.pairing,
+                        RemotePairingJourneyEvent.Failed(actionable.action),
+                    ),
+                )
+            } }
     }
 
     private suspend fun reportPresence(runtimeIds: List<ai.drsai.remote.remote.model.RuntimeId>) {
         runtimeIds.forEach { runtimeId ->
-            runCatching { relay.recordPresence(runtimeId) }
+            runCatching { associations.recordPresence(runtimeId) }
         }
     }
 
     fun revokeAssociation(runtimeId: ai.drsai.remote.remote.model.RuntimeId, clearLocalCache: Boolean = false) =
         viewModelScope.launch(Dispatchers.IO) {
             mutableState.update { it.copy(refreshing = true, error = null) }
-            runCatching { relay.revokeAssociation(runtimeId) }
+            runCatching { associations.revokeAssociation(runtimeId) }
                 .onSuccess {
                     tokenStore.user()?.let { user ->
                         SharedPreferencesPushRegistrationStateStore(
@@ -358,8 +448,8 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                             directory.removeCachedRuntime(subject, runtimeId)
                             container.drafts.clearRuntime(subject, runtimeId.value)
                             container.activity.clearRuntime(subject, runtimeId.value)
-                            container.runControls.clearRuntime(subject, runtimeId.value)
-                            container.approvalDecisions.clearRuntime(subject, runtimeId.value)
+                            container.boundaries.run.controls.clearRuntime(subject, runtimeId.value)
+                            container.boundaries.approval.decisions.clearRuntime(subject, runtimeId.value)
                             instructionVersions.clearRuntime(subject, runtimeId)
                         }.exceptionOrNull() else null
                     }

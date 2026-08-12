@@ -34,10 +34,12 @@ class PythonRuntimeClient(
     context: Context,
     private val metrics: PythonRuntimeMetrics = NoOpPythonRuntimeMetrics,
     private val idleTimeoutMs: Long = 30_000,
-    // Keep the transport/health deadline aligned with the accepted first-event budget.
-    // A 2 s deadline produced a false UNAVAILABLE during a loaded arm64 device run even
-    // though the same cold-start sequence completed in under 1 s when retried alone.
-    private val healthTimeoutMs: Long = 5_000,
+    // A fresh install or cleared app data must extract Chaquopy before Android can
+    // deliver onServiceConnected. Keep this correctness deadline independent from
+    // the cold-start performance SLO: killing the process at the SLO boundary makes
+    // every retry repeat the same extraction and can prevent Full Runtime forever.
+    private val serviceConnectionTimeoutMs: Long = 30_000,
+    private val healthTimeoutMs: Long = 10_000,
     private val responseTimeoutMs: Long = 30_000,
 ) : FullRuntimeBindingTransport, PythonRuntimeBridge {
     private val applicationContext = context.applicationContext
@@ -105,7 +107,7 @@ class PythonRuntimeClient(
             }
             throw IllegalStateException("python_runtime_bind_failed")
         }
-        withTimeout(healthTimeoutMs) { deferred.await() }
+        withTimeout(serviceConnectionTimeoutMs) { deferred.await() }
         verifyPythonCoreReady()
     }
 

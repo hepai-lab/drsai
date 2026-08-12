@@ -76,6 +76,7 @@ import type {
   DesktopStreamingVoiceCapabilities,
   DesktopMcpContextResult,
   DesktopMobileAssociation,
+  DesktopMobileRemoteDiagnostics,
   DesktopMobilePairingReadiness,
   DesktopThread,
   DesktopWorktreeSummary,
@@ -131,6 +132,7 @@ import { BackgroundTaskQueue } from "./components/SkillSquareView";
 // import { GfsView } from "./components/GfsView";
 import { TaskCenterView } from "./components/TaskCenterView";
 import { MobilePairingDialog, mobilePairingErrorText } from "./components/MobilePairingDialog";
+import { mobileAssociationScopeEditorState } from "./components/mobileAssociationScopeEditor";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { RunInspectorPanel } from "./components/RunInspectorPanel";
@@ -236,12 +238,13 @@ const AWAY_STARTED_AT_STORAGE_KEY = "opendrsai.awayStartedAt";
 type WorkspaceSortMode = "recent" | "name" | "created";
 type AppearanceMode = "light" | "dark" | "system";
 type AgentConfigurationTab = "opendrsai" | "codex" | "platform";
-type AgentCapabilityModelRole = "image_understanding_model" | "image_generation_model" | "text_to_speech_model" | "speech_to_text_model";
+type AgentCapabilityModelRole = "image_understanding_model" | "image_generation_model" | "text_to_speech_model" | "realtime_voice_model" | "speech_to_text_model";
 interface AgentModelPolicyDraft {
   primary_model: AgentModelSelection;
   image_understanding_model: AgentModelSelection | null;
   image_generation_model: AgentModelSelection | null;
   text_to_speech_model: AgentModelSelection | null;
+  realtime_voice_model: AgentModelSelection | null;
   speech_to_text_model: AgentModelSelection | null;
   reasoning_effort: ThinkingEffort | null;
 }
@@ -2039,6 +2042,7 @@ function AuthenticatedApp({
         image_understanding_model: myDrSaiAgentModelPolicy?.image_understanding_model ?? null,
         image_generation_model: myDrSaiAgentModelPolicy?.image_generation_model ?? myDrSaiAgentModelPolicy?.image_model ?? null,
         text_to_speech_model: myDrSaiAgentModelPolicy?.text_to_speech_model ?? null,
+        realtime_voice_model: myDrSaiAgentModelPolicy?.realtime_voice_model ?? null,
         speech_to_text_model: myDrSaiAgentModelPolicy?.speech_to_text_model ?? null,
         reasoning_effort: reasoningEffort,
         expected_revision: myDrSaiAgentModelPolicy?.revision,
@@ -2099,6 +2103,7 @@ function AuthenticatedApp({
         image_understanding_model: policy.image_understanding_model ?? null,
         image_generation_model: policy.image_generation_model ?? policy.image_model ?? null,
         text_to_speech_model: policy.text_to_speech_model ?? null,
+        realtime_voice_model: policy.realtime_voice_model ?? null,
         speech_to_text_model: policy.speech_to_text_model ?? null,
         reasoning_effort: effort,
         expected_revision: policy.revision,
@@ -2757,6 +2762,7 @@ function AuthenticatedApp({
         modelSettings={modelSettings}
         agents={availableChatAgents}
         appearance={appearance}
+        codexStatus={codexStatus}
         approvalCenterPanel={(
           <ApprovalCenterView
             language={language}
@@ -2782,6 +2788,11 @@ function AuthenticatedApp({
         myDrSaiConfig={myDrSaiConfig}
         myDrSaiAgentModelPolicy={myDrSaiAgentModelPolicy}
         onCheckUpdates={() => void desktop.checkUpdates()}
+        onCodexRefresh={async () => setCodexStatus(await desktopApi.getCodexBackendStatus(true))}
+        onCodexRestart={async () => setCodexStatus(await desktopApi.restartCodexBackend())}
+        onCodexRepair={() => desktop.startInstall(false)}
+        onCodexLogin={async (type) => desktopApi.startCodexBackendLogin(type)}
+        onCodexLogout={async () => { await desktopApi.logoutCodexBackend(); setCodexStatus(await desktopApi.getCodexBackendStatus(true)); }}
         onAppearanceChange={setAppearance}
         onCompletionNotificationsChange={(enabled) => {
           setCompletionNotifications(enabled);
@@ -2888,8 +2899,6 @@ function AuthenticatedApp({
       actionMessage={desktop.actionMessage}
       busy={desktop.busy}
       health={health}
-      codexStatus={codexStatus}
-      codexEnabled={platformDescriptor?.capabilities.features.codexBackend === true}
       installProgress={desktop.installProgress}
       language={language}
       onCancelInstall={desktop.cancelInstall}
@@ -2899,11 +2908,6 @@ function AuthenticatedApp({
       onInstallUpdate={desktop.installUpdate}
       onOpenPath={(path) => desktopApi.openPath(path)}
       onRefresh={desktop.refreshHealth}
-      onCodexRefresh={async () => setCodexStatus(await desktopApi.getCodexBackendStatus(true))}
-      onCodexRestart={async () => setCodexStatus(await desktopApi.restartCodexBackend())}
-      onCodexRepair={() => desktop.startInstall(false)}
-      onCodexLogin={async (type) => desktopApi.startCodexBackendLogin(type)}
-      onCodexLogout={async () => { await desktopApi.logoutCodexBackend(); setCodexStatus(await desktopApi.getCodexBackendStatus(true)); }}
     />
   );
 
@@ -2913,10 +2917,11 @@ function AuthenticatedApp({
         language={language}
         request={runInspectionRequest}
         focusedItemId={runInspectionRequest?.focusedItemId}
-        onOpenRun={(runId) => setRunInspectionRequest((current) => current ? {
+        onOpenRun={(runId, focusedItemId) => setRunInspectionRequest((current) => current ? {
           workspacePath: current.workspacePath,
           ...(current.workspaceId ? { workspaceId: current.workspaceId } : {}),
           runId,
+          ...(focusedItemId ? { focusedItemId } : {}),
         } : current)}
         onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : () => {
           setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
@@ -6181,12 +6186,101 @@ function TaskDeliverySummaryPanel({
   );
 }
 
+function CodexRuntimeSettings({
+  busy,
+  health,
+  language,
+  status,
+  onRefresh,
+  onRestart,
+  onRepair,
+  onLogin,
+  onLogout,
+}: {
+  busy: boolean;
+  health: DesktopHealth | null;
+  language: AppLanguage;
+  status: CodexBackendStatus | null;
+  onRefresh: () => void | Promise<void>;
+  onRestart: () => void | Promise<void>;
+  onRepair: () => void | Promise<void>;
+  onLogin: (type: "chatgpt" | "chatgptDeviceCode") => Promise<CodexBackendLogin>;
+  onLogout: () => void | Promise<void>;
+}): React.JSX.Element {
+  const zh = language === "zh";
+  const [login, setLogin] = useState<CodexBackendLogin | null>(null);
+  const [diagnosticCopied, setDiagnosticCopied] = useState(false);
+
+  async function copyDiagnostic(): Promise<void> {
+    await copyTextSafely(JSON.stringify({
+      product: "OpenDrSai Desktop",
+      desktopVersion: health?.update.currentVersion ?? "unknown",
+      runtimeReady: health?.gatewayReady ?? false,
+      runtimeMode: health?.mode ?? "local",
+      codex: status ? {
+        state: status.state,
+        version: status.version,
+        loggedIn: status.loggedIn,
+        appServerState: status.appServerState,
+        connectionState: status.connectionState,
+        transport: status.transport,
+        adapterVersion: status.adapterVersion,
+        retryable: status.retryable,
+      } : null,
+      generatedAt: new Date().toISOString(),
+    }, null, 2));
+    setDiagnosticCopied(true);
+    window.setTimeout(() => setDiagnosticCopied(false), 2_000);
+  }
+
+  return <section className="settings-section" data-testid="codex-runtime-settings">
+    <div>
+      <h2>Codex Agent Runtime</h2>
+      <p>{zh ? "管理 Codex 运行时连接、账户、修复操作和脱敏诊断信息。" : "Manage the Codex runtime connection, account, repair actions, and redacted diagnostics."}</p>
+    </div>
+    <div className="about-section-title" data-testid="codex-backend-status">
+      <strong>{zh ? "运行状态" : "Runtime status"}</strong>
+      <span data-testid={`codex-state-${status?.state ?? "loading"}`}>{status ? `${status.state}${status.version ? ` · ${status.version}` : ""}` : (zh ? "正在读取 Runtime 能力" : "Reading Runtime capability")}</span>
+    </div>
+    <dl className="codex-health-layers" data-testid="codex-health-layers">
+      <div><dt>Desktop → Runtime</dt><dd>{health?.gatewayReady ? (zh ? "已连接" : "Connected") : (zh ? "未连接" : "Disconnected")}</dd></div>
+      <div><dt>Runtime → Codex</dt><dd>{status?.available ? (zh ? "可用" : "Available") : (status?.reason || (zh ? "不可用" : "Unavailable"))}</dd></div>
+      <div><dt>{zh ? "Codex → 账户/模型" : "Codex → account/model"}</dt><dd>{status?.loggedIn && status.state === "available" ? (zh ? "账户已登录，模型可用" : "Signed in; models available") : (zh ? "需要检查账户或模型" : "Account or model check required")}</dd></div>
+      <div><dt>App Server</dt><dd>{status?.appServerState === "running" ? (zh ? "运行中" : "Running") : (zh ? "按需启动" : "Starts on demand")}</dd></div>
+      <div><dt>{zh ? "连接方式" : "Transport"}</dt><dd>{status?.transport === "ssh" ? (zh ? "远程 SSH" : "Remote SSH") : (zh ? "本机进程" : "Local process")}</dd></div>
+      <div><dt>{zh ? "适配器" : "Adapter"}</dt><dd>{status?.adapterVersion || (zh ? "等待检测" : "Pending check")}</dd></div>
+    </dl>
+    <div className="about-action-grid">
+      <button type="button" onClick={() => void onRefresh()}>{zh ? "刷新 Codex" : "Refresh Codex"}</button>
+      {status?.action === "login" && <button type="button" data-testid="codex-login" onClick={() => void onLogin("chatgptDeviceCode").then(setLogin)}>{zh ? "登录 ChatGPT" : "Sign in to ChatGPT"}</button>}
+      {status?.loggedIn && <button type="button" data-testid="codex-logout" onClick={() => void onLogout()}>{zh ? "退出 Codex" : "Sign out of Codex"}</button>}
+      {status?.action === "install" && <button type="button" disabled={busy} data-testid="codex-install-action" onClick={() => void onRepair()}>{zh ? "安装并修复 Codex" : "Install and repair Codex"}</button>}
+      {status?.action === "upgrade" && <button type="button" disabled={busy} data-testid="codex-upgrade-action" onClick={() => void onRepair()}>{zh ? "升级 Codex Runtime" : "Upgrade Codex Runtime"}</button>}
+      {status?.action === "restart" && <button type="button" data-testid="codex-restart-action" onClick={() => void onRestart()}>{zh ? "重启 Codex Runtime" : "Restart Codex Runtime"}</button>}
+      <button type="button" data-testid="copy-codex-diagnostic" onClick={() => void copyDiagnostic()}>{diagnosticCopied ? (zh ? "已复制" : "Copied") : (zh ? "复制脱敏诊断" : "Copy redacted diagnostics")}</button>
+    </div>
+    <ol className="codex-setup-steps" data-testid="codex-setup-steps" aria-label={zh ? "Codex 首次使用向导" : "Codex first-use setup"}>
+      <li data-state={status?.state === "not_installed" ? "current" : "complete"}>
+        <strong>{zh ? "1. 检查或安装 Codex" : "1. Check or install Codex"}</strong>
+        <span>{status?.version ? `${zh ? "已找到版本" : "Found version"} ${status.version}` : (zh ? "等待检查" : "Waiting for check")}</span>
+      </li>
+      <li data-state={status?.loggedIn ? "complete" : status?.available ? "current" : "pending"}>
+        <strong>{zh ? "2. 登录 ChatGPT" : "2. Sign in to ChatGPT"}</strong>
+        <span>{status?.loggedIn ? (status.accountLabel || (zh ? "已登录" : "Signed in")) : (zh ? "需要登录后才能对话" : "Sign in before chatting")}</span>
+      </li>
+      <li data-state={status?.state === "available" ? "complete" : "pending"}>
+        <strong>{zh ? "3. 新建 Codex 会话" : "3. Start a Codex conversation"}</strong>
+        <span>{status?.state === "available" ? (zh ? "已就绪，可返回工作区新建会话" : "Ready; return to a workspace and start a conversation") : (zh ? "完成前两步后自动就绪" : "Ready automatically after the first two steps")}</span>
+      </li>
+    </ol>
+    {login?.userCode && <div role="status" data-testid="codex-device-code">{zh ? "设备码" : "Device code"}: {login.userCode}</div>}
+  </section>;
+}
+
 function DesktopStatusPanel({
   actionMessage,
   busy,
   health,
-  codexStatus,
-  codexEnabled,
   installProgress,
   language,
   onCancelInstall,
@@ -6196,17 +6290,10 @@ function DesktopStatusPanel({
   onInstallUpdate,
   onOpenPath,
   onRefresh,
-  onCodexRefresh,
-  onCodexRestart,
-  onCodexRepair,
-  onCodexLogin,
-  onCodexLogout,
 }: {
   actionMessage: string | null;
   busy: boolean;
   health: DesktopHealth | null;
-  codexStatus: CodexBackendStatus | null;
-  codexEnabled: boolean;
   installProgress: InstallProgress | null;
   language: AppLanguage;
   onCancelInstall: () => void;
@@ -6216,37 +6303,8 @@ function DesktopStatusPanel({
   onInstallUpdate: () => void;
   onOpenPath: (path: string) => void;
   onRefresh: () => void;
-  onCodexRefresh: () => void | Promise<void>;
-  onCodexRestart: () => void | Promise<void>;
-  onCodexRepair: () => void | Promise<void>;
-  onCodexLogin: (type: "chatgpt" | "chatgptDeviceCode") => Promise<CodexBackendLogin>;
-  onCodexLogout: () => void | Promise<void>;
 }): React.JSX.Element {
   const zh = language === "zh";
-  const [codexLogin, setCodexLogin] = useState<CodexBackendLogin | null>(null);
-  const [diagnosticCopied, setDiagnosticCopied] = useState(false);
-  async function copyCodexDiagnostic(): Promise<void> {
-    const report = {
-      product: "OpenDrSai Desktop",
-      desktopVersion: health?.update.currentVersion ?? "unknown",
-      runtimeReady: health?.gatewayReady ?? false,
-      runtimeMode: health?.mode ?? "local",
-      codex: codexStatus ? {
-        state: codexStatus.state,
-        version: codexStatus.version,
-        loggedIn: codexStatus.loggedIn,
-        appServerState: codexStatus.appServerState,
-        connectionState: codexStatus.connectionState,
-        transport: codexStatus.transport,
-        adapterVersion: codexStatus.adapterVersion,
-        retryable: codexStatus.retryable,
-      } : null,
-      generatedAt: new Date().toISOString(),
-    };
-    await copyTextSafely(JSON.stringify(report, null, 2));
-    setDiagnosticCopied(true);
-    window.setTimeout(() => setDiagnosticCopied(false), 2_000);
-  }
 
   // The About card describes the Desktop application, not the independently
   // installed Python Runtime. The updater identity is always sourced from
@@ -6320,47 +6378,6 @@ function DesktopStatusPanel({
           <dd>OIDC</dd>
         </div>
       </dl>
-
-      {codexEnabled && <section className="about-section">
-        <div className="about-section-title" data-testid="codex-backend-status">
-          <strong>Codex Agent Backend</strong>
-          <span data-testid={`codex-state-${codexStatus?.state ?? "loading"}`}>
-            {codexStatus ? `${codexStatus.state}${codexStatus.version ? ` · ${codexStatus.version}` : ""}` : (zh ? "正在读取 Runtime capability" : "Reading Runtime capability")}
-          </span>
-        </div>
-        <dl className="codex-health-layers" data-testid="codex-health-layers">
-          <div><dt>Desktop → Runtime</dt><dd>{health?.gatewayReady ? (zh ? "已连接" : "Connected") : (zh ? "未连接" : "Disconnected")}</dd></div>
-          <div><dt>Runtime → Codex</dt><dd>{codexStatus?.available ? (zh ? "可用" : "Available") : (codexStatus?.reason || (zh ? "不可用" : "Unavailable"))}</dd></div>
-          <div><dt>{zh ? "Codex → 账号/模型" : "Codex → account/model"}</dt><dd>{codexStatus?.loggedIn && codexStatus.state === "available" ? (zh ? "账号已登录，模型可用" : "Signed in; models available") : (zh ? "需要检查账号或模型" : "Account or model check required")}</dd></div>
-          <div><dt>App Server</dt><dd>{codexStatus?.appServerState === "running" ? (zh ? "运行中" : "Running") : (zh ? "按需启动" : "Starts on demand")}</dd></div>
-          <div><dt>{zh ? "连接方式" : "Transport"}</dt><dd>{codexStatus?.transport === "ssh" ? (zh ? "远程 SSH" : "Remote SSH") : (zh ? "本机进程" : "Local process")}</dd></div>
-          <div><dt>{zh ? "适配器" : "Adapter"}</dt><dd>{codexStatus?.adapterVersion || (zh ? "等待检测" : "Pending check")}</dd></div>
-        </dl>
-        <div className="about-action-grid">
-          <button type="button" onClick={() => void onCodexRefresh()}>{zh ? "刷新 Codex" : "Refresh Codex"}</button>
-          {codexStatus?.action === "login" && <button type="button" data-testid="codex-login" onClick={() => void onCodexLogin("chatgptDeviceCode").then(setCodexLogin)}>{zh ? "登录 ChatGPT" : "Sign in to ChatGPT"}</button>}
-          {codexStatus?.loggedIn && <button type="button" data-testid="codex-logout" onClick={() => void onCodexLogout()}>{zh ? "退出 Codex" : "Sign out of Codex"}</button>}
-          {codexStatus?.action === "install" && <button type="button" disabled={busy} data-testid="codex-install-action" onClick={() => void onCodexRepair()}>{zh ? "安装并修复 Codex" : "Install and repair Codex"}</button>}
-          {codexStatus?.action === "upgrade" && <button type="button" disabled={busy} data-testid="codex-upgrade-action" onClick={() => void onCodexRepair()}>{zh ? "升级 Codex Backend" : "Upgrade Codex Backend"}</button>}
-          {codexStatus?.action === "restart" && <button type="button" data-testid="codex-restart-action" onClick={() => void onCodexRestart()}>{zh ? "重启 Codex Backend" : "Restart Codex Backend"}</button>}
-          <button type="button" data-testid="copy-codex-diagnostic" onClick={() => void copyCodexDiagnostic()}>{diagnosticCopied ? (zh ? "已复制" : "Copied") : (zh ? "复制脱敏诊断" : "Copy redacted diagnostics")}</button>
-        </div>
-        <ol className="codex-setup-steps" data-testid="codex-setup-steps" aria-label={zh ? "Codex 首次使用向导" : "Codex first-use setup"}>
-          <li data-state={codexStatus?.state === "not_installed" ? "current" : "complete"}>
-            <strong>{zh ? "1. 检查或安装 Codex" : "1. Check or install Codex"}</strong>
-            <span>{codexStatus?.version ? `${zh ? "已找到版本" : "Found version"} ${codexStatus.version}` : (zh ? "等待检查" : "Waiting for check")}</span>
-          </li>
-          <li data-state={codexStatus?.loggedIn ? "complete" : codexStatus?.available ? "current" : "pending"}>
-            <strong>{zh ? "2. 登录 ChatGPT" : "2. Sign in to ChatGPT"}</strong>
-            <span>{codexStatus?.loggedIn ? (codexStatus.accountLabel || (zh ? "已登录" : "Signed in")) : (zh ? "需要登录后才能对话" : "Sign in before chatting")}</span>
-          </li>
-          <li data-state={codexStatus?.state === "available" ? "complete" : "pending"}>
-            <strong>{zh ? "3. 新建 Codex 会话" : "3. Start a Codex conversation"}</strong>
-            <span>{codexStatus?.state === "available" ? (zh ? "已就绪，可返回工作区新建会话" : "Ready; return to a workspace and start a conversation") : (zh ? "完成前两步后自动就绪" : "Ready automatically after the first two steps")}</span>
-          </li>
-        </ol>
-        {codexLogin?.userCode && <div role="status" data-testid="codex-device-code">{zh ? "设备码" : "Device code"}: {codexLogin.userCode}</div>}
-      </section>}
 
       <section className="about-section">
         <div className="about-section-title">
@@ -6560,7 +6577,7 @@ function formatUpdateStatus(
   return zh ? "未检查" : "not checked";
 }
 
-type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "agent-task" | "approvals" | "analytics" | "integrations" | "remote-workspace" | "channels" | "archived-sessions" | "other";
+type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "agent-task" | "approvals" | "analytics" | "integrations" | "codex" | "remote-workspace" | "channels" | "archived-sessions" | "other";
 
 function modelProviderRuntimeSummary(connection: MyDrSaiModelConnection, zh: boolean): string | undefined {
   switch (connection.runtime?.runtime_status) {
@@ -6792,6 +6809,7 @@ function createAgentModelPolicyDraft(policy: MyDrSaiAgentModelPolicy): AgentMode
     image_understanding_model: policy.image_understanding_model ?? null,
     image_generation_model: policy.image_generation_model ?? policy.image_model ?? null,
     text_to_speech_model: policy.text_to_speech_model ?? null,
+    realtime_voice_model: policy.realtime_voice_model ?? null,
     speech_to_text_model: policy.speech_to_text_model ?? null,
     reasoning_effort: policy.reasoning_effort ?? null,
   };
@@ -6959,6 +6977,7 @@ function SettingsPanel({
   modelSettings,
   agents,
   appearance,
+  codexStatus,
   approvalCenterPanel,
   channelsPanel,
   featureCapabilities,
@@ -6975,6 +6994,11 @@ function SettingsPanel({
   myDrSaiAgentModelPolicy,
   agentConfigurations,
   onCheckUpdates,
+  onCodexRefresh,
+  onCodexRestart,
+  onCodexRepair,
+  onCodexLogin,
+  onCodexLogout,
   onAppearanceChange,
   onCompletionNotificationsChange,
   onCopyDiagnostics,
@@ -7019,6 +7043,7 @@ function SettingsPanel({
   modelSettings: ModelSettingsDraftController;
   agents: DesktopAgent[];
   appearance: AppearanceMode;
+  codexStatus: CodexBackendStatus | null;
   approvalCenterPanel: React.ReactNode;
   channelsPanel: React.ReactNode;
   featureCapabilities?: DesktopPlatformDescriptor["capabilities"]["features"];
@@ -7035,6 +7060,11 @@ function SettingsPanel({
   myDrSaiAgentModelPolicy: MyDrSaiAgentModelPolicy | null;
   agentConfigurations: Record<string, AgentConfigurationPreference>;
   onCheckUpdates: () => void;
+  onCodexRefresh: () => void | Promise<void>;
+  onCodexRestart: () => void | Promise<void>;
+  onCodexRepair: () => void | Promise<void>;
+  onCodexLogin: (type: "chatgpt" | "chatgptDeviceCode") => Promise<CodexBackendLogin>;
+  onCodexLogout: () => void | Promise<void>;
   onAppearanceChange: (appearance: AppearanceMode) => void;
   onCompletionNotificationsChange: (enabled: boolean) => void;
   onCopyDiagnostics: () => void;
@@ -7166,6 +7196,12 @@ function SettingsPanel({
       && model.input_modalities?.includes(input)
       && model.output_modalities?.includes(output),
   );
+  const selectableRealtimeVoiceModels = models.filter((model) =>
+    model.provider_id
+      && ["available", "configured_unverified"].includes(model.availability ?? "")
+      && ((model.input_modalities?.includes("audio") && model.output_modalities?.includes("audio"))
+        || model.alias.toLowerCase().split("/").at(-1)?.startsWith("gpt-realtime")),
+  );
   const capabilityModelSettings: Array<{
     role: AgentCapabilityModelRole;
     testId: string;
@@ -7177,6 +7213,7 @@ function SettingsPanel({
     { role: "image_understanding_model", testId: "agent-image-understanding-model-setting", label: zh ? "图像理解" : "Image understanding", description: zh ? "接收图片并输出文字理解结果。" : "Accepts images and returns a text understanding.", models: selectableCapabilityModels("image", "text"), selection: agentModelPolicyDraft?.image_understanding_model },
     { role: "image_generation_model", testId: "agent-image-generation-model-setting", label: zh ? "图像生成" : "Image generation", description: zh ? "根据文字或图片生成图像。" : "Generates images from text or image input.", models: models.filter((model) => model.provider_id && ["available", "configured_unverified"].includes(model.availability ?? "") && model.output_modalities?.includes("image")), selection: agentModelPolicyDraft?.image_generation_model },
     { role: "text_to_speech_model", testId: "agent-text-to-speech-model-setting", label: zh ? "文字转语音" : "Text to speech", description: zh ? "将文字合成为语音。" : "Synthesizes speech from text.", models: selectableCapabilityModels("text", "audio"), selection: agentModelPolicyDraft?.text_to_speech_model },
+    { role: "realtime_voice_model", testId: "agent-realtime-voice-model-setting", label: zh ? "实时" : "Realtime", description: zh ? "用于全双工实时语音输入与输出。" : "Handles full-duplex realtime voice input and output.", models: selectableRealtimeVoiceModels, selection: agentModelPolicyDraft?.realtime_voice_model },
     { role: "speech_to_text_model", testId: "agent-speech-to-text-model-setting", label: zh ? "语音转文字" : "Speech to text", description: zh ? "将语音识别为文字。" : "Transcribes speech into text.", models: selectableCapabilityModels("audio", "text"), selection: agentModelPolicyDraft?.speech_to_text_model },
   ];
   useEffect(() => {
@@ -7201,6 +7238,12 @@ function SettingsPanel({
   const [mobileAssociationsState, setMobileAssociationsState] = useState<AndroidDeviceLoadState>("idle");
   const [mobileEnrollmentBusy, setMobileEnrollmentBusy] = useState(false);
   const [mobileEnrollmentError, setMobileEnrollmentError] = useState<string | null>(null);
+  const [mobileScopeEditor, setMobileScopeEditor] = useState<{
+    association: DesktopMobileAssociation;
+    workspaces: WorkspaceProject[];
+    selectedIds: Set<string>;
+    canSave: boolean;
+  } | null>(null);
   const [agentConfigSaving, setAgentConfigSaving] = useState(false);
   const [agentConfigMessage, setAgentConfigMessage] = useState<string | null>(null);
   const [modelCapabilityStatus, setModelCapabilityStatus] = useState<AgentModelCapabilityStatus | null>(null);
@@ -7972,6 +8015,49 @@ function SettingsPanel({
     }
   }
 
+  async function openAndroidDeviceScopeEditor(association: DesktopMobileAssociation): Promise<void> {
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      const editor = mobileAssociationScopeEditorState(association, await desktopApi.listWorkspaces());
+      if (editor.workspaces.length === 0) {
+        setMobileEnrollmentError(zh ? "当前没有可用于缩小授权范围的工作区。" : "No workspaces are available for narrowing this authorization.");
+        return;
+      }
+      setMobileScopeEditor({
+        association,
+        ...editor,
+      });
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
+  async function saveAndroidDeviceScope(): Promise<void> {
+    if (!mobileScopeEditor?.canSave) return;
+    setMobileEnrollmentBusy(true);
+    setMobileEnrollmentError(null);
+    try {
+      const updated = await desktopApi.shrinkMobileAssociation(
+        mobileScopeEditor.association.association_id,
+        mobileScopeEditor.association.permissions,
+        {
+          workspace_scope: "selected",
+          workspace_ids: [...mobileScopeEditor.selectedIds].sort(),
+        },
+      );
+      setMobileAssociations((items) => items.map((item) =>
+        item.association_id === updated.association_id ? updated : item));
+      setMobileScopeEditor(null);
+    } catch (reason) {
+      setMobileEnrollmentError(mobilePairingErrorText(reason, language));
+    } finally {
+      setMobileEnrollmentBusy(false);
+    }
+  }
+
   async function revokeAllAndroidDevices(): Promise<void> {
     const confirmed = await requestAppDecision({ id: "revoke-all-mobile-devices", tone: "danger", title: zh ? "撤销所有设备访问？" : "Revoke every device?", description: zh ? "所有已配对 Android 设备会立即失去访问权限。" : "Every paired Android device will immediately lose access.", impact: zh ? "此电脑仍可配对；每台设备需要重新配对。" : "This computer remains pairable; each device must pair again.", confirmLabel: zh ? "全部撤销" : "Revoke all" });
     if (!confirmed) return;
@@ -8010,12 +8096,16 @@ function SettingsPanel({
     setMobileEnrollmentError(null);
     try {
       const result = await desktopApi.diagnoseMobileRemoteAccess();
-      const labels = zh ? {
+      const labels: Record<DesktopMobileRemoteDiagnostics["action"], string> = zh ? {
+        repair_device_identity: "请重新扫码连接设备",
+        enable_notifications: "请在手机上启用通知",
         none: "连接正常", start_runtime: "请启动 OpenDrSai Runtime", sign_in: "请重新登录",
         retry_relay: "请稍后重试平台连接", reconnect_runtime: "请重新连接 Runtime", update_runtime: "请更新 OpenDrSai Runtime",
       } : {
         none: "Connection is healthy", start_runtime: "Start OpenDrSai Runtime", sign_in: "Sign in again",
-        retry_relay: "Retry the platform connection", reconnect_runtime: "Reconnect Runtime", update_runtime: "Update OpenDrSai Runtime",
+        retry_relay: "Retry the platform connection", repair_device_identity: "Pair the device again",
+        reconnect_runtime: "Reconnect this computer", update_runtime: "Update OpenDrSai",
+        enable_notifications: "Enable notifications on the phone",
       };
       setMobileEnrollmentError(labels[result.action]);
     } catch (reason) {
@@ -8131,6 +8221,7 @@ function SettingsPanel({
       label: zh ? "集成" : "Integrations",
       items: [
         { id: "integrations", label: zh ? "集成概览" : "Overview", icon: Plug },
+        { id: "codex", label: "Codex", icon: Bot },
         { id: "remote-workspace", label: zh ? "远程工作区" : "Remote Workspace", icon: TerminalIcon },
         { id: "channels", label: zh ? "频道" : "Channels", icon: MessageSquare },
       ],
@@ -8150,6 +8241,7 @@ function SettingsPanel({
       if (item.id === "agent-defaults" || item.id === "model-providers" || item.id === "perceptors" || item.id === "executors" || item.id === "memories" || item.id === "agent-task") return featureCapabilities?.agents === true;
       if (item.id === "approvals") return featureCapabilities?.approvals === true;
       if (item.id === "analytics") return featureCapabilities?.diagnostics === true;
+      if (item.id === "codex") return featureCapabilities?.codexBackend === true;
       if (item.id === "remote-workspace") return featureCapabilities?.remoteWorkspace === true;
       if (item.id === "channels") return featureCapabilities?.channels === true;
       return true;
@@ -8243,6 +8335,17 @@ function SettingsPanel({
     online: "Online",
     offline: "Offline",
     revoked: "Revoked",
+  };
+  const androidPermissionText: Record<DesktopMobileAssociation["permissions"][number], string> = zh ? {
+    read: "查看",
+    send: "发送消息",
+    approve: "处理审批",
+    files: "查看文件",
+  } : {
+    read: "View",
+    send: "Send messages",
+    approve: "Review approvals",
+    files: "View files",
   };
   const androidPanelMessage = mobileAssociationsState === "loading"
     ? null
@@ -8916,6 +9019,18 @@ function SettingsPanel({
         {activePane === "analytics" && <div className="settings-embedded-view">{usageAnalyticsPanel}</div>}
         {activePane === "channels" && <div className="settings-embedded-view">{channelsPanel}</div>}
 
+        {activePane === "codex" && <CodexRuntimeSettings
+          busy={updateBusy}
+          health={health}
+          language={language}
+          status={codexStatus}
+          onRefresh={onCodexRefresh}
+          onRestart={onCodexRestart}
+          onRepair={onCodexRepair}
+          onLogin={onCodexLogin}
+          onLogout={onCodexLogout}
+        />}
+
         {activePane === "integrations" && (
           <>
             <header className="settings-content-header">
@@ -8963,10 +9078,41 @@ function SettingsPanel({
                     {activeAndroidAssociations.map((association) => (
                       <div key={association.association_id} className="android-device-row" data-state={association.access_state} data-testid="android-device-row">
                         <span className="android-device-presence" aria-hidden="true" />
-                        <span><strong>{association.device_name}</strong><small>{association.device_type === "android" ? (zh ? "Android 设备" : "Android device") : association.device_type} · {association.workspace_scope === "selected" ? (zh ? "指定工作区" : "Selected workspaces") : (zh ? "全部工作区" : "All workspaces")} · {association.permissions.join(" / ")} · {zh ? "授权于" : "Authorized"} {new Date(association.created_at).toLocaleDateString()}</small></span>
+                        <span><strong>{association.device_name}</strong><small>{association.device_type === "android" ? (zh ? "Android 设备" : "Android device") : association.device_type} · {association.workspace_scope === "selected" ? (zh ? `${association.workspace_ids?.length ?? 0} 个指定工作区` : `${association.workspace_ids?.length ?? 0} selected workspaces`) : (zh ? "全部工作区" : "All workspaces")} · {association.permissions.map((permission) => androidPermissionText[permission]).join(" / ")} · {zh ? "授权于" : "Authorized"} {new Date(association.created_at).toLocaleDateString()}</small></span>
                         <em data-testid="android-device-status">{androidDeviceStateText[association.access_state]}{association.last_seen_at ? ` · ${androidRelativeTime(association.last_seen_at, language)}` : ""}</em>
+                        <button type="button" disabled={mobileEnrollmentBusy} data-testid="android-device-scope" onClick={() => void openAndroidDeviceScopeEditor(association)}>{zh ? "管理范围" : "Manage scope"}</button>
                         {association.permissions.some((permission) => permission !== "read") ? <button type="button" disabled={mobileEnrollmentBusy} data-testid="android-device-read-only" onClick={() => void makeAndroidDeviceReadOnly(association)}>{zh ? "设为只读" : "Make read-only"}</button> : null}
                         <button type="button" className="danger" disabled={mobileEnrollmentBusy} data-testid="android-device-revoke" onClick={() => void revokeAndroidDevice(association)}>{zh ? "撤销" : "Revoke"}</button>
+                        {mobileScopeEditor?.association.association_id === association.association_id ? (
+                          <div className="android-device-scope-editor" data-testid="android-device-scope-editor">
+                            <strong>{zh ? "仅允许以下工作区" : "Allow only these workspaces"}</strong>
+                            <small>{zh ? "保存后只能继续缩小；扩大范围需要重新连接设备。" : "After saving, this can only be narrowed further. Re-pair the device to expand access."}</small>
+                            {mobileScopeEditor.workspaces.map((workspace) => (
+                              <label key={workspace.id}>
+                                <input
+                                  type="checkbox"
+                                  checked={mobileScopeEditor.selectedIds.has(workspace.id)}
+                                  onChange={(event) => setMobileScopeEditor((current) => {
+                                    if (!current) return current;
+                                    const selectedIds = new Set(current.selectedIds);
+                                    if (event.target.checked) selectedIds.add(workspace.id); else selectedIds.delete(workspace.id);
+                                    return {
+                                      ...current,
+                                      ...mobileAssociationScopeEditorState(
+                                        current.association, current.workspaces, selectedIds,
+                                      ),
+                                    };
+                                  })}
+                                />
+                                <span>{workspace.name}</span>
+                              </label>
+                            ))}
+                            <div className="settings-integration-actions">
+                              <button type="button" onClick={() => setMobileScopeEditor(null)}>{zh ? "取消" : "Cancel"}</button>
+                              <button type="button" disabled={mobileEnrollmentBusy || !mobileScopeEditor.canSave} onClick={() => void saveAndroidDeviceScope()} data-testid="android-device-scope-save">{zh ? "保存较小范围" : "Save narrower scope"}</button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>

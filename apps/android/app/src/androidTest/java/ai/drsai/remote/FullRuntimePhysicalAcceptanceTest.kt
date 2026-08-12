@@ -31,8 +31,9 @@ class FullRuntimePhysicalAcceptanceTest {
     @Before
     fun requireExplicitPhysicalAcceptanceOptIn() {
         assumeTrue(
-            "physical runtime acceptance must be explicitly enabled",
-            InstrumentationRegistry.getArguments().getString("runPhysicalRuntime") == "true",
+            "runtime lifecycle acceptance must be explicitly enabled",
+            InstrumentationRegistry.getArguments().getString("runPhysicalRuntime") == "true" ||
+                InstrumentationRegistry.getArguments().getString("runP9EmulatorLifecycle") == "true",
         )
     }
 
@@ -196,19 +197,115 @@ class FullRuntimePhysicalAcceptanceTest {
         }
     }
 
+    @Test
+    fun seedWaitingToolProcessReclaimCheckpoint(): Unit = runBlocking {
+        val context = context()
+        val client = PythonRuntimeClient(context)
+        try {
+            assertReady(client.submit(start(
+                "tool-reclaim-seed", TOOL_RECLAIM_RUN, TOOL_SESSION,
+                input = "Search the workspace for runtime files",
+                tools = JSONArray().put(JSONObject()
+                    .put("name", "workspace.search")
+                    .put("version", 1)
+                    .put("source", "android-host")
+                    .put("classification", "local-equivalent")
+                    .put("description", "Search workspace paths")
+                    .put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()
+                        .put("query", JSONObject().put("type", "string"))))
+                    .put("required_capabilities", JSONArray())
+                    .put("risk", "read_only")
+                    .put("requires_approval", false)
+                    .put("oaep_output_type", "command_execution")),
+            )))
+            val waitingTool = client.submit(PythonRuntimeEnvelope(
+                messageType = PythonRuntimeMessageType.MODEL_COMPLETED,
+                requestId = "tool-reclaim-model",
+                runId = TOOL_RECLAIM_RUN,
+                sessionId = TOOL_SESSION,
+                sequence = 1,
+                idempotencyKey = "tool-reclaim:model",
+                payload = JSONObject().put("tool_calls", JSONArray().put(JSONObject()
+                    .put("call_id", TOOL_CALL_ID)
+                    .put("name", "workspace.search")
+                    .put("arguments", JSONObject().put("query", "runtime"))
+                    .put("risk", "read_only")
+                    .put("requires_approval", false)
+                    .put("oaep_output_type", "command_execution"))),
+            )).getJSONObject("python_result")
+            val checkpoint = outbound(waitingTool).first { it.optString("message_type") == "checkpoint_request" }
+            val state = checkpoint.getJSONObject("payload").getJSONObject("state")
+            assertEquals("waiting_tool", state.getString("phase"))
+            assertEquals(TOOL_CALL_ID, state.getJSONObject("pending_tool_calls").keys().next())
+            acceptancePrefs(context).edit().putString("tool_checkpoint", state.toString()).commit()
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun verifyWaitingToolProcessReclaimReplaysUnfinishedCallOnce(): Unit = runBlocking {
+        val context = context()
+        val state = JSONObject(requireNotNull(acceptancePrefs(context).getString("tool_checkpoint", null)))
+        val client = PythonRuntimeClient(context)
+        try {
+            val resumed = client.submit(PythonRuntimeEnvelope(
+                messageType = PythonRuntimeMessageType.RESUME_RUN,
+                requestId = "tool-reclaim-resume",
+                runId = TOOL_RECLAIM_RUN,
+                sessionId = TOOL_SESSION,
+                sequence = 0,
+                idempotencyKey = "tool-reclaim:resume",
+                payload = JSONObject()
+                    .put("state", state)
+                    .put("resume_phase", "waiting_tool")
+                    .put("recovery_mode", "replay_receipt_or_reconcile"),
+            )).getJSONObject("python_result")
+            val outbound = outbound(resumed)
+            val recovered = outbound.filter {
+                it.optString("message_type") == "runtime_event" &&
+                    it.getJSONObject("payload").optString("kind") == "run.recovered"
+            }
+            val toolRequests = outbound.filter { it.optString("message_type") == "tool_call_request" }
+            assertEquals(1, recovered.size)
+            assertEquals("waiting_tool", recovered.single().getJSONObject("payload").getString("phase"))
+            assertEquals(1, toolRequests.size)
+            assertEquals(TOOL_CALL_ID, toolRequests.single().getJSONObject("payload").getString("call_id"))
+            assertFalse(resumed.toString().contains("kotlin", ignoreCase = true))
+            Log.i(TOOL_RECOVERY_MARKER, JSONObject()
+                .put("process_reclaim", true)
+                .put("same_run_resumed", true)
+                .put("run_id", TOOL_RECLAIM_RUN)
+                .put("resume_phase", "waiting_tool")
+                .put("resume_event_count", recovered.size)
+                .put("tool_request_count", toolRequests.size)
+                .put("call_id", TOOL_CALL_ID)
+                .put("kotlin_fallback_available", false)
+                .toString())
+        } finally {
+            client.close()
+        }
+    }
+
     private fun context() = ApplicationProvider.getApplicationContext<Context>()
 
     private fun acceptancePrefs(context: Context) =
         context.getSharedPreferences("v156_physical_acceptance", Context.MODE_PRIVATE)
 
-    private fun start(request: String, run: String, session: String = SESSION) = PythonRuntimeEnvelope(
+    private fun start(
+        request: String,
+        run: String,
+        session: String = SESSION,
+        input: String = "physical acceptance",
+        tools: JSONArray = JSONArray(),
+    ) = PythonRuntimeEnvelope(
         messageType = PythonRuntimeMessageType.START_RUN,
         requestId = request,
         runId = run,
         sessionId = session,
         sequence = 0,
         idempotencyKey = "$request:start",
-        payload = JSONObject().put("input", "physical acceptance").put("model_id", "probe-model"),
+        payload = JSONObject().put("input", input).put("model_id", "probe-model").put("tools", tools),
     )
 
     private fun assertReady(result: JSONObject) {
@@ -247,8 +344,12 @@ class FullRuntimePhysicalAcceptanceTest {
     companion object {
         const val DEFAULT_MARKER = "V156_PHYSICAL_DEFAULT_BINDING"
         const val FAULT_MARKER = "V156_PHYSICAL_FAULT_RECOVERY"
+        const val TOOL_RECOVERY_MARKER = "V156_PHYSICAL_TOOL_RECOVERY"
         const val SESSION = "physical-acceptance-session"
         const val NETWORK_SESSION = "physical-network-session"
         const val RECLAIM_RUN = "physical-process-reclaim-run"
+        const val TOOL_SESSION = "physical-tool-reclaim-session"
+        const val TOOL_RECLAIM_RUN = "physical-tool-reclaim-run"
+        const val TOOL_CALL_ID = "physical-tool-call"
     }
 }

@@ -25,7 +25,7 @@ interface RunInspectorPanelProps {
   request: RunInspectionOpenRequest | null;
   focusedItemId?: string;
   onOpenDebug?: () => void;
-  onOpenRun?: (runId: string) => void;
+  onOpenRun?: (runId: string, itemId?: string) => void;
 }
 
 interface WebSearchCandidateInspection {
@@ -353,7 +353,11 @@ export function RunInspectorPanel({
 
     {error && describedError ? <aside className="run-inspector-inline-error" role="alert"><strong>{describedError.title}</strong><p>{describedError.action}</p><details><summary>{zh ? "技术详情" : "Technical details"}</summary><code>{describedError.code}</code><pre>{redactRunInspectionText(error)}</pre></details></aside> : null}
     {onOpenDebug ? <button type="button" className="run-inspector-debug-link" onClick={onOpenDebug}>{zh ? "打开技术诊断" : "Open technical diagnostics"}</button> : null}
-    {experimentOpen && request ? <RunExperimentPanel request={request} itemId={selectedItemId} language={language} onClose={() => setExperimentOpen(false)} /> : null}
+    {experimentOpen && request ? <RunExperimentPanel
+      request={request} itemId={selectedItemId} language={language}
+      onOpenEvidence={(runId, evidenceItemId) => { setExperimentOpen(false); onOpenRun?.(runId, evidenceItemId); }}
+      onClose={() => setExperimentOpen(false)}
+    /> : null}
   </section>;
 }
 

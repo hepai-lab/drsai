@@ -75,7 +75,7 @@ def test_text_run_emits_model_request_stream_event_and_terminal_event() -> None:
     ]
     assert started[0].payload["kind"] == "run.started"
     assert delta[0].payload == {"kind": "message.delta", "text": "hi"}
-    assert [item.payload["kind"] for item in completed[:2]] == ["tool.decision", "run.completed"]
+    assert [item.payload["kind"] for item in completed[:3]] == ["tool.decision", "message.completed", "run.completed"]
     assert core.snapshot("run-1")["phase"] == RunPhase.COMPLETED.value
 
 
@@ -301,6 +301,39 @@ def test_delegate_starts_two_logical_children_cancels_one_and_summarizes_other()
     assert completed[0].payload["kind"] == "subagent.completed"
     assert completed[-1].message_type is MessageType.MODEL_REQUEST
     assert completed[-1].payload["messages"][-1]["content"] == "[child-b] completed: answer B"
+
+
+def test_delegate_accepts_parent_safe_tool_allowlist_rejects_escalation_and_parent_cancel_clears_children() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "Compare two workspace files", "model_id": "model-1",
+        "tools": [tool_schema("delegate"), tool_schema("workspace.read"),
+                  tool_schema("workspace.write", risk="external_write", requires_approval=True)],
+    }))
+    delegated = core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [{
+        "call_id": "delegate-safe", "name": "delegate", "arguments": {"tasks": [{
+            "task_id": "child-safe", "prompt": "Read A", "allowed_tools": ["workspace__dot__read"],
+        }]},
+    }]}))
+    started = next(item for item in delegated if item.payload.get("kind") == "subagent.started")
+    assert started.payload["allowed_tools"] == ["workspace.read"]
+    cancelled = core.handle(command(MessageType.CANCEL_RUN, 2, {}))
+    assert [item.payload.get("kind") for item in cancelled if item.message_type is MessageType.RUNTIME_EVENT] == ["run.cancelled"]
+    snapshot = core.snapshot("run-1")
+    assert snapshot["pending_subagents"] == {}
+    assert snapshot["phase"] == "cancelled"
+
+    denied = create_mobile_agent_core()
+    denied.handle(command(MessageType.START_RUN, 0, {
+        "input": "Research", "model_id": "model-1",
+        "tools": [tool_schema("delegate"), tool_schema("workspace.write", risk="external_write", requires_approval=True)],
+    }))
+    with pytest.raises(ValueError, match="subagent_tool_whitelist_denied"):
+        denied.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [{
+            "call_id": "delegate-denied", "name": "delegate", "arguments": {"tasks": [{
+                "task_id": "child-denied", "prompt": "Write", "allowed_tools": ["workspace.write"],
+            }]},
+        }]}))
 
 
 def test_pure_core_text_tool_executes_without_android_tool_host_round_trip() -> None:

@@ -12,6 +12,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.graphics.asAndroidBitmap
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RuntimeId
@@ -65,8 +69,6 @@ class RemoteWorkspaceUiTest {
                                 state = RemoteConnectionState.ONLINE,
                                 lastSeenLabel = "刚刚",
                                 version = "1.4.6",
-                                instanceId = "boot-2",
-                                connectionGeneration = 2,
                                 workspaces = listOf(workspace),
                                 workspaceSyncStatus = "已同步 07-28 12:00",
                             )
@@ -82,14 +84,16 @@ class RemoteWorkspaceUiTest {
         }
 
         composeRule.onNodeWithText("开发服务器").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
-        composeRule.onNodeWithText("刚刚").assertIsDisplayed()
-        composeRule.onNodeWithText("OpenDrSai 1.4.6").assertIsDisplayed()
-        composeRule.onNodeWithText("已同步 07-28 12:00").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(
+            "电脑状态：在线。电脑可用，工作区与会话会保持同步。", useUnmergedTree = true,
+        ).assertExists()
+        composeRule.onNodeWithText("电脑可用，工作区与会话会保持同步。").assertIsDisplayed()
+        composeRule.onNodeWithText("OpenDrSai 1.4.6").assertExists()
+        composeRule.onNodeWithText("已同步 07-28 12:00").assertExists()
         composeRule.onNodeWithContentDescription("刷新 开发服务器 的工作区")
-            .assertIsDisplayed()
+            .performScrollTo()
             .performClick()
-        composeRule.onNodeWithText("OpenDrSai").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("OpenDrSai").performScrollTo().performClick()
         composeRule.runOnIdle {
             assertEquals(RuntimeId("runtime-a"), refreshed)
             assertEquals(workspace, opened)
@@ -141,12 +145,18 @@ class RemoteWorkspaceUiTest {
             }
         }
 
-        composeRule.onNodeWithContentDescription("连接状态：在线").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("连接状态：离线").assertIsDisplayed()
-        composeRule.onNodeWithText("缓存 · 上次同步 07-28 10:30").assertIsDisplayed()
-        composeRule.onNodeWithText("缓存项目").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("连接状态：正在连接").assertIsDisplayed()
-        composeRule.onNodeWithText("连接中…").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(
+            "电脑状态：在线。电脑可用，工作区与会话会保持同步。", useUnmergedTree = true,
+        ).assertExists()
+        composeRule.onNodeWithContentDescription(
+            "电脑状态：离线。暂时无法联系电脑；缓存 · 上次同步 07-28 10:30。可执行：重试",
+            useUnmergedTree = true,
+        ).assertExists()
+        composeRule.onNodeWithText("缓存项目").assertExists()
+        composeRule.onNodeWithContentDescription(
+            "电脑状态：正在连接。正在确认电脑是否可用，请稍候。", useUnmergedTree = true,
+        ).assertExists()
+        composeRule.onNodeWithText("正在连接").assertExists()
     }
 
     @Test fun associationQrDeepLinkExtractsOnlyOneTimeCode() {
@@ -275,11 +285,86 @@ class RemoteWorkspaceUiTest {
             }
         }
 
-        composeRule.onNodeWithText("允许系统通知后，App 关闭时也能收到任务结果和审批提醒").assertIsDisplayed()
+        composeRule.onNodeWithText("通知未启用").assertIsDisplayed()
+        composeRule.onNodeWithText("允许系统通知后，应用关闭时也能收到任务结果和审批提醒。").assertIsDisplayed()
         composeRule.onNodeWithText("启用通知").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertEquals(1, enableCalls) }
         composeRule.onNodeWithText("开发电脑").assertIsDisplayed()
     }
+
+    @Test
+    fun hostStatusSemanticAndScreenshotMatrixCoversSixProductStates() {
+        val runtimeId = RuntimeId("status-matrix")
+        val uiState = mutableStateOf(hostMatrixState(runtimeId, RemoteConnectionState.ONLINE))
+        composeRule.setContent {
+            MaterialTheme {
+                RemoteHomeScreen(
+                    state = uiState.value,
+                    onBack = {}, onAssociate = {}, onRefresh = {}, onOpenWorkspace = {},
+                )
+            }
+        }
+
+        val snapshots = linkedSetOf<Int>()
+        fun verify(state: RemoteHomeUiState, description: String) {
+            composeRule.runOnIdle { uiState.value = state }
+            composeRule.waitForIdle()
+            composeRule.onNodeWithContentDescription(description, useUnmergedTree = true).assertExists()
+            val pixels = composeRule.onRoot().captureToImage().asAndroidBitmap()
+            var hash = 1
+            for (y in 0 until pixels.height step 8) {
+                for (x in 0 until pixels.width step 8) hash = 31 * hash + pixels.getPixel(x, y)
+            }
+            snapshots += hash
+        }
+
+        verify(
+            hostMatrixState(runtimeId, RemoteConnectionState.ONLINE),
+            "电脑状态：在线。电脑可用，工作区与会话会保持同步。",
+        )
+        verify(
+            hostMatrixState(runtimeId, RemoteConnectionState.OFFLINE),
+            "电脑状态：离线。暂时无法联系电脑，请确认电脑已开机并联网。可执行：重试",
+        )
+        verify(
+            hostMatrixState(runtimeId, RemoteConnectionState.PAUSED),
+            "电脑状态：已暂停。电脑端暂停了移动访问，现有授权仍保留。可执行：恢复后重试",
+        )
+        verify(
+            RemoteHomeUiState(
+                error = "access_denied",
+                actionableError = RemoteActionableState(
+                    "此设备已解除关联", "请在电脑端生成新的二维码。",
+                    RemoteRecoveryAction.REASSOCIATE, "重新扫码",
+                ),
+            ),
+            "电脑状态：此设备已解除关联。请在电脑端生成新的二维码。可执行：重新扫码",
+        )
+        verify(
+            hostMatrixState(runtimeId, RemoteConnectionState.INCOMPATIBLE),
+            "电脑状态：需要更新。手机或电脑端版本不兼容，更新后才能打开工作区。可执行：检查更新",
+        )
+        verify(
+            hostMatrixState(runtimeId, RemoteConnectionState.ONLINE).copy(
+                notificationState = RemoteNotificationReadiness.PERMISSION_REQUIRED,
+            ),
+            "电脑状态：通知未启用。允许系统通知后，应用关闭时也能收到任务结果和审批提醒。可执行：启用通知",
+        )
+        assertEquals(6, snapshots.size)
+    }
+
+    private fun hostMatrixState(runtimeId: RuntimeId, state: RemoteConnectionState) =
+        RemoteHomeUiState(
+            computers = listOf(
+                RemoteComputerUi(
+                    runtimeId = runtimeId,
+                    displayName = "状态测试电脑",
+                    state = state,
+                    lastSeenLabel = "",
+                    workspaces = emptyList(),
+                ),
+            ),
+        )
 
     @Test fun actionableStateShowsOneSafePrimaryAction() {
         var selected: RemoteRecoveryAction? = null

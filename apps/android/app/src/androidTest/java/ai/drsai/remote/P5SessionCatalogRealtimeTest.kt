@@ -21,6 +21,7 @@ import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -32,6 +33,11 @@ class P5SessionCatalogRealtimeTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val arguments = InstrumentationRegistry.getArguments()
+        assumeTrue(
+            "P5 session catalog test requires relay identifiers",
+            listOf("runtimeId", "workspaceId", "sessionId", "temporaryTitle")
+                .all { !arguments.getString(it).isNullOrBlank() },
+        )
         val runtimeId = RuntimeId(required(arguments.getString("runtimeId"), "runtime_id"))
         val workspaceId = WorkspaceId(required(arguments.getString("workspaceId"), "workspace_id"))
         val sessionId = SessionId(required(arguments.getString("sessionId"), "session_id"))

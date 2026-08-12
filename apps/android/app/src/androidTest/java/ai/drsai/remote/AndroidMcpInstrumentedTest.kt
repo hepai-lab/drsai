@@ -89,7 +89,7 @@ class AndroidMcpInstrumentedTest {
             val persistedEndpoint = McpServerEndpoint("secure", "https://example.com/mcp")
             secureStore.save(subject, persistedEndpoint, "device-secret")
             assertEquals("device-secret", secureStore.token(subject, persistedEndpoint.id))
-            val registry = ToolRegistry()
+            val registry = ToolRegistry(allowPrivateNetworkForTests = true)
             val manager = AndroidMcpToolManager(registry)
             val client = McpStreamableHttpClient(
                 endpoint, subject, McpBearerTokenProvider { _, _ -> secureStore.token(subject, persistedEndpoint.id) }, OkHttpClient(),
@@ -99,7 +99,14 @@ class AndroidMcpInstrumentedTest {
             assertEquals("mcp", definition.source)
             assertFalse(definition.toRuntimeSchema().toString().contains("device-secret"))
             val output = registry.execute(
-                ToolExecutionContext(subject, setOf(RuntimeCapability.MCP), approved = true),
+                ToolExecutionContext(
+                    subject,
+                    setOf(RuntimeCapability.MCP),
+                    approved = true,
+                    runId = "mcp-test-run",
+                    sessionId = "mcp-test-session",
+                    toolCallId = "call-device",
+                ),
                 tool.modelName, "{\"text\":\"hello\"}",
             ) as ToolExecutionOutcome.Success
             assertTrue(output.output.contains("device-ok"))

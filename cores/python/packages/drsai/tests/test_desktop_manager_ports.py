@@ -30,10 +30,18 @@ class _Profile:
         return f"updated:{values['nickname']}"
 
 
+class _Regression:
+    def execute(self, name, arguments):
+        assert name == "regression_list_cases"
+        assert arguments == {"suite_id": "p3-desktop"}
+        return '{"cases":[{"id":"qa.greeting.hello"}]}'
+
+
 class _Agent:
     _cached_skills_loader = _Skills()
     _todo_manager = _Todo()
     _user_profile_manager = _Profile()
+    _regression_manager = _Regression()
 
     def __init__(self):
         self.elevated = []
@@ -72,3 +80,14 @@ async def test_skill_todo_profile_and_delegate_manager_ports_preserve_results() 
 def test_unknown_manager_tool_gets_explicit_fail_closed_port() -> None:
     ports = DesktopAgentManagerPorts(_Agent(), CancellationToken()).ports({"UnknownManager"})
     assert set(ports) == {"UnknownManager"}
+
+
+@pytest.mark.asyncio
+async def test_regression_manager_port_dispatches_visible_native_tool() -> None:
+    ports = DesktopAgentManagerPorts(_Agent(), CancellationToken()).ports({"regression_list_cases"})
+    result = await ports["regression_list_cases"](_payload(
+        "regression_list_cases", {"suite_id": "p3-desktop"},
+    ))
+
+    assert result.succeeded is True
+    assert '"qa.greeting.hello"' in result.content["content"]

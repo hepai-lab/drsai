@@ -64,7 +64,7 @@ async def test_desktop_coordinator_direct_answer_is_owned_by_factory_kernel() ->
     events = [event async for event in coordinator.execute(_start())]
 
     assert [event.payload["kind"] for event in events] == [
-        "run.started", "message.delta", "message.delta", "tool.decision", "run.completed",
+        "run.started", "message.delta", "message.delta", "tool.decision", "message.completed", "run.completed",
     ]
     assert events[0].payload["capability_diagnostics"]["available"]
     assert [value["reason"] for value in checkpoints] == ["before_model", "terminal"]
@@ -107,7 +107,7 @@ async def test_desktop_coordinator_emits_first_model_delta_before_provider_compl
     remaining = [event async for event in stream]
     assert model.completed is True
     assert [event.payload["kind"] for event in remaining] == [
-        "message.delta", "tool.decision", "run.completed",
+        "message.delta", "tool.decision", "message.completed", "run.completed",
     ]
 
 
@@ -141,7 +141,7 @@ async def test_desktop_coordinator_services_kernel_tool_request_then_model_follo
     assert model_calls == 2
     assert [value["call_id"] for value in tool_calls] == ["clock-1"]
     assert [event.payload["kind"] for event in events] == [
-        "run.started", "tool.decision", "tool.started", "tool.result", "tool.decision", "run.completed",
+        "run.started", "tool.decision", "tool.started", "tool.result", "tool.decision", "message.completed", "run.completed",
     ]
     reasons = [value["reason"] for value in checkpoints]
     assert reasons == ["before_model", "before_tool", "after_tool", "terminal"]

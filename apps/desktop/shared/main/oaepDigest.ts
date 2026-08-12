@@ -30,6 +30,15 @@ export function canonicalOaepItems(items: readonly OaepItem[]): string {
     );
     const content = { ...(value.content as unknown as Record<string, unknown>) };
     if (item.type === "message" && content.citations === undefined) content.citations = [];
+    // `parts` is an optional compatibility field. Generated Android models
+    // emit an empty array while Runtime/Desktop may omit it; both represent
+    // the same OAEP message and must produce the same transcript digest.
+    if (Array.isArray(content.parts) && content.parts.length === 0) delete content.parts;
+    if (["command_execution", "tool_call"].includes(item.type)
+      && content.replay_policy && typeof content.replay_policy === "object"
+      && !Array.isArray(content.replay_policy) && Object.keys(content.replay_policy as Record<string, unknown>).length === 0) {
+      delete content.replay_policy;
+    }
     if (item.type === "artifact") {
       if (content.previewable === undefined) content.previewable = false;
       if (content.downloadable === undefined) content.downloadable = false;

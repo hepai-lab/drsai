@@ -147,7 +147,7 @@ class RemoteRunControlLedger(context: Context) {
     private fun decode(raw: String): PendingRemoteRunControl {
         require(raw.length <= MAX_RECORD_BYTES) { "remote_run_control_record_too_large" }
         val value = JSONObject(raw)
-        require(value.length() == 9 && value.getInt("schema_version") == 1) {
+        require(value.length() == 10 && value.getInt("schema_version") == 1) {
             "remote_run_control_record_invalid"
         }
         val result = PendingRemoteRunControl(

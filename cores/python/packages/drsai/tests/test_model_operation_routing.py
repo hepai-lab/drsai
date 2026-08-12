@@ -140,6 +140,32 @@ def test_openai_image_understanding_uses_responses_for_chat_and_tools() -> None:
         ]
 
 
+def test_agent_operation_resolves_provider_key_from_process_environment(monkeypatch) -> None:
+    monkeypatch.setenv("REGRESSION_PROVIDER_KEY", "test-provider-key")
+    config = parse_user_config({"model_providers": {"provider": {
+        "base_url": "https://provider.example/v1",
+        "requires_api_key": True,
+        "api_key_env": "REGRESSION_PROVIDER_KEY",
+        "models": {"vision": {
+            "input_modalities": ["text", "image"], "output_modalities": ["text"],
+            "capabilities": ["chat"], "api_protocol": "openai",
+        }},
+    }}})
+    policy = AgentModelPolicy(
+        agent_id="opendrsai",
+        image_understanding_model=AgentModelSelection(
+            "explicit", ModelRef("provider", "vision"),
+        ),
+    )
+
+    resolved = resolve_agent_operation(
+        config, policy, role="image_understanding_model", operation="chat",
+    )
+
+    assert resolved.model.provider.has_api_key is True
+    assert resolved.model.provider.api_key_source == "env:REGRESSION_PROVIDER_KEY"
+
+
 def test_inherited_primary_and_role_operation_mismatch_fail_closed() -> None:
     with pytest.raises(ModelOperationRoutingError) as unbound:
         resolve_agent_operation(

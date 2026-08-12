@@ -1,0 +1,79 @@
+{
+  "application": {
+    "application_id": "ai.drsai.remote.debug",
+    "version_name": "1.5.6"
+  },
+  "artifacts": {
+    "app_apk": {
+      "name": "OpenDrSai-Android-v1.5.6.apk",
+      "sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24"
+    },
+    "test_apk": {
+      "name": "app-debug-androidTest.apk",
+      "sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5"
+    }
+  },
+  "environment": {
+    "abi": "x86_64",
+    "api": 35,
+    "avd": "OpenDrSai_P9_API35",
+    "device_id_sha256": "d81873432981ee4e8ded10dc5ae99ce71dee8e0978d202c1248919e40a5ef2ca",
+    "kind": "emulator",
+    "manufacturer": "Google",
+    "model": "sdk_gphone64_x86_64",
+    "serial": "emulator-5554"
+  },
+  "evidence_tier": "emulator_preflight",
+  "feature_ids": [],
+  "generated_at": "2026-08-11T20:20:53.723360+00:00",
+  "lifecycle": {
+    "gates": {
+      "binding_observable": true,
+      "cancel_background_oaep_and_anr_suite": true,
+      "cold_start_binding_ready": true,
+      "cold_start_full_runtime_only": true,
+      "dedicated_runtime_process": true,
+      "runtime_death_rebinds_without_lite": true,
+      "unfinished_tool_replayed_once": true,
+      "unrecoverable_checkpoint_fails_explicitly": true,
+      "waiting_model_same_run_recovered": true,
+      "waiting_tool_same_run_recovered": true
+    },
+    "passed": true,
+    "path": "docs/android/reports/preflight/p9-emulator/lifecycle-api35.json",
+    "sha256": "23f01041961acf3bfc090905d08d59f32c434383e3f09a8ebea3daf7771140cd"
+  },
+  "observations": {},
+  "release_evidence": false,
+  "requested": {
+    "attempts": 3,
+    "case": null,
+    "models": [
+      "deepseek-v4-flash",
+      "deepseek-v4-pro"
+    ]
+  },
+  "runtime": {
+    "abis": {
+      "arm64-v8a": "3.12",
+      "x86_64": "3.12"
+    },
+    "python_version": "3.12"
+  },
+  "schema_version": "opendrsai.p9-emulator-preflight-manifest/1",
+  "smoke_tests": {
+    "ai.drsai.remote.P9AgentEventVisibilityInstrumentedTest": {
+      "passed": true,
+      "path": "docs/android/reports/preflight/p9-emulator/instrumentation-ai.drsai.remote.P9AgentEventVisibilityInstrumentedTest.txt",
+      "sha256": "6c442921f0c3cd4f61b77c1ff86714c08e84577554c8093cbb6c53b435a7e794",
+      "tests": 3
+    },
+    "ai.drsai.remote.P9DeterministicNaturalToolSelectionInstrumentedTest": {
+      "passed": true,
+      "path": "docs/android/reports/preflight/p9-emulator/instrumentation-ai.drsai.remote.P9DeterministicNaturalToolSelectionInstrumentedTest.txt",
+      "sha256": "0007e7b1e258b4a75c9e3d7b1e62bf38ac9640c1b5528793550c666dfe91b157",
+      "tests": 2
+    }
+  },
+  "started_at": "2026-08-11T20:20:15.238877+00:00"
+}

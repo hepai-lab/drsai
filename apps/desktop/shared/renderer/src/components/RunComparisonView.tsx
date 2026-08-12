@@ -1,14 +1,25 @@
 import { useEffect, useRef, useState } from "react";
-import type { RunAdoption, RunComparison, RuntimeApprovalRequired } from "@shared/runExperiment";
+import type { RunAdoption, RunComparison, RunComparisonEvaluationCriterionId, RunComparisonEvaluationEvidenceRef, RunComparisonEvaluationList, RunComparisonEvaluationScore, RunComparisonEvaluationVerdict, RuntimeApprovalRequired } from "@shared/runExperiment";
 import type { RunInspectionOpenRequest } from "@shared/runInspection";
 import { desktopApi } from "../desktopApi";
 
-export function RunComparisonView({ comparison, request, language }: {
+export function RunComparisonView({ comparison, request, language, onOpenEvidence }: {
   comparison: RunComparison; request: RunInspectionOpenRequest; language: "en" | "zh";
+  onOpenEvidence?: (runId: string, itemId: string) => void;
 }): React.JSX.Element {
   const zh = language === "zh";
   const outcome = comparison.outcome as { baseline_status?: string; candidate_status?: string; status_changed?: boolean; baseline_result?: unknown; candidate_result?: unknown };
-  const usage = comparison.usage as { baseline?: { known?: boolean; value?: Record<string, number> | null }; candidate?: { known?: boolean; value?: Record<string, number> | null } };
+  const metrics = comparison.metrics ?? unknownComparisonMetrics(outcome.baseline_status, outcome.candidate_status);
+  const [evaluations, setEvaluations] = useState<RunComparisonEvaluationList | null>(null);
+  const [evaluationReceipt, setEvaluationReceipt] = useState("");
+  const [verdict, setVerdict] = useState<RunComparisonEvaluationVerdict>("inconclusive");
+  const [scores, setScores] = useState<Record<RunComparisonEvaluationCriterionId, RunComparisonEvaluationScore>>({
+    outcome_quality: { baseline: 3, candidate: 3 },
+    execution_quality: { baseline: 3, candidate: 3 },
+    safety_reproducibility: { baseline: 3, candidate: 3 },
+  });
+  const [note, setNote] = useState("");
+  const [evidenceRefs, setEvidenceRefs] = useState<RunComparisonEvaluationEvidenceRef[]>([]);
   const [adoption, setAdoption] = useState<RunAdoption | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [approvalId, setApprovalId] = useState("");
@@ -18,6 +29,7 @@ export function RunComparisonView({ comparison, request, language }: {
   const [error, setError] = useState("");
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const evaluationKey = useRef(`desktop:comparison-evaluation:${crypto.randomUUID()}`);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -26,6 +38,47 @@ export function RunComparisonView({ comparison, request, language }: {
     closeRef.current?.focus();
     return () => { if (dialog.open) dialog.close(); };
   }, [adoptionOpen]);
+
+  useEffect(() => {
+    let active = true;
+    void desktopApi.listRunComparisonEvaluations({ ...request, comparisonId: comparison.comparison_id })
+      .then((value) => {
+        if (!active) return;
+        setEvaluations(value);
+        const latest = value.evaluations[value.evaluations.length - 1];
+        if (latest) {
+          setVerdict(latest.verdict); setScores(latest.scores); setNote(latest.note); setEvidenceRefs(latest.evidence_refs);
+        }
+      })
+      .catch((reason: unknown) => { if (active) setError(adoptionError(reason, language)); });
+    return () => { active = false; };
+  }, [comparison.comparison_id, language, request]);
+
+  async function saveEvaluation(): Promise<void> {
+    if (!evaluations) return;
+    setBusy(true); setError(""); setEvaluationReceipt("");
+    try {
+      const saved = await desktopApi.createRunComparisonEvaluation({
+        ...request, comparisonId: comparison.comparison_id,
+        expectedLatestRevision: evaluations.latest_revision,
+        idempotencyKey: evaluationKey.current,
+        verdict, scores, note, evidenceRefs,
+      });
+      setEvaluations((current) => current ? {
+        ...current, latest_revision: saved.revision, evaluations: [...current.evaluations, saved],
+      } : current);
+      evaluationKey.current = `desktop:comparison-evaluation:${crypto.randomUUID()}`;
+      setEvaluationReceipt(zh ? `评价修订 ${saved.revision} 已保存。` : `Evaluation revision ${saved.revision} saved.`);
+    } catch (reason) { setError(adoptionError(reason, language)); }
+    finally { setBusy(false); }
+  }
+
+  function toggleEvidence(runId: string, itemId: string): void {
+    const exists = evidenceRefs.some((item) => item.run_id === runId && item.item_id === itemId);
+    setEvidenceRefs((current) => exists
+      ? current.filter((item) => item.run_id !== runId || item.item_id !== itemId)
+      : [...current, { run_id: runId, item_id: itemId }].slice(0, 20));
+  }
 
   async function previewAdoption(): Promise<void> {
     setBusy(true); setError("");
@@ -81,16 +134,39 @@ export function RunComparisonView({ comparison, request, language }: {
       <article><h4>{zh ? "基线结果" : "Baseline result"}</h4><pre>{readableResult(outcome.baseline_result, language)}</pre></article>
       <article><h4>{zh ? "候选结果" : "Candidate result"}</h4><pre>{readableResult(outcome.candidate_result, language)}</pre></article>
     </div>
+    <h4>{zh ? "自动指标" : "Automatic metrics"}</h4>
+    <table className="comparison-metrics"><thead><tr><th>{zh ? "指标" : "Metric"}</th><th>{zh ? "基线" : "Baseline"}</th><th>{zh ? "候选" : "Candidate"}</th><th>Δ</th></tr></thead><tbody>
+      {(["duration_ms", "total_tokens", "tool_calls", "tool_errors", "approvals", "artifacts", "warnings"] as const).map((key) => <tr key={key}><th>{metricLabel(key, language)}</th><td>{metricValue(key, metrics.baseline[key], language)}</td><td>{metricValue(key, metrics.candidate[key], language)}</td><td>{deltaValue(key, metrics.delta[key], language)}</td></tr>)}
+    </tbody></table>
     <details open><summary>{zh ? `步骤差异（${comparison.steps.length}）` : `Step differences (${comparison.steps.length})`}</summary>
-      {comparison.steps.length ? <ol className="comparison-steps">{comparison.steps.slice(0, 200).map((step, index) => <li key={index}><strong>{String(step.alignment || "unknown")}</strong> · {String(step.baseline_type || "—")} → {String(step.candidate_type || "—")}</li>)}</ol> : <p>{zh ? "没有步骤差异。" : "No step differences."}</p>}
+      {comparison.steps.length ? <ol className="comparison-steps">{comparison.steps.slice(0, 200).map((step, index) => {
+        const baselineItemId = typeof step.baseline_item_id === "string" ? step.baseline_item_id : "";
+        const candidateItemId = typeof step.candidate_item_id === "string" ? step.candidate_item_id : "";
+        return <li key={index}><strong>{String(step.alignment || "unknown")}</strong> · {String(step.baseline_type || "—")} → {String(step.candidate_type || "—")}
+          <span className="comparison-evidence-actions">
+            {baselineItemId ? <><button type="button" onClick={() => onOpenEvidence?.(comparison.baseline_run_id, baselineItemId)}>{zh ? "查看基线证据" : "View baseline evidence"}</button><label><input type="checkbox" checked={evidenceRefs.some((item) => item.run_id === comparison.baseline_run_id && item.item_id === baselineItemId)} onChange={() => toggleEvidence(comparison.baseline_run_id, baselineItemId)} />{zh ? "引用" : "Cite"}</label></> : null}
+            {candidateItemId ? <><button type="button" onClick={() => onOpenEvidence?.(comparison.candidate_run_id, candidateItemId)}>{zh ? "查看候选证据" : "View candidate evidence"}</button><label><input type="checkbox" checked={evidenceRefs.some((item) => item.run_id === comparison.candidate_run_id && item.item_id === candidateItemId)} onChange={() => toggleEvidence(comparison.candidate_run_id, candidateItemId)} />{zh ? "引用" : "Cite"}</label></> : null}
+          </span>
+        </li>;
+      })}</ol> : <p>{zh ? "没有步骤差异。" : "No step differences."}</p>}
       {comparison.steps.length > 200 ? <p role="status">{zh ? "仅显示前 200 项；完整差异仍保存在 Comparison 中。" : "Showing the first 200 entries; the complete comparison remains recorded."}</p> : null}
     </details>
     <h4>{zh ? "文件变化" : "File changes"}</h4>
     {comparison.files.length ? <ul>{comparison.files.map((file, index) => <li key={String(file.identity || index)}><strong>{String(file.change || "changed")}</strong> · {String(file.identity || "unknown")}</li>)}</ul> : <p>{zh ? "没有记录到文件差异。" : "No file differences were recorded."}</p>}
     <h4>{zh ? "产物变化" : "Artifact changes"}</h4>
     {comparison.artifacts.length ? <ul>{comparison.artifacts.map((artifact, index) => <li key={String(artifact.identity || index)}><strong>{String(artifact.change || "changed")}</strong> · {String(artifact.identity || "unknown")}</li>)}</ul> : <p>{zh ? "没有记录到产物差异。" : "No artifact differences were recorded."}</p>}
-    <h4>{zh ? "使用量" : "Usage"}</h4>
-    <p>{usage.baseline?.known ? JSON.stringify(usage.baseline.value) : (zh ? "基线未知" : "Baseline unknown")} → {usage.candidate?.known ? JSON.stringify(usage.candidate.value) : (zh ? "实验未知" : "Experiment unknown")}</p>
+    <details className="comparison-evaluation" open><summary>{zh ? "人工评价" : "Human evaluation"}</summary>
+      {evaluations ? <form onSubmit={(event) => { event.preventDefault(); void saveEvaluation(); }}>
+        {evaluations.comparison_digest !== comparison.comparison_digest ? <p role="alert">{zh ? "比较内容已经变化；请刷新后再评价。" : "The Comparison changed. Refresh before evaluating."}</p> : null}
+        <table><thead><tr><th>{zh ? "维度" : "Criterion"}</th><th>{zh ? "基线 1–5" : "Baseline 1–5"}</th><th>{zh ? "候选 1–5" : "Candidate 1–5"}</th></tr></thead><tbody>{evaluations.rubric_snapshot.criteria.map((criterion) => <tr key={criterion.id}><th><strong>{criterionLabel(criterion.id, language)}</strong><small>{criterionDescription(criterion.id, language)}</small></th>{(["baseline", "candidate"] as const).map((side) => <td key={side}><select aria-label={`${criterionLabel(criterion.id, language)} ${side}`} value={scores[criterion.id][side]} onChange={(event) => setScores((current) => ({ ...current, [criterion.id]: { ...current[criterion.id], [side]: Number(event.target.value) } }))}>{[1,2,3,4,5].map((value) => <option key={value} value={value}>{value}</option>)}</select></td>)}</tr>)}</tbody></table>
+        <label>{zh ? "结论" : "Verdict"}<select value={verdict} onChange={(event) => setVerdict(event.target.value as RunComparisonEvaluationVerdict)}><option value="inconclusive">{zh ? "证据不足" : "Inconclusive"}</option><option value="baseline_better">{zh ? "基线更好" : "Baseline better"}</option><option value="candidate_better">{zh ? "候选更好" : "Candidate better"}</option><option value="tie">{zh ? "相当" : "Tie"}</option></select></label>
+        <label>{zh ? "评价备注" : "Evaluation note"}<textarea maxLength={4000} rows={3} value={note} onChange={(event) => setNote(event.target.value)} /></label>
+        <p>{zh ? `已引用 ${evidenceRefs.length} 条 OAEP 证据。` : `${evidenceRefs.length} OAEP evidence reference(s) selected.`}</p>
+        <button type="submit" className="primary" disabled={busy || evaluations.comparison_digest !== comparison.comparison_digest}>{busy ? (zh ? "保存中…" : "Saving…") : (zh ? "保存新评价修订" : "Save new evaluation revision")}</button>
+        {evaluationReceipt ? <p role="status">{evaluationReceipt}</p> : null}
+        {evaluations.evaluations.length ? <details><summary>{zh ? `历史修订（${evaluations.evaluations.length}）` : `Revision history (${evaluations.evaluations.length})`}</summary><ol>{evaluations.evaluations.map((item) => <li key={item.evaluation_id}>#{item.revision} · {verdictLabel(item.verdict, language)} · {new Date(item.created_at).toLocaleString()}</li>)}</ol></details> : null}
+      </form> : <p role="status">{zh ? "正在加载评价…" : "Loading evaluations…"}</p>}
+    </details>
     <h4>{zh ? "差异归因" : "Attribution"}</h4>
     <ul>{comparison.attribution.map((item, index) => <li key={index}>{String(item.kind || "unattributed")}</li>)}</ul>
     {comparison.incomplete ? <p role="status">{zh ? "大型运行尚未加载全部步骤；未加载项不会被强行配对。" : "The large run is only partially loaded; missing steps are not force-aligned."}</p> : null}
@@ -138,4 +214,34 @@ function readableResult(value: unknown, language: "en" | "zh"): string {
     return JSON.stringify(record, null, 2).slice(0, 20_000);
   }
   return String(value);
+}
+
+function metricLabel(key: string, language: "en" | "zh"): string {
+  const values: Record<string, [string, string]> = { duration_ms: ["Duration", "耗时"], total_tokens: ["Total tokens", "Token 总量"], tool_calls: ["Tool calls", "工具调用"], tool_errors: ["Failed items", "失败项目"], approvals: ["Approvals", "审批"], artifacts: ["Artifacts", "产物"], warnings: ["Warnings", "警告"] };
+  return values[key]?.[language === "zh" ? 1 : 0] || key;
+}
+function metricValue(key: string, value: number | null, language: "en" | "zh"): string {
+  if (value === null) return language === "zh" ? "未知" : "Unknown";
+  return key === "duration_ms" ? `${(value / 1000).toFixed(2)} s` : String(value);
+}
+function deltaValue(key: string, value: number | null, language: "en" | "zh"): string {
+  if (value === null) return language === "zh" ? "未知" : "Unknown";
+  const formatted = key === "duration_ms" ? `${(value / 1000).toFixed(2)} s` : String(Math.abs(value));
+  return value === 0 ? "0" : `${value > 0 ? "+" : "−"}${formatted.replace(/^-/, "")}`;
+}
+function criterionLabel(id: RunComparisonEvaluationCriterionId, language: "en" | "zh"): string {
+  const values: Record<RunComparisonEvaluationCriterionId, [string, string]> = { outcome_quality: ["Outcome quality", "结果质量"], execution_quality: ["Execution quality", "执行质量"], safety_reproducibility: ["Safety and reproducibility", "安全与复现"] };
+  return values[id][language === "zh" ? 1 : 0];
+}
+function criterionDescription(id: RunComparisonEvaluationCriterionId, language: "en" | "zh"): string {
+  const values: Record<RunComparisonEvaluationCriterionId, [string, string]> = { outcome_quality: ["Correct, complete, and goal-aligned.", "结果正确、完整并满足目标。"], execution_quality: ["Effective tools and steps without unnecessary failures.", "工具和步骤有效，且没有不必要失败。"], safety_reproducibility: ["Sufficient approvals, safety boundaries, and evidence.", "审批、安全边界和复现证据充分。"] };
+  return values[id][language === "zh" ? 1 : 0];
+}
+function verdictLabel(value: RunComparisonEvaluationVerdict, language: "en" | "zh"): string {
+  const values: Record<RunComparisonEvaluationVerdict, [string, string]> = { baseline_better: ["Baseline better", "基线更好"], candidate_better: ["Candidate better", "候选更好"], tie: ["Tie", "相当"], inconclusive: ["Inconclusive", "证据不足"] };
+  return values[value][language === "zh" ? 1 : 0];
+}
+function unknownComparisonMetrics(baselineStatus = "unknown", candidateStatus = "unknown"): NonNullable<RunComparison["metrics"]> {
+  const side = (status: string) => ({ status, duration_ms: null, input_tokens: null, output_tokens: null, total_tokens: null, tool_calls: null, tool_errors: null, approvals: null, artifacts: null, warnings: null });
+  return { baseline: side(baselineStatus), candidate: side(candidateStatus), delta: { duration_ms: null, input_tokens: null, output_tokens: null, total_tokens: null, tool_calls: null, tool_errors: null, approvals: null, artifacts: null, warnings: null } };
 }

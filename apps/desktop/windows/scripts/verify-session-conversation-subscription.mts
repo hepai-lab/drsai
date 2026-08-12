@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { subscribeSessionConversation } from "../../shared/main/sessionConversationSubscription.ts";
 import { selectRuntimeConversationProtocol, selectRuntimeConversationProtocolResult } from "../../shared/main/runtimeProtocolSelection.ts";
 import { OAEP_SCHEMA_SHA256 } from "../../shared/api/oaep.generated.ts";
@@ -18,11 +19,11 @@ import type {
 } from "../../shared/main/runtimeClient.ts";
 
 const subscriptionSource = readFileSync(
-  new URL("../../shared/main/threadRuntimeSubscription.ts", import.meta.url),
+  resolve(process.cwd(), "../shared/main/threadRuntimeSubscription.ts"),
   "utf8",
 );
 const windowsMainSource = readFileSync(
-  new URL("../src/main/index.ts", import.meta.url),
+  resolve(process.cwd(), "src/main/index.ts"),
   "utf8",
 );
 assert.match(subscriptionSource, /isDestroyed\?\.\(\)/);
@@ -118,7 +119,10 @@ const projected = projectRuntimeThreadSnapshot({
 assert.equal(projected.messages[0].content, "hello");
 assert.equal(projected.messages[1].content, "hello from Android");
 assert.equal(projected.messages[2].reasoningContent, "thinking");
-assert.equal(projected.messages[3].statusContent, "Tool: shell · completed");
+assert.equal(projected.messages[2].statusContent, "Tool: shell · completed",
+  "reasoning and tool status must stay in one structured assistant bubble");
+assert.equal(projected.messages.length, 3,
+  "runtime activity fragments must not create detached empty chat messages");
 const oaepProjected = projectOaepThreadSnapshot({
   id: "desktop-thread-oaep", kind: "chat", title: "OAEP conversation",
   createdAt: "2026-07-27T00:00:00Z", updatedAt: "2026-07-27T00:00:00Z",

@@ -1,0 +1,105 @@
+{
+  "schema_version": "opendrsai.p9-e06-web-capability-tool-selection-checkpoint/1",
+  "evidence_tier": "emulator_preflight",
+  "release_evidence": false,
+  "generated_at": "2026-08-11T19:11:18Z",
+  "candidate": {
+    "application_id": "ai.drsai.remote.debug",
+    "app_apk_sha256": "72187207d7de4ce0c6e6cad6fb5c3fbb706eb4a304239dd59c51e6ff139ef83d",
+    "test_apk_sha256": "cf6a27cb63b3bd4f9dfbdae49c8295554139f8e7fab3e05e486415c03eb294d6"
+  },
+  "shared_python": {
+    "tests": 86,
+    "failures": 0,
+    "errors": 0,
+    "path": "docs/android/reports/preflight/p9-emulator/e06-web-capability-tool-selection.xml",
+    "sha256": "bedc60c884397cfb349e0b2aadc3873532ffb02f087554f159fc0dd77297bd29"
+  },
+  "android_jvm": {
+    "tests": 23,
+    "failures": 0,
+    "errors": 0,
+    "suites": {
+      "RunCapabilityDiagnosticsTest": "d8cc4c9117e3e18ab44bf8e5f6509f2a2b9405b1da78606f683843b5c52fa588",
+      "HybridRuntimeCoordinatorTest": "1af6fd7cb3a46b442dac465ec4cf527b19c68293b3036c6411c57dc9a2dabf13",
+      "DesktopHandoffContractTest": "f3cbe936df4a9c432a653fdda6491889faceaedf86d278157d4d41b760d75ca4",
+      "DesktopHandoffOaepTest": "c67970fda7f3852787042097b50a18c31c4cf57bffa20f12c405653f56e7a7ae",
+      "ArchitectureBoundaryTest": "237a799cbdd9f300b241f6f2fcd438561b52ce35eb6e51986f133e0a97bdc63a",
+      "WebSearchToolTest": "7cb6e339338b203b909cd02b34c8faba78ccdd3c827e15ea5a13336ea71d05bb",
+      "WebFetchToolTest": "dfeb2a7d53829ecf4ff2a7f34b38f357da61b77fb9a20b49bb580451810d09f6"
+    },
+    "isolated_from_unrelated_gate": "verifyAndroidRelayBindings"
+  },
+  "device_suite": {
+    "api": 35,
+    "tests": 11,
+    "failures": 0,
+    "errors": 0,
+    "path": "docs/android/reports/preflight/p9-emulator/p9-device-functional-api35.xml",
+    "sha256": "04fd64e5c3890be1d06d7ac190ef969b5d6ae6bea8ea76b0ad046bafd89356fb",
+    "ui_screenshot_sha256": "2516a9333fbae4967c574c0cf7ed3ea5445f44c054455d16c06db81ef8c5e0f5"
+  },
+  "deterministic_natural_tool_suite": {
+    "api": 35,
+    "fixture_cases": 30,
+    "attempts_per_case": 3,
+    "runtime_observations": 90,
+    "instrumentation_tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "path": "docs/android/reports/preflight/p9-emulator/p9-deterministic-natural-tool-api35.xml",
+    "sha256": "14ddc4743fb15139237e52d36897a646d11c7bfda07996b60b048be32c37ffe1"
+  },
+  "features": {
+    "E06-F01": {
+      "gates": {
+        "hepix_first_round_search_policy": true,
+        "citation_repair_and_fabrication_rejection": true,
+        "emulator_ui_e2e": true
+      },
+      "passed": true
+    },
+    "E06-F02": {
+      "gates": {
+        "latest_news_version_and_date_require_retrieval": true,
+        "web_available_forces_matching_tool": true,
+        "web_unavailable_returns_capability_notice": true,
+        "model_guess_is_not_published": true
+      },
+      "passed": true
+    },
+    "E06-F03": {
+      "gates": {
+        "android_local_shell_not_advertised": true,
+        "no_remote_returns_explicit_unsupported": true,
+        "remote_capable_returns_visible_confirmable_handoff": true,
+        "handoff_is_oaep_projected_and_secret_redacted": true
+      },
+      "passed": true
+    },
+    "E06-F04": {
+      "gates": {
+        "frozen_30_case_suite_and_scorer": true,
+        "three_runtime_attempts_per_case": true,
+        "tool_arguments_terminal_and_oaep_all_pass": true
+      },
+      "passed": true
+    },
+    "E06-F05": {
+      "gates": {
+        "no_tool_negative_cases_present": true,
+        "meaningless_and_duplicate_calls_scored": true,
+        "three_runtime_attempts_without_tool_abuse": true,
+        "clarification_interaction_observed": true
+      },
+      "passed": true
+    }
+  },
+  "passed_features": [
+    "E06-F01",
+    "E06-F02",
+    "E06-F03",
+    "E06-F04",
+    "E06-F05"
+  ]
+}

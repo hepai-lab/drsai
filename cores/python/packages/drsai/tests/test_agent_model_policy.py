@@ -38,6 +38,7 @@ def test_agent_toml_persists_all_provider_aware_roles(tmp_path) -> None:
         image_understanding_model=AgentModelSelection("explicit", ModelRef("provider-a", "vision")),
         image_generation_model=AgentModelSelection("explicit", ModelRef("provider-b", "image")),
         text_to_speech_model=AgentModelSelection("explicit", ModelRef("provider-b", "tts")),
+        realtime_voice_model=AgentModelSelection("explicit", ModelRef("provider-b", "gpt-realtime-2")),
         speech_to_text_model=AgentModelSelection("explicit", ModelRef("provider-b", "stt")),
         reasoning_effort="max",
     )
@@ -52,6 +53,7 @@ def test_agent_toml_persists_all_provider_aware_roles(tmp_path) -> None:
         "mode": "explicit", "provider_id": "provider-a", "model_id": "chat",
     }
     assert document["models"]["image_generation"]["model_id"] == "image"
+    assert document["models"]["realtime_voice"]["model_id"] == "gpt-realtime-2"
     assert document["models"]["reasoning_effort"] == "max"
     assert document["schema_version"] == 2
     assert document["tools"]["mode"] == "inherit"

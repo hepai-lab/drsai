@@ -42,12 +42,14 @@ import type {
   RunExperiment,
   ReplayPlan,
   RunComparison,
+  RunComparisonEvaluation,
   RunAdoption,
   DesktopTrustAssessment,
   DesktopTrustStatus,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionEvent,
   DesktopStreamingVoiceTranscriptionEvent,
+  DesktopDuplexVoiceEvent,
   DesktopVoiceSynthesisEvent,
   DesktopWorkflowRun,
   DesktopWorkflowMarketplaceListResult,
@@ -761,15 +763,26 @@ function mockReplayPlan(experimentId: string, draftVersion: number, replayPlanId
 function mockRunComparison(baselineRunId: string, candidateRunId: string): RunComparison {
   return {
     comparison_id: "comparison-visual",
-    schema_version: "opendrsai.run-comparison/1",
+    schema_version: "opendrsai.run-comparison/2",
     baseline_run_id: baselineRunId,
     candidate_run_id: candidateRunId,
     source_digest: `sha256:${"d".repeat(64)}`,
     comparison_digest: `sha256:${"e".repeat(64)}`,
     created_at: new Date().toISOString(), cached: false,
     outcome: { baseline_status: "completed", candidate_status: "completed", status_changed: false },
-    steps: [], files: [], artifacts: [],
+    steps: [{
+      alignment: "provenance",
+      baseline_item_id: "mock-safe-tool",
+      candidate_item_id: "mock-safe-tool",
+      baseline_type: "tool_call",
+      candidate_type: "tool_call",
+    }], files: [], artifacts: [],
     usage: { baseline: { known: false, value: null }, candidate: { known: false, value: null } },
+    metrics: {
+      baseline: { status: "completed", duration_ms: 1200, input_tokens: 100, output_tokens: 50, total_tokens: 150, tool_calls: 1, tool_errors: 0, approvals: 0, artifacts: 0, warnings: 0 },
+      candidate: { status: "completed", duration_ms: 900, input_tokens: 90, output_tokens: 60, total_tokens: 150, tool_calls: 1, tool_errors: 0, approvals: 0, artifacts: 0, warnings: 0 },
+      delta: { duration_ms: -300, input_tokens: -10, output_tokens: 10, total_tokens: 0, tool_calls: 0, tool_errors: 0, approvals: 0, artifacts: 0, warnings: 0 },
+    },
     attribution: [{ kind: "unattributed", confidence: "unknown" }], incomplete: false,
   };
 }
@@ -796,11 +809,14 @@ export function installMockDesktopApi(): void {
   const activeDeltaFixture = new URLSearchParams(window.location.search).get("activeDeltaFixture") === "1";
   const structuredActivityFixtureItems = Math.min(10_000, Math.max(0, Number(new URLSearchParams(window.location.search).get("structuredActivityItems")) || 0));
   const experimentReleaseGateEnabled = new URLSearchParams(window.location.search).get("experimentReleaseGate") === "passed";
+  const phase4RecoveryFixture = new URLSearchParams(window.location.search).get("phase4Recovery");
   const resultFirstCompletionFixture = new URLSearchParams(window.location.search).get("resultFirstCompletion") === "1";
   const resultProvenanceFixture = new URLSearchParams(window.location.search).get("resultProvenance") === "1";
   const runInspectionSafetyFixture = new URLSearchParams(window.location.search).get("runInspectionSafety") === "1";
   const operationalStateFixture = new URLSearchParams(window.location.search).get("operationalStateFixture") === "1";
   let resultFirstCompletionPoll = 0;
+  const comparisonEvaluations: RunComparisonEvaluation[] = [];
+  let recoveredExperimentDeleted = false;
   if (resultProvenanceFixture) {
     const now = new Date().toISOString();
     threads = [{
@@ -923,6 +939,7 @@ export function installMockDesktopApi(): void {
   const completionNotificationClickListeners = new Set<Listener<CompletionNotificationClickEvent>>();
   const voiceTranscriptionListeners = new Set<Listener<DesktopVoiceTranscriptionEvent>>();
   const streamingVoiceTranscriptionListeners = new Set<Listener<DesktopStreamingVoiceTranscriptionEvent>>();
+  const duplexVoiceListeners = new Set<Listener<DesktopDuplexVoiceEvent[]>>();
   const voiceSynthesisListeners = new Set<Listener<DesktopVoiceSynthesisEvent>>();
   const streamingVoiceSessions = new Map<string, { turnId: string; eventSequence: number; partialSent: boolean }>();
   const voiceFixtureTimers = new Map<string, number>();
@@ -1908,7 +1925,7 @@ export function installMockDesktopApi(): void {
       source_ledger_sha256: "a".repeat(64),
       reason: experimentReleaseGateEnabled ? "all_release_evidence_passed" : "release_evidence_incomplete",
     }),
-    shrinkMobileAssociation: async (associationId, permissions) => ({
+    shrinkMobileAssociation: async (associationId, permissions, scope) => ({
       association_id: associationId,
       subject_summary: "sub_000000000000",
       device_summary: "dev_000000000000",
@@ -1919,7 +1936,8 @@ export function installMockDesktopApi(): void {
       last_seen_at: new Date().toISOString(),
       revoked_at: null,
       device_type: "android",
-      workspace_scope: "all",
+      workspace_scope: scope?.workspace_scope ?? "all",
+      workspace_ids: scope?.workspace_ids ?? [],
       permissions,
     }),
     revokeMobileRuntimeEnrollment: async () => ({
@@ -2295,7 +2313,7 @@ export function installMockDesktopApi(): void {
         capability_confidence: "inferred",
       }],
     }),
-    getMyDrSaiAgentModelPolicy: async (agentId = "opendrsai") => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, speech_to_text_model: null, reasoning_effort: "high", effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model }, revision: `sha256:${"a".repeat(64)}`, valid: true }),
+    getMyDrSaiAgentModelPolicy: async (agentId = "opendrsai") => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, realtime_voice_model: null, speech_to_text_model: null, reasoning_effort: "high", effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model }, revision: `sha256:${"a".repeat(64)}`, valid: true }),
     getMyDrSaiAgentToolPolicy: async (agentId) => ({ agent_id: agentId, mode: "inherit", enabled: [], disabled: [], require_approval: [], revision: `sha256:${"d".repeat(64)}` }),
     updateMyDrSaiAgentToolPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, revision: `sha256:${"e".repeat(64)}` }),
     previewMyDrSaiAgentTools: async (agentId) => ({ agent_id: agentId, mode: "inherit", tools: [{ tool_id: "builtin.image_generation", status: "available", capabilities: ["tool.call", "builtin"], selected: true }, { tool_id: "builtin.web-search", status: "available", capabilities: ["tool.call", "builtin", "network.public_https"], selected: true }], missing_ids: [], disabled_ids: [], agent_revision: `sha256:${"d".repeat(64)}`, registry_revision: `sha256:${"f".repeat(64)}` }),
@@ -2314,7 +2332,7 @@ export function installMockDesktopApi(): void {
     deleteKnowledgeBase: async () => ({ status: "ok" }),
     getMyDrSaiAgentModelCapabilityStatus: async (agentId = "opendrsai") => ({ agent_id: agentId, capabilities: [] }),
     updateMyDrSaiAgentModelPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, effective_ref: policy.primary_model.ref, revision: `sha256:${"b".repeat(64)}`, valid: true }),
-    migrateMyDrSaiAgentModelPolicy: async (agentId, legacyModel) => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, speech_to_text_model: null, effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel }, revision: `sha256:${"c".repeat(64)}`, valid: true, migrated: true }),
+    migrateMyDrSaiAgentModelPolicy: async (agentId, legacyModel) => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, realtime_voice_model: null, speech_to_text_model: null, effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel }, revision: `sha256:${"c".repeat(64)}`, valid: true, migrated: true }),
     updateMyDrSaiConfig: async (request): Promise<MyDrSaiConfig> => {
       myDrSaiCliConfig = { ...myDrSaiCliConfig, ...request };
       return api.getMyDrSaiConfig();
@@ -2786,6 +2804,7 @@ export function installMockDesktopApi(): void {
       object: "list",
       data: [{
         run_id: "run-visual",
+        relation_type: "root",
         session_id: request.sessionId,
         status: "completed",
         manifest: mockRunManifest("run-visual"),
@@ -2796,7 +2815,7 @@ export function installMockDesktopApi(): void {
     pauseMobileRemoteAccess: async () => ({ runtime_id: "runtime-local", status: "paused" }),
     resumeMobileRemoteAccess: async () => ({ runtime_id: "runtime-local", status: "active" }),
     renameMobileRuntime: async (displayName) => ({ runtime_id: "runtime-local", display_name: displayName.trim() }),
-    diagnoseMobileRemoteAccess: async () => ({ status: "healthy", action: "none", checks: { runtime: "ok", relay: "ok", oidc: "ok", wss: "ok", heartbeat: "ok", protocol: "ok" } }),
+    diagnoseMobileRemoteAccess: async () => ({ status: "healthy", action: "none", checks: { runtime: "ok", relay: "ok", oidc: "ok", device_proof: "unknown", wss: "ok", heartbeat: "ok", protocol: "ok", push: "unknown" } }),
     getRunInspection: async (request) => ({
       schema_version: "opendrsai.run-inspection/1",
       run: {
@@ -2805,9 +2824,9 @@ export function installMockDesktopApi(): void {
         workspace_id: "workspace-visual",
         backend_id: "codex",
         agent_definition: "codex@1",
-        status: "completed",
+        status: phase4RecoveryFixture === "running" && request.runId === "run-replay-visual" ? "running" : "completed",
         created_at: new Date(Date.now() - 18_000).toISOString(),
-        completed_at: new Date().toISOString(),
+        completed_at: phase4RecoveryFixture === "running" && request.runId === "run-replay-visual" ? null : new Date().toISOString(),
       },
       summary: {
         duration_ms: 18_000,
@@ -2875,7 +2894,7 @@ export function installMockDesktopApi(): void {
     }),
     getRunExperiment: async () => mockRunExperiment("run-visual"),
     updateRunExperiment: async (request) => ({ ...mockRunExperiment("run-visual"), draft_version: request.expectedVersion + 1, ...request.patch }),
-    deleteRunExperiment: async () => true,
+    deleteRunExperiment: async () => { recoveredExperimentDeleted = true; return true; },
     exportRunExperimentPackage: async (request) => ({
       package: {
         schema_version: "opendrsai.run-experiment-package/1", exported_at: new Date().toISOString(),
@@ -2889,10 +2908,64 @@ export function installMockDesktopApi(): void {
     createReplayPlan: async (request) => mockReplayPlan(request.experimentId, request.expectedDraftVersion),
     getReplayPlan: async (request) => mockReplayPlan("experiment-visual", 1, request.replayPlanId),
     getReplayBoundaries: async (request) => ({ run_id: request.runId, items: [], runtime_checkpoint: null }),
-    getRunRelations: async (request) => ({ run_id: request.runId, parent: null, children: [], experiments: [] }),
+    getRunRelations: async (request) => {
+      const recovered = phase4RecoveryFixture && !recoveredExperimentDeleted
+        ? {
+            ...mockRunExperiment(request.runId, phase4RecoveryFixture === "executed" ? "Recovered executed experiment" : "Recovered draft experiment"),
+            ...(["executed", "running"].includes(phase4RecoveryFixture) ? { status: "executed" as const, executed_run_id: "run-replay-visual" } : {}),
+          }
+        : null;
+      return { run_id: request.runId, parent: null, children: [], experiments: recovered ? [recovered] : [] };
+    },
+    appendDuplexVoiceHistory: async (request) => {
+      const current = threadSnapshots[request.threadId] ?? { threadId: request.threadId, title: request.threadId, messages: [], updatedAt: Date.now(), messageCount: 0 };
+      const merged = new Map(current.messages.map((message) => [message.id, message]));
+      for (const message of request.messages) merged.set(message.id, { ...merged.get(message.id), ...message });
+      const messages = [...merged.values()];
+      const next = { ...current, messages, messageCount: messages.length, updatedAt: Date.now() };
+      threadSnapshots = { ...threadSnapshots, [request.threadId]: next };
+      return next;
+    },
     executeReplayPlan: async (request) => ({ replay_plan_id: request.replayPlanId, created: true, run: { run_id: "run-replay-visual", status: "completed" } }),
     createRunComparison: async (request) => mockRunComparison(request.baselineRunId, request.candidateRunId),
     getRunComparison: async (request) => ({ ...mockRunComparison("run-visual", "run-replay-visual"), comparison_id: request.comparisonId }),
+    listRunComparisonEvaluations: async (request) => ({
+      schema_version: "opendrsai.run-comparison-evaluation/1",
+      comparison_id: request.comparisonId,
+      comparison_digest: `sha256:${"e".repeat(64)}`,
+      rubric_snapshot: {
+        rubric_id: "opendrsai.comparison.default", revision: 1,
+        criteria: [
+          { id: "outcome_quality", title: "Outcome quality", description: "The final result satisfies the goal." },
+          { id: "execution_quality", title: "Execution quality", description: "The execution is effective." },
+          { id: "safety_reproducibility", title: "Safety and reproducibility", description: "The evidence is sufficient." },
+        ],
+        score_min: 1, score_max: 5,
+      },
+      latest_revision: comparisonEvaluations.length,
+      evaluations: comparisonEvaluations.filter((item) => item.comparison_id === request.comparisonId),
+    }),
+    createRunComparisonEvaluation: async (request) => {
+      const evaluation: RunComparisonEvaluation = {
+        evaluation_id: `comparison-evaluation-${comparisonEvaluations.length + 1}`,
+        comparison_id: request.comparisonId,
+        revision: comparisonEvaluations.filter((item) => item.comparison_id === request.comparisonId).length + 1,
+        schema_version: "opendrsai.run-comparison-evaluation/1",
+        comparison_digest: `sha256:${"e".repeat(64)}`,
+        rubric_snapshot: {
+          rubric_id: "opendrsai.comparison.default", revision: 1,
+          criteria: [
+            { id: "outcome_quality", title: "Outcome quality", description: "The final result satisfies the goal." },
+            { id: "execution_quality", title: "Execution quality", description: "The execution is effective." },
+            { id: "safety_reproducibility", title: "Safety and reproducibility", description: "The evidence is sufficient." },
+          ], score_min: 1, score_max: 5,
+        },
+        scores: request.scores, verdict: request.verdict, note: request.note || "",
+        evidence_refs: request.evidenceRefs || [], created_by: "mock-user", created_at: new Date().toISOString(),
+      };
+      comparisonEvaluations.push(evaluation);
+      return evaluation;
+    },
     getWorktreeAdoptionPreview: async (request) => ({ source_workspace_id: request.sourceWorkspaceId, worktree_id: request.worktreeId, base_commit: "a".repeat(40), source_head: "a".repeat(40), candidate_head: "b".repeat(40), preview_digest: `sha256:${"f".repeat(64)}`, source_clean: true, candidate_clean: true, conflict_count: 0, can_apply: true, changes: [] }),
     applyWorktreeAdoption: async (request) => ({ worktree: { worktree_id: request.worktreeId, status: "merged" }, preview_digest: request.previewDigest, selected_paths: request.selectedPaths }),
     getRunAdoptionPreview: async (request) => mockRunAdoption(request.comparisonId),
@@ -2971,6 +3044,21 @@ export function installMockDesktopApi(): void {
       protocolVersion: 2,
       maxBufferedAudioMs: 2_000,
     }),
+    getDuplexVoiceCapabilities: async () => ({
+      protocolVersion: 1, inputAudioEncodings: ["pcm_s16le"], outputAudioEncodings: ["pcm_s16le"],
+      inputSampleRatesHz: [24_000], outputSampleRatesHz: [24_000], supportsInputTranscription: true,
+      supportsOutputTranscription: true, supportsServerVad: true, supportsResponseCancel: true,
+      supportsConversationTruncation: true, supportsToolCalling: true, supportsSessionResume: false,
+      maxUplinkBufferedAudioMs: 2_000, maxPlaybackBufferedAudioMs: 3_000, maxSessionDurationSeconds: 1_800,
+    }),
+    startDuplexVoiceSession: async (request) => ({ sessionId: request.sessionId, acceptedAt: new Date().toISOString(), runtimeId: "mock-local", providerId: request.providerId, modelId: request.modelId, capabilities: await api.getDuplexVoiceCapabilities() }),
+    sendDuplexVoiceAudioChunk: (chunk) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId: chunk.sessionId, sequence: chunk.sequence, type: "input_audio_ack", acknowledgedSequence: chunk.sequence, bufferedAudioMs: 0 }]); return true; },
+    updateDuplexVoiceSession: async () => true,
+    interruptDuplexVoiceSession: async (request) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId: request.sessionId, sequence: 0, type: "interrupted", responseId: request.responseId, playedAudioMs: request.playedAudioMs, reason: request.reason }]); return true; },
+    submitDuplexVoiceToolResult: async () => true,
+    stopDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId, sequence: 0, type: "completed", terminal: "completed" }]); return true; },
+    cancelDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId, sequence: 0, type: "cancelled", terminal: "cancelled" }]); return true; },
+    disposeDuplexVoiceSession: async () => true,
     startStreamingVoiceTranscription: async (request) => {
       const sessionId = `fixture-streaming-${Date.now()}`;
       streamingVoiceSessions.set(sessionId, { turnId: request.turnId, eventSequence: 1, partialSent: false });
@@ -6331,6 +6419,7 @@ export function installMockDesktopApi(): void {
     onChatEvent: (callback) => subscribe(chatListeners, callback),
     onVoiceTranscriptionEvent: (callback) => subscribe(voiceTranscriptionListeners, callback),
     onStreamingVoiceTranscriptionEvent: (callback) => subscribe(streamingVoiceTranscriptionListeners, callback),
+    onDuplexVoiceEvents: (callback) => subscribe(duplexVoiceListeners, callback),
     onVoiceSynthesisEvent: (callback) => subscribe(voiceSynthesisListeners, callback),
     onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
     onUpdateStatus: (callback) => subscribe(updateListeners, callback),

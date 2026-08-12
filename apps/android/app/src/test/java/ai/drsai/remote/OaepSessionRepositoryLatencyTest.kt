@@ -3,6 +3,7 @@ package ai.drsai.remote
 import ai.drsai.remote.remote.data.OaepSessionRepository
 import ai.drsai.remote.remote.data.RelayRemoteRepository
 import ai.drsai.remote.remote.data.RelaySseClient
+import ai.drsai.remote.remote.data.RemoteLatencyTracker
 import ai.drsai.remote.remote.generated.OaepEvent
 import ai.drsai.remote.remote.generated.OaepEventData
 import ai.drsai.remote.remote.generated.OaepSource
@@ -31,7 +32,7 @@ class OaepSessionRepositoryLatencyTest {
         val repository = OaepSessionRepository(
             relay,
             RelaySseClient(baseUrl, accessToken = { "token" }),
-            wallClockMs = { times.removeFirst() },
+            latency = RemoteLatencyTracker(wallClockMs = { times.removeFirst() }),
         )
         val event = event("event/one")
         repository.markLatencyReceived(event)

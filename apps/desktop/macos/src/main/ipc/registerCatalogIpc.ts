@@ -33,7 +33,8 @@ export function registerMacosCatalogIpc(
     event,
     associationId: string,
     permissions: Array<"read" | "send" | "approve" | "files">,
-  ) => dependencies.mobilePairingControllerFor(event.sender).shrinkAssociation(associationId, permissions));
+    scope: import("../../../../shared/api/desktopApi").DesktopMobilePairingScope | undefined,
+  ) => dependencies.mobilePairingControllerFor(event.sender).shrinkAssociation(associationId, permissions, scope));
   ipcMain.handle("desktop:mobile-enrollment-revoke", (event) => dependencies.mobilePairingControllerFor(event.sender).revokeEnrollment());
   ipcMain.handle("desktop:list-threads", () => listThreads());
   ipcMain.handle("desktop:list-agents", (_event, options) => listAgents(options && typeof options === "object" ? {

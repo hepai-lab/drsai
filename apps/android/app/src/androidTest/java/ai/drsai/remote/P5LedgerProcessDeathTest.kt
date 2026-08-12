@@ -10,6 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.junit.Assume.assumeNotNull
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
@@ -18,8 +19,11 @@ class P5LedgerProcessDeathTest {
     fun executeRequestedPhase() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val arguments = InstrumentationRegistry.getArguments()
-        val phase = requireNotNull(arguments.getString("ledgerPhase"))
-        val nonce = requireNotNull(arguments.getString("ledgerNonce"))
+        val phaseArgument = arguments.getString("ledgerPhase")
+        val nonceArgument = arguments.getString("ledgerNonce")
+        assumeNotNull(phaseArgument, nonceArgument)
+        val phase = requireNotNull(phaseArgument)
+        val nonce = requireNotNull(nonceArgument)
         require(nonce.matches(Regex("^[a-f0-9]{32}$"))) { "p5_ledger_nonce_invalid" }
         val context = instrumentation.targetContext
         val subject = "p5-ledger-process-$nonce"

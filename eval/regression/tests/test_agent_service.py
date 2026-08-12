@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from opendrsai_regression.agent_service import AgentRegressionService, TERMINAL_STATES, _normalize_options, _safe_summary, _summary_status
+from opendrsai_regression.agent_service import AgentRegressionService, TERMINAL_STATES, _normalize_options, _safe_summary, _summary_status, _write_reference_documents
 
 REGRESSION_ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,6 +30,49 @@ def test_partial_stop_result_is_not_a_false_pass_and_names_not_run_cases() -> No
     safe = _safe_summary(summary, "eval-test", ["qa.greeting.hello", "qa.constraints.json"])
     assert safe["requested_total"] == 2
     assert safe["not_run_case_ids"] == ["qa.constraints.json"]
+
+
+def test_case_source_references_bind_to_persisted_evaluation_evidence(tmp_path: Path) -> None:
+    evaluation_id = "eval-00000000-0000-4000-8000-000000000001"
+    summary = {
+        "total": 1, "attempts": 1, "passed": 1, "failed": 0, "error": 0, "inconclusive": 0,
+        "results": [{
+            "case_id": "run.inspect_compare", "case_revision": 1, "status": "passed",
+            "evidence": {
+                "output": "comparison complete",
+                "comparison": {"comparison_id": "comparison-regression-001", "verdict": "regressed"},
+                "operation_calls": [{"operation": "run.compare"}],
+                "references": [{
+                    "type": "run_comparison", "id": "comparison-regression-001",
+                    "uri": "opendrsai://run-comparisons/comparison-regression-001", "interactive": True,
+                }, {
+                    "type": "run_comparison", "id": "comparison-regression-001",
+                    "uri": "opendrsai://run-comparisons/comparison-regression-001", "interactive": True,
+                }],
+            },
+        }],
+    }
+    safe = _safe_summary(summary, evaluation_id, ["run.inspect_compare"])
+    rebound = safe["results"][0]["references"][0]
+    assert len(safe["results"][0]["references"]) == 1
+    assert rebound == {
+        "type": "run_comparison", "id": "comparison-regression-001", "interactive": True,
+        "uri": (
+            f"opendrsai://regression/evaluations/{evaluation_id}/evidence/"
+            "run.inspect_compare/run_comparison/comparison-regression-001"
+        ),
+    }
+
+    directory = tmp_path / evaluation_id
+    directory.mkdir()
+    _write_reference_documents(directory, safe, summary, evaluation_id)
+    document = json.loads((
+        directory / "references" / "run.inspect_compare" / "run_comparison"
+        / "comparison-regression-001.json"
+    ).read_text(encoding="utf-8"))
+    assert document["kind"] == "source_evidence"
+    assert document["reference"]["id"] == "comparison-regression-001"
+    assert document["evidence"]["comparison"]["verdict"] == "regressed"
 
 
 def test_preflight_blocks_without_gateway_configuration(tmp_path, monkeypatch) -> None:

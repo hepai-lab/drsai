@@ -21,12 +21,18 @@ class DesktopAgentManagerPorts:
         self._cancellation_token = cancellation_token
 
     def ports(self, visible_names: set[str]) -> dict[str, ManagerPort]:
+        regression_names = {
+            "regression_list_suites", "regression_list_cases", "regression_get_case",
+            "regression_preflight", "regression_start", "regression_history",
+            "regression_get", "regression_events", "regression_cancel",
+        }
         known = {
             "Skill": self.skill,
             "TodoWrite": self.todo_write,
             "UpdateUserConfig": self.update_user_config,
             "Delegate": self.delegate,
             "ScheduledTaskManager": self.scheduled_task,
+            **{name: self.regression for name in regression_names},
         }
         unknown = visible_names - set(known)
         if unknown:
@@ -72,6 +78,25 @@ class DesktopAgentManagerPorts:
         warning = str(getattr(manager, "_last_warning", "") or "")
         content = manager.get_task_prompt()
         return self._success(call_id, f"{warning}\n\n{content}".strip())
+
+    async def regression(self, payload: Mapping[str, Any]) -> DesktopToolResult:
+        call_id, name, arguments = self._arguments(payload)
+        manager = getattr(self._agent, "_regression_manager", None)
+        if manager is None:
+            return DesktopToolResult(
+                call_id, False, {"content": "Regression manager unavailable"},
+                "regression_manager_unavailable",
+            )
+        try:
+            return self._success(call_id, manager.execute(name, arguments))
+        except Exception as exc:
+            # Preserve a stable public code while keeping arbitrary catalog or
+            # filesystem exception text out of the Kernel tool envelope.
+            return DesktopToolResult(
+                call_id, False,
+                {"error": {"code": "regression_tool_failed", "type": type(exc).__name__}},
+                "regression_tool_failed",
+            )
 
     async def update_user_config(self, payload: Mapping[str, Any]) -> DesktopToolResult:
         call_id, _, arguments = self._arguments(payload)

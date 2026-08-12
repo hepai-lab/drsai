@@ -21,6 +21,7 @@ from drsai.backend.runtime.desktop_agent_kernel_adapter import (
     _desktop_input_artifact,
     _desktop_memory_candidates,
     _controlled_operation_result,
+    _controlled_operation_call_contracts,
     _controlled_command,
     _controlled_command_templates,
     _controlled_basic_tool_names,
@@ -32,6 +33,7 @@ from drsai.backend.runtime.desktop_agent_kernel_adapter import (
     run_agent_through_kernel,
 )
 from drsai.modules.agents.skills_agent.drsai_assistant import DrSaiAssistant
+from drsai.modules.agents.skills_agent.managers.get_managers_tools import get_regression_read_tools
 
 
 class _Client:
@@ -43,6 +45,19 @@ class _Client:
             finish_reason="stop", content="done",
             usage=RequestUsage(prompt_tokens=1, completion_tokens=1), cached=False,
         )
+
+
+class _VisibleRegressionToolsClient(_Client):
+    def __init__(self):
+        self.tool_names = set()
+
+    async def create_stream(self, _messages, **kwargs):
+        self.tool_names = {
+            str(getattr(tool, "schema", tool).get("name"))
+            for tool in kwargs.get("tools", [])
+        }
+        async for value in super().create_stream(_messages, **kwargs):
+            yield value
 
 
 class _Workbench:
@@ -138,6 +153,13 @@ def test_regression_run_operations_are_digest_bound_and_scope_limited() -> None:
     }
     resources = [{"kind": "selection", "name": "OpenDrSai regression control", "content": json.dumps(control)}]
     with desktop_regression_control_scope(resources):
+        assert _controlled_operation_call_contracts() == (
+            "run_inspect(run_id=run-regression-baseline-001)",
+            "run_inspect(run_id=run-regression-candidate-001)",
+            "run_manifest_read(run_id=run-regression-baseline-001)",
+            "run_manifest_read(run_id=run-regression-candidate-001)",
+            "run_compare(baseline_run_id=run-regression-baseline-001, candidate_run_id=run-regression-candidate-001)",
+        )
         inspected = _controlled_operation_result("run_inspect", {"run_id": "run-regression-candidate-001"})
         compared = _controlled_operation_result("run_compare", {
             "baseline_run_id": "run-regression-baseline-001", "candidate_run_id": "run-regression-candidate-001",
@@ -197,7 +219,7 @@ class _ControlledWriteClient(_Client):
                     id="call-write", name="regression_controlled_write",
                     arguments=json.dumps({
                         "relative_path": "output/approval-proof.txt",
-                        "content": "OpenDrSai approval regression passed.\n",
+                        "content": "OpenDrSai approval regression passed.",
                     }),
                 )],
                 usage=RequestUsage(prompt_tokens=1, completion_tokens=1), cached=False,
@@ -432,6 +454,7 @@ class _Agent:
     _subagent_tools = []
     _todo_tools = []
     _scheduled_task_tools = []
+    _regression_tools = []
     _tool_approval_handler = None
 
     def __init__(self):
@@ -480,6 +503,26 @@ async def test_production_shaped_agent_pilot_is_actually_driven_by_shared_kernel
 
 
 @pytest.mark.asyncio
+async def test_ordinary_desktop_kernel_exposes_native_regression_tools() -> None:
+    agent = _Agent()
+    client = _VisibleRegressionToolsClient()
+    agent._model_client = client
+    agent._regression_tools = get_regression_read_tools()
+
+    output = [value async for value in run_agent_through_kernel(
+        agent, task="有哪些回归测试？", cancellation_token=__import__("autogen_core").CancellationToken(),
+        policy_resolver=_policy,
+    )]
+
+    assert output[-1].stop_reason == "run.completed"
+    assert {
+        "regression_list_suites", "regression_list_cases", "regression_get_case",
+        "regression_preflight", "regression_start", "regression_history",
+        "regression_get", "regression_events", "regression_cancel",
+    }.issubset(client.tool_names)
+
+
+@pytest.mark.asyncio
 async def test_gateway_trusted_evidence_satisfies_kernel_retrieval_requirement() -> None:
     agent = _Agent()
     resources = [{
@@ -489,16 +532,19 @@ async def test_gateway_trusted_evidence_satisfies_kernel_retrieval_requirement()
         "name": "OpenDrSai trusted evidence",
         "permission": "read",
         "status": "encoded",
-        "content": '{"satisfied_capability_domains":["retrieval"]}',
+        "content": '{"satisfied_capability_domains":["retrieval","workspace"]}',
         "captured_at": "2026-08-10T00:00:00+00:00",
     }]
 
     with desktop_regression_control_scope(resources):
-        output = [value async for value in run_agent_through_kernel(
-            agent, task="Describe the current status shown in the supplied evidence.",
-            cancellation_token=__import__("autogen_core").CancellationToken(),
-            policy_resolver=_policy,
-        )]
+        # The production Gateway enters a second manager scope without
+        # repeating its trusted evidence resources.
+        with desktop_regression_control_scope([]):
+            output = [value async for value in run_agent_through_kernel(
+                agent, task="Describe the current source file in the workspace shown in the supplied evidence.",
+                cancellation_token=__import__("autogen_core").CancellationToken(),
+                policy_resolver=_policy,
+            )]
 
     assert output[-1].stop_reason == "run.completed"
     assert output[-1].messages[-1].content == "done"
@@ -807,6 +853,10 @@ async def test_regression_controlled_write_requires_approval_and_stays_in_isolat
             "effect": "write_local_mutable", "approval": "always_required",
             "allowed_root": "output/", "idempotency": "required",
         }],
+        "controlled_write_target": {
+            "relative_path": "output/approval-proof.txt",
+            "content_utf8": "OpenDrSai approval regression passed.\n",
+        },
     }
     resources = [{"kind": "selection", "name": "OpenDrSai regression control", "content": json.dumps(control)}]
 

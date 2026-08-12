@@ -6,6 +6,8 @@ import ai.drsai.remote.data.ChatDatabase
 import ai.drsai.remote.remote.data.EventDecision
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteDeliveryState
+import ai.drsai.remote.remote.data.RemoteOaepItemEntity
+import ai.drsai.remote.remote.data.OaepProjectionIntegrity
 import ai.drsai.remote.remote.generated.GeneratedConversationSnapshot
 import ai.drsai.remote.remote.generated.GeneratedSessionConversationItem
 import ai.drsai.remote.remote.generated.GeneratedSessionEvent
@@ -282,6 +284,30 @@ class RemoteSessionSyncStoreTest {
     }
 
     @Test
+    fun oaep_room_projection_preserves_runtime_checkpoint_hash() = runTest {
+        val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
+        val run = OaepRun("run-1", "session", null, status = "completed",
+            createdAt = "now", updatedAt = "now", completedAt = "now")
+        val item = oaepMessageItem("completed").copy(source = OaepSource(
+            backend = "runtime", backendItemId = "backend-item", client = "android",
+            messageId = "source-message", runtimeId = "rt", adapter = "oaep-adapter",
+            adapterVersion = "1", mappingVersion = "1",
+        ))
+        val digest = OaepProjectionIntegrity.digestItems(listOf(item))
+        val checkpoint = OaepSnapshotCheckpoint(1, digest, 1)
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot("1.0", session, listOf(run), listOf(item), 1, checkpoint,
+                OaepSnapshotWindow(100, false, null)),
+            1,
+        )
+        store.verifyOaepProjectionCheckpoint("user", "", "rt", "session", checkpoint)
+        val stored = store.oaepSessionItems("user", "", "rt", "session").single()
+        assertEquals("backend-item", org.json.JSONObject(stored.sourceJson).getString("backend_item_id"))
+        assertEquals("oaep-adapter", org.json.JSONObject(stored.sourceJson).getString("adapter"))
+    }
+
+    @Test
     fun capacity_trim_is_rebuilt_from_full_snapshot_and_account_clear_is_complete() = runTest {
         val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
         val run = OaepRun(
@@ -350,6 +376,33 @@ class RemoteSessionSyncStoreTest {
     }
 
     @Test
+    fun oaep_delta_before_item_creates_realtime_projection_without_losing_cursor() = runTest {
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now"),
+                listOf(OaepRun("run-1", "session", null, status = "running",
+                    createdAt = "now", updatedAt = "now", completedAt = null)),
+                emptyList(), 1,
+            ),
+            1,
+        )
+        val event = OaepEvent(
+            "1.0", "event-2", "session", "run-1", "delta-first", 2,
+            "event.item.delta", "later", "event-2",
+            OaepSource("runtime", runtimeId = "rt"),
+            OaepEventData(delta = OaepDelta("message.text.append", "visible now")),
+        )
+        assertEquals(EventDecision.APPLY, store.applyOaepEvent(
+            "user", "", "rt", "ws", "session", event, 2,
+        ))
+        val item = store.oaepSessionItems("user", "", "rt", "session").single()
+        assertEquals("delta-first", item.itemId)
+        assertEquals("visible now", org.json.JSONObject(item.contentJson).getString("text"))
+        assertEquals(2, store.oaepSessionCursor("user", "", "rt", "session")!!.lastSequence)
+    }
+
+    @Test
     fun oaep_plan_delta_event_updates_cached_plan_text() = runTest {
         store.replaceOaepSnapshot(
             "user", "", "rt", "ws",
@@ -378,6 +431,29 @@ class RemoteSessionSyncStoreTest {
         val item = store.oaepSessionItems("user", "", "rt", "session").single()
         assertEquals(2, item.latestEventSequence)
         assertEquals("first step\nsecond step", org.json.JSONObject(item.contentJson).getString("text"))
+    }
+
+    @Test
+    fun long_session_cold_window_is_bounded_while_offline_search_covers_older_cache() = runTest {
+        val rows = (1..2_500).map { sequence ->
+            RemoteOaepItemEntity(
+                "user", "", "rt", "ws", "session", "run-${sequence / 10}",
+                "item-$sequence", "message", "completed", sequence.toLong(), sequence.toLong(),
+                "runtime", "android", null, "now", "now",
+                org.json.JSONObject().put("role", "assistant").put(
+                    "text", if (sequence == 100) "literal 100%_match" else "message $sequence",
+                ).toString(), false,
+            )
+        }
+        database!!.remoteDao().saveOaepItems(rows)
+
+        val window = store.oaepSessionItemWindow("user", "", "rt", "session", 1_000)
+        assertEquals(1_000, window.size)
+        assertEquals("item-1501", window.first().itemId)
+        assertEquals("item-2500", window.last().itemId)
+
+        val search = store.searchCachedOaepItems("user", "", "rt", "session", "100%_match")
+        assertEquals(listOf("item-100"), search.map { it.itemId })
     }
 
     private fun snapshot(sequence: Long, items: List<GeneratedSessionConversationItem>) =
