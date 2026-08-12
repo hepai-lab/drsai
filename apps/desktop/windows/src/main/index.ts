@@ -3327,13 +3327,32 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
 
 const codexWorkspaceSyncControllers = new Map<string, AbortController>();
 
+const QUIET_DIAGNOSTIC_IPC = new Set([
+  "desktop:run-manifest",
+  "desktop:run-manifest-export",
+  "desktop:update-thread",
+  "desktop:update-thread-snapshot",
+  "desktop:delete-thread",
+  "desktop:create-thread",
+  "desktop:get-health",
+  "desktop:get-gateway-status",
+  "desktop:get-install-status",
+  "desktop:background-tasks-list",
+  "desktop:list-threads",
+  "desktop:get-thread",
+  "desktop:get-diagnostic-snapshot",
+  "desktop:get-production-diagnostic-status",
+]);
+
 function secureHandle<T extends unknown[]>(
   channel: string,
   handler: (event: IpcMainInvokeEvent, ...args: T) => unknown,
 ): void {
   ipcMain.handle(channel, async (event, ...args: T) => {
     assertTrustedSender(event);
-    if (channel.startsWith("desktop:diagnostics-")) return handler(event, ...args);
+    if (channel.startsWith("desktop:diagnostics-") || QUIET_DIAGNOSTIC_IPC.has(channel)) {
+      return handler(event, ...args);
+    }
     const target = classifyDiagnosticChannel(channel);
     const propagated = extractDiagnosticContext(args[0]);
     const operation = await desktopDiagnostics.start({
@@ -5176,7 +5195,14 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread", (_event, request) =>
     updateThread(request),
   );
-  secureHandle("desktop:delete-thread", (_event, threadId) => deleteThread(threadId));
+  secureHandle("desktop:delete-thread", async (_event, threadId) => {
+    try {
+      return await deleteThread(threadId);
+    } catch (error) {
+      console.error("[desktop:delete-thread] failed", threadId, error);
+      throw error;
+    }
+  });
   secureHandle("desktop:set-thread-archived", (_event, request) => {
     const value = request as { threadId?: unknown; archived?: unknown };
     if (typeof value?.threadId !== "string" || typeof value.archived !== "boolean") throw new Error("Archive request is invalid.");
@@ -6351,8 +6377,11 @@ app.whenReady().then(async () => {
   desktopDiagnostics.setPublisher((event) => {
     productionDiagnostics.observeEvent(Buffer.byteLength(JSON.stringify(event), "utf8"), event.workspaceId);
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
+      try {
         window.webContents.send("desktop:diagnostics-event", event);
+      } catch {
+        // Renderer can dispose mid-send (OOM / navigation); never fail the publisher.
       }
     }
   });

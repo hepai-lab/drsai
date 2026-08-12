@@ -21,6 +21,7 @@ import { replaceFileSafely } from "./atomicFileReplace";
 import { stripAttachmentContextFromUserContent } from "../api/attachmentContextDisplay";
 
 const THREADS_FILE = join(DRSAI_HOME, "desktop", "threads.json");
+const DELETED_THREADS_FILE = join(DRSAI_HOME, "desktop", "deleted-threads.json");
 const THREAD_SNAPSHOTS_FILE = join(DRSAI_HOME, "desktop", "thread-snapshots.json");
 const THREAD_SNAPSHOTS_DIRECTORY = join(DRSAI_HOME, "desktop", "thread-snapshots");
 // The P3 session directory is metadata-only, so retaining 1,000 active entries
@@ -29,6 +30,7 @@ const THREAD_SNAPSHOTS_DIRECTORY = join(DRSAI_HOME, "desktop", "thread-snapshots
 const MAX_THREADS = 1_000;
 const MAX_ARCHIVED_THREADS = 2_000;
 const MAX_THREAD_SNAPSHOTS = 2_000;
+const MAX_DELETED_THREAD_TOMBSTONES = 5_000;
 const MAX_SNAPSHOT_MESSAGES = 500;
 const MAX_MESSAGE_CHARS = 200_000;
 const MAX_STATUS_CHARS = 80_000;
@@ -45,8 +47,13 @@ const atomicJsonWriteQueues = new Map<string, Promise<void>>();
 const jsonMutationQueues = new Map<string, Promise<void>>();
 let staleThreadFilesCleaned = false;
 const threadSnapshotIoMetrics = { shardReads: 0, shardWrites: 0, legacyCatalogReads: 0, shardDirectoryScans: 0 };
-/** In-process tombstones so late abort/handoff upserts cannot recreate a deleted thread. */
+/**
+ * Tombstones for permanently deleted conversations.
+ * Kept in-process for late abort/handoff races, and mirrored to disk so a
+ * restart/login upsert cannot resurrect a conversation the user already deleted.
+ */
 const deletedThreadIds = new Set<string>();
+let deletedTombstonesLoaded = false;
 
 export function getThreadSnapshotIoMetrics(): Readonly<typeof threadSnapshotIoMetrics> {
   return { ...threadSnapshotIoMetrics };
@@ -59,15 +66,39 @@ export function resetThreadSnapshotIoMetrics(): void {
   threadSnapshotIoMetrics.shardDirectoryScans = 0;
 }
 
+async function ensureDeletedTombstonesLoaded(): Promise<void> {
+  if (deletedTombstonesLoaded) return;
+  deletedTombstonesLoaded = true;
+  try {
+    const parsed = parseStoredJson(await readFile(DELETED_THREADS_FILE, "utf8"));
+    if (!Array.isArray(parsed)) return;
+    for (const value of parsed.slice(-MAX_DELETED_THREAD_TOMBSTONES)) {
+      if (typeof value === "string" && THREAD_ID_PATTERN.test(value) && !/[\r\n]/.test(value)) {
+        deletedThreadIds.add(value);
+      }
+    }
+  } catch {
+    // First run or missing file — no durable tombstones yet.
+  }
+}
+
+async function persistDeletedThreadIds(): Promise<void> {
+  const ids = [...deletedThreadIds].slice(-MAX_DELETED_THREAD_TOMBSTONES);
+  await writeAtomicJson(DELETED_THREADS_FILE, ids);
+}
+
 export async function listThreads(): Promise<DesktopThread[]> {
   if (!staleThreadFilesCleaned) {
     staleThreadFilesCleaned = true;
     await cleanupStaleThreadTemporaryFiles();
   }
+  await ensureDeletedTombstonesLoaded();
   return serializeJsonMutation(THREADS_FILE, async () => {
     const result = await readThreadsWithMigration();
-    if (result.migrated) await writeThreads(result.threads);
-    return result.threads.sort(compareThreads);
+    const visible = result.threads.filter((thread) => !deletedThreadIds.has(thread.id));
+    const removedTombstoned = visible.length !== result.threads.length;
+    if (result.migrated || removedTombstoned) await writeThreads(visible);
+    return visible.sort(compareThreads);
   });
 }
 
@@ -109,15 +140,25 @@ export async function createThread(rawRequest: unknown): Promise<DesktopThread> 
   });
 }
 
+function throwThreadDeleted(): never {
+  throw Object.assign(new Error("Thread was deleted."), {
+    code: "thread_deleted",
+    retryable: false,
+  });
+}
+
+export function isThreadDeletedError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "thread_deleted");
+}
+
 export async function updateThread(rawRequest: unknown): Promise<DesktopThread> {
   const request = validateUpdateThreadRequest(rawRequest);
-  if (deletedThreadIds.has(request.id)) {
-    throw Object.assign(new Error("Thread was deleted."), {
-      code: "thread_deleted",
-      retryable: false,
-    });
-  }
+  await ensureDeletedTombstonesLoaded();
+  // Tombstone must be checked inside the store lock. An outer-only check races
+  // deleteThread: update can pass the check, wait for the lock, then recreate
+  // the row after delete has already removed it from threads.json.
   return serializeJsonMutation(THREADS_FILE, async () => {
+    if (deletedThreadIds.has(request.id)) throwThreadDeleted();
     const threads = await readThreads();
     const now = new Date().toISOString();
     const existing = threads.find((thread) => thread.id === request.id);
@@ -151,27 +192,41 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
 
 export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
   const threadId = sanitizeThreadId(rawThreadId);
+  await ensureDeletedTombstonesLoaded();
+  // Durable tombstone first so restart/login cannot resurrect via upsert even if
+  // the catalog rewrite loses a race or the process exits mid-delete.
   deletedThreadIds.add(threadId);
+  try {
+    await persistDeletedThreadIds();
+  } catch {
+    // Catalog removal below is still authoritative for this process; a later
+    // listThreads/delete retry can persist the tombstone file.
+  }
   const deleted = await serializeJsonMutation(THREADS_FILE, async () => {
     const threads = await readThreads();
     if (!threads.some((thread) => thread.id === threadId)) return false;
     await writeThreads(threads.filter((thread) => thread.id !== threadId));
     return true;
   });
-  if (!deleted) return false;
   await rm(threadSnapshotPath(threadId), { force: true }).catch(() => undefined);
-  await serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
-    const snapshots = await readLegacyThreadSnapshots();
-    if (snapshots[threadId]) {
-      delete snapshots[threadId];
-      await writeThreadSnapshots(snapshots);
-    }
-  });
-  return true;
+  try {
+    await serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
+      const snapshots = await readLegacyThreadSnapshots();
+      if (snapshots[threadId]) {
+        delete snapshots[threadId];
+        await writeThreadSnapshots(snapshots);
+      }
+    });
+  } catch {
+    // Shard removal above is enough for getThreadSnapshot(); legacy catalog is best-effort.
+  }
+  return deleted;
 }
 
 export async function getThreadSnapshot(rawThreadId: unknown): Promise<DesktopThreadSnapshot | null> {
   const threadId = sanitizeThreadId(rawThreadId);
+  await ensureDeletedTombstonesLoaded();
+  if (deletedThreadIds.has(threadId)) return null;
   const sharded = await readThreadSnapshotShard(threadId);
   if (sharded) return sharded;
   // One-time compatibility path for installations created before snapshots
@@ -231,8 +286,11 @@ function createSearchSnippet(content: string, matchIndex: number, matchLength: n
 
 export async function updateThreadSnapshot(rawRequest: unknown): Promise<DesktopThreadSnapshot> {
   const snapshot = validateThreadSnapshot(rawRequest);
+  await ensureDeletedTombstonesLoaded();
+  if (deletedThreadIds.has(snapshot.threadId)) throwThreadDeleted();
   const path = threadSnapshotPath(snapshot.threadId);
   return serializeJsonMutation(path, async () => {
+    if (deletedThreadIds.has(snapshot.threadId)) throwThreadDeleted();
     await writeThreadSnapshotShard(snapshot);
     return snapshot;
   });
@@ -251,7 +309,30 @@ export async function upsertThreadFromRun(input: {
   status?: DesktopThread["status"];
   messageCount?: number;
 }): Promise<DesktopThread> {
-  return updateThread(input);
+  try {
+    return await updateThread(input);
+  } catch (error) {
+    // Late abort/settle events must not fail the run pipeline after delete.
+    if (isThreadDeletedError(error)) {
+      const now = new Date().toISOString();
+      return {
+        id: input.id,
+        kind: input.kind,
+        title: input.title || defaultTitle(input.kind),
+        workspacePath: input.workspacePath,
+        boundAgentId: input.boundAgentId,
+        boundAgentName: input.boundAgentName,
+        createdAt: now,
+        updatedAt: now,
+        lastRunId: input.lastRunId,
+        lastRequestId: input.lastRequestId,
+        runtimeSessionId: input.runtimeSessionId,
+        status: input.status ?? "idle",
+        messageCount: input.messageCount,
+      };
+    }
+    throw error;
+  }
 }
 
 async function readThreads(): Promise<DesktopThread[]> {

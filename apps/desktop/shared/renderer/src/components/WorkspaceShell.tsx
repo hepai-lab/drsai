@@ -71,7 +71,8 @@ import { extractShareConclusion, extractShareMessageText } from "@shared/threadS
 import { ChatMessageContent } from "./ChatMessageContent";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
 import { userFacingFailureMessage } from "../userFacingLanguage";
-import { showAppNotice } from "./AppDecisionDialog";
+import { showAppNotice, requestAppDecision } from "./AppDecisionDialog";
+import { deleteDesktopThread } from "../deleteDesktopThread";
 import { ThreadActivityBubble } from "./ThreadActivityBubble";
 import type { ThreadActivityState } from "../threadActivity";
 import {
@@ -344,7 +345,6 @@ export function WorkspaceShell({
     preferAbove: boolean;
   } | null>(null);
   const threadMenuRef = useRef<HTMLDivElement | null>(null);
-  const [deleteConfirmThread, setDeleteConfirmThread] = useState<WorkspaceThread | null>(null);
   const [renameDialog, setRenameDialog] = useState<{
     thread: WorkspaceThread;
     title: string;
@@ -3311,8 +3311,49 @@ export function WorkspaceShell({
               role="menuitem"
               className="thread-context-danger"
               onClick={() =>
-                runThreadMenuAction(() => {
-                  setDeleteConfirmThread(threadMenu.thread);
+                runThreadMenuAction(async () => {
+                  const thread = threadMenu.thread;
+                  const approved = await requestAppDecision({
+                    id: `delete-thread:${thread.id}`,
+                    title: thread.source === "codex"
+                      ? (zh ? "从 OpenDrSai 列表移除？" : "Remove from the OpenDrSai list?")
+                      : (zh ? "永久删除本地对话？" : "Permanently delete this local conversation?"),
+                    description: thread.source === "codex"
+                      ? (zh
+                        ? `「${thread.title}」只移除 OpenDrSai 的本地列表记录，不会删除或归档 Codex 历史；下次同步可重新导入。`
+                        : `"${thread.title}" only removes the local OpenDrSai list entry. Codex history is not deleted or archived and can be imported again.`)
+                      : (zh
+                        ? `「${thread.title}」会永久删除 OpenDrSai 本地聊天记录，且不可恢复。若只想隐藏，请改用归档。`
+                        : `"${thread.title}" permanently deletes the local OpenDrSai chat history and cannot be undone. Use Archive if you only want to hide it.`),
+                    tone: "danger",
+                    kind: "confirmation",
+                    confirmLabel: zh ? "删除" : "Delete",
+                    cancelLabel: zh ? "取消" : "Cancel",
+                  });
+                  if (!approved) return;
+                  // Persist here so delete does not depend on App.tsx HMR
+                  // (App.tsx exceeds Babel's 500KB limit and often keeps a stale handler
+                  // that rethrows into thread-menu-action-failed without writing disk).
+                  try {
+                    await deleteDesktopThread(thread.id);
+                  } catch (error) {
+                    const detail = error instanceof Error ? error.message : String(error);
+                    console.error("[delete-thread] persist failed", thread.id, error);
+                    void showAppNotice({
+                      id: "delete-thread-failed",
+                      title: zh ? "删除失败" : "Delete failed",
+                      description: zh
+                        ? `本地对话未能永久删除。${detail}`
+                        : `The local conversation could not be permanently deleted. ${detail}`,
+                    });
+                    return;
+                  }
+                  try {
+                    await onDeleteThread(thread.id);
+                  } catch (error) {
+                    // Catalog/tombstone already persisted; stale App handlers may still throw.
+                    console.warn("[delete-thread] UI cleanup failed after persist", thread.id, error);
+                  }
                 })
               }
             >
@@ -3545,61 +3586,6 @@ export function WorkspaceShell({
                 onClick={submitRenameDialog}
               >
                 {zh ? "保存" : "Save"}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
-      {deleteConfirmThread && (
-        <div
-          className="thread-delete-confirm-overlay"
-          role="presentation"
-          onMouseDown={() => setDeleteConfirmThread(null)}
-        >
-          <section
-            className="thread-delete-confirm-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="thread-delete-confirm-title"
-            aria-describedby="thread-delete-confirm-desc"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="thread-delete-confirm-body">
-              <span className="thread-delete-confirm-icon" aria-hidden>
-                !
-              </span>
-              <div className="thread-delete-confirm-copy">
-                <h2 id="thread-delete-confirm-title">
-                  {deleteConfirmThread.source === "codex"
-                    ? (zh ? "从 OpenDrSai 列表移除？" : "Remove from the OpenDrSai list?")
-                    : (zh ? "永久删除本地对话？" : "Permanently delete this local conversation?")}
-                </h2>
-                <p id="thread-delete-confirm-desc">
-                  <span className="thread-delete-confirm-name">{deleteConfirmThread.title}</span>
-                  {deleteConfirmThread.source === "codex"
-                    ? (zh ? "只移除 OpenDrSai 的本地列表记录，不会删除或归档 Codex 历史；下次同步可重新导入。" : "This only removes the local OpenDrSai list entry. Codex history is not deleted or archived and can be imported again.")
-                    : (zh ? "这会永久删除 OpenDrSai 本地聊天记录，且不可恢复。若只想隐藏，请改用归档。" : "This permanently deletes the local OpenDrSai chat history and cannot be undone. Use Archive if you only want to hide it.")}
-                </p>
-              </div>
-            </div>
-            <div className="thread-delete-confirm-actions">
-              <button
-                type="button"
-                className="thread-delete-confirm-cancel"
-                onClick={() => setDeleteConfirmThread(null)}
-              >
-                {zh ? "取消" : "Cancel"}
-              </button>
-              <button
-                type="button"
-                className="thread-delete-confirm-delete"
-                onClick={() => {
-                  const threadId = deleteConfirmThread.id;
-                  setDeleteConfirmThread(null);
-                  void onDeleteThread(threadId);
-                }}
-              >
-                {zh ? "删除" : "Delete"}
               </button>
             </div>
           </section>

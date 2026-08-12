@@ -32,7 +32,34 @@ try {
   assert.equal((await threads.listThreads()).some((thread) => thread.id === created.id), false);
   assert.equal(await threads.getThreadSnapshot(created.id), null, "Deleting a thread must delete its persisted snapshot.");
   assert.deepEqual(JSON.parse(await readFile(join(root, "desktop", "threads.json"), "utf8")), []);
-  assert.deepEqual(JSON.parse(await readFile(join(root, "desktop", "thread-snapshots.json"), "utf8")), {});
+  const legacySnapshotsPath = join(root, "desktop", "thread-snapshots.json");
+  try {
+    assert.deepEqual(JSON.parse(await readFile(legacySnapshotsPath, "utf8")), {});
+  } catch (error) {
+    assert.equal((error as NodeJS.ErrnoException).code, "ENOENT", "Legacy snapshot catalog may be absent when only sharded snapshots existed.");
+  }
+
+  // Late upserts that passed an outer tombstone check must not recreate the row
+  // after deleteThread has removed it from threads.json.
+  const raceTarget = await threads.createThread({ kind: "chat", title: "Race delete", workspacePath: root });
+  const deleteStarted = threads.deleteThread(raceTarget.id);
+  await Promise.resolve();
+  await assert.rejects(
+    () => threads.updateThread({ id: raceTarget.id, status: "idle", messageCount: 1 }),
+    (error: unknown) => threads.isThreadDeletedError(error),
+  );
+  assert.equal(await deleteStarted, true);
+  assert.equal((await threads.listThreads()).some((thread) => thread.id === raceTarget.id), false);
+  assert.deepEqual(JSON.parse(await readFile(join(root, "desktop", "threads.json"), "utf8")), []);
+  const softUpsert = await threads.upsertThreadFromRun({ id: raceTarget.id, kind: "chat", status: "error" });
+  assert.equal(softUpsert.id, raceTarget.id);
+  assert.equal((await threads.listThreads()).some((thread) => thread.id === raceTarget.id), false, "upsertThreadFromRun must not resurrect a deleted thread.");
+
+  // Durable tombstones must survive process-local Set loss (simulated by reading the file).
+  const deletedPath = join(root, "desktop", "deleted-threads.json");
+  const tombstones = JSON.parse(await readFile(deletedPath, "utf8"));
+  assert.ok(tombstones.includes(raceTarget.id), "deleteThread must persist a durable tombstone.");
+
   console.log("Thread lifecycle and persistence verification passed.");
 } finally {
   await rm(root, { recursive: true, force: true });

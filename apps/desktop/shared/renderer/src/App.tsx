@@ -2079,10 +2079,37 @@ function AuthenticatedApp({
     });
     setThreadHydrationError((current) => (current?.threadId === threadId ? null : current));
     try {
+      const hydration = threadHydrationsRef.current.get(threadId);
+      if (hydration) {
+        void desktopApi.cancelThreadSnapshotHydration(hydration.requestId).catch(() => false);
+        threadHydrationsRef.current.delete(threadId);
+      }
+      void desktopApi.unsubscribeThreadSnapshot(threadId).catch(() => undefined);
+      // WorkspaceShell persists first via deleteDesktopThread; keep this idempotent for
+      // other entry points. Never rethrow — stale HMR + menu catch was masking real deletes.
+      try {
+        if (typeof window.openDrSai?.deleteThread === "function") {
+          await window.openDrSai.deleteThread(threadId);
+        }
+      } catch (persistError) {
+        console.error("[handleDeleteThread] persist failed", threadId, persistError);
+        deletedThreadIdsRef.current.delete(threadId);
+        await refreshThreads().catch(() => undefined);
+        const detail = persistError instanceof Error ? persistError.message : String(persistError);
+        void showAppNotice({
+          id: "delete-thread-failed",
+          title: language === "zh" ? "删除失败" : "Delete failed",
+          description: language === "zh"
+            ? `本地对话未能永久删除，已恢复到列表。${detail}`
+            : `The local conversation could not be permanently deleted and was restored. ${detail}`,
+        });
+        return;
+      }
       if (wasActive) {
+        if (window.localStorage.getItem(LAST_THREAD_STORAGE_KEY) === threadId) {
+          window.localStorage.removeItem(LAST_THREAD_STORAGE_KEY);
+        }
         await chat.abort().catch(() => undefined);
-        // Leave the deleted thread before persistence so adapter handoff cannot
-        // race an upsert back into threads.json / the sidebar.
         setRightPanelCollapsed(true);
         setActiveThreadId(createLocalThreadId());
         navigateTo(MENU_IDS.currentSession);
@@ -2090,17 +2117,9 @@ function AuthenticatedApp({
         const abort = thread.kind === "agent_run" ? desktopApi.abortAgentRun : desktopApi.abortChat;
         await abort(thread.lastRunId).catch(() => undefined);
       }
-      const hydration = threadHydrationsRef.current.get(threadId);
-      if (hydration) {
-        void desktopApi.cancelThreadSnapshotHydration(hydration.requestId).catch(() => false);
-        threadHydrationsRef.current.delete(threadId);
-      }
-      void desktopApi.unsubscribeThreadSnapshot(threadId).catch(() => undefined);
-      await desktopApi.deleteThread(threadId);
     } catch (error) {
-      deletedThreadIdsRef.current.delete(threadId);
-      await refreshThreads().catch(() => undefined);
-      throw error;
+      // Persistence already attempted above; keep sidebar tombstone and do not rethrow.
+      console.warn("[handleDeleteThread] cleanup failed", threadId, error);
     }
   }
 

@@ -165,15 +165,25 @@ const remote = read(windowsRoot, "src/main/remoteWorkspace.ts");
   const hasDelete =
     app.includes("handleDeleteThread") &&
     threads.includes("export async function deleteThread") &&
-    shell.includes("deleteConfirmThread");
+    (shell.includes("deleteConfirmThread") || shell.includes("delete-thread:") || shell.includes("requestAppDecision"));
   if (hasDelete) {
-    ok("SM-DEL-OK", "删除会话", "删除确认对话框与 IPC 存在", "deleteConfirm + desktopApi.deleteThread");
+    ok("SM-DEL-OK", "删除会话", "删除确认对话框与 IPC 存在", "requestAppDecision/deleteConfirm + desktopApi.deleteThread");
+  }
+  if (hasDelete && !(shell.includes("deleteDesktopThread") && shell.includes('from "../deleteDesktopThread"'))) {
+    bug(
+      "SM-DEL-04",
+      "删除会话",
+      "P1",
+      "删除落盘仍依赖可能未热更新的 App.tsx handleDeleteThread",
+      "WorkspaceShell 未直接调用 deleteDesktopThread",
+      "App.tsx 超过 Babel 500KB 限制时 HMR 会保留陈旧 handler，确认后 800ms 内弹出 thread-menu-action-failed",
+    );
   }
 
-  const deleteFn = app.slice(app.indexOf("async function handleDeleteThread"), app.indexOf("async function handleDeleteThread") + 1200);
+  const deleteFnStart = app.indexOf("async function handleDeleteThread");
+  const deleteFn = app.slice(deleteFnStart, deleteFnStart + 2800);
   const abortsOnDelete =
-    /abort|cancelChat|abortChat|abortAgent/.test(deleteFn) ||
-    /handleDeleteThread[\s\S]{0,400}chat\.abort/.test(app);
+    /chat\.abort|abortAgentRun|abortChat|cancelChatTurn/.test(deleteFn);
   if (hasDelete && !abortsOnDelete) {
     bug(
       "SM-DEL-01",
@@ -191,6 +201,13 @@ const remote = read(windowsRoot, "src/main/remoteWorkspace.ts");
     && app.includes("if (deletedThreadIdsRef.current.has(snapshot.threadId)) return;")
     && threads.includes("deletedThreadIds")
     && threads.includes("thread_deleted")
+    && threads.includes("deleted-threads.json")
+    && /serializeJsonMutation\(THREADS_FILE, async \(\) => \{[\s\S]*?deletedThreadIds\.has\(request\.id\)/.test(threads)
+    && (
+      /await (?:desktopApi|window\.openDrSai)\.deleteThread\(threadId\)/.test(deleteFn)
+      || shell.includes("await deleteDesktopThread(thread.id)")
+    )
+    && /chat\.abort|abortAgentRun|abortChat/.test(deleteFn)
   )) {
     bug(
       "SM-DEL-03",
@@ -198,7 +215,7 @@ const remote = read(windowsRoot, "src/main/remoteWorkspace.ts");
       "P1",
       "删除后异步 upsert 会把会话写回侧边栏",
       "handleDeleteThread 未抑制已删除 threadId 的 updateThread/catalog 回写",
-      "删除后应标记 deletedThreadIdsRef，主进程 tombstone 拒绝 thread_deleted upsert",
+      "删除后应标记 deletedThreadIdsRef，主进程 durable tombstone(deleted-threads.json) 在锁内拒绝 thread_deleted upsert，且 deleteThread 须先于 abort",
     );
   }
 
