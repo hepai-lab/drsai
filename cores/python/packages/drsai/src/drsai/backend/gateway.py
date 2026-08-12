@@ -8153,6 +8153,9 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                 # End the real HTTP response without [DONE] so Desktop recovery
                 # must resume from the persisted five-character cursor.
                 return
+            # Exercise the Desktop's slow-network recovery path after the
+            # interrupted response, with a deterministic bounded delay.
+            await asyncio.sleep(1.5)
             yield f"data: {json.dumps({'choices': [{'delta': {'content': ' beta'}}]})}\n\n"
             yield "data: [DONE]\n\n"
 

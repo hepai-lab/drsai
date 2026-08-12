@@ -280,4 +280,8 @@ npm run verify:website-release -- \
 - OSS 准备：`ossutil 1.7.19`，AccessKey CSV 已收紧到 `0600`；stable 读取和 validation 前缀隔离创建/读取/删除探针通过，不触碰 stable 或版本化资产。
 - OSS-only：生产 workflow、晋级策略、发布后校验和上一版准备均已移除 GitHub Release 硬依赖。
 - 上一版基线：已从 OSS/CDN 真实下载 v1.5.3 ZIP，验证 metadata size/SHA-512、解包和 `codesign --verify --strict`。
-- 下一阶段：整理并固定 clean release commit，构建同一 commit 绑定的签名/公证 DMG 和更新 ZIP，执行 L4～L6、真实升级/回滚、OSS 晋级及线上验证。
+- 自动验收入口：已实现 `verify:v1.5.7:{source,electron,device,packaged,update,release,all}`，逐命令生成 JSON/JUnit，并绑定 commit、source fingerprint 和 App executable SHA-256；任一 required/gated/stale 项失败即停止。
+- 稳定性矩阵：正式 L5 已扩展为核心黄金任务、登录/退出、Runtime 与 Native Helper 强杀恢复各 20 轮，继续强制 100 次 App 重启和两小时浸泡；正常、慢速、中断、离线/在线恢复均形成结构化证据。
+- 真机矩阵：睡眠/唤醒默认执行 20 轮，可由 `pmset` 定时自动唤醒，逐轮验证事件顺序、Gateway 恢复、零残留进程和用户数据 SHA-256；隔离 Keychain 锁定/解锁/删除生命周期已动态通过且不记录秘密。
+- L6 防伪：新增 `stability-matrix.json` 聚合门禁；L6 强制纳入完整六类真实 Provider、Keychain、20 轮睡眠/唤醒和自动化 TCC Notification `show` 事件，不再接受人工点击确认或旧收据。
+- 当前剩余：提交并重建上述自动化对应的最终签名/公证候选，重跑 L4～L6、v1.5.3 在线升级/回滚、OSS 晋级及线上验证。当前进程未注入六类真实 Provider 的专用 URL/model/key，因此真实 Provider 矩阵仍为发布阻塞；GitHub 不是硬门槛。

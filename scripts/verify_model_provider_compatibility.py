@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import platform
 import sys
 import threading
 from dataclasses import dataclass
@@ -63,6 +64,9 @@ def main() -> int:
 
     server: ThreadingHTTPServer | None = None
     if args.local:
+        for name in ("NO_PROXY", "no_proxy"):
+            values = [value.strip() for value in os.environ.get(name, "").split(",") if value.strip()]
+            os.environ[name] = ",".join(dict.fromkeys([*values, "127.0.0.1", "localhost"]))
         server = ThreadingHTTPServer(("127.0.0.1", 0), _LocalMatrixHandler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         cases = local_cases(server.server_address[1])
@@ -103,10 +107,12 @@ def main() -> int:
         results = asyncio.run(run_cases(cases))
         passed = bool(results) and all(row["passed"] for row in results) and (not args.require_all or not missing)
         evidence = {
-            "schemaVersion": 1,
-            "testId": "model-provider-compatibility-matrix",
+            "schemaVersion": 2,
+            "testId": f"model-provider-{matrix_kind}",
             "kind": matrix_kind,
+            "platform": "darwin-arm64" if sys.platform == "darwin" and platform.machine() == "arm64" else f"{sys.platform}-{platform.machine()}",
             "passed": passed,
+            "featureIds": ["F04.3"],
             "requiredServiceTypes": list(required_service_types),
             "configuredServiceTypes": sorted(configured),
             "missingServiceTypes": missing,

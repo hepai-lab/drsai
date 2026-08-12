@@ -182,6 +182,12 @@ for (const contract of ["sleep-wake", "lock-screen", "unlock-screen", "allExpect
 for (const contract of ["Apple Silicon macOS hardware", "Put this Mac to sleep", "waitForNoResiduals", "residualProcessCount: 0", "sleep-wake-real-device.json", 'featureIds: ["F06.4", "F06.5", "F08.5", "F10.3"]']) {
   assert.ok(sleepWakeDevice.includes(contract), `macOS real-device sleep/wake verifier omits ${contract}`);
 }
+for (const contract of ["OPENDRSAI_MACOS_SLEEP_WAKE_ROUNDS", "formalTwentyRoundRequirementSatisfied", "scheduleAutomaticWakeAndSleep", "userDataSha256Before", "userDataSha256After"]) {
+  assert.ok(sleepWakeDevice.includes(contract), `macOS formal sleep/wake matrix omits ${contract}`);
+}
+for (const contract of ["verify:v1.5.7:source", "verify:v1.5.7:electron", "verify:v1.5.7:device", "verify:v1.5.7:packaged", "verify:v1.5.7:update", "verify:v1.5.7:release", "verify:v1.5.7:all", "record:stability-matrix"]) {
+  assert.ok(packageJson.scripts[contract], `macOS package scripts omit ${contract}`);
+}
 for (const contract of ["OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE", "OPENDRSAI_DEV_AUTH_BYPASS", 'x-opendrsai-auth-mode") == "offline"', 'request.user_id == "packaged-l5-user"', 'fixture_request_id == "packaged_chat_recovery_001"', "network_retry_attempt", "resume_from_chars", "X-OpenDrSai-Packaged-Recovery-Fixture"]) {
   assert.ok(gateway.includes(contract), `Packaged Chat recovery fixture omits security or cursor contract: ${contract}`);
 }
@@ -189,7 +195,7 @@ assert.ok((gateway.match(/packaged_recovery_fixture = \(/g) ?? []).length >= 2, 
 for (const contract of ["--deep", "--strict", "Developer ID Application:", "spctl", "stapler", "hdiutil", "clean-install", "signed-update-rollback-rehearsal", "onlineUpdateInstalled: false", "userDataPreserved: true"]) {
   assert.ok(releaseL6.includes(contract), `macOS automated L6 omits ${contract}`);
 }
-for (const contract of ["OPENDRSAI_MACOS_PACKAGED_SCENARIO", '"tcc"', "microphoneState", "automationState", "notificationVisiblyConfirmed", "hardwareIdentitySha256", "display dialog"]) {
+for (const contract of ["OPENDRSAI_MACOS_PACKAGED_SCENARIO", '"tcc"', "microphoneState", "automationState", "notificationShowEventObserved", "hardwareIdentitySha256"]) {
   assert.ok(tccL6.includes(contract), `macOS real-device TCC L6 omits ${contract}`);
 }
 for (const contract of ["https:", "online-signed-update", "onlineUpdateInstalled: true", "healthConfirmed: true", "userDataPreserved: true", "installedAppExecutableSha256", "codesign"] ) {
@@ -215,7 +221,10 @@ for (const path of [
   "scripts/verify-runtime-reproducibility.mjs",
   "scripts/verify-packaged-l5.mjs",
   "scripts/verify-sleep-wake-real-device.mjs",
+  "scripts/verify-keychain-lock-cycle.mjs",
+  "scripts/verify-v157-acceptance.mjs",
   "../shared/test-kit/record-macos-l5-evidence.mjs",
+  "../shared/test-kit/record-macos-stability-matrix.mjs",
   "scripts/verify-release-l6.mjs",
   "scripts/verify-tcc-real-device.mjs",
   "scripts/verify-online-signed-update.mjs",

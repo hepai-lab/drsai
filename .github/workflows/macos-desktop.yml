@@ -145,7 +145,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     needs: verify-macos-unsigned
     runs-on: [self-hosted, macOS, ARM64, opendrsai-nightly]
-    timeout-minutes: 240
+    timeout-minutes: 360
     defaults:
       run:
         working-directory: apps/desktop
@@ -173,6 +173,7 @@ jobs:
         env:
           OPENDRSAI_MACOS_L5_RESTART_ITERATIONS: "100"
           OPENDRSAI_MACOS_L5_STABILITY_MS: "7200000"
+          OPENDRSAI_MACOS_L5_MATRIX_ITERATIONS: "20"
         run: |
           npm run verify:packaged:l5 --workspace opendrsai-macos-desktop
           npm run record:l5-evidence --workspace opendrsai-macos-desktop
@@ -188,7 +189,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || inputs.run_signed_release
     needs: [verify-macos-unsigned]
     runs-on: [self-hosted, macOS, ARM64, opendrsai-release]
-    timeout-minutes: 240
+    timeout-minutes: 360
     defaults:
       run:
         working-directory: apps/desktop
@@ -234,6 +235,9 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          OPENDRSAI_MACOS_L5_RESTART_ITERATIONS: "100"
+          OPENDRSAI_MACOS_L5_STABILITY_MS: "7200000"
+          OPENDRSAI_MACOS_L5_MATRIX_ITERATIONS: "20"
         run: |
           npm run preflight:release --workspace opendrsai-macos-desktop
           npm run prepare:runtime:macos --workspace opendrsai-macos-desktop
@@ -242,6 +246,10 @@ jobs:
           npm run record:l4-evidence --workspace opendrsai-macos-desktop
           npm run verify:packaged:l5 --workspace opendrsai-macos-desktop
           npm run record:l5-evidence --workspace opendrsai-macos-desktop
+      - name: Verify Keychain lock lifecycle and 20 sleep/wake rounds
+        run: |
+          npm run verify:keychain-lock:device --workspace opendrsai-macos-desktop
+          npm run verify:sleep-wake:device --workspace opendrsai-macos-desktop
       - name: Verify real model Provider compatibility matrix
         env:
           DRSAI_MATRIX_OPENAI_BASE_URL: ${{ secrets.DRSAI_MATRIX_OPENAI_BASE_URL }}
@@ -277,9 +285,12 @@ jobs:
           npm run verify:online-update:l6 --workspace opendrsai-macos-desktop
           npm run record:signed-update-evidence --workspace opendrsai-macos-desktop
       - name: Verify real-device TCC and notification behavior
+        env:
+          OPENDRSAI_MACOS_TCC_REAL_DEVICE: "1"
         run: npm run verify:tcc:l6 --workspace opendrsai-macos-desktop
       - name: Record L6 evidence
         run: |
+          npm run record:stability-matrix --workspace opendrsai-macos-desktop
           npm run record:l6-evidence --workspace opendrsai-macos-desktop
           npm run verify:acceptance --workspace opendrsai-macos-desktop -- --require-l4 --require-l5 --require-l6
           npm run record:p2-acceptance --workspace opendrsai-macos-desktop

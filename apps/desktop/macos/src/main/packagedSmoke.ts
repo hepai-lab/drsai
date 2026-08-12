@@ -7,8 +7,9 @@ import { stopGateway } from "./gateway";
 import type { NativeHelperSupervisor } from "./native/nativeHelperSupervisor";
 import { clickLatestCompletionNotificationForE2e } from "../../../shared/main/completionNotifications";
 import { setPackagedNetworkOnlineForE2e } from "./bootstrap/installAppIntegrations";
+import { wasLatestPermissionNotificationShownForE2e } from "./systemPermissions";
 
-type PackagedScenario = "smoke" | "core" | "product-state" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "system-events" | "sleep-wake" | "tcc" | "online-update-lab" | "ssh-loopback";
+type PackagedScenario = "smoke" | "core" | "product-state" | "auth-cycle" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "system-events" | "sleep-wake" | "tcc" | "online-update-lab" | "ssh-loopback";
 
 interface PackagedScenarioConfig {
   workspacePath?: string;
@@ -27,6 +28,7 @@ interface PackagedScenarioConfig {
   durationMs?: number;
   intervalMs?: number;
   warmupMs?: number;
+  resourceSettleMs?: number;
   targetVersion?: string;
   readyPath?: string;
 }
@@ -48,6 +50,7 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
         : scenario === "system-events"
           ? await runSystemEventsScenario(window)
         : await window.webContents.executeJavaScript(buildScenarioScript(scenario, config), true);
+      if (scenario === "tcc") result = { ...(result as object), notificationShown: wasLatestPermissionNotificationShownForE2e() };
       if (scenario === "ssh-loopback") result = await verifyPackagedSshForward(window, result);
       if (scenario === "managed-process-crash") {
         const gatewayBefore = (result as { gateway?: { pid?: number } }).gateway;
@@ -91,7 +94,7 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
 
 function normalizeScenario(value: string | undefined): PackagedScenario {
   const scenario = value?.trim() || "smoke";
-  if (["smoke", "core", "product-state", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "system-events", "sleep-wake", "tcc", "online-update-lab", "ssh-loopback"].includes(scenario)) return scenario as PackagedScenario;
+  if (["smoke", "core", "product-state", "auth-cycle", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "system-events", "sleep-wake", "tcc", "online-update-lab", "ssh-loopback"].includes(scenario)) return scenario as PackagedScenario;
   throw new Error(`Unsupported packaged acceptance scenario: ${scenario}`);
 }
 
@@ -210,6 +213,19 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
   if (descriptor.id !== "macos") throw new Error("packaged scenario did not load the macOS platform adapter");
 
   if (scenario === "performance-ready") return { descriptor, interactive: true };
+
+  if (scenario === "auth-cycle") {
+    await api.logout({ clearLocalData: false });
+    const before = await api.getAuthSession();
+    if (before.authenticated) throw new Error("auth-cycle did not start logged out");
+    const login = await api.login({ developerBypass: true, rememberMe: false });
+    const authenticated = await api.getAuthSession();
+    if (!login.ok || !authenticated.authenticated || authenticated.user?.id !== "packaged-l5-user") throw new Error("auth-cycle login did not establish the isolated identity");
+    const logout = await api.logout({ clearLocalData: false });
+    const after = await api.getAuthSession();
+    if (!logout.ok || after.authenticated) throw new Error("auth-cycle logout did not invalidate the session");
+    return { descriptor, loggedOutBefore: true, loggedIn: true, loggedOutAfter: true, userId: authenticated.user?.id };
+  }
 
   if (scenario === "ssh-loopback") {
     const phase = (name: string) => console.info(`[packaged-ssh-loopback] ${name}`);
@@ -441,6 +457,8 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
       if ((await api.listPendingApprovals()).some((item) => item.id === config.approvalId)) throw new Error("rejected recovered approval remained pending");
       return { descriptor, threadId: config.threadId, threadRecovered: true, preferenceRecovered: true, approvalRecoveredRejected: true, activeRunsRecovered };
     }
+    const resourceSettleMs = config.resourceSettleMs;
+    if (scenario === "restart" && resourceSettleMs) await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(resourceSettleMs, 5_000))));
     return { descriptor, threadId: config.threadId, threadRecovered: true, preferenceRecovered: true, scheduledTaskRecovered: Boolean(config.scheduledTaskId) };
   }
 
@@ -920,7 +938,7 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (!(await api.stopGateway())) throw new Error("packaged product journey could not stop its managed Gateway");
     if ((await api.getGatewayStatus()).ready) throw new Error("packaged product journey Gateway remained healthy after explicit stop");
 
-    return { descriptor, workspaceId: workspace.id, scheduledTaskId: scheduledTask.id, scheduledRunId: scheduledRun.id, gitApprovalId: gitProposal.approval.id, threadLifecycle: true, chatAbortRecoveryLifecycle: true, chatNetworkRecoveryLifecycle: true, agentCatalogAbortRecoveryLifecycle: true, gitApprovalExecution: true, workspaceGitReviewLifecycle: true, checkpointLifecycle: true, worktreeQueueLifecycle: true, desktopHandoffLifecycle: true, customCommandCrud: true, projectMemoryCrud: true, projectSkillApprovalInstall: true, workflowLifecycle: true, reusableAndScheduledLifecycle: true, managerPresentationLifecycle: true, diagnosticsRoundtrip: true, diagnosticSourceAndPackage: true, backgroundTaskLifecycle: true, resultShareVersionLifecycle: true, interactiveDebuggerRoundtrip: true, pythonDebuggerRoundtrip: true };
+    return { descriptor, workspaceId: workspace.id, scheduledTaskId: scheduledTask.id, scheduledRunId: scheduledRun.id, gitApprovalId: gitProposal.approval.id, threadLifecycle: true, chatAbortRecoveryLifecycle: true, chatNetworkRecoveryLifecycle: true, chatSlowNetworkRecoveryLifecycle: true, agentCatalogAbortRecoveryLifecycle: true, gitApprovalExecution: true, workspaceGitReviewLifecycle: true, checkpointLifecycle: true, worktreeQueueLifecycle: true, desktopHandoffLifecycle: true, customCommandCrud: true, projectMemoryCrud: true, projectSkillApprovalInstall: true, workflowLifecycle: true, reusableAndScheduledLifecycle: true, managerPresentationLifecycle: true, diagnosticsRoundtrip: true, diagnosticSourceAndPackage: true, backgroundTaskLifecycle: true, resultShareVersionLifecycle: true, interactiveDebuggerRoundtrip: true, pythonDebuggerRoundtrip: true };
   }
 
   if (scenario === "crash-ready") {
