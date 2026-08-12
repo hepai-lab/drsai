@@ -98,4 +98,19 @@ class ModelsTest {
         assertTrue(OIDC_SCOPE.contains("hai_api"))
         assertTrue(OIDC_SCOPE.contains("offline_access"))
     }
+
+    @Test fun oidc_avatar_only_accepts_issuer_origin_https_urls() {
+        val issuer = "https://ai-dev.ihep.ac.cn/api"
+        assertEquals(
+            "https://ai-dev.ihep.ac.cn/api/v1/avatars/user/hash.webp",
+            normalizeOidcAvatarUrl("/api/v1/avatars/user/hash.webp", issuer),
+        )
+        assertEquals(
+            "https://ai-dev.ihep.ac.cn/user.png",
+            normalizeOidcAvatarUrl("https://ai-dev.ihep.ac.cn/user.png", issuer),
+        )
+        assertEquals(null, normalizeOidcAvatarUrl("http://ai-dev.ihep.ac.cn/user.png", issuer))
+        assertEquals(null, normalizeOidcAvatarUrl("https://example.invalid/user.png", issuer))
+        assertEquals(null, normalizeOidcAvatarUrl("not a url", issuer))
+    }
 }

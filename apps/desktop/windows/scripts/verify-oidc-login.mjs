@@ -137,10 +137,14 @@ const checks = [
       auth.includes("accessClaims.exp <= nowSeconds"),
   ],
   [
-    "OIDC public user is built from ID and access token claims",
-    auth.includes("email: idClaims?.email || userId") &&
-      auth.includes("name: idClaims?.name || idClaims?.email || userId") &&
-      auth.includes("avatarUrl: idClaims?.picture || undefined") &&
+    "OIDC public user refreshes profile from subject-bound UserInfo",
+    auth.includes("fetchOidcUserInfo(token.access_token, userId)") &&
+      auth.includes("profile.sub !== expectedSubject") &&
+      auth.includes("safeOidcAvatarUrl(userInfo?.picture || idClaims?.picture)") &&
+      auth.includes('candidate.protocol !== "https:"') &&
+      auth.includes("candidate.origin !== issuer.origin") &&
+      auth.includes("email: userInfo?.email || idClaims?.email || userId") &&
+      auth.includes("name: userInfo?.name || idClaims?.name || idClaims?.email || userId") &&
       auth.includes("roles: Array.isArray(accessClaims?.roles) ? accessClaims.roles : undefined") &&
       auth.includes("groups: Array.isArray(accessClaims?.groups) ? accessClaims.groups : undefined") &&
       api.includes("roles?: string[]") &&
