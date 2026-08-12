@@ -71,7 +71,7 @@
 | `ossutil` | `~/.local/bin/ossutil` v1.7.19 | 满足工具版本 |
 | OSS 配置 | `~/.keys/aliyun_oss/AccessKey.csv` 为 0600；stable stat 和 validation 前缀隔离写/读/删探针通过 | 发布权限就绪；stable 晋级仍受 L6 门禁保护 |
 | GitHub Device OAuth client ID | 未注入 | GitHub Channel 真实验收阻塞 |
-| 真实 Provider 矩阵变量 | 未注入 | 模型兼容性矩阵阻塞 |
+| 真实 Provider 平台会话 | 本机已有 `ai-dev.ihep.ac.cn` HepAI OIDC 会话与启用模型目录 | 统一平台真实模型矩阵可执行；不再要求六套外部 Provider 账号 |
 | macOS Keychain `ai.drsai.desktop` | 真实 put/get/replace/delete 原生测试通过 | 就绪；不保留验收秘密 |
 | OSS 发布事务静态测试 | 通过；stable metadata 最后更新且唯一可覆盖 | 设计满足 |
 | 线上发布入口 | `opendrsai-dev.ihep.ac.cn` HTTPS 200；macOS stable OSS/CDN 元数据 HTTPS 200 且支持 Range | 线上读取链可用；发布只需写 OSS，域名用于发布后验收 |
@@ -125,7 +125,7 @@
 - Finder open/reveal、Dock/menu、deep link、单实例和退出清理；
 - 睡眠/唤醒、offline/online、Runtime crash、App crash 和订阅恢复；
 - SSH、远程工作区、端口转发和远端 host-key 安全；
-- 真实 Provider 兼容矩阵与模型探测，秘密不得进入日志或 receipt。
+- 真实发布 Provider（HepAI）模型目录与已启用模型探测，秘密不得进入日志或 receipt；OpenAI/Anthropic/DeepSeek/Ollama/chat-only/custom proxy 的配置兼容性由确定性 loopback 矩阵覆盖。
 
 退出条件：L4 真机证据绑定当前 clean commit，所有关键恢复旅程自动通过。
 
@@ -191,7 +191,7 @@ npm run verify:v1.5.7:all
 | OSS | 固定版本 `ossutil`、0600 config、最小权限 RAM/STS | v1.7.19 和读取已通过；CSV 为 0644，写权限未验证 |
 | GitHub Release | 可选备份渠道，不作为本次 OSS 发布硬门槛 | 本次可不配置 |
 | GitHub Channel | `OPENDRSAI_GITHUB_CLIENT_ID` | 缺失 |
-| Provider 矩阵 | OpenAI/Anthropic/DeepSeek/Ollama/chat-only/custom proxy 对应 URL/model/key | 当前环境未注入 |
+| Provider 矩阵 | HepAI OIDC 会话、`https://ai-dev.ihep.ac.cn/apiv2/v1` 与发布启用模型；其他 Provider 类型使用无外部凭据的确定性协议矩阵 | 本机 HepAI 会话与模型配置已存在 |
 | 本地 App 凭据 | Keychain service `ai.drsai.desktop` | 未找到可确认条目 |
 
 自动 readiness 脚本必须检查：变量存在但不输出值、证书有效期和唯一性、API key 文件 0600、Keychain put/get/delete、OSS stat、Provider 最小探针、Runner 标签、可用磁盘和网络。若启用 GitHub 备份发布，再检查 GitHub API 权限。真实写入或发布前仍需受控发布审批。
@@ -283,5 +283,5 @@ npm run verify:website-release -- \
 - 自动验收入口：已实现 `verify:v1.5.7:{source,electron,device,packaged,update,release,all}`，逐命令生成 JSON/JUnit，并绑定 commit、source fingerprint 和 App executable SHA-256；任一 required/gated/stale 项失败即停止。
 - 稳定性矩阵：正式 L5 已扩展为核心黄金任务、登录/退出、Runtime 与 Native Helper 强杀恢复各 20 轮，继续强制 100 次 App 重启和两小时浸泡；正常、慢速、中断、离线/在线恢复均形成结构化证据。
 - 真机矩阵：睡眠/唤醒默认执行 20 轮，可由 `pmset` 定时自动唤醒，逐轮验证事件顺序、Gateway 恢复、零残留进程和用户数据 SHA-256；隔离 Keychain 锁定/解锁/删除生命周期已动态通过且不记录秘密。
-- L6 防伪：新增 `stability-matrix.json` 聚合门禁；L6 强制纳入完整六类真实 Provider、Keychain、20 轮睡眠/唤醒和自动化 TCC Notification `show` 事件，不再接受人工点击确认或旧收据。
-- 当前剩余：提交并重建上述自动化对应的最终签名/公证候选，重跑 L4～L6、v1.5.3 在线升级/回滚、OSS 晋级及线上验证。当前进程未注入六类真实 Provider 的专用 URL/model/key，因此真实 Provider 矩阵仍为发布阻塞；GitHub 不是硬门槛。
+- L6 防伪：新增 `stability-matrix.json` 聚合门禁；L6 强制纳入 HepAI 统一平台真实目录与发布模型流式探针、Keychain、20 轮睡眠/唤醒和自动化 TCC Notification `show` 事件，不再接受人工点击确认或旧收据。六类 Provider 形态继续由 15 项确定性 loopback 探针覆盖，不虚构六套生产部署。
+- 当前剩余：提交并重建上述自动化对应的最终签名/公证候选，重跑 L4～L6、v1.5.3 在线升级/回滚、OSS 晋级及线上验证。真实 Provider 门禁改为使用本机安全存储中的 HepAI OIDC 会话，对 `ai-dev.ihep.ac.cn/apiv2/v1` 的 `deepseek-v4-flash`、`deepseek-v4-pro`、`gpt-5.6-luna` 执行目录与流式响应验证；GitHub 不是硬门槛。

@@ -250,29 +250,10 @@ jobs:
         run: |
           npm run verify:keychain-lock:device --workspace opendrsai-macos-desktop
           npm run verify:sleep-wake:device --workspace opendrsai-macos-desktop
-      - name: Verify real model Provider compatibility matrix
+      - name: Verify real HepAI platform model matrix
         env:
-          DRSAI_MATRIX_OPENAI_BASE_URL: ${{ secrets.DRSAI_MATRIX_OPENAI_BASE_URL }}
-          DRSAI_MATRIX_OPENAI_MODEL: ${{ secrets.DRSAI_MATRIX_OPENAI_MODEL }}
-          DRSAI_MATRIX_OPENAI_API_KEY: ${{ secrets.DRSAI_MATRIX_OPENAI_API_KEY }}
-          DRSAI_MATRIX_ANTHROPIC_BASE_URL: ${{ secrets.DRSAI_MATRIX_ANTHROPIC_BASE_URL }}
-          DRSAI_MATRIX_ANTHROPIC_MODEL: ${{ secrets.DRSAI_MATRIX_ANTHROPIC_MODEL }}
-          DRSAI_MATRIX_ANTHROPIC_API_KEY: ${{ secrets.DRSAI_MATRIX_ANTHROPIC_API_KEY }}
-          DRSAI_MATRIX_DEEPSEEK_BASE_URL: ${{ secrets.DRSAI_MATRIX_DEEPSEEK_BASE_URL }}
-          DRSAI_MATRIX_DEEPSEEK_MODEL: ${{ secrets.DRSAI_MATRIX_DEEPSEEK_MODEL }}
-          DRSAI_MATRIX_DEEPSEEK_API_KEY: ${{ secrets.DRSAI_MATRIX_DEEPSEEK_API_KEY }}
-          DRSAI_MATRIX_OLLAMA_BASE_URL: ${{ secrets.DRSAI_MATRIX_OLLAMA_BASE_URL }}
-          DRSAI_MATRIX_OLLAMA_MODEL: ${{ secrets.DRSAI_MATRIX_OLLAMA_MODEL }}
-          DRSAI_MATRIX_CHAT_ONLY_BASE_URL: ${{ secrets.DRSAI_MATRIX_CHAT_ONLY_BASE_URL }}
-          DRSAI_MATRIX_CHAT_ONLY_MODEL: ${{ secrets.DRSAI_MATRIX_CHAT_ONLY_MODEL }}
-          DRSAI_MATRIX_CHAT_ONLY_REQUIRES_KEY: ${{ secrets.DRSAI_MATRIX_CHAT_ONLY_REQUIRES_KEY }}
-          DRSAI_MATRIX_CHAT_ONLY_API_KEY: ${{ secrets.DRSAI_MATRIX_CHAT_ONLY_API_KEY }}
-          DRSAI_MATRIX_CUSTOM_PROXY_BASE_URL: ${{ secrets.DRSAI_MATRIX_CUSTOM_PROXY_BASE_URL }}
-          DRSAI_MATRIX_CUSTOM_PROXY_MODEL: ${{ secrets.DRSAI_MATRIX_CUSTOM_PROXY_MODEL }}
-          DRSAI_MATRIX_CUSTOM_PROXY_API_KEY: ${{ secrets.DRSAI_MATRIX_CUSTOM_PROXY_API_KEY }}
-        run: |
-          python3 -m pip install --disable-pip-version-check --no-input -e ../../cores/python/packages/drsai
-          python3 ../../scripts/verify_model_provider_compatibility.py --real-env --require-all --output macos/build/acceptance/model-provider-real-opt-in.json
+          OPENDRSAI_HEPAI_ORIGIN: https://ai-dev.ihep.ac.cn
+        run: npm run verify:model-provider-real --workspace opendrsai-macos-desktop
       - name: Verify signed release, Gatekeeper and clean install
         run: npm run verify:release:l6-auto --workspace opendrsai-macos-desktop
       - name: Verify update metadata and immutable asset contract

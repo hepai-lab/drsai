@@ -8,8 +8,9 @@ import type { NativeHelperSupervisor } from "./native/nativeHelperSupervisor";
 import { clickLatestCompletionNotificationForE2e } from "../../../shared/main/completionNotifications";
 import { setPackagedNetworkOnlineForE2e } from "./bootstrap/installAppIntegrations";
 import { wasLatestPermissionNotificationShownForE2e } from "./systemPermissions";
+import { requireAuthContext } from "../../../shared/main/auth";
 
-type PackagedScenario = "smoke" | "core" | "product-state" | "auth-cycle" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "system-events" | "sleep-wake" | "tcc" | "online-update-lab" | "ssh-loopback";
+type PackagedScenario = "smoke" | "core" | "product-state" | "auth-cycle" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "system-events" | "sleep-wake" | "tcc" | "online-update-lab" | "ssh-loopback" | "hepai-provider";
 
 interface PackagedScenarioConfig {
   workspacePath?: string;
@@ -49,6 +50,8 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
         ? await runSleepWakeScenario(window, config)
         : scenario === "system-events"
           ? await runSystemEventsScenario(window)
+        : scenario === "hepai-provider"
+          ? await runHepaiProviderScenario()
         : await window.webContents.executeJavaScript(buildScenarioScript(scenario, config), true);
       if (scenario === "tcc") result = { ...(result as object), notificationShown: wasLatestPermissionNotificationShownForE2e() };
       if (scenario === "ssh-loopback") result = await verifyPackagedSshForward(window, result);
@@ -94,8 +97,52 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
 
 function normalizeScenario(value: string | undefined): PackagedScenario {
   const scenario = value?.trim() || "smoke";
-  if (["smoke", "core", "product-state", "auth-cycle", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "system-events", "sleep-wake", "tcc", "online-update-lab", "ssh-loopback"].includes(scenario)) return scenario as PackagedScenario;
+  if (["smoke", "core", "product-state", "auth-cycle", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "system-events", "sleep-wake", "tcc", "online-update-lab", "ssh-loopback", "hepai-provider"].includes(scenario)) return scenario as PackagedScenario;
   throw new Error(`Unsupported packaged acceptance scenario: ${scenario}`);
+}
+
+async function runHepaiProviderScenario(): Promise<unknown> {
+  const origin = new URL(process.env.OPENDRSAI_HEPAI_ORIGIN || "https://ai-dev.ihep.ac.cn");
+  if (origin.protocol !== "https:" || origin.username || origin.password) throw new Error("HepAI platform origin must be a credential-free HTTPS URL");
+  const auth = await requireAuthContext();
+  if (auth.authMode !== "oidc" || !auth.accessToken) throw new Error("HepAI Provider acceptance requires an OIDC session");
+  const base = new URL("/apiv2/v1/", origin);
+  const timeoutMs = 120_000;
+  const catalog = await fetchWithAcceptanceDeadline(new URL("models", base), { headers: { Authorization: `Bearer ${auth.accessToken}`, Accept: "application/json" }, redirect: "error" }, timeoutMs);
+  const payload = await catalog.json().catch(() => null) as { data?: Array<{ id?: unknown }> } | null;
+  if (!catalog.ok) throw new Error(`HepAI model catalog failed with HTTP ${catalog.status}`);
+  const availableModelIds = Array.isArray(payload?.data) ? payload.data.map((item) => item?.id).filter((id): id is string => typeof id === "string" && id.length > 0) : [];
+  const preferred = ["deepseek-v4-flash", "deepseek-v4-pro", "gpt-5.6-luna"];
+  const selectedModelIds = preferred.filter((id) => availableModelIds.includes(id));
+  if (selectedModelIds.length !== preferred.length) throw new Error(`HepAI catalog is missing configured release models: ${preferred.filter((id) => !selectedModelIds.includes(id)).join(", ")}`);
+  const results: Array<{ modelId: string; passed: boolean; statusCode: number; contentType: string; sawData: boolean; sawDone: boolean; durationMs: number }> = [];
+  for (const modelId of selectedModelIds) results.push(await probeHepaiModel(base, modelId, auth.accessToken, timeoutMs));
+  if (!results.every((item) => item.passed)) throw new Error("one or more HepAI live model probes failed");
+  return { providerId: "hepai", authentication: "oidc-safe-storage", endpoint: { origin: origin.origin, modelApiPath: base.pathname, protocol: "openai-compatible" }, catalogStatus: catalog.status, availableModelCount: availableModelIds.length, selectedModelIds, results, secretMaterialRecorded: false };
+}
+
+async function probeHepaiModel(base: URL, modelId: string, accessToken: string, timeoutMs: number): Promise<{ modelId: string; passed: boolean; statusCode: number; contentType: string; sawData: boolean; sawDone: boolean; durationMs: number }> {
+  const startedAt = Date.now();
+  const response = await fetchWithAcceptanceDeadline(new URL("chat/completions", base), { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: "Reply with OK." }], stream: true, max_tokens: 16 }), redirect: "error" }, timeoutMs);
+  const contentType = (response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+  let sawData = false; let sawDone = false;
+  if (response.ok && contentType === "text/event-stream" && response.body) {
+    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffered = ""; const deadline = Date.now() + timeoutMs;
+    try {
+      while (Date.now() < deadline && !sawDone) {
+        const remaining = Math.max(1, deadline - Date.now());
+        const chunk = await Promise.race([reader.read(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`HepAI stream timed out for ${modelId}`)), remaining))]);
+        if (chunk.done) break;
+        buffered += decoder.decode(chunk.value, { stream: true }); sawData ||= /data:\s*\{/.test(buffered); sawDone ||= /data:\s*\[DONE\]/.test(buffered); if (buffered.length > 64_000) buffered = buffered.slice(-32_000);
+      }
+    } finally { await reader.cancel().catch(() => undefined); }
+  }
+  return { modelId, passed: response.ok && contentType === "text/event-stream" && sawData && sawDone, statusCode: response.status, contentType, sawData, sawDone, durationMs: Date.now() - startedAt };
+}
+
+async function fetchWithAcceptanceDeadline(url: URL, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try { return await fetch(url, { ...init, signal: controller.signal }); } finally { clearTimeout(timer); }
 }
 
 function parseConfig(raw: string | undefined): PackagedScenarioConfig {

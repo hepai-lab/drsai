@@ -54,11 +54,17 @@ assert.equal(sleepWake.residualProcessCount, 0);
 const matrix = receipts.find(({ receipt }) => receipt.testId === "stability-matrix").receipt;
 assert.equal(matrix.allRequiredConditionsPassed, true);
 const providers = receipts.find(({ receipt }) => receipt.testId === "model-provider-real-opt-in").receipt;
-assert.equal(providers.kind, "real-opt-in");
-assert.deepEqual(providers.missingServiceTypes, []);
-assert.equal(providers.requiredServiceTypes.length, 6);
-assert.equal(providers.configuredServiceTypes.length, 6);
-assert.ok(providers.results.length >= 6 && providers.results.every((result) => result.passed === true));
+assert.equal(providers.schemaVersion, 3);
+assert.equal(providers.kind, "hepai-platform");
+assert.equal(providers.providerId, "hepai");
+assert.equal(providers.authentication, "oidc-safe-storage");
+assert.equal(providers.endpoint?.protocol, "openai-compatible");
+assert.equal(providers.secretMaterialRecorded, false);
+assert.equal(providers.commit, snapshot.commit);
+assert.equal(providers.sourceAggregateSha256, snapshot.aggregateSha256);
+assert.ok(providers.availableModelCount >= providers.selectedModelIds.length);
+assert.ok(providers.results.length >= 1 && providers.results.length === providers.selectedModelIds.length);
+assert.ok(providers.results.every((result) => result.passed === true && result.statusCode === 200 && result.sawData === true && result.sawDone === true));
 const evidence = {
   schemaVersion: 2,
   level: "L6",

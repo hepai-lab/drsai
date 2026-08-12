@@ -66,7 +66,7 @@
     "verify:model-provider-macos-contract": "node scripts/verify-model-provider-release-gate.mjs --contract-only",
     "verify:model-provider-keychain": "python3 scripts/verify-model-provider-keychain.py",
     "verify:model-provider-release-gate": "node scripts/verify-model-provider-release-gate.mjs",
-    "verify:model-provider-real": "python3 ../../../scripts/verify_model_provider_compatibility.py --real-env --require-all --output build/acceptance/model-provider-real-opt-in.json",
+    "verify:model-provider-real": "node scripts/verify-hepai-platform-provider.cjs",
     "verify:keychain-lock:device": "node scripts/verify-keychain-lock-cycle.mjs",
     "verify:packaged:l5": "node scripts/verify-packaged-l5.mjs",
     "verify:sleep-wake:device": "node scripts/verify-sleep-wake-real-device.mjs --auto",

@@ -14,6 +14,8 @@ const builder = readFileSync(join(macRoot, "electron-builder.yml"), "utf8");
 const credentials = readFileSync(join(repoRoot, "cores/python/packages/drsai/src/drsai/config/credentials.py"), "utf8");
 const catalogIpc = readFileSync(join(macRoot, "src/main/ipc/registerCatalogIpc.ts"), "utf8");
 const keychainGate = join(macRoot, "scripts", "verify-model-provider-keychain.py");
+const packagedSmoke = readFileSync(join(macRoot, "src/main/packagedSmoke.ts"), "utf8");
+const hepaiGate = readFileSync(join(macRoot, "scripts/verify-hepai-platform-provider.cjs"), "utf8");
 
 assert.match(builder, /hardenedRuntime:\s*true/);
 assert.match(builder, /notarize:\s*true/);
@@ -26,6 +28,14 @@ assert.ok(catalogIpc.includes("desktop:delete-my-drsai-model-provider"));
 assert.ok(existsSync(keychainGate));
 assert.ok(packageJson.scripts["verify:model-provider-keychain"]);
 assert.ok(packageJson.scripts["verify:model-provider-release-gate"]);
+assert.equal(packageJson.scripts["verify:model-provider-real"], "node scripts/verify-hepai-platform-provider.cjs");
+assert.match(packagedSmoke, /scenario === "hepai-provider"/);
+assert.match(packagedSmoke, /requireAuthContext\(\)/);
+assert.match(packagedSmoke, /https:\/\/ai-dev\.ihep\.ac\.cn/);
+assert.match(packagedSmoke, /data:\\s\*\\\[DONE\\\]/);
+assert.match(hepaiGate, /model-provider-real-opt-in\.json/);
+assert.match(hepaiGate, /sourceAggregateSha256/);
+assert.doesNotMatch(hepaiGate, /encryptedAccessToken|encryptedRefreshToken|Authorization/);
 
 if (contractOnly) {
   console.log("macOS model Provider release contract passed (signing/notarization policy, IPC, packaged gate, and native Keychain boundary)." );
