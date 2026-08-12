@@ -2,7 +2,7 @@ import { app, type IpcMain, type WebContents } from "electron";
 import { getAgentCatalogSnapshot, getPlatformAgentStatus, listAgents, recordAgentUsage, setDefaultAgent } from "../../../../shared/main/agents";
 import type { MobilePairingController } from "../../../../shared/main/mobilePairingController";
 import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../../shared/main/myDrSaiConfig";
-import { createThread, deleteThread, getThreadSnapshot, listThreads, searchThreadMessages, updateThread, updateThreadSnapshot } from "../../../../shared/main/threads";
+import { appendDuplexVoiceHistory, createThread, deleteThread, getThreadSnapshot, listThreads, searchThreadMessages, updateThread, updateThreadSnapshot } from "../../../../shared/main/threads";
 import { getRuntimeThreadSnapshot, getRuntimeThreadSnapshotEnvelope } from "../../../../shared/main/threadRuntimeSubscription";
 import { createDefaultWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../../../../shared/main/workspaces";
 import { remoteWorkspaceController } from "../../../../shared/main/remoteWorkspaceController";
@@ -106,6 +106,7 @@ export function registerMacosCatalogIpc(
     return mergeSearchResults(remote, local, typeof request?.limit === "number" ? request.limit : 24);
   });
   ipcMain.handle("desktop:update-thread-snapshot", (_event, request) => updateThreadSnapshot(request));
+  ipcMain.handle("desktop:append-duplex-voice-history", (_event, request) => appendDuplexVoiceHistory(request));
   ipcMain.handle("desktop:list-workspaces", () => listWorkspaces(app.getPath("documents")));
   ipcMain.handle("desktop:create-workspace", (_event, request) => createWorkspace(request));
   ipcMain.handle("desktop:create-default-workspace", () => createDefaultWorkspace(app.getPath("documents")));

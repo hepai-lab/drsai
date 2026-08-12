@@ -31,6 +31,7 @@ import { scheduleUpdateHealthConfirmation } from "./updater";
 import { previewWorkspaceFile } from "../../../shared/main/workspaceContext";
 import { cleanupAllVoiceTempFiles } from "../../../shared/main/voice";
 import { cancelStreamingVoiceSessionsForSender } from "../../../shared/main/voiceStreaming";
+import { disposeAllDuplexVoiceSessions, disposeDuplexVoiceSessionsForSender } from "../../../shared/main/voice/duplex/controller";
 import { runPackagedSmokeIfRequested } from "./packagedSmoke";
 import { isAllowedDevelopmentRendererUrl } from "./rendererNavigationPolicy";
 import { createMacosMainWindow } from "./bootstrap/createWindow";
@@ -235,6 +236,7 @@ function createWindow(): BrowserWindow {
     },
     onWebContentsDestroyed: (destroyedWindow, destroyedWebContents, ownerId) => {
       cancelStreamingVoiceSessionsForSender(destroyedWebContents);
+      disposeDuplexVoiceSessionsForSender(destroyedWebContents);
       detachTerminalSessionsForOwner(ownerId);
       if (mainWindow === destroyedWindow) openRequests.detach();
     },
@@ -315,7 +317,7 @@ app.on("before-quit", (event) => {
     },
     stopScheduledTaskWorker: () => { scheduledTaskWorker?.stop(); scheduledTaskWorker = null; },
     killTerminalSessions: killAllTerminalSessions,
-    cleanupVoiceFiles: cleanupAllVoiceTempFiles,
+    cleanupVoiceFiles: () => { disposeAllDuplexVoiceSessions(); cleanupAllVoiceTempFiles(); },
     cancelRuntimeInstall: cancelBundledRuntimeInstall,
     shutdownApprovalStore: () => appServices.approvalStore.shutdown(),
     shutdownInteractiveDebugger: () => appServices.interactiveDebugger.shutdown(),

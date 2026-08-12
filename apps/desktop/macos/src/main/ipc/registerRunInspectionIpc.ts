@@ -17,6 +17,7 @@ import type {
   ApplyRunAdoptionRequest,
   ApplyWorktreeAdoptionRequest,
   CreateReplayPlanRequest,
+  CreateRunComparisonEvaluationRequest,
   CreateRunComparisonRequest,
   CreateRunExperimentRequest,
   DeleteRunExperimentRequest,
@@ -30,6 +31,7 @@ import type {
   GetRunExperimentCapabilitiesRequest,
   GetRunExperimentRequest,
   GetRunRelationsRequest,
+  ListRunComparisonEvaluationsRequest,
   GetWorktreeAdoptionPreviewRequest,
   RunExperimentPackageExportResult,
   RuntimeRunApprovalDecisionRequest,
@@ -186,6 +188,16 @@ export function registerMacosRunInspectionIpc(ipcMain: Pick<IpcMain, "handle">):
     await requireReleaseGate();
     const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
     return resolved.client.getRunComparison(request.comparisonId, await requireAuthContext());
+  });
+  ipcMain.handle("desktop:run-comparison-evaluations-list", async (_event, request: ListRunComparisonEvaluationsRequest) => {
+    await requireReleaseGate();
+    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+    return resolved.client.listRunComparisonEvaluations(request.comparisonId, await requireAuthContext());
+  });
+  ipcMain.handle("desktop:run-comparison-evaluation-create", async (_event, request: CreateRunComparisonEvaluationRequest) => {
+    await requireReleaseGate();
+    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+    return resolved.client.createRunComparisonEvaluation(request, await requireAuthContext());
   });
   ipcMain.handle("desktop:worktree-adoption-preview", async (_event, request: GetWorktreeAdoptionPreviewRequest) => {
     await requireReleaseGate();
