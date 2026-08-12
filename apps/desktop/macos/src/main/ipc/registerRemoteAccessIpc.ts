@@ -64,7 +64,7 @@ export function registerMacosRemoteAccessIpc(
       const auth = await requireAuthContext().catch(() => null);
       return classifyMobileRemoteDiagnostics({ ...runtime.checks, oidc: auth?.authMode === "oidc" && auth.accessToken ? "ok" : "failed" });
     } catch {
-      return classifyMobileRemoteDiagnostics({ runtime: "failed", relay: "unknown", oidc: "unknown", wss: "unknown", heartbeat: "unknown", protocol: "unknown" });
+      return classifyMobileRemoteDiagnostics({ runtime: "failed", relay: "unknown", oidc: "unknown", device_proof: "unknown", wss: "unknown", heartbeat: "unknown", protocol: "unknown", push: "unknown" });
     }
   });
   ipcMain.handle("desktop:mobile-runtime-rename", async (_event, displayName) => {
