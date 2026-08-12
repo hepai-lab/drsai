@@ -7,10 +7,6 @@ import android.os.Build
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.DefaultLifecycleObserver
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import ai.drsai.remote.remote.data.AndroidDevicePresence
 import ai.drsai.remote.remote.data.RemoteWorkspaceContainer
@@ -32,8 +28,7 @@ import ai.drsai.remote.remote.data.SharedPreferencesPushRegistrationStateStore
 import ai.drsai.remote.remote.device.RemotePushProvider
 import ai.drsai.remote.remote.device.RemotePushProviderStatus
 import ai.drsai.remote.remote.device.RemotePushRegistrationScheduler
-import ai.drsai.remote.remote.device.AndroidRemoteBackgroundWorkController
-import ai.drsai.remote.remote.device.RemoteBackgroundSyncCoordinator
+import ai.drsai.remote.remote.device.AndroidRemoteBackgroundSync
 import ai.drsai.remote.BuildConfig
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RemoteConnectionState
@@ -69,34 +64,16 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
     private val notificationReadinessGeneration = AtomicLong(0)
     private val keyRotationInFlight = AtomicBoolean(false)
     private val pairingReducer = RemotePairingJourneyReducer()
-    private val backgroundSync = RemoteBackgroundSyncCoordinator(
-        AndroidRemoteBackgroundWorkController(app),
-    )
-    @Volatile private var appForeground = ProcessLifecycleOwner.get().lifecycle.currentState
-        .isAtLeast(Lifecycle.State.STARTED)
-    private val processLifecycleObserver = object : DefaultLifecycleObserver {
-        override fun onStart(owner: LifecycleOwner) {
-            appForeground = true
-            onForeground()
-        }
-
-        override fun onStop(owner: LifecycleOwner) {
-            appForeground = false
-            reconcileBackgroundPolicy()
-        }
-    }
     val state: StateFlow<RemoteHomeUiState> = mutableState.asStateFlow()
 
     init {
-        ProcessLifecycleOwner.get().lifecycle.addObserver(processLifecycleObserver)
         refreshNotificationReadiness()
         RemotePushRegistrationScheduler.schedule(app)
         refresh()
         viewModelScope.launch {
             connectivity.online.drop(1).collect { online ->
                 lifecycleCoordinator.networkChanged()
-                reconcileBackgroundPolicy()
-                if (online && appForeground) refresh() else if (!online) mutableState.update {
+                if (online) refresh() else mutableState.update {
                     it.copy(stale = it.computers.isNotEmpty(), error = "网络已断开")
                 }
             }
@@ -114,7 +91,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
             ) == PackageManager.PERMISSION_GRANTED)
         val local = localRemoteNotificationReadiness(provider, notificationsEnabled)
         mutableState.update { it.copy(notificationState = local) }
-        reconcileBackgroundPolicy(local)
+        AndroidRemoteBackgroundSync.updatePushReady(false)
         if (local != RemoteNotificationReadiness.CHECKING) return
         viewModelScope.launch(Dispatchers.IO) {
             val platform = runCatching { container.boundaries.push.readiness.pushReadiness() }.getOrNull()
@@ -122,7 +99,9 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                 mutableState.update {
                     it.copy(notificationState = resolvedRemoteNotificationReadiness(local, platform))
                 }
-                reconcileBackgroundPolicy()
+                AndroidRemoteBackgroundSync.updatePushReady(
+                    mutableState.value.notificationState == RemoteNotificationReadiness.READY,
+                )
             }
         }
     }
@@ -132,17 +111,6 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         refreshNotificationReadiness()
         RemotePushRegistrationScheduler.schedule(getApplication())
         refresh()
-        reconcileBackgroundPolicy()
-    }
-
-    private fun reconcileBackgroundPolicy(
-        readiness: RemoteNotificationReadiness = mutableState.value.notificationState,
-    ) {
-        backgroundSync.reconcile(
-            foreground = appForeground,
-            online = connectivity.online.value,
-            pushReady = readiness == RemoteNotificationReadiness.READY,
-        )
     }
 
     fun diagnoseConnection() {
@@ -516,7 +484,6 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     override fun onCleared() {
-        ProcessLifecycleOwner.get().lifecycle.removeObserver(processLifecycleObserver)
         super.onCleared()
     }
 

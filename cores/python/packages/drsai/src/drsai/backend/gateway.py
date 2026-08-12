@@ -1510,8 +1510,20 @@ class AgentManager:
             agent._trusted_evidence_domains = tuple(trusted_evidence_domains)
             had_runtime_workspace_path = hasattr(agent, "_runtime_workspace_path")
             previous_runtime_workspace_path = getattr(agent, "_runtime_workspace_path", None)
+            regression_manager = getattr(agent, "_regression_manager", None)
+            previous_regression_workspace_path = (
+                getattr(regression_manager, "workspace_path", None)
+                if regression_manager is not None else None
+            )
             if work_dir:
                 agent._runtime_workspace_path = Path(work_dir).resolve()
+                # Regression tools run inside the ordinary Agent and must use
+                # the Workspace bound to this Run, not the Agent's private
+                # profile/storage directory.  Keep the binding turn-scoped so
+                # one long-lived Agent instance cannot leak Workspace context
+                # into a later Run.
+                if regression_manager is not None:
+                    regression_manager.workspace_path = Path(work_dir).resolve()
 
             previous_reasoning_effort = getattr(agent, "_reasoning_effort", None)
             if reasoning_effort is not None:
@@ -1544,6 +1556,8 @@ class AgentManager:
                     agent._runtime_workspace_path = previous_runtime_workspace_path
                 elif hasattr(agent, "_runtime_workspace_path"):
                     delattr(agent, "_runtime_workspace_path")
+                if regression_manager is not None:
+                    regression_manager.workspace_path = previous_regression_workspace_path
 
                 if hasattr(agent, "_tool_approval_handler"):
                     agent._tool_approval_handler = previous_tool_approval_handler

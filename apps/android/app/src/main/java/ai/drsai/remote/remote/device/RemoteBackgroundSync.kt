@@ -7,6 +7,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -21,6 +25,7 @@ import ai.drsai.remote.remote.data.RemoteWorkspaceContainer
 import ai.drsai.remote.remote.data.SharedPreferencesWorkspaceRecencyStore
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class RemoteBackgroundPolicy(
     val keepForegroundSse: Boolean,
@@ -88,6 +93,55 @@ class AndroidRemoteBackgroundWorkController(context: Context) : RemoteBackground
         const val FALLBACK_INTERVAL_MINUTES = 15L
         const val FALLBACK_FLEX_MINUTES = 5L
         const val MIN_BACKOFF_SECONDS = 30L
+    }
+}
+
+/** Process-wide owner: it exists even when a notification opens a Session directly. */
+object AndroidRemoteBackgroundSync {
+    private val installed = AtomicBoolean(false)
+    @Volatile private var lifecycle: BackgroundLifecycle? = null
+
+    fun install(application: Application) {
+        if (!installed.compareAndSet(false, true)) return
+        BackgroundLifecycle(application).also { owner ->
+            lifecycle = owner
+            ProcessLifecycleOwner.get().lifecycle.addObserver(owner)
+            owner.reconcile()
+        }
+    }
+
+    fun updatePushReady(ready: Boolean) {
+        lifecycle?.updatePushReady(ready)
+    }
+
+    private class BackgroundLifecycle(application: Application) : DefaultLifecycleObserver {
+        private val coordinator = RemoteBackgroundSyncCoordinator(
+            AndroidRemoteBackgroundWorkController(application),
+        )
+        @Volatile private var foreground = ProcessLifecycleOwner.get().lifecycle.currentState
+            .isAtLeast(Lifecycle.State.STARTED)
+        @Volatile private var pushReady = false
+
+        override fun onStart(owner: LifecycleOwner) {
+            foreground = true
+            reconcile()
+        }
+
+        override fun onStop(owner: LifecycleOwner) {
+            foreground = false
+            reconcile()
+        }
+
+        fun updatePushReady(ready: Boolean) {
+            pushReady = ready
+            reconcile()
+        }
+
+        fun reconcile() {
+            // WorkManager owns network constraints. Scheduling while offline is
+            // intentional: the OS will run the unique job only after connectivity returns.
+            coordinator.reconcile(foreground, online = true, pushReady = pushReady)
+        }
     }
 }
 

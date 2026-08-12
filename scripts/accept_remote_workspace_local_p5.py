@@ -63,6 +63,7 @@ PYTHON_TESTS = (
     "scripts/test_verify_p6_long_session_navigation.py",
     "scripts/test_verify_p6_push_readiness.py",
     "scripts/test_verify_p6_safe_notification_navigation.py",
+    "scripts/test_verify_p6_android_background_policy.py",
     "scripts/test_p5_legacy_rollback.py",
     "scripts/test_collect_oaep_legacy_migration_evidence.py",
     "scripts/test_check_oaep_legacy_removal.py",
@@ -165,6 +166,9 @@ def suite_catalog() -> list[tuple[str, list[str], Path, dict[str, str] | None]]:
         ], ROOT, None),
         ("safe_notification_navigation", [
             project_python, str(ROOT / "scripts/verify_p6_safe_notification_navigation.py"),
+        ], ROOT, None),
+        ("android_background_policy", [
+            project_python, str(ROOT / "scripts/verify_p6_android_background_policy.py"),
         ], ROOT, None),
         ("android_unit", [wrapper, ":app:testDebugUnitTest", *GRADLE_ISOLATION], android, _java_environment()),
         ("android_test_compile", [wrapper, ":app:compileDebugAndroidTestKotlin", *GRADLE_ISOLATION], android, _java_environment()),

@@ -154,6 +154,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.material3.rememberDrawerState
 import ai.drsai.remote.AppViewModel
 import ai.drsai.remote.BuildConfig
@@ -559,6 +561,9 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                 } else if (mainRoute == AppRoute.RemoteHome) {
                     val remoteViewModel: RemoteHomeViewModel = viewModel(key = "remote-home")
                     val remoteState by remoteViewModel.state.collectAsState()
+                    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+                        remoteViewModel.onForeground()
+                    }
                     val notificationPermission = rememberLauncherForActivityResult(
                         ActivityResultContracts.RequestPermission(),
                     ) { remoteViewModel.refreshNotificationReadiness() }
