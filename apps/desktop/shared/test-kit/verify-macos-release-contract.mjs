@@ -203,7 +203,7 @@ for (const contract of ["--deep", "--strict", "Developer ID Application:", "spct
 for (const contract of ["OPENDRSAI_MACOS_PACKAGED_SCENARIO", '"tcc"', "microphoneState", "automationState", "notificationShowEventObserved", "hardwareIdentitySha256"]) {
   assert.ok(tccL6.includes(contract), `macOS real-device TCC L6 omits ${contract}`);
 }
-for (const contract of ["https:", "online-signed-update", "onlineUpdateInstalled: true", "healthConfirmed: true", "userDataPreserved: true", "installedAppExecutableSha256", "codesign"] ) {
+for (const contract of ["https:", "online-signed-update", "sourceSnapshot.commit", "sourceSnapshot.aggregateSha256", "onlineUpdateInstalled: true", "healthConfirmed: true", "userDataPreserved: true", "installedAppExecutableSha256", "codesign"] ) {
   assert.ok(onlineUpdateL6.includes(contract), `macOS signed online update L6 omits ${contract}`);
 }
 for (const contract of ["runtime-bootstrap.json", "OPENDRSAI_MACOS_L6_RUNTIME_BOOTSTRAP_APP", "runtimeBootstrapVersion", "runtimeBootstrapUsedPreviousApp", 'OPENDRSAI_MACOS_PACKAGED_SCENARIO: "smoke"', "waitForVersion", "--user-data-dir=", 'spawnSync("/usr/bin/pkill"']) {

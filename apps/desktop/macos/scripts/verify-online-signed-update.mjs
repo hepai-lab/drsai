@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Signed online update lab requires Apple Silicon macOS.");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const acceptance = join(root, "build", "acceptance");
+const sourceSnapshot = JSON.parse(readFileSync(join(acceptance, "source-snapshot.json"), "utf8"));
 const candidate = join(root, "release", "mac-arm64", "OpenDrSai.app");
 const previous = resolve(required("OPENDRSAI_MACOS_L6_PREVIOUS_APP"));
 const runtimeBootstrapApp = resolve(process.env.OPENDRSAI_MACOS_L6_RUNTIME_BOOTSTRAP_APP?.trim() || previous);
@@ -65,9 +67,8 @@ try {
   assert.equal(readFileSync(sentinel, "utf8"), "preserved-online-update\n");
   const installedHash = sha256(join(installed, "Contents", "MacOS", "OpenDrSai"));
   assert.equal(installedHash, sha256(join(candidate, "Contents", "MacOS", "OpenDrSai")));
-  const acceptance = join(root, "build", "acceptance");
   mkdirSync(acceptance, { recursive: true });
-  writeFileSync(join(acceptance, "online-signed-update.json"), `${JSON.stringify({ schemaVersion: 2, testId: "online-signed-update", platform: "darwin-arm64", passed: true, fromVersion, toVersion, feedUrl: feed.toString(), runtimeBootstrapVersion: version(runtimeBootstrapApp), runtimeBootstrapUsedPreviousApp: runtimeBootstrapApp === previous, onlineUpdateInstalled: true, healthConfirmed: true, userDataPreserved: true, installedAppExecutableSha256: installedHash, generatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
+  writeFileSync(join(acceptance, "online-signed-update.json"), `${JSON.stringify({ schemaVersion: 2, testId: "online-signed-update", platform: "darwin-arm64", passed: true, commit: sourceSnapshot.commit, sourceAggregateSha256: sourceSnapshot.aggregateSha256, fromVersion, toVersion, feedUrl: feed.toString(), runtimeBootstrapVersion: version(runtimeBootstrapApp), runtimeBootstrapUsedPreviousApp: runtimeBootstrapApp === previous, onlineUpdateInstalled: true, healthConfirmed: true, userDataPreserved: true, installedAppExecutableSha256: installedHash, generatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
   console.log(`macOS signed online update passed: ${fromVersion} -> ${toVersion}.`);
 } finally {
   spawnSync("/usr/bin/pkill", ["-f", join(installed, "Contents", "MacOS", "OpenDrSai")]);
