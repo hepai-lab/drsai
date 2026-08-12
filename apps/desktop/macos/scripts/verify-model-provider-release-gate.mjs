@@ -37,6 +37,8 @@ assert.match(packagedSmoke, /data:\\s\*\\\[DONE\\\]/);
 assert.match(bootstrapEntry, /OPENDRSAI_MACOS_PACKAGED_SCENARIO !== "hepai-provider"/);
 assert.match(hepaiGate, /model-provider-real-opt-in\.json/);
 assert.match(hepaiGate, /sourceAggregateSha256/);
+assert.match(hepaiGate, /DRSAI_HOME: sourceHome/);
+assert.doesNotMatch(hepaiGate, /copyFileSync|isolatedHome/);
 assert.doesNotMatch(hepaiGate, /encryptedAccessToken|encryptedRefreshToken|Authorization/);
 
 if (contractOnly) {

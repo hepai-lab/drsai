@@ -1,7 +1,7 @@
 const { strict: assert } = require("node:assert");
 const { createHash } = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
-const { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 
@@ -11,7 +11,6 @@ const output = join(acceptance, "model-provider-real-opt-in.json");
 const temp = mkdtempSync(join(tmpdir(), "opendrsai-hepai-provider-"));
 const resultPath = join(temp, "result.json");
 const userData = join(temp, "electron-user-data");
-const isolatedHome = join(temp, "home");
 let releaseMount;
 let appBundle = resolve(process.env.OPENDRSAI_MACOS_APP_PATH || join(root, "release", "mac-arm64", "OpenDrSai.app"));
 if (!process.env.OPENDRSAI_MACOS_APP_PATH && !hasRuntimeArchive(appBundle)) {
@@ -36,13 +35,10 @@ async function main() {
   const sourceHome = process.env.DRSAI_HOME || join(require("node:os").homedir(), ".drsai");
   const sourceAuth = join(sourceHome, "auth", "auth.json");
   assert.ok(existsSync(sourceAuth), `HepAI Provider acceptance requires ${sourceAuth}`);
-  mkdirSync(join(isolatedHome, "auth"), { recursive: true, mode: 0o700 });
-  copyFileSync(sourceAuth, join(isolatedHome, "auth", "auth.json"));
-  require("node:fs").chmodSync(join(isolatedHome, "auth", "auth.json"), 0o600);
   const child = spawn(executable, [`--user-data-dir=${userData}`], {
     env: {
       ...process.env,
-      DRSAI_HOME: isolatedHome,
+      DRSAI_HOME: sourceHome,
       OPENDRSAI_RUNTIME_PERSIST: "0",
       OPENDRSAI_DISABLE_SCHEDULED_TASK_WORKER: "1",
       OPENDRSAI_PLATFORM_AGENTS_ENABLED: "0",
