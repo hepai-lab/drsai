@@ -1754,6 +1754,36 @@ export async function connectRuntimeClientForWorkspace(
   return resolveLocalRuntimeWorkspace(client, workspacePath, workspaceId, persisted?.name ?? workspaceName, Boolean(persisted));
 }
 
+/**
+ * Borrows the current workspace Runtime client for the complete duration of a
+ * finite operation. A connected client is shared with OAEP streams, so callers
+ * must hold a reference while awaiting an IPC request; otherwise the final
+ * stream subscriber can release and close the client underneath that request.
+ */
+export async function withRuntimeClientForWorkspace<T>(
+  workspacePath: string,
+  workspaceId: string | undefined,
+  operation: (resolved: { client: RuntimeClient; workspaceId: string }) => Promise<T>,
+  workspaceName?: string,
+): Promise<T> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const resolved = await connectRuntimeClientForWorkspace(workspacePath, workspaceId, workspaceName);
+    let release: (() => void) | undefined;
+    try {
+      release = retainRuntimeClient(resolved.client);
+    } catch (error) {
+      if (attempt === 0 && error instanceof RuntimeClientGenerationInvalidatedError) continue;
+      throw error;
+    }
+    try {
+      return await operation(resolved);
+    } finally {
+      release();
+    }
+  }
+  throw new RuntimeClientGenerationInvalidatedError();
+}
+
 /** Resolve an already-running Runtime for read-only restoration work without
  * spawning the local Gateway. Callers can fall back to persisted Desktop data
  * when this returns null. */

@@ -1947,10 +1947,10 @@ async function runM07OperationalStateSmoke(window: BrowserWindow): Promise<Smoke
   })()`, true) as boolean;
   if (!checks.workspaceSelectedForRecovery) throw new Error("M07 recovery workspace was not selectable in the packaged UI.");
   const scenarios = [
-    { name: "identity", facts: { identity: "anonymous", runtime: "blocked", model: "unconfigured", workspace: "none" }, layer: "identity", state: "anonymous" },
-    { name: "runtime", facts: { identity: "authenticated", runtime: "blocked", model: "unconfigured", workspace: "none" }, layer: "runtime", state: "blocked" },
-    { name: "model", facts: { identity: "authenticated", runtime: "ready", model: "unconfigured", workspace: "none" }, layer: "model", state: "unconfigured" },
-    { name: "workspace", facts: { identity: "authenticated", runtime: "ready", model: "ready", workspace: "untrusted" }, layer: "workspace", state: "untrusted" },
+    { name: "identity", facts: { identity: "anonymous", runtime: "blocked", agent: "unconfigured", workspace: "none" }, layer: "identity", state: "anonymous" },
+    { name: "runtime", facts: { identity: "authenticated", runtime: "blocked", agent: "unconfigured", workspace: "none" }, layer: "runtime", state: "blocked" },
+    { name: "agent", facts: { identity: "authenticated", runtime: "ready", agent: "unconfigured", workspace: "none" }, layer: "agent", state: "unconfigured" },
+    { name: "workspace", facts: { identity: "authenticated", runtime: "ready", agent: "ready", workspace: "untrusted" }, layer: "workspace", state: "untrusted" },
   ] as const;
   for (const scenario of scenarios) {
     await window.webContents.executeJavaScript(`(() => { window.dispatchEvent(new CustomEvent('drsai:e2e-operational-state', { detail: ${JSON.stringify(scenario.facts)} })); return true; })()`, true);
@@ -2010,7 +2010,7 @@ async function runM07OperationalStateSmoke(window: BrowserWindow): Promise<Smoke
       throw new Error("M07 recovery test could not return to the task shell.");
     }
   };
-  const readyBase = { identity: "authenticated", runtime: "ready", model: "ready", workspace: "trusted" };
+  const readyBase = { identity: "authenticated", runtime: "ready", agent: "ready", workspace: "trusted" };
   await setFacts(readyBase);
   checks.readyDoesNotOccupyGlobalOverlay = await waitFor("!document.querySelector('[data-testid=operational-state-bar]')");
 
@@ -2018,8 +2018,8 @@ async function runM07OperationalStateSmoke(window: BrowserWindow): Promise<Smoke
   await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-primary-action]')?.click()", true);
   checks.runtimeRepairExecutesAndSettles = await waitFor("document.querySelector('[data-testid=operational-action-message]') && !document.querySelector('[data-testid=operational-primary-action]')?.disabled");
 
-  await setFacts({ ...readyBase, model: "unconfigured" });
-  checks.modelRecoveryOffersDirectVerification = await waitFor("document.querySelector('[data-testid=operational-primary-action]')");
+  await setFacts({ ...readyBase, agent: "unconfigured" });
+  checks.agentRecoveryOffersDirectConfiguration = await waitFor("document.querySelector('[data-testid=operational-primary-action]')");
 
   await setFacts({ ...readyBase, workspace: "untrusted" });
   await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-primary-action]')?.click()", true);

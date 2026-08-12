@@ -44,14 +44,27 @@ if ($arpSizeKB -lt $minimumRuntimeSizeKB) {
 }
 $runtimeArchive = Join-Path (Split-Path -Parent $msi) "OpenDrSai-Windows-v$((Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\package.json") -Raw | ConvertFrom-Json).version)-x64.zip"
 if (Test-Path -LiteralPath $runtimeArchive -PathType Leaf) {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archiveItem = Get-Item -LiteralPath $runtimeArchive
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($archiveItem.FullName)
-    try {
-        [Int64]$expandedBytes = 0
-        foreach ($entry in $archive.Entries) { $expandedBytes += [Int64]$entry.Length }
-    } finally {
-        $archive.Dispose()
+    $receiptPath = "$runtimeArchive.receipt.json"
+    $receipt = if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+        Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else { $null }
+    if ($receipt -and [int]$receipt.schemaVersion -ge 2 -and $receipt.status -eq "complete" -and
+        $receipt.verification.status -eq "passed" -and [Int64]$receipt.payload.expandedSizeBytes -gt 0) {
+        if ([Int64]$receipt.artifact.size -ne [Int64]$archiveItem.Length) {
+            throw "Runtime receipt size differs from the local archive used by the MSI contract."
+        }
+        [Int64]$expandedBytes = [Int64]$receipt.payload.expandedSizeBytes
+    } else {
+        # Backward-compatible validation for legacy Runtime receipts.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($archiveItem.FullName)
+        try {
+            [Int64]$expandedBytes = 0
+            foreach ($entry in $archive.Entries) { $expandedBytes += [Int64]$entry.Length }
+        } finally {
+            $archive.Dispose()
+        }
     }
     [Int64]$supportBytes = 0
     foreach ($name in @("install-opendrsai.ps1", "uninstall-opendrsai.ps1", "run-opendrsai-install.vbs", "run-opendrsai-uninstall.vbs")) {

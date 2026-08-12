@@ -39,7 +39,7 @@ import type {
 import { RemoteProtocolError } from "../../../../shared/api/remoteSshProtocol";
 import { requireAuthContext } from "../../../../shared/main/auth";
 import { assertExperimentReleaseEnabled, readExperimentReleaseGate } from "../../../../shared/main/experimentReleaseGate";
-import { connectRuntimeClientForWorkspace } from "../../../../shared/main/runtimeClient";
+import { connectRuntimeClientForWorkspace, withRuntimeClientForWorkspace } from "../../../../shared/main/runtimeClient";
 
 let releaseGatePromise: ReturnType<typeof readExperimentReleaseGate> | undefined;
 
@@ -85,24 +85,29 @@ async function writeJsonAtomically(path: string, value: unknown): Promise<void> 
 /** Registers Runtime-backed traceability, experimentation, replay, and adoption APIs. */
 export function registerMacosRunInspectionIpc(ipcMain: Pick<IpcMain, "handle">): void {
   ipcMain.handle("desktop:run-list", async (_event, request: SessionRunsReadRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    return sanitizeSessionRunList(await resolved.client.listSessionRuns(request.sessionId, request.cursor, request.limit, request.status, await requireAuthContext()));
+    const auth = await requireAuthContext();
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeSessionRunList(await client.listSessionRuns(request.sessionId, request.cursor, request.limit, request.status, auth)));
   });
   ipcMain.handle("desktop:run-inspection", async (_event, request: RunInspectionOpenRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    return sanitizeRunInspection(await resolved.client.getRunInspection(request.runId, request.timelineCursor, request.limit, request.itemType, request.status, await requireAuthContext()));
+    const auth = await requireAuthContext();
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeRunInspection(await client.getRunInspection(request.runId, request.timelineCursor, request.limit, request.itemType, request.status, auth)));
   });
   ipcMain.handle("desktop:run-item-locator", async (_event, request: RunItemLocatorRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    return resolved.client.locateRunItem(request.runId, request.itemId, request.itemType, request.status, await requireAuthContext());
+    const auth = await requireAuthContext();
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, ({ client }) =>
+      client.locateRunItem(request.runId, request.itemId, request.itemType, request.status, auth));
   });
   ipcMain.handle("desktop:run-manifest", async (_event, request: RunManifestReadRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    return sanitizeRunReproductionManifest(await resolved.client.getRunReproductionManifest(request.runId, await requireAuthContext()));
+    const auth = await requireAuthContext();
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeRunReproductionManifest(await client.getRunReproductionManifest(request.runId, auth)));
   });
   ipcMain.handle("desktop:run-manifest-export", async (_event, request: RunManifestReadRequest): Promise<RunManifestExportResult> => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    const manifest = sanitizeRunReproductionManifest(await resolved.client.exportRunReproductionManifest(request.runId, await requireAuthContext()));
+    const auth = await requireAuthContext();
+    const manifest = await withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeRunReproductionManifest(await client.exportRunReproductionManifest(request.runId, auth)));
     const suggestedName = `opendrsai-run-${request.runId}-manifest.json`.replace(/[^a-zA-Z0-9._-]/g, "-");
     const selected = await chooseJsonExport(suggestedName, "Export redacted Run manifest");
     if (selected.canceled || !selected.filePath) return { manifest, savedPath: null, cancelled: true };

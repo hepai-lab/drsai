@@ -520,6 +520,23 @@ assert(!runtimeChat.includes("getConversationSnapshot("),
   "OAEP outbox completion must not cross into the legacy Conversation contract");
 assert(runtimeChat.includes("sourceMessageObserved") && runtimeChat.includes("completeOutbox(runtimeSessionId, sourceMessageId)"),
   "OAEP outbox completion must require the authoritative source message and terminal Run");
+const runtimeClientSource = await readFile(resolve(process.cwd(), "../shared/main/runtimeClient.ts"), "utf8");
+const borrowedOperationStart = runtimeClientSource.indexOf("export async function withRuntimeClientForWorkspace");
+const borrowedOperationEnd = runtimeClientSource.indexOf("connectRuntimeClientForWorkspaceIfAvailable", borrowedOperationStart);
+const borrowedOperation = runtimeClientSource.slice(borrowedOperationStart, borrowedOperationEnd);
+assert(borrowedOperationStart >= 0, "finite Runtime operations must expose a retained-client helper");
+assert(borrowedOperation.includes("retainRuntimeClient(resolved.client)"),
+  "finite Runtime operations must retain the shared client before awaiting work");
+assert(borrowedOperation.includes("finally") && borrowedOperation.includes("release();"),
+  "finite Runtime operations must release their client lease on success and failure");
+const windowsMain = await readFile(resolve(process.cwd(), "src/main/index.ts"), "utf8");
+const manifestHandlerStart = windowsMain.indexOf('secureHandle("desktop:run-manifest"');
+const manifestHandlerEnd = windowsMain.indexOf('secureHandle("desktop:run-manifest-export"', manifestHandlerStart);
+const manifestHandler = windowsMain.slice(manifestHandlerStart, manifestHandlerEnd);
+assert(manifestHandler.includes("withRuntimeClientForWorkspace("),
+  "Run manifest reads must retain the client while OAEP chat teardown runs concurrently");
+assert(!manifestHandler.includes("connectRuntimeClientForWorkspace("),
+  "Run manifest reads must not use an unleased shared Runtime client");
 const threadSubscription = await readFile(resolve(process.cwd(), "../shared/main/threadRuntimeSubscription.ts"), "utf8");
 assert(threadSubscription.includes("subscribeRuntimeThreadSnapshotOnce")
   && threadSubscription.includes("isRuntimeGenerationInvalidated(active?.terminalError)")

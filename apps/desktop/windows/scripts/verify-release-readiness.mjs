@@ -39,7 +39,6 @@ const steps = [
   ["Backend installer check-only", npmScript("verify:install-check"), true, {}],
   ["Runtime direct-update policy", npmScript("verify:update-policy"), true, {}],
   ["Runtime update manifest", npmScript("verify:update-manifest"), true, {}],
-  ["Release summary", npmScript("summary:win"), true, {}],
   ["Release artifacts", npmScript("verify:artifacts"), true, {}],
   ["Remote Workspace acceptance-status regressions", npmScript("verify:remote-workspace-progress-regressions"), true, {}],
   ["Remote PTY lifecycle", npmScript("verify:remote-pty-lifecycle"), true, {}],

@@ -8,21 +8,14 @@ param(
     [string]$CodexTrustedPublishersPath = "",
     [string]$OpenSshDir = "$env:WINDIR\System32\OpenSSH",
     [string]$Version = "",
-    [string]$Channel = "dev"
+    [string]$Channel = "dev",
+    [ValidateSet("Fastest", "Optimal", "NoCompression")]
+    [string]$CompressionLevel = "Optimal",
+    [ValidateRange(1, 128)]
+    [int]$CopyThreads = 16
 )
 
 $ErrorActionPreference = "Stop"
-
-function Get-Sha256Hex([string]$Path) {
-    $stream = [System.IO.File]::OpenRead($Path)
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
-    } finally {
-        $sha256.Dispose()
-        $stream.Dispose()
-    }
-}
 
 function Resolve-FullPath([string]$Path) {
     if (Test-Path $Path) {
@@ -33,6 +26,15 @@ function Resolve-FullPath([string]$Path) {
 
 function Copy-DirectoryContents([string]$Source, [string]$Destination) {
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    $robocopy = Get-Command robocopy.exe -ErrorAction SilentlyContinue
+    if ($robocopy) {
+        & $robocopy.Source $Source $Destination /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 "/MT:$CopyThreads" /NFL /NDL /NJH /NJS /NP
+        $copyExitCode = $LASTEXITCODE
+        if ($copyExitCode -gt 7) {
+            throw "robocopy failed while staging Runtime files with exit code ${copyExitCode}: $Source"
+        }
+        return
+    }
     Copy-Item -Path (Join-Path $Source "*") -Destination $Destination -Recurse -Force
 }
 
@@ -340,18 +342,19 @@ $trustScript = Join-Path $windowsAppDir "scripts\runtime-build-trust.mjs"
 if ($LASTEXITCODE -ne 0) {
     throw "Runtime build identity and file manifest generation failed."
 }
-& node $trustScript verify-directory --payload $payloadRoot
-if ($LASTEXITCODE -ne 0) {
-    throw "Runtime payload trust verification failed before archive creation."
-}
 
 $runtimeZip = Join-Path $outDir "OpenDrSai-Windows-v$Version-x64.zip"
 Remove-Item -LiteralPath $runtimeZip -Force -ErrorAction SilentlyContinue
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+$resolvedCompressionLevel = [System.Enum]::Parse(
+    [System.IO.Compression.CompressionLevel],
+    $CompressionLevel,
+    $true
+)
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
     $payloadRoot,
     $runtimeZip,
-    [System.IO.Compression.CompressionLevel]::Optimal,
+    $resolvedCompressionLevel,
     $false
 )
 
@@ -364,7 +367,7 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $receiptPath -PathType 
 }
 & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `
     (Join-Path $windowsAppDir "scripts\verify-final-runtime-artifact.ps1") `
-    -ArchivePath $runtimeZip -ReceiptPath $receiptPath
+    -ArchivePath $runtimeZip -ReceiptPath $receiptPath -CompleteReceipt
 if ($LASTEXITCODE -ne 0) {
     Remove-Item -LiteralPath $runtimeZip -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
@@ -372,8 +375,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $workRoot
 
-$hash = Get-Sha256Hex $runtimeZip
-$size = (Get-Item -LiteralPath $runtimeZip).Length
+$completedReceipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$hash = [string]$completedReceipt.artifact.sha256
+$size = [Int64]$completedReceipt.artifact.size
 Write-Host "Built $runtimeZip" -ForegroundColor Green
 Write-Host "  sha256: $hash"
 Write-Host "  size:   $size"

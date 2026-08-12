@@ -33,6 +33,19 @@ function Resolve-FullPath([string]$Path) {
     return [System.IO.Path]::GetFullPath($Path)
 }
 
+function Get-InstallerSupportBytes {
+    [Int64]$supportBytes = 0
+    foreach ($name in @(
+        "install-opendrsai.ps1",
+        "uninstall-opendrsai.ps1",
+        "run-opendrsai-install.vbs",
+        "run-opendrsai-uninstall.vbs"
+    )) {
+        $supportBytes += [Int64](Get-Item -LiteralPath (Join-Path $PSScriptRoot $name)).Length
+    }
+    return $supportBytes
+}
+
 function Get-InstalledSizeKB([string]$RuntimeArchivePath) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archiveItem = Get-Item -LiteralPath $RuntimeArchivePath
@@ -45,21 +58,15 @@ function Get-InstalledSizeKB([string]$RuntimeArchivePath) {
     } finally {
         $archive.Dispose()
     }
+    return Get-InstalledSizeKBFromMetadata $expandedBytes ([Int64]$archiveItem.Length)
+}
 
+function Get-InstalledSizeKBFromMetadata([Int64]$ExpandedBytes, [Int64]$ArchiveBytes) {
     # The installer keeps the verified Runtime ZIP in INSTALLFOLDER\cache and
     # installs its expanded payload beside the MSI support scripts. ARPSIZE is
     # expressed in KiB, so account for both copies instead of letting Windows
     # Installer report only the small set of files authored in the File table.
-    [Int64]$supportBytes = 0
-    foreach ($name in @(
-        "install-opendrsai.ps1",
-        "uninstall-opendrsai.ps1",
-        "run-opendrsai-install.vbs",
-        "run-opendrsai-uninstall.vbs"
-    )) {
-        $supportBytes += [Int64](Get-Item -LiteralPath (Join-Path $PSScriptRoot $name)).Length
-    }
-    return [Int64][Math]::Ceiling(($expandedBytes + [Int64]$archiveItem.Length + $supportBytes) / 1KB)
+    return [Int64][Math]::Ceiling(($ExpandedBytes + $ArchiveBytes + (Get-InstallerSupportBytes)) / 1KB)
 }
 
 $windowsAppDir = Resolve-FullPath (Join-Path $PSScriptRoot "..\..\windows")
@@ -183,15 +190,36 @@ if (-not $RuntimePath) {
 }
 if ($RuntimePath) {
     $runtimeItem = Get-Item -LiteralPath (Resolve-FullPath $RuntimePath)
+    $trustedReceipt = $null
     if ($RequireTrustedRuntime) {
         $receiptPath = "$($runtimeItem.FullName).receipt.json"
         if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
             throw "Trusted Runtime receipt is required before building an MSI: $receiptPath"
         }
-        & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `
-            (Join-Path $windowsAppDir "scripts\verify-final-runtime-artifact.ps1") `
-            -ArchivePath $runtimeItem.FullName -ReceiptPath $receiptPath
+        $trustedReceipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $canFastVerify = [int]$trustedReceipt.schemaVersion -ge 2 -and
+            $trustedReceipt.status -eq "complete" -and
+            $trustedReceipt.verification.status -eq "passed" -and
+            [Int64]$trustedReceipt.payload.fileCount -gt 0 -and
+            [Int64]$trustedReceipt.payload.expandedSizeBytes -gt 0
+        $verificationArguments = @(
+            "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+            (Join-Path $windowsAppDir "scripts\verify-final-runtime-artifact.ps1"),
+            "-ArchivePath", $runtimeItem.FullName,
+            "-ReceiptPath", $receiptPath
+        )
+        if ($canFastVerify) { $verificationArguments += "-Fast" }
+        & powershell.exe @verificationArguments
         if ($LASTEXITCODE -ne 0) { throw "MSI input Runtime failed completed-artifact verification." }
+        if ($canFastVerify) {
+            if (-not $RuntimeSha256) { $RuntimeSha256 = [string]$trustedReceipt.artifact.sha256 }
+            if ($RuntimeSizeBytes -le 0) { $RuntimeSizeBytes = [Int64]$trustedReceipt.artifact.size }
+            if ($EstimatedSizeKB -le 0) {
+                $EstimatedSizeKB = Get-InstalledSizeKBFromMetadata `
+                    ([Int64]$trustedReceipt.payload.expandedSizeBytes) `
+                    ([Int64]$trustedReceipt.artifact.size)
+            }
+        }
     }
     if (-not $RuntimeSha256) {
         $RuntimeSha256 = Get-Sha256Hex $runtimeItem.FullName

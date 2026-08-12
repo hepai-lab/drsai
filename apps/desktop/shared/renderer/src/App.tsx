@@ -490,6 +490,7 @@ function AuthenticatedApp({
   }, [experimentReleaseGate.enabled]);
   const [sessionScope, setSessionScope] = useState<"workspace" | "all">(() => loadSessionScope());
   const [availableChatAgents, setAvailableChatAgents] = useState<DesktopAgent[]>([]);
+  const [agentCatalogLoaded, setAgentCatalogLoaded] = useState(false);
   const [availableChatModels, setAvailableChatModels] = useState<MyDrSaiModelConfig[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(() => loadOptionalSetting(DEFAULT_AGENT_STORAGE_KEY));
   const [selectedChatAgentName, setSelectedChatAgentName] = useState("OpenDrSai");
@@ -1189,6 +1190,7 @@ function AuthenticatedApp({
     const applyCatalog = (agents: DesktopAgent[]): void => {
       if (cancelled) return;
       setAvailableChatAgents(agents);
+      setAgentCatalogLoaded(true);
       if (agents.length === 0) return;
       setSelectedChatAgentId((current) => {
         const preferredAgent = agents.find((agent) => agent.id === current)
@@ -1276,6 +1278,7 @@ function AuthenticatedApp({
         }));
         if (agentModelPolicy.reasoning_effort) setDefaultThinkingEffort(agentModelPolicy.reasoning_effort);
         setAvailableChatAgents(agents);
+        setAgentCatalogLoaded(true);
         if (myDrSaiConfig.ready || !myDrSaiConfigRef.current) {
           setAvailableChatModels(myDrSaiConfig.models ?? []);
           myDrSaiConfigRef.current = myDrSaiConfig;
@@ -2415,11 +2418,17 @@ function AuthenticatedApp({
         : auth.serviceBusy || !health
           ? "preparing"
           : "unknown",
-    model: !myDrSaiConfigLoaded
+    agent: !agentCatalogLoaded
       ? "unknown"
-      : !operationalSelectedModelRef
-        ? "unconfigured"
-        : "ready",
+      : !selectedChatAgent || selectedChatAgent.available === false
+        ? "unavailable"
+        : selectedChatAgent.source === "local" && selectedChatAgent.id !== "my-codex"
+          ? !myDrSaiConfigLoaded
+            ? "unknown"
+            : !operationalSelectedModelRef
+              ? "unconfigured"
+              : "ready"
+          : "ready",
     workspace: !workspacesLoaded || !selectedSetupWorkspace
       ? "none"
       : selectedSetupWorkspace.trusted
@@ -3172,7 +3181,7 @@ function AuthenticatedApp({
     if (!desktopApi.isOperationalStateE2eEnabled()) return;
     const handleOperationalState = (event: Event): void => {
       const facts = (event as CustomEvent<OperationalStateFacts>).detail;
-      document.documentElement.dataset.operationalE2eState = `${facts.identity}:${facts.runtime}:${facts.model}:${facts.workspace}`;
+      document.documentElement.dataset.operationalE2eState = `${facts.identity}:${facts.runtime}:${facts.agent}:${facts.workspace}`;
       setOperationalE2eFacts(facts);
     };
     window.addEventListener("drsai:e2e-operational-state", handleOperationalState);
@@ -3213,8 +3222,13 @@ function AuthenticatedApp({
           await auth.retryBootstrap();
           await desktop.refreshHealth();
           break;
-        case "model":
+        case "agent":
           {
+            if (operationalDecision.state === "unavailable") {
+              setRequestedSettingsPane("agent-defaults");
+              navigateTo(MENU_IDS.profile);
+              return;
+            }
             const selectedRef = myDrSaiAgentModelPolicy?.effective_ref;
             if (!selectedRef) {
               setRequestedSettingsPane("agent-defaults");

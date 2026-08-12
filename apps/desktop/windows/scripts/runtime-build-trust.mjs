@@ -80,22 +80,31 @@ function recordArchive() {
   const identity = readJson(join(payload, "build-identity.json"));
   const manifestPath = join(payload, "runtime-files.sha256.json");
   const receiptPath = args.receipt ? resolve(args.receipt) : `${archive}.receipt.json`;
+  const payloadFiles = collectFiles(payload);
   writeJson(receiptPath, {
-    schemaVersion: 1,
-    status: "complete",
+    schemaVersion: 2,
+    status: "staged",
     buildId: identity.buildId,
     version: identity.version,
     channel: identity.channel,
-    completedAt: new Date().toISOString(),
+    stagedAt: new Date().toISOString(),
     artifact: {
       file: basename(archive),
       size: statSync(archive).size,
       sha256: sha256File(archive),
     },
+    payload: {
+      fileCount: payloadFiles.length,
+      expandedSizeBytes: payloadFiles.reduce((total, path) => total + statSync(path).size, 0),
+    },
     runtimeManifestSha256: sha256File(manifestPath),
     sourceTreeSha256: identity.sourceTreeSha256,
+    verification: {
+      status: "pending",
+      mode: "full-extraction",
+    },
   });
-  console.log(`Recorded completed artifact receipt: ${receiptPath}`);
+  console.log(`Recorded staged artifact receipt: ${receiptPath}`);
 }
 
 function createBuildIdentity(version, channel, payload) {
