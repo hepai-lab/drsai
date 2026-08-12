@@ -1,7 +1,7 @@
 const { strict: assert } = require("node:assert");
 const { createHash } = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
-const { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 
@@ -22,6 +22,10 @@ if (!process.env.OPENDRSAI_MACOS_APP_PATH && !hasRuntimeArchive(appBundle)) {
   appBundle = join(releaseMount, "OpenDrSai.app");
 }
 const executable = join(appBundle, "Contents", "MacOS", "OpenDrSai");
+const runtimeManifest = JSON.parse(readFileSync(join(appBundle, "Contents", "Resources", "runtime", "runtime-manifest.json"), "utf8"));
+const runtimeArchive = statSync(join(appBundle, "Contents", "Resources", "runtime", runtimeManifest.archive));
+const runtimeGiB = Math.ceil(runtimeArchive.size / (1024 ** 3));
+const timeoutMs = Math.min(900_000, 300_000 + runtimeGiB * 600_000);
 
 main().catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }).finally(cleanup);
 
@@ -41,7 +45,7 @@ async function main() {
   let stdout = ""; let stderr = "";
   child.stdout.on("data", (value) => { stdout += value.toString(); });
   child.stderr.on("data", (value) => { stderr += value.toString(); });
-  const result = await waitForResult(child, 420_000, () => stdout, () => stderr);
+  const result = await waitForResult(child, timeoutMs, () => stdout, () => stderr);
   assert.equal(result.ok, true, result.error || stderr);
   assert.equal(await waitForExit(child, 30_000), 0, stderr);
   const snapshot = JSON.parse(readFileSync(join(acceptance, "source-snapshot.json"), "utf8"));
@@ -73,6 +77,8 @@ async function waitForResult(child, timeoutMs, stdout, stderr) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try { return JSON.parse(readFileSync(resultPath, "utf8")); } catch {}
+    const startupErrorPath = `${resultPath}.startup-error.json`;
+    if (existsSync(startupErrorPath)) throw new Error(`OpenDrSai startup failed.\n${readFileSync(startupErrorPath, "utf8")}`);
     if (child.exitCode !== null) throw new Error(`OpenDrSai exited before writing Provider evidence.\n${stdout()}\n${stderr()}`);
     await new Promise((resolveWait) => setTimeout(resolveWait, 250));
   }

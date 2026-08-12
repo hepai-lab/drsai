@@ -15,6 +15,7 @@ const credentials = readFileSync(join(repoRoot, "cores/python/packages/drsai/src
 const catalogIpc = readFileSync(join(macRoot, "src/main/ipc/registerCatalogIpc.ts"), "utf8");
 const keychainGate = join(macRoot, "scripts", "verify-model-provider-keychain.py");
 const packagedSmoke = readFileSync(join(macRoot, "src/main/packagedSmoke.ts"), "utf8");
+const bootstrapEntry = readFileSync(join(macRoot, "src/main/bootstrapEntry.ts"), "utf8");
 const hepaiGate = readFileSync(join(macRoot, "scripts/verify-hepai-platform-provider.cjs"), "utf8");
 
 assert.match(builder, /hardenedRuntime:\s*true/);
@@ -33,6 +34,7 @@ assert.match(packagedSmoke, /scenario === "hepai-provider"/);
 assert.match(packagedSmoke, /requireAuthContext\(\)/);
 assert.match(packagedSmoke, /https:\/\/ai-dev\.ihep\.ac\.cn/);
 assert.match(packagedSmoke, /data:\\s\*\\\[DONE\\\]/);
+assert.match(bootstrapEntry, /OPENDRSAI_MACOS_PACKAGED_SCENARIO !== "hepai-provider"/);
 assert.match(hepaiGate, /model-provider-real-opt-in\.json/);
 assert.match(hepaiGate, /sourceAggregateSha256/);
 assert.doesNotMatch(hepaiGate, /encryptedAccessToken|encryptedRefreshToken|Authorization/);
