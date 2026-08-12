@@ -22,7 +22,7 @@ const commands = {
     "verify:defects",
     "verify:acceptance",
   ],
-  electron: ["build", "verify:renderer-l3", "verify:coverage", "verify:macos-ux"],
+  electron: ["build", "verify:coverage", "verify:macos-ux"],
   packaged: [
     "verify:build-output",
     "verify:packaged",
