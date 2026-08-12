@@ -357,22 +357,23 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   }
   let resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
   let client = resolved.client as RuntimeClient;
+  let releaseRecoveryClient: (() => void) | undefined;
   const withCurrentRecoveryClient = async <T>(operation: (current: RuntimeClient) => Promise<T>): Promise<T> => {
     for (let attempt = 0; ; attempt += 1) {
-      let release: (() => void) | undefined;
       try {
         // A sibling OAEP subscription may finish while recovery is paging the
-        // same shared client. Hold an explicit registry lease so that sibling
-        // release cannot dispose the transport in the middle of this read.
-        release = retainRuntimeClient(client);
+        // same shared client. Keep one lease for the whole recovery transaction:
+        // releasing after each read would close the zero-reference client and
+        // force the next page to create (and invalidate) another generation.
+        releaseRecoveryClient ??= retainRuntimeClient(client);
         return await operation(client);
       } catch (error) {
         if (!isRuntimeClientGenerationInvalidated(error) || attempt >= 4) throw error;
+        releaseRecoveryClient?.();
+        releaseRecoveryClient = undefined;
         await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, 50 * 2 ** attempt)));
         resolved = await connectRuntimeClientForWorkspace(thread!.workspacePath!, thread!.execution?.workspaceId);
         client = resolved.client as RuntimeClient;
-      } finally {
-        release?.();
       }
     }
   };
@@ -386,198 +387,202 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
       thread!.runtimeSessionId!, outbox.sourceMessageId,
     ).catch(() => undefined);
   };
-  const [authoritativeRun, runtimeIdentity] = await withCurrentRecoveryClient((current) => Promise.all([
-    current.getAgentRun(thread!.lastRunId!),
-    current.getRuntime(),
-  ]));
-  const recoveryDecision = decideRuntimeRestartRecovery(authoritativeRun, runtimeIdentity);
-  // A non-terminal Run owned by an older Runtime instance no longer has an
-  // execution task behind it. Seal it as interrupted before presenting user
-  // choices. This never touches an already terminal Run and never re-executes
-  // work merely to recover an HTTP acknowledgement.
-  if (recoveryDecision.kind === "interrupted") {
-    await withCurrentRecoveryClient((current) => current.cancelAgentRun(thread!.lastRunId!)).catch(() => undefined);
-  }
-  const recovered: ChatEvent[] = [];
-  let sequence = 0;
-  const push = (event: Omit<ChatEvent, "requestId" | "sessionId" | "seq">) => {
-    recovered.push({ ...event, requestId, sessionId, seq: ++sequence });
-  };
-  const recorded = await listRecordedChatRunEvents(thread.lastRunId);
-  push({ type: "start", runId: thread.lastRunId });
-  for (const event of recorded) if (event.type === "connection") push({ type: "connection", runId: thread.lastRunId, connection: event.connection });
-  const target: RuntimeProjectionTarget = {
-    projection: createOaepPresentationProjection(requestId, basename(thread.workspacePath)),
-  };
-  const replayedEventIds = new Set<string>();
-  const bufferedLiveEvents: OaepEvent[] = [];
-  let liveReady = false;
-  let recoveredSubscription: Awaited<ReturnType<typeof subscribeOaepSession>> | undefined;
-  const settleRecoveredSubscription = async (event: OaepEvent): Promise<void> => {
-    if (!eventTarget) return;
-    if (!liveReady) {
-      bufferedLiveEvents.push(event);
-      return;
+  try {
+    const [authoritativeRun, runtimeIdentity] = await withCurrentRecoveryClient((current) => Promise.all([
+      current.getAgentRun(thread!.lastRunId!),
+      current.getRuntime(),
+    ]));
+    const recoveryDecision = decideRuntimeRestartRecovery(authoritativeRun, runtimeIdentity);
+    // A non-terminal Run owned by an older Runtime instance no longer has an
+    // execution task behind it. Seal it as interrupted before presenting user
+    // choices. This never touches an already terminal Run and never re-executes
+    // work merely to recover an HTTP acknowledgement.
+    if (recoveryDecision.kind === "interrupted") {
+      await withCurrentRecoveryClient((current) => current.cancelAgentRun(thread!.lastRunId!)).catch(() => undefined);
     }
-    if (replayedEventIds.has(event.event_id)) return;
-    replayedEventIds.add(event.event_id);
-    if (event.run_id !== thread.lastRunId) return;
-    emitRuntimeOaepEvent(
-      eventTarget, requestId, sessionId, thread.lastRunId!, event, target,
-      recoveredSubscription ? presentationItemForOaepEvent(recoveredSubscription.state, event) : undefined,
-    );
-    if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {
-      recoveredSubscription?.stop();
-      chatTurns.delete(requestId);
-      chatEventSequences.delete(requestId);
-      await completeRecoveredOutbox();
-      await updateThread({ id: thread.id, status: event.type === "event.run.completed" ? "idle" : "error" });
-    }
-  };
-  if (recoveryDecision.kind === "reconnect" && eventTarget) {
-    chatTurns.get(requestId)?.subscription?.stop();
-    recoveredSubscription = await withCurrentRecoveryClient((current) => subscribeOaepSession(current, thread!.runtimeSessionId!, {
-      onEvent(event) { void settleRecoveredSubscription(event); },
-      onConnection(status, attempt) {
-        if (!liveReady) return;
-        emit(eventTarget, { requestId, sessionId, runId: thread.lastRunId, type: "connection", connection: {
-          status: status === "connected" ? "restored" : "retrying",
-          attempt,
-          delayMs: status === "retrying" ? Math.min(2000, 100 * 2 ** Math.min(4, Math.max(0, attempt - 1))) : undefined,
-          timestamp: new Date().toISOString(), source: authoritativeRun.backend_id === "opendrsai" ? "opendrsai-runtime" : "codex-runtime",
-        } });
-      },
-    }));
-  }
-  const events: OaepEvent[] = [];
-  let cursor = 0;
-  for (let pageIndex = 0; pageIndex < 10_000; pageIndex += 1) {
-    const previousCursor = cursor;
-    const page = await withCurrentRecoveryClient((current) => current.listOaepEvents(thread!.runtimeSessionId!, cursor, 2_000));
-    for (const event of page.data) {
-      cursor = Math.max(cursor, event.sequence);
-      if (event.run_id === thread.lastRunId) events.push(event);
-    }
-    if (!page.has_more) break;
-    if (!page.data.length || cursor <= previousCursor) {
-      throw new Error("oaep_recovery_cursor_stalled: Runtime recovery Event pagination did not advance.");
-    }
-    cursor = Math.max(cursor, page.next_sequence);
-  }
-  const replayItems = new Map<string, OaepItem>();
-  const replayShadows = new Map<string, OaepDeltaShadow>();
-  const replayRuns = new Map();
-  for (const event of events) {
-    replayedEventIds.add(event.event_id);
-    reduceOaepEvent(replayItems, replayRuns, event, replayShadows);
-    for (const mapped of mapRuntimeOaepEvent(
-      requestId, sessionId, thread.lastRunId, event, target,
-      event.item_id ? replayItems.get(event.item_id)
-        ?? (replayShadows.get(event.item_id) ? materializeOaepDeltaShadow(replayShadows.get(event.item_id)!) : undefined)
-        : undefined,
-    )) push(mapped);
-  }
-  const hasOaepTerminal = events.some((event) => [
-    "event.run.completed",
-    "event.run.cancelled",
-    "event.run.failed",
-  ].includes(event.type));
-  // OAEP terminals were already projected as StructuredConversation events.
-  // Keep only the compatibility fallback for a pre-OAEP interrupted Run.
-  if (!hasOaepTerminal && recorded.some((event) => event.type === "aborted")) {
-    push({ type: "aborted", runId: thread.lastRunId });
-  }
-  if (recoveryDecision.kind === "interrupted") {
-    push({
-      type: "error",
-      runId: thread.lastRunId,
-      error: "The task was interrupted by a Runtime restart. Received content and files were preserved.",
-      errorEnvelope: {
-        code: "runtime_restart_interrupted",
-        category: "runtime",
-        retryable: false,
-        user_message_key: "errors.runtime.runtime_restart_interrupted",
-        recovery_actions: ["continue", "redo", "abandon"],
-        diagnostic_reference: `run:${thread.lastRunId}`,
-        redacted_details: { previous_status: recoveryDecision.status },
-      },
-    });
-    await completeRecoveredOutbox();
-    await updateThread({ id: thread.id, status: "error" });
-  } else if (hasOaepTerminal) {
-    recoveredSubscription?.stop();
-    await completeRecoveredOutbox();
-    await updateThread({
-      id: thread.id,
-      status: authoritativeRun.status === "completed" ? "idle" : "error",
-    });
-  } else if (recoveredSubscription && eventTarget) {
-    const controller = new AbortController();
-    const runtime: RuntimeChatTarget = {
-      client,
-      controller,
-      runId: thread.lastRunId,
-      projection: target.projection,
+    const recovered: ChatEvent[] = [];
+    let sequence = 0;
+    const push = (event: Omit<ChatEvent, "requestId" | "sessionId" | "seq">) => {
+      recovered.push({ ...event, requestId, sessionId, seq: ++sequence });
     };
-    const waitingForCapability = [...replayItems.values()].some((item) =>
-      item.type === "interaction"
-      && String(item.content.interaction_type || "") === "capability_configuration"
-      && item.status !== "completed" && item.status !== "cancelled",
-    );
-    if (waitingForCapability && authoritativeRun.input_message) {
-      const waitForChoice = () => new Promise<"resume" | "without_network">((resolve, reject) => {
-        runtime.capabilityConfiguration = { settle: resolve };
-        controller.signal.addEventListener(
-          "abort",
-          () => reject(new DOMException("Recovered capability configuration was cancelled.", "AbortError")),
-          { once: true },
-        );
+    const recorded = await listRecordedChatRunEvents(thread.lastRunId);
+    push({ type: "start", runId: thread.lastRunId });
+    for (const event of recorded) if (event.type === "connection") push({ type: "connection", runId: thread.lastRunId, connection: event.connection });
+    const target: RuntimeProjectionTarget = {
+      projection: createOaepPresentationProjection(requestId, basename(thread.workspacePath)),
+    };
+    const replayedEventIds = new Set<string>();
+    const bufferedLiveEvents: OaepEvent[] = [];
+    let liveReady = false;
+    let recoveredSubscription: Awaited<ReturnType<typeof subscribeOaepSession>> | undefined;
+    const settleRecoveredSubscription = async (event: OaepEvent): Promise<void> => {
+      if (!eventTarget) return;
+      if (!liveReady) {
+        bufferedLiveEvents.push(event);
+        return;
+      }
+      if (replayedEventIds.has(event.event_id)) return;
+      replayedEventIds.add(event.event_id);
+      if (event.run_id !== thread.lastRunId) return;
+      emitRuntimeOaepEvent(
+        eventTarget, requestId, sessionId, thread.lastRunId!, event, target,
+        recoveredSubscription ? presentationItemForOaepEvent(recoveredSubscription.state, event) : undefined,
+      );
+      if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {
+        recoveredSubscription?.stop();
+        chatTurns.delete(requestId);
+        chatEventSequences.delete(requestId);
+        await completeRecoveredOutbox();
+        await updateThread({ id: thread.id, status: event.type === "event.run.completed" ? "idle" : "error" });
+      }
+    };
+    if (recoveryDecision.kind === "reconnect" && eventTarget) {
+      chatTurns.get(requestId)?.subscription?.stop();
+      recoveredSubscription = await withCurrentRecoveryClient((current) => subscribeOaepSession(current, thread!.runtimeSessionId!, {
+        onEvent(event) { void settleRecoveredSubscription(event); },
+        onConnection(status, attempt) {
+          if (!liveReady) return;
+          emit(eventTarget, { requestId, sessionId, runId: thread.lastRunId, type: "connection", connection: {
+            status: status === "connected" ? "restored" : "retrying",
+            attempt,
+            delayMs: status === "retrying" ? Math.min(2000, 100 * 2 ** Math.min(4, Math.max(0, attempt - 1))) : undefined,
+            timestamp: new Date().toISOString(), source: authoritativeRun.backend_id === "opendrsai" ? "opendrsai-runtime" : "codex-runtime",
+          } });
+        },
+      }));
+    }
+    const events: OaepEvent[] = [];
+    let cursor = 0;
+    for (let pageIndex = 0; pageIndex < 10_000; pageIndex += 1) {
+      const previousCursor = cursor;
+      const page = await withCurrentRecoveryClient((current) => current.listOaepEvents(thread!.runtimeSessionId!, cursor, 2_000));
+      for (const event of page.data) {
+        cursor = Math.max(cursor, event.sequence);
+        if (event.run_id === thread.lastRunId) events.push(event);
+      }
+      if (!page.has_more) break;
+      if (!page.data.length || cursor <= previousCursor) {
+        throw new Error("oaep_recovery_cursor_stalled: Runtime recovery Event pagination did not advance.");
+      }
+      cursor = Math.max(cursor, page.next_sequence);
+    }
+    const replayItems = new Map<string, OaepItem>();
+    const replayShadows = new Map<string, OaepDeltaShadow>();
+    const replayRuns = new Map();
+    for (const event of events) {
+      replayedEventIds.add(event.event_id);
+      reduceOaepEvent(replayItems, replayRuns, event, replayShadows);
+      for (const mapped of mapRuntimeOaepEvent(
+        requestId, sessionId, thread.lastRunId, event, target,
+        event.item_id ? replayItems.get(event.item_id)
+          ?? (replayShadows.get(event.item_id) ? materializeOaepDeltaShadow(replayShadows.get(event.item_id)!) : undefined)
+          : undefined,
+      )) push(mapped);
+    }
+    const hasOaepTerminal = events.some((event) => [
+      "event.run.completed",
+      "event.run.cancelled",
+      "event.run.failed",
+    ].includes(event.type));
+    // OAEP terminals were already projected as StructuredConversation events.
+    // Keep only the compatibility fallback for a pre-OAEP interrupted Run.
+    if (!hasOaepTerminal && recorded.some((event) => event.type === "aborted")) {
+      push({ type: "aborted", runId: thread.lastRunId });
+    }
+    if (recoveryDecision.kind === "interrupted") {
+      push({
+        type: "error",
+        runId: thread.lastRunId,
+        error: "The task was interrupted by a Runtime restart. Received content and files were preserved.",
+        errorEnvelope: {
+          code: "runtime_restart_interrupted",
+          category: "runtime",
+          retryable: false,
+          user_message_key: "errors.runtime.runtime_restart_interrupted",
+          recovery_actions: ["continue", "redo", "abandon"],
+          diagnostic_reference: `run:${thread.lastRunId}`,
+          redacted_details: { previous_status: recoveryDecision.status },
+        },
       });
-      void (async () => {
-        let action = await waitForChoice();
-        for (;;) {
-          const response = await client.executeAgentRun(
-            thread.lastRunId!, authoritativeRun.input_message!, controller.signal,
-            {
-              sourceClient: "windows",
-              sourceMessageId: thread.lastRequestId || requestId,
-              metadata: {
-                ...(thread.boundAgentId ? { agent_name: thread.boundAgentId } : {}),
-                capability_configuration_resolution: action,
-                ...(action === "without_network" ? { web_search_declined: true } : {}),
-              },
-            },
+      await completeRecoveredOutbox();
+      await updateThread({ id: thread.id, status: "error" });
+    } else if (hasOaepTerminal) {
+      recoveredSubscription?.stop();
+      await completeRecoveredOutbox();
+      await updateThread({
+        id: thread.id,
+        status: authoritativeRun.status === "completed" ? "idle" : "error",
+      });
+    } else if (recoveredSubscription && eventTarget) {
+      const controller = new AbortController();
+      const runtime: RuntimeChatTarget = {
+        client,
+        controller,
+        runId: thread.lastRunId,
+        projection: target.projection,
+      };
+      const waitingForCapability = [...replayItems.values()].some((item) =>
+        item.type === "interaction"
+        && String(item.content.interaction_type || "") === "capability_configuration"
+        && item.status !== "completed" && item.status !== "cancelled",
+      );
+      if (waitingForCapability && authoritativeRun.input_message) {
+        const waitForChoice = () => new Promise<"resume" | "without_network">((resolve, reject) => {
+          runtime.capabilityConfiguration = { settle: resolve };
+          controller.signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("Recovered capability configuration was cancelled.", "AbortError")),
+            { once: true },
           );
-          if ((response.result as { status?: unknown } | null)?.status !== "awaiting_capability_configuration") break;
-          action = await waitForChoice();
-        }
-      })().catch((error) => {
-        emit(eventTarget, {
-          requestId, sessionId, runId: thread.lastRunId,
-          type: "error",
-          error: error instanceof Error ? error.message : String(error),
-          errorEnvelope: normalizeRuntimeErrorEnvelope(error),
         });
+        void (async () => {
+          let action = await waitForChoice();
+          for (;;) {
+            const response = await client.executeAgentRun(
+              thread.lastRunId!, authoritativeRun.input_message!, controller.signal,
+              {
+                sourceClient: "windows",
+                sourceMessageId: thread.lastRequestId || requestId,
+                metadata: {
+                  ...(thread.boundAgentId ? { agent_name: thread.boundAgentId } : {}),
+                  capability_configuration_resolution: action,
+                  ...(action === "without_network" ? { web_search_declined: true } : {}),
+                },
+              },
+            );
+            if ((response.result as { status?: unknown } | null)?.status !== "awaiting_capability_configuration") break;
+            action = await waitForChoice();
+          }
+        })().catch((error) => {
+          emit(eventTarget, {
+            requestId, sessionId, runId: thread.lastRunId,
+            type: "error",
+            error: error instanceof Error ? error.message : String(error),
+            errorEnvelope: normalizeRuntimeErrorEnvelope(error),
+          });
+        });
+      }
+      chatTurns.set(requestId, {
+        requestId,
+        sessionId,
+        runId: thread.lastRunId,
+        phase: "running",
+        cancelRequested: false,
+        controller,
+        eventTarget,
+        runtime,
+        subscription: recoveredSubscription,
       });
+      chatEventSequences.set(requestId, recovered.length);
+      liveReady = true;
+      for (const event of bufferedLiveEvents.splice(0)) {
+        await settleRecoveredSubscription(event);
+      }
     }
-    chatTurns.set(requestId, {
-      requestId,
-      sessionId,
-      runId: thread.lastRunId,
-      phase: "running",
-      cancelRequested: false,
-      controller,
-      eventTarget,
-      runtime,
-      subscription: recoveredSubscription,
-    });
-    chatEventSequences.set(requestId, recovered.length);
-    liveReady = true;
-    for (const event of bufferedLiveEvents.splice(0)) {
-      await settleRecoveredSubscription(event);
-    }
+    return recovered;
+  } finally {
+    releaseRecoveryClient?.();
   }
-  return recovered;
 }
 
 export async function respondChatInput(

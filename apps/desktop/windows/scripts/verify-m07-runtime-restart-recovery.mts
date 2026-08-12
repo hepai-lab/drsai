@@ -51,6 +51,8 @@ assert.ok(recovery.includes("decideRuntimeRestartRecovery(authoritativeRun, runt
 assert.ok(recovery.includes('recoveryDecision.kind === "reconnect"') && recovery.includes("subscribeOaepSession"));
 assert.ok(recovery.includes("current.listOaepEvents(thread!.runtimeSessionId!, cursor, 2_000)"), "Recovery must page the complete OAEP journal.");
 assert.ok(recovery.includes("withCurrentRecoveryClient") && recovery.includes("isRuntimeClientGenerationInvalidated(error)") && recovery.includes("attempt >= 4"), "Recovery must reconnect with a bounded retry when the Runtime generation changes.");
+assert.ok(recovery.includes("releaseRecoveryClient ??= retainRuntimeClient(client)") && recovery.includes("releaseRecoveryClient?.()"),
+  "Recovery must retain one Runtime generation for the complete replay transaction and release it deterministically.");
 assert.ok(recovery.includes('recoveryDecision.kind === "interrupted"') && recovery.includes("current.cancelAgentRun(thread!.lastRunId!)"));
 assert.ok(recovery.includes('recovery_actions: ["continue", "redo", "abandon"]'));
 assert.equal(recovery.includes("runChat("), false, "Restart recovery must never resend the original chat turn.");
