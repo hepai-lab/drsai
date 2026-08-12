@@ -1,6 +1,8 @@
 package ai.drsai.remote
 
 import ai.drsai.remote.remote.data.RemoteUserSloTracker
+import ai.drsai.remote.remote.data.RemoteUserSloDiagnostics
+import ai.drsai.remote.remote.data.RemoteUserSloJourney
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -66,5 +68,17 @@ class RemoteUserSloTrackerTest {
         assertTrue(runCatching { RemoteUserSloTracker(capacity = 0) }.exceptionOrNull() is IllegalArgumentException)
         val tracker = RemoteUserSloTracker()
         assertTrue(runCatching { tracker.operationDispatched(" ") }.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    @Test fun `diagnostics expose content free monotonic outcome counts`() {
+        val before = RemoteUserSloDiagnostics.snapshot(RemoteUserSloJourney.FIRST_SCREEN)
+        RemoteUserSloDiagnostics.attempted(RemoteUserSloJourney.FIRST_SCREEN)
+        RemoteUserSloDiagnostics.succeeded(RemoteUserSloJourney.FIRST_SCREEN)
+        RemoteUserSloDiagnostics.attempted(RemoteUserSloJourney.FIRST_SCREEN)
+        RemoteUserSloDiagnostics.failed(RemoteUserSloJourney.FIRST_SCREEN)
+        val after = RemoteUserSloDiagnostics.snapshot(RemoteUserSloJourney.FIRST_SCREEN)
+        assertEquals(2, after.attempted - before.attempted)
+        assertEquals(1, after.succeeded - before.succeeded)
+        assertEquals(1, after.failed - before.failed)
     }
 }

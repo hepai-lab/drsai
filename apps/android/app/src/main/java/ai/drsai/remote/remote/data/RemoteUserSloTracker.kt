@@ -1,6 +1,75 @@
 package ai.drsai.remote.remote.data
 
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
+
+enum class RemoteUserSloJourney { FIRST_SCREEN, OPERATION_CONFIRMATION, RECONNECT }
+
+data class RemoteUserSloDiagnosticSnapshot(
+    val attempted: Long,
+    val succeeded: Long,
+    val failed: Long,
+)
+
+/** Process-local, content-free counters for delivery diagnostics and physical acceptance. */
+object RemoteUserSloDiagnostics {
+    private data class Counters(
+        val attempted: AtomicLong = AtomicLong(),
+        val succeeded: AtomicLong = AtomicLong(),
+        val failed: AtomicLong = AtomicLong(),
+    )
+
+    private val counters = RemoteUserSloJourney.entries.associateWith { Counters() }
+
+    fun snapshot(journey: RemoteUserSloJourney): RemoteUserSloDiagnosticSnapshot =
+        requireNotNull(counters[journey]).let {
+            RemoteUserSloDiagnosticSnapshot(
+                attempted = it.attempted.get(),
+                succeeded = it.succeeded.get(),
+                failed = it.failed.get(),
+            )
+        }
+
+    fun attempted(journey: RemoteUserSloJourney) {
+        requireNotNull(counters[journey]).attempted.incrementAndGet()
+    }
+
+    fun succeeded(journey: RemoteUserSloJourney) {
+        requireNotNull(counters[journey]).succeeded.incrementAndGet()
+    }
+
+    fun failed(journey: RemoteUserSloJourney) {
+        requireNotNull(counters[journey]).failed.incrementAndGet()
+    }
+}
+
+data class RemoteUserSloLifecycleSnapshot(
+    val cacheLoaded: Long,
+    val authorityRefreshed: Long,
+    val renderCallback: Long,
+    val refreshCompleted: Long,
+    val refreshFailed: Long,
+    val refreshSuperseded: Long,
+)
+
+object RemoteUserSloLifecycleDiagnostics {
+    private val cache = AtomicLong()
+    private val authority = AtomicLong()
+    private val render = AtomicLong()
+    private val completed = AtomicLong()
+    private val failed = AtomicLong()
+    private val superseded = AtomicLong()
+
+    fun cacheLoaded() { cache.incrementAndGet() }
+    fun authorityRefreshed() { authority.incrementAndGet() }
+    fun renderCallback() { render.incrementAndGet() }
+    fun refreshCompleted() { completed.incrementAndGet() }
+    fun refreshFailed() { failed.incrementAndGet() }
+    fun refreshSuperseded() { superseded.incrementAndGet() }
+    fun snapshot() = RemoteUserSloLifecycleSnapshot(
+        cache.get(), authority.get(), render.get(), completed.get(), failed.get(), superseded.get(),
+    )
+}
 
 data class FirstScreenSloObservation(
     val sampleId: String,

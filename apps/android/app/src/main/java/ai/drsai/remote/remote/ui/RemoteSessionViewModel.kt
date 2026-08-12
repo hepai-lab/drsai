@@ -124,6 +124,7 @@ class RemoteSessionViewModel(
                     mutableState.update { it.copy(messages = messages, artifacts = artifacts) }
                 }
             }
+            RemoteUserSloLifecycleDiagnostics.cacheLoaded()
             userSlo.cacheLoaded()
             refresh()
         }
@@ -131,19 +132,33 @@ class RemoteSessionViewModel(
 
     /** Called after Compose commits the latest authoritative UI state. */
     fun onUiRendered() {
+        RemoteUserSloLifecycleDiagnostics.renderCallback()
         val firstScreen = userSlo.firstRendered()
         val operations = userSlo.operationsRendered()
         if (firstScreen == null && operations.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             firstScreen?.let { observation ->
-                runCatching { oaep.recordFirstScreen(runtimeId, workspaceId, sessionId, observation) }
+                recordUserSlo(RemoteUserSloJourney.FIRST_SCREEN) {
+                    oaep.recordFirstScreen(runtimeId, workspaceId, sessionId, observation)
+                }
             }
             operations.forEach { observation ->
-                runCatching {
+                recordUserSlo(RemoteUserSloJourney.OPERATION_CONFIRMATION) {
                     oaep.recordOperationConfirmation(runtimeId, workspaceId, sessionId, observation)
                 }
             }
         }
+    }
+
+    private suspend fun recordUserSlo(
+        journey: RemoteUserSloJourney,
+        operation: suspend () -> Unit,
+    ) {
+        RemoteUserSloDiagnostics.attempted(journey)
+        runCatching { operation() }.fold(
+            onSuccess = { RemoteUserSloDiagnostics.succeeded(journey) },
+            onFailure = { RemoteUserSloDiagnostics.failed(journey) },
+        )
     }
 
     private fun reconcileSessionStream() {
@@ -317,6 +332,7 @@ class RemoteSessionViewModel(
                 // soon as the authoritative Snapshot arrives; slow Run or
                 // Approval metadata must not leave the chat blank.
                     if (requestGeneration == refreshGeneration.get()) {
+                        RemoteUserSloLifecycleDiagnostics.authorityRefreshed()
                         userSlo.authorityRefreshed()
                         mutableState.update {
                             it.copy(
@@ -339,7 +355,11 @@ class RemoteSessionViewModel(
                 }
             }
         }.onSuccess { loaded ->
-            if (requestGeneration != refreshGeneration.get()) return@onSuccess
+            if (requestGeneration != refreshGeneration.get()) {
+                RemoteUserSloLifecycleDiagnostics.refreshSuperseded()
+                return@onSuccess
+            }
+            RemoteUserSloLifecycleDiagnostics.refreshCompleted()
             val latest = loaded.runs.lastOrNull()
             latestRun = latest
             activeRun = latest?.identity
@@ -376,7 +396,11 @@ class RemoteSessionViewModel(
             authRefreshAttempted = false
             startSessionSync()
         }.onFailure { failure ->
-            if (requestGeneration != refreshGeneration.get()) return@onFailure
+            if (requestGeneration != refreshGeneration.get()) {
+                RemoteUserSloLifecycleDiagnostics.refreshSuperseded()
+                return@onFailure
+            }
+            RemoteUserSloLifecycleDiagnostics.refreshFailed()
             when {
                 handleAuthoritativeRevocation(failure) -> Unit
                 recoverAuthentication(failure) -> refresh()
@@ -1049,7 +1073,7 @@ class RemoteSessionViewModel(
                                 userSlo.transportRestored()
                                 userSlo.replayCaughtUp()?.let { observation ->
                                     viewModelScope.launch(Dispatchers.IO) {
-                                        runCatching {
+                                        recordUserSlo(RemoteUserSloJourney.RECONNECT) {
                                             oaep.recordReconnect(runtimeId, workspaceId, sessionId, observation)
                                         }
                                     }
