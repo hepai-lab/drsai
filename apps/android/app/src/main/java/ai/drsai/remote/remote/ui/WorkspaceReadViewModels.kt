@@ -27,7 +27,7 @@ class WorkspaceFilesViewModel(
     private val workspaceId: WorkspaceId,
     workspaceName: String,
 ) : AndroidViewModel(app) {
-    private val client = RemoteWorkspaceContainer.get(app).workspace(runtimeId)
+    private val client = RemoteWorkspaceContainer.get(app).boundaries.file.client(runtimeId)
     private val mutableState = MutableStateFlow(FileTreeUiState(workspaceName = workspaceName, loading = true,
         scopeKey = "${runtimeId.value}/${workspaceId.value}"))
     val state: StateFlow<FileTreeUiState> = mutableState.asStateFlow()
@@ -139,7 +139,7 @@ class WorkspaceGitViewModel(
     private val runtimeId: RuntimeId,
     private val workspaceId: WorkspaceId,
 ) : AndroidViewModel(app) {
-    private val client = RemoteWorkspaceContainer.get(app).workspace(runtimeId)
+    private val client = RemoteWorkspaceContainer.get(app).boundaries.file.client(runtimeId)
     private val mutableState = MutableStateFlow(GitReadUiState(GitStatusUi(null, "loading", emptyList())))
     val state: StateFlow<GitReadUiState> = mutableState.asStateFlow()
 

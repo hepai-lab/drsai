@@ -320,7 +320,9 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
             if (state.destination == AppDestination.Chat && AppRoute.parse(requested) != null) {
                 mainRoutePath = requested
                 remoteFocusItemId = state.requestedRemoteItemId
-                viewModel.consumeRequestedRoute()
+                if (AppRoute.parse(requested) !is AppRoute.RemoteSession ||
+                    state.requestedRemoteItemId == null
+                ) viewModel.consumeRequestedRoute()
             }
         }
     }
@@ -565,21 +567,53 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                             computer.workspaces.map { computer.displayName to it }
                         })
                     }
+                    fun startRemoteAssociationScan() {
+                        remoteViewModel.beginAssociationScan()
+                        com.google.mlkit.common.MlKit.initialize(context)
+                        GmsBarcodeScanning.getClient(context).startScan()
+                            .addOnSuccessListener { barcode ->
+                                barcode.rawValue?.let(remoteViewModel::associate)
+                                    ?: remoteViewModel.cancelAssociationScan()
+                            }
+                            .addOnFailureListener { remoteViewModel.cancelAssociationScan() }
+                            .addOnCanceledListener(remoteViewModel::cancelAssociationScan)
+                    }
                     RemoteHomeScreen(
                         state = remoteState,
                         onBack = { mainRoutePath = AppRoute.Chat.path },
                         onAssociate = {
+                            remoteViewModel.beginAssociationScan()
                             com.google.mlkit.common.MlKit.initialize(context)
                             GmsBarcodeScanning.getClient(context).startScan()
                                 .addOnSuccessListener { barcode ->
-                                    barcode.rawValue?.let(remoteViewModel::associate)
-                                        ?: Toast.makeText(context, "二维码内容为空", Toast.LENGTH_SHORT).show()
+                                    barcode.rawValue?.let(remoteViewModel::associate) ?: run {
+                                        remoteViewModel.cancelAssociationScan()
+                                        Toast.makeText(context, "二维码内容为空", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                                 .addOnFailureListener { failure ->
+                                    remoteViewModel.cancelAssociationScan()
                                     Toast.makeText(context, failure.message ?: "无法启动扫码", Toast.LENGTH_SHORT).show()
                                 }
+                                .addOnCanceledListener(remoteViewModel::cancelAssociationScan)
                         },
                         onRefresh = { remoteViewModel.refresh() },
+                        onDiagnose = remoteViewModel::diagnoseConnection,
+                        onDiagnosticAction = { action -> when (action) {
+                            ai.drsai.remote.remote.ui.RemoteDiagnosticAction.SIGN_IN -> viewModel.login()
+                            ai.drsai.remote.remote.ui.RemoteDiagnosticAction.REPAIR_DEVICE -> startRemoteAssociationScan()
+                            ai.drsai.remote.remote.ui.RemoteDiagnosticAction.UPDATE -> mainRoutePath = AppRoute.Settings.path
+                            ai.drsai.remote.remote.ui.RemoteDiagnosticAction.ENABLE_NOTIFICATIONS -> {
+                                if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                else context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                })
+                            }
+                            else -> remoteViewModel.refresh()
+                        } },
+                        onSignIn = viewModel::login,
+                        onCheckUpdate = { mainRoutePath = AppRoute.Settings.path },
+                        onContactAdmin = { mainRoutePath = AppRoute.Settings.path },
                         onEnableNotifications = {
                             if (Build.VERSION.SDK_INT >= 33) {
                                 notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -660,6 +694,9 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     }
                     val sessionViewModel: RemoteSessionViewModel = viewModel(key = route.path, factory = factory)
                     val remoteChatState by sessionViewModel.state.collectAsState()
+                    LaunchedEffect(route.path, remoteFocusItemId) {
+                        remoteFocusItemId?.let(sessionViewModel::focusItem)
+                    }
                     RemoteChatScreen(
                         state = remoteChatState,
                         onBack = { mainRoutePath = AppRoute.WorkspaceSessions(route.runtimeId, route.workspaceId).path },
@@ -667,11 +704,17 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                         onDraftChange = sessionViewModel::updateDraft,
                         onCancelRun = sessionViewModel::cancel,
                         onRetryRun = sessionViewModel::retry,
+                        onSearchTranscript = sessionViewModel::searchTranscript,
                         onApproval = sessionViewModel::decide,
                         onOpenArtifact = sessionViewModel::openArtifact,
                         onConfirmArtifact = sessionViewModel::confirmArtifactDownload,
                         onLoadOlderHistory = sessionViewModel::loadOlderHistory,
                         focusItemId = remoteFocusItemId,
+                        onFocusResolved = {
+                            remoteFocusItemId = null
+                            viewModel.consumeRequestedRoute(focusedItemId = state.requestedRemoteItemId)
+                        },
+                        onSignIn = viewModel::login,
                         onOpenAudit = {
                             remoteChatState.activeRunId?.let { runId ->
                                 mainRoutePath = AppRoute.RunAudit(route.runtimeId, route.workspaceId, route.sessionId, runId).path

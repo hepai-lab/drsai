@@ -100,11 +100,11 @@ class RemotePushRegistrationWorker(
         }
         return try {
             val container = RemoteWorkspaceContainer.get(applicationContext as Application)
-            val user = container.tokenStore.user() ?: return Result.success()
+            val user = container.boundaries.auth.tokens.user() ?: return Result.success()
             val runtimes = buildList {
                 var cursor: String? = null
                 repeat(MAX_CATALOG_PAGES) {
-                    val page = container.relayDiscovery.listRuntimes(cursor)
+                    val page = container.boundaries.push.catalog.listRuntimes(cursor)
                     addAll(page.items.filter {
                         "notification.push.registration" in it.capabilities
                     }.map { it.reference.runtimeId })
@@ -116,7 +116,7 @@ class RemotePushRegistrationWorker(
             if (runtimes.isEmpty()) return Result.success()
             val token = FirebaseMessaging.getInstance().token.await()
             RemotePushRegistrationCoordinator(
-                container.repository,
+                container.boundaries.push.registrations,
                 SharedPreferencesPushRegistrationStateStore(
                     applicationContext, "${BuildConfig.OIDC_ISSUER}\n${user.id}",
                 ),

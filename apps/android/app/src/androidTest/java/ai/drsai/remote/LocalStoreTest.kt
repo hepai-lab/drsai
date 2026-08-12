@@ -24,6 +24,7 @@ import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.data.MIGRATION_11_12
 import ai.drsai.remote.data.MIGRATION_12_13
 import ai.drsai.remote.data.MIGRATION_13_14
+import ai.drsai.remote.data.MIGRATION_14_15
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
@@ -630,7 +631,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
             .allowMainThreadQueries()
             .build()
         try {
@@ -668,7 +669,7 @@ class LocalStoreTest {
             legacy.version = 3
         }
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
             .allowMainThreadQueries()
             .build()
         try {
@@ -722,7 +723,7 @@ class LocalStoreTest {
             legacy.version = 10
         }
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).allowMainThreadQueries().build()
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15).allowMainThreadQueries().build()
         try {
             assertEquals(
                 "legacy-item",
@@ -765,7 +766,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).allowMainThreadQueries().build()
+            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15).allowMainThreadQueries().build()
         try {
             assertEquals("preserve me", migrated.dao().visibleMessageSnapshot("legacy-session").single().content)
             assertEquals(

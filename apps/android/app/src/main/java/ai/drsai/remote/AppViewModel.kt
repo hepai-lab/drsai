@@ -47,6 +47,7 @@ import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.data.MIGRATION_11_12
 import ai.drsai.remote.data.MIGRATION_12_13
 import ai.drsai.remote.data.MIGRATION_13_14
+import ai.drsai.remote.data.MIGRATION_14_15
 import ai.drsai.remote.workbench.data.WorkbenchProjectionRepository
 import ai.drsai.remote.workbench.data.UnifiedWorkbenchRepository
 import ai.drsai.remote.workbench.data.SessionMutationResult
@@ -175,10 +176,11 @@ private data class PendingDesktopHandoffDraft(
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val tokenStore by lazy { SecureTokenStore(app) }
     private val deepLinkStore = app.getSharedPreferences("remote-notification-navigation", Application.MODE_PRIVATE)
+    private val notificationNavigation = ai.drsai.remote.remote.data.RemoteNotificationNavigationReducer()
     private val oidcTransactions by lazy { OidcTransactionStore(app) }
     private val database by lazy {
         Room.databaseBuilder(app, ChatDatabase::class.java, "opendrsai.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
             .build()
     }
     private val oidcClient by lazy { OidcClient(refreshClientId = { tokenStore.oidcClientId }) }
@@ -448,6 +450,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }) }
         val user = tokenStore.user()
+        notificationNavigation.accept(
+            ai.drsai.remote.remote.data.RemoteNotificationNavigationEvent.ProcessStarted(
+                authenticated = !tokenStore.accessToken.isNullOrBlank() && user != null,
+                locked = false,
+            )
+        )
         if (tokenStore.accessToken.isNullOrBlank() || user == null) {
             update { it.copy(destination = AppDestination.Login) }
             return@launch
@@ -460,7 +468,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun login() {
         if (loginJob?.isActive == true) return
         loginJob = viewModelScope.launch {
-            update { it.copy(loading = true, waitingForLogin = false, loginUrl = null, error = null) }
+            update { it.copy(
+                destination = AppDestination.Login,
+                loading = true,
+                waitingForLogin = false,
+                loginUrl = null,
+                error = null,
+            ) }
             runCatching { oidcClient.startLogin() }
                 .onSuccess { session ->
                     oidcSession = session
@@ -506,6 +520,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 tokenStore.save(auth)
                 tokenStore.oidcClientId = session.transaction.clientId
                 AndroidDevicePresence.authenticationChanged()
+                notificationNavigation.accept(
+                    ai.drsai.remote.remote.data.RemoteNotificationNavigationEvent.LoginCompleted
+                )
                 loadWorkspace(auth.user)
                 consumePendingAssociation()
             }
@@ -661,9 +678,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun handleDeepLink(uri: Uri?) {
         val route = uri?.toString()?.let(WorkbenchDeepLinkParser::route) ?: return
-        val itemId = uri.getQueryParameter("item_id")?.takeIf(String::isNotBlank)
-        deepLinkStore.edit().putString("route_path", route.path)
-            .putString("item_id", itemId).apply()
+        val rawItemId = uri.getQueryParameter("item_id")
+        val itemId = rawItemId?.takeIf {
+            it.matches(Regex("^[A-Za-z0-9_.:-]{1,200}$")) && it != "." && it != ".."
+        }
+        if (rawItemId != null && itemId == null) return
+        notificationNavigation.accept(
+            ai.drsai.remote.remote.data.RemoteNotificationNavigationEvent.Received(route.path, itemId)
+        )
+        check(deepLinkStore.edit().putString("route_path", route.path)
+            .putString("item_id", itemId).commit()) { "remote_notification_navigation_write_failed" }
         update { it.copy(requestedRoutePath = route.path, requestedRemoteItemId = itemId) }
     }
 
@@ -733,8 +757,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun consumeRequestedRoute() {
-        deepLinkStore.edit().clear().apply()
+    fun consumeRequestedRoute(focusedItemId: String? = null) {
+        val current = mutableState.value
+        val route = current.requestedRoutePath?.let(ai.drsai.remote.remote.navigation.AppRoute::parse)
+        if (route is ai.drsai.remote.remote.navigation.AppRoute.RemoteSession &&
+            current.requestedRemoteItemId != null
+        ) {
+            require(focusedItemId == current.requestedRemoteItemId) {
+                "remote_notification_focus_required"
+            }
+            notificationNavigation.accept(
+                ai.drsai.remote.remote.data.RemoteNotificationNavigationEvent.ItemFocused(focusedItemId)
+            )
+        }
+        check(deepLinkStore.edit().clear().commit()) { "remote_notification_navigation_clear_failed" }
         update { it.copy(requestedRoutePath = null, requestedRemoteItemId = null) }
     }
 
@@ -2063,8 +2099,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val remote = ai.drsai.remote.remote.data.RemoteWorkspaceContainer.get(getApplication())
                 runCatching { remote.drafts.clearSubject(subject) }
                 runCatching { remote.activity.clearSubject(subject) }
-                runCatching { remote.runControls.clearSubject(subject) }
-                runCatching { remote.approvalDecisions.clearSubject(subject) }
+                runCatching { remote.boundaries.run.controls.clearSubject(subject) }
+                runCatching { remote.boundaries.approval.decisions.clearSubject(subject) }
             }
             tokenStore.clear()
             update { AppState(destination = AppDestination.Login) }

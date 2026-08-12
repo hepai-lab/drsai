@@ -274,20 +274,34 @@ class HaiModelClient(
             val parser = SseParser()
             val chars = CharArray(2048)
             var sawDone = false
+            var sawOutput = false
             while (true) {
                 val count = reader.read(chars)
                 if (count < 0) break
                 parser.feed(String(chars, 0, count)).forEach { event ->
-                    if (event == "[DONE]") sawDone = true else onDelta(parseDelta(event))
+                    if (event == "[DONE]") sawDone = true else {
+                        val delta = parseDelta(event)
+                        if (delta.isMeaningful()) sawOutput = true
+                        onDelta(delta)
+                    }
                 }
                 if (sawDone) break
             }
             if (!sawDone) {
                 parser.finish().forEach { event ->
-                    if (event == "[DONE]") sawDone = true else onDelta(parseDelta(event))
+                    if (event == "[DONE]") sawDone = true else {
+                        val delta = parseDelta(event)
+                        if (delta.isMeaningful()) sawOutput = true
+                        onDelta(delta)
+                    }
                 }
             }
-            if (!sawDone) throw ApiException(0, "模型流在完成前中断")
+            if (!sawDone) throw ApiException(
+                0, "模型流在完成前中断", retryable = true, code = "model_stream_interrupted",
+            )
+            if (!sawOutput) throw ApiException(
+                0, "模型返回了空响应，请重试", retryable = true, code = "model_empty_response",
+            )
         }
     }
 
@@ -514,19 +528,31 @@ private fun JSONObject.stringOrNull(name: String): String? {
             val parser = SseParser()
             val chars = CharArray(2048)
             var completed = false
+            var sawOutput = false
             while (!completed) {
                 val count = reader.read(chars)
                 if (count < 0) break
                 parser.feed(String(chars, 0, count)).forEach { event ->
                     val delta = parseAnthropicDelta(event)
-                    if (delta.finishReason == "message_stop") completed = true else onDelta(delta)
+                    if (delta.finishReason == "message_stop") completed = true else {
+                        if (delta.isMeaningful()) sawOutput = true
+                        onDelta(delta)
+                    }
                 }
             }
             if (!completed) parser.finish().forEach { event ->
                 val delta = parseAnthropicDelta(event)
-                if (delta.finishReason == "message_stop") completed = true else onDelta(delta)
+                if (delta.finishReason == "message_stop") completed = true else {
+                    if (delta.isMeaningful()) sawOutput = true
+                    onDelta(delta)
+                }
             }
-            if (!completed) throw ApiException(0, "模型流在完成前中断")
+            if (!completed) throw ApiException(
+                0, "模型流在完成前中断", retryable = true, code = "model_stream_interrupted",
+            )
+            if (!sawOutput) throw ApiException(
+                0, "模型返回了空响应，请重试", retryable = true, code = "model_empty_response",
+            )
         }
     }
 
@@ -578,6 +604,9 @@ private fun JSONObject.stringOrNull(name: String): String? {
 internal fun toHaiToolName(canonical: String): String = canonical.replace(".", "__dot__")
 
 internal fun fromHaiToolName(wire: String): String = wire.replace("__dot__", ".")
+
+private fun ModelDelta.isMeaningful(): Boolean =
+    !content.isNullOrEmpty() || toolCalls.isNotEmpty() || !reasoningSummary.isNullOrEmpty()
 
 internal fun selectPreferredModel(models: List<ModelInfo>): ModelInfo {
     if (models.isEmpty()) throw ApiException(404, "当前 HAI 账号没有可用模型", retryable = false)

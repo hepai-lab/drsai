@@ -309,7 +309,26 @@ class HaiModelClientTest {
         }.exceptionOrNull()
 
         assertTrue(error is ApiException)
-        assertEquals("模型流在完成前中断", error?.message)
+        assertEquals("model_stream_interrupted", (error as ApiException).code)
+        assertTrue(error.retryable)
+        assertEquals("模型流在完成前中断", error.message)
+    }
+
+    @Test fun completedProviderStreamWithoutContentToolOrSummaryFailsExplicitly() = runTest {
+        server.enqueue(MockResponse().setBody("data: [DONE]\n\n"))
+        val resolver = FakeModelConfigurationResolver(
+            provider("openai"), configuredModel("stable-empty", "upstream"), "provider-secret",
+        )
+
+        val error = runCatching {
+            HaiModelClient(FakeTokenStore("oidc", "refresh"), FakeTokenLifecycle(), providerStore = resolver)
+                .streamCompletionWithTools("stable-empty", listOf(RuntimeMessage("user", "hello")), JSONArray()) {}
+        }.exceptionOrNull() as ApiException
+
+        assertEquals(0, error.status)
+        assertEquals("model_empty_response", error.code)
+        assertTrue(error.retryable)
+        assertTrue(error.message.isNotBlank())
     }
 
     @Test fun cancellingActiveProviderRequestStopsTheNetworkCallPromptly() = runBlocking {

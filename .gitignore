@@ -304,6 +304,7 @@ notebooks/test.db
 # Android / Gradle
 ########################
 .gradle/
+.kotlin/
 **/local.properties
 **/.cxx/
 **/.externalNativeBuild/

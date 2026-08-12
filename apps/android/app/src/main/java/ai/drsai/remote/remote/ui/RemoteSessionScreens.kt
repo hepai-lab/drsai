@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ai.drsai.remote.remote.model.*
@@ -20,6 +21,9 @@ import ai.drsai.remote.remote.data.RemoteAuditEntry
 import ai.drsai.remote.remote.data.RemoteDeliveryState
 import ai.drsai.remote.remote.data.RemoteApprovalDecisionState
 import ai.drsai.remote.remote.data.RemoteRunControlState
+import ai.drsai.remote.remote.data.RemoteSessionUiAuthorityState
+import ai.drsai.remote.remote.data.reduceRemoteTimelineUpdate
+import ai.drsai.remote.remote.data.remoteActionableState
 import ai.drsai.remote.remote.data.userLabel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -260,6 +264,7 @@ data class RemoteMessageUi(
 data class RemoteArtifactUi(val artifactId: String, val name: String, val mimeType: String, val size: Long,
                             val sha256: String, val downloading: Boolean = false, val error: String? = null)
 enum class RemoteTranscriptFilter(val label: String) { ALL("全部"), RUN("运行"), TOOL("工具"), FILE("文件") }
+enum class RemoteFocusItemState { IDLE, LOADING, FOUND, NOT_FOUND }
 
 fun filterRemoteTranscript(
     messages: List<RemoteMessageUi>,
@@ -279,26 +284,32 @@ data class RemoteChatUiState(
     val sessionTitle: String,
     val messages: List<RemoteMessageUi> = emptyList(),
     val approval: RemoteApprovalCard? = null,
-    val running: Boolean = false,
-    val online: Boolean = true,
+    val authority: RemoteSessionUiAuthorityState = RemoteSessionUiAuthorityState(),
     val correlationId: String? = null,
     val activeRunId: RunId? = null,
     val artifacts: List<RemoteArtifactUi> = emptyList(),
     val scopeKey: String = "",
-    val connectionState: RemoteConnectionState = RemoteConnectionState.ONLINE,
     val draft: String = "",
     val approvalDecisionState: RemoteApprovalDecisionState = RemoteApprovalDecisionState.PENDING,
     val approvalOutcome: String? = null,
     val runControlState: RemoteRunControlState = RemoteRunControlState.IDLE,
     val runControlOutcome: String? = null,
-    val canRetry: Boolean = false,
     val pendingArtifactConfirmation: String? = null,
     val historyCursor: String? = null,
     val loadingHistory: Boolean = false,
     val historyError: String? = null,
+    val transcriptSearchQuery: String = "",
+    val transcriptSearchResults: List<RemoteMessageUi>? = null,
+    val transcriptSearching: Boolean = false,
+    val transcriptSearchTruncated: Boolean = false,
+    val focusItemState: RemoteFocusItemState = RemoteFocusItemState.IDLE,
 ) {
+    val running: Boolean get() = authority.running
+    val online: Boolean get() = authority.online
+    val connectionState: RemoteConnectionState get() = authority.connectionState
+    val canRetry: Boolean get() = authority.canRetry
     val lifecycleState: ai.drsai.remote.remote.data.RemoteLifecycleState
-        get() = ai.drsai.remote.remote.data.remoteLifecycleState(connectionState, messages.isNotEmpty())
+        get() = authority.lifecycleState
 }
 
 @Composable
@@ -306,7 +317,9 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                      onCancelRun: () -> Unit, onApproval: (String, String) -> Unit, onOpenAudit: () -> Unit,
                       onOpenArtifact: (String) -> Unit = {}, onDraftChange: (String) -> Unit = {},
                       onRetryRun: () -> Unit = {}, onConfirmArtifact: (Boolean) -> Unit = {},
-                      onLoadOlderHistory: () -> Unit = {}, focusItemId: String? = null) {
+                      onLoadOlderHistory: () -> Unit = {}, onSearchTranscript: (String) -> Unit = {},
+                      focusItemId: String? = null, onFocusResolved: () -> Unit = {},
+                      onSignIn: () -> Unit = {}) {
     var input by remember(state.scopeKey) { mutableStateOf(state.draft) }
     LaunchedEffect(state.scopeKey, state.draft) {
         if (input != state.draft) input = state.draft
@@ -327,14 +340,17 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
     var unreadStart by remember(state.scopeKey) { mutableStateOf<Int?>(null) }
     var previousMessageCount by remember(state.scopeKey) { mutableIntStateOf(0) }
     var focusApplied by remember(state.scopeKey, focusItemId) { mutableStateOf(false) }
-    val visibleMessages = remember(state.messages, transcriptFilter) {
-        filterRemoteTranscript(state.messages, transcriptFilter)
+    var historyAnchor by remember(state.scopeKey) { mutableStateOf<Pair<String, Int>?>(null) }
+    val transcriptSearchActive = state.transcriptSearchQuery.isNotBlank()
+    val searchedMessages = state.transcriptSearchResults ?: state.messages
+    val visibleMessages = remember(searchedMessages, transcriptFilter) {
+        filterRemoteTranscript(searchedMessages, transcriptFilter)
     }
     val rawMessageIndices = remember(state.messages) {
         state.messages.withIndex().associate { it.value.id to it.index }
     }
-    val transcriptItemCount =
-        visibleMessages.size + state.artifacts.size + if (state.approval == null) 0 else 1
+    val transcriptItemCount = visibleMessages.size + if (transcriptSearchActive) 0 else
+        state.artifacts.size + if (state.approval == null) 0 else 1
     LaunchedEffect(state.scopeKey) {
         snapshotFlow {
             val info = transcriptListState.layoutInfo
@@ -342,13 +358,21 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                 (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= info.totalItemsCount - 2
         }.collect { nearBottom -> followLatest = nearBottom }
     }
-    LaunchedEffect(state.scopeKey, state.messages.size, transcriptFilter) {
-        val added = state.messages.size > previousMessageCount
-        if (transcriptItemCount > 0 && (previousMessageCount == 0 || followLatest)) {
+    LaunchedEffect(state.scopeKey, state.messages.size, state.loadingHistory, transcriptFilter) {
+        historyAnchor?.takeIf { !state.loadingHistory }?.let { (itemId, offset) ->
+            val restoredIndex = visibleMessages.indexOfFirst { it.id == itemId }
+            if (restoredIndex >= 0) transcriptListState.scrollToItem(restoredIndex, offset)
+            historyAnchor = null
+            previousMessageCount = state.messages.size
+            return@LaunchedEffect
+        }
+        val update = reduceRemoteTimelineUpdate(
+            previousMessageCount, state.messages.size, followLatest, unreadStart,
+            searchActive = transcriptSearchActive,
+        )
+        unreadStart = update.unreadStart
+        if (transcriptItemCount > 0 && update.scrollToLatest) {
             transcriptListState.scrollToItem(transcriptItemCount - 1)
-            unreadStart = null
-        } else if (added && unreadStart == null) {
-            unreadStart = previousMessageCount
         }
         previousMessageCount = state.messages.size
     }
@@ -363,6 +387,7 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             transcriptListState.scrollToItem(index)
             followLatest = false
             focusApplied = true
+            onFocusResolved()
         }
     }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -375,8 +400,35 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             state.correlationId?.let { TextButton(onClick = onOpenAudit) { Text("审计") } }
         }
         if (!state.online) Text("连接已中断，任务可能仍在运行", color = MaterialTheme.colorScheme.error)
+        if (state.connectionState == RemoteConnectionState.AUTH_REQUIRED) {
+            RemoteActionableStateCard(
+                requireNotNull(remoteActionableState(state.lifecycleState)),
+                onAction = { onSignIn() },
+            )
+        }
+        when (state.focusItemState) {
+            RemoteFocusItemState.LOADING -> Text("正在定位通知对应的内容…")
+            RemoteFocusItemState.NOT_FOUND -> Text(
+                "通知对应的内容暂时无法读取；重新登录或恢复连接后会继续定位。",
+                color = MaterialTheme.colorScheme.error,
+            )
+            else -> Unit
+        }
         state.runControlOutcome?.let {
             Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+        }
+        OutlinedTextField(
+            value = state.transcriptSearchQuery,
+            onValueChange = onSearchTranscript,
+            modifier = Modifier.fillMaxWidth().testTag("remote-transcript-search"),
+            singleLine = true,
+            label = { Text("搜索已缓存会话") },
+            trailingIcon = {
+                if (state.transcriptSearching) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            },
+        )
+        if (state.transcriptSearchTruncated) {
+            Text("仅显示前 200 条结果，请缩小搜索范围", style = MaterialTheme.typography.labelSmall)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             RemoteTranscriptFilter.entries.forEach { filter ->
@@ -387,9 +439,15 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                 )
             }
         }
-        if (state.historyCursor != null) {
+        if (state.historyCursor != null && !transcriptSearchActive) {
             OutlinedButton(
-                onClick = onLoadOlderHistory,
+                onClick = {
+                    val first = transcriptListState.firstVisibleItemIndex
+                    visibleMessages.getOrNull(first)?.let { item ->
+                        historyAnchor = item.id to transcriptListState.firstVisibleItemScrollOffset
+                    }
+                    onLoadOlderHistory()
+                },
                 enabled = !state.loadingHistory,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (state.loadingHistory) "正在加载历史…" else "加载更早内容") }
@@ -400,9 +458,19 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             state = transcriptListState,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (transcriptSearchActive && !state.transcriptSearching && visibleMessages.isEmpty()) {
+                item("remote-transcript-search-empty") {
+                    Text(
+                        "未在已同步的会话内容中找到结果",
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             itemsIndexed(visibleMessages, key = { _, item -> item.id }) { index, message ->
                 val rawIndex = rawMessageIndices[message.id]
-                if (unreadStart != null && rawIndex == unreadStart) {
+                if (!transcriptSearchActive && unreadStart != null && rawIndex == unreadStart) {
                     HorizontalDivider()
                     Text("以下是新内容", color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.labelMedium)
@@ -414,7 +482,7 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                 message.deliveryState?.let { Text(it.userLabel(), style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary) }
             }
-            items(state.artifacts, key = { "artifact-${it.artifactId}" }) { artifact ->
+            if (!transcriptSearchActive) items(state.artifacts, key = { "artifact-${it.artifactId}" }) { artifact ->
                 OutlinedCard {
                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -428,13 +496,13 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                     }
                 }
             }
-            state.approval?.let { approval -> item { ApprovalCard(
+            if (!transcriptSearchActive) state.approval?.let { approval -> item { ApprovalCard(
                 approval, state.online && state.approvalDecisionState == RemoteApprovalDecisionState.PENDING,
                 state.approvalDecisionState, onApproval,
             ) } }
         }
         state.approvalOutcome?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
-        unreadStart?.let { start ->
+        if (!transcriptSearchActive) unreadStart?.let { start ->
             val count = (state.messages.size - start).coerceAtLeast(0)
             OutlinedButton(
                 onClick = {

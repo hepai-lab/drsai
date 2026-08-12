@@ -27,9 +27,9 @@ class HttpOwopRelayTransport(
             .put("version", request.version).put("request_id", request.requestId)
             .put("correlation_id", request.correlationId).put("operation", request.operation.wireName)
             .put("params", JSONObject(request.params))
-        val url = root.newBuilder().addPathSegments(
-            "v1/runtimes/${runtimeId.value}/workspaces/${request.workspaceId.value}/owop",
-        ).build()
+        val url = root.withRelayPath(
+            listOf("v1", "runtimes", runtimeId.value, "workspaces", request.workspaceId.value, "owop"),
+        )
         val token = accessToken()
         val authorized = authorizeRelayRequest(
             deviceProof,

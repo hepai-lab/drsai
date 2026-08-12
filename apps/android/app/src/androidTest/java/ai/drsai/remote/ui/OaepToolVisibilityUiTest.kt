@@ -40,8 +40,9 @@ class OaepToolVisibilityUiTest {
                     sources = listOf(OaepSourceLink("HEPiX search result", "https://www.hepix.org/")),
                 ),
                 OaepProcessItem(
-                    "fetch", "tool", "网页读取", "fetch_timeout", "failed",
-                    detail = "web.fetch", executionLocation = "Android Agent Runtime · Android Host",
+                    "fetch", "tool", "网页读取", "provider_http_408 · api_key=[REDACTED]", "failed",
+                    detail = "web.fetch · Provider request timed out; retry later.",
+                    executionLocation = "Android Agent Runtime · Android Host",
                 ),
                 OaepProcessItem(
                     "delegate", "subtask", "正在委派 · 核验会议日期", "等待 Subagent", "running",
@@ -60,7 +61,9 @@ class OaepToolVisibilityUiTest {
         rule.onNodeWithText("正在搜索网页").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("正在委派 · 核验会议日期").performScrollTo().assertIsDisplayed()
         rule.onAllNodesWithText("执行位置：Android Agent Runtime · Android Host").assertCountEquals(2)
-        rule.onNodeWithText("fetch_timeout").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("provider_http_408 · api_key=[REDACTED]").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("web.fetch · Provider request timed out; retry later.").assertIsDisplayed()
+        rule.onAllNodesWithText("sk-never-render-this-secret").assertCountEquals(0)
         rule.onNodeWithText("HEPiX search result").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("HEPiX 官方来源").performScrollTo().assertIsDisplayed()
 
