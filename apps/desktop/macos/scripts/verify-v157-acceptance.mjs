@@ -46,6 +46,7 @@ const commands = {
 };
 
 const stages = requested === "all" ? stageOrder : [requested];
+const expectedCommandCount = stages.reduce((count, stage) => count + commands[stage].length, 0);
 const results = [];
 let failure;
 for (const stage of stages) {
@@ -63,7 +64,7 @@ for (const stage of stages) {
     if (child.stderr) process.stderr.write(child.stderr);
     const passed = !child.error && child.status === 0;
     results.push({ stage, script, passed, startedAt, durationMs: Date.now() - started, exitCode: child.status });
-    writeReports(requested, results, passed ? undefined : child.error?.message || `${script} exited with ${child.status}`);
+    writeReports(requested, results, passed ? undefined : child.error?.message || `${script} exited with ${child.status}`, false);
     if (!passed) {
       failure = new Error(`macOS v1.5.7 ${stage} acceptance failed at npm run ${script}`);
       break;
@@ -72,22 +73,29 @@ for (const stage of stages) {
   if (failure) break;
 }
 
-writeReports(requested, results, failure?.message);
+if (!failure && results.length !== expectedCommandCount) failure = new Error(`macOS v1.5.7 ${requested} acceptance ended after ${results.length}/${expectedCommandCount} commands`);
+if (!failure) {
+  const bindings = evidenceBindings();
+  if (!bindings.sourceCurrent || !bindings.sourceClean) failure = new Error(`macOS v1.5.7 ${requested} acceptance requires a current clean source snapshot`);
+}
+writeReports(requested, results, failure?.message, true);
 if (failure) throw failure;
 console.log(`macOS v1.5.7 ${requested} acceptance passed (${results.length} commands).`);
 
-function writeReports(scope, commandResults, error) {
+function writeReports(scope, commandResults, error, complete) {
   mkdirSync(acceptance, { recursive: true });
   mkdirSync(reports, { recursive: true });
-  const passed = !error && commandResults.length > 0 && commandResults.every((item) => item.passed);
+  const passed = complete && !error && commandResults.length === expectedCommandCount && commandResults.every((item) => item.passed);
   const bindings = evidenceBindings();
   const receipt = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     testId: `macos-v1.5.7-${scope}`,
     platform: `${process.platform}-${process.arch}`,
     version: "1.5.7",
     ...bindings,
     scope,
+    status: complete ? (passed ? "passed" : "failed") : "running",
+    expectedCommandCount,
     passed,
     error: error || null,
     commands: commandResults,
@@ -104,9 +112,16 @@ function evidenceBindings() {
   let snapshot = {};
   try { snapshot = JSON.parse(readFileSync(snapshotPath, "utf8")); } catch { /* source stage may not have produced it yet */ }
   const executable = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "MacOS", "OpenDrSai");
+  const git = spawnSync("/usr/bin/git", ["rev-parse", "HEAD"], { cwd: resolve(root, "../../.."), encoding: "utf8" });
+  const currentCommit = git.status === 0 ? git.stdout.trim() : null;
+  const scopes = Array.isArray(snapshot.scopes) ? snapshot.scopes : [];
+  const status = scopes.length ? spawnSync("/usr/bin/git", ["status", "--porcelain=v1", "--untracked-files=all", "--", ...scopes], { cwd: resolve(root, "../../.."), encoding: "utf8" }) : null;
+  const sourceCurrent = typeof snapshot.commit === "string" && snapshot.commit === currentCommit;
+  const sourceClean = sourceCurrent && snapshot.clean === true && status?.status === 0 && status.stdout.trim() === "";
   return {
     commit: typeof snapshot.commit === "string" ? snapshot.commit : null,
-    sourceClean: snapshot.clean === true,
+    sourceCurrent,
+    sourceClean,
     sourceFingerprint: typeof snapshot.aggregateSha256 === "string" ? snapshot.aggregateSha256 : null,
     appExecutableSha256: existsSync(executable) ? createHash("sha256").update(readFileSync(executable)).digest("hex") : null,
   };
