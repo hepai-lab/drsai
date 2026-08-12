@@ -391,16 +391,16 @@ api.include_router(
 )
 
 api.include_router(
-<<<<<<<<< Temporary merge branch 1
     releases.router,
     prefix="/releases",
     tags=["releases"],
-=========
+)
+
+api.include_router(
     cloud.router,
     prefix="/cloud",
     tags=["cloud"],
     responses={404: {"description": "Not found"}},
->>>>>>>>> Temporary merge branch 2
 )
 
 # Version endpoint
