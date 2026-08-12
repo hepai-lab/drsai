@@ -103,6 +103,11 @@ for (const contract of ["--preflight", "--assets-only", "--promote-metadata", "-
 for (const contract of ["--head", '"--range", "0-1"', "content-range", "sha256", "OSS/CDN assets are byte-identical", "--pre-promotion", "--metadata-only"]) {
   assert.ok(publishedVerifier.includes(contract), `macOS published-origin verifier omits ${contract}`);
 }
+assert.ok(ossPublisher.includes('const versionPrefix = `releases/v${version}/macos`;'), "macOS OSS publisher must use the canonical release archive prefix.");
+for (const verifier of [publishedVerifier, websiteReleaseVerifier]) {
+  assert.ok(verifier.includes('`releases/${tag}/macos/${'), "macOS production verifier must use the canonical release archive prefix.");
+  assert.equal(verifier.includes('`releases/${tag}/macos/arm64/'), false, "macOS production verifier must not add a directory-level architecture segment when filenames already contain the architecture.");
+}
 for (const contract of ["--origin", "--download-origin", "--release-dir", "latest-mac.yml", "opendrsaiRuntimeVersion", "remote-local-byte-identity", '"stapler", "validate"', '"--assess", "--type", "execute"', "website-release.json"]) {
   assert.ok(websiteReleaseVerifier.includes(contract), `macOS website release verifier omits ${contract}`);
 }

@@ -31,8 +31,8 @@ if (metadataOnly) {
   process.exit(0);
 }
 await assertRemote(new URL(`channels/stable/macos/arm64/${zipName}`, cdn), local.get(zipName), true);
-await assertRemote(new URL(`releases/${tag}/macos/arm64/${zipName}`, cdn), local.get(zipName), true);
-await assertRemote(new URL(`releases/${tag}/macos/arm64/${dmgName}`, cdn), local.get(dmgName), true);
+await assertRemote(new URL(`releases/${tag}/macos/${zipName}`, cdn), local.get(zipName), true);
+await assertRemote(new URL(`releases/${tag}/macos/${dmgName}`, cdn), local.get(dmgName), true);
 
 console.log(`macOS ${version} OSS/CDN assets are byte-identical to the build candidate; HEAD, Range and SHA-256 passed.`);
 

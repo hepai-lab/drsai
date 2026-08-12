@@ -51,7 +51,7 @@ assert.equal(Number(header(zipHead.headers, "content-length")), zipSize, "update
 assertRange(zipUrl, zipSize);
 
 const dmgName = `OpenDrSai-macOS-v${version}-${arch}.dmg`;
-const dmgUrl = new URL(`releases/${tag}/macos/${arch}/${dmgName}`, downloadOrigin);
+const dmgUrl = new URL(`releases/${tag}/macos/${dmgName}`, downloadOrigin);
 const dmgHead = curlHeaders(dmgUrl);
 assertStatus(dmgHead, 200, `DMG ${dmgUrl}`);
 assertRange(dmgUrl, Number(header(dmgHead.headers, "content-length")));
