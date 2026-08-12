@@ -206,9 +206,10 @@ for (const contract of ["OPENDRSAI_MACOS_PACKAGED_SCENARIO", '"tcc"', "microphon
 for (const contract of ["https:", "online-signed-update", "onlineUpdateInstalled: true", "healthConfirmed: true", "userDataPreserved: true", "installedAppExecutableSha256", "codesign"] ) {
   assert.ok(onlineUpdateL6.includes(contract), `macOS signed online update L6 omits ${contract}`);
 }
-for (const contract of ["runtime-bootstrap.json", 'OPENDRSAI_MACOS_PACKAGED_SCENARIO: "smoke"', "waitForVersion", "--user-data-dir=", 'spawnSync("/usr/bin/pkill"']) {
-  assert.ok(onlineUpdateL6.includes(contract), `macOS signed online update L6 does not initialize the previous release Runtime: ${contract}`);
+for (const contract of ["runtime-bootstrap.json", "OPENDRSAI_MACOS_L6_RUNTIME_BOOTSTRAP_APP", "runtimeBootstrapVersion", "runtimeBootstrapUsedPreviousApp", 'OPENDRSAI_MACOS_PACKAGED_SCENARIO: "smoke"', "waitForVersion", "--user-data-dir=", 'spawnSync("/usr/bin/pkill"']) {
+  assert.ok(onlineUpdateL6.includes(contract), `macOS signed online update L6 does not initialize a compatible persisted Runtime: ${contract}`);
 }
+for (const contract of ["value?.ok === false", 'typeof value?.error === "string"', "online update scenario failed"]) assert.ok(onlineUpdateL6.includes(contract), `macOS signed online update L6 omits fail-fast handling: ${contract}`);
 for (const contract of ['scenario === "tcc"', 'requestSystemPermission("microphone")', 'requestSystemPermission("automation")', 'requestSystemPermission("notifications")', 'openSystemPermissionSettings("files")']) {
   assert.ok(read("src/main/packagedSmoke.ts").includes(contract), `macOS packaged TCC scenario omits ${contract}`);
 }
