@@ -22,7 +22,7 @@ const commands = {
     "verify:defects",
     "verify:acceptance",
   ],
-  electron: ["build", "verify:renderer-l3", "verify:macos-ux", "verify:coverage"],
+  electron: ["build", "verify:renderer-l3", "verify:coverage", "verify:macos-ux"],
   packaged: [
     "verify:build-output",
     "verify:packaged",
@@ -64,7 +64,7 @@ for (const stage of stages) {
     if (child.stderr) process.stderr.write(child.stderr);
     const passed = !child.error && child.status === 0;
     results.push({ stage, script, passed, startedAt, durationMs: Date.now() - started, exitCode: child.status });
-    writeReports(requested, results, passed ? undefined : child.error?.message || `${script} exited with ${child.status}`, false);
+    writeReports(requested, results, passed ? undefined : child.error?.message || `${script} exited with ${child.status}`, results.length === expectedCommandCount);
     if (!passed) {
       failure = new Error(`macOS v1.5.7 ${stage} acceptance failed at npm run ${script}`);
       break;
