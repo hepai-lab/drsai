@@ -161,7 +161,7 @@ start_frontend() {
   # 用 bash -lc 注入 GATSBY_DEV_PORT（pm2 --env 只对 ecosystem 环境名有效）
   pm2_up "$PM2_FRONTEND" \
     pm2 start -n "$PM2_FRONTEND" --cwd "$FRONTEND_DIR" \
-      bash -- -lc "export GATSBY_DEV_PORT='$FRONTEND_PORT'; exec yarn develop"
+      bash -- -lc "export GATSBY_DEV_PORT='$FRONTEND_PORT'; exec yarn dev"
   ok "前端已启动"
 }
 
