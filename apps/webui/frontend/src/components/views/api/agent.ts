@@ -1,4 +1,5 @@
 import { getServerUrl } from "../../utils";
+import { getAuthToken } from "../../../utils/authSession";
 
 export class Agent {
     private getBaseUrl(): string {
@@ -6,9 +7,14 @@ export class Agent {
     }
 
     private getHeaders(): HeadersInit {
-        return {
+        const headers: Record<string, string> = {
             "Content-Type": "application/json",
         };
+        const token = getAuthToken();
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
+        return headers;
     }
 
     // get main agent list
@@ -18,9 +24,7 @@ export class Agent {
         const response = await fetch(
             `${this.getBaseUrl()}/agentmode/?user_id=${userId}`,
             {
-                headers: {
-                    "Content-Type": "application/json",
-                },
+                headers: this.getHeaders(),
             }
         );
         const data = await response.json();
@@ -99,9 +103,7 @@ export class Agent {
         const response = await fetch(
             `${this.getBaseUrl()}/agentmode/config/?user_id=${userId}&mode=${mode}`,
             {
-                headers: {
-                    "Content-Type": "application/json",
-                },
+                headers: this.getHeaders(),
             }
         );
         const data = await response.json();

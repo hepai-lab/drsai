@@ -222,11 +222,10 @@ const WelcomePage = () => {
           {isZh ? "您的智能体，随处可用" : "Your agent, everywhere"}
         </p>
         <h1
-          className={`max-w-4xl font-extrabold leading-[1.1] tracking-[-0.045em] sm:text-6xl sm:tracking-[-0.055em] ${
-            isZh
-              ? "whitespace-nowrap text-[clamp(1.5rem,7vw,1.75rem)] sm:whitespace-normal"
-              : "text-3xl min-[390px]:text-4xl"
-          }`}
+          className={`max-w-4xl font-extrabold leading-[1.1] tracking-[-0.045em] sm:text-6xl sm:tracking-[-0.055em] ${isZh
+            ? "whitespace-nowrap text-[clamp(1.5rem,7vw,1.75rem)] sm:whitespace-normal"
+            : "text-3xl min-[390px]:text-4xl"
+            }`}
         >
           {isZh ? "让智能体，随时为您工作" : "Your agent, ready to work for you anytime"}
         </h1>
@@ -238,7 +237,7 @@ const WelcomePage = () => {
 
         <div className="mt-7 flex w-full max-w-md flex-col gap-3 sm:mt-8 sm:flex-row sm:justify-center">
           <a
-            href="https://opendrsai.ihep.ac.cn"
+            href="/login"
             className="group inline-flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-2.5 text-sm font-extrabold text-white no-underline shadow-lg shadow-violet-500/20 transition hover:-translate-y-0.5"
           >
             <span className="inline-flex items-center gap-2 text-white transition group-hover:drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">
@@ -291,11 +290,10 @@ const WelcomePage = () => {
               <button
                 type="button"
                 onClick={() => toggleClient("android")}
-                className={`rounded-md p-0.5 transition hover:bg-emerald-50 dark:hover:bg-white/10 ${
-                  activeClient === "android"
-                    ? "bg-emerald-50 ring-1 ring-emerald-300 dark:bg-emerald-500/15 dark:ring-emerald-500/40"
-                    : ""
-                }`}
+                className={`rounded-md p-0.5 transition hover:bg-emerald-50 dark:hover:bg-white/10 ${activeClient === "android"
+                  ? "bg-emerald-50 ring-1 ring-emerald-300 dark:bg-emerald-500/15 dark:ring-emerald-500/40"
+                  : ""
+                  }`}
                 aria-label="Android"
               >
                 <span className="block scale-100 sm:scale-75">
@@ -326,7 +324,7 @@ const WelcomePage = () => {
               href="/login"
               orderClass="order-2 sm:order-1"
             />
-            <ClientItem
+            {/* <ClientItem
               icon={<WindowsLogo />}
               title="Windows"
               detail={isZh ? "连接本地工作区" : "Connect local workspaces"}
@@ -334,8 +332,8 @@ const WelcomePage = () => {
               active={activeClient === "windows"}
               onClick={() => toggleClient("windows")}
               orderClass="order-3 sm:order-2"
-            />
-            <ClientItem
+            /> */}
+            {/* <ClientItem
               icon={<AndroidLogo />}
               title="Android"
               detail={isZh ? "移动处理与查看进度" : "Work and follow progress"}
@@ -343,15 +341,14 @@ const WelcomePage = () => {
               active={activeClient === "android"}
               onClick={() => toggleClient("android")}
               orderClass="order-1 border-l-0 sm:order-3 sm:border-l"
-            />
+            /> */}
             <button
               type="button"
               onClick={() => toggleClient("terminal")}
-              className={`group order-4 flex min-h-24 min-w-[165px] snap-start items-center gap-3 border-l border-slate-100 p-4 text-left transition first:border-l-0 sm:min-h-36 sm:min-w-0 sm:gap-4 sm:border-l sm:border-t-0 sm:p-5 lg:border-l dark:border-white/5 ${
-                activeClient === "terminal"
-                  ? "bg-violet-50/80 dark:bg-violet-500/10"
-                  : "bg-transparent hover:bg-violet-50/60 dark:hover:bg-violet-500/[0.06]"
-              }`}
+              className={`group order-4 flex min-h-24 min-w-[165px] snap-start items-center gap-3 border-l border-slate-100 p-4 text-left transition first:border-l-0 sm:min-h-36 sm:min-w-0 sm:gap-4 sm:border-l sm:border-t-0 sm:p-5 lg:border-l dark:border-white/5 ${activeClient === "terminal"
+                ? "bg-violet-50/80 dark:bg-violet-500/10"
+                : "bg-transparent hover:bg-violet-50/60 dark:hover:bg-violet-500/[0.06]"
+                }`}
             >
               <span className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-slate-900 text-white dark:bg-white/10">
                 <Terminal className="h-5 w-5" />
@@ -369,11 +366,10 @@ const WelcomePage = () => {
             <button
               type="button"
               onClick={() => toggleClient("macos")}
-              className={`order-5 flex min-h-24 min-w-[165px] snap-start items-center gap-3 border-l border-slate-100 p-4 text-left text-slate-950 transition sm:min-h-36 sm:min-w-0 sm:gap-4 sm:border-l sm:border-t-0 sm:p-5 dark:border-white/5 dark:text-white ${
-                activeClient === "macos"
-                  ? "bg-violet-50/80 dark:bg-violet-500/10"
-                  : "bg-transparent hover:bg-violet-50/60 dark:hover:bg-violet-500/[0.06]"
-              }`}
+              className={`order-5 flex min-h-24 min-w-[165px] snap-start items-center gap-3 border-l border-slate-100 p-4 text-left text-slate-950 transition sm:min-h-36 sm:min-w-0 sm:gap-4 sm:border-l sm:border-t-0 sm:p-5 dark:border-white/5 dark:text-white ${activeClient === "macos"
+                ? "bg-violet-50/80 dark:bg-violet-500/10"
+                : "bg-transparent hover:bg-violet-50/60 dark:hover:bg-violet-500/[0.06]"
+                }`}
             >
               <span className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-slate-100 dark:bg-white/10">
                 <AppleLogo />
@@ -398,8 +394,8 @@ const WelcomePage = () => {
                 onCopy={copyTuiCommand}
                 latestRelease={
                   activeClient === "windows" ||
-                  activeClient === "android" ||
-                  activeClient === "macos"
+                    activeClient === "android" ||
+                    activeClient === "macos"
                     ? latestReleases[activeClient]
                     : undefined
                 }
@@ -550,21 +546,18 @@ const ProductShowcase = ({
       </ul>
     </div>
     <figure
-      className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-[0_28px_80px_-38px_rgba(76,29,149,0.42)] dark:border-white/10 dark:bg-white/[0.06] ${
-        portrait ? "flex justify-center bg-gradient-to-br from-violet-50 to-slate-100 py-8 dark:from-violet-950/30 dark:to-slate-900" : ""
-      } ${
-        reverse ? "lg:order-1" : ""
-      }`}
+      className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-[0_28px_80px_-38px_rgba(76,29,149,0.42)] dark:border-white/10 dark:bg-white/[0.06] ${portrait ? "flex justify-center bg-gradient-to-br from-violet-50 to-slate-100 py-8 dark:from-violet-950/30 dark:to-slate-900" : ""
+        } ${reverse ? "lg:order-1" : ""
+        }`}
     >
       <img
         src={image}
         alt={imageAlt}
         loading="lazy"
-        className={`block h-auto rounded-xl ${
-          portrait
-            ? "w-[min(72%,20rem)] shadow-[0_20px_60px_-28px_rgba(15,23,42,0.55)]"
-            : "w-full"
-        }`}
+        className={`block h-auto rounded-xl ${portrait
+          ? "w-[min(72%,20rem)] shadow-[0_20px_60px_-28px_rgba(15,23,42,0.55)]"
+          : "w-full"
+          }`}
       />
     </figure>
   </article>
@@ -648,25 +641,24 @@ const ClientItem = ({
 }: ClientItemProps) => {
   const content = (
     <>
-    <span className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-slate-100 dark:bg-white/10">
-      {icon}
-    </span>
-    <span className="min-w-0 flex-1">
-      <span className="block font-extrabold">{title}</span>
-      <span className="mt-1 block text-xs font-medium text-slate-400">
-        {detail}
+      <span className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-slate-100 dark:bg-white/10">
+        {icon}
       </span>
-    </span>
-    <span className="hidden flex-none text-xs font-extrabold text-violet-700 sm:inline dark:text-violet-300">
-      {action}
-    </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-extrabold">{title}</span>
+        <span className="mt-1 block text-xs font-medium text-slate-400">
+          {detail}
+        </span>
+      </span>
+      <span className="hidden flex-none text-xs font-extrabold text-violet-700 sm:inline dark:text-violet-300">
+        {action}
+      </span>
     </>
   );
-  const className = `group ${orderClass} flex min-h-24 min-w-[165px] snap-start items-center gap-3 border-l border-slate-100 p-4 text-left text-slate-950 no-underline transition first:border-l-0 sm:min-h-36 sm:min-w-0 sm:gap-4 sm:border-l sm:border-t-0 sm:p-5 sm:first:border-l-0 lg:first:border-l-0 dark:border-white/5 dark:text-white ${
-    active
-      ? "bg-violet-50/80 dark:bg-violet-500/10"
-      : "bg-transparent hover:bg-violet-50/60 dark:hover:bg-violet-500/[0.06]"
-  }`;
+  const className = `group ${orderClass} flex min-h-24 min-w-[165px] snap-start items-center gap-3 border-l border-slate-100 p-4 text-left text-slate-950 no-underline transition first:border-l-0 sm:min-h-36 sm:min-w-0 sm:gap-4 sm:border-l sm:border-t-0 sm:p-5 sm:first:border-l-0 lg:first:border-l-0 dark:border-white/5 dark:text-white ${active
+    ? "bg-violet-50/80 dark:bg-violet-500/10"
+    : "bg-transparent hover:bg-violet-50/60 dark:hover:bg-violet-500/[0.06]"
+    }`;
 
   return href ? (
     <a href={href} className={className}>
@@ -811,26 +803,26 @@ const ClientDetails = ({
   const fallbackRelease = releases[active];
   const release = latestRelease
     ? {
-        ...fallbackRelease,
-        version: `v${latestRelease.version}`,
-        channel: latestRelease.channel,
-        file: latestRelease.download.file,
-        sizeBytes: latestRelease.download.sizeBytes,
-        sha256:
-          latestRelease.program?.sha256 ||
-          latestRelease.download.sha256 ||
-          fallbackRelease.sha256,
-        href: latestRelease.download.url,
-        ...("programFile" in fallbackRelease
-          ? {
-              programFile:
-                latestRelease.program?.file || fallbackRelease.programFile,
-              programSizeBytes:
-                latestRelease.program?.sizeBytes ||
-                fallbackRelease.programSizeBytes,
-            }
-          : {}),
-      }
+      ...fallbackRelease,
+      version: `v${latestRelease.version}`,
+      channel: latestRelease.channel,
+      file: latestRelease.download.file,
+      sizeBytes: latestRelease.download.sizeBytes,
+      sha256:
+        latestRelease.program?.sha256 ||
+        latestRelease.download.sha256 ||
+        fallbackRelease.sha256,
+      href: latestRelease.download.url,
+      ...("programFile" in fallbackRelease
+        ? {
+          programFile:
+            latestRelease.program?.file || fallbackRelease.programFile,
+          programSizeBytes:
+            latestRelease.program?.sizeBytes ||
+            fallbackRelease.programSizeBytes,
+        }
+        : {}),
+    }
     : fallbackRelease;
   return (
     <div className="border-t border-slate-200/80 p-6 dark:border-white/10 sm:p-8">
