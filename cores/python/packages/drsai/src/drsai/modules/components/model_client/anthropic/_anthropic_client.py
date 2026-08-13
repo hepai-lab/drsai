@@ -84,6 +84,8 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         if credential:
             kwargs["api_key"] = credential.access_token
             kwargs["base_url"] = credential.anthropic_base_url
+            if credential.delegation_headers:
+                kwargs["default_headers"] = credential.delegation_headers
         elif not kwargs.get("api_key"):
             kwargs["api_key"] = "opendrsai-oidc-pending"
             self._oidc_credential_pending = True
@@ -97,6 +99,8 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             return
         self._client.api_key = credential.access_token
         self._client.base_url = credential.anthropic_base_url
+        if credential.delegation_headers:
+            self._client._custom_headers = credential.delegation_headers
         self._oidc_credential_pending = False
 
     async def create(self, *args: Any, **kwargs: Any):

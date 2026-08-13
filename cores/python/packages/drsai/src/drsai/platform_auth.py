@@ -10,8 +10,9 @@ import urllib.request
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
-from typing import Iterator, Protocol
+from dataclasses import dataclass, field as dataclass_field
+from typing import FrozenSet, Iterator, Protocol
+from pydantic import SecretStr
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,33 @@ class PlatformAuthContext:
         return f"{self.model_base_url.removesuffix('/v1')}/anthropic"
 
 
+@dataclass(frozen=True)
+class DelegatedCredentialContext:
+    access_token: SecretStr | str = dataclass_field(repr=False)
+    token_type: str = "Bearer"
+    expires_at: int = 0
+    audience: str = "hai-model-gateway"
+    invocation_id: str = ""
+    subject: str = ""
+    worker_id: str = ""
+    allowed_models: FrozenSet[str] = frozenset()
+    allowed_operations: FrozenSet[str] = frozenset()
+    model_base_url: str = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+
+    def __post_init__(self) -> None:
+        if isinstance(self.access_token, str):
+            object.__setattr__(self, "access_token", SecretStr(self.access_token))
+        if self.token_type != "Bearer" or self.audience != "hai-model-gateway":
+            raise ValueError("invalid_delegated_credential")
+        if self.expires_at <= int(time.time()):
+            raise ValueError("delegation_expired")
+        if not self.model_base_url.startswith("https://ai-dev.ihep.ac.cn/"):
+            raise ValueError("delegation_host_not_allowed")
+
+    def __reduce__(self):
+        raise TypeError("delegated credentials cannot be pickled")
+
+
 class ModelCredentialProvider(Protocol):
     @property
     def access_token(self) -> str: ...
@@ -39,6 +67,9 @@ class ModelCredentialProvider(Protocol):
 
     @property
     def anthropic_base_url(self) -> str: ...
+
+    @property
+    def delegation_headers(self) -> dict[str, str]: ...
 
 
 @dataclass(frozen=True)
@@ -57,6 +88,34 @@ class OidcModelCredentialProvider:
     def anthropic_base_url(self) -> str:
         return self.context.anthropic_base_url
 
+    @property
+    def delegation_headers(self) -> dict[str, str]:
+        return {}
+
+
+@dataclass(frozen=True)
+class DelegatedModelCredentialProvider:
+    context: DelegatedCredentialContext
+
+    @property
+    def access_token(self) -> str:
+        return self.context.access_token.get_secret_value()
+
+    @property
+    def openai_base_url(self) -> str:
+        return self.context.model_base_url
+
+    @property
+    def anthropic_base_url(self) -> str:
+        return f"{self.context.model_base_url.removesuffix('/v1')}/anthropic"
+
+    @property
+    def delegation_headers(self) -> dict[str, str]:
+        return {
+            "X-HepAI-Delegation-Worker-ID": self.context.worker_id,
+            "X-HepAI-Delegation-Invocation-ID": self.context.invocation_id,
+        }
+
 
 @dataclass(frozen=True)
 class StaticModelCredentialProvider:
@@ -67,11 +126,18 @@ class StaticModelCredentialProvider:
     def anthropic_base_url(self) -> str:
         return self.openai_base_url
 
+    @property
+    def delegation_headers(self) -> dict[str, str]:
+        return {}
+
 
 def get_model_credential_provider(
     fallback_token: str | None = None,
     fallback_base_url: str | None = None,
 ) -> ModelCredentialProvider | None:
+    delegated = get_delegated_credential()
+    if delegated:
+        return DelegatedModelCredentialProvider(delegated)
     context = get_platform_auth()
     if context:
         return OidcModelCredentialProvider(context)
@@ -89,9 +155,50 @@ _platform_auth: ContextVar[PlatformAuthContext | None] = ContextVar(
     default=None,
 )
 
+_delegated_credential: ContextVar[DelegatedCredentialContext | None] = ContextVar(
+    "drsai_delegated_credential", default=None,
+)
+
 
 def get_platform_auth() -> PlatformAuthContext | None:
     return _platform_auth.get()
+
+
+def get_delegated_credential() -> DelegatedCredentialContext | None:
+    local = _delegated_credential.get()
+    if local is not None:
+        return local
+    # Remote Workers bind the transport credential in HepAI's request context.
+    # Import lazily so local/CLI DrSai remains independent of the Worker SDK.
+    try:
+        from hepai.tools.request_context import get_remote_call_context
+        remote = get_remote_call_context()
+        delegated = remote.delegation if remote else None
+    except (ImportError, AttributeError):
+        return None
+    if delegated is None:
+        return None
+    return DelegatedCredentialContext(
+        access_token=delegated.access_token,
+        token_type=delegated.token_type,
+        expires_at=delegated.expires_at,
+        audience=delegated.audience,
+        invocation_id=delegated.invocation_id,
+        subject=delegated.subject,
+        worker_id=delegated.worker_id,
+        allowed_models=frozenset(delegated.allowed_models),
+        allowed_operations=frozenset(delegated.allowed_operations),
+    )
+
+
+@contextmanager
+def delegated_credential_scope(context: DelegatedCredentialContext) -> Iterator[None]:
+    """Bind a Worker-verified credential to exactly one remote-call lifetime."""
+    token = _delegated_credential.set(context)
+    try:
+        yield
+    finally:
+        _delegated_credential.reset(token)
 
 
 @contextmanager
