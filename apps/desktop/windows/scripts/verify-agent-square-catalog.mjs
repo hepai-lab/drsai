@@ -105,6 +105,7 @@ assert.equal(merged.find((agent) => agent.id === "platform:featured").name, "Alp
 
 const unsafeRuntimeAgent = {
   ...defaultPlatform,
+  author: "Agent Research Team",
   localizedDescription: { en: "English", zh: "中文" },
   url: "https://private.invalid",
   api_key: "MUST_NOT_REACH_CACHE",
@@ -122,15 +123,16 @@ assert.equal(payload.agents[0].mode, "ddf");
 assert.deepEqual(payload.agents[0].localizedDescription, { en: "English", zh: "中文" });
 
 const parsed = parsePublicAgentCachePayload(JSON.parse(serialized));
-assert.equal(parsed.version, 1);
+assert.equal(parsed.version, 2);
 assert.equal(parsed.savedAt, "2026-07-14T00:00:00.000Z");
 assert.equal(parsed.agents[0].id, "platform:default");
+assert.equal(parsed.agents[0].author, "Agent Research Team");
 assert.deepEqual(parsed.agents[0].localizedDescription, { en: "English", zh: "中文" });
-assert.equal(parsePublicAgentCachePayload({ version: 2, agents: [] }), null);
-assert.equal(parsePublicAgentCachePayload({ version: 1, savedAt: 4, agents: [] }), null);
+assert.equal(parsePublicAgentCachePayload({ version: 1, agents: [] }), null);
+assert.equal(parsePublicAgentCachePayload({ version: 2, savedAt: 4, agents: [] }), null);
 
 const poisonedPlatformCache = parsePublicAgentCachePayload({
-  version: 1,
+  version: 2,
   savedAt: "2026-07-14T00:00:00.000Z",
   agents: [{
     id: "platform:must-stay-remote",
@@ -144,7 +146,7 @@ assert.equal(poisonedPlatformCache.agents[0].source, "remote", "HAI cache record
 assert.equal(poisonedPlatformCache.agents[0].catalogGroup, "official", "HAI cache records must never enter the local group");
 
 const staleSyntheticCache = parsePublicAgentCachePayload({
-  version: 1,
+  version: 2,
   savedAt: "2026-07-14T00:00:00.000Z",
   agents: [
     { id: "platform:hai.native.ddf", name: "Synthetic DDF", source: "remote", status: "running" },
@@ -154,7 +156,7 @@ const staleSyntheticCache = parsePublicAgentCachePayload({
 assert.deepEqual(staleSyntheticCache.agents.map((agent) => agent.id), ["platform:real-ddf"], "stale synthetic HAI templates must not be restored");
 
 const legacyLocalizedCache = parsePublicAgentCachePayload({
-  version: 1,
+  version: 2,
   savedAt: "2026-07-14T00:00:00.000Z",
   agents: [{
     id: "platform:legacy-localized",
@@ -174,7 +176,7 @@ assert(agentSource.includes("PLATFORM_CACHE_TTL_MS"), "catalog cache TTL is miss
 assert(agentSource.includes("PLATFORM_MEMORY_TTL_MS") && agentSource.includes("getOrCreateCatalogFlight"), "platform memory TTL or single-flight is missing");
 assert(agentSource.includes("platformCachePath(subjectKey)") && agentSource.includes("createPlatformCatalogSubjectKey"), "platform cache is not scoped to the verified OIDC subject");
 assert(agentSource.includes("createPublicAgentCachePayload"), "public-only cache serializer is not used");
-assert(agentSource.includes("const gateway = await getGatewayStatus()") && agentSource.includes("if (!gateway.ready) return agents;"), "catalog discovery must use a fresh read-only probe without starting a cold local Runtime");
+assert(agentSource.includes("const gateway = getGatewaySnapshot()") && agentSource.includes("if (!gateway.ready) return agents;"), "catalog discovery must use a fresh read-only snapshot without starting a cold local Runtime");
 assert(!agentSource.includes("listRemoteAgents"), "Agent Square must not merge legacy local remote-agent files");
 assert(!agentSource.includes("remote_agents.json"), "Agent Square must source non-local agents exclusively from HAI");
 assert(preloadSource.includes('ipcRenderer.invoke("desktop:list-agents", options)'), "refresh options do not cross IPC");

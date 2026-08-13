@@ -2693,8 +2693,7 @@ function AuthenticatedApp({
               agent,
             }).then((selected) => {
               if (!selected) return;
-              setRightPanelCollapsed(true);
-              navigateTo(MENU_IDS.currentSession);
+              void handleNewChat();
             });
           }}
         />

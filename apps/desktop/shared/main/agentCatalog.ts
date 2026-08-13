@@ -12,7 +12,7 @@ export interface PlatformAgentExecutionDescriptor {
 }
 
 export interface PlatformAgentCachePayload {
-  version: 1;
+  version: 2;
   savedAt: string;
   agents: DesktopAgent[];
 }
@@ -66,7 +66,7 @@ export function createPublicAgentCachePayload(
   savedAt: string,
 ): PlatformAgentCachePayload {
   return {
-    version: 1,
+    version: 2,
     savedAt,
     agents: agents.map(toCacheSafeAgent),
   };
@@ -75,13 +75,13 @@ export function createPublicAgentCachePayload(
 export function parsePublicAgentCachePayload(value: unknown): PlatformAgentCachePayload | null {
   if (!value || typeof value !== "object") return null;
   const payload = value as Partial<PlatformAgentCachePayload>;
-  if (payload.version !== 1 || typeof payload.savedAt !== "string" || !Array.isArray(payload.agents)) {
+  if (payload.version !== 2 || typeof payload.savedAt !== "string" || !Array.isArray(payload.agents)) {
     return null;
   }
   const agents = payload.agents
     .map(readCacheSafeAgent)
     .filter((agent): agent is DesktopAgent => agent !== null);
-  return { version: 1, savedAt: payload.savedAt, agents };
+  return { version: 2, savedAt: payload.savedAt, agents };
 }
 
 function compareAgents(left: DesktopAgent, right: DesktopAgent): number {
@@ -103,6 +103,7 @@ function toCacheSafeAgent(agent: DesktopAgent): DesktopAgent {
     description: agent.description,
     localizedDescription: agent.localizedDescription ? { ...agent.localizedDescription } : undefined,
     owner: agent.owner,
+    author: agent.author,
     source: agent.source,
     status: agent.status,
     mode: agent.mode,
@@ -138,6 +139,7 @@ function readCacheSafeAgent(value: unknown): DesktopAgent | null {
     description: description.fallback,
     localizedDescription: description.localized,
     owner: typeof record.owner === "string" ? record.owner : "OpenDrSai",
+    author: stringValue(record.author),
     // This parser is used only for the HAI platform cache. Never trust a
     // persisted source/group field enough to turn a platform record into a
     // local agent; OpenDrSai is reconstructed independently from this device.
