@@ -34,6 +34,8 @@ const macWindow = read("src/main/bootstrap/createWindow.ts");
 const packagedSmoke = read("scripts/verify-packaged-smoke.mjs");
 const packagedL5 = read("scripts/verify-packaged-l5.mjs");
 const sleepWakeDevice = read("scripts/verify-sleep-wake-real-device.mjs");
+const keychainLockDevice = read("scripts/verify-keychain-lock-cycle.mjs");
+const keychainProbe = read("scripts/helpers/keychain-noninteractive-probe.swift");
 const releaseL6 = read("scripts/verify-release-l6.mjs");
 const dmgNotarizer = read("scripts/notarize-dmg.mjs");
 const tccL6 = read("scripts/verify-tcc-real-device.mjs");
@@ -190,6 +192,12 @@ for (const contract of ["Apple Silicon macOS hardware", "Put this Mac to sleep",
 for (const contract of ["OPENDRSAI_MACOS_SLEEP_WAKE_ROUNDS", "formalTwentyRoundRequirementSatisfied", "scheduleAutomaticWakeAndSleep", "userDataSha256Before", "userDataSha256After"]) {
   assert.ok(sleepWakeDevice.includes(contract), `macOS formal sleep/wake matrix omits ${contract}`);
 }
+for (const contract of ["/private/tmp/opendrsai-keychain-cycle-", "authenticationUiDisabled: true", "lockedSecretRefused: true", "unlockedSecretRecovered: true", "secretMaterialRecorded: false"]) {
+  assert.ok(keychainLockDevice.includes(contract), `macOS Keychain lock-cycle verifier omits ${contract}`);
+}
+for (const contract of ["SecKeychainSetUserInteractionAllowed(false)", "authenticationContext.interactionNotAllowed = true", "SecKeychainCreate", "SecKeychainLock", "SecKeychainUnlock", "SecKeychainDelete", "locked.status != errSecSuccess", "deleted.status == errSecItemNotFound"]) {
+  assert.ok(keychainProbe.includes(contract), `macOS Keychain lock-cycle probe omits headless lifecycle contract ${contract}`);
+}
 for (const contract of ["verify:v1.5.7:source", "verify:v1.5.7:electron", "verify:v1.5.7:device", "verify:v1.5.7:packaged", "verify:v1.5.7:update", "verify:v1.5.7:release", "verify:v1.5.7:all", "record:stability-matrix"]) {
   assert.ok(packageJson.scripts[contract], `macOS package scripts omit ${contract}`);
 }
@@ -228,6 +236,7 @@ for (const path of [
   "scripts/verify-packaged-l5.mjs",
   "scripts/verify-sleep-wake-real-device.mjs",
   "scripts/verify-keychain-lock-cycle.mjs",
+  "scripts/helpers/keychain-noninteractive-probe.swift",
   "scripts/record-v157-acceptance.mjs",
   "scripts/run-v157-acceptance.mjs",
   "../shared/test-kit/record-macos-l5-evidence.mjs",

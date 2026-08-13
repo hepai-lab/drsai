@@ -43,6 +43,7 @@ assert.ok(["granted", "denied"].includes(tcc.automationState));
 assert.equal(tcc.notificationShowEventObserved, true);
 assert.equal(tcc.filesSettingsOpened, true);
 const keychain = receipts.find(({ receipt }) => receipt.testId === "keychain-lock-cycle").receipt;
+assert.equal(keychain.authenticationUiDisabled, true);
 assert.equal(keychain.lockedSecretRefused, true);
 assert.equal(keychain.unlockedSecretRecovered, true);
 assert.equal(keychain.deletedSecretRefused, true);
