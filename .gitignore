@@ -319,6 +319,8 @@ notebooks/test.db
 .runtime-tools/
 .tooling/
 .worktrees/
+# Locally downloaded release utilities (for example, ossutil).
+.tools/
 apps/desktop/macos/native/OpenDrSaiNativeHelper/.build/
 apps/desktop/macos/release-unsigned-update/
 
