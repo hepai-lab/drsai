@@ -53,8 +53,8 @@ function removeGeneratedRuntime() {
   for (const name of readdirSync(outputRoot)) {
     if (
       name === "runtime-manifest.json"
-      || /^runtime-(?:sbom|provenance)-\d+\.\d+\.\d+\.json$/.test(name)
-      || /^opendrsai-runtime-macos-arm64-\d+\.\d+\.\d+\.tar\.gz$/.test(name)
+      || /^runtime-(?:sbom|provenance)-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\.json$/.test(name)
+      || /^opendrsai-runtime-macos-arm64-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\.tar\.gz$/.test(name)
     ) rmSync(join(outputRoot, name), { force: true });
   }
 }

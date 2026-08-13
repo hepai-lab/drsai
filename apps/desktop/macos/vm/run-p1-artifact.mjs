@@ -4,7 +4,7 @@ import { extractFile } from "@electron/asar";
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const vmDir = dirname(fileURLToPath(import.meta.url));
@@ -297,14 +297,28 @@ try {
   summary.artifact.appAsarSha256 = appAsarSha256;
   summary.artifact.executableSha256 = executableSha256;
 
-  const runtimeProvenanceText = guestShell(
+  const runtimeRoot = `${mountedApp}/Contents/Resources/runtime`;
+  const runtimeManifest = JSON.parse(guest(vmName, "/bin/cat", [`${runtimeRoot}/runtime-manifest.json`]).stdout);
+  if (runtimeManifest.version !== args.version) throw new Error(`Runtime manifest version mismatch: ${runtimeManifest.version}`);
+  const runtimeArtifacts = [runtimeManifest.archive, runtimeManifest.sbom, runtimeManifest.provenance];
+  for (const name of runtimeArtifacts) {
+    if (typeof name !== "string" || basename(name) !== name) throw new Error(`Runtime manifest contains an unsafe artifact name: ${name}`);
+  }
+  const packagedRuntimeFiles = guestShell(
     vmName,
-    `runtime_provenance=$(/usr/bin/find ${shellQuote(`${mountedApp}/Contents/Resources/runtime`)} -maxdepth 1 -name 'runtime-provenance-*.json' -print -quit); test -n "$runtime_provenance"; /bin/cat "$runtime_provenance"`,
-  ).stdout;
+    `/usr/bin/find ${shellQuote(runtimeRoot)} -maxdepth 1 -type f \( -name 'opendrsai-runtime-macos-arm64-*.tar.gz' -o -name 'runtime-sbom-*.json' -o -name 'runtime-provenance-*.json' \) -exec /usr/bin/basename {} \; | /usr/bin/sort`,
+  ).stdout.split("\n").filter(Boolean);
+  const expectedRuntimeFiles = [...runtimeArtifacts].sort();
+  if (JSON.stringify(packagedRuntimeFiles) !== JSON.stringify(expectedRuntimeFiles)) {
+    throw new Error(`Packaged Runtime contains stale or missing artifacts: ${packagedRuntimeFiles.join(", ")}`);
+  }
+  const runtimeProvenanceText = guest(vmName, "/bin/cat", [`${runtimeRoot}/${runtimeManifest.provenance}`]).stdout;
   const runtimeProvenance = JSON.parse(runtimeProvenanceText);
   if (runtimeProvenance.gitCommit !== args.commit) throw new Error(`Runtime commit mismatch: ${runtimeProvenance.gitCommit}`);
   if (runtimeProvenance.version !== args.version) throw new Error(`Runtime version mismatch: ${runtimeProvenance.version}`);
   summary.runtimeProvenance = runtimeProvenance;
+  summary.runtimeManifest = runtimeManifest;
+  summary.checks.runtimePackageHygiene = true;
 
   const asarPath = resolve(evidenceDir, "app.asar");
   const buildMetadata = JSON.parse(extractFile(asarPath, "out/build-metadata.json").toString("utf8"));
