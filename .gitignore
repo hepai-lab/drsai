@@ -273,6 +273,8 @@ data
 !apps/android/app/src/main/java/ai/drsai/remote/remote/data/**
 runs
 node_modules
+# Legacy/local Gatsby frontend workspace generated at the repository root.
+/frontend/
 database.sqlite
 .cache/*
 src/magentic_ui/backend/web/files/user/*
