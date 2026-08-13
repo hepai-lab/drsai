@@ -11,10 +11,11 @@ const output = join(acceptance, "model-provider-real-opt-in.json");
 const temp = mkdtempSync(join(tmpdir(), "opendrsai-hepai-provider-"));
 const resultPath = join(temp, "result.json");
 const userData = join(temp, "electron-user-data");
+const packageVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 let releaseMount;
 let appBundle = resolve(process.env.OPENDRSAI_MACOS_APP_PATH || join(root, "release", "mac-arm64", "OpenDrSai.app"));
 if (!process.env.OPENDRSAI_MACOS_APP_PATH && !hasRuntimeArchive(appBundle)) {
-  const dmg = join(root, "release", "OpenDrSai-macOS-v1.5.7-arm64.dmg");
+  const dmg = join(root, "release", `OpenDrSai-macOS-v${packageVersion}-arm64.dmg`);
   assert.ok(existsSync(dmg), `HepAI Provider acceptance requires ${dmg}`);
   releaseMount = mkdtempSync(join(tmpdir(), "opendrsai-hepai-provider-dmg-"));
   const attached = spawnSync("/usr/bin/hdiutil", ["attach", dmg, "-readonly", "-nobrowse", "-mountpoint", releaseMount], { encoding: "utf8" });

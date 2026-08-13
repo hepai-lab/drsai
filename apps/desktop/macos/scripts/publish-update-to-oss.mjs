@@ -5,12 +5,20 @@ import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const execute = process.argv.includes("--execute");
+const beta = process.argv.includes("--beta");
 const assetsOnly = process.argv.includes("--assets-only");
 const metadataOnly = process.argv.includes("--promote-metadata");
 const snapshotStable = process.argv.includes("--snapshot-stable");
 const rollbackMetadata = process.argv.includes("--rollback-metadata");
 const preflight = process.argv.includes("--preflight");
 assert.equal(assetsOnly && metadataOnly, false, "Choose either --assets-only or --promote-metadata.");
+if (beta) {
+  assert.equal(
+    assetsOnly || metadataOnly || snapshotStable || rollbackMetadata || preflight,
+    false,
+    "--beta publishes only the immutable release candidate; stable publication flags are not allowed.",
+  );
+}
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const release = resolve(valueAfter("--release-dir") || join(root, "release"));
 const bucket = process.env.OPENDRSAI_OSS_BUCKET?.trim() || "hepai-release";
@@ -21,6 +29,7 @@ assert.ok(existsSync(metadata), `Missing ${metadata}`);
 const source = readFileSync(metadata, "utf8");
 const version = capture(source, /^version:\s*([^\s]+)\s*$/m, "version");
 assert.match(version, /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/);
+if (beta) assert.match(version, /-/, "--beta requires a prerelease version such as 1.5.8-beta.1.");
 const zipName = capture(source, /^path:\s*(.+?)\s*$/m, "path");
 assert.equal(zipName, `OpenDrSai-macOS-v${version}-arm64.zip`);
 const dmgName = `OpenDrSai-macOS-v${version}-arm64.dmg`;
@@ -54,13 +63,20 @@ const allCommands = [
   upload(metadata, historyKey, "public, max-age=31536000, immutable"),
   upload(metadata, `${channelPrefix}/latest-mac.yml`, "public, max-age=30, must-revalidate"),
 ];
-const commands = assetsOnly ? allCommands.slice(0, -1) : metadataOnly ? allCommands.slice(-1) : allCommands;
+const betaCommands = [
+  upload(join(release, dmgName), `${versionPrefix}/${dmgName}`, "public, max-age=31536000, immutable"),
+  upload(join(release, zipName), `${versionPrefix}/${zipName}`, "public, max-age=31536000, immutable"),
+  upload(metadata, `${versionPrefix}/latest-mac.yml`, "public, max-age=31536000, immutable"),
+];
+const commands = beta ? betaCommands : assetsOnly ? allCommands.slice(0, -1) : metadataOnly ? allCommands.slice(-1) : allCommands;
 
-const plan = { schemaVersion: 1, platform: "darwin-arm64", version, bucket, execute, phase: assetsOnly ? "assets" : metadataOnly ? "stable-metadata" : "complete", metadataLast: true, commands: commands.map(({ display }) => display) };
+const plan = { schemaVersion: 1, platform: "darwin-arm64", version, bucket, execute, phase: beta ? "beta-candidate" : assetsOnly ? "assets" : metadataOnly ? "stable-metadata" : "complete", metadataLast: true, stableUnchanged: beta, commands: commands.map(({ display }) => display) };
 console.log(JSON.stringify(plan, null, 2));
 if (!execute) process.exit(0);
 for (const command of commands) run(command);
-console.log(`Published macOS ${version} assets; stable metadata was uploaded last.`);
+console.log(beta
+  ? `Published immutable macOS ${version} beta candidate; stable channel was not changed.`
+  : `Published macOS ${version} assets; stable metadata was uploaded last.`);
 
 function upload(local, key, cacheControl) {
   const target = `oss://${bucket}/${key}`;

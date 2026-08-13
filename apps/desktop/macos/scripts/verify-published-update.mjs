@@ -7,8 +7,12 @@ import { spawnSync } from "node:child_process";
 
 const release = resolve(requiredArg("--release-dir"));
 const tag = requiredArg("--tag");
+const beta = process.argv.includes("--beta");
 const prePromotion = process.argv.includes("--pre-promotion");
 const metadataOnly = process.argv.includes("--metadata-only");
+if (beta) {
+  assert.equal(prePromotion || metadataOnly, false, "--beta cannot be combined with stable-channel verification flags.");
+}
 const cdn = new URL(process.env.OPENDRSAI_MACOS_CDN_BASE_URL?.trim() || "https://download-opendrsai.ihep.ac.cn/");
 assert.equal(cdn.protocol, "https:");
 const metadataPath = join(release, "latest-mac.yml");
@@ -16,6 +20,7 @@ const metadata = readFileSync(metadataPath);
 const metadataText = metadata.toString("utf8");
 const version = capture(metadataText, /^version:\s*([^\s]+)\s*$/m, "version");
 assert.equal(tag, `v${version}`);
+if (beta) assert.match(version, /-/, "--beta requires prerelease metadata.");
 const zipName = capture(metadataText, /^path:\s*(.+?)\s*$/m, "path");
 const dmgName = `OpenDrSai-macOS-v${version}-arm64.dmg`;
 const local = new Map([
@@ -24,17 +29,19 @@ const local = new Map([
   ["latest-mac.yml", await fileIdentity(metadataPath)],
 ]);
 
-const metadataKey = prePromotion ? `channels/history/macos/arm64/v${version}/latest-mac.yml` : "channels/stable/macos/arm64/latest-mac.yml";
+const releasePrefix = `releases/${tag}/macos`;
+const metadataKey = beta ? `${releasePrefix}/latest-mac.yml` : prePromotion ? `channels/history/macos/arm64/v${version}/latest-mac.yml` : "channels/stable/macos/arm64/latest-mac.yml";
 await assertRemote(new URL(metadataKey, cdn), local.get("latest-mac.yml"), true);
 if (metadataOnly) {
   console.log(`macOS ${version} stable metadata promotion passed HEAD, Range and SHA-256.`);
   process.exit(0);
 }
-await assertRemote(new URL(`channels/stable/macos/arm64/${zipName}`, cdn), local.get(zipName), true);
+if (!beta) await assertRemote(new URL(`channels/stable/macos/arm64/${zipName}`, cdn), local.get(zipName), true);
 await assertRemote(new URL(`releases/${tag}/macos/${zipName}`, cdn), local.get(zipName), true);
 await assertRemote(new URL(`releases/${tag}/macos/${dmgName}`, cdn), local.get(dmgName), true);
 
-console.log(`macOS ${version} OSS/CDN assets are byte-identical to the build candidate; HEAD, Range and SHA-256 passed.`);
+if (beta) console.log(`macOS ${version} beta candidate is byte-identical to the build candidate; HEAD, Range and SHA-256 passed.`);
+else console.log(`macOS ${version} OSS/CDN assets are byte-identical to the build candidate; HEAD, Range and SHA-256 passed.`);
 
 async function assertRemote(url, expected, requireRange) {
   const head = curl(["--head", url.toString()]);

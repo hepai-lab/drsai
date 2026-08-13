@@ -9,10 +9,11 @@ import { createServer } from "node:net";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Sleep/wake acceptance requires Apple Silicon macOS hardware.");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const packageVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 let releaseMount;
 let appBundle = resolve(process.env.OPENDRSAI_MACOS_APP_PATH || join(root, "release", "mac-arm64", "OpenDrSai.app"));
 if (!process.env.OPENDRSAI_MACOS_APP_PATH && !hasRuntimeArchive(appBundle)) {
-  const dmg = join(root, "release", "OpenDrSai-macOS-v1.5.7-arm64.dmg");
+  const dmg = join(root, "release", `OpenDrSai-macOS-v${packageVersion}-arm64.dmg`);
   assert.ok(existsSync(dmg), `Sleep/wake full Runtime DMG is missing: ${dmg}`);
   releaseMount = mkdtempSync(join(tmpdir(), "opendrsai-macos-sleep-wake-dmg-"));
   const attached = spawnSync("/usr/bin/hdiutil", ["attach", dmg, "-readonly", "-nobrowse", "-mountpoint", releaseMount], { encoding: "utf8" });

@@ -18,7 +18,7 @@ const version = requiredArg("--version");
 const arch = requiredArg("--arch");
 const releaseDir = resolve(requiredArg("--release-dir"));
 const tag = `v${version}`;
-assert.equal(arch, "arm64", "v1.5.7 production release only supports arm64");
+assert.equal(arch, "arm64", "macOS production release currently supports arm64 only");
 
 const metadataUrl = new URL("channels/stable/macos/arm64/latest-mac.yml", downloadOrigin);
 const metadataResponse = curlText(metadataUrl, ["--location", "--write-out", "\n%{url_effective}"]);
