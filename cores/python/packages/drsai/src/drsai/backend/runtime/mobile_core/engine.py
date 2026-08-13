@@ -20,7 +20,7 @@ else:
 from .protocol import MessageType, RuntimeEnvelope
 from .plan_state import event_kind as plan_event_kind, normalize_plan_state, normalize_plan_update
 from .subagents import build_subagent_scheduling_policy
-from .context import assemble_mobile_context, build_citation_evidence, build_context_observability, build_execution_tool_registry, build_memory_policy, build_prompt_layer_diagnostics, build_run_capability_snapshot, build_tool_choice_policy, build_tool_decision_requirement, classify_tool_error, completed_tool_decision_domains, execution_tool_record, freeze_model_tool_snapshot, normalize_citation_evidence, normalize_context_budget, normalize_kernel_host_port, normalize_memory_policy, normalize_memory_selection, normalize_model_route_snapshot, normalize_tool_loop_policy, normalize_tool_output, resolve_tool_decision, select_relevant_memories, validate_context_within_budget, validate_conversation_context, validate_memory_tool_call, validate_tool_call_batch, verify_model_tool_calls, verify_run_capability_snapshot
+from .context import assemble_mobile_context, build_citation_evidence, build_claim_support, build_context_observability, build_execution_tool_registry, build_memory_policy, build_prompt_layer_diagnostics, build_run_capability_snapshot, build_tool_choice_policy, build_tool_decision_requirement, classify_tool_error, completed_tool_decision_domains, execution_tool_record, freeze_model_tool_snapshot, normalize_citation_evidence, normalize_context_budget, normalize_kernel_host_port, normalize_memory_policy, normalize_memory_selection, normalize_model_route_snapshot, normalize_tool_loop_policy, normalize_tool_output, resolve_tool_decision, select_relevant_memories, validate_context_within_budget, validate_conversation_context, validate_memory_tool_call, validate_tool_call_batch, verify_model_tool_calls, verify_run_capability_snapshot
 
 
 class RunPhase(StrEnum):
@@ -83,6 +83,34 @@ def _public_retrieval_source_urls(messages: Sequence[Mapping[str, Any]]) -> list
             continue
         collect(message.get("content", {}), "content")
     return [url for url, _ in sorted(candidates.items(), key=lambda item: (-item[1][0], item[1][1]))]
+
+
+def _grounded_evidence_rows(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Rebuild the evidence blocks in the order the model was shown them.
+
+    The grounded contract asks for ``[E<n>]`` where n is the number of the
+    evidence block, so the numbering here has to match what the tool result
+    presented, across every retrieval call in the turn.
+    """
+
+    rows: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") != "tool" or message.get("succeeded") is False:
+            continue
+        if str(message.get("name", "")).casefold() != "knowledge_search":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        if not isinstance(content, Mapping):
+            continue
+        evidence = content.get("evidence")
+        if isinstance(evidence, Sequence) and not isinstance(evidence, (str, bytes)):
+            rows.extend(dict(row) for row in evidence if isinstance(row, Mapping))
+    return rows
 
 
 def _knowledge_retrieval_sources(messages: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -205,6 +233,10 @@ class MobileRunState:
     verification_retry_count: int = 0
     citation_retry_count: int = 0
     citation_evidence: dict[str, Any] = field(default_factory=dict)
+    # Set from the Agent config when this turn must answer only from supplied
+    # material. Every other turn leaves it False and takes the unchanged path.
+    grounded: bool = False
+    claim_support: dict[str, Any] = field(default_factory=dict)
     tool_round_count: int = 0
     tool_execution_disabled: bool = False
     web_search_queries: list[str] = field(default_factory=list)
@@ -387,6 +419,7 @@ class DrSaiAgentKernel:
             if effective_agent.get("memory_summary"):
                 raise ValueError("memory_summary_host_conflict")
             effective_agent["memory_summary"] = state.memory_selection["summary"]
+        state.grounded = bool(effective_agent.get("grounded"))
         state.prompt_layer_diagnostics = build_prompt_layer_diagnostics(effective_agent, state.skills)
         state.lifecycle_state = str(command.payload.get("lifecycle_state", "foreground"))
         state.subagent_scheduling_policy = build_subagent_scheduling_policy(
@@ -525,6 +558,8 @@ class DrSaiAgentKernel:
             tool_decision_requirement=dict(raw.get("tool_decision_requirement", {})),
             verification_retry_count=int(raw.get("verification_retry_count", 0)),
             citation_retry_count=int(raw.get("citation_retry_count", 0)),
+            grounded=bool(raw.get("grounded", False)),
+            claim_support=dict(raw.get("claim_support") or {}),
             citation_evidence=normalize_citation_evidence(raw.get("citation_evidence")),
             prompt_layer_diagnostics=[dict(value) for value in raw.get("prompt_layer_diagnostics", [])],
             context_budget=normalize_context_budget(raw.get("context_budget")),
@@ -1028,7 +1063,17 @@ class DrSaiAgentKernel:
                 retrieval_required="retrieval" in state.tool_decision_requirement.get("required_domains", ()),
             )
             state.citation_evidence = citation
-            if not citation["valid"]:
+            # Whole-answer citation checking accepts an answer that cites a real
+            # document and then states something the document never says, which
+            # is exactly the failure grounded answering exists to stop. Only a
+            # grounded turn pays for the per-sentence check; every other turn
+            # takes the same path it always did.
+            if state.grounded:
+                state.claim_support = build_claim_support(
+                    content, _grounded_evidence_rows(state.messages),
+                )
+            unsupported_claims = state.grounded and not state.claim_support.get("valid", True)
+            if not citation["valid"] or unsupported_claims:
                 if state.citation_retry_count >= 1:
                     # The retrieval itself succeeded, so a model formatting miss
                     # must not discard an otherwise useful answer. When the only
@@ -1052,7 +1097,10 @@ class DrSaiAgentKernel:
                             retrieval_required="retrieval" in state.tool_decision_requirement.get("required_domains", ()),
                         )
                         state.citation_evidence = citation
-                    if not citation["valid"]:
+                    # Appending trusted sources cannot repair a sentence that
+                    # cites a passage not stating it, so a grounded failure
+                    # falls through to the warning rather than being papered over.
+                    if not citation["valid"] or unsupported_claims:
                         warning = (
                             "\n\n> Note: Retrieved information was available, but some source citations "
                             "could not be fully verified. Review the listed sources before relying on sensitive details."
@@ -1084,7 +1132,15 @@ class DrSaiAgentKernel:
                     state.citation_retry_count += 1
                     state.messages.append({
                         "role": "system",
-                        "content": "Your answer must cite at least one exact source reference from the successful retrieval "
+                        "content": (
+                            # Telling a model to "cite a source" does not help when it did
+                            # cite one and the passage does not say what the sentence says.
+                            "Every factual sentence must carry an [E<n>] marker whose evidence block "
+                            "states that sentence, including any figure in it. If no block states a "
+                            "claim, remove the claim or say the material does not contain it. "
+                            "Do not add a figure that is absent from the cited block. Revise the answer now."
+                        ) if unsupported_claims else
+                        "Your answer must cite at least one exact source reference from the successful retrieval "
                                    "tool results (an HTTPS URL, an internal knowledge source URI, or every exact "
                                    "[memory:<id>] marker returned by memory search) and must not invent sources. "
                                    "For conflicting memory results, state the conflict rather than silently choosing one. Revise the answer now.",
@@ -1937,6 +1993,8 @@ class DrSaiAgentKernel:
             "tool_decision_requirement": dict(state.tool_decision_requirement),
             "verification_retry_count": state.verification_retry_count,
             "citation_retry_count": state.citation_retry_count,
+            "grounded": state.grounded,
+            "claim_support": dict(state.claim_support),
             "citation_evidence": dict(state.citation_evidence),
             "prompt_layer_diagnostics": list(state.prompt_layer_diagnostics),
             "context_budget": dict(state.context_budget),

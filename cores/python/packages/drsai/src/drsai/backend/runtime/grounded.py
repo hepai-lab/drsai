@@ -127,6 +127,13 @@ _CITATION_MARKER = re.compile(r"\[E(\d{1,3})\]")
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?])\s*|(?<!\d)\.\s+|\n+")
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 _LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9._-]{2,}")
+_SOURCE_REFERENCE = re.compile(
+    r"^(?:[-*]\s*)?(?:sources?|来源|出处)?\s*[:：]?\s*(?:\[[^\]]*\]\(\s*)?\w+://\S+\)?$",
+    re.IGNORECASE,
+)
+# The engine's own citation repair appends a "Sources:" block, so the heading
+# has to be recognised as apparatus rather than scored as an uncited claim.
+_SOURCE_HEADING = re.compile(r"^(?:sources?|来源|出处|引用)\s*[:：]?\s*$", re.IGNORECASE)
 _CJK_TOKEN = re.compile(r"[㐀-鿿]{2,}")
 
 
@@ -148,14 +155,31 @@ def build_claim_support(
         if isinstance(row, Mapping):
             contents[position] = str(row.get("content") or "")
 
+    # Models place the marker on either side of the terminator. Splitting
+    # "... multiple Runs. [E1]" leaves the marker in a segment of its own and
+    # the claim looking uncited, so a correctly cited answer would be sent back
+    # as unsupported. Reattach a marker-only segment to the claim it follows.
+    segments: list[str] = []
+    for raw in _SENTENCE_SPLIT.split(final_content):
+        piece = raw.strip()
+        if not piece:
+            continue
+        remainder = _CITATION_MARKER.sub("", piece).strip()
+        if segments and (not remainder or _SOURCE_REFERENCE.match(remainder)):
+            # Carry only the markers back. Folding the source text in too would
+            # make the claim inherit tokens the passage never contains and fail
+            # its own support check.
+            carried = "".join(f"[E{value}]" for value in _CITATION_MARKER.findall(piece))
+            if carried:
+                segments[-1] = f"{segments[-1]} {carried}"
+            continue
+        segments.append(piece)
+
     factual: list[int] = []
     cited: list[int] = []
     unsupported: list[int] = []
     fabricated: set[int] = set()
-    for index, raw in enumerate(_SENTENCE_SPLIT.split(final_content)):
-        sentence = raw.strip()
-        if not sentence:
-            continue
+    for index, sentence in enumerate(segments):
         markers = [int(value) for value in _CITATION_MARKER.findall(sentence)]
         body = _CITATION_MARKER.sub(" ", sentence)
         if not _is_factual(body):
@@ -187,6 +211,10 @@ def _is_factual(sentence: str) -> bool:
     """Skip framing sentences so refusals are not scored as unsupported claims."""
     stripped = sentence.strip()
     if len(stripped) < 4:
+        return False
+    # A bare source reference is citation apparatus, not a claim. Scoring it as
+    # one makes every properly sourced answer look partly unsupported.
+    if _SOURCE_REFERENCE.match(stripped) or _SOURCE_HEADING.match(stripped):
         return False
     hedges = (
         "知识库", "文档", "资料", "未包含", "没有找到", "不包含", "无法", "并未",
