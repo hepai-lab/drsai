@@ -194,7 +194,7 @@ let logFd = null;
 let keepVm = false;
 const guestEvidence = "/Volumes/My Shared Files/evidence";
 const guestDmg = "/Users/admin/Downloads/OpenDrSai-candidate.dmg";
-const mountPoint = "/Volumes/OpenDrSai Candidate";
+const mountPoint = "/Users/admin/Downloads/OpenDrSai Candidate Mount";
 const installedApp = "/Applications/OpenDrSai.app";
 
 try {

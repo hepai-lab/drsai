@@ -55,7 +55,7 @@ async function assertRemote(url, expected, requireRange) {
   const directory = mkdtempSync(join(tmpdir(), "opendrsai-cdn-verify-"));
   const output = join(directory, "asset");
   try {
-    curl(["--output", output, "--max-time", "600", url.toString()]);
+    curl(["--output", output, "--max-time", "1800", url.toString()]);
     assert.deepEqual(await fileIdentity(output), expected, `Downloaded identity differs for ${url}`);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
@@ -66,5 +66,5 @@ async function fileIdentity(path) {
 }
 function requiredArg(flag) { const index = process.argv.indexOf(flag); const value = index >= 0 ? process.argv[index + 1] : null; assert.ok(value, `${flag} is required`); return value; }
 function capture(text, pattern, label) { const match = text.match(pattern); assert.ok(match, `latest-mac.yml omits ${label}`); return match[1].trim(); }
-function curl(args) { const result = spawnSync("/usr/bin/curl", ["-fsS", "--proto", "=https", "--tlsv1.2", "--max-time", "30", ...args], { encoding: "utf8", timeout: 610_000, maxBuffer: 8 * 1024 * 1024 }); if (result.error || result.status !== 0) throw new Error(`/usr/bin/curl failed for ${args.at(-1)}: ${result.stderr || result.error?.message}`); return result.stdout; }
+function curl(args) { const result = spawnSync("/usr/bin/curl", ["-fsS", "--proto", "=https", "--tlsv1.2", "--max-time", "30", ...args], { encoding: "utf8", timeout: 1_810_000, maxBuffer: 8 * 1024 * 1024 }); if (result.error || result.status !== 0) throw new Error(`/usr/bin/curl failed for ${args.at(-1)}: ${result.stderr || result.error?.message}`); return result.stdout; }
 function header(source, name) { const match = source.match(new RegExp(`(?:^|\\r?\\n)${name}:\\s*([^\\r\\n]+)`, "i")); return match?.[1]?.trim() || ""; }
