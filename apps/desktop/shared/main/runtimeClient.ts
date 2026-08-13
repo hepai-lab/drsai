@@ -1754,6 +1754,33 @@ export async function connectRuntimeClientForWorkspace(
   return resolveLocalRuntimeWorkspace(client, workspacePath, workspaceId, persisted?.name ?? workspaceName, Boolean(persisted));
 }
 
+export interface RuntimeClientLease<T extends RuntimeClient = RuntimeClient> {
+  client: T;
+  workspaceId: string;
+  release: () => void;
+}
+
+/**
+ * Acquire a finite-operation lease without exposing the connect/retain race.
+ * A previous OAEP owner can release the last reference immediately after a
+ * caller resolves the shared client. Retrying here is safe because no Session
+ * or Run mutation has happened yet.
+ */
+export async function acquireRuntimeClientLease<T extends RuntimeClient>(
+  resolve: () => Promise<{ client: T; workspaceId: string }>,
+): Promise<RuntimeClientLease<T>> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const resolved = await resolve();
+      return { ...resolved, release: retainRuntimeClient(resolved.client) };
+    } catch (error) {
+      if (attempt < 2 && error instanceof RuntimeClientGenerationInvalidatedError) continue;
+      throw error;
+    }
+  }
+  throw new RuntimeClientGenerationInvalidatedError();
+}
+
 /**
  * Borrows the current workspace Runtime client for the complete duration of a
  * finite operation. A connected client is shared with OAEP streams, so callers
@@ -1766,22 +1793,13 @@ export async function withRuntimeClientForWorkspace<T>(
   operation: (resolved: { client: RuntimeClient; workspaceId: string }) => Promise<T>,
   workspaceName?: string,
 ): Promise<T> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const resolved = await connectRuntimeClientForWorkspace(workspacePath, workspaceId, workspaceName);
-    let release: (() => void) | undefined;
-    try {
-      release = retainRuntimeClient(resolved.client);
-    } catch (error) {
-      if (attempt === 0 && error instanceof RuntimeClientGenerationInvalidatedError) continue;
-      throw error;
-    }
-    try {
-      return await operation(resolved);
-    } finally {
-      release();
-    }
+  const lease = await acquireRuntimeClientLease(() =>
+    connectRuntimeClientForWorkspace(workspacePath, workspaceId, workspaceName));
+  try {
+    return await operation(lease);
+  } finally {
+    lease.release();
   }
-  throw new RuntimeClientGenerationInvalidatedError();
 }
 
 /** Resolve an already-running Runtime for read-only restoration work without

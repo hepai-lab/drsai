@@ -49,7 +49,9 @@ function Start-InstalledApp {
     $app = "C:\Program Files\OpenDrSai\app\OpenDrSai.exe"
     if (-not (Test-Path $app)) { throw "Installed OpenDrSai.exe was not found." }
     $env:OPENDRSAI_ACCEPTANCE_RUN_ID = $runId
-    Start-Process $app
+    $env:OPENDRSAI_ACCEPTANCE_AUTO_DEVICE_LOGIN = "1"
+    $env:OPENDRSAI_OIDC_DEVICE_HANDOFF_PATH = Join-Path $EvidenceDir "device-login-handoff.json"
+    return Start-Process $app -PassThru
 }
 
 function Verify-InstalledBuildIdentity {
@@ -81,19 +83,27 @@ function Collect-Diagnostics([string]$Phase) {
     }
 }
 
-function Write-OutcomeShortcuts([string]$ManualNote) {
-    $finalizer = Join-Path $PackageDir "complete-windows-sandbox-acceptance.ps1"
-    $pass = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$finalizer`" -EvidenceDir `"$EvidenceDir`" -RunId `"$runId`" -ManualOutcome PASS -ManualNote `"$ManualNote`"`r`n"
-    $desktop = [Environment]::GetFolderPath('Desktop')
-    [IO.File]::WriteAllText((Join-Path $desktop "1-OpenDrSai-Acceptance-PASS.cmd"), $pass, [Text.Encoding]::Default)
-    Write-FailShortcut
+function Start-AcceptanceObserver([int]$InitialProcessId) {
+    $watcher = Join-Path $PackageDir "watch-windows-sandbox-acceptance.ps1"
+    $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$watcher`" -EvidenceDir `"$EvidenceDir`" -RunId `"$runId`" -InitialProcessId $InitialProcessId"
+    Start-Process powershell.exe -ArgumentList $arguments -WindowStyle Hidden | Out-Null
 }
 
-function Write-FailShortcut {
-    $finalizer = Join-Path $PackageDir "complete-windows-sandbox-acceptance.ps1"
-    $fail = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$finalizer`" -EvidenceDir `"$EvidenceDir`" -RunId `"$runId`" -ManualOutcome FAIL -ManualNote `"Tester observed a failure.`"`r`n"
-    $desktop = [Environment]::GetFolderPath('Desktop')
-    [IO.File]::WriteAllText((Join-Path $desktop "2-OpenDrSai-Acceptance-FAIL-Collect.cmd"), $fail, [Text.Encoding]::Default)
+function Wait-ForCompletedChat([DateTimeOffset]$After, [int]$TimeoutSeconds = 1200) {
+    $telemetryPath = Join-Path $env:USERPROFILE ".drsai\logs\agent-telemetry.jsonl"
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Path -LiteralPath $telemetryPath -PathType Leaf) {
+            foreach ($line in @(Get-Content -LiteralPath $telemetryPath -Tail 200)) {
+                try {
+                    $row = $line | ConvertFrom-Json
+                    if ($row.event -eq "execution_completed" -and $row.agentId -eq "opendrsai" -and [DateTimeOffset]::Parse([string]$row.timestamp) -ge $After) { return }
+                } catch { }
+            }
+        }
+        Start-Sleep -Seconds 3
+    }
+    throw "Timed out waiting for a successful OpenDrSai chat; diagnostics will be collected automatically."
 }
 
 try {
@@ -116,21 +126,15 @@ try {
     Write-JsonFile (Join-Path $EvidenceDir "resolved-input.json") $input
     Install-Msi $msiPath $(if ($input.mode -eq "upgrade") { "msi-baseline-install.log" } else { "msi-install.log" }) ([bool]$input.automateInstaller)
     if ($input.mode -ne "upgrade") { Verify-InstalledBuildIdentity }
-    Start-InstalledApp
+    $initialApp = Start-InstalledApp
     Start-Sleep -Seconds 8
     Collect-Diagnostics $(if ($input.mode -eq "upgrade") { "baseline-pre-oidc" } else { "pre-oidc" })
 
     Add-Type -AssemblyName PresentationFramework
     if ($input.mode -eq "upgrade") {
-        $desktop = [Environment]::GetFolderPath('Desktop')
-        $signal = Join-Path $EvidenceDir "upgrade-continue.signal"
-        $continue = "@echo off`r`npowershell.exe -NoProfile -Command `"[IO.File]::WriteAllText('$signal','continue')`"`r`n"
-        [IO.File]::WriteAllText((Join-Path $desktop "1-Continue-OpenDrSai-Candidate-Upgrade.cmd"), $continue, [Text.Encoding]::Default)
-        Write-FailShortcut
-        [Windows.MessageBox]::Show("Sign in on baseline $($input.baselineVersion), send a chat and confirm a reply. Then run 1-Continue-OpenDrSai-Candidate-Upgrade.cmd from the desktop. Use FAIL-Collect if baseline fails.", "OpenDrSai upgrade acceptance - baseline") | Out-Null
-        $deadline = (Get-Date).AddMinutes(20)
-        while (-not (Test-Path $signal) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
-        if (-not (Test-Path $signal)) { throw "Timed out waiting for baseline acceptance before upgrade." }
+        $baselineStartedAt = [DateTimeOffset]$initialApp.StartTime
+        [Windows.MessageBox]::Show("Sign in on baseline $($input.baselineVersion), send one chat and confirm a reply. The candidate upgrade will continue automatically; do not click any CMD files.", "OpenDrSai upgrade acceptance - baseline") | Out-Null
+        Wait-ForCompletedChat $baselineStartedAt
         Get-Process OpenDrSai -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
         $candidateMsi = Join-Path $PackageDir "OpenDrSai-Windows-Installer-x64.msi"
@@ -138,17 +142,17 @@ try {
         Write-JsonFile (Join-Path $EvidenceDir "download-evidence.json") $candidateEvidence
         Install-Msi $candidateMsi "msi-candidate-upgrade.log" $true
         Verify-InstalledBuildIdentity
-        Start-InstalledApp
+        $candidateApp = Start-InstalledApp
         Start-Sleep -Seconds 8
         Collect-Diagnostics "candidate-post-upgrade-pre-chat"
-        Write-OutcomeShortcuts "Baseline login/chat, candidate upgrade, persisted OIDC, restart and post-upgrade chat confirmed by tester."
-        [Windows.MessageBox]::Show("Candidate $($input.expectedVersion) is installed. Confirm login persisted, chat works, close/reopen from Start, chat again, then run PASS. Use FAIL-Collect on any failure.", "OpenDrSai upgrade acceptance - candidate") | Out-Null
+        Start-AcceptanceObserver $candidateApp.Id
+        [Windows.MessageBox]::Show("Candidate $($input.expectedVersion) is installed. Confirm login persisted; configure and test Tavily; chat; close/reopen from Start; chat again; then log out in OpenDrSai. Evidence and PASS/FAIL diagnostics are collected automatically; do not click any CMD files.", "OpenDrSai upgrade acceptance - candidate") | Out-Null
         exit 0
     }
 
-    Write-OutcomeShortcuts "OIDC login, first chat, restart persistence and second chat confirmed by tester."
+    Start-AcceptanceObserver $initialApp.Id
     [Windows.MessageBox]::Show(
-        "Complete these checks: 1. If the MSI wizard is visible, finish it; unattended candidate runs skip this step. 2. Sign in with HepAI OIDC. 3. Send SANDBOX-E2E-$runId and confirm a reply. 4. Close OpenDrSai and reopen it from Start. 5. Confirm login persists and chat works again. Then run the PASS desktop shortcut. If anything fails, run FAIL-Collect. Do not close Sandbox first.",
+        "Complete these checks in OpenDrSai only: 1. Finish the MSI wizard if visible. 2. Sign in with HepAI device code. 3. Configure Tavily in Settings and make its Search test pass. 4. Send SANDBOX-E2E-$runId and confirm a reply. 5. Close OpenDrSai, reopen it from Start, confirm login persists, and send another chat. 6. Log out in OpenDrSai. Evidence and PASS/FAIL diagnostics are collected automatically; do not click any CMD files or close Sandbox first.",
         "OpenDrSai clean-environment acceptance"
     ) | Out-Null
 } catch {

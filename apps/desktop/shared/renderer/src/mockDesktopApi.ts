@@ -801,7 +801,6 @@ export function installMockDesktopApi(): void {
   if (window.openDrSai) return;
   let health = structuredClone(initialHealth);
   let authSession = structuredClone(anonymousSession);
-  let pendingAuthProvider: AuthSession["authProvider"] = "ihep";
   let threads: DesktopThread[] = [];
   let threadSnapshots: Record<string, DesktopThreadSnapshot> = {};
   let workspaces: WorkspaceProject[] = [];
@@ -1337,12 +1336,16 @@ export function installMockDesktopApi(): void {
     message: string,
     status: OidcLoginDebugEvent["status"] = "info",
     url?: string,
+    userCode?: string,
+    expiresAt?: string,
   ): void {
     emit(oidcLoginDebugListeners, {
       stage,
       status,
       message,
       url,
+      userCode,
+      expiresAt,
       at: new Date().toISOString(),
     });
   }
@@ -1577,14 +1580,16 @@ export function installMockDesktopApi(): void {
         "https://ai-dev.ihep.ac.cn/api/.well-known/openid-configuration",
       );
       emitOidcLoginDebug(
-        "browser-opened",
-        "Mock browser open request was sent.",
+        "device-code-ready",
+        "Enter the mock device code in the browser.",
         "success",
-        "http://localhost:3000/#/",
+        "https://ai-dev.ihep.ac.cn/api/oauth2/device",
+        "MOCK-CODE",
+        new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       );
       emitOidcLoginDebug(
-        "waiting-callback",
-        "Waiting for mock loopback callback.",
+        "device-code-polling",
+        "Waiting for mock device approval.",
       );
       authSession = {
         authenticated: true,
@@ -1618,63 +1623,6 @@ export function installMockDesktopApi(): void {
       );
       return true;
     },
-    startDesktopSsoLogin: async () => {
-      pendingAuthProvider = "ihep";
-      return {
-        ok: true,
-        message: "Mock browser SSO started.",
-        deviceCode: "mock-device-code",
-        loginUrl:
-          "https://opendrsai.ihep.ac.cn/api/desktop-auth/login?device_code=mock",
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        intervalSeconds: 1,
-      };
-    },
-    startWechatDesktopLogin: async () => {
-      pendingAuthProvider = "wechat";
-      return {
-        ok: true,
-        message: "Mock WeChat login started.",
-        deviceCode: "mock-wechat-device-code",
-        loginUrl:
-          "https://opendrsai.ihep.ac.cn/api/desktop-auth/wechat/callback?code=mock&state=mock",
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        intervalSeconds: 1,
-      };
-    },
-    pollDesktopSsoLogin: async () => {
-      const provider = pendingAuthProvider || "ihep";
-      authSession = {
-        authenticated: true,
-        user: {
-          id: provider === "wechat" ? "wechat:mock-openid" : "mock-sso-user",
-          email:
-            provider === "wechat"
-              ? "wechat:mock-openid"
-              : "mock-sso@ihep.ac.cn",
-          name:
-            provider === "wechat" ? "Mock WeChat User" : "mock-sso@ihep.ac.cn",
-          role: "user",
-        },
-        expiresAt: new Date(
-          Date.now() + 30 * 24 * 60 * 60 * 1000,
-        ).toISOString(),
-        accessTokenExpiresAt: new Date(
-          Date.now() + 30 * 60 * 1000,
-        ).toISOString(),
-        refreshable: true,
-        authMode: "sso",
-        authProvider: provider,
-      };
-      pendingAuthProvider = "ihep";
-      return {
-        ok: true,
-        state: "authorized",
-        message: "Mock SSO complete.",
-        session: authSession,
-      };
-    },
-    cancelDesktopSsoLogin: async () => true,
     logout: async () => {
       authSession = structuredClone(anonymousSession);
       health = {

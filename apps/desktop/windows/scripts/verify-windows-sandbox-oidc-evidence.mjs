@@ -12,7 +12,12 @@ const requiredChecks = [
   "Default Agent bound",
   "HepAI Provider selected",
   "API Key not required",
-  "OIDC session persisted",
+  "Encrypted OIDC session before logout",
+  "Restart persistence verified",
+  "Two acceptance chats completed",
+  "Post-restart chat verified",
+  "Tavily search available",
+  "OIDC logout cleared local session",
   "Gateway ready",
   "Runtime model catalog non-empty",
   "Real OpenDrSai execution completed",
@@ -21,7 +26,7 @@ const requiredChecks = [
   "Run manifest generated",
 ];
 const requiredArtifacts = [
-  "acceptance-result.json", "collection-result.json", "run-manifest.json", "summary.md", "checksums.txt",
+  "acceptance-result.json", "pre-logout-validation.json", "collection-result.json", "run-manifest.json", "summary.md", "checksums.txt",
   "app/auth-metadata.json", "app/model-catalog-status.json", "agent/agent-telemetry.jsonl",
   "gateway/gateway.log", "installer/install-state.json", "network/connections.json",
   "windows-events/application.json", "windows-events/code-integrity.json", "windows-events/defender.json",
@@ -80,7 +85,7 @@ function verifyRun(item, mode) {
   for (const artifact of requiredArtifacts) if (!existsSync(join(dir, artifact))) failures.push(`missing artifact: ${artifact}`);
   const screenshots = join(dir, "screenshots");
   if (!existsSync(screenshots) || !readdirSync(screenshots).some((name) => name.toLowerCase().endsWith(".png"))) failures.push("missing Sandbox screenshot evidence");
-  for (const forbidden of ["auth.json", ".env"]) {
+  for (const forbidden of ["auth.json", ".env", "device-login-handoff.json"]) {
     if (walkFiles(dir).some((path) => basename(path).toLowerCase() === forbidden)) failures.push(`forbidden raw secret file exported: ${forbidden}`);
   }
   if (existsSync(join(dir, "collection-result.json"))) {
@@ -117,7 +122,7 @@ function verifyChecksums(dir) {
     if (actual !== match[1]) failures.push(`checksum mismatch: ${match[2]}`);
     verified.add(match[2].replaceAll("\\", "/"));
   }
-  for (const name of ["acceptance-result.json", "collection-result.json", "run-manifest.json", "summary.md"]) if (!verified.has(name)) failures.push(`checksums.txt does not bind ${name}`);
+  for (const name of ["acceptance-result.json", "pre-logout-validation.json", "collection-result.json", "run-manifest.json", "summary.md"]) if (!verified.has(name)) failures.push(`checksums.txt does not bind ${name}`);
   return failures;
 }
 

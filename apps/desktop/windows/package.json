@@ -476,7 +476,7 @@
     "verify:channel-adapter-route-order": "node scripts/verify-channel-adapter-route-order.mjs",
     "verify:channel-adapter-runtime-fixtures": "node scripts/verify-channel-adapter-runtime-fixtures.mjs",
     "verify:mcp-live-bridge": "node scripts/verify-mcp-live-bridge.mjs",
-    "verify:oidc-login": "node scripts/verify-oidc-login.mjs",
+    "verify:oidc-login": "node scripts/verify-oidc-login.mjs && node scripts/verify-windows-external-url-fallback.mjs",
     "verify:agent-square-catalog": "node scripts/verify-agent-square-catalog.mjs",
     "verify:agent-square-loading": "node scripts/verify-agent-square-loading.mjs",
     "verify:agent-square-ui": "node scripts/verify-agent-square-ui.mjs",

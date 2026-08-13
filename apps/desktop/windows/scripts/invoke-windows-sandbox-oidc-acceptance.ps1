@@ -18,7 +18,9 @@ $controller = Join-Path $scriptRoot "windows-sandbox-session.ps1"
 $guest = Join-Path $scriptRoot "guest\Invoke-OpenDrSaiAcceptance.ps1"
 $collector = Join-Path $scriptRoot "collect-windows-sandbox-diagnostics.ps1"
 $finalizer = Join-Path $scriptRoot "complete-windows-sandbox-acceptance.ps1"
-foreach ($required in @($controller, $guest, $collector, $finalizer)) {
+$preLogout = Join-Path $scriptRoot "capture-windows-sandbox-prelogout.ps1"
+$watcher = Join-Path $scriptRoot "watch-windows-sandbox-acceptance.ps1"
+foreach ($required in @($controller, $guest, $collector, $finalizer, $preLogout, $watcher)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required Sandbox input is missing: $required" }
 }
 
@@ -38,7 +40,7 @@ $runDir = Join-Path ([IO.Path]::GetFullPath($EvidenceRoot)) $runId
 $packageDir = Join-Path $runDir "package"
 $evidenceDir = Join-Path $runDir "evidence"
 New-Item -ItemType Directory -Force -Path $packageDir,$evidenceDir | Out-Null
-Copy-Item -LiteralPath $guest,$collector,$finalizer -Destination $packageDir -Force
+Copy-Item -LiteralPath $guest,$collector,$finalizer,$preLogout,$watcher -Destination $packageDir -Force
 
 $expectedVersion = ""
 $expectedBuildId = ""
@@ -53,10 +55,18 @@ if ($Mode -in @("Candidate", "Upgrade")) {
     if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
         throw "Candidate Runtime has no completed build receipt: $receiptPath"
     }
-    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `
-        (Join-Path $scriptRoot "verify-final-runtime-artifact.ps1") -ArchivePath $runtime -ReceiptPath $receiptPath
-    if ($LASTEXITCODE -ne 0) { throw "Candidate Runtime failed final-artifact identity verification." }
     $receipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $verifyArguments = @(
+        "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+        (Join-Path $scriptRoot "verify-final-runtime-artifact.ps1"),
+        "-ArchivePath", $runtime,
+        "-ReceiptPath", $receiptPath
+    )
+    if ([int]$receipt.schemaVersion -ge 2 -and $receipt.status -eq "complete" -and $receipt.verification.status -eq "passed") {
+        $verifyArguments += "-Fast"
+    }
+    & powershell.exe @verifyArguments
+    if ($LASTEXITCODE -ne 0) { throw "Candidate Runtime failed final-artifact identity verification." }
     $expectedBuildId = [string]$receipt.buildId
     $expectedRuntimeSha256 = [string]$receipt.artifact.sha256
     Copy-Item -LiteralPath $runtime -Destination (Join-Path $packageDir $expectedName) -Force
@@ -118,13 +128,27 @@ try {
 $sessionId = [string]$session.id
 Write-Host "Sandbox acceptance round started. runId=$runId sessionId=$sessionId" -ForegroundColor Cyan
 if ($AutomateInstaller) {
-    Write-Host "The MSI will install unattended. Complete OIDC login and both chat checks inside Sandbox, then use the desktop PASS/FAIL shortcut." -ForegroundColor Yellow
+    Write-Host "The MSI will install unattended. Click Continue with HepAI in Sandbox; the verification page will open on this host. Approve it here, then complete both chat checks in Sandbox." -ForegroundColor Yellow
 } else {
-    Write-Host "Complete the MSI wizard, OIDC login and both chat checks inside Sandbox, then use the desktop PASS/FAIL shortcut." -ForegroundColor Yellow
+    Write-Host "Complete the MSI wizard and click Continue with HepAI in Sandbox; approve the verification page opened on this host, then complete both chat checks." -ForegroundColor Yellow
 }
 $resultPath = Join-Path $evidenceDir "acceptance-result.json"
+$handoffPath = Join-Path $evidenceDir "device-login-handoff.json"
+$handoffOpened = $false
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 while (-not (Test-Path -LiteralPath $resultPath) -and (Get-Date) -lt $deadline) {
+    if (-not $handoffOpened -and (Test-Path -LiteralPath $handoffPath -PathType Leaf)) {
+        $handoff = Get-Content -LiteralPath $handoffPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $verificationUrl = [string]$(if ($handoff.verificationUriComplete) { $handoff.verificationUriComplete } else { $handoff.verificationUri })
+        $parsedVerificationUrl = [Uri]$verificationUrl
+        if ($parsedVerificationUrl.Scheme -ne "https" -or $parsedVerificationUrl.Host -ne "ai-dev.ihep.ac.cn") {
+            throw "Sandbox returned an untrusted device verification URL."
+        }
+        Start-Process $verificationUrl
+        $handoffOpened = $true
+        Remove-Item -LiteralPath $handoffPath -Force -ErrorAction SilentlyContinue
+        Write-Host "Opened the ai-dev device verification page on the host. Complete user approval in the browser." -ForegroundColor Cyan
+    }
     Start-Sleep -Seconds 5
     Write-Host "." -NoNewline
 }

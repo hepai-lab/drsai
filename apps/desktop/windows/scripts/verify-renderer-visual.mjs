@@ -1352,9 +1352,6 @@ contextBridge.exposeInMainWorld("openDrSai", {
   logout: async () => ({ ok: true, message: "Mock sign-out complete." }),
   previewLocalDataCleanup: async (scope) => ({ scope, applicationData: [{ category: "sessions", label: "会话", description: "清除会话记录。" }], preservedUserMaterials: [], preservesAllWorkspaceFiles: true, confirmationPhrase: scope === "all_local_data" ? "清除" : undefined, requiresSignInAgain: scope === "all_local_data" }),
   clearLocalData: async (request) => ({ ok: true, scope: request.scope, removedPaths: [], protectedWorkspacePaths: [], skippedTargets: [], requiresSignInAgain: request.scope === "all_local_data", message: "应用数据已清除；用户工作区文件和成果未受影响。" }),
-  startDesktopSsoLogin: async () => ({ ok: false, message: "Mock SSO is unavailable." }),
-  pollDesktopSsoLogin: async () => ({ ok: false, state: "error", message: "Mock SSO is unavailable." }),
-  cancelDesktopSsoLogin: async () => undefined,
   refreshAuthSession: async () => ({
     authenticated: true,
     user: {

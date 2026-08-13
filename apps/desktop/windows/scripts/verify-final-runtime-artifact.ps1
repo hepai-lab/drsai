@@ -20,6 +20,23 @@ if ($CompleteReceipt) {
 $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actualHash -ne $receipt.artifact.sha256) { throw "Runtime archive SHA-256 differs from completed build receipt." }
 if ((Get-Item -LiteralPath $archive).Length -ne $receipt.artifact.size) { throw "Runtime archive size differs from completed build receipt." }
+if ($schemaVersion -ge 2) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archiveForMetrics = [System.IO.Compression.ZipFile]::OpenRead($archive)
+    try {
+        $archiveFiles = @($archiveForMetrics.Entries | Where-Object { -not $_.FullName.EndsWith("/") -and -not $_.FullName.EndsWith("\") })
+        [Int64]$archiveExpandedSizeBytes = 0
+        foreach ($entry in $archiveFiles) { $archiveExpandedSizeBytes += [Int64]$entry.Length }
+        if ($archiveFiles.Count -ne [Int64]$receipt.payload.fileCount) {
+            throw "Runtime ZIP file count differs from artifact receipt."
+        }
+        if ($archiveExpandedSizeBytes -ne [Int64]$receipt.payload.expandedSizeBytes) {
+            throw "Runtime ZIP expanded size differs from artifact receipt."
+        }
+    } finally {
+        $archiveForMetrics.Dispose()
+    }
+}
 
 if ($Fast) {
     if ($CompleteReceipt) { throw "Fast verification cannot complete a staged receipt." }
@@ -53,17 +70,6 @@ try {
     if ($identity.buildId -ne $receipt.buildId) { throw "Archive buildId differs from completed build receipt." }
     $manifestHash = (Get-FileHash -LiteralPath (Join-Path $extractRoot "runtime-files.sha256.json") -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($manifestHash -ne $receipt.runtimeManifestSha256) { throw "Archive Runtime manifest differs from completed build receipt." }
-    if ($schemaVersion -ge 2) {
-        $files = @(Get-ChildItem -LiteralPath $extractRoot -Recurse -File -Force)
-        [Int64]$expandedSizeBytes = 0
-        foreach ($file in $files) { $expandedSizeBytes += [Int64]$file.Length }
-        if ($files.Count -ne [Int64]$receipt.payload.fileCount) {
-            throw "Extracted Runtime file count differs from artifact receipt."
-        }
-        if ($expandedSizeBytes -ne [Int64]$receipt.payload.expandedSizeBytes) {
-            throw "Extracted Runtime expanded size differs from artifact receipt."
-        }
-    }
     if ($CompleteReceipt) {
         $receipt.status = "complete"
         $receipt | Add-Member -NotePropertyName completedAt -NotePropertyValue ([DateTime]::UtcNow.ToString("o")) -Force

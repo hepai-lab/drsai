@@ -9,12 +9,10 @@ import {
   type JsonWebKey,
 } from "crypto";
 import { createServer, type Server } from "http";
-import { dirname, join } from "path";
+import { dirname, isAbsolute, join } from "path";
 import type { DesktopCredentialService } from "../api";
 import type {
   AuthSession,
-  DesktopSsoPollResult,
-  DesktopSsoStartResult,
   LoginRequest,
   LoginResult,
   LogoutOptions,
@@ -87,6 +85,7 @@ interface SerializedStoredAuthSession extends Omit<StoredAuthSession, "accessTok
 }
 
 let pendingOidcLogin: Awaited<ReturnType<typeof createLoopbackCallback>> | null = null;
+let pendingOidcDeviceLogin: AbortController | null = null;
 let pendingOidcLoginDebug: OidcLoginDebugSink | null = null;
 let oidcJwksCache: { keys: JsonWebKey[]; fetchedAt: number } | null = null;
 let oidcMetadataCache: { metadata: OidcProviderMetadata; fetchedAt: number } | null = null;
@@ -215,6 +214,10 @@ export async function startOidcLogin(
   debug?: OidcLoginDebugSink,
 ): Promise<LoginResult> {
   const rememberMe = normalizeRememberMe(rawRequest);
+  const discoveredMetadata = await getOidcMetadata().catch(() => null);
+  if (discoveredMetadata?.device_authorization_endpoint) {
+    return startOidcDeviceLogin(discoveredMetadata, rememberMe, debug);
+  }
   const verifier = generateTokenPart(64);
   const challenge = createPkceChallenge(verifier);
   const state = generateTokenPart(32);
@@ -346,6 +349,12 @@ function isOidcLoginCancelled(error: unknown): boolean {
 }
 
 export function cancelOidcLogin(): boolean {
+  if (pendingOidcDeviceLogin) {
+    pendingOidcDeviceLogin.abort();
+    pendingOidcDeviceLogin = null;
+    pendingOidcLoginDebug = null;
+    return true;
+  }
   if (!pendingOidcLogin) return false;
   pendingOidcLogin.cancel("Browser sign-in cancelled.");
   pendingOidcLoginDebug?.({
@@ -357,121 +366,6 @@ export function cancelOidcLogin(): boolean {
   pendingOidcLogin = null;
   pendingOidcLoginDebug = null;
   return true;
-}
-
-export async function startDesktopSsoLogin(): Promise<DesktopSsoStartResult> {
-  return startDesktopTicketLogin(
-    "/api/desktop-auth/start",
-    "Open the browser to finish IHEP SSO.",
-    "IHEP SSO",
-  );
-}
-
-export async function startWechatDesktopLogin(): Promise<DesktopSsoStartResult> {
-  return startDesktopTicketLogin(
-    "/api/desktop-auth/wechat/start",
-    "Open the browser to scan with WeChat.",
-    "WeChat login",
-  );
-}
-
-async function startDesktopTicketLogin(
-  path: string,
-  successMessage: string,
-  providerLabel: string,
-): Promise<DesktopSsoStartResult> {
-  try {
-    const response = await fetch(`${DESKTOP_AUTH_BASE_URL}${path}`, {
-      method: "POST",
-      headers: { Accept: "application/json" },
-    });
-    const payload = await response.json() as DesktopAuthStartPayload;
-    if (!response.ok || !payload.status || !payload.data?.device_code || !payload.data.login_url) {
-      return {
-        ok: false,
-        message: `${readPayloadMessage(payload, `Failed to start ${providerLabel}.`)} Auth service: ${DESKTOP_AUTH_BASE_URL}`,
-      };
-    }
-    return {
-      ok: true,
-      message: successMessage,
-      deviceCode: payload.data.device_code,
-      loginUrl: payload.data.login_url,
-      expiresAt: payload.data.expires_at
-        ? new Date(payload.data.expires_at * 1000).toISOString()
-        : undefined,
-      intervalSeconds: payload.data.interval ?? 2,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      message: `${error instanceof Error ? error.message : `Failed to start ${providerLabel}.`} Auth service: ${DESKTOP_AUTH_BASE_URL}`,
-    };
-  }
-}
-
-export async function pollDesktopSsoLogin(deviceCode: unknown): Promise<DesktopSsoPollResult> {
-  if (typeof deviceCode !== "string" || !deviceCode.trim()) {
-    return { ok: false, state: "error", message: "Missing desktop login code." };
-  }
-  try {
-    const response = await fetch(
-      `${DESKTOP_AUTH_BASE_URL}/api/desktop-auth/poll/${encodeURIComponent(deviceCode.trim())}`,
-      { headers: { Accept: "application/json" } },
-    );
-    const payload = await response.json() as DesktopAuthPollPayload;
-    if (!response.ok || !payload.status || !payload.data?.state) {
-      return { ok: false, state: "error", message: readPayloadMessage(payload, "SSO polling failed.") };
-    }
-    if (payload.data.state !== "authorized") {
-      return {
-        ok: true,
-        state: payload.data.state,
-        message: formatPollState(payload.data.state),
-      };
-    }
-    if (!payload.data.user_id || !payload.data.access_token) {
-      return { ok: false, state: "error", message: "Desktop login response is missing tokens." };
-    }
-    const session = createSsoSession(
-      payload.data.user_id,
-      payload.data.access_token,
-      payload.data.refresh_token,
-      {
-        authProvider: payload.data.auth_provider,
-        name: payload.data.user_name,
-        avatarUrl: payload.data.avatar_url,
-      },
-    );
-    writeStoredSession(session);
-    return {
-      ok: true,
-      state: "authorized",
-      message: payload.data.auth_provider === "wechat"
-        ? "Signed in with WeChat."
-        : "Signed in with IHEP SSO.",
-      session: toPublicSession(session),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      state: "error",
-      message: error instanceof Error ? error.message : "SSO polling failed.",
-    };
-  }
-}
-
-export async function cancelDesktopSsoLogin(deviceCode: unknown): Promise<boolean> {
-  if (typeof deviceCode !== "string" || !deviceCode.trim()) return false;
-  try {
-    await fetch(
-      `${DESKTOP_AUTH_BASE_URL}/api/desktop-auth/cancel/${encodeURIComponent(deviceCode.trim())}`,
-      { method: "POST" },
-    );
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function logout(rawOptions?: unknown): Promise<{ ok: boolean; message: string }> {
@@ -874,33 +768,6 @@ function anonymousSession(): AuthSession {
   };
 }
 
-interface DesktopAuthStartPayload {
-  status?: boolean;
-  message?: string;
-  detail?: string;
-  data?: {
-    device_code?: string;
-    login_url?: string;
-    expires_at?: number;
-    interval?: number;
-  };
-}
-
-interface DesktopAuthPollPayload {
-  status?: boolean;
-  message?: string;
-  detail?: string;
-  data?: {
-    state?: "pending" | "authorized" | "expired" | "cancelled";
-    user_id?: string;
-    user_name?: string;
-    avatar_url?: string;
-    auth_provider?: "ihep" | "wechat" | "local";
-    access_token?: string;
-    refresh_token?: string;
-  };
-}
-
 interface DesktopAuthRefreshPayload {
   status?: boolean;
   message?: string;
@@ -927,6 +794,20 @@ interface OidcProviderMetadata {
   token_endpoint: string;
   jwks_uri: string;
   revocation_endpoint?: string;
+  device_authorization_endpoint?: string;
+}
+
+interface OidcDeviceAuthorizationResponse {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete?: string;
+  expires_in: number;
+  interval?: number;
+}
+
+class OidcDevicePollingError extends Error {
+  constructor(readonly code: string, message: string) { super(message); }
 }
 
 interface OidcIdTokenClaims {
@@ -954,16 +835,6 @@ interface OidcAccessTokenClaims {
 interface OidcJwtHeader {
   alg?: string;
   kid?: string;
-}
-
-function readPayloadMessage(payload: { message?: string; detail?: string }, fallback: string): string {
-  return payload.detail || payload.message || fallback;
-}
-
-function formatPollState(state: "pending" | "expired" | "cancelled"): string {
-  if (state === "pending") return "Waiting for browser sign-in...";
-  if (state === "expired") return "Desktop sign-in expired.";
-  return "Desktop sign-in cancelled.";
 }
 
 function getJwtExpiry(token: string): string | null {
@@ -1167,12 +1038,129 @@ async function postOidcToken(params: Record<string, string>): Promise<OidcTokenR
   return payload as OidcTokenResponse;
 }
 
+async function startOidcDeviceLogin(metadata: OidcProviderMetadata, rememberMe: boolean, debug?: OidcLoginDebugSink): Promise<LoginResult> {
+  const controller = new AbortController();
+  pendingOidcLogin?.cancel("A new device sign-in was started.");
+  pendingOidcDeviceLogin?.abort();
+  pendingOidcDeviceLogin = controller;
+  pendingOidcLoginDebug = debug ?? null;
+  const emit = (event: Omit<OidcLoginDebugEvent, "at">): void => debug?.({ ...event, ...(event.url ? { url: sanitizeDiagnosticUrl(event.url) } : {}), at: new Date().toISOString() });
+  try {
+    emit({ stage: "device-code-request", status: "info", message: "Requesting a HepAI device code." });
+    const scope = rememberMe ? `${OIDC_BASE_SCOPE} offline_access` : OIDC_BASE_SCOPE;
+    const response = await fetchOidcEndpoint(metadata.device_authorization_endpoint!, "OIDC device authorization", {
+      method: "POST", headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: OIDC_CLIENT_ID, scope }).toString(), signal: controller.signal,
+    });
+    const device = await response.json().catch(() => ({})) as Partial<OidcDeviceAuthorizationResponse> & { error?: string; error_description?: string };
+    if (!response.ok || !device.device_code || !device.user_code || !device.verification_uri || !Number.isFinite(device.expires_in)) throw new Error(readOidcErrorMessage(device));
+    const expiresAtMs = Date.now() + Math.max(1, Number(device.expires_in)) * 1000;
+    let intervalMs = Math.max(1, Number(device.interval) || 5) * 1000;
+    emit({ stage: "device-code-ready", status: "success", message: "Enter the displayed code in the browser to approve this device.", url: device.verification_uri, userCode: device.user_code, expiresAt: new Date(expiresAtMs).toISOString() });
+    writeDeviceAcceptanceHandoff({
+      verificationUri: device.verification_uri,
+      verificationUriComplete: device.verification_uri_complete,
+      userCode: device.user_code,
+      expiresAt: new Date(expiresAtMs).toISOString(),
+    });
+    try {
+      await openExternalUrl(device.verification_uri_complete || device.verification_uri);
+      emit({ stage: "browser-opened", status: "success", message: "Browser open request was sent.", url: device.verification_uri });
+    } catch {
+      emit({ stage: "browser-opened", status: "error", message: "Could not open the browser automatically. Open the verification address manually.", url: device.verification_uri });
+    }
+    while (Date.now() < expiresAtMs) {
+      await abortableDelay(intervalMs, controller.signal);
+      emit({ stage: "device-code-polling", status: "info", message: "Waiting for device approval." });
+      try {
+        const token = await pollOidcDeviceToken(metadata.token_endpoint, device.device_code, controller.signal);
+        const session = await createOidcSession(token, rememberMe);
+        writeStoredSession(session);
+        emit({ stage: "token-verified", status: "success", message: "OIDC device tokens were verified." });
+        emit({ stage: "session-created", status: "success", message: "HepAI session was created and stored securely." });
+        return { ok: true, session: toPublicSession(session), message: "Signed in with HAI OIDC." };
+      } catch (error) {
+        if (!(error instanceof OidcDevicePollingError)) throw error;
+        if (error.code === "authorization_pending") continue;
+        if (error.code === "slow_down") { intervalMs += 5000; emit({ stage: "device-code-slow-down", status: "info", message: "The server requested a slower polling interval." }); continue; }
+        if (error.code === "access_denied") throw new Error("Device sign-in was denied.");
+        if (error.code === "expired_token") throw new Error("Device sign-in expired. Start again.");
+        throw error;
+      }
+    }
+    throw new Error("Device sign-in expired. Start again.");
+  } catch (error) {
+    const cancelled = controller.signal.aborted;
+    emit({ stage: cancelled ? "cancelled" : "failed", status: cancelled ? "info" : "error", message: cancelled ? "Device sign-in cancelled." : error instanceof Error ? error.message : "OIDC device sign-in failed." });
+    return { ok: false, session: null, message: cancelled ? "Device sign-in cancelled." : error instanceof Error ? error.message : "OIDC device sign-in failed." };
+  } finally {
+    clearDeviceAcceptanceHandoff();
+    if (pendingOidcDeviceLogin === controller) { pendingOidcDeviceLogin = null; pendingOidcLoginDebug = null; }
+  }
+}
+
+function deviceAcceptanceHandoffPath(): string | null {
+  if (process.env.OPENDRSAI_ACCEPTANCE_AUTO_DEVICE_LOGIN !== "1") return null;
+  const path = process.env.OPENDRSAI_OIDC_DEVICE_HANDOFF_PATH?.trim();
+  return path && isAbsolute(path) ? path : null;
+}
+
+function writeDeviceAcceptanceHandoff(value: {
+  verificationUri: string;
+  verificationUriComplete?: string;
+  userCode: string;
+  expiresAt: string;
+}): void {
+  const path = deviceAcceptanceHandoffPath();
+  if (!path) return;
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 1, ...value })}\n`, { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, path);
+}
+
+function clearDeviceAcceptanceHandoff(): void {
+  const path = deviceAcceptanceHandoffPath();
+  if (!path) return;
+  try { rmSync(path, { force: true }); } catch { /* Best-effort cleanup; evidence sealing also rejects this file. */ }
+}
+
+async function pollOidcDeviceToken(tokenEndpoint: string, deviceCode: string, signal: AbortSignal): Promise<OidcTokenResponse> {
+  const response = await fetchOidcEndpoint(tokenEndpoint, "OIDC device token request", {
+    method: "POST", headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: deviceCode, client_id: OIDC_CLIENT_ID }).toString(), signal,
+  });
+  const payload = await response.json().catch(() => ({})) as Partial<OidcTokenResponse> & { error?: string; error_description?: string };
+  if (!response.ok) throw new OidcDevicePollingError(payload.error || "invalid_grant", readOidcErrorMessage(payload));
+  if (!payload.access_token || !payload.id_token || payload.token_type?.toLowerCase() !== "bearer") throw new Error("OIDC device token response is incomplete.");
+  return payload as OidcTokenResponse;
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(Object.assign(new Error("Device sign-in cancelled."), { name: "AbortError" })); return; }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(Object.assign(new Error("Device sign-in cancelled."), { name: "AbortError" }));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function fetchOidcEndpoint(
   url: string,
   label: string,
   init: RequestInit = {},
 ): Promise<Response> {
   const controller = new AbortController();
+  const upstreamSignal = init.signal;
+  const forwardAbort = (): void => controller.abort();
+  if (upstreamSignal?.aborted) controller.abort();
+  else upstreamSignal?.addEventListener("abort", forwardAbort, { once: true });
   const timeout = setTimeout(() => controller.abort(), OIDC_FETCH_TIMEOUT_MS);
   try {
     return await fetch(url, {
@@ -1181,12 +1169,14 @@ async function fetchOidcEndpoint(
     });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
+      if (upstreamSignal?.aborted) throw error;
       throw new Error(`${label} timed out after ${OIDC_FETCH_TIMEOUT_MS}ms: ${url}`);
     }
     const detail = error instanceof Error ? error.message : "Unknown error";
     throw new Error(`${label} failed: ${url}. ${detail}`);
   } finally {
     clearTimeout(timeout);
+    upstreamSignal?.removeEventListener("abort", forwardAbort);
   }
 }
 
@@ -1249,6 +1239,9 @@ async function getOidcMetadata(): Promise<OidcProviderMetadata> {
     jwks_uri: payload.jwks_uri,
     revocation_endpoint: typeof payload.revocation_endpoint === "string"
       ? payload.revocation_endpoint
+      : undefined,
+    device_authorization_endpoint: typeof payload.device_authorization_endpoint === "string"
+      ? payload.device_authorization_endpoint
       : undefined,
   };
   oidcMetadataCache = { metadata, fetchedAt: Date.now() };

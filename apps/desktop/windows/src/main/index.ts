@@ -441,17 +441,13 @@ import {
 import { saveApiKeyAndSync } from "./settings";
 import {
   cancelOidcLogin,
-  cancelDesktopSsoLogin,
   getAuthSession,
   login,
   logout,
-  pollDesktopSsoLogin,
   refreshAuthSession,
   refreshAuthContextAfterUnauthorized,
   requireAuthContext,
-  startDesktopSsoLogin,
   startOidcLogin,
-  startWechatDesktopLogin,
 } from "./auth";
 import { maybeRunE2eSmoke } from "./e2eSmoke";
 import {
@@ -4470,17 +4466,6 @@ function registerIpc(): void {
     return result;
   });
   secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());
-  secureHandle("desktop:start-desktop-sso-login", () => startDesktopSsoLogin());
-  secureHandle("desktop:start-wechat-desktop-login", () =>
-    startWechatDesktopLogin(),
-  );
-  secureHandle("desktop:poll-desktop-sso-login", (_event, deviceCode: string) =>
-    pollDesktopSsoLogin(deviceCode),
-  );
-  secureHandle(
-    "desktop:cancel-desktop-sso-login",
-    (_event, deviceCode: string) => cancelDesktopSsoLogin(deviceCode),
-  );
   secureHandle("desktop:logout", (_event, options) => {
     stopGateway();
     return logout(options);
@@ -6625,7 +6610,12 @@ async function runHeadlessOidcSmoke(): Promise<void> {
     error?: string;
   } = { ok: false, checks: {}, details: {} };
   try {
+    const expectedLoginError = process.env.OPENDRSAI_E2E_OIDC_EXPECT_LOGIN_ERROR?.trim();
+    const cancelTimer = expectedLoginError === "cancelled"
+      ? setTimeout(() => cancelOidcLogin(), 200)
+      : null;
     const loginResult = await startOidcLogin({ rememberMe: true });
+    if (cancelTimer) clearTimeout(cancelTimer);
     result.details.login = {
       ok: loginResult.ok,
       message: loginResult.message,
@@ -6635,6 +6625,19 @@ async function runHeadlessOidcSmoke(): Promise<void> {
     result.checks.oidcPublicSession = publicSessionLooksHeadlessOidc(
       loginResult.session,
     );
+    if (expectedLoginError) {
+      result.checks.expectedLoginRejected = !loginResult.ok && (
+        expectedLoginError === "cancelled"
+          ? /cancel/i.test(loginResult.message)
+          : loginResult.message.toLowerCase().includes(expectedLoginError.toLowerCase())
+      );
+      result.checks.noSessionCreated = loginResult.session === null && !existsSync(join(DRSAI_HOME, "auth", "auth.json"));
+      result.ok = result.checks.expectedLoginRejected && result.checks.noSessionCreated;
+      mkdirSync(dirname(resultPath), { recursive: true });
+      writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+      app.exit(result.ok ? 0 : 1);
+      return;
+    }
 
     const bootstrap = await bootstrapDesktop();
     result.details.bootstrap = bootstrap;

@@ -2,16 +2,12 @@ import { app, BrowserWindow, session as electronSession, shell, type IpcMain } f
 import { hasActiveAgentRuns } from "../../../../shared/main/agentRuns";
 import { getA5ServiceGuidanceScenario } from "../../../../shared/main/a5ServiceGuidanceScenario";
 import {
-  cancelDesktopSsoLogin,
   cancelOidcLogin,
   getAuthSession,
   login,
   logout,
-  pollDesktopSsoLogin,
   refreshAuthSession,
-  startDesktopSsoLogin,
   startOidcLogin,
-  startWechatDesktopLogin,
 } from "../../../../shared/main/auth";
 import type { BrowserTaskService } from "../../../../shared/main/browser/browserTaskService";
 import { hasActiveChats } from "../../../../shared/main/chat";
@@ -61,10 +57,6 @@ export function registerMacosRuntimeServicesIpc(
     return result;
   });
   ipcMain.handle("desktop:cancel-oidc-login", () => cancelOidcLogin());
-  ipcMain.handle("desktop:start-desktop-sso-login", () => startDesktopSsoLogin());
-  ipcMain.handle("desktop:start-wechat-desktop-login", () => startWechatDesktopLogin());
-  ipcMain.handle("desktop:poll-desktop-sso-login", (_event, deviceCode) => pollDesktopSsoLogin(deviceCode));
-  ipcMain.handle("desktop:cancel-desktop-sso-login", (_event, deviceCode) => cancelDesktopSsoLogin(deviceCode));
   ipcMain.handle("desktop:refresh-auth-session", () => refreshAuthSession());
   ipcMain.handle("desktop:logout", (_event, options) => logout(options));
   ipcMain.handle("desktop:local-data-cleanup-preview", (_event, scope) => previewLocalDataCleanup(scope));

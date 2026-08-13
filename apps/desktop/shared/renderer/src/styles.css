@@ -7565,6 +7565,40 @@ button.structured-activity-detail:hover {
   font-weight: 500 !important;
 }
 
+.login-device-code {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 14px;
+  background: var(--app-card-bg);
+  color: var(--app-text-secondary);
+}
+
+.login-device-code > strong {
+  color: var(--app-text-primary);
+  font: 750 clamp(24px, 4vw, 34px)/1.1 ui-monospace, "Cascadia Mono", monospace;
+  letter-spacing: 0.12em;
+  user-select: all;
+}
+
+.login-device-code-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.login-device-code-actions button {
+  padding: 7px 12px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 999px;
+  color: var(--app-text-primary);
+  background: transparent;
+  cursor: pointer;
+}
+
 .login-submit {
   display: inline-flex;
   align-items: center;

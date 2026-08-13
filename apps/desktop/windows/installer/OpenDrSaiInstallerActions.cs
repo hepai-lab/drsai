@@ -149,7 +149,15 @@ namespace OpenDrSai.Installer
             string progress;
             try
             {
-                progress = File.ReadAllText(progressFile);
+                using (FileStream stream = new FileStream(
+                    progressFile,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete))
+                using (StreamReader reader = new StreamReader(stream))
+                {
+                    progress = reader.ReadToEnd();
+                }
             }
             catch (IOException)
             {

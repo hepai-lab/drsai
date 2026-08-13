@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const scripts = [
   "scripts/collect-windows-sandbox-diagnostics.ps1",
+  "scripts/capture-windows-sandbox-prelogout.ps1",
   "scripts/complete-windows-sandbox-acceptance.ps1",
   "scripts/guest/Invoke-OpenDrSaiAcceptance.ps1",
   "scripts/invoke-windows-sandbox-oidc-acceptance.ps1",
@@ -23,6 +24,7 @@ assert(host.includes("windows-sandbox-session.ps1"), "acceptance launcher bypass
 assert(host.includes("-Action Diagnose") && host.includes("-Action List"), "acceptance launcher omits Sandbox preflight");
 assert(host.includes("<ReadOnly>true</ReadOnly>") && host.includes("<ReadOnly>false</ReadOnly>"), "Sandbox mappings do not separate immutable inputs from writable evidence");
 assert(host.includes("acceptance-result.json"), "host launcher does not wait for structured acceptance evidence");
+assert(host.includes("device-login-handoff.json") && host.includes('Host -ne "ai-dev.ihep.ac.cn"') && host.includes("Start-Process $verificationUrl"), "host launcher does not safely open the Sandbox device verification handoff");
 assert(host.includes("host-sandbox-launch-failure.json") && host.includes("SANDBOX_SESSION_START_TIMEOUT"), "host launcher does not preserve Sandbox startup failure evidence");
 assert(host.includes("Session $sessionId remains open"), "failure path does not preserve the Sandbox for inspection");
 assert(host.includes("channels/beta/latest-windows.json"), "host launcher has no immutable channel-manifest input");
@@ -30,16 +32,22 @@ assert(host.includes("Complete the MSI wizard"), "host launcher does not tell th
 assert(host.includes("[switch]$AutomateInstaller") && host.includes("automateInstaller = [bool]$AutomateInstaller"), "host launcher has no explicit unattended candidate-install mode");
 assert(host.includes('ValidateSet("Online", "Candidate", "Upgrade", "NetworkCandidate")'), "host launcher does not expose every required Sandbox scenario");
 assert(host.includes("releaseBaseUrl = $ReleaseBaseUrl.TrimEnd('/')"), "host launcher does not record the selected release CDN base URL");
+assert(host.includes("watch-windows-sandbox-acceptance.ps1") && host.includes("$watcher"), "host launcher does not package the automatic acceptance observer");
 
 const guest = read("scripts/guest/Invoke-OpenDrSaiAcceptance.ps1");
+assert(guest.includes("OPENDRSAI_ACCEPTANCE_AUTO_DEVICE_LOGIN") && guest.includes("OPENDRSAI_OIDC_DEVICE_HANDOFF_PATH"), "guest does not enable the bounded device-login handoff");
 for (const expected of [
   "Get-AuthenticodeSignature", "msi-install.log",
-  "SANDBOX-E2E-$runId", "Acceptance-PASS", "Acceptance-FAIL-Collect",
+  "SANDBOX-E2E-$runId", "Start-AcceptanceObserver", "Wait-ForCompletedChat",
 ]) assert(guest.includes(expected), `guest acceptance omits ${expected}`);
-assert(guest.includes("unattended candidate runs skip this step"), "guest acceptance does not explain interactive versus unattended installation");
+assert(guest.includes("Finish the MSI wizard if visible"), "guest acceptance does not explain interactive installation");
+for (const expected of ["Configure Tavily", "Log out in OpenDrSai", "collected automatically", "do not click any CMD files"]) {
+  assert(guest.toLowerCase().includes(expected.toLowerCase()), `guest acceptance omits two-stage gate: ${expected}`);
+}
+assert(!/Write-OutcomeShortcuts|Write-FailShortcut|Acceptance-PASS\.cmd|FAIL-Collect\.cmd|Capture-Before-Logout\.cmd/.test(guest), "guest acceptance still requires CMD shortcut interaction");
 assert(guest.includes("$args += '/qn'"), "guest acceptance does not implement unattended MSI installation");
 assert(guest.includes('$Role-manifest.json'), "online acceptance does not retain role-specific channel manifests");
-for (const expected of ["msi-baseline-install.log", "msi-candidate-upgrade.log", "upgrade-continue.signal"]) {
+for (const expected of ["msi-baseline-install.log", "msi-candidate-upgrade.log", "Wait-ForCompletedChat"]) {
   assert(guest.includes(expected), `upgrade acceptance omits ${expected}`);
 }
 assert(!/developerBypass|OPENDRSAI_DEV_AUTH_BYPASS|fake.gateway/i.test(guest), "real Sandbox acceptance contains a fake authentication or Gateway bypass");
@@ -57,12 +65,26 @@ assert(controller.includes("Stop-Process -Id $helper.Id -Force"), "timed-out pac
 assert(controller.includes("launcherExitedBeforeCleanup") && controller.includes("Stop-Process -Id $launcher.Id -Force"), "timed-out Sandbox launchers are not cleaned without touching service hosts");
 
 const finalizer = read("scripts/complete-windows-sandbox-acceptance.ps1");
+const preLogout = read("scripts/capture-windows-sandbox-prelogout.ps1");
+const watcher = read("scripts/watch-windows-sandbox-acceptance.ps1");
+for (const expected of ["Get-CompletedChats", "Test-Tavily", "InitialProcessId", "preRestartChats", "postRestartChats", "complete-windows-sandbox-acceptance.ps1", "automatic-timeout"]) {
+  assert(watcher.includes(expected), `automatic Sandbox observer omits ${expected}`);
+}
+assert(guest.includes("WindowStyle Hidden"), "automatic Sandbox observer is not started hidden");
+for (const expected of ["encryptedOidcSession", "restartPersistence", "twoAcceptanceChats", "postRestartChat", "tavilySearchAvailable", "/v1/config/perceptors", "perceptor_id", "capability=search", "Local Gateway request failed:"]) {
+  assert(preLogout.includes(expected), `pre-logout validator omits gate: ${expected}`);
+}
+assert(preLogout.includes('$_.acceptanceRunId -eq $RunId') && preLogout.includes('-lt $processStarted') && preLogout.includes('-gt $processStarted'), "pre-logout validator does not prove correlated chats across the app restart boundary");
+assert(!preLogout.includes('-ge $authCreated'), "pre-logout validator incorrectly treats the refreshable auth record timestamp as the original login time");
 for (const code of [
   "Default Agent bound", "HepAI Provider selected", "API Key not required",
-  "OIDC session persisted", "Gateway ready", "Runtime model catalog non-empty",
+  "Encrypted OIDC session before logout", "Restart persistence verified", "Two acceptance chats completed",
+  "Post-restart chat verified", "Tavily search available", "OIDC logout cleared local session",
+  "Gateway ready", "Runtime model catalog non-empty",
   "Real OpenDrSai execution completed", "Chat evidence correlated", "Diagnostic evidence redaction",
   "Installer support files colocated", "Start menu shortcut", "Bundled Runtime Python",
 ]) assert(finalizer.includes(code), `acceptance finalizer omits gate: ${code}`);
+assert(finalizer.includes("manualChatAttestation") && finalizer.includes("observedChatCount -ge 2") && finalizer.includes("pre-logout-validation.json + manual"), "acceptance finalizer cannot record a bounded tester attestation backed by successful chat telemetry");
 for (const field of ["checkedAt", "diagnosticCode", "summary.md", "run-manifest.json"]) {
   assert(finalizer.includes(field), `acceptance finalizer omits required evidence field/artifact: ${field}`);
 }

@@ -525,9 +525,9 @@ const borrowedOperationStart = runtimeClientSource.indexOf("export async functio
 const borrowedOperationEnd = runtimeClientSource.indexOf("connectRuntimeClientForWorkspaceIfAvailable", borrowedOperationStart);
 const borrowedOperation = runtimeClientSource.slice(borrowedOperationStart, borrowedOperationEnd);
 assert(borrowedOperationStart >= 0, "finite Runtime operations must expose a retained-client helper");
-assert(borrowedOperation.includes("retainRuntimeClient(resolved.client)"),
-  "finite Runtime operations must retain the shared client before awaiting work");
-assert(borrowedOperation.includes("finally") && borrowedOperation.includes("release();"),
+assert(borrowedOperation.includes("acquireRuntimeClientLease("),
+  "finite Runtime operations must atomically acquire the shared client lease before awaiting work");
+assert(borrowedOperation.includes("finally") && borrowedOperation.includes("lease.release();"),
   "finite Runtime operations must release their client lease on success and failure");
 const windowsMain = await readFile(resolve(process.cwd(), "src/main/index.ts"), "utf8");
 const manifestHandlerStart = windowsMain.indexOf('secureHandle("desktop:run-manifest"');
