@@ -13,6 +13,7 @@ const rendererFiles = [
   "../shared/renderer/src/components/files/FilesContextPanel.tsx",
   "../shared/renderer/src/components/GfsView.tsx",
   "../shared/renderer/src/components/SkillsManager.tsx",
+  "../shared/renderer/src/components/PerceptorSettingsPanel.tsx",
 ];
 const activeRenderer = rendererFiles.map(read).join("\n");
 const host = read("../shared/renderer/src/components/AppDecisionDialog.tsx");

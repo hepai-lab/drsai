@@ -21,6 +21,7 @@ from drsai.backend.runtime.experiments import RuntimeExperimentStore
 from drsai.backend.runtime.replay_planner import ReplayPlanStore
 from drsai.backend.runtime.replay_execution import ReplayExecutionStore
 from drsai.backend.runtime.run_comparison import RunComparisonStore
+from drsai.backend.runtime.run_comparison_evaluation import RunComparisonEvaluationStore
 from drsai.backend.runtime.oaep import project_event, project_snapshot, safe_error
 from drsai.backend.runtime.run_inspection import (
     INSPECTION_SCHEMA_VERSION,
@@ -38,7 +39,7 @@ from drsai.backend.runtime.run_inspection import (
 )
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from drsai.relay.device_identity import WindowsDpapiProtector
-from drsai.relay.security import redact_secrets
+from drsai.relay.security import redact_credentials, redact_secrets
 
 
 RUN_TRANSITIONS = {
@@ -288,6 +289,9 @@ class RuntimeEngine:
             self.database, self.get_run,
             lambda run_id: self.get_run_manifest(run_id, safe=False),
             self.inspect_run, self.experiments,
+        )
+        self.run_comparison_evaluations = RunComparisonEvaluationStore(
+            self.database, self.run_comparisons.get,
         )
         from drsai.backend.runtime.adoptions import RuntimeAdoptionStore
         self.adoptions = RuntimeAdoptionStore(self.database)
@@ -1060,6 +1064,26 @@ class RuntimeEngine:
             raise KeyError("Run not found")
         return self._run(row)
 
+    def get_run_by_idempotency(self, session_id: str, idempotency_key: str) -> dict[str, Any]:
+        """Resolve an already-created Run without reissuing its side effect.
+
+        This is the recovery read used when a client cannot know whether the
+        create response was lost.  Both values are checked so a key cannot be
+        used as a cross-Session lookup oracle.
+        """
+        if not idempotency_key or len(idempotency_key) > 200 or any(
+            character in idempotency_key for character in "\r\n\0"
+        ):
+            raise ValueError("A valid Idempotency-Key is required")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM runtime_runs WHERE session_id=? AND idempotency_key=?",
+                (session_id, idempotency_key),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Run idempotency result not found")
+        return self._run(row)
+
     def revise_goal(
         self, run_id: str, goal: Mapping[str, Any], *, expected_version: int,
     ) -> dict[str, Any]:
@@ -1413,8 +1437,11 @@ class RuntimeEngine:
         parameters.append(bounded + 1)
         with self._connect() as db:
             rows = db.execute(
-                f"SELECT rowid AS inspection_rowid,* FROM runtime_runs WHERE {where} "
-                "ORDER BY rowid LIMIT ?",
+                f"SELECT rowid AS inspection_rowid,*,"
+                "COALESCE((SELECT relation_type FROM runtime_run_relations "
+                "WHERE target_run_id=runtime_runs.run_id ORDER BY created_at DESC LIMIT 1),"
+                "CASE WHEN parent_run_id IS NOT NULL THEN 'subagent' ELSE 'root' END) AS relation_type "
+                f"FROM runtime_runs WHERE {where} ORDER BY rowid LIMIT ?",
                 parameters,
             ).fetchall()
         page = rows[:bounded]
@@ -1698,13 +1725,27 @@ class RuntimeEngine:
         evidence: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         run = self.get_run(run_id)
-        safe_message = str(redact_sensitive(redact_secrets(message)))
+        safe_message = str(redact_sensitive(redact_secrets(message), "", "content"))
         from drsai.backend.runtime.input_resources import normalize_input_resources, serializable_input_resources
         normalized_resources = normalize_input_resources(input_resources or [])
-        encoded = json.dumps(redact_sensitive(attachment_refs or []), separators=(",", ":"))
+        encoded = json.dumps(redact_sensitive(attachment_refs or [], "", "content"), separators=(",", ":"))
         encoded_resources = json.dumps(
             serializable_input_resources(normalized_resources), ensure_ascii=False, separators=(",", ":"),
         )
+        # A Run owns exactly one immutable user input. HTTP retries and
+        # recoverable capability configuration may enter this method again,
+        # but they must never revise the user Item or rebind request-scoped
+        # metadata such as a new correlation ID to revision 1.
+        if str(run.get("input_message") or ""):
+            if (
+                str(run["input_message"]) != safe_message
+                or json.dumps(run.get("attachment_refs") or [], separators=(",", ":")) != encoded
+                or json.dumps(
+                    run.get("input_resources") or [], ensure_ascii=False, separators=(",", ":"),
+                ) != encoded_resources
+            ):
+                raise ValueError("Runtime Run input is immutable")
+            return run
         manifest_evidence = dict(evidence or {})
         supplied_input = manifest_evidence.get("input")
         manifest_evidence["input"] = {
@@ -1729,47 +1770,66 @@ class RuntimeEngine:
             "attachments",
             [{"ref": ref, "ref_sha256": text_digest(ref)} for ref in (attachment_refs or [])],
         )
+        already_bound = False
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            db.execute(
-                "UPDATE runtime_runs SET input_message=?, attachment_refs_json=?, input_resources_json=?, "
-                "correlation_id=COALESCE(correlation_id,?) WHERE run_id=?",
-                (safe_message, encoded, encoded_resources, correlation_id, run_id),
-            )
-            self._merge_run_manifest_in_transaction(
-                db,
-                run_id,
-                manifest_evidence,
-            )
-            _, _, journal_created = self.conversation_journal.upsert_item_in_transaction(
-                db,
-                str(run["session_id"]),
-                item_id=f"user:{run_id}",
-                kind="message",
-                role="user",
-                revision=1,
-                source_client=source_client,
-                source_message_id=source_message_id,
-                payload={
-                    "content": safe_message,
-                    "text": safe_message,
-                    "parts": [{"type": "text", "text": safe_message}] if safe_message else [],
-                    "phase": "final",
-                    "status": "completed",
-                    "attachment_refs": json.loads(encoded),
-                    "input_resources": [
-                        {
-                            "resource_id": value["resource_id"], "kind": value["kind"],
-                            "name": value["name"], "status": value["status"],
-                        }
-                        for value in normalized_resources
-                    ],
-                    "correlation_id": correlation_id,
-                },
-                run_id=run_id,
-                created_at=str(run["created_at"]),
-            )
+            current = db.execute(
+                "SELECT input_message,attachment_refs_json,input_resources_json FROM runtime_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if current is None:
+                raise KeyError("Run not found")
+            if str(current["input_message"] or ""):
+                if (
+                    str(current["input_message"]) != safe_message
+                    or str(current["attachment_refs_json"]) != encoded
+                    or str(current["input_resources_json"]) != encoded_resources
+                ):
+                    raise ValueError("Runtime Run input is immutable")
+                already_bound = True
+                journal_created = False
+            else:
+                db.execute(
+                    "UPDATE runtime_runs SET input_message=?, attachment_refs_json=?, input_resources_json=?, "
+                    "correlation_id=COALESCE(correlation_id,?) WHERE run_id=?",
+                    (safe_message, encoded, encoded_resources, correlation_id, run_id),
+                )
+                self._merge_run_manifest_in_transaction(
+                    db,
+                    run_id,
+                    manifest_evidence,
+                )
+                _, _, journal_created = self.conversation_journal.upsert_item_in_transaction(
+                    db,
+                    str(run["session_id"]),
+                    item_id=f"user:{run_id}",
+                    kind="message",
+                    role="user",
+                    revision=1,
+                    source_client=source_client,
+                    source_message_id=source_message_id,
+                    payload={
+                        "content": safe_message,
+                        "text": safe_message,
+                        "parts": [{"type": "text", "text": safe_message}] if safe_message else [],
+                        "phase": "final",
+                        "status": "completed",
+                        "attachment_refs": json.loads(encoded),
+                        "input_resources": [
+                            {
+                                "resource_id": value["resource_id"], "kind": value["kind"],
+                                "name": value["name"], "status": value["status"],
+                            }
+                            for value in normalized_resources
+                        ],
+                        "correlation_id": correlation_id,
+                    },
+                    run_id=run_id,
+                    created_at=str(run["created_at"]),
+                )
             db.commit()
+        if already_bound:
+            return self.get_run(run_id)
         if journal_created:
             self.conversation_journal.notify_committed()
         return self.get_run(run_id)
@@ -1824,7 +1884,7 @@ class RuntimeEngine:
             if message and str(message) != "[REDACTED]":
                 error_summary = {
                     "code": str(error.get("code") or content.get("code") or "run.item_failed")[:120],
-                    "message": str(redact_sensitive(redact_secrets(str(message))))[:500],
+                    "message": redact_credentials(str(message)),
                     "retryable": bool(error.get("retryable", False)),
                 }
         manifest_view = self.get_run_manifest(run_id, safe=True)
@@ -1849,7 +1909,7 @@ class RuntimeEngine:
             if message:
                 error_summary = {
                     "code": str(outcome_error.get("code") or "run.failed")[:120],
-                    "message": str(redact_sensitive(redact_secrets(str(message))))[:500],
+                    "message": redact_credentials(str(message)),
                     "retryable": bool(outcome_error.get("retryable", False)),
                 }
         if usage["total_tokens"] == 0:
@@ -1867,7 +1927,7 @@ class RuntimeEngine:
         ended = _timestamp(run.get("completed_at")) or _timestamp(_now())
         response = {
             "schema_version": INSPECTION_SCHEMA_VERSION,
-            "run": redact_sensitive(run),
+            "run": redact_sensitive(run, "", "audit"),
             "summary": {
                 "duration_ms": max(0, round((ended - started) * 1000)) if started else None,
                 "counts_by_item_type": counts,
@@ -2351,7 +2411,48 @@ class RuntimeEngine:
                 db.rollback(); raise ValueError(f"Illegal Run transition: {row['status']} -> {status}")
             started = row["started_at"] or (_now() if status == "running" else None)
             completed = _now() if status in {"completed", "cancelled", "failed"} else None
+            pending_approvals = []
             if completed:
+                pending_approvals = db.execute(
+                    "SELECT approval_id,request_json,deadline_at FROM runtime_approvals "
+                    "WHERE run_id=? AND status='pending' ORDER BY created_at",
+                    (run_id,),
+                ).fetchall()
+                if pending_approvals:
+                    db.execute(
+                        "UPDATE runtime_approvals SET status='cancelled',decision_json=?,resolved_at=? "
+                        "WHERE run_id=? AND status='pending'",
+                        (
+                            json.dumps({"reason": f"run_{status}"}, separators=(",", ":")),
+                            completed,
+                            run_id,
+                        ),
+                    )
+                db.execute(
+                    "UPDATE runtime_side_effects SET status='rejected',completed_at=? "
+                    "WHERE run_id=? AND status IN ('requested','approved')",
+                    (completed, run_id),
+                )
+                for approval in pending_approvals:
+                    approval_id = str(approval["approval_id"])
+                    self.conversation_journal.upsert_item_in_transaction(
+                        db,
+                        str(row["session_id"]),
+                        item_id=f"approval:{approval_id}",
+                        kind="approval",
+                        role=None,
+                        revision=2,
+                        source_client="runtime",
+                        payload={
+                            "approval_id": approval_id,
+                            "status": "cancelled",
+                            "request": json.loads(str(approval["request_json"])),
+                            "decision": {"reason": f"run_{status}"},
+                            "deadline_at": approval["deadline_at"],
+                        },
+                        run_id=run_id,
+                        updated_at=completed,
+                    )
                 self._finalize_active_run_items_in_transaction(
                     db,
                     session_id=str(row["session_id"]),
@@ -2388,6 +2489,37 @@ class RuntimeEngine:
                 dedupe_key=f"runtime-event:{runtime_event_id}",
                 created_at=event_created,
             )
+            for approval in pending_approvals:
+                sequence += 1
+                approval_id = str(approval["approval_id"])
+                approval_event_id = f"event-{uuid.uuid4()}"
+                approval_detail = {"approval_id": approval_id, "reason": f"run_{status}"}
+                db.execute(
+                    "INSERT INTO runtime_events("
+                    "event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key"
+                    ") VALUES(?,?,?,?,?,?,NULL)",
+                    (
+                        approval_event_id,
+                        run_id,
+                        sequence,
+                        "approval.cancelled",
+                        json.dumps(approval_detail, separators=(",", ":"), sort_keys=True),
+                        event_created,
+                    ),
+                )
+                self.conversation_journal.append_event_in_transaction(
+                    db,
+                    str(row["session_id"]),
+                    "approval.decided",
+                    {
+                        "approval_id": approval_id,
+                        "decision": "cancelled",
+                        "detail": {"reason": f"run_{status}"},
+                    },
+                    run_id=run_id,
+                    dedupe_key=f"runtime-event:{approval_event_id}",
+                    created_at=event_created,
+                )
             if status in {"completed", "cancelled", "failed"}:
                 self._merge_run_manifest_in_transaction(
                     db,
@@ -2419,6 +2551,45 @@ class RuntimeEngine:
                 db.commit()
                 return self._run(row)
             first_request = row["cancel_requested_at"] is None
+            pending_approvals = db.execute(
+                "SELECT approval_id,request_json,deadline_at FROM runtime_approvals "
+                "WHERE run_id=? AND status='pending' ORDER BY created_at",
+                (run_id,),
+            ).fetchall()
+            if pending_approvals:
+                db.execute(
+                    "UPDATE runtime_approvals SET status='denied',decision_json=?,resolved_at=? "
+                    "WHERE run_id=? AND status='pending'",
+                    (json.dumps({"reason": "run_cancelled"}, separators=(",", ":")), now, run_id),
+                )
+            # Cancellation atomically revokes every side effect that has not
+            # started. An approval that won just before this transaction must
+            # not remain claimable after the Run is terminal.
+            db.execute(
+                "UPDATE runtime_side_effects SET status='rejected',completed_at=? "
+                "WHERE run_id=? AND status IN ('requested','approved')",
+                (now, run_id),
+            )
+            for approval in pending_approvals:
+                approval_id = str(approval["approval_id"])
+                self.conversation_journal.upsert_item_in_transaction(
+                    db,
+                    str(row["session_id"]),
+                    item_id=f"approval:{approval_id}",
+                    kind="approval",
+                    role=None,
+                    revision=2,
+                    source_client="runtime",
+                    payload={
+                        "approval_id": approval_id,
+                        "status": "denied",
+                        "request": json.loads(str(approval["request_json"])),
+                        "decision": {"reason": "run_cancelled"},
+                        "deadline_at": approval["deadline_at"],
+                    },
+                    run_id=run_id,
+                    updated_at=now,
+                )
             self._finalize_active_run_items_in_transaction(
                 db,
                 session_id=str(row["session_id"]),
@@ -2435,16 +2606,6 @@ class RuntimeEngine:
                 current = db.execute("SELECT * FROM runtime_runs WHERE run_id=?", (run_id,)).fetchone()
                 db.commit()
                 return self._run(current)
-            pending_approvals = db.execute(
-                "SELECT approval_id FROM runtime_approvals WHERE run_id=? AND status='pending' ORDER BY created_at",
-                (run_id,),
-            ).fetchall()
-            if pending_approvals:
-                db.execute(
-                    "UPDATE runtime_approvals SET status='denied',decision_json=?,resolved_at=? "
-                    "WHERE run_id=? AND status='pending'",
-                    (json.dumps({"reason": "run_cancelled"}, separators=(",", ":")), now, run_id),
-                )
             sequence = int(db.execute(
                 "SELECT COALESCE(MAX(sequence),0) FROM runtime_events WHERE run_id=?",
                 (run_id,),
@@ -2761,11 +2922,24 @@ class RuntimeEngine:
             payload["status"] = phase if phase in {"completed", "failed", "cancelled"} else "running"
         elif event_type == "agent.failed":
             error = data.get("error") if isinstance(data.get("error"), dict) else {}
+            message = str(error.get("message") or data.get("message") or "Agent execution failed.")
+            if message == "[REDACTED]":
+                redacted_details = error.get("redacted_details")
+                if not isinstance(redacted_details, dict):
+                    redacted_details = data.get("redacted_details")
+                detail = error.get("detail")
+                if not isinstance(detail, dict):
+                    detail = data.get("detail")
+                safe_reason = (
+                    redacted_details.get("reason") if isinstance(redacted_details, dict) else None
+                ) or (detail.get("reason") if isinstance(detail, dict) else None)
+                if safe_reason:
+                    message = f"Agent execution failed: {safe_reason}"
             payload = {
                 "event_type": event_type,
                 "level": "error",
                 "code": str(error.get("code") or data.get("code") or "agent_execution_failed"),
-                "message": str(error.get("message") or data.get("message") or "Agent execution failed."),
+                "message": message,
                 "details": {
                     "retryable": bool(error.get("retryable") or data.get("retryable")),
                 },
@@ -2882,7 +3056,7 @@ class RuntimeEngine:
         return [dict(row) for row in rows]
 
     def append_event(self, run_id: str, event_type: str, data: dict[str, Any]) -> dict[str, Any]:
-        safe_data = redact_sensitive(data)
+        safe_data = redact_sensitive(data, "", "content")
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = db.execute(
@@ -2938,7 +3112,7 @@ class RuntimeEngine:
                 "SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_events WHERE run_id=?", (run_id,)
             ).fetchone()[0]
             event_id, created = f"event-{uuid.uuid4()}", _now()
-            safe_data = redact_sensitive(data)
+            safe_data = redact_sensitive(data, "", "content")
             db.execute(
                 "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,?)",
                 (event_id, run_id, sequence, event_type,
@@ -2993,7 +3167,7 @@ class RuntimeEngine:
             NormalizedEventKind.SESSION_DELETED: "removed",
         }.get(event.kind)
         event_type, data, dedupe_key = normalized_runtime_write(event)
-        compatibility_data = redact_sensitive({**dict(audit or {}), **data})
+        compatibility_data = redact_sensitive({**dict(audit or {}), **data}, "", "content")
         created = _now()
         journal_created = False
         with self._lock, self._connect() as db:
@@ -3198,7 +3372,7 @@ class RuntimeEngine:
                         continue
                     sequence += 1
                     event_id, created = f"event-{uuid.uuid4()}", _now()
-                    safe_data = redact_sensitive(data)
+                    safe_data = redact_sensitive(data, "", "content")
                     inserted_rows.append((
                         event_id, run_id, sequence, event_type,
                         json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key,
@@ -3272,7 +3446,7 @@ class RuntimeEngine:
                     results.append(self._event(existing)); continue
                 sequence += 1
                 event_id, created = f"event-{uuid.uuid4()}", _now()
-                safe_data = redact_sensitive(data)
+                safe_data = redact_sensitive(data, "", "content")
                 db.execute(
                     "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,?)",
                     (event_id, run_id, sequence, event_type, json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key),
@@ -3336,7 +3510,7 @@ class RuntimeEngine:
 
     def request_approval(self, run_id: str, request: dict[str, Any], deadline_at: str | None = None) -> dict[str, Any]:
         approval_id, created = f"approval-{uuid.uuid4()}", _now()
-        safe_request = redact_sensitive(request)
+        safe_request = redact_sensitive(request, "", "audit")
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = db.execute(
@@ -3461,7 +3635,14 @@ class RuntimeEngine:
 
     def get_side_effect(self, approval_id: str) -> dict[str, Any]:
         with self._connect() as db:
-            row = db.execute("SELECT * FROM runtime_side_effects WHERE approval_id=?", (approval_id,)).fetchone()
+            row = db.execute(
+                "SELECT e.*,r.status AS run_status,a.status AS approval_status "
+                "FROM runtime_side_effects e "
+                "JOIN runtime_runs r ON r.run_id=e.run_id "
+                "JOIN runtime_approvals a ON a.approval_id=e.approval_id "
+                "WHERE e.approval_id=?",
+                (approval_id,),
+            ).fetchone()
         if row is None:
             raise KeyError("Side effect not found")
         return self._side_effect(row)
@@ -3477,7 +3658,14 @@ class RuntimeEngine:
         claimed_at = _now()
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM runtime_side_effects WHERE approval_id=?", (approval_id,)).fetchone()
+            row = db.execute(
+                "SELECT e.*,r.status AS run_status,a.status AS approval_status "
+                "FROM runtime_side_effects e "
+                "JOIN runtime_runs r ON r.run_id=e.run_id "
+                "JOIN runtime_approvals a ON a.approval_id=e.approval_id "
+                "WHERE e.approval_id=?",
+                (approval_id,),
+            ).fetchone()
             if row is None:
                 db.rollback()
                 raise KeyError("Side effect not found")
@@ -3493,9 +3681,13 @@ class RuntimeEngine:
             if str(row["status"]) != "approved":
                 db.rollback()
                 raise ValueError("Side effect is not approved for execution")
+            if str(row["run_status"]) != "running" or str(row["approval_status"]) != "approved":
+                db.rollback()
+                raise ValueError("Side effect authorization is no longer active")
             updated = db.execute(
                 "UPDATE runtime_side_effects SET status='executing',execution_started_at=?,recovered_at=? "
-                "WHERE approval_id=? AND status='approved'",
+                "WHERE approval_id=? AND status='approved' "
+                "AND EXISTS(SELECT 1 FROM runtime_runs r WHERE r.run_id=runtime_side_effects.run_id AND r.status='running')",
                 (claimed_at, claimed_at if recovered else row["recovered_at"], approval_id),
             )
             if updated.rowcount != 1:
@@ -3507,7 +3699,7 @@ class RuntimeEngine:
     def complete_side_effect(self, approval_id: str, result: Mapping[str, Any]) -> dict[str, Any]:
         completed_at = _now()
         result_digest = "sha256:" + hashlib.sha256(
-            json.dumps(redact_sensitive(dict(result)), separators=(",", ":"), sort_keys=True, default=str).encode("utf-8")
+            json.dumps(redact_sensitive(dict(result), "", "audit"), separators=(",", ":"), sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
         with self._lock, self._connect() as db:
             updated = db.execute(
@@ -3753,6 +3945,12 @@ class RuntimeEngine:
     @staticmethod
     def _run(row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
+        # The public Runtime/Relay Run projection names the user input
+        # ``message``.  Keep the durable column name for internal recovery,
+        # but always expose the required alias (including an empty historical
+        # value) so old Runs remain listable from mobile clients.
+        if "input_message" in row.keys():
+            result["message"] = str(row["input_message"] or "")
         if "attachment_refs_json" in row.keys():
             result["attachment_refs"] = json.loads(str(row["attachment_refs_json"] or "[]"))
         if "input_resources_json" in row.keys():

@@ -5,6 +5,7 @@ import { BrowserStreamingAudioAdapter } from "./browserStreamingAudioAdapter";
 import { DesktopStreamingTtsRuntime } from "./desktopStreamingTtsRuntime";
 import { OrderedStreamingAudioPlaybackQueue, type StreamingPlaybackPhase } from "./orderedAudioPlaybackQueue";
 import { BoundedStreamingTtsScheduler } from "./streamingTtsScheduler";
+import { AdaptiveTtsPrefetchWatermark, estimateSpeechAudioMs } from "./adaptiveTtsWatermark";
 
 export interface StreamingVoiceOutputState {
   phase: StreamingPlaybackPhase | "synthesizing";
@@ -38,6 +39,8 @@ export function useStreamingVoiceOutput(options: {
   const identityRef = useRef<{ sessionId: string; turnId: string; messageId: string } | null>(null);
   const pumpRef = useRef<() => void>(() => {});
   const onTerminalRef = useRef(options.onTerminal);
+  const watermarkRef = useRef(new AdaptiveTtsPrefetchWatermark());
+  const synthesisStartedRef = useRef(new Map<number, number>());
   onTerminalRef.current = options.onTerminal;
   segmentsRef.current = options.segments;
   completedRef.current = options.textCompleted;
@@ -46,6 +49,8 @@ export function useStreamingVoiceOutput(options: {
     if (!options.enabled) return;
     const identity = { sessionId: `tts-session-${crypto.randomUUID()}`, turnId: `tts-turn-${crypto.randomUUID()}`, messageId: `tts-message-${crypto.randomUUID()}` };
     identityRef.current = identity;
+    watermarkRef.current = new AdaptiveTtsPrefetchWatermark();
+    synthesisStartedRef.current.clear();
     nextScheduledRef.current = 0;
     setError(null); setSynthesizedSegments(0); setPlayedSegments(0); setPhase("buffering");
     const runtime = new DesktopStreamingTtsRuntime({
@@ -64,8 +69,15 @@ export function useStreamingVoiceOutput(options: {
     playbackRef.current = playback;
     const scheduler = new BoundedStreamingTtsScheduler(runtime, {
       onEvent: (event) => {
-        if (event.type === "started" && !["playing", "paused"].includes(playbackRef.current?.phase ?? "idle")) setPhase("synthesizing");
+        if (event.type === "started") {
+          synthesisStartedRef.current.set(event.request.segmentIndex, performance.now());
+          if (!["playing", "paused"].includes(playbackRef.current?.phase ?? "idle")) setPhase("synthesizing");
+        }
         else if (event.type === "audio") {
+          const startedAt = synthesisStartedRef.current.get(event.segment.segmentIndex);
+          const source = segmentsRef.current[event.segment.segmentIndex];
+          if (startedAt !== undefined && source) watermarkRef.current.observe(performance.now() - startedAt, estimateSpeechAudioMs(source.text, options.speed));
+          synthesisStartedRef.current.delete(event.segment.segmentIndex);
           if (!playback.enqueue(event.segment)) {
             setError("The streaming playback queue is full or received a duplicate segment.");
             onTerminalRef.current?.("failed");
@@ -91,7 +103,8 @@ export function useStreamingVoiceOutput(options: {
     const playback = playbackRef.current;
     const identity = identityRef.current;
     if (!scheduler || !playback || !identity) return;
-    while (scheduler.capacity > 0 && nextScheduledRef.current < segmentsRef.current.length) {
+    while (scheduler.capacity > 0 && nextScheduledRef.current < segmentsRef.current.length
+      && watermarkRef.current.shouldPrefetch(playback.bufferedCount, Number(Boolean(scheduler.active)) + Number(Boolean(scheduler.pending)))) {
       const segment = segmentsRef.current[nextScheduledRef.current];
       const accepted = scheduler.enqueue({
         ...identity, segmentId: segment.id, segmentIndex: segment.index, text: segment.text,

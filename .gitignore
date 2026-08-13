@@ -365,3 +365,10 @@ examples/agent_groupchat/docmaster/docs/architecture.md
 examples/agent_groupchat/docmaster/docs/ppt-outline.md
 examples/agent_groupchat/docmaster/test_ppt/make_arch_figure.py
 examples/agent_groupchat/docmaster/test_ppt/make_paper_slide.py
+
+# Windows packaging consumes these two brand assets from buildResources.
+# Keep other generated build directories ignored while making clean/CI builds branded.
+!apps/desktop/windows/build/
+apps/desktop/windows/build/*
+!apps/desktop/windows/build/icon.ico
+!apps/desktop/windows/build/icon.png

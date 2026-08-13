@@ -36,7 +36,13 @@ dependencies = [
     # ── data model & validation ──────────────────────────────────────────
     "pydantic",
     "pydantic-settings",
+    # Document parsing for Knowledge Base indexing. Each format needs its own
+    # reader to keep positions (page, slide, heading, sheet); without them a
+    # citation can name a file but not the place inside it.
     "pypdf==6.10.0",
+    "python-pptx>=1.0,<2",
+    "python-docx>=1.1,<2",
+    "openpyxl>=3.1,<4",
 
     # ── database ──────────────────────────────────────────────────────────
     "sqlmodel",
@@ -53,6 +59,14 @@ dependencies = [
 
     # ── async networking ──────────────────────────────────────────────────
     "aiohttp",
+    # Use the native Windows certificate store for packaged Runtime HTTPS.
+    # This keeps enterprise/IHEP trust roots aligned with Edge and the OS.
+    "truststore>=0.10,<1; sys_platform == 'win32'",
+    # HTTPX automatically honors HTTP(S)/ALL_PROXY. The SOCKS extra is a
+    # runtime requirement when a Desktop user has configured a SOCKS proxy;
+    # without it Agent creation fails before the first model request.
+    "httpx[socks]>=0.27,<1",
+    "playwright==1.51",
 
     # ── scheduling & tasks ────────────────────────────────────────────────
     "schedule",

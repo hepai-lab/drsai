@@ -1,13 +1,20 @@
 # Windows OIDC Login Plan
 
+> This is the authoritative overall OIDC login plan. The RFC 8628 extension,
+> Sandbox automation, and its detailed acceptance matrix are documented in
+> `docs/desktop/device-code-login-implementation-plan.zh-CN.md`.
+
 This document records the planned login integration between OpenDrSai Windows
 Desktop and the HAI lightweight OIDC provider implemented in
 `hai-ai-platform-backend` branch `feature/oidc_auth`.
 
 ## Summary
 
-Use standard OpenID Connect Authorization Code Flow with PKCE for the Windows
-desktop app.
+Use standard OpenID Connect Authorization Code Flow with PKCE as the default
+login method for the normal Windows desktop product. Support OAuth 2.0 Device
+Authorization Grant as a secondary method for Windows Sandbox, headless or
+remote environments where loopback is unreliable, and the explicit
+"Sign in on another device" user action.
 
 The HAI backend acts as a lightweight OIDC provider for OpenDrSai. IHEP SSO
 remains the upstream identity authority. The desktop app is a public OIDC
@@ -27,9 +34,29 @@ Recommended desktop flow:
 9. OpenDrSai refreshes tokens with the refresh token when needed.
 10. The user can cancel the pending browser sign-in from the desktop login UI.
 
-This should become the main login path. The older DrSai desktop
-`/desktop-auth/start` polling bridge can remain as a compatibility fallback if
-needed, but it should not be the primary plan when HAI OIDC is available.
+Authorization Code + PKCE remains the main product login path because it gives
+normal desktop users a one-click browser round trip back to the app. Publishing
+`device_authorization_endpoint` in discovery must not silently change that
+default. The obsolete DrSai `/desktop-auth/start`, poll, and cancel client bridge
+has been removed; it is not an OIDC fallback. Existing stored SSO sessions may
+still be read, encrypted, refreshed, and migrated during the compatibility
+window.
+
+## Login Method Selection
+
+| Product action | Protocol | Selection rule |
+| --- | --- | --- |
+| Sign in with HepAI | OIDC Authorization Code Flow with PKCE (`authorization_code`) | Default on normal Windows/macOS desktop |
+| Sign in on another device | OAuth 2.0 Device Authorization Grant (`urn:ietf:params:oauth:grant-type:device_code`) | Explicit secondary action; visible only when discovery supports it |
+| Windows Sandbox acceptance | Device Authorization Grant | Forced by the bounded acceptance flag so the host browser can approve |
+| Headless/remote/loopback-restricted environment | Device Authorization Grant | Explicit environment policy or user choice |
+
+If Authorization Code login cannot start or its callback times out, show a
+recoverable error and offer the device method. Do not silently switch methods.
+If device authorization is rejected, expires, or is denied, preserve that
+terminal result and do not bypass it by starting an authorization-code flow.
+Both methods converge on the same token validation, encrypted storage, refresh,
+revoke, logout, Runtime bearer identity, and local-data ownership code.
 
 ## Backend Capabilities
 

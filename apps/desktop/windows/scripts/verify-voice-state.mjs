@@ -26,9 +26,16 @@ const beforeStaleStt = state;
 state = reduceVoiceTurn(state, { type: "stt_completed", requestId: "old-stt" });
 assert.equal(state, beforeStaleStt);
 state = reduceVoiceTurn(state, { type: "stt_completed", requestId: "stt-1" });
-state = reduceVoiceTurn(state, { type: "review_accepted" });
+assert.equal(state.phase, "ready_to_send");
 state = reduceVoiceTurn(state, { type: "submit_started", messageId: "user-1" });
+state = reduceVoiceTurn(state, { type: "submission_linked", requestId: "chat-1", sourceMessageId: "user-real-1", responseMessageId: "assistant-1" });
+assert.equal(state.chatRequestId, "chat-1");
+assert.equal(state.sourceMessageId, "user-real-1");
+assert.equal(state.expectedResponseMessageId, "assistant-1");
 state = reduceVoiceTurn(state, { type: "response_started" });
+const beforeWrongResponse = state;
+state = reduceVoiceTurn(state, { type: "response_completed", messageId: "assistant-other" });
+assert.equal(state, beforeWrongResponse);
 state = reduceVoiceTurn(state, { type: "response_completed", messageId: "assistant-1" });
 state = reduceVoiceTurn(state, { type: "tts_started", requestId: "tts-1" });
 const beforeStaleTts = state;
@@ -57,7 +64,7 @@ const expectedTransitions = {
   requesting_permission: ["recording", "cancelling", "failed"],
   recording: ["preparing_audio", "cancelling", "failed"],
   preparing_audio: ["transcribing", "cancelling", "failed"],
-  transcribing: ["reviewing", "cancelling", "failed"],
+  transcribing: ["reviewing", "ready_to_send", "cancelling", "failed"],
   reviewing: ["ready_to_send", "transcribing", "cancelling", "failed"],
   ready_to_send: ["submitting", "cancelling", "failed"],
   submitting: ["awaiting_response", "cancelling", "failed"],
@@ -69,7 +76,7 @@ const expectedTransitions = {
   paused: ["playing", "completed", "cancelling", "failed"],
   completed: ["idle", "requesting_permission"],
   cancelling: ["idle", "failed"],
-  failed: ["requesting_permission", "transcribing", "synthesizing", "idle"],
+  failed: ["requesting_permission", "transcribing", "ready_to_send", "synthesizing", "idle"],
 };
 for (const from of Object.keys(expectedTransitions)) {
   for (const to of Object.keys(expectedTransitions)) {
@@ -88,6 +95,28 @@ failed = reduceVoiceTurn(failed, {
 });
 assert.equal(failed.phase, "failed");
 assert.equal(reduceVoiceTurn(failed, { type: "retry" }).phase, "requesting_permission");
+
+let submitFailed = reduceVoiceTurn(initialVoiceTurnState, { type: "begin_capture", turnId: "turn-submit-retry" });
+submitFailed = reduceVoiceTurn(submitFailed, { type: "permission_granted" });
+submitFailed = reduceVoiceTurn(submitFailed, { type: "recording_stopped" });
+submitFailed = reduceVoiceTurn(submitFailed, { type: "stt_started", requestId: "stt-submit-retry" });
+submitFailed = reduceVoiceTurn(submitFailed, { type: "stt_completed", requestId: "stt-submit-retry" });
+submitFailed = reduceVoiceTurn(submitFailed, { type: "submit_started", messageId: "user-submit-retry" });
+submitFailed = reduceVoiceTurn(submitFailed, {
+  type: "fail",
+  error: { stage: "submitting", code: "chat_error", message: "failed", retryable: true },
+});
+assert.equal(reduceVoiceTurn(submitFailed, { type: "retry" }).phase, "ready_to_send");
+
+let review = reduceVoiceTurn(initialVoiceTurnState, { type: "begin_capture", turnId: "turn-review" });
+review = reduceVoiceTurn(review, { type: "permission_granted" });
+review = reduceVoiceTurn(review, { type: "recording_stopped" });
+review = reduceVoiceTurn(review, { type: "stt_started", requestId: "stt-review" });
+review = reduceVoiceTurn(review, { type: "stt_completed", requestId: "stt-review", requiresReview: true });
+assert.equal(review.phase, "reviewing");
+assert.equal(reduceVoiceTurn(review, { type: "transcript_inserted", requestId: "stale-review" }), review);
+review = reduceVoiceTurn(review, { type: "transcript_inserted", requestId: "stt-review" });
+assert.deepEqual(review, initialVoiceTurnState);
 
 assert.deepEqual(createSilentVoiceLevels(3), [0, 0, 0]);
 assert.equal(calculateVoiceLevel(new Float32Array(32), 0), 0);

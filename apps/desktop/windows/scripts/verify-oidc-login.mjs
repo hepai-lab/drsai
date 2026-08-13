@@ -48,6 +48,34 @@ const haiTest = existsSync(haiTestPath) ? readHai("backend/webui/test/apps/webui
 
 const checks = [
   [
+    "obsolete desktop-auth ticket bridge is removed from production and tests",
+    !auth.includes("/api/desktop-auth/start") &&
+      !auth.includes("/api/desktop-auth/wechat/start") &&
+      !auth.includes("/api/desktop-auth/poll/") &&
+      !auth.includes("/api/desktop-auth/cancel/") &&
+      !auth.includes("startDesktopSsoLogin") &&
+      !auth.includes("startWechatDesktopLogin") &&
+      !auth.includes("pollDesktopSsoLogin") &&
+      !auth.includes("cancelDesktopSsoLogin"),
+  ],
+  [
+    "main process implements RFC 8628 device authorization with safe fallback",
+    auth.includes("device_authorization_endpoint") &&
+      auth.includes("urn:ietf:params:oauth:grant-type:device_code") &&
+      auth.includes('error.code === "authorization_pending"') &&
+      auth.includes('error.code === "slow_down"') &&
+      auth.includes("intervalMs += 5000") &&
+      auth.includes('error.code === "access_denied"') &&
+      auth.includes('error.code === "expired_token"') &&
+      auth.includes("pendingOidcDeviceLogin.abort()") &&
+      auth.includes("createOidcSession(token, rememberMe)") &&
+      login.includes('data-testid="oidc-device-code"') &&
+      login.includes("Copy code") &&
+      e2eOidc.includes("device_authorization_endpoint") &&
+      e2eOidc.includes("devicePending") &&
+      e2eOidc.includes("deviceToken"),
+  ],
+  [
     "shared/preload/main expose browser OIDC IPC",
     api.includes('authMode: "password" | "api_key" | "sso" | "oidc" | "offline" | null') &&
       api.includes('"hai"') &&
@@ -104,7 +132,9 @@ const checks = [
       auth.includes("waitForCode.catch") &&
       auth.includes("isOidcLoginCancelled") &&
       main.includes('"desktop:oidc-login-debug"') &&
-      main.includes("if (result.ok) focusMainWindow()") &&
+      main.includes("if (result.ok) {") &&
+      main.includes("syncAuthIdentityToGateway(userId)") &&
+      main.includes("focusMainWindow();") &&
       preload.includes('"desktop:oidc-login-debug"') &&
       auth.includes('response_type", "code"') &&
       auth.includes("exchangeOidcAuthorizationCode"),
@@ -137,14 +167,11 @@ const checks = [
       auth.includes("accessClaims.exp <= nowSeconds"),
   ],
   [
-    "OIDC public user refreshes profile from subject-bound UserInfo",
-    auth.includes("fetchOidcUserInfo(token.access_token, userId)") &&
-      auth.includes("profile.sub !== expectedSubject") &&
-      auth.includes("safeOidcAvatarUrl(userInfo?.picture || idClaims?.picture)") &&
-      auth.includes('candidate.protocol !== "https:"') &&
-      auth.includes("candidate.origin !== issuer.origin") &&
-      auth.includes("email: userInfo?.email || idClaims?.email || userId") &&
-      auth.includes("name: userInfo?.name || idClaims?.name || idClaims?.email || userId") &&
+    "OIDC public user is built from ID and access token claims",
+    auth.includes("const email = idClaims?.email || userId") &&
+      auth.includes("email,") &&
+      auth.includes("name: idClaims?.name || idClaims?.email || userId") &&
+      auth.includes("avatarUrl: idClaims?.picture || undefined") &&
       auth.includes("roles: Array.isArray(accessClaims?.roles) ? accessClaims.roles : undefined") &&
       auth.includes("groups: Array.isArray(accessClaims?.groups) ? accessClaims.groups : undefined") &&
       api.includes("roles?: string[]") &&
@@ -227,7 +254,7 @@ const checks = [
       login.includes("onOidcLoginDebug") &&
       login.includes("auth.startOidcLogin({ rememberMe })") &&
       login.includes("auth.cancelOidcLogin()") &&
-      login.includes("Sign in with HepAI") &&
+      login.includes("Continue with HepAI") &&
       !login.includes("Use API key instead") &&
       !login.includes("DEFAULT_MODEL_OPTIONS") &&
       !login.includes('type="email"') &&
@@ -245,7 +272,7 @@ const checks = [
   [
     "production IPC rejects API key configuration",
     mainProcess.includes('secureHandle("desktop:save-api-key"') &&
-      mainProcess.includes("if (!is.dev)") &&
+      mainProcess.includes('if (process.env.OPENDRSAI_DESKTOP_DEV !== "1")') &&
       mainProcess.includes("receives service authorization through HepAI OIDC") &&
       e2eSmoke.includes("productionApiKeyRejected") &&
       e2eSmoke.includes("apiKeyStatusUnchanged"),

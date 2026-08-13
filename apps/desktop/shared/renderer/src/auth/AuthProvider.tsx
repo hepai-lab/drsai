@@ -3,8 +3,6 @@ import type {
   AuthSession,
   DesktopA5ServiceGuidanceScenario,
   DesktopBootstrapBlocker,
-  DesktopSsoPollResult,
-  DesktopSsoStartResult,
   LoginRequest,
 } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
@@ -22,10 +20,6 @@ interface AuthContextValue {
   login: (request: LoginRequest) => Promise<boolean>;
   startOidcLogin: (request?: { rememberMe?: boolean }) => Promise<boolean>;
   cancelOidcLogin: () => Promise<void>;
-  startDesktopSsoLogin: () => Promise<DesktopSsoStartResult>;
-  startWechatDesktopLogin: () => Promise<DesktopSsoStartResult>;
-  pollDesktopSsoLogin: (deviceCode: string) => Promise<DesktopSsoPollResult>;
-  cancelDesktopSsoLogin: (deviceCode: string) => Promise<void>;
   logout: (clearLocalData?: boolean) => Promise<void>;
   refresh: () => Promise<void>;
   retryBootstrap: () => Promise<boolean>;
@@ -82,7 +76,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
           setMessage("Developer workspace unlocked.");
           return;
         }
-        void retryBootstrap();
+        // The main screen performs the real Runtime/service readiness check.
+        // Keep this false until bootstrap has reached an explicit terminal state.
+        setServiceReady(false);
+        setServiceBlocker(null);
       }
     })();
     refreshPromiseRef.current = operation;
@@ -160,7 +157,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       session.authMode === "offline" ||
       serviceReady ||
       serviceBusy ||
-      (serviceBlocker && serviceBlocker.kind !== "service_unavailable")
+      serviceBlocker
+    ) {
+      return;
+    }
+    void retryBootstrap();
+  }, [
+    serviceBlocker,
+    serviceBusy,
+    serviceReady,
+    session.authMode,
+    session.authenticated,
+  ]);
+
+  useEffect(() => {
+    if (
+      !session.authenticated ||
+      session.authMode === "offline" ||
+      serviceReady ||
+      serviceBusy ||
+      !serviceBlocker ||
+      serviceBlocker.kind !== "service_unavailable"
     ) {
       return undefined;
     }
@@ -221,7 +238,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       if (result.ok && result.session) {
         setLoginFailed(false);
         setSession(result.session);
-        void retryBootstrap();
+        setServiceReady(false);
+        setServiceBlocker(null);
         return true;
       }
       const cancelled = /cancel/i.test(result.message);
@@ -255,66 +273,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     }
   }
 
-  async function startDesktopSsoLogin(): Promise<DesktopSsoStartResult> {
-    return startDesktopLogin(() => desktopApi.startDesktopSsoLogin(), "Failed to start SSO login.");
-  }
-
-  async function startWechatDesktopLogin(): Promise<DesktopSsoStartResult> {
-    return startDesktopLogin(() => desktopApi.startWechatDesktopLogin(), "Failed to start WeChat login.");
-  }
-
-  async function startDesktopLogin(
-    start: () => Promise<DesktopSsoStartResult>,
-    fallback: string,
-  ): Promise<DesktopSsoStartResult> {
-    setLoginBusy(true);
-    setLoginFailed(false);
-    setMessage(null);
-    try {
-      const result = await start();
-      setMessage(result.message);
-      setLoginFailed(!result.ok);
-      if (!result.ok) console.error("[auth] Desktop sign-in failed:", result.message);
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : fallback;
-      setLoginFailed(true);
-      console.error("[auth] Desktop sign-in failed:", error);
-      setMessage(message);
-      return { ok: false, message };
-    } finally {
-      setLoginBusy(false);
-    }
-  }
-
-  async function pollDesktopSsoLogin(deviceCode: string): Promise<DesktopSsoPollResult> {
-    try {
-      const result = await desktopApi.pollDesktopSsoLogin(deviceCode);
-      setMessage(result.message);
-      if (result.ok && result.state === "authorized" && result.session) {
-        setLoginFailed(false);
-        setSession(result.session);
-      } else if (result.state === "error") {
-        setLoginFailed(true);
-        console.error("[auth] Desktop sign-in failed:", result.message);
-      }
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "SSO login failed.";
-      setLoginFailed(true);
-      console.error("[auth] Desktop sign-in failed:", error);
-      setMessage(message);
-      return { ok: false, state: "error", message };
-    }
-  }
-
-  async function cancelDesktopSsoLogin(deviceCode: string): Promise<void> {
-    try {
-      await desktopApi.cancelDesktopSsoLogin(deviceCode);
-    } catch {
-      // Best effort; the ticket will expire server-side.
-    }
-  }
 
   async function logout(clearLocalData = false): Promise<void> {
     setLogoutBusy(true);
@@ -347,10 +305,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       login,
       startOidcLogin,
       cancelOidcLogin,
-      startDesktopSsoLogin,
-      startWechatDesktopLogin,
-      pollDesktopSsoLogin,
-      cancelDesktopSsoLogin,
       logout,
       refresh,
       retryBootstrap,

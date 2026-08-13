@@ -7,6 +7,7 @@ import type {
   DesktopThreadSnapshot,
   DesktopThreadHistoryState,
 } from "../api/desktopApi";
+import { citationIdsForMarkdown, projectCitationParts } from "../api/citations";
 import {
   attachmentNameFromPath,
   stripAttachmentContextFromUserContent,
@@ -329,9 +330,18 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
   if (item.type === "message") {
     const markdown = oaepText(item.content);
     if ((!markdown && !includeEmpty) || item.content.role !== "assistant") return { parts: [], activities: [] };
-    return item.content.phase === "commentary"
-      ? { parts: [{ id: item.id, kind: "progress", status, summary: markdown, phase: "commentary" }], activities: [] }
-      : { parts: [{ id: item.id, kind: "markdown", status, markdown }], activities: [] };
+    if (item.content.phase === "commentary") {
+      return { parts: [{ id: item.id, kind: "progress", status, summary: markdown, phase: "commentary" }], activities: [] };
+    }
+    const citations = projectCitationParts(item.id, item.content.citations, status, item.id);
+    const citationIds = citationIdsForMarkdown(markdown, citations);
+    return {
+      parts: [
+        { id: item.id, kind: "markdown", status, markdown, ...(citationIds.length ? { citationIds } : {}) },
+        ...citations,
+      ],
+      activities: [],
+    };
   }
   if (item.type === "reasoning") {
     const visibleSegments = item.content.segments.filter((segment) => !segment.visibility || segment.visibility === "user");
@@ -373,11 +383,18 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
   }
   if (item.type === "interaction") {
     const candidate = String(item.content.interaction_type);
-    const interactionType = ["approval", "text_input", "choice", "confirmation"].includes(candidate)
-      ? candidate as "approval" | "text_input" | "choice" | "confirmation" : "approval";
+    const interactionType = ["approval", "text_input", "choice", "confirmation", "capability_configuration"].includes(candidate)
+      ? candidate as "approval" | "text_input" | "choice" | "confirmation" | "capability_configuration" : "approval";
+    const summary = item.content.request_summary && typeof item.content.request_summary === "object"
+      ? item.content.request_summary as Record<string, unknown> : {};
     return { parts: [{
       id: item.id, kind: "interaction", status, requestId: String(item.content.approval_id || item.id),
       interactionType, prompt: String(item.content.prompt || "Input required"),
+      ...(summary.capability ? { capability: String(summary.capability) } : {}),
+      ...(summary.resource_kind ? { resourceKind: String(summary.resource_kind) } : {}),
+      ...(summary.preferred_adapter ? { preferredAdapter: String(summary.preferred_adapter) } : {}),
+      ...(summary.reason ? { reason: String(summary.reason) } : {}),
+      ...(typeof summary.query_disclosed === "boolean" ? { queryDisclosed: summary.query_disclosed } : {}),
     }], activities: [] };
   }
   if (item.type === "file_change") {
@@ -435,6 +452,12 @@ export function projectOaepThreadSnapshot(
 ): DesktopThreadSnapshot {
   const allItems = [...items];
   const runById = new Map([...runs].map((run) => [run.id, run]));
+  const itemsByRun = new Map<string, OaepItem[]>();
+  for (const item of allItems) {
+    const grouped = itemsByRun.get(item.run_id);
+    if (grouped) grouped.push(item);
+    else itemsByRun.set(item.run_id, [item]);
+  }
   let runIds = [...new Set([...runById.keys(), ...allItems.map((item) => item.run_id)])];
   const runsByBackendId = new Map<string, string[]>();
   for (const runId of runIds) {
@@ -459,7 +482,7 @@ export function projectOaepThreadSnapshot(
   runIds = runIds.filter((runId) => !supersededRuns.has(runId));
   let projectionWarnings = 0;
   for (const runId of runIds) {
-    const sequences = allItems.filter((item) => item.run_id === runId).map((item) => item.sequence).sort((left, right) => left - right);
+    const sequences = (itemsByRun.get(runId) ?? []).map((item) => item.sequence).sort((left, right) => left - right);
     for (let index = 0; index < sequences.length; index += 1) {
       if (sequences[index] <= 0 || (index > 0 && sequences[index] === sequences[index - 1])) projectionWarnings += 1;
       if (index > 0 && sequences[index] > sequences[index - 1] + 1) projectionWarnings += 1;
@@ -476,7 +499,7 @@ export function projectOaepThreadSnapshot(
   });
   const messages: DesktopThreadMessageSnapshot[] = [];
   for (const runId of runIds) {
-    const runItems = allItems.filter((item) => item.run_id === runId)
+    const runItems = [...(itemsByRun.get(runId) ?? [])]
       .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
     const run = runById.get(runId);
     let assistantItems: OaepItem[] = [];

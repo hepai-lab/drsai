@@ -53,9 +53,13 @@ if (process.argv.includes("--release")) {
 console.log(JSON.stringify({ passed: true, totals: ledger.totals, sourceDigest: currentSource }));
 function sha(value) { return createHash("sha256").update(value || "").digest("hex"); }
 function p10SourceEntries() { return [
-  "cores/protocol/codex-app-server-stable-contract.json", "cores/protocol/oaep/oaep.schema.json",
+  "cores/protocol/codex-app-server-stable-contract.json",
+  "cores/protocol/codex-app-server/0.147.0-alpha.1.2", "cores/protocol/codex-app-server/0.147.0-alpha.6.6",
+  "cores/protocol/oaep/oaep.schema.json",
   "cores/python/packages/drsai/scripts/generate_codex_stable_contract.py",
+  "cores/python/packages/drsai/scripts/verify_codex_stable_contract.py",
   "cores/python/packages/drsai/src/drsai/backend/codex_adapter",
+  "cores/python/packages/drsai/src/drsai/backend/gateway.py",
   ...["agent.py", "agent_bindings.py", "engine.py", "error_contract.py", "evidence.py", "history.py", "input_resources.py", "normalized_events.py", "oaep.py", "security.py", "turn_coordinator.py"].map((name) => `cores/python/packages/drsai/src/drsai/backend/runtime/${name}`),
   "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py",
   "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel_factory.py",
@@ -65,10 +69,13 @@ function p10SourceEntries() { return [
   ...["userFacingErrors.ts", "threadPatchFrameBatcher.ts", "threadSnapshotPatch.ts", "threadSnapshotStore.ts", "threadSyncMetrics.ts", "adapters/useDesktopChatAdapter.ts", "components/ChatWorkspace.tsx", "components/StructuredMessageParts.tsx"].map((name) => `apps/desktop/shared/renderer/src/${name}`),
   "scripts/verify-codex-runtime-online.py",
   "scripts/verify-codex-p10-ssh-bridge.py", "apps/desktop/windows/tests/remote-ssh/Dockerfile.codex-p10",
+  "apps/desktop/windows/tests/remote-ssh/Dockerfile.codex-p10.dockerignore",
   "apps/desktop/windows/tests/remote-ssh/fake_codex_app_server.py",
   ...["verify-codex-adapter.mjs", "generate-codex-p10-ledger.mjs", "verify-codex-p10-ledger.mjs", "verify-p10-error-contract.mts",
     "verify-p10-snapshot-waterline.mts", "verify-p10-resource-governance.mts", "verify-p10-architecture-boundary.mjs",
-    "verify-p10-turn-queue-ux.mts", "verify-thread-patch-frame-batcher.mts", "run-codex-p9-live.mjs", "verify-p8-electron-ipc.mjs", "verify-structured-visual.mjs",
+    "verify-codex-p7-restart-matrix.mjs", "verify-oaep-session-stream.mts", "verify-codex-p10-turn-queue-ux.mts",
+    "verify-p7-session-view-store.mts",
+    "verify-thread-patch-frame-batcher.mts", "run-codex-p9-live.mjs", "verify-p8-electron-ipc.mjs", "verify-structured-visual.mjs",
     "verify-codex-p10-user-journey.mjs", "verify-codex-desktop-integration.mjs", "verify-session-sync-state.mts",
     "verify-session-conversation-subscription.mts", "verify-codex-session-resume-policy.mts", "verify-codex-p7-attachments.mts", "verify-thread-archive.mts"
   ].map((name) => `apps/desktop/windows/scripts/${name}`),

@@ -6,7 +6,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from drsai.backend.runtime.security import redact_sensitive
-from drsai.relay.security import redact_secrets
+from drsai.relay.security import redact_credentials, redact_secrets
 
 
 OAEP_VERSION = "1.0"
@@ -14,8 +14,12 @@ _WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
 _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
-def _safe_text(value: Any, *, limit: int = 4096) -> str:
-    redacted = redact_sensitive(redact_secrets("" if value is None else str(value)))
+def _safe_text(value: Any, *, limit: int = 1_048_576) -> str:
+    # Preserve stable diagnostic fields such as ``error_code`` inside JSON
+    # text while still removing credentials. ``redact_secrets`` treats every
+    # generic ``code`` value as OAuth-sensitive and corrupts public Runtime
+    # error contracts (for example service_unavailable).
+    redacted = redact_sensitive(redact_credentials("" if value is None else str(value)), "", "content")
     text = str(redacted)
     return text if len(text) <= limit else f"{text[:limit]}[TRUNCATED {len(text) - limit} CHARS]"
 
@@ -46,25 +50,17 @@ def _safe_value(value: Any, *, key: str = "") -> Any:
         return [_safe_value(item) for item in list(value)[:100]]
     if isinstance(value, str):
         return _safe_text(value)
-    return redact_sensitive(value, key)
+    return redact_sensitive(value, key, "content")
 
 
 def safe_error(value: Any) -> dict[str, Any]:
-    """Project a backend error without exposing credential-bearing prose.
-
-    Error messages are diagnostic rather than conversation content.  If a
-    backend embeds a credential marker in free-form prose (for example
-    ``failed with token <value>``), redact the complete message instead of
-    attempting to preserve a potentially incomplete fragment.
-    """
+    """Project a backend error with credentials redacted and prose preserved."""
     result = _safe_mapping(value)
     raw_message = value.get("message") if isinstance(value, dict) else None
-    if isinstance(raw_message, str) and re.search(
-        r"\b(?:token|password|secret|private.?key|authorization|api.?key|credential|cookie)\b",
-        raw_message,
-        re.I,
-    ):
-        result["message"] = "[REDACTED]"
+    if isinstance(raw_message, str):
+        # Error response bodies are the primary debugging evidence.  Preserve
+        # them in full while replacing only credential values.
+        result["message"] = redact_credentials(raw_message)
     return result
 
 
@@ -131,10 +127,40 @@ def _safe_operation_ref(value: Any) -> dict[str, Any] | None:
     required = ("operation_id", "workspace_id", "operation", "correlation_id")
     if value.get("protocol") not in {None, "owop/1"} or not all(value.get(key) for key in required):
         return None
+    # Historical adapters could persist free-form tool names here.  An invalid
+    # optional OWOP reference must not invalidate the entire OAEP Snapshot.
+    # Drop the reference at the projection boundary; the Tool Item remains
+    # authoritative and its content is preserved.
+    operation = str(value["operation"]).strip()
+    if len(operation) > 128 or re.fullmatch(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*", operation) is None:
+        return None
     return {
         "protocol": "owop/1",
         **{key: _safe_text(value[key], limit=256) for key in required},
     }
+
+
+def sanitize_persisted_item(value: Any) -> dict[str, Any]:
+    """Normalize optional references on a canonical Item loaded from storage.
+
+    Older Runtime versions allowed free-form OWOP operation names and extra
+    reference properties.  Those rows are still valid conversation history,
+    but their optional reference does not satisfy the frozen OAEP schema.  A
+    read-boundary repair keeps the Item authoritative while omitting an
+    unusable reference, and avoids mutating the durable journal in place.
+    """
+    if not isinstance(value, dict):
+        return {}
+    item = copy.deepcopy(value)
+    content = item.get("content")
+    if not isinstance(content, dict) or "operation_ref" not in content:
+        return item
+    operation_ref = _safe_operation_ref(content.get("operation_ref"))
+    if operation_ref is None:
+        content.pop("operation_ref", None)
+    else:
+        content["operation_ref"] = operation_ref
+    return item
 
 
 def _safe_resource_refs(value: Any) -> list[dict[str, Any]]:
@@ -408,7 +434,7 @@ def project_item(item: dict[str, Any]) -> dict[str, Any]:
         request = payload.get("request") if isinstance(payload.get("request"), dict) else payload
         decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else None
         content = {
-            "interaction_type": str(payload.get("interaction_type") or "approval"),
+            "interaction_type": str(payload.get("interaction_type") or request.get("interaction_type") or "approval"),
             "approval_id": payload.get("approval_id"),
             "operation": _safe_text(request.get("operation") or request.get("tool") or request.get("name") or "", limit=256),
             "prompt": _safe_text(

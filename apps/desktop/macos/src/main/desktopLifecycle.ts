@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import type { DesktopBootstrapResult, DesktopHealth, InstallProgress, InstallStatus, PrerequisiteStatus } from "../../../shared/api/desktopApi";
 import { requireAuthContext } from "../../../shared/main/auth";
-import { getGatewayModels, getGatewayStatus, startGateway, syncAuthIdentityToGateway } from "./gateway";
+import { discoverGatewayModels, getGatewayStatus, startGateway, syncAuthIdentityToGateway } from "./gateway";
 import { DRSAI_CONFIG_FILE, DRSAI_ENV_FILE, DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, DRSAI_SCRIPT } from "../../../shared/main/paths";
 import { getUpdateStatus } from "./updater";
 import { ensureBundledRuntimeInstalled, hasBundledRuntime, inspectInstalledRuntime } from "./runtimeInstaller";
@@ -54,17 +54,25 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   await syncAuthIdentityToGateway(auth.userId);
   await ensureBundledRuntimeInstalled();
   const ready = await startGateway();
-  const { models, dataLength } = ready ? await getGatewayModels(auth.accessToken) : { models: [] as Array<{ id: string; name: string }>, dataLength: 0 };
-  const blockerKind: "service_unavailable" | "permission_denied" | "runtime_missing" = ready ? (dataLength > 0 ? "service_unavailable" : "permission_denied") : "runtime_missing";
-  const blockerCode = ready ? (dataLength > 0 ? "model-list-invalid" : "account-no-model-service") : "runtime-missing";
+  const discovery = ready
+    ? await discoverGatewayModels(auth.accessToken)
+    : { state: "unavailable" as const, diagnosticCode: "runtime-missing", message: "The local runtime is unavailable." };
+  const models = discovery.state === "ready" ? discovery.models : [];
+  const authenticationBlocked = discovery.state === "auth_required"
+    || discovery.state === "auth_expired"
+    || discovery.state === "forbidden";
+  const blockerKind: "service_unavailable" | "permission_denied" | "runtime_missing" = !ready
+    ? "runtime_missing"
+    : authenticationBlocked ? "permission_denied" : "service_unavailable";
+  const blockerCode = ready && discovery.state !== "ready" ? discovery.diagnosticCode : "runtime-missing";
   return {
     ready: ready && models.length > 0,
     message: ready ? (models.length ? "OpenDrSai is ready." : "No model service is available for this account.") : "The local runtime could not be started.",
     user: auth.session.user,
     blocker: ready && models.length ? null : {
       kind: blockerKind,
-      title: ready ? (dataLength > 0 ? "Model list format error" : "Account has no available service") : "Local runtime is unavailable",
-      message: ready ? (dataLength > 0 ? "The model service returned data that could not be parsed." : "Sign in with an account that has model access.") : "Install or repair the local runtime before starting tasks.",
+      title: ready ? (authenticationBlocked ? "Account has no available service" : "Model service is unavailable") : "Local runtime is unavailable",
+      message: ready && discovery.state !== "ready" ? discovery.message : "Install or repair the local runtime before starting tasks.",
       retryable: ready ? false : true,
       canRepairRuntime: !ready,
       canSignInAgain: ready,

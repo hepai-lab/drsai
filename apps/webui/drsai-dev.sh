@@ -9,7 +9,7 @@
 #   ./drsai-dev.sh verify                            完整健康链路检查 + 访问地址
 #   ./drsai-dev.sh logs    [backend|frontend]        查看日志
 #
-# 设计说明见 agent_skills/skills/drsai-dev-skill/SKILL.md
+# 设计说明见 skills/skills/drsai-dev-skill/SKILL.md
 set -euo pipefail
 
 # ───────────────────────── 配置（可用 env 覆盖）─────────────────────────

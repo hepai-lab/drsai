@@ -6,7 +6,15 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+for (const key of ["NO_PROXY", "no_proxy"]) {
+  const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+  for (const host of ["127.0.0.1", "localhost"]) if (!entries.includes(host)) entries.push(host);
+  process.env[key] = entries.join(",");
+}
+
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const repoRoot = resolve(root, "..", "..", "..");
+const pythonSrc = join(repoRoot, "cores", "python", "packages", "drsai", "src");
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const scenarioIndex = process.argv.indexOf("--scenario");
 const scenario = scenarioIndex >= 0 ? process.argv[scenarioIndex + 1] : "default";
@@ -15,6 +23,7 @@ if (!["default", "background-close", "minimized-notification", "network-recovery
 }
 const isAnalysisRouteScenario = scenario === "i4-analysis-routes" || scenario === "i5-route-comparison";
 const port = Number(process.env.OPENDRSAI_E2E_AGENT_RUN_PORT || "18646");
+const oidcSigningSecret = createHash("sha256").update(`opendrsai-e2e-agent:${port}`).digest("hex");
 const baseUrl = `http://127.0.0.1:${port}`;
 const systemPath = [
   process.env.SystemRoot ? join(process.env.SystemRoot, "System32") : "C:\\Windows\\System32",
@@ -35,6 +44,7 @@ const appHome = join(tempDir, "drsai-home");
 const workspacePath = join(tempDir, "workspace");
 const userData = join(tempDir, "electron-user-data");
 const resultPath = join(tempDir, "result.json");
+const pythonUserProfile = join(tempDir, "python-user");
 const evidenceDir = join(
   root,
   "release",
@@ -127,6 +137,7 @@ mkdirSync(evidenceDir, { recursive: true });
 mkdirSync(g4SaveDirectory, { recursive: true });
 mkdirSync(i6SaveDirectory, { recursive: true });
 writeFileSync(join(workspacePath, "user-work.txt"), "user work before agent\n", "utf8");
+writeFileSync(join(workspacePath, "notes.md"), "# Agent E2E notes\n\nUse the Runtime-backed fixture.\n", "utf8");
 if (scenario === "d2-edit-plan") {
   writeFileSync(join(appHome, "old-report.md"), "# 旧报告\n\n样本量：100；平均值：42。\n", "utf8");
   writeFileSync(join(appHome, "latest-data.csv"), "metric,old,new\nsample_size,100,160\nmean,42,47\n", "utf8");
@@ -220,6 +231,7 @@ let sideEffectCount = 0;
 let externalEditCount = 0;
 let i6ExternalWatcher = null;
 const outageMs = Number(process.env.OPENDRSAI_E2E_NETWORK_OUTAGE_MS || "60000");
+let primaryError = null;
 
 try {
   if (scenario === "i6-external-conflict") {
@@ -234,7 +246,8 @@ try {
     }, 20);
   }
   await assertPortFree();
-  server = await startGateway(workspacePath);
+  server = scenario === "default" ? startRuntimeGateway(workspacePath) : await startGateway(workspacePath);
+  await waitForGatewayReady();
   await runPackagedApp({ appHome, resultPath, workspacePath });
   if (!existsSync(resultPath)) {
     throw new Error("E2E agent run did not write a smoke result.");
@@ -286,11 +299,23 @@ try {
     }
   }
   console.log(`E2E agent run ${scenario} passed with packaged Electron + fake gateway.`);
+} catch (error) {
+  primaryError = error;
+  throw error;
 } finally {
   if (i6ExternalWatcher) clearInterval(i6ExternalWatcher);
-  if (server) await new Promise((resolveClose) => server.close(resolveClose));
-  cleanupTempDir(tempDir);
+  if (server?.pid) await stopProcessTree(server);
+  else if (server?.close) await new Promise((resolveClose) => server.close(resolveClose));
+  try {
+    await cleanupTempDir(tempDir);
+  } catch (cleanupError) {
+    process.stderr.write(`[cleanup] ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}; the release-level cleanup gate will retry after this process exits.\n`);
+  }
 }
+
+// Electron and Windows may retain non-functional native handles after the app and
+// Runtime have closed. All assertions and evidence writes are complete here.
+process.exit(0);
 
 function assertG3OutputVersionsDiagnostics(result) {
   const requiredChecks = [
@@ -667,15 +692,18 @@ function assertD2EditPlanDiagnostics(result) {
   const reportText = readFileSync(join(appHome, "edited-plan-report.md"), "utf8");
   if (!reportText.includes("## 引用") || !reportText.includes("[1]")) throw new Error("D2 result did not honor the citation requirement.");
 }
-function cleanupTempDir(path) {
-  try {
-    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-  } catch (error) {
-    throw new Error(
-      `Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
+async function cleanupTempDir(path) {
+  let lastError;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    }
   }
+  throw new Error(`Could not remove temporary directory ${path}: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 async function assertPortFree() {
@@ -685,6 +713,40 @@ async function assertPortFree() {
   } catch (error) {
     if (error instanceof Error && error.message.includes("already serving")) throw error;
   }
+}
+
+async function waitForGatewayReady() {
+  const deadline = Date.now() + 25_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(800) });
+      if (response.ok) return;
+    } catch {}
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
+  }
+  throw new Error("Runtime-backed Agent gateway did not become ready.");
+}
+
+function startRuntimeGateway(targetWorkspace) {
+  const python = resolvePython();
+  return spawn(python, ["-m", "drsai.backend.gateway"], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      DRSAI_API_HOST: "127.0.0.1",
+      DRSAI_API_PORT: String(port),
+      DRSAI_GATEWAY_FAKE_AGENT: "1",
+      OPENDRSAI_DESKTOP_RUNTIME: "1",
+      OPENDRSAI_OIDC_HS256_SECRET: oidcSigningSecret,
+      OPENDRSAI_E2E_AGENT_SIDE_EFFECTS: "1",
+      OPENDRSAI_E2E_AGENT_WORKSPACE: targetWorkspace,
+      DRSAI_HOME: appHome,
+      USERPROFILE: pythonUserProfile,
+      PYTHONPATH: [pythonSrc, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
 }
 
 function startGateway(workspacePath) {
@@ -1025,12 +1087,14 @@ function assertAgentRunDiagnostics(result) {
     throw new Error(`E2E agent run did not create an agent_run thread:\n${JSON.stringify(result?.details?.thread, null, 2)}`);
   }
   const expectedRequestCount = scenario === "network-recovery" ? 2 : 1;
-  if ((scenario === "network-recovery" ? requestCount < expectedRequestCount : requestCount !== expectedRequestCount) || !requestBody) {
-    throw new Error(`E2E agent run request count was invalid: ${requestCount}.`);
+  if (scenario !== "default") {
+    if ((scenario === "network-recovery" ? requestCount < expectedRequestCount : requestCount !== expectedRequestCount) || !requestBody) {
+      throw new Error(`E2E agent run request count was invalid: ${requestCount}.`);
+    }
+    assertAgentRunBody(requestBody, threadId);
   }
-  assertAgentRunBody(requestBody, threadId);
   const summary = result?.details?.agentRunSummary;
-  if (!summary || summary.firstEventType !== "start" || summary.terminalEventType !== "done" || summary.lastEventType !== "done") {
+  if (!summary || !["start", "structured"].includes(summary.firstEventType) || summary.terminalEventType !== "done" || !["done", "structured"].includes(summary.lastEventType)) {
     throw new Error(`E2E agent run did not record a completed event summary:\n${JSON.stringify(result, null, 2)}`);
   }
   if (!Number.isFinite(summary.durationMs) || summary.durationMs < 0) {
@@ -1048,7 +1112,11 @@ function assertAgentRunDiagnostics(result) {
   if (!events.every((event) => !event.sessionId || event.sessionId === threadId)) {
     throw new Error(`E2E agent run events did not use the created thread id:\n${JSON.stringify(events, null, 2)}`);
   }
-  if (!events.every((event) => !event.runId || event.runId === "e2e-agent-run-run-0001")) {
+  const authoritativeRunIds = [...new Set(events.map((event) => event.runId).filter(Boolean))];
+  const runIdsValid = scenario === "default"
+    ? authoritativeRunIds.length === 1 && String(authoritativeRunIds[0]).startsWith("run-")
+    : events.every((event) => !event.runId || event.runId === "e2e-agent-run-run-0001");
+  if (!runIdsValid) {
     throw new Error(`E2E agent run events did not use the requested run id:\n${JSON.stringify(events, null, 2)}`);
   }
   if (!result?.checks?.startAgentRunReturned || !result?.checks?.agentRunDistinctIds || !result?.checks?.agentRunThreadEvents) {
@@ -1409,6 +1477,9 @@ function runPackagedApp({ appHome, resultPath, workspacePath }) {
         DRSAI_GATEWAY_DEV_MANAGED: "1",
         OPENDRSAI_GATEWAY_PORT: String(port),
         OPENDRSAI_DEV_AUTH_BYPASS: "1",
+        OPENDRSAI_E2E_OIDC_HS256_SECRET: scenario === "default" ? oidcSigningSecret : undefined,
+        OPENDRSAI_OIDC_HS256_SECRET: scenario === "default" ? oidcSigningSecret : undefined,
+        OPENDRSAI_E2E_AUTH_USER_ID: scenario === "default" ? "d5a0db9b-7f29-47bd-a412-26424006a0fd" : undefined,
         OPENDRSAI_E2E_AGENT_RUN: "1",
         OPENDRSAI_E2E_AGENT_RUN_SCENARIO: scenario,
         OPENDRSAI_E2E_RESULT: resultPath,
@@ -1461,6 +1532,15 @@ function runPackagedApp({ appHome, resultPath, workspacePath }) {
   });
 }
 
+function resolvePython() {
+  const candidates = [process.env.OPENDRSAI_PYTHON, join(repoRoot, ".venv", "Scripts", "python.exe"), "python"].filter(Boolean);
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ["--version"], { stdio: "ignore", windowsHide: true });
+    if (probe.status === 0) return candidate;
+  }
+  throw new Error("Python is required for the Runtime-backed Agent E2E.");
+}
+
 function readJsonBody(req) {
   return new Promise((resolveBody, reject) => {
     let body = "";
@@ -1489,4 +1569,19 @@ function killProcessTree(pid) {
     stdio: "ignore",
     windowsHide: true,
   });
+}
+
+async function stopProcessTree(child) {
+  if (!child?.pid) return;
+  const closed = child.exitCode !== null
+    ? Promise.resolve()
+    : new Promise((resolveClose) => child.once("close", resolveClose));
+  killProcessTree(child.pid);
+  await Promise.race([
+    closed,
+    new Promise((resolveTimeout) => setTimeout(resolveTimeout, 2000)),
+  ]);
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.stdin?.destroy();
 }

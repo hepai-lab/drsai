@@ -97,3 +97,11 @@
 - 第三项不能把评价只保存在客户端 Thread 文件；应由 Runtime/Eval 层持久化，并允许桌面人工评分与 `eval/` 自动指标共存。
 - `parent_run_id` 当前同时服务子 Agent 关系，不能在没有 `relation_type` 的情况下直接复用为实验分支关系。
 - 实际 Tool Call 重放晚于只读检查和模拟结果分支，并受执行策略、审批和幂等性门禁控制。
+
+## 实施后的收敛结论
+
+- 轨迹检查、实验草稿、Replay Plan、隔离执行、Comparison 与 Adoption 已由 OpenDrSai 原生模块实现。
+- `runtime_run_relations.relation_type` 是实验重放关系的权威来源；`parent_run_id` 仍用于子 Agent，不得在 UI 中直接等同于 Replay。
+- A/B Evaluation 采用 Comparison 上的单表追加式评价修订：内置三维 Rubric 作为不可变 snapshot，不再创建独立 Rubric Studio 或多表评分平台。
+- 自动批量回归继续使用根目录 `eval/regression`；人工 Comparison Evaluation 不复制 Case/Suite 或发布门禁。
+- 当前正式计划见 [Agent 运行时可追溯、可复现 P4](../../../desktop/agent-runtime-traceability-reproducibility-phase4-development-plan.md)。

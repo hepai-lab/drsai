@@ -13,6 +13,7 @@ if (streamingMode) {
   assert.ok(process.env.OPENDRSAI_STREAMING_STT_WS_URL?.trim(), "Set OPENDRSAI_STREAMING_STT_WS_URL for production streaming ASR smoke.");
   process.env.OPENDRSAI_E2E_VOICE_STREAMING = "1";
 }
+if (streamingMode) assert.ok(fullRoundMode, "Production streaming acceptance must include --full-round (ASR, LLM, TTS, and playback). ");
 if (fullRoundMode) process.env.OPENDRSAI_E2E_VOICE_FULL_ROUND = "1";
 
 await import("./verify-packaged-voice.mjs");

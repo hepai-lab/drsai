@@ -424,6 +424,7 @@ def test_approval_terminal_runs_finalize_manifest(
 def test_session_run_pagination_and_status_filter(engine: RuntimeEngine) -> None:
     session = engine.create_session("workspace-one", "Many runs")
     runs = [engine.create_run(session["session_id"], "agent@v1", f"key-{index}", "codex")[0] for index in range(5)]
+    engine.set_run_input(runs[1]["run_id"], "mobile input", attachment_refs=["attachment-safe"])
     engine.transition_run(runs[0]["run_id"], "running")
     engine.transition_run(runs[0]["run_id"], "completed")
 
@@ -431,6 +432,10 @@ def test_session_run_pagination_and_status_filter(engine: RuntimeEngine) -> None
     second = engine.list_session_runs_page(session["session_id"], cursor=first["next_cursor"], limit=2)
     third = engine.list_session_runs_page(session["session_id"], cursor=second["next_cursor"], limit=2)
     assert [row["run_id"] for row in [*first["data"], *second["data"], *third["data"]]] == [row["run_id"] for row in runs]
+    assert first["data"][0]["message"] == ""
+    assert first["data"][0]["attachment_refs"] == []
+    assert first["data"][1]["message"] == "mobile input"
+    assert first["data"][1]["attachment_refs"] == ["attachment-safe"]
     assert third["has_more"] is False
     completed = engine.list_session_runs_page(session["session_id"], status="completed")
     assert [row["run_id"] for row in completed["data"]] == [runs[0]["run_id"]]
@@ -677,7 +682,7 @@ def test_inspection_aggregates_usage_error_and_hides_private_reasoning(
         "input_tokens": 7, "output_tokens": 5, "total_tokens": 12,
     }
     assert inspection["summary"]["error"] == {
-        "code": "provider.failed", "message": "[REDACTED]", "retryable": True,
+        "code": "provider.failed", "message": "Bearer [REDACTED]", "retryable": True,
     }
     reasoning = next(item for item in inspection["timeline"] if item["type"] == "reasoning")
     assert reasoning["content"] == {"segments": []}
@@ -723,6 +728,24 @@ def test_public_inspection_scrubs_embedded_private_paths_and_reasoning_aliases()
     assert "C:\\\\Users" not in serialized
     assert "/home/private-user" not in serialized
     assert serialized.count("REDACTED PRIVATE PATH") == 2
+
+
+def test_public_inspection_preserves_serialized_json_while_scrubbing_windows_paths() -> None:
+    envelope = json.dumps({
+        "result": {
+            "output": 'File "C:\\Users\\private-user\\workspace\\test.py", line 3',
+            "exit_code": 1,
+        },
+        "_inspection": {"kind": "test_execution"},
+    })
+    safe = safe_inspection_item({
+        "id": "command-one", "type": "command_execution", "status": "completed",
+        "content": {"output": envelope}, "event_refs": [],
+    })
+    decoded = json.loads(safe["content"]["output"])
+    assert decoded["result"]["exit_code"] == 1
+    assert decoded["_inspection"]["kind"] == "test_execution"
+    assert decoded["result"]["output"] == 'File "[REDACTED PRIVATE PATH]", line 3'
 
 
 def test_inspection_uses_run_index_and_bounds_a_10k_timeline(
@@ -874,3 +897,21 @@ def test_inspection_truncates_a_10mb_tool_output_before_serialization(engine: Ru
     serialized = json.dumps(inspection)
     assert len(serialized) < 100_000
     assert "TRUNCATED sha256=" in serialized
+
+
+def test_agent_config_snapshot_cannot_drift_after_run_binding() -> None:
+    base = initial_manifest(
+        run_id="run-one", runtime_id="runtime", instance_id="instance", backend_id="opendrsai",
+        agent_definition="alpha", workspace_id="workspace", worktree_id=None,
+    )
+    manifest = merge_manifest(base, {
+        "agent_config_snapshot": {"agent_id": "alpha", "sha256": "sha256:first"},
+    })
+    unchanged = merge_manifest(manifest, {
+        "agent_config_snapshot": {"agent_id": "alpha", "sha256": "sha256:first"},
+    })
+    assert unchanged["agent_config_snapshot"]["agent_id"] == "alpha"
+    with pytest.raises(ValueError, match="agent_config_snapshot is immutable"):
+        merge_manifest(manifest, {
+            "agent_config_snapshot": {"agent_id": "beta", "sha256": "sha256:second"},
+        })

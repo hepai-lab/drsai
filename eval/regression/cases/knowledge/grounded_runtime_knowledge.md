@@ -3,7 +3,7 @@
 ## 身份与目的
 
 - Case ID：`knowledge.grounded`
-- Revision：1
+- Revision：2
 - 目的：验证 OpenDrSai 实际检索指定知识库，忠实回答，并通过 OAEP 提供可交互的内部资料引用；不能依赖模型记忆或网络搜索。
 
 ## 为什么使用固定资料
@@ -20,6 +20,7 @@
 
 - 新建空白 Session，禁用网络；
 - 只挂载 `regression.opendrsai-runtime@1`；
+- 该 Fixture 显式声明 `corpus_complete: true`，表示列出的固定文档就是本案例知识库的完整语料；
 - 文档正文不能直接拼入系统提示，Agent 必须调用知识检索；
 - 知识查询 1–3 次；
 - 不得进行网络搜索、无关 Tool/Skill、审批或外部写操作；

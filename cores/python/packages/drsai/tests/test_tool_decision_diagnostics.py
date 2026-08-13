@@ -49,6 +49,7 @@ def test_required_available_task_records_selected_or_omitted_without_prompt() ->
     assert set(selected) == {
         "kind", "policy_version", "requirement_sha256", "category", "reason",
         "required_domain_count", "available_domain_count", "selected_tool_count", "tool_round_count",
+        "required_domains",
     }
 
 
@@ -62,6 +63,15 @@ def test_required_missing_capability_and_no_tool_task_have_distinct_categories()
     assert direct["reason"] == "tool_not_required"
 
 
+def test_unavailable_required_capability_beats_an_unrelated_selected_tool() -> None:
+    decision = _decision("Verify the latest AI news with sources", [_tool("image_generation")], [
+        {"call_id": "image-1", "name": "image_generation", "arguments": {}},
+    ])
+
+    assert decision["category"] == "required_tool_unavailable"
+    assert decision["reason"] == "required_capability_not_available"
+
+
 def test_requirement_and_resolution_are_deterministic_and_redacted() -> None:
     first = build_tool_decision_requirement("现在几点？", ["get_current_time"])
     second = build_tool_decision_requirement("现在几点？", ["get_current_time"])
@@ -71,3 +81,35 @@ def test_requirement_and_resolution_are_deterministic_and_redacted() -> None:
     assert first["required_domains"] == ["time"]
     assert decision["category"] == "required_tool_selected"
     assert "现在几点" not in json.dumps(first, ensure_ascii=False)
+
+
+def test_current_local_device_and_time_facts_do_not_require_web_retrieval() -> None:
+    device = build_tool_decision_requirement(
+        "这台安卓设备当前的系统版本和语言环境是什么？不要猜。",
+        ["get_device_info"],
+    )
+    time = build_tool_decision_requirement(
+        "现在几点？请按我当前时区回答。",
+        ["get_current_time"],
+    )
+
+    assert device["required_domains"] == ["device"]
+    assert time["required_domains"] == ["time"]
+    assert resolve_tool_decision(device, ["get_device_info"])["category"] == "required_tool_selected"
+    assert resolve_tool_decision(time, ["get_current_time"])["category"] == "required_tool_selected"
+
+
+def test_current_volatile_public_fact_still_requires_retrieval() -> None:
+    requirement = build_tool_decision_requirement("当前美元汇率是多少？", ["web.search"])
+
+    assert requirement["required_domains"] == ["retrieval"]
+
+
+def test_search_saved_memory_phrase_does_not_require_public_web() -> None:
+    requirement = build_tool_decision_requirement(
+        "你保存过我希望使用什么称呼吗？请查一下。",
+        ["search_memory"],
+    )
+
+    assert requirement["required_domains"] == ["memory"]
+    assert resolve_tool_decision(requirement, ["search_memory"])["category"] == "required_tool_selected"

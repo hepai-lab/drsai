@@ -133,7 +133,10 @@ def test_desktop_production_factory_and_android_probe_share_kernel_prompt_identi
         "schema_version": 1, "protocol_version": "p9-host-port-v1", "surface": "desktop",
         "capabilities": [
             {"id": value, "version": 1, "required": value == "chat"}
-            for value in ["chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts"]
+            for value in [
+                    "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+                    "web_search", "web_fetch", "network.public_https", "image_generation", "image_edit",
+            ]
         ],
     }, surface="desktop")
     assert desktop["metadata"] == {

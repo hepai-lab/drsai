@@ -110,11 +110,12 @@
       "required": [
         "schema_version", "status", "data_start", "data_end", "observation_days",
         "release_cycles", "oaep_ratio", "legacy_ratio", "migration_ratio",
-        "fallback_error_ratio", "gap_days", "requirements", "eligible"
+        "fallback_error_ratio", "gap_days", "supported_runtime_count",
+        "supported_runtime_requires_legacy", "requirements", "eligible"
       ],
       "properties": {
         "schema_version": {"const": "p5-protocol-deletion-decision/1"},
-        "status": {"enum": ["no_data", "history_gap", "insufficient_window", "threshold_failed", "eligible"]},
+        "status": {"enum": ["no_data", "history_gap", "insufficient_window", "threshold_failed", "runtime_compatibility_unknown", "supported_runtime_requires_legacy", "eligible"]},
         "data_start": {"type": ["string", "null"], "format": "date"},
         "data_end": {"type": ["string", "null"], "format": "date"},
         "observation_days": {"type": "integer", "minimum": 0},
@@ -124,17 +125,20 @@
         "migration_ratio": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
         "fallback_error_ratio": {"type": "number", "minimum": 0, "maximum": 1},
         "gap_days": {"type": "integer", "minimum": 0},
+        "supported_runtime_count": {"type": "integer", "minimum": 0},
+        "supported_runtime_requires_legacy": {"type": ["boolean", "null"]},
         "requirements": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["observation_days", "release_cycles", "oaep_ratio", "legacy_ratio", "migration_ratio", "fallback_error_ratio"],
+          "required": ["observation_days", "release_cycles", "oaep_ratio", "legacy_ratio", "migration_ratio", "fallback_error_ratio", "supported_runtime_requires_legacy"],
           "properties": {
             "observation_days": {"const": 0},
             "release_cycles": {"const": 0},
             "oaep_ratio": {"const": 0.999},
             "legacy_ratio": {"const": 0.001},
             "migration_ratio": {"const": 1.0},
-            "fallback_error_ratio": {"const": 0.001}
+            "fallback_error_ratio": {"const": 0.001},
+            "supported_runtime_requires_legacy": {"const": false}
           }
         },
         "eligible": {"type": "boolean"}
@@ -147,7 +151,9 @@
             "oaep_ratio": {"minimum": 0.999},
             "legacy_ratio": {"exclusiveMaximum": 0.001},
             "migration_ratio": {"const": 1.0},
-            "fallback_error_ratio": {"maximum": 0.001}
+            "fallback_error_ratio": {"maximum": 0.001},
+            "supported_runtime_count": {"minimum": 1},
+            "supported_runtime_requires_legacy": {"const": false}
           }}
         },
         {
@@ -165,6 +171,22 @@
         {
           "if": {"properties": {"status": {"const": "history_gap"}}},
           "then": {"properties": {"gap_days": {"minimum": 1}, "eligible": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"supported_runtime_count": {"const": 0}}},
+          "then": {"properties": {"supported_runtime_requires_legacy": {"const": null}, "eligible": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"supported_runtime_count": {"minimum": 1}}},
+          "then": {"properties": {"supported_runtime_requires_legacy": {"type": "boolean"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "runtime_compatibility_unknown"}}},
+          "then": {"properties": {"supported_runtime_count": {"const": 0}, "eligible": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "supported_runtime_requires_legacy"}}},
+          "then": {"properties": {"supported_runtime_count": {"minimum": 1}, "supported_runtime_requires_legacy": {"const": true}, "eligible": {"const": false}}}
         }
       ]
     },

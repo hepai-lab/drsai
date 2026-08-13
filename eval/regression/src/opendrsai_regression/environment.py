@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import shutil
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .case_loader import RegressionCase
+from .workspace_digest import directory_digest, directory_snapshot
 
 
 class EnvironmentError(RuntimeError):
@@ -24,6 +26,7 @@ class PreparedEnvironment:
     workspace: Path
     attachment_refs: dict[str, str]
     manifest: dict[str, Any]
+    workspace_snapshot_before: dict[str, str]
     _temporary: tempfile.TemporaryDirectory[str]
 
     def cleanup(self) -> None:
@@ -53,6 +56,7 @@ class EnvironmentProvisioner:
             refs = self._prepare_attachments(case, workspace)
             knowledge = self._prepare_knowledge(case, workspace)
             input_resources = self._input_resources(case, workspace, refs, knowledge)
+            snapshot_before = directory_snapshot(workspace)
             manifest = {
                 "schema_version": "opendrsai.regression-environment/1",
                 "case_id": case.id,
@@ -66,7 +70,7 @@ class EnvironmentProvisioner:
                 "knowledge_bases": knowledge,
                 "input_resources": input_resources,
             }
-            return PreparedEnvironment(case.id, root, workspace, refs, manifest, temporary)
+            return PreparedEnvironment(case.id, root, workspace, refs, manifest, snapshot_before, temporary)
         except Exception:
             temporary.cleanup()
             raise
@@ -118,7 +122,7 @@ class EnvironmentProvisioner:
                 prepared.append({
                     "knowledge_base_id": kb_id, "knowledge_base_revision": revision,
                     "document_path": source.name, "reference": target.relative_to(workspace).as_posix(),
-                    "sha256": digest,
+                    "sha256": digest, "corpus_complete": knowledge_base.get("corpus_complete") is True,
                 })
         return prepared
 
@@ -133,19 +137,71 @@ class EnvironmentProvisioner:
                 "size_bytes": path.stat().st_size, "sha256": sha256_file(path), "permission": "read", "status": "encoded",
             })
         environment = case.data.get("environment") or {}
+        run_fixture = environment.get("run_fixture")
+        prepared_run_fixture: dict[str, Any] | None = None
+        if isinstance(run_fixture, dict) and run_fixture.get("path"):
+            source = self._case_resource(case, str(run_fixture["path"]))
+            raw = source.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            if digest != run_fixture.get("sha256"):
+                raise EnvironmentError(f"Run fixture digest changed: {run_fixture['path']}")
+            prepared_run_fixture = {
+                "sha256": digest,
+                "content_base64": base64.b64encode(raw).decode("ascii"),
+            }
         control = {
             "schema_version": "opendrsai.regression-control/1", "case_id": case.id, "case_revision": case.revision,
             "network": environment.get("network", "unspecified"), "required_capabilities": environment.get("required_capabilities") or [],
             "forbidden_capabilities": environment.get("forbidden_capabilities") or [], "required_skills": environment.get("required_skills") or [],
             "tool_faults": environment.get("tool_faults") or [], "tool_fixtures": environment.get("tool_fixtures") or {},
+            "knowledge_bases": [
+                {
+                    **item,
+                    "content_base64": base64.b64encode(
+                        (workspace / item["reference"]).read_bytes()
+                    ).decode("ascii"),
+                }
+                for item in knowledge
+            ],
+            "tools": environment.get("tools") or [],
             "allowed_commands": environment.get("allowed_commands") or [],
+            "run_fixture": prepared_run_fixture,
+            "allowed_operations": environment.get("allowed_operations") or [],
+            "forbidden_operations": environment.get("forbidden_operations") or [],
             "workspace": environment.get("workspace") or {},
+            "artifact_targets": [
+                str(item.get("relative_path"))
+                for item in [((case.data.get("expect") or {}).get("artifacts") or {}).get("required")]
+                if isinstance(item, dict) and item.get("relative_path")
+            ],
+            "image_constraints": {
+                "required": list((((case.data.get("expect") or {}).get("image") or {}).get("visual_requirements") or [])),
+                "forbidden": list((((case.data.get("expect") or {}).get("image") or {}).get("visual_forbidden") or [])),
+            } if (case.data.get("expect") or {}).get("image") else {},
+            "controlled_write_target": (
+                dict((case.data.get("baseline") or {}).get("target") or {})
+                if case.id == "safety.write_approval" else {}
+            ),
         }
-        resources.append({
-            "protocol": "oaep.input/1", "resource_id": "regression-control", "kind": "selection",
-            "name": "OpenDrSai regression control", "content": json.dumps(control, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
-            "captured_at": captured_at, "permission": "read", "status": "encoded",
-        })
+        # A plain conversational case must remain runnable against the normal
+        # Desktop Runtime. Only attach the privileged regression envelope when
+        # the case actually asks the test Runtime to inject or constrain a
+        # capability; the network declaration alone is descriptive evidence.
+        needs_control = any(control[key] for key in (
+            "required_capabilities", "forbidden_capabilities", "required_skills",
+            "tool_faults", "tool_fixtures", "knowledge_bases", "allowed_commands", "workspace",
+            "tools",
+            "artifact_targets",
+            "image_constraints",
+            "controlled_write_target",
+            "run_fixture", "allowed_operations", "forbidden_operations",
+        ))
+        if needs_control:
+            resources.append({
+                "protocol": "oaep.input/1", "resource_id": "regression-control", "kind": "selection",
+                "name": "OpenDrSai regression control", "content": json.dumps(control, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                "captured_at": captured_at, "permission": "read", "status": "encoded",
+            })
         return resources
 
     def _case_resource(self, case: RegressionCase, relative: str) -> Path:
@@ -168,16 +224,6 @@ def safe_join(root: Path, relative: str) -> Path:
 
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def directory_digest(root: Path) -> str:
-    aggregate = hashlib.sha256()
-    for item in sorted(path for path in root.rglob("*") if path.is_file()):
-        aggregate.update(item.relative_to(root).as_posix().encode("utf-8"))
-        aggregate.update(b"\0")
-        aggregate.update(hashlib.sha256(item.read_bytes()).digest())
-        aggregate.update(b"\0")
-    return aggregate.hexdigest()
 
 
 def write_environment_manifest(environment: PreparedEnvironment, path: Path) -> None:

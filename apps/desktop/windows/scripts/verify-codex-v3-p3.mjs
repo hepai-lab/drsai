@@ -19,7 +19,7 @@ const checks = [
   ["M04-F02 one Run maps to one Turn", bindings.includes("backend_run_id") && backend.includes('prepare_operation("run", context.run_id, "turn/start"')],
   ["M04-F03 durable idempotent send intent and UI lock", backend.includes("mark_operation_requesting") && adapter.includes("activeRequestIdRef.current = requestId")],
   ["M04-F04 explicit lifecycle labels", ["Queued", "Sent", "Generating", "Waiting for approval", "Completed", "Failed"].every((label) => structured.includes(label))],
-  ["M04-F05 stop and two retry scopes", adapter.includes("abortChat(requestId)") && workspace.includes('"same_session" | "new_session"') && workspace.includes("Branch to a new session")],
+  ["M04-F05 stop and two retry scopes", adapter.includes("cancelChatTurn") && workspace.includes('"same_session" | "new_session"') && workspace.includes("Branch to a new session")],
   ["M04-F06 session and restored-context visibility", workspace.includes("conversation-titlebar") && workspace.includes("Ready") && workspace.includes("Syncing") && workspace.includes("Synced")],
   ["M05-F01 first feedback and first delta metrics", adapter.includes('touchStreamingAssistant(event.requestId, "feedback")') && adapter.includes('touchStreamingAssistant(event.requestId, "delta")') && workspace.includes("First model delta")],
   ["M05-F02 terminal-only answer fallback", mapper.includes("_message_seen_runs") && mapper.includes('"items"') && mapper.includes('"agentMessage"')],

@@ -32,19 +32,7 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
   const zh = language === "zh";
 
   const refreshHealth = useCallback(async (): Promise<void> => {
-    const [snapshot, install, gateway] = await Promise.all([
-      desktopApi.getHealth(),
-      desktopApi.getInstallStatus(),
-      desktopApi.getGatewayStatus(),
-    ]);
-    setHealth({
-      ...snapshot,
-      installed: install.installed,
-      gatewayReady: gateway.ready,
-      version: install.version,
-      install,
-      gateway,
-    });
+    setHealth(await desktopApi.getHealth());
   }, []);
 
   useEffect(() => {
@@ -54,12 +42,15 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
     }).catch(() => {
       if (!cancelled) setHealth(createFallbackHealth());
     });
-    const timer = window.setTimeout(() => {
-      void refreshHealth().catch(() => undefined);
-    }, 750);
+    let timer: number | undefined;
+    const poll = async (): Promise<void> => {
+      await refreshHealth().catch(() => undefined);
+      if (!cancelled) timer = window.setTimeout(() => { void poll(); }, 2_000);
+    };
+    timer = window.setTimeout(() => { void poll(); }, 750);
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshHealth]);
 

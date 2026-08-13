@@ -53,6 +53,7 @@ def test_runtime_vision_uses_bound_role_and_responses_before_primary_agent(tmp_p
     ))
     assert seen["ref"] == ModelRef("zhizengzeng", "gemini-3.6-flash")
     assert seen["protocol"] == "openai_responses"
+    assert seen["max_output_tokens"] == 2048
     assert seen["input_value"][0]["content"][1]["image_url"].startswith("data:image/png;base64,")
     assert "model_unauthorized" in summary
     assert evidence["model_ref"] == {"provider_id": "zhizengzeng", "model_id": "gemini-3.6-flash"}

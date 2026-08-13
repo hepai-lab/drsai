@@ -73,10 +73,15 @@ export interface InteractionOption {
 export interface InteractionPart extends StructuredPartBase {
   kind: "interaction";
   requestId: string;
-  interactionType: "approval" | "text_input" | "choice" | "confirmation";
+  interactionType: "approval" | "text_input" | "choice" | "confirmation" | "capability_configuration";
   prompt: string;
   options?: InteractionOption[];
   response?: string;
+  capability?: string;
+  resourceKind?: string;
+  preferredAdapter?: string;
+  reason?: string;
+  queryDisclosed?: boolean;
 }
 
 export interface SubtaskPart extends StructuredPartBase {

@@ -13,10 +13,7 @@ import type {
   PlatformAgentStatus,
   UpdateMyDrSaiConfigRequest,
 } from "@shared/desktopApi";
-import {
-  LOCAL_OPENDRSAI_AGENT_ID,
-  LOCAL_OPENDRSAI_AGENT_NAME,
-} from "@shared/desktopApi";
+import { LOCAL_OPENDRSAI_AGENT_NAME } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
 import { userFacingFailureMessage } from "../userFacingLanguage";
@@ -132,8 +129,8 @@ export function AgentSquareView({
     onStartChat(agent);
   }
 
-  const openDrSai = filteredAgents.find((agent) => agent.id === LOCAL_OPENDRSAI_AGENT_ID);
-  const otherAgents = filteredAgents.filter((agent) => agent.id !== LOCAL_OPENDRSAI_AGENT_ID);
+  const openDrSai = filteredAgents.find((agent) => agent.source === "local");
+  const otherAgents = filteredAgents.filter((agent) => agent !== openDrSai);
   const sections = (["local", "official", "mine"] as const)
     .map((sectionGroup) => ({
       group: sectionGroup,
@@ -293,7 +290,7 @@ function AgentFeaturedCard({
           <h2>{agent.name}</h2>
           <AgentStatusPill agent={agent} zh={zh} />
         </div>
-        {agent.id === LOCAL_OPENDRSAI_AGENT_ID ? (
+        {agent.source === "local" ? (
           <div className="my-drsai-subtitle">
             <span>运行在本机的智能体。</span>
             <span>专属于您的AI智能体❤</span>
@@ -998,7 +995,7 @@ async function loadAgentCatalogSnapshot(
   }
   return {
     agents: [{
-      id: LOCAL_OPENDRSAI_AGENT_ID,
+      id: "local-agent-unavailable",
       name: LOCAL_OPENDRSAI_AGENT_NAME,
       description: "专属于您的AI智能体❤",
       owner: "运行在本机的智能体。",

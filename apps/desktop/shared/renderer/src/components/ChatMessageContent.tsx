@@ -1,10 +1,14 @@
-import { memo, useRef, useState, type ReactNode } from "react";
+import { memo, Profiler, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { parseChatOutput } from "../chatOutputModel";
 import { copyTextSafely } from "../clipboard";
 import { copyTextReliable } from "../threadShareClient";
+import { createStreamingTextFadePlugin, useStreamingTextSegments } from "../streamingTextFade";
+import { splitStreamingMarkdown } from "../streamingMarkdown";
+import { useStreamingDisplayBuffer } from "../streamingDisplayBuffer";
+import { observeStreamingRenderMetric } from "../streamingRenderMetrics";
 
 interface ChatMessageContentProps {
   content: string;
@@ -35,10 +39,13 @@ function CopyButton({ value, label }: { value: string; label: string }): React.J
   );
 }
 
-function MarkdownContent({ content, onOpenLink }: Pick<ChatMessageContentProps, "content" | "onOpenLink">): React.JSX.Element {
+const MarkdownRenderer = memo(function MarkdownRenderer({ content, onOpenLink, streaming = false }: Pick<ChatMessageContentProps, "content" | "onOpenLink" | "streaming">): React.JSX.Element {
+  const streamingSegments = useStreamingTextSegments(content, streaming);
+  const rehypePlugins = useMemo(() => streamingSegments.length ? [createStreamingTextFadePlugin(streamingSegments)] : [], [streamingSegments]);
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      rehypePlugins={rehypePlugins}
       components={{
         a: ({ href, children }) => (
           <button className="markdown-link" type="button" onClick={() => onOpenLink(href)}>
@@ -71,6 +78,23 @@ function MarkdownContent({ content, onOpenLink }: Pick<ChatMessageContentProps, 
     >
       {content}
     </ReactMarkdown>
+  );
+});
+
+function MarkdownContent({ content, onOpenLink, streaming = false }: Pick<ChatMessageContentProps, "content" | "onOpenLink" | "streaming">): React.JSX.Element {
+  const renderStartedAt = performance.now();
+  const displayedContent = useStreamingDisplayBuffer(content, streaming);
+  const split = useMemo(() => streaming ? splitStreamingMarkdown(displayedContent) : { stable: "", tail: displayedContent }, [displayedContent, streaming]);
+  useLayoutEffect(() => {
+    if (streaming) observeStreamingRenderMetric("commit-layout", performance.now() - renderStartedAt);
+  }, [displayedContent, streaming]);
+  return (
+    <Profiler id="streaming-markdown" onRender={(_id, _phase, actualDuration) => {
+      if (streaming) observeStreamingRenderMetric("markdown-render", actualDuration);
+    }}>
+      {split.stable ? <MarkdownRenderer content={split.stable} onOpenLink={onOpenLink} /> : null}
+      {split.tail ? <MarkdownRenderer content={split.tail} onOpenLink={onOpenLink} streaming={streaming} /> : null}
+    </Profiler>
   );
 }
 
@@ -148,7 +172,7 @@ export const ChatMessageContent = memo(function ChatMessageContent({
     return (
       <div className="chat-output">
         <div className="chat-markdown">
-          <MarkdownContent content={content} onOpenLink={onOpenLink} />
+          <MarkdownContent content={content} onOpenLink={onOpenLink} streaming={streaming} />
         </div>
       </div>
     );
@@ -160,7 +184,7 @@ export const ChatMessageContent = memo(function ChatMessageContent({
         <ReasoningPart key={part.id} text={part.text} complete={part.complete && !streaming} language={language} />
       ) : (
         <div className="chat-markdown" key={part.id}>
-          <MarkdownContent content={part.text} onOpenLink={onOpenLink} />
+          <MarkdownContent content={part.text} onOpenLink={onOpenLink} streaming={streaming} />
         </div>
       ))}
     </div>

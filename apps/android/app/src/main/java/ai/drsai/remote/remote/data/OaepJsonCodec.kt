@@ -48,7 +48,9 @@ object OaepJsonCodec {
         .put("data", JSONObject(value.data.extra).apply {
             value.data.item?.let { put("item", itemJson(it)) }
             value.data.delta?.let { put("delta", JSONObject().put("kind", it.kind)
-                .putOpt("text", it.text).putOpt("segment_id", it.segmentId).putOpt("stream", it.stream)) }
+                .putOpt("text", it.text).putOpt("segment_id", it.segmentId).putOpt("stream", it.stream)
+                .putOpt("reasoning_kind", it.reasoningKind).putOpt("visibility", it.visibility)
+                .putOpt("reasoning_source", it.reasoningSource)) }
             value.data.error?.let { put("error", errorJson(it)) }
         })
 
@@ -85,7 +87,10 @@ object OaepJsonCodec {
                     window.stringOrNull("next_cursor"),
                 )
             },
-        ).also(::validateSnapshot)
+        ).also { snapshot ->
+            validateSnapshot(snapshot)
+            OaepProjectionIntegrity.verifyCompleteSnapshot(snapshot)
+        }
     }
 
     fun session(root: JSONObject) = OaepSession(
@@ -146,6 +151,10 @@ object OaepJsonCodec {
         }
         if (type in setOf("event.item.completed", "event.item.failed")) {
             require(decoded.data.item != null) { "oaep_terminal_item_required" }
+        }
+        decoded.data.item?.let { item ->
+            require(item.id == decoded.itemId && item.sessionId == decoded.sessionId &&
+                item.runId == decoded.runId) { "oaep_event_item_scope_invalid" }
         }
         return decoded
     }
@@ -240,6 +249,9 @@ object OaepJsonCodec {
         text = root.stringOrNull("text"),
         segmentId = root.stringOrNull("segment_id"),
         stream = root.stringOrNull("stream"),
+        reasoningKind = root.stringOrNull("reasoning_kind"),
+        visibility = root.stringOrNull("visibility"),
+        reasoningSource = root.stringOrNull("reasoning_source"),
     )
 
     private fun error(root: JSONObject) = OaepError(
@@ -263,7 +275,12 @@ object OaepJsonCodec {
                 resourceRefs = resources,
             )
             "reasoning" -> OaepReasoningContent(root.objects("segments").map { segment ->
-                mapOf("id" to segment.required("id"), "text" to segment.getString("text"))
+                buildMap {
+                    put("id", segment.required("id")); put("text", segment.getString("text"))
+                    segment.stringOrNull("kind")?.let { put("kind", it) }
+                    segment.stringOrNull("visibility")?.let { put("visibility", it) }
+                    segment.stringOrNull("source")?.let { put("source", it) }
+                }
             }, operation, resources)
             "plan" -> OaepPlanContent(root.getString("text"), root.objects("steps").map { it.toMap() },
                 root.stringOrNull("explanation"), operation, resources)
@@ -322,7 +339,7 @@ object OaepJsonCodec {
         label = root.stringOrNull("label"), digest = root.stringOrNull("digest"),
     )
 
-    private fun sourceJson(value: OaepSource) = JSONObject()
+    fun sourceJson(value: OaepSource) = JSONObject()
         .put("backend", value.backend).putOpt("backend_item_id", value.backendItemId)
         .putOpt("backend_event_id", value.backendEventId).putOpt("client", value.client)
         .putOpt("message_id", value.messageId).putOpt("runtime_id", value.runtimeId)
@@ -358,10 +375,17 @@ object OaepJsonCodec {
                 .put("display_command", value.displayCommand).put("cwd", value.cwd).put("output", value.output)
                 .putOpt("stdout_tail", value.stdoutTail).putOpt("stderr_tail", value.stderrTail)
                 .putOpt("exit_code", value.exitCode).putOpt("duration_ms", value.durationMs)
+                .put("replay_policy", JSONObject(value.replayPolicy))
             is OaepToolCallContent -> JSONObject().put("tool_kind", value.toolKind)
                 .put("tool_name", value.toolName).put("call_id", value.callId)
-                .put("arguments", JSONObject(value.arguments)).put("result", jsonWireValue(value.result))
+                .put("arguments", JSONObject(value.arguments))
+                // OAEP Tool Call ``result`` is required and may explicitly be
+                // JSON null while the tool is pending. JSONObject.put(key,
+                // null) removes the key, changing the canonical digest after
+                // an otherwise lossless Android decode/encode round trip.
+                .put("result", value.result?.let(::jsonWireValue) ?: JSONObject.NULL)
                 .putOpt("server", value.server).putOpt("duration_ms", value.durationMs)
+                .put("replay_policy", JSONObject(value.replayPolicy))
             is OaepFileChangeContent -> JSONObject().put("changes", JSONArray(value.changes))
                 .put("summary", value.summary)
             is OaepArtifactContent -> JSONObject().put("artifact_id", value.artifactId)

@@ -174,7 +174,7 @@ assert(agentSource.includes("PLATFORM_CACHE_TTL_MS"), "catalog cache TTL is miss
 assert(agentSource.includes("PLATFORM_MEMORY_TTL_MS") && agentSource.includes("getOrCreateCatalogFlight"), "platform memory TTL or single-flight is missing");
 assert(agentSource.includes("platformCachePath(subjectKey)") && agentSource.includes("createPlatformCatalogSubjectKey"), "platform cache is not scoped to the verified OIDC subject");
 assert(agentSource.includes("createPublicAgentCachePayload"), "public-only cache serializer is not used");
-assert(agentSource.includes("const gateway = getGatewaySnapshot()") && agentSource.includes("if (!gateway.ready) return agents;"), "catalog discovery may still start a cold local Runtime");
+assert(agentSource.includes("const gateway = await getGatewayStatus()") && agentSource.includes("if (!gateway.ready) return agents;"), "catalog discovery must use a fresh read-only probe without starting a cold local Runtime");
 assert(!agentSource.includes("listRemoteAgents"), "Agent Square must not merge legacy local remote-agent files");
 assert(!agentSource.includes("remote_agents.json"), "Agent Square must source non-local agents exclusively from HAI");
 assert(preloadSource.includes('ipcRenderer.invoke("desktop:list-agents", options)'), "refresh options do not cross IPC");

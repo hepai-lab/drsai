@@ -27,7 +27,7 @@
 HEPAI_API_KEY=your_api_key_here
 
 # Skills 目录（默认已设置在镜像中）
-SYSTEM_SKILLS_DIR=/app/agent_skills/skills
+SYSTEM_SKILLS_DIR=/app/skills/skills
 
 # RAG Flow 配置
 RAGFLOW_URL=your_ragflow_url
@@ -67,7 +67,7 @@ docker run -d \
   -p 42818:42818 \
   -p 2222:22 \
   -v $(pwd)/workspace:/app/workspace \
-  -v $(pwd)/agent_skills:/app/agent_skills \
+  -v $(pwd)/skills/skills:/app/skills/skills:ro \
   --env-file .env \
   --privileged \
   drsai:latest \
@@ -148,11 +148,11 @@ services:
       - "2222:22"      # SSH (可选)
     volumes:
       - ./workspace:/app/workspace
-      - ./agent_skills:/app/agent_skills
+      - ./skills/skills:/app/skills/skills:ro
     env_file:
       - .env
     environment:
-      - SYSTEM_SKILLS_DIR=/app/agent_skills/skills
+      - SYSTEM_SKILLS_DIR=/app/skills/skills
     command: bash -c "service ssh start && python run_drsai_agent.py"
     # 如果需要 Docker-in-Docker
     # privileged: true
@@ -217,7 +217,7 @@ docker run -d \
 ```bash
 # 推荐挂载的目录
 -v $(pwd)/workspace:/app/workspace           # 工作空间
--v $(pwd)/agent_skills:/app/agent_skills     # 技能目录
+-v $(pwd)/skills/skills:/app/skills/skills:ro # 默认技能目录
 -v $(pwd)/.env:/app/.env:ro                  # 环境配置（只读）
 -v drsai-data:/app/data                      # 数据目录（使用命名卷）
 ```

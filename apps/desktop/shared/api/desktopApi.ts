@@ -10,6 +10,7 @@ import type {
 import type { ExecutionActionKind } from "./executionPolicy";
 import type { DesktopPlatformDescriptor } from "./platform";
 import type { InteractionOption, StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+import type { OaepEvent } from "./oaep.generated";
 export type { InteractionOption } from "./structuredConversation";
 import type {
   RunInspection,
@@ -28,6 +29,7 @@ import type {
   GetRunExperimentCapabilitiesRequest,
   FinalizeRunExperimentCandidateRequest,
   CreateRunComparisonRequest,
+  CreateRunComparisonEvaluationRequest,
   GetRunAdoptionPreviewRequest,
   ApplyRunAdoptionRequest,
   DiscardRunAdoptionRequest,
@@ -42,6 +44,7 @@ import type {
   GetWorktreeAdoptionPreviewRequest,
   GetRunExperimentRequest,
   GetRunComparisonRequest,
+  ListRunComparisonEvaluationsRequest,
   GetRunRelationsRequest,
   ReplayBoundaries,
   ReplayPlan,
@@ -51,6 +54,8 @@ import type {
   RunExperimentCandidateSnapshot,
   RunRelations,
   RunComparison,
+  RunComparisonEvaluation,
+  RunComparisonEvaluationList,
   RunAdoption,
   WorktreeAdoptionPreview,
   ApplyWorktreeAdoptionRequest,
@@ -319,11 +324,18 @@ export interface AuthSession {
   refreshable?: boolean;
 }
 
-// Keep this compatibility ID stable: it is persisted in threads and local
-// preferences. Product surfaces must use the display name instead of deriving
-// a label from the ID.
-export const LOCAL_OPENDRSAI_AGENT_ID = "my-drsai";
+// Read-only migration alias. Current Agent identities come from config.toml
+// and configs/agents, never from a product-wide constant.
+export const LEGACY_MY_DRSAI_AGENT_ID = "my-drsai";
 export const LOCAL_OPENDRSAI_AGENT_NAME = "OpenDrSai";
+
+export interface ConfiguredAgentDescriptor {
+  agent_name: string;
+  display_name: string;
+  enabled: boolean;
+  config_file: string;
+  current: boolean;
+}
 
 export interface DesktopBootstrapResult {
   ready: boolean;
@@ -370,6 +382,10 @@ export interface DesktopA5ServiceGuidanceScenario {
 
 export type OidcLoginDebugStage =
   | "started"
+  | "device-code-request"
+  | "device-code-ready"
+  | "device-code-polling"
+  | "device-code-slow-down"
   | "callback-listening"
   | "discovery"
   | "authorize-url"
@@ -388,32 +404,174 @@ export interface OidcLoginDebugEvent {
   message: string;
   at: string;
   url?: string;
-}
-
-export interface DesktopSsoStartResult {
-  ok: boolean;
-  message: string;
-  deviceCode?: string;
-  loginUrl?: string;
+  userCode?: string;
   expiresAt?: string;
-  intervalSeconds?: number;
-}
-
-export interface DesktopSsoPollResult {
-  ok: boolean;
-  state: "pending" | "authorized" | "expired" | "cancelled" | "error";
-  message: string;
-  session?: AuthSession | null;
 }
 
 export type DesktopVoiceRuntimeId =
   | "mock-local"
   | "gateway-provider"
-  | "local-whisper";
+  | "local-whisper"
+  | "realtime-provider";
 
-export type DesktopVoiceInteractionMode = "serial" | "streaming";
+export type DesktopVoiceInteractionMode = "serial" | "streaming" | "duplex";
 
 export type DesktopStreamingAudioEncoding = "pcm_s16le";
+
+export const DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION = 1 as const;
+
+export type DesktopDuplexVoiceAudioEncoding = "pcm_s16le" | "pcm_f32le";
+export type DesktopDuplexVoiceTerminalState = "completed" | "cancelled" | "failed";
+export type DesktopDuplexVoiceConnectionState = "connecting" | "connected" | "reconnecting" | "reconnected" | "disconnected";
+export type DesktopDuplexVoiceErrorCode =
+  | "auth"
+  | "model"
+  | "protocol"
+  | "network"
+  | "device"
+  | "audio"
+  | "rate_limit"
+  | "policy"
+  | "cancelled"
+  | "internal";
+
+export interface DesktopDuplexVoiceError {
+  code: DesktopDuplexVoiceErrorCode;
+  message: string;
+  retryable: boolean;
+  providerCode?: string;
+  requestId?: string;
+}
+
+export interface DesktopDuplexVoiceCapabilities {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  inputAudioEncodings: DesktopDuplexVoiceAudioEncoding[];
+  outputAudioEncodings: DesktopDuplexVoiceAudioEncoding[];
+  inputSampleRatesHz: number[];
+  outputSampleRatesHz: number[];
+  supportsInputTranscription: boolean;
+  supportsOutputTranscription: boolean;
+  supportsServerVad: boolean;
+  supportsResponseCancel: boolean;
+  supportsConversationTruncation: boolean;
+  supportsToolCalling: boolean;
+  supportsSessionResume: boolean;
+  maxUplinkBufferedAudioMs: number;
+  maxPlaybackBufferedAudioMs: number;
+  maxSessionDurationSeconds?: number;
+}
+
+export interface DesktopDuplexVoiceSessionStartRequest {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  sessionId: string;
+  providerId: string;
+  modelId: string;
+  inputEncoding: DesktopDuplexVoiceAudioEncoding;
+  inputSampleRateHz: number;
+  outputEncoding: DesktopDuplexVoiceAudioEncoding;
+  outputSampleRateHz: number;
+  channels: 1;
+  languageHint?: string;
+  voice?: string;
+  instructions?: string;
+  enableInputTranscription: boolean;
+  enableOutputTranscription: boolean;
+  enableServerVad: boolean;
+  enableToolCalling: boolean;
+}
+
+export interface DesktopDuplexVoiceSessionStartResult {
+  sessionId: string;
+  acceptedAt: string;
+  runtimeId: "realtime-provider" | "mock-local";
+  providerId: string;
+  modelId: string;
+  capabilities: DesktopDuplexVoiceCapabilities;
+}
+
+export interface DesktopDuplexVoiceInterruptRequest {
+  sessionId: string;
+  responseId: string;
+  itemId: string;
+  contentIndex: number;
+  playedAudioMs: number;
+  reason: "user_speech" | "manual" | "stop_intent";
+}
+
+export interface DesktopDuplexVoiceToolResultRequest {
+  sessionId: string;
+  callId: string;
+  output: string;
+}
+
+export interface DesktopDuplexVoiceHistoryAppendRequest {
+  threadId: string;
+  messages: Array<{ id: string; role: "user" | "assistant"; content: string; statusContent?: string }>;
+}
+
+export interface DesktopDuplexVoiceAudioChunk {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  sessionId: string;
+  sequence: number;
+  capturedAtMs: number;
+  durationMs: number;
+  encoding: DesktopDuplexVoiceAudioEncoding;
+  sampleRateHz: number;
+  channels: 1;
+  audioData: Uint8Array;
+}
+
+export interface DesktopDuplexVoiceAudioDelta {
+  responseId: string;
+  itemId: string;
+  contentIndex: number;
+  sequence: number;
+  encoding: DesktopDuplexVoiceAudioEncoding;
+  sampleRateHz: number;
+  channels: 1;
+  audioData: Uint8Array;
+}
+
+export interface DesktopDuplexVoiceTranscriptDelta {
+  itemId: string;
+  responseId?: string;
+  contentIndex: number;
+  text: string;
+}
+
+export interface DesktopDuplexVoiceToolCall {
+  callId: string;
+  itemId: string;
+  name: string;
+  argumentsJson: string;
+}
+
+export type DesktopDuplexVoiceEvent = {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  sessionId: string;
+  sequence: number;
+} & (
+  | { type: "session_started"; runtimeId: "realtime-provider" | "mock-local"; providerId: string; modelId: string; capabilities: DesktopDuplexVoiceCapabilities }
+  | { type: "connection_state"; state: DesktopDuplexVoiceConnectionState; attempt?: number }
+  | { type: "input_audio_ack"; acknowledgedSequence: number; bufferedAudioMs: number }
+  | { type: "flow_control"; direction: "uplink" | "playback"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
+  | { type: "input_speech_started"; itemId?: string; audioStartMs?: number }
+  | { type: "input_speech_stopped"; itemId?: string; audioEndMs?: number }
+  | { type: "input_transcript_delta"; delta: DesktopDuplexVoiceTranscriptDelta }
+  | { type: "input_transcript_completed"; itemId: string; text: string }
+  | { type: "response_started"; responseId: string }
+  | { type: "response_audio_delta"; delta: DesktopDuplexVoiceAudioDelta }
+  | { type: "response_audio_completed"; responseId: string; itemId: string; contentIndex: number }
+  | { type: "response_transcript_delta"; delta: DesktopDuplexVoiceTranscriptDelta }
+  | { type: "response_transcript_completed"; responseId: string; itemId: string; text: string }
+  | { type: "tool_call"; call: DesktopDuplexVoiceToolCall }
+  | { type: "usage_update"; inputAudioMs: number; outputAudioMs: number; inputTokens: number | null; outputTokens: number | null; estimatedCostUsd: number | null; warning: boolean; exceeded: boolean }
+  | { type: "diagnostic"; metrics: { connectMs: number | null; firstInputEventMs: number | null; ttfaMs: number | null; reconnects: number; interrupts: number; maxBufferedAudioMs: number; inputAudioMs: number; outputAudioMs: number } }
+  | { type: "interrupted"; responseId: string; playedAudioMs: number; reason: "user_speech" | "manual" | "stop_intent" }
+  | { type: "completed"; terminal: "completed" }
+  | { type: "cancelled"; terminal: "cancelled" }
+  | { type: "failed"; terminal: "failed"; error: DesktopDuplexVoiceError }
+);
 
 export interface DesktopStreamingVoiceCapabilities {
   serialStt: boolean;
@@ -425,10 +583,34 @@ export interface DesktopStreamingVoiceCapabilities {
   supportsPartialTranscripts: boolean;
   supportsProviderEndpointing: boolean;
   supportsSessionResume: boolean;
+  supportsAdaptiveEndpointing?: boolean;
+  supportsContextualRepair?: boolean;
+  supportsProviderFailover?: boolean;
+  protocolVersion?: 1 | 2;
   maxBufferedAudioMs: number;
 }
 
+export type DesktopTranscriptRepairSourceType = "later_speech" | "conversation_summary" | "user_dictionary" | "workspace_term";
+
+export interface DesktopTranscriptRepairSource {
+  type: DesktopTranscriptRepairSourceType;
+  label?: string;
+}
+
+export interface DesktopTranscriptRepairCandidate {
+  id: string;
+  revision: number;
+  originalText: string;
+  suggestedText: string;
+  confidence: number;
+  sources: DesktopTranscriptRepairSource[];
+  risk: "none" | "meaning_change" | "sensitive_value" | "command_or_code";
+  autoAccept: boolean;
+  reasons: string[];
+}
+
 export interface DesktopStreamingVoiceStartRequest {
+  protocolVersion?: 1 | 2;
   turnId: string;
   languageHint?: string;
   encoding: DesktopStreamingAudioEncoding;
@@ -446,6 +628,7 @@ export interface DesktopStreamingVoiceStartResult {
 }
 
 export interface DesktopStreamingVoiceAudioChunk {
+  protocolVersion?: 1 | 2;
   sessionId: string;
   turnId: string;
   sequence: number;
@@ -473,7 +656,7 @@ export interface DesktopStreamingVoiceTranscriptSegment {
   endMs?: number;
 }
 
-export type DesktopStreamingVoiceTranscriptionEvent =
+export type DesktopStreamingVoiceTranscriptionEvent = { protocolVersion?: 1 | 2 } & (
   | { sessionId: string; turnId: string; sequence: number; type: "accepted"; runtimeId: DesktopVoiceRuntimeId }
   | { sessionId: string; turnId: string; sequence: number; type: "audio_ack"; ack: DesktopStreamingVoiceAudioAck }
   | { sessionId: string; turnId: string; sequence: number; type: "flow_control"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
@@ -483,7 +666,8 @@ export type DesktopStreamingVoiceTranscriptionEvent =
   | { sessionId: string; turnId: string; sequence: number; type: "endpoint"; reason: "provider" | "local_vad" | "manual" }
   | { sessionId: string; turnId: string; sequence: number; type: "completed" }
   | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError }
-  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" };
+  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" }
+);
 
 export interface DesktopStreamingVoiceTtsSegmentRequest {
   sessionId: string;
@@ -794,7 +978,7 @@ export interface ChatEvent {
   requestId: string;
   /** Monotonic per-request sequence assigned by the main process. */
   seq?: number;
-  type: "start" | "structured" | "chunk" | "reasoning" | "status" | "connection" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
+  type: "start" | "oaep" | "structured" | "chunk" | "reasoning" | "status" | "connection" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
@@ -811,6 +995,8 @@ export interface ChatEvent {
   failureRecovery?: DesktopFailureRecovery;
   errorEnvelope?: RuntimeErrorEnvelope;
   structuredEvent?: StructuredConversationEvent;
+  /** Authoritative OAEP event, forwarded unchanged for diagnostics and protocol inspection. */
+  oaepEvent?: OaepEvent;
   connection?: {
     status: "retrying" | "restored";
     attempt: number;
@@ -3130,6 +3316,7 @@ export interface AgentModelPolicy {
   image_understanding_model?: AgentModelSelection | null;
   image_generation_model?: AgentModelSelection | null;
   text_to_speech_model?: AgentModelSelection | null;
+  realtime_voice_model?: AgentModelSelection | null;
   speech_to_text_model?: AgentModelSelection | null;
   reasoning_effort?: "none" | "low" | "medium" | "high" | "xhigh" | "max" | null;
   /** @deprecated Migrated to image_generation_model. */
@@ -3143,12 +3330,152 @@ export interface MyDrSaiAgentModelPolicy extends AgentModelPolicy {
   effective_image_understanding_ref?: RuntimeModelRef | null;
   effective_image_generation_ref?: RuntimeModelRef | null;
   effective_text_to_speech_ref?: RuntimeModelRef | null;
+  effective_realtime_voice_ref?: RuntimeModelRef | null;
   effective_speech_to_text_ref?: RuntimeModelRef | null;
   revision: string;
   valid: boolean;
   error?: string | null;
   migrated?: boolean;
   warning?: string | null;
+}
+
+export interface ChatTurnIdentity {
+  requestId: string;
+  sessionId?: string;
+  runId?: string;
+}
+
+export interface ChatTurnCancelResult {
+  accepted: boolean;
+  state: "cancelling" | "cancelled" | "completed" | "failed" | "not_found";
+}
+
+export type AgentResourceMode = "inherit" | "explicit" | "all_enabled";
+
+export interface AgentToolPolicy {
+  agent_id: string;
+  mode: AgentResourceMode;
+  enabled: string[];
+  disabled: string[];
+  require_approval: string[];
+  revision: string;
+  expected_revision?: string | null;
+}
+
+export interface AgentToolPreviewRow {
+  tool_id: string;
+  status: "configured" | "available" | "degraded" | "credential_required" | "runtime_unavailable" | "unsupported_platform" | "disabled";
+  error?: string | null;
+  capabilities: string[];
+  selected: boolean;
+}
+
+export interface AgentToolPreview {
+  agent_id: string;
+  mode: AgentResourceMode;
+  tools: AgentToolPreviewRow[];
+  missing_ids: string[];
+  disabled_ids: string[];
+  agent_revision: string;
+  registry_revision: string;
+}
+
+export interface AgentSkillPolicy {
+  agent_id: string;
+  mode: AgentResourceMode;
+  enabled: string[];
+  disabled: string[];
+  allow_thread_override: boolean;
+  revision: string;
+  expected_revision?: string | null;
+}
+
+export interface AgentSkillPreview {
+  agent_id: string;
+  mode: AgentResourceMode;
+  skills: Array<GatewaySkill & { enabled_for_agent: boolean }>;
+  enabled_ids: string[];
+  missing_ids: string[];
+  allow_thread_override: boolean;
+  revision: string;
+}
+
+export interface AgentKnowledgePolicy {
+  agent_id: string;
+  mode: AgentResourceMode;
+  sources: string[];
+  retrieval_policy: "auto" | "always" | "never";
+  top_k: number;
+  score_threshold: number;
+  require_citations: boolean;
+  revision: string;
+  expected_revision?: string | null;
+}
+
+export interface KnowledgeBaseResource {
+  knowledge_id: string;
+  display_name: string;
+  type: "local-files" | "ragflow";
+  enabled: boolean;
+  config: Record<string, unknown>;
+  credential_configured?: boolean;
+  status?: "not_indexed" | "indexing" | "ready" | "stale" | "failed" | "credential_required" | "configured" | "disabled";
+  document_count?: number;
+  chunk_count?: number;
+  selected?: boolean;
+}
+
+export interface PerceptorResource {
+  perceptor_id: string;
+  name?: string | null;
+  kind: "public_web" | "large_facility_data";
+  adapter: "tavily" | "facility_gateway";
+  enabled: boolean;
+  capabilities: string[];
+  config: Record<string, unknown>;
+  revision: string;
+}
+
+export interface SavePerceptorRequest {
+  perceptor_id: string;
+  name?: string;
+  kind: "public_web" | "large_facility_data";
+  adapter: "tavily" | "facility_gateway";
+  enabled: boolean;
+  capabilities: string[];
+  config: Record<string, unknown>;
+}
+
+export interface SaveKnowledgeBaseRequest {
+  knowledge_id: string;
+  display_name: string;
+  type: "local-files" | "ragflow";
+  enabled: boolean;
+  config: Record<string, unknown>;
+  credential?: string;
+}
+
+export interface AgentKnowledgePreview {
+  agent_id: string;
+  mode: AgentResourceMode;
+  sources: string[];
+  missing_ids: string[];
+  knowledge_bases: KnowledgeBaseResource[];
+  retrieval_policy: "auto" | "always" | "never";
+  top_k: number;
+  score_threshold: number;
+  require_citations: boolean;
+  revision: string;
+}
+
+export interface KnowledgeSearchEvidence {
+  knowledge_id: string;
+  document_id: string;
+  chunk_id: string;
+  source: string;
+  score: number;
+  content_sha256: string;
+  content?: string;
 }
 
 export interface ModelCapabilityProbeStatus {
@@ -3163,6 +3490,15 @@ export interface ModelCapabilityProbeStatus {
   duration_ms: number;
   error_code?: string | null;
   retryable: boolean;
+}
+
+export type ModelCapabilityProbeOperation = "chat" | "tool_calling" | "reasoning" | "image_generation" | "image_edit" | "text_to_speech" | "speech_to_text";
+export interface ModelCapabilityProbeResult extends ModelCapabilityProbeStatus {
+  upstream_model_id?: string;
+  http_status?: number | null;
+  may_incur_cost?: boolean;
+  evidence_kind?: "real_provider" | "configuration";
+  assertions?: Array<{ id: string; passed: boolean; detail?: string }>;
 }
 
 export interface AgentModelCapabilityStatus {
@@ -3210,6 +3546,9 @@ export interface MyDrSaiConfig {
   cliPath?: string;
   config: MyDrSaiCliConfig;
   models: MyDrSaiModelConfig[];
+  /** Provider definitions and their persisted local model catalogs. This is
+   * intentionally independent from the currently effective Agent model. */
+  modelProviders?: MyDrSaiModelProvider[];
   modelConnection?: MyDrSaiModelConnection;
   modelCatalog?: {
     state: RuntimeModelCatalogState | "unconfigured" | "empty" | "timeout";
@@ -3221,6 +3560,7 @@ export interface MyDrSaiConfig {
 
 export interface CodexWorkspaceSessionSyncResult {
   workspaceId: string;
+  cancelled?: boolean;
   discovered: number;
   active: number;
   archived: number;
@@ -3279,7 +3619,7 @@ export interface MyDrSaiModelConnection {
   revision?: string;
   warnings?: string[];
   runtime?: { configured_revision: string; runtime_revisions: string[]; runtime_status: "not_started" | "applied" | "partially_applied" | "pending_next_turn"; active_runtime_count: number };
-  last_test?: { provider: string; model?: string; mode: string; ok: boolean; tested_at: string; error?: string; status_code?: number } | null;
+  last_test?: { provider: string; model?: string; mode: string; ok: boolean; tested_at: string; error?: string; status_code?: number; fingerprint?: string; last_success?: { provider: string; model?: string; mode: string; ok: boolean; tested_at: string; fingerprint?: string } } | null;
 }
 
 export interface MyDrSaiProviderPreset {
@@ -4869,7 +5209,7 @@ export type DesktopOpenRequest =
   | { kind: "settings"; source: "menu" };
 
 export interface DesktopLifecycleEvent {
-  reason: "resume" | "network-online" | "display-change" | "renderer-recovered" | "gpu-recovered";
+  reason: "suspend" | "lock-screen" | "resume" | "unlock-screen" | "network-online" | "display-change" | "renderer-recovered" | "gpu-recovered";
   recoveredGateway: boolean;
   at: string;
 }
@@ -4957,8 +5297,8 @@ export interface DesktopRuntimeDisplayNameResult {
 
 export interface DesktopMobileRemoteDiagnostics {
   status: "healthy" | "action_required";
-  action: "none" | "start_runtime" | "sign_in" | "retry_relay" | "reconnect_runtime" | "update_runtime";
-  checks: Record<"runtime" | "relay" | "oidc" | "wss" | "heartbeat" | "protocol", "ok" | "failed" | "unknown">;
+  action: "none" | "start_runtime" | "sign_in" | "retry_relay" | "repair_device_identity" | "reconnect_runtime" | "update_runtime" | "enable_notifications";
+  checks: Record<"runtime" | "relay" | "oidc" | "device_proof" | "wss" | "heartbeat" | "protocol" | "push", "ok" | "failed" | "unknown">;
 }
 
 export type ExperimentReleaseGateFeatureId = "M31-02" | "M31-03" | "M31-04" | "M31-05";
@@ -5012,11 +5352,8 @@ export interface DesktopApi {
   login(request: LoginRequest): Promise<LoginResult>;
   startOidcLogin(request?: { rememberMe?: boolean }): Promise<LoginResult>;
   cancelOidcLogin(): Promise<boolean>;
-  startDesktopSsoLogin(): Promise<DesktopSsoStartResult>;
-  startWechatDesktopLogin(): Promise<DesktopSsoStartResult>;
-  pollDesktopSsoLogin(deviceCode: string): Promise<DesktopSsoPollResult>;
-  cancelDesktopSsoLogin(deviceCode: string): Promise<boolean>;
   logout(options?: LogoutOptions): Promise<{ ok: boolean; message: string }>;
+  restartApplication(): Promise<boolean>;
   previewLocalDataCleanup(scope: DesktopDataCleanupScope): Promise<DesktopDataCleanupPreview>;
   clearLocalData(request: DesktopDataCleanupRequest): Promise<DesktopDataCleanupResult>;
   refreshAuthSession(): Promise<AuthSession>;
@@ -5059,6 +5396,7 @@ export interface DesktopApi {
   shrinkMobileAssociation(
     associationId: string,
     permissions: Array<"read" | "send" | "approve" | "files">,
+    scope?: DesktopMobilePairingScope,
   ): Promise<DesktopMobileAssociation>;
   revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
   listSshHosts(): Promise<RemoteSshHost[]>;
@@ -5082,7 +5420,7 @@ export interface DesktopApi {
   listRemoteThreads(workspaceId: string): Promise<DesktopThread[]>;
   preflightRemoteGateway(hostAlias: string): Promise<RemoteGatewayPreflight>;
   getRemoteSshDiagnosticReport(): Promise<RemoteSshDiagnosticReport>;
-  installRemoteGateway(request: RemoteGatewayInstallRequest): Promise<RemoteGatewayInstallResult>;
+  installRemoteGateway(request: RemoteGatewayInstallRequest): Promise<RemoteGatewayInstallResult | null>;
   requestRemoteGatewayInstallApproval(
     request: RemoteGatewayInstallRequest,
   ): Promise<DesktopApprovalProposalResult>;
@@ -5101,7 +5439,7 @@ export interface DesktopApi {
   onWorkspaceFileChanges(callback: (event: WorkspaceFileChangeEvent) => void): () => void;
   generateManagerPresentation(
     request: ManagerPresentationGenerateRequest,
-  ): Promise<ManagerPresentationGenerateResult>;
+  ): Promise<ManagerPresentationGenerateResult | null>;
   cancelManagerPresentation(
     request: ManagerPresentationCancelRequest,
   ): Promise<ManagerPresentationCancelResult>;
@@ -5169,6 +5507,27 @@ export interface DesktopApi {
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
   getMyDrSaiRuntimeModelCatalog(): Promise<RuntimeModelCatalog>;
   getMyDrSaiAgentModelPolicy(agentId?: string): Promise<MyDrSaiAgentModelPolicy>;
+  getMyDrSaiAgentToolPolicy(agentId: string): Promise<AgentToolPolicy>;
+  updateMyDrSaiAgentToolPolicy(agentId: string, policy: AgentToolPolicy): Promise<AgentToolPolicy>;
+  previewMyDrSaiAgentTools(agentId: string): Promise<AgentToolPreview>;
+  testAgentTool(toolId: string): Promise<{ ok: boolean; tool_id: string; status: string; tested: string; error?: string }>;
+  getMyDrSaiAgentSkillPolicy(agentId: string): Promise<AgentSkillPolicy>;
+  updateMyDrSaiAgentSkillPolicy(agentId: string, policy: AgentSkillPolicy): Promise<AgentSkillPolicy>;
+  previewMyDrSaiAgentSkills(agentId: string): Promise<AgentSkillPreview>;
+  getMyDrSaiAgentKnowledgePolicy(agentId: string): Promise<AgentKnowledgePolicy>;
+  updateMyDrSaiAgentKnowledgePolicy(agentId: string, policy: AgentKnowledgePolicy): Promise<AgentKnowledgePolicy>;
+  previewMyDrSaiAgentKnowledge(agentId: string): Promise<AgentKnowledgePreview>;
+  indexKnowledgeBase(knowledgeId: string): Promise<{ knowledge_id: string; status: string; document_count: number; chunk_count: number }>;
+  testKnowledgeBase(knowledgeId: string): Promise<{ ok: boolean; knowledge_id: string; type: string; status?: string; dataset_count?: number }>;
+  searchKnowledgeBase(knowledgeId: string, query: string): Promise<{ knowledge_id: string; query: string; evidence: KnowledgeSearchEvidence[] }>;
+  listKnowledgeBases(): Promise<KnowledgeBaseResource[]>;
+  listPerceptors(): Promise<PerceptorResource[]>;
+  savePerceptor(request: SavePerceptorRequest): Promise<PerceptorResource>;
+  updatePerceptor(perceptorId: string, request: SavePerceptorRequest): Promise<PerceptorResource>;
+  testPerceptor(perceptorId: string, capability?: "search" | "extract"): Promise<{ ok: boolean; perceptor_id: string; status: string; tested?: string; result_count?: number; error?: string }>;
+  deletePerceptor(perceptorId: string): Promise<{ status: string; perceptor_id: string }>;
+  createKnowledgeBase(request: SaveKnowledgeBaseRequest): Promise<KnowledgeBaseResource>;
+  deleteKnowledgeBase(knowledgeId: string): Promise<{ status: string }>;
   getMyDrSaiAgentModelCapabilityStatus(agentId?: string): Promise<AgentModelCapabilityStatus>;
   updateMyDrSaiAgentModelPolicy(agentId: string, policy: AgentModelPolicy): Promise<MyDrSaiAgentModelPolicy>;
   migrateMyDrSaiAgentModelPolicy(agentId: string, legacyModel: string, expectedRevision?: string): Promise<MyDrSaiAgentModelPolicy>;
@@ -5179,6 +5538,7 @@ export interface DesktopApi {
   restoreMyDrSaiModelConnection(expectedRevision?: string): Promise<MyDrSaiModelConnection>;
   saveMyDrSaiModelProvider(provider: string, request: SaveMyDrSaiModelProviderRequest): Promise<MyDrSaiModelConnection>;
   testMyDrSaiModelProvider(provider: string, model?: string): Promise<MyDrSaiProviderTestResult>;
+  probeMyDrSaiProviderModel(provider: string, request: { model: string; operation: ModelCapabilityProbeOperation; protocol?: string }): Promise<ModelCapabilityProbeResult>;
   testMyDrSaiModelDraft(request: UpdateMyDrSaiModelConnectionRequest, mode?: "basic" | "model"): Promise<MyDrSaiProviderTestResult>;
   listMyDrSaiModelProviderPresets(): Promise<MyDrSaiProviderPreset[]>;
   discoverMyDrSaiProviderModels(provider: string, refresh?: boolean, draft?: MyDrSaiModelProviderDraft): Promise<MyDrSaiModelDiscoveryResult>;
@@ -5211,7 +5571,7 @@ export interface DesktopApi {
   listWorktreeEvents(request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch>;
   startChat(request: ChatRequest): Promise<string>;
   recoverChatRun(request: ChatRunRecoveryRequest): Promise<ChatEvent[]>;
-  abortChat(requestId: string): Promise<boolean>;
+  cancelChatTurn(request: ChatTurnIdentity): Promise<ChatTurnCancelResult>;
   listSessionRuns(request: SessionRunsReadRequest): Promise<SessionRunList>;
   getRunInspection(request: RunInspectionOpenRequest): Promise<RunInspection>;
   locateRunItem(request: RunItemLocatorRequest): Promise<RunItemLocator>;
@@ -5232,6 +5592,8 @@ export interface DesktopApi {
   executeReplayPlan(request: ExecuteReplayPlanRequest): Promise<ReplayExecutionResult | RuntimeApprovalRequired>;
   createRunComparison(request: CreateRunComparisonRequest): Promise<RunComparison>;
   getRunComparison(request: GetRunComparisonRequest): Promise<RunComparison>;
+  listRunComparisonEvaluations(request: ListRunComparisonEvaluationsRequest): Promise<RunComparisonEvaluationList>;
+  createRunComparisonEvaluation(request: CreateRunComparisonEvaluationRequest): Promise<RunComparisonEvaluation>;
   getWorktreeAdoptionPreview(request: GetWorktreeAdoptionPreviewRequest): Promise<WorktreeAdoptionPreview>;
   applyWorktreeAdoption(request: ApplyWorktreeAdoptionRequest): Promise<WorktreeAdoptionApplyResult>;
   getRunAdoptionPreview(request: GetRunAdoptionPreviewRequest): Promise<RunAdoption>;
@@ -5251,6 +5613,17 @@ export interface DesktopApi {
   cancelVoiceTranscription(requestId: string): Promise<boolean>;
   getVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus>;
   getStreamingVoiceCapabilities(): Promise<DesktopStreamingVoiceCapabilities>;
+  getDuplexVoiceCapabilities(): Promise<DesktopDuplexVoiceCapabilities>;
+  startDuplexVoiceSession(request: DesktopDuplexVoiceSessionStartRequest): Promise<DesktopDuplexVoiceSessionStartResult>;
+  sendDuplexVoiceAudioChunk(chunk: DesktopDuplexVoiceAudioChunk): boolean;
+  updateDuplexVoiceSession(request: DesktopDuplexVoiceSessionStartRequest): Promise<boolean>;
+  interruptDuplexVoiceSession(request: DesktopDuplexVoiceInterruptRequest): Promise<boolean>;
+  submitDuplexVoiceToolResult(request: DesktopDuplexVoiceToolResultRequest): Promise<boolean>;
+  stopDuplexVoiceSession(sessionId: string): Promise<boolean>;
+  cancelDuplexVoiceSession(sessionId: string): Promise<boolean>;
+  disposeDuplexVoiceSession(sessionId: string): Promise<boolean>;
+  onDuplexVoiceEvents(callback: (events: DesktopDuplexVoiceEvent[]) => void): () => void;
+  appendDuplexVoiceHistory(request: DesktopDuplexVoiceHistoryAppendRequest): Promise<DesktopThreadSnapshot>;
   startStreamingVoiceTranscription(
     request: DesktopStreamingVoiceStartRequest,
   ): Promise<DesktopStreamingVoiceStartResult>;
@@ -5498,6 +5871,7 @@ export interface DesktopApi {
   listPendingBrowserTaskApprovals(): Promise<BrowserTaskPendingApproval[]>;
   approveBrowserTaskAction(request: BrowserTaskApprovalRequest): Promise<boolean>;
   openExternal(url: string): Promise<void>;
+  openRegressionReference(uri: string): Promise<string>;
   openPath(path: string): Promise<string>;
   openPdfPage(request: PdfPageOpenRequest): Promise<PdfPageOpenResult>;
   getIdeContext(workspacePath: string): Promise<DesktopIdeContextSnapshot>;

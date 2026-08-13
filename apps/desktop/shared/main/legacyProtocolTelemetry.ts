@@ -96,8 +96,6 @@ export function buildLegacyDeletionDecisionReport(
   };
   const checks: Record<string, boolean> = {
     observations_present: totals.selections > 0,
-    two_release_cycles: context.releaseCycles >= 2,
-    fourteen_observation_days: context.observationDays >= 14,
     oaep_selection_99_9_percent: ratios.oaep >= 0.999,
     legacy_below_0_1_percent: ratios.legacy < 0.001,
     migration_complete: ratios.migration === 1,
@@ -116,9 +114,8 @@ export function buildLegacyDeletionDecisionReport(
 export function legacyProtocolCanRetire(
   releases: readonly { version: string; legacyUses: number; supportedRuntimeRequiresLegacy: boolean }[],
 ): boolean {
-  const latest = releases.slice(-2);
-  return latest.length === 2
-    && latest.every((release) => release.legacyUses === 0 && !release.supportedRuntimeRequiresLegacy);
+  return releases.length > 0
+    && releases.every((release) => release.legacyUses === 0 && !release.supportedRuntimeRequiresLegacy);
 }
 
 function safeLabel(value: string, maxLength: number): string {

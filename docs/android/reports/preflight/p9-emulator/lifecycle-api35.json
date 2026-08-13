@@ -1,0 +1,114 @@
+{
+  "artifacts": {
+    "app_apk": {
+      "name": "OpenDrSai-Android-v1.5.6.apk",
+      "sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24"
+    },
+    "test_apk": {
+      "name": "app-debug-androidTest.apk",
+      "sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5"
+    }
+  },
+  "environment": {
+    "abi": "x86_64",
+    "api": 35,
+    "avd": "OpenDrSai_P9_API35",
+    "device_id_sha256": "d81873432981ee4e8ded10dc5ae99ce71dee8e0978d202c1248919e40a5ef2ca",
+    "kind": "emulator",
+    "manufacturer": "Google",
+    "model": "sdk_gphone64_x86_64",
+    "serial": "emulator-5554"
+  },
+  "evidence_tier": "emulator_preflight",
+  "feature_ids": [
+    "E02-F03",
+    "E02-F04",
+    "E02-F05"
+  ],
+  "gates": {
+    "binding_observable": true,
+    "cancel_background_oaep_and_anr_suite": true,
+    "cold_start_binding_ready": true,
+    "cold_start_full_runtime_only": true,
+    "dedicated_runtime_process": true,
+    "runtime_death_rebinds_without_lite": true,
+    "unfinished_tool_replayed_once": true,
+    "unrecoverable_checkpoint_fails_explicitly": true,
+    "waiting_model_same_run_recovered": true,
+    "waiting_tool_same_run_recovered": true
+  },
+  "generated_at": "2026-08-11T20:20:36.362219+00:00",
+  "instrumentation": {
+    "binderPythonAndNetworkFaultsRemainOnFullRuntime": {
+      "path": "docs/android/reports/preflight/p9-emulator/lifecycle-binderPythonAndNetworkFaultsRemainOnFullRuntime.txt",
+      "sha256": "79350392111637db8aa52e5ec038d7929d5d9b8947726b7eb2f51ebdead3f478"
+    },
+    "cancelBackgroundOaepAndAnr": {
+      "path": "docs/android/reports/preflight/p9-emulator/lifecycle-cancelBackgroundOaepAndAnr.txt",
+      "sha256": "e1d186ba0590ed163e620058cbeffe24a47d16b231248cc313e6563aa8782dc6"
+    },
+    "defaultFullRuntimeBindingIsReadyAndObservable": {
+      "path": "docs/android/reports/preflight/p9-emulator/lifecycle-defaultFullRuntimeBindingIsReadyAndObservable.txt",
+      "sha256": "457bb0b4dff2d38d8304f5ae005d220f42a06cefe64a7761c0aaddba04066530"
+    },
+    "seedProcessReclaimCheckpoint": {
+      "path": "docs/android/reports/preflight/p9-emulator/lifecycle-seedProcessReclaimCheckpoint.txt",
+      "sha256": "81bd68d55c7939851342c0fd9132c52dc853755d3be0638b293ba485abb2f93e"
+    },
+    "seedWaitingToolProcessReclaimCheckpoint": {
+      "path": "docs/android/reports/preflight/p9-emulator/lifecycle-seedWaitingToolProcessReclaimCheckpoint.txt",
+      "sha256": "37e5f4f6d977bbad5a27ec873738bc161e08cc28f69de4f4549a7b22404c4475"
+    },
+    "unrecoverableCheckpointMigration": {
+      "path": "docs/android/reports/preflight/p9-emulator/lifecycle-unrecoverableCheckpointMigration.txt",
+      "sha256": "36e3e05d581ff786f7509e9ef641d9e7472149682e8eb93aaf59e6494489907e"
+    },
+    "verifyProcessReclaimResumesSameRun": {
+      "path": "docs/android/reports/preflight/p9-emulator/lifecycle-verifyProcessReclaimResumesSameRun.txt",
+      "sha256": "08c75cc635dcedfecb162a04497fa9627d6086663ccf5ebc3734ddb750d6f928"
+    },
+    "verifyWaitingToolProcessReclaimReplaysUnfinishedCallOnce": {
+      "path": "docs/android/reports/preflight/p9-emulator/lifecycle-verifyWaitingToolProcessReclaimReplaysUnfinishedCallOnce.txt",
+      "sha256": "6cd661c12d085a7843a22d380dface1d86c8e20a45807dd5220105d960d8400b"
+    }
+  },
+  "observed": {
+    "default_binding": {
+      "bind_attempts_delta": 1,
+      "bind_successes_delta": 1,
+      "binding_state": "READY",
+      "full_runtime_enabled": true,
+      "kotlin_lite_enabled": false,
+      "main_pid": 17606,
+      "python_status": "python_runtime_ready",
+      "runtime_pid": 17627,
+      "safe_fallbacks_delta": 0,
+      "starts_delta": 1
+    },
+    "fault_recovery": {
+      "bind_death": true,
+      "kotlin_fallback_available": false,
+      "network_interruption": true,
+      "normalized_resume_event": "event.run.resumed",
+      "process_reclaim": true,
+      "python_crash": true,
+      "resume_event": "run.recovered",
+      "resume_model_request": true,
+      "run_id": "physical-process-reclaim-run",
+      "same_run_resumed": true
+    },
+    "tool_recovery": {
+      "call_id": "physical-tool-call",
+      "kotlin_fallback_available": false,
+      "process_reclaim": true,
+      "resume_event_count": 1,
+      "resume_phase": "waiting_tool",
+      "run_id": "physical-tool-reclaim-run",
+      "same_run_resumed": true,
+      "tool_request_count": 1
+    }
+  },
+  "passed": true,
+  "release_evidence": false,
+  "schema_version": "opendrsai.p9-emulator-lifecycle-preflight/1"
+}

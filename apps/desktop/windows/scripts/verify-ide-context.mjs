@@ -16,7 +16,7 @@ function assert(condition, message) {
 
 const api = read("../shared/api/desktopApi.ts");
 const main = read("src/main/index.ts");
-const ideContext = read("src/main/ideContext.ts");
+const ideContext = read("../shared/main/ideContext.ts");
 const preload = read("../shared/main/preload.ts");
 const app = read("../shared/renderer/src/App.tsx");
 const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
@@ -34,13 +34,16 @@ assert(
 assert(
   ideContext.includes(".drsai") &&
     ideContext.includes("ide-context.json") &&
-    ideContext.includes("resolveWorkspaceFilePath") &&
+    ideContext.includes("workspaceRoot") &&
+    ideContext.includes("workspaceFile") &&
     ideContext.includes("MAX_SELECTION_CHARS") &&
-    ideContext.includes("isInsidePath"),
+    ideContext.includes("function inside"),
   "main-process IDE context adapter does not read and constrain the handoff file",
 );
 assert(
-  main.includes("getIdeContext") && main.includes("desktop:ide-context"),
+  main.includes("getIdeContext") &&
+    main.includes("desktop:ide-context") &&
+    main.includes("resolveLegacyLocalWorkspaceLabel"),
   "main process does not register IDE context IPC",
 );
 assert(

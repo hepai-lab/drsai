@@ -557,6 +557,12 @@ export function FilesContextPanel({
         requirements: recovering ? managerPresentationRequirements : [],
       });
       if (managerPresentationRequestRef.current !== requestId) return;
+      if (!result) {
+        setManagerPresentationProgress((current) => current?.requestId === requestId && current.phase === "cancelled"
+          ? current
+          : { requestId, phase: "cancelled", progress: 100, message: zh ? "已取消生成；未保留未完成的 PPT 文件。" : "Generation cancelled; no incomplete PPT was kept." });
+        return;
+      }
       setManagerPresentationResult(result);
       setAudienceResults((current) => ({ ...current, [result.audience]: result }));
       const artifactEvent: AgentFileTraceEvent = {
@@ -903,6 +909,20 @@ export function FilesContextPanel({
       </header>
 
       {error ? <p className="files-context-error">{error}</p> : null}
+      {pendingAgentCheckpoint ? (
+        <div className="files-agent-change-review" role="status" data-testid="agent-change-review">
+          <span>{zh ? "智能体变更等待确认" : "Agent changes are ready for review"}</span>
+          <div>
+            <button type="button" onClick={() => void restoreRollbackCheckpoint(pendingAgentCheckpoint)}>
+              {zh ? "拒绝并恢复运行前" : "Reject and restore before run"}
+            </button>
+            <button type="button" className="primary" onClick={() => void acceptAgentChangeSet(pendingAgentCheckpoint)}>
+              {zh ? "接受本次变更" : "Accept changes"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {checkpointMessage ? <p className="files-context-checkpoint-message" role="status">{checkpointMessage}</p> : null}
 
       <div className="files-context-body">
         <main className="files-context-preview" aria-label="File preview">

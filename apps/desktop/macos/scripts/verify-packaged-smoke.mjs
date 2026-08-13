@@ -1,20 +1,35 @@
 import { strict as assert } from "node:assert";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Packaged macOS smoke must run on Apple Silicon macOS.");
 const root = resolve(new URL("..", import.meta.url).pathname);
-const executable = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "MacOS", "OpenDrSai");
+const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+let releaseMount;
+let appPath = resolve(process.env.OPENDRSAI_MACOS_APP_PATH || join(root, "release", "mac-arm64", "OpenDrSai.app"));
+if (!process.env.OPENDRSAI_MACOS_APP_PATH && !hasRuntimeArchive(appPath)) {
+  const dmg = join(root, "release", `OpenDrSai-macOS-v${packageJson.version}-arm64.dmg`);
+  assert.ok(existsSync(dmg), `Packaged smoke full Runtime DMG is missing: ${dmg}`);
+  releaseMount = await mkdtemp(join(tmpdir(), "opendrsai-macos-smoke-dmg-"));
+  const attached = spawnSync("/usr/bin/hdiutil", ["attach", dmg, "-readonly", "-nobrowse", "-mountpoint", releaseMount], { encoding: "utf8" });
+  assert.equal(attached.status, 0, `Packaged smoke could not mount ${dmg}.\n${attached.stderr}`);
+  appPath = join(releaseMount, "OpenDrSai.app");
+}
+const executable = join(appPath, "Contents", "MacOS", "OpenDrSai");
 assert.ok(existsSync(executable), `packaged executable missing: ${executable}`);
-const runtimeRoot = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "Resources", "runtime");
+const runtimeRoot = join(appPath, "Contents", "Resources", "runtime");
 const runtimeManifest = JSON.parse(await readFile(join(runtimeRoot, "runtime-manifest.json"), "utf8"));
 const runtimeArchive = await stat(join(runtimeRoot, runtimeManifest.archive));
 const runtimeGiB = Math.ceil(runtimeArchive.size / (1024 ** 3));
-const timeoutMs = Math.min(360_000, 45_000 + runtimeGiB * 45_000);
+// First launch extracts and hashes every Runtime file, relocates both Python
+// virtual environments, and probes the installed interpreter. Keep this
+// correctness gate bounded without conflating it with the separate L5
+// performance gate; the current Runtime contains roughly 27,000 files.
+const timeoutMs = Math.min(900_000, 300_000 + runtimeGiB * 600_000);
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-macos-packaged-"));
 const resultPath = join(temp, "result.json");
 const gatewayPort = await freePort();
@@ -67,6 +82,24 @@ try {
   throw error;
 } finally {
   await rm(temp, { recursive: true, force: true });
+  cleanupReleaseMount();
+}
+
+function hasRuntimeArchive(candidateApp) {
+  const candidateRuntime = join(candidateApp, "Contents", "Resources", "runtime");
+  const manifestPath = join(candidateRuntime, "runtime-manifest.json");
+  if (!existsSync(manifestPath)) return false;
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    return Boolean(manifest.archive && existsSync(join(candidateRuntime, manifest.archive)));
+  } catch { return false; }
+}
+
+function cleanupReleaseMount() {
+  if (!releaseMount) return;
+  spawnSync("/usr/bin/hdiutil", ["detach", releaseMount, "-force"], { stdio: "ignore" });
+  rmSync(releaseMount, { recursive: true, force: true });
+  releaseMount = undefined;
 }
 
 function waitForCleanClose(process, timeout, runtimeBytes) {

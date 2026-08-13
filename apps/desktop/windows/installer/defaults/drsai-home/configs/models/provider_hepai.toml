@@ -1,0 +1,44 @@
+# Product model catalog for the HepAI OIDC Provider.
+
+[models."deepseek-v4-flash"]
+input_modalities = ["text"]
+output_modalities = ["text"]
+api_protocol = "openai"
+enabled = true
+capabilities = ["chat", "tool_calling", "reasoning"]
+
+[models."deepseek-v4-pro"]
+input_modalities = ["text"]
+output_modalities = ["text"]
+api_protocol = "openai"
+enabled = true
+capabilities = ["chat", "tool_calling", "reasoning"]
+
+[models."gpt-5.6-luna"]
+input_modalities = ["text", "image"]
+output_modalities = ["text"]
+api_protocol = "openai"
+enabled = true
+capabilities = ["chat", "tool_calling"]
+
+[models."gemini-3.1-flash-lite-image"]
+alias = "Nano Banana 2 Lite"
+input_modalities = ["text", "image"]
+output_modalities = ["text", "image"]
+api_protocol = "openai"
+enabled = true
+capabilities = ["chat", "image_generation", "image_edit"]
+
+[models."tts-1"]
+input_modalities = ["text"]
+output_modalities = ["audio"]
+api_protocol = "openai"
+enabled = true
+capabilities = ["text_to_speech"]
+
+[models."whisper-1"]
+input_modalities = ["audio"]
+output_modalities = ["text"]
+api_protocol = "openai"
+enabled = true
+capabilities = ["speech_to_text"]

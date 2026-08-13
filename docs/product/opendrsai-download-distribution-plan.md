@@ -2,11 +2,11 @@
 
 ## 生产架构
 
-- GitHub Release 保留版本记录和备用下载。
+- GitHub Release 可选地保留版本记录和备用下载，不是 OSS 生产发布的硬依赖。
 - 阿里云北京 OSS 私有 Bucket `hepai-release` 保存发布资产。
 - `download-opendrsai.ihep.ac.cn` 通过 CNAME 接入阿里云 CDN，使用 `*.ihep.ac.cn` 证书。
 - CDN 开启同账号私有 Bucket 回源、HTTPS 强制跳转、2 MB Range 回源和带宽告警。
-- OpenDrSai 优先使用 CDN；连接、下载或校验失败时回退 GitHub。
+- OpenDrSai 生产更新使用 OSS/CDN；只在显式启用并验证了 GitHub 备份渠道时才允许回退。
 
 ## 路径与缓存
 
@@ -25,8 +25,8 @@
 ```
 
 - Windows MSI 固定命名为 `OpenDrSai-Windows-Installer-x64.msi`；Runtime ZIP 使用 `OpenDrSai-Windows-v{version}-x64.zip`。
-- macOS 完整 DMG（含首次安装 Runtime）用于 CDN 首次安装；应用内更新 ZIP 不重复携带已持久化到 `~/.drsai` 的 Runtime，以满足 GitHub Release 单资产小于 2 GiB 的限制。ZIP 和 `latest-mac.yml` 同步发布到 CDN 与 GitHub；首发只支持 Apple Silicon arm64。
-- macOS Channel 目录保留同字节的版本化 ZIP 别名，使同一份相对 URL `latest-mac.yml` 可同时用于 Generic CDN 和 GitHub Release；该 ZIP 名含版本和架构且不可覆盖，权威归档位于 `/releases/v版本/macos/`。
+- macOS 完整 DMG（含首次安装 Runtime）用于 CDN 首次安装；应用内更新 ZIP 不重复携带已持久化到 `~/.drsai` 的 Runtime。DMG、ZIP 和 `latest-mac.yml` 发布到 OSS/CDN；首发只支持 Apple Silicon arm64。
+- macOS Channel 目录保留同字节的版本化 ZIP 别名，使相对 URL `latest-mac.yml` 在 Generic CDN 上可用；该 ZIP 名含版本和架构且不可覆盖，权威归档位于 `/releases/v版本/macos/`。
 - `/releases/v版本/`：不可覆盖，缓存一年，发布后预热 MSI、ZIP、APK、DMG。
 - `/channels/stable/`：缓存 30～60 秒，不预热；更新清单最后上传。
 - 不对 MSI、ZIP、APK、DMG 做 CDN 动态压缩；客户端必须校验版本、文件大小和 SHA-256。macOS 还必须通过 Apple 代码签名验证后才允许安装。
@@ -36,8 +36,8 @@
 1. 完成构建、测试和签名检查。
 2. 上传版本化资产到 OSS，并通过 CDN 验证 `HEAD`、Range、大小和 SHA-256。
 3. 预热大文件，再上传版本清单和 `channels/stable` 清单。
-4. 创建包含相同更新 ZIP 和 `latest-mac.yml` 的 GitHub Release；完整 DMG 仅由 OSS/CDN 承载。
-5. 验证 CDN 下载、自动更新和 GitHub 回退。
+4. 最后晋级 `channels/stable` 清单，失败时恢复上一份 stable 快照。
+5. 验证 CDN 下载、自动更新和 `opendrsai-dev.ihep.ac.cn` 发布入口。
 
 macOS 的详细实现、无签名开发边界、Feed 回退状态机和分层发布门禁见 [OpenDrSai macOS 下载与更新完整链路规划](./opendrsai-macos-download-update-implementation-plan.md)。在 Developer ID、公证凭据和上一稳定签名版本齐备前，只允许产出 unsigned 开发证据，不得更新生产 `channels/stable/macos/arm64/latest-mac.yml`。
 

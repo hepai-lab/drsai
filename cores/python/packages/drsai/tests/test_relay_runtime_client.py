@@ -3,9 +3,11 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import time
 from pathlib import Path
 from urllib.parse import unquote
 
+import aiohttp
 import pytest
 
 from drsai.relay.device_identity import DeviceIdentityStore
@@ -1018,6 +1020,101 @@ def test_runtime_connector_backs_off_after_clean_peer_disconnect(tmp_path: Path)
         connector.run_once = clean_disconnect  # type: ignore[method-assign]
         await asyncio.wait_for(connector.run_forever(stop), timeout=0.5)
         assert calls == 1
+        assert connector.diagnostic_state() == {
+            "connection": "stopped",
+            "heartbeat": "unknown",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_runtime_connector_diagnostics_require_live_recent_heartbeat(tmp_path: Path) -> None:
+    identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+    connector = RuntimeOutboundConnector(
+        "wss://relay.example/v1/runtime-connect",
+        RuntimeCredential("rt-one", "token"), identity, "instance-one", "1.5.3",
+    )
+    assert connector.diagnostic_state() == {"connection": "idle", "heartbeat": "unknown"}
+    connector._connection_state = "connected"
+    connector._last_heartbeat_ack_monotonic = time.monotonic()
+    assert connector.diagnostic_state() == {"connection": "connected", "heartbeat": "ok"}
+    connector._last_heartbeat_ack_monotonic = time.monotonic() - 60
+    assert connector.diagnostic_state(heartbeat_ttl=45) == {
+        "connection": "connected", "heartbeat": "stale",
+    }
+    connector._connection_state = "retrying"
+    assert connector.diagnostic_state(heartbeat_ttl=90)["heartbeat"] == "stale"
+    with pytest.raises(ValueError, match="runtime_connector_heartbeat_ttl_invalid"):
+        connector.diagnostic_state(heartbeat_ttl=0)
+
+
+def test_runtime_connector_recovers_after_unexpected_iteration_failure_without_leaking_body(
+    tmp_path: Path, caplog,
+) -> None:
+    async def scenario() -> None:
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"),
+            identity,
+            "instance-one",
+            "1.5.3",
+        )
+        stop = asyncio.Event()
+        calls = 0
+
+        async def fail_then_recover() -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise ValueError("private-frame-body-must-not-be-logged")
+            stop.set()
+
+        connector.run_once = fail_then_recover  # type: ignore[method-assign]
+        await asyncio.wait_for(connector.run_forever(stop, maximum_backoff=0.01), timeout=0.5)
+        assert calls == 2
+
+    asyncio.run(scenario())
+    assert "runtime_relay_connector_iteration_failed" in caplog.text
+    assert "private-frame-body-must-not-be-logged" not in caplog.text
+
+
+def test_runtime_connector_transport_failure_logs_only_safe_type_and_status(
+    tmp_path: Path, caplog,
+) -> None:
+    async def scenario() -> None:
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"), identity, "instance-one", "1.5.3",
+        )
+        stop = asyncio.Event()
+
+        async def fail_handshake() -> None:
+            asyncio.get_running_loop().call_later(0.01, stop.set)
+            raise aiohttp.WSServerHandshakeError(
+                request_info=None, history=(), status=401,
+                message="private-response-body-must-not-be-logged", headers=None,
+            )
+
+        connector.run_once = fail_handshake  # type: ignore[method-assign]
+        await asyncio.wait_for(connector.run_forever(stop, maximum_backoff=0.01), timeout=0.5)
+
+    asyncio.run(scenario())
+    assert "runtime_relay_connector_transport_failed" in caplog.text
+    assert "WSServerHandshakeError" in caplog.text and "status=401" in caplog.text
+    assert "private-response-body-must-not-be-logged" not in caplog.text
+
+
+def test_runtime_connector_rejects_nonpositive_backoff(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        identity = DeviceIdentityStore(tmp_path / "id", XorProtector()).load_or_create()
+        connector = RuntimeOutboundConnector(
+            "wss://relay.example/v1/runtime-connect",
+            RuntimeCredential("rt-one", "token"), identity, "instance-one", "1.5.3",
+        )
+        with pytest.raises(ValueError, match="runtime_connector_maximum_backoff_invalid"):
+            await connector.run_forever(asyncio.Event(), maximum_backoff=0)
 
     asyncio.run(scenario())
 

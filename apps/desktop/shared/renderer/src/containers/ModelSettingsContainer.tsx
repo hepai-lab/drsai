@@ -7,7 +7,7 @@ import type {
   RuntimeModelOperation,
 } from "@shared/desktopApi";
 
-export type SettingsPaneId = "general" | "voice" | "agent-defaults" | "model-providers" | "agent-task" | "approvals" | "analytics" | "integrations" | "remote-workspace" | "channels" | "archived-sessions" | "other";
+export type SettingsPaneId = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "agent-task" | "approvals" | "analytics" | "integrations" | "codex" | "remote-workspace" | "channels" | "archived-sessions" | "other";
 type WireApi = "openai" | "anthropic" | "gemini";
 type KeySource = "secure" | "env" | "none";
 

@@ -3,6 +3,7 @@ package ai.drsai.remote.runtime.python
 import ai.drsai.remote.data.CompletedToolCall
 import ai.drsai.remote.data.ModelDelta
 import ai.drsai.remote.data.ModelGateway
+import ai.drsai.remote.data.ModelToolChoiceProtocolAdapter
 import ai.drsai.remote.data.ToolChoiceAwareModelGateway
 import ai.drsai.remote.data.PinnedModelRouteGateway
 import ai.drsai.remote.data.RuntimeMessage
@@ -32,11 +33,20 @@ class HaiPythonModelHostPort(
     override fun stream(request: HostModelRequest): Flow<HostModelChunk> = channelFlow {
         val modelCapabilities = capabilityResolver(request.modelId)
         modelCapabilities?.requireRunSupport(request.tools.length())
+        val compatibleRequest = providerCompatibleToolRequest(request.tools, request.toolChoice)
         val calls = StreamedToolCallAssembler()
         var finishReason: String? = null
         var receivedDelta = false
         suspend fun complete(tools: JSONArray) {
-            val messages = request.messages.toRuntimeMessages()
+            val messages = request.messages.toRuntimeMessages().toMutableList().apply {
+                compatibleRequest.requiredToolName?.let { name ->
+                    add(RuntimeMessage(
+                        role = "system",
+                        content = "This turn requires using the only available tool '$name'. " +
+                            "Do not answer directly before calling it.",
+                    ))
+                }
+            }
             val consume: suspend (ModelDelta) -> Unit = { delta ->
                 if (!delta.content.isNullOrEmpty() || delta.toolCalls.isNotEmpty()) receivedDelta = true
                 delta.content?.takeIf(String::isNotEmpty)?.let {
@@ -52,18 +62,18 @@ class HaiPythonModelHostPort(
             }
             if (gateway is PinnedModelRouteGateway && request.modelRouteSnapshot != null) {
                 gateway.streamCompletionWithPinnedRoute(
-                    request.modelId, request.modelRouteSnapshot, messages, tools, request.toolChoice, consume,
+                    request.modelId, request.modelRouteSnapshot, messages, tools, compatibleRequest.toolChoice, consume,
                 )
             } else if (gateway is ToolChoiceAwareModelGateway) {
                 gateway.streamCompletionWithToolChoice(
-                    request.modelId, messages, tools, request.toolChoice, consume,
+                    request.modelId, messages, tools, compatibleRequest.toolChoice, consume,
                 )
             } else {
                 gateway.streamCompletionWithTools(request.modelId, messages, tools, consume)
             }
         }
         try {
-            complete(request.tools)
+            complete(compatibleRequest.tools)
         } catch (error: ApiException) {
             if (error.code != null) throw error
             if (error.status != 400 || request.tools.length() == 0 || receivedDelta) throw error
@@ -95,6 +105,43 @@ class HaiPythonModelHostPort(
         )
     }
 
+}
+
+private data class ProviderCompatibleToolRequest(
+    val tools: JSONArray,
+    val toolChoice: JSONObject,
+    val requiredToolName: String? = null,
+)
+
+/** Mirrors Desktop Full Runtime's provider-neutral handling of required tool domains. */
+private fun providerCompatibleToolRequest(tools: JSONArray, policy: JSONObject): ProviderCompatibleToolRequest {
+    val mode = policy.optString("mode")
+    if (mode !in setOf("required", "specified")) return ProviderCompatibleToolRequest(tools, policy)
+    val matchingNames = if (mode == "specified") {
+        setOf(policy.optString("specified_tool").takeIf(String::isNotBlank)
+            ?: return ProviderCompatibleToolRequest(tools, policy))
+    } else {
+        val matching = policy.optJSONArray("matching_tools") ?: return ProviderCompatibleToolRequest(
+            tools, ModelToolChoiceProtocolAdapter.automatic(),
+        )
+        (0 until matching.length()).mapNotNull { index ->
+            matching.optString(index).takeIf(String::isNotBlank)
+        }.toSet()
+    }
+    if (matchingNames.isEmpty()) return ProviderCompatibleToolRequest(
+        tools, ModelToolChoiceProtocolAdapter.automatic(),
+    )
+    val filtered = JSONArray().apply {
+        repeat(tools.length()) { index ->
+            tools.optJSONObject(index)?.takeIf { it.optString("name") in matchingNames }?.let(::put)
+        }
+    }
+    check(filtered.length() > 0) { "model_required_tools_unavailable" }
+    return ProviderCompatibleToolRequest(
+        filtered,
+        ModelToolChoiceProtocolAdapter.automatic(),
+        matchingNames.singleOrNull(),
+    )
 }
 
 fun interface PythonToolExecutor {

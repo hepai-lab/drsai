@@ -1114,10 +1114,14 @@ def test_mobile_approval_resumes_authoritative_run_once_and_keeps_audit_identity
         restarted_replay = await restored.decide_approval(
             "oidc-subject-one", "approval-one", "approve", "stable-approval-decision"
         )
+        recovered = await restored.idempotency_result(
+            "oidc-subject-one", "approval.decide", "stable-approval-decision"
+        )
 
         assert decision["status"] == "approved"
         assert replayed == decision
         assert restarted_replay == decision
+        assert recovered == decision
         assert gateway.runs[run["run_id"]]["status"] == "running"
         assert gateway.calls.count(
             ("POST", f"/v1/runs/{run['run_id']}/approvals/approval-one/decision")

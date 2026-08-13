@@ -142,7 +142,7 @@ export class VoicePlaybackController {
   private playSystem(request: VoicePlaybackRequest): void {
     const system = this.environment.system;
     if (!system) {
-      this.update({ activeMessageId: null, error: localize(request.language, "当前系统不支持语音播报。", "System speech playback is unavailable."), phase: "failed" });
+      this.update({ activeMessageId: request.messageId, error: localize(request.language, "当前系统不支持语音播报。", "System speech playback is unavailable."), phase: "failed" });
       return;
     }
     // Chromium often leaves speechSynthesis paused after cancel(); clear that before speaking.
@@ -174,7 +174,7 @@ export class VoicePlaybackController {
         this.update({ activeMessageId: null, phase: "idle" });
       } else {
         const detail = describeError(event.error, event.message);
-        this.update({ activeMessageId: null, error: localize(request.language, `系统语音播放失败（${detail}）。`, `Speech playback failed (${detail}).`), phase: "failed" });
+        this.update({ activeMessageId: request.messageId, error: localize(request.language, `系统语音播放失败（${detail}）。`, `Speech playback failed (${detail}).`), phase: "failed" });
       }
     };
     this.utterance = utterance;
@@ -229,7 +229,7 @@ export class VoicePlaybackController {
         if (!this.isCurrent(generation)) return;
         if (status.state !== "ready" || !status.supportsSynthesisTask) {
           this.update({
-            activeMessageId: null,
+            activeMessageId: request.messageId,
             error: status.message || localize(
               request.language,
               "在线语音服务当前不可用，请重试或在设置中选择 Windows 本地朗读。",
@@ -263,7 +263,7 @@ export class VoicePlaybackController {
           const audioBytes = normalizeAudioBytes(event.result.audioData);
           if (audioBytes.byteLength < 44) {
             this.update({
-              activeMessageId: null,
+              activeMessageId: request.messageId,
               error: localize(request.language, "语音合成返回了空音频。", "Speech synthesis returned empty audio."),
               phase: "failed",
             });
@@ -291,7 +291,7 @@ export class VoicePlaybackController {
           if (event.type === "cancelled") {
             this.update({ activeMessageId: null, phase: "idle" });
           } else {
-            this.update({ activeMessageId: null, error: event.error.message, phase: "failed" });
+            this.update({ activeMessageId: request.messageId, error: event.error.message, phase: "failed" });
           }
         }
       };
@@ -323,16 +323,17 @@ export class VoicePlaybackController {
         return;
       }
       this.release(false);
-      this.update({ activeMessageId: null, error: error instanceof Error ? error.message : localize(request.language, "语音合成失败。", "Voice synthesis failed."), phase: "failed" });
+      this.update({ activeMessageId: request.messageId, error: error instanceof Error ? error.message : localize(request.language, "语音合成失败。", "Voice synthesis failed."), phase: "failed" });
     }
   }
 
   private handleAudioError(language: "zh" | "en" = "en", cause?: unknown): void {
     if (!this.audio) return;
+    const activeMessageId = this.snapshot.activeMessageId;
     const detail = describeUnknownError(cause);
     this.release(false);
     this.update({
-      activeMessageId: null,
+      activeMessageId,
       error: localize(
         language,
         `合成音频无法播放${detail ? `（${detail}）` : ""}，请重试或切换为 Windows 本地朗读。`,

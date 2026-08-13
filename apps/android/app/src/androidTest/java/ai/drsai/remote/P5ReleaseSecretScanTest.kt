@@ -1,18 +1,22 @@
 package ai.drsai.remote
 
+import ai.drsai.remote.remote.security.StreamingBytePatternScanner
 import android.content.pm.ApplicationInfo
 import android.database.sqlite.SQLiteDatabase
 import android.os.Bundle
 import android.os.Process
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.security.KeyStore
 import java.security.MessageDigest
-import java.util.UUID
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.spec.GCMParameterSpec
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -31,23 +35,56 @@ class P5ReleaseSecretScanTest {
             "P5 endpoint scan runs only against a non-debuggable artifact",
             (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0,
         )
-        val canaries = List(4) { "p5-${UUID.randomUUID()}-${UUID.randomUUID()}" }
+        val canaryRunId = InstrumentationRegistry.getArguments().getString("p5CanaryRunId")
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9._:-]{8,128}")) }
+            ?: error("p5_canary_run_id_invalid")
+        val canaries = List(4) { index ->
+            "p5-canary-v1-" + sha256("opendrsai-p5-secret-canary/1\u0000$canaryRunId\u0000$index".toByteArray())
+        }
+        val canarySetSha256 = sha256(canaries.sorted().joinToString("\n").toByteArray())
+        val expectedCanarySetSha256 = InstrumentationRegistry.getArguments()
+            .getString("p5CanarySetSha256")
+            ?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
+            ?: error("p5_canary_set_digest_invalid")
+        require(canarySetSha256 == expectedCanarySetSha256) { "p5_canary_derivation_drift" }
         val variants = canaries.flatMap(::variants).distinct().map(String::toByteArray)
-        val preferences = EncryptedSharedPreferences.create(
-            context,
-            "p5_release_secret_probe",
-            MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-        preferences.edit().putString("probe", canaries.first()).commit()
+        val keyAlias = "p5_release_secret_probe_key"
+        val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        keyGenerator.init(KeyGenParameterSpec.Builder(
+            keyAlias,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .build())
+        val key = keyGenerator.generateKey()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key)
+        val encryptedProbe = cipher.doFinal(canaries.first().toByteArray())
+        val preferences = context.getSharedPreferences("p5_release_secret_probe", 0)
+        preferences.edit().putString(
+            "probe",
+            Base64.encodeToString(cipher.iv + encryptedProbe, Base64.NO_WRAP),
+        ).commit()
+        val decrypt = Cipher.getInstance("AES/GCM/NoPadding")
+        decrypt.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, cipher.iv))
+        require(decrypt.doFinal(encryptedProbe).contentEquals(canaries.first().toByteArray())) {
+            "p5_android_keystore_roundtrip_failed"
+        }
         Log.i("P5SecretScan", "boundary probe ${sha256(canaries.first().toByteArray()).take(12)}")
 
         val sentinel = context.getDatabasePath("p5-secret-scan-sentinel.db")
         sentinel.parentFile?.mkdirs()
+        val roomCanaryDigest = sha256(canaries[1].toByteArray())
         SQLiteDatabase.openOrCreateDatabase(sentinel, null).use { db ->
             db.execSQL("CREATE TABLE IF NOT EXISTS sentinel (value TEXT NOT NULL)")
-            db.execSQL("INSERT INTO sentinel(value) VALUES ('prepared')")
+            db.execSQL("DELETE FROM sentinel")
+            db.execSQL("INSERT INTO sentinel(value) VALUES (?)", arrayOf(roomCanaryDigest))
+            db.rawQuery("SELECT value FROM sentinel", null).use { cursor ->
+                require(cursor.moveToFirst() && cursor.getString(0) == roomCanaryDigest) {
+                    "p5_android_room_hash_assertion_failed"
+                }
+            }
         }
         try {
             val apk = File(context.applicationInfo.sourceDir)
@@ -59,15 +96,19 @@ class P5ReleaseSecretScanTest {
                 File(context.applicationInfo.dataDir, "shared_prefs"))
                 .flatMap { root -> if (root.exists()) root.walkTopDown().filter(File::isFile).toList() else emptyList() }
             val backupStats = scanFiles(backupFiles, variants, "android_backup")
-            val logBytes = instrumentation.uiAutomation.executeShellCommand(
+            val logScan = instrumentation.uiAutomation.executeShellCommand(
                 "logcat -d --pid=${Process.myPid()}",
-            ).use { descriptor -> android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).readBytes() }
-            require(logBytes.isNotEmpty()) { "p5_android_logs_empty" }
-            requireNoVariant(logBytes, variants, "android_logs")
+            ).use { descriptor ->
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                    StreamingBytePatternScanner(variants).scan(input)
+                }
+            }
+            require(logScan.bytesScanned > 0) { "p5_android_logs_empty" }
+            require(!logScan.matched) { "p5_android_secret_match:android_logs" }
             val sources = JSONArray()
                 .put(apkStats)
                 .put(JSONObject().put("name", "android_logs").put("status", "clean")
-                    .put("bytes_scanned", logBytes.size).put("files_scanned", 1))
+                    .put("bytes_scanned", logScan.bytesScanned).put("files_scanned", 1))
                 .put(roomStats)
                 .put(backupStats)
             val report = JSONObject()
@@ -77,8 +118,13 @@ class P5ReleaseSecretScanTest {
                 .put("physical", isPhysicalDevice())
                 .put("debuggable", false)
                 .put("backup_disabled", (context.applicationInfo.flags and ApplicationInfo.FLAG_ALLOW_BACKUP) == 0)
-                .put("artifact_sha256", sha256(apk.readBytes()))
+                .put("artifact_sha256", sha256(apk))
                 .put("canary_count", canaries.size)
+                .put("canary_set_sha256", canarySetSha256)
+                .put("storage_assertions", JSONObject()
+                    .put("android_logs", "sha256_only")
+                    .put("android_room", "sha256_only")
+                    .put("android_backup", "keystore_encrypted_only"))
                 .put("sources", sources)
             assertEquals(4, sources.length())
             val encoded = report.toString()
@@ -87,6 +133,7 @@ class P5ReleaseSecretScanTest {
         } finally {
             preferences.edit().clear().commit()
             context.deleteSharedPreferences("p5_release_secret_probe")
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(keyAlias)
             listOf(sentinel, File(sentinel.path + "-wal"), File(sentinel.path + "-shm")).forEach(File::delete)
         }
     }
@@ -94,19 +141,17 @@ class P5ReleaseSecretScanTest {
     private fun scanFiles(files: List<File>, forbidden: List<ByteArray>, name: String): JSONObject {
         val readable = files.filter { it.isFile && it.canRead() }
         require(readable.isNotEmpty()) { "p5_${name}_empty" }
+        val scanner = StreamingBytePatternScanner(forbidden)
         var bytes = 0L
         readable.forEach { file ->
-            val value = file.readBytes()
-            bytes += value.size
-            requireNoVariant(value, forbidden, name)
+            bytes += file.length()
+            file.inputStream().buffered().use { input ->
+                require(!scanner.contains(input)) { "p5_android_secret_match:$name" }
+            }
         }
         require(bytes > 0) { "p5_${name}_empty" }
         return JSONObject().put("name", name).put("status", "clean")
             .put("bytes_scanned", bytes).put("files_scanned", readable.size)
-    }
-
-    private fun requireNoVariant(value: ByteArray, variants: List<ByteArray>, source: String) {
-        require(variants.none { value.containsSubsequence(it) }) { "p5_android_secret_match:$source" }
     }
 
     private fun variants(value: String): List<String> {
@@ -130,10 +175,17 @@ class P5ReleaseSecretScanTest {
     private fun sha256(value: ByteArray): String = MessageDigest.getInstance("SHA-256")
         .digest(value).joinToString("") { "%02x".format(it) }
 
-    private fun ByteArray.containsSubsequence(needle: ByteArray): Boolean {
-        if (needle.isEmpty() || needle.size > size) return false
-        return (0..size - needle.size).any { offset ->
-            needle.indices.all { index -> this[offset + index] == needle[index] }
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        file.inputStream().buffered().use { input ->
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
         }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
+
 }

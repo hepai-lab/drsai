@@ -31,6 +31,8 @@ class RelaySseClient(
     private val http: OkHttpClient = OkHttpClient(),
     private val refreshAfter: suspend (String) -> String? = { null },
     private val deviceProof: RelayDeviceProof? = null,
+    private val resources: RemoteResourceLeaseRegistry? = null,
+    private val time: RemoteTimeScheduler = RemoteTimeScheduler(),
 ) {
     private val root = baseUrl.trimEnd('/').toHttpUrl()
     // SSE is an intentionally long-lived response. Preserve the caller's
@@ -46,9 +48,11 @@ class RelaySseClient(
         onConnected: () -> Unit = {},
     ): Flow<RelayStreamEvent> = channelFlow {
         require(afterSequence >= 0) { "after_sequence_invalid" }
-        val url = root.newBuilder()
-            .addPathSegments("v1/runtimes/${identity.runtimeId.value}/runs/${identity.runId.value}/events/stream")
-            .addQueryParameter("after_sequence", afterSequence.toString()).build()
+        val url = root.withRelayPath(
+            listOf("v1", "runtimes", identity.runtimeId.value, "runs", identity.runId.value, "events", "stream"),
+            listOf("after_sequence" to afterSequence.toString()),
+        )
+        val resourceLease = resources?.acquire("sse_stream")
         var activeCall: okhttp3.Call? = null
         val reader = launch(Dispatchers.IO) {
             val initialToken = accessToken()
@@ -101,7 +105,7 @@ class RelaySseClient(
             }
             close()
         }
-        awaitClose { activeCall?.cancel(); reader.cancel() }
+        awaitClose { activeCall?.cancel(); reader.cancel(); resourceLease?.close() }
     }
 
     fun sessionStream(
@@ -112,12 +116,12 @@ class RelaySseClient(
         onConnected: () -> Unit = {},
     ): Flow<GeneratedSessionEvent> = channelFlow {
         require(afterSequence >= 0) { "after_sequence_invalid" }
-        val url = root.newBuilder()
-            .addPathSegments(
-                "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-events/stream",
-            )
-            .addQueryParameter("after_sequence", afterSequence.toString())
-            .build()
+        val url = root.withRelayPath(
+            listOf("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+                "sessions", sessionId.value, "oaep-events", "stream"),
+            listOf("after_sequence" to afterSequence.toString()),
+        )
+        val resourceLease = resources?.acquire("sse_stream")
         var activeCall: okhttp3.Call? = null
         val reader = launch(Dispatchers.IO) {
             val initialToken = accessToken()
@@ -183,7 +187,7 @@ class RelaySseClient(
             }
             close()
         }
-        awaitClose { activeCall?.cancel(); reader.cancel() }
+        awaitClose { activeCall?.cancel(); reader.cancel(); resourceLease?.close() }
     }
 
     /** One content-free stream per visible Workspace, never one stream per Session. */
@@ -191,10 +195,12 @@ class RelaySseClient(
         runtimeId: RuntimeId,
         workspaceId: WorkspaceId,
         onConnected: () -> Unit = {},
-    ): Flow<Unit> = channelFlow {
-        val url = root.newBuilder().addPathSegments(
-            "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/session-catalog-events/stream",
-        ).build()
+    ): Flow<WorkspaceSessionCatalogEvent> = channelFlow {
+        val url = root.withRelayPath(
+            listOf("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+                "session-catalog-events", "stream"),
+        )
+        val resourceLease = resources?.acquire("sse_stream")
         var activeCall: okhttp3.Call? = null
         val reader = launch(Dispatchers.IO) {
             val initialToken = accessToken()
@@ -215,18 +221,21 @@ class RelaySseClient(
                 if (!response.isSuccessful) throw relayHttpException(response)
                 val source = response.body?.source() ?: error("relay_workspace_catalog_sse_empty")
                 onConnected()
-                var hasData = false
+                val data = StringBuilder()
                 while (!source.exhausted()) {
                     val line = source.readUtf8Line() ?: break
                     when {
-                        line.startsWith("data:") -> hasData = true
-                        line.isEmpty() && hasData -> { send(Unit); hasData = false }
+                        line.startsWith("data:") -> data.append(line.removePrefix("data:").trim())
+                        line.isEmpty() && data.isNotEmpty() -> {
+                            send(decodeWorkspaceSessionCatalogEvent(JSONObject(data.toString())))
+                            data.clear()
+                        }
                     }
                 }
             }
             close()
         }
-        awaitClose { activeCall?.cancel(); reader.cancel() }
+        awaitClose { activeCall?.cancel(); reader.cancel(); resourceLease?.close() }
     }
 
     fun oaepSessionStream(
@@ -238,12 +247,12 @@ class RelaySseClient(
         onReceived: (OaepEvent, Double) -> Unit = { _, _ -> },
     ): Flow<OaepEvent> = channelFlow {
         require(afterSequence >= 0) { "after_sequence_invalid" }
-        val url = root.newBuilder()
-            .addPathSegments(
-                "v1/runtimes/${runtimeId.value}/workspaces/${workspaceId.value}/sessions/${sessionId.value}/oaep-events/stream",
-            )
-            .addQueryParameter("after_sequence", afterSequence.toString())
-            .build()
+        val url = root.withRelayPath(
+            listOf("v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+                "sessions", sessionId.value, "oaep-events", "stream"),
+            listOf("after_sequence" to afterSequence.toString()),
+        )
+        val resourceLease = resources?.acquire("sse_stream")
         var activeCall: okhttp3.Call? = null
         val reader = launch(Dispatchers.IO) {
             try {
@@ -275,7 +284,7 @@ class RelaySseClient(
                         when {
                             line.startsWith("data:") -> data.append(line.removePrefix("data:").trim())
                             line.isEmpty() && data.isNotEmpty() -> {
-                                val decodeStarted = System.nanoTime()
+                                val decodeStarted = time.monotonicNanos()
                                 val event = OaepJsonCodec.event(JSONObject(data.toString()))
                                 require(event.sessionId == sessionId.value) {
                                     "remote_session_event_scope_mismatch"
@@ -283,7 +292,7 @@ class RelaySseClient(
                                 event.source.runtimeId?.let {
                                     require(it == runtimeId.value) { "remote_runtime_event_scope_mismatch" }
                                 }
-                                onReceived(event, (System.nanoTime() - decodeStarted) / 1_000_000.0)
+                                onReceived(event, time.monotonicElapsedMillis(decodeStarted).toDouble())
                                 send(event)
                                 data.clear()
                             }
@@ -303,6 +312,7 @@ class RelaySseClient(
         awaitClose {
             reader.cancel()
             activeCall?.cancel()
+            resourceLease?.close()
         }
     }
 }

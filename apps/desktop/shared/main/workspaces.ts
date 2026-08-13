@@ -11,12 +11,17 @@ import type {
   WorkspaceProject,
   RemoteSshWorkspaceDescriptor,
 } from "../api/desktopApi";
+import {
+  DEFAULT_WORKSPACE_DISPLAY_NAME,
+  DEFAULT_WORKSPACE_VERSION,
+  resolveDefaultWorkspaceDisplayName,
+} from "../api/workspaceDefaults";
 import { DRSAI_HOME } from "./paths";
 import { backupLegacyWorkspaceDataOnce, migrateLegacyWorkspaceRecords, migrateWorkspaceToAuthoritativeId, recordWorkspaceIdMigration } from "./workspaceMigrations";
 import { LocalRuntimeClient } from "./runtimeClient";
 import { isRemoteAcceptanceWorkspace } from "./remoteWorkspaceRestorePolicy";
 import { replaceFileSafely } from "./atomicFileReplace";
-import { DEFAULT_WORKSPACE_FOLDER_NAME, ensureDefaultWorkspaceDirectory } from "./defaultWorkspace";
+import { ensureDefaultWorkspaceDirectory, migrateLegacyDefaultWorkspaceDirectory } from "./defaultWorkspace";
 
 const WORKSPACES_FILE = join(DRSAI_HOME, "desktop", "workspaces.json");
 const WORKSPACES_LEGACY_BACKUP_FILE = join(DRSAI_HOME, "desktop", "workspaces.legacy-v1.backup.json");
@@ -34,10 +39,10 @@ const FOLDER_NAME_PATTERN = /^[^<>:"/\\|?*\u0000-\u001f]+$/;
 let workspaceUpdateQueue: Promise<void> = Promise.resolve();
 let defaultWorkspaceCreation: Promise<WorkspaceProject> | null = null;
 
-export async function listWorkspaces(): Promise<WorkspaceProject[]> {
+export async function listWorkspaces(documentsPath?: string): Promise<WorkspaceProject[]> {
   let workspaces = await readWorkspaces();
   if (workspaces.length === 0) {
-    workspaces = await ensureDefaultWorkspace();
+    workspaces = documentsPath ? [await createDefaultWorkspace(documentsPath)] : await ensureDefaultWorkspace();
   }
   workspaces = await synchronizeRuntimeWorkspaceNames(workspaces);
   const refreshed = await Promise.all(workspaces.map(refreshWorkspaceStatus));
@@ -55,7 +60,7 @@ export async function ensureDefaultWorkspace(): Promise<WorkspaceProject[]> {
   const created = await createWorkspace({
     source: "existing",
     path: workspacePath,
-    name: "Default",
+    name: DEFAULT_WORKSPACE_DISPLAY_NAME,
     description: "Auto-created on first launch",
     trusted: true,
     pinned: true,
@@ -102,30 +107,68 @@ export async function createDefaultWorkspace(documentsPath: string): Promise<Wor
 
 async function performDefaultWorkspaceCreation(documentsPath: string): Promise<WorkspaceProject> {
   const canonicalWorkspacePath = await ensureDefaultWorkspaceDirectory(documentsPath);
-
-  const existing = (await readWorkspaces()).find((workspace) =>
+  const workspaces = await readWorkspaces();
+  const legacyDefaults = workspaces.filter(isLegacyProfileDefaultWorkspace);
+  const legacyFullyMigrated = legacyDefaults.length === 0
+    || await migrateLegacyDefaultWorkspaceDirectory(DEFAULT_USER_WORKSPACE_PATH, canonicalWorkspacePath);
+  const existing = workspaces.find((workspace) =>
     workspace.location !== "remote" && samePath(workspace.path, canonicalWorkspacePath));
   const metadata = {
     ...(existing?.metadata || {}),
     managedDefault: true,
-    defaultWorkspaceVersion: 1,
+    defaultWorkspaceVersion: DEFAULT_WORKSPACE_VERSION,
   };
   if (existing) {
-    return updateWorkspace({
+    const displayName = resolveDefaultWorkspaceDisplayName(
+      existing.name,
+      existing.metadata?.defaultWorkspaceVersion,
+    );
+    const updated = await updateWorkspace({
       id: existing.id,
+      name: displayName,
       trusted: true,
       lastOpenedAt: new Date().toISOString(),
       metadata,
     });
+    const refreshed = await readWorkspaces();
+    const staleManagedDefaults = refreshed.filter((workspace) =>
+      workspace.id !== updated.id && (workspace.metadata?.managedDefault === true
+        || (legacyFullyMigrated && isLegacyProfileDefaultWorkspace(workspace))));
+    if (staleManagedDefaults.length > 0) {
+      await writeWorkspaces([
+        updated,
+        ...refreshed.filter((workspace) =>
+          workspace.id !== updated.id && workspace.metadata?.managedDefault !== true
+            && !(legacyFullyMigrated && isLegacyProfileDefaultWorkspace(workspace))),
+      ]);
+    }
+    return updated;
   }
-  return createWorkspace({
+  const created = await createWorkspace({
     source: "existing",
     path: canonicalWorkspacePath,
-    name: DEFAULT_WORKSPACE_FOLDER_NAME,
+    name: DEFAULT_WORKSPACE_DISPLAY_NAME,
     description: "OpenDrSai managed default workspace",
     trusted: true,
     metadata,
   });
+  const refreshed = await readWorkspaces();
+  await writeWorkspaces([
+    created,
+    ...refreshed.filter((workspace) =>
+      workspace.id !== created.id && workspace.metadata?.managedDefault !== true
+        && !(legacyFullyMigrated && isLegacyProfileDefaultWorkspace(workspace))),
+  ]);
+  return created;
+}
+
+function isLegacyProfileDefaultWorkspace(workspace: WorkspaceProject): boolean {
+  return workspace.location !== "remote"
+    && samePath(workspace.path, DEFAULT_USER_WORKSPACE_PATH)
+    && workspace.description === "Auto-created on first launch"
+    && workspace.trusted === true
+    && workspace.pinned === true
+    && workspace.metadata?.managedDefault !== true;
 }
 
 export async function updateWorkspace(rawRequest: unknown): Promise<WorkspaceProject> {
@@ -171,7 +214,8 @@ async function synchronizeRuntimeWorkspaceNames(workspaces: WorkspaceProject[]):
   const remote = workspaces.filter((workspace) => workspace.location === "remote");
   if (!local.length) return workspaces;
   try {
-    const client = await LocalRuntimeClient.connect();
+    const client = await LocalRuntimeClient.connectIfAvailable();
+    if (!client) return workspaces;
     const runtimeWorkspaces = new Map((await client.listWorkspaces(true)).map((workspace) => [workspace.workspace_id, workspace]));
     let changed = false;
     const syncedLocal = await Promise.all(local.map(async (workspace) => {
@@ -180,12 +224,12 @@ async function synchronizeRuntimeWorkspaceNames(workspaces: WorkspaceProject[]):
         const opened = await client.openWorkspace(workspace.path, workspace.name);
         if (opened.workspace_id !== workspace.id || !samePath(opened.path, workspace.path)) {
           changed = true;
-          return {
+          return migrateWorkspaceToAuthoritativeId(workspace, {
             ...workspace,
             id: opened.workspace_id,
             path: opened.path,
             updatedAt: new Date().toISOString(),
-          };
+          });
         }
         return workspace;
       }
@@ -211,7 +255,9 @@ async function openWorkspaceInRuntime(
   displayName: string,
 ): Promise<{ workspace_id: string; path: string }> {
   try {
-    const opened = await (await LocalRuntimeClient.connect()).openWorkspace(workspacePath, displayName);
+    const client = await LocalRuntimeClient.connectIfAvailable();
+    if (!client) throw new Error("Local Runtime is not running.");
+    const opened = await client.openWorkspace(workspacePath, displayName);
     return { workspace_id: opened.workspace_id, path: opened.path };
   } catch {
     // Persist a local registration even when Runtime health is racing at startup.
@@ -243,7 +289,11 @@ export async function deleteWorkspace(rawId: unknown): Promise<boolean> {
 }
 
 export async function findWorkspaceById(id: string): Promise<WorkspaceProject | undefined> {
-  return (await readWorkspaces()).find((workspace) => workspace.id === id);
+  return (await readWorkspaces()).find((workspace) => (
+    workspace.id === id
+    || (Array.isArray(workspace.metadata?.legacyWorkspaceIds)
+      && workspace.metadata.legacyWorkspaceIds.includes(id))
+  ));
 }
 
 export async function setRemoteWorkspaceAutoReconnect(id: string, enabled: boolean): Promise<void> {

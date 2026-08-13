@@ -68,12 +68,57 @@ def test_case_preflight_maps_image_input_to_bound_vision_model(tmp_path) -> None
     class Case:
         data = {"environment": {"required_capabilities": ["image_input"]}}
     snapshot = tmp_path / "snapshot.json"
-    snapshot.write_text(json.dumps({"results": [{
-        "model_id": "gpt-5.6-luna", "operation": "chat", "status": "verified",
-    }]}), encoding="utf-8")
+    snapshot.write_text(json.dumps({"results": [
+        {"model_id": "deepseek-v4-flash", "operation": "chat", "status": "runtime_verified"},
+        {"model_id": "deepseek-v4-flash", "operation": "tool_calling", "status": "runtime_verified"},
+        {"model_id": "gpt-5.6-luna", "operation": "chat", "status": "verified"},
+    ]}), encoding="utf-8")
     passed, reasons = evaluate_case_model_preflight([Case()], snapshot)
     assert not passed
     assert reasons == ["model prerequisite not runtime verified: gpt-5.6-luna/chat status=verified"]
+
+
+def test_case_preflight_uses_agent_role_models_and_rejects_policy_revision_drift(tmp_path) -> None:
+    class Case:
+        data = {
+            "environment": {"required_capabilities": ["image_input", "image_generation"]},
+            "expect": {"image": {"visual_requirements": ["visible"]}},
+        }
+    rows = [
+        {"model_id": "agent-primary", "operation": operation, "status": "runtime_verified", "revisions": {"agent_policy": "old"}}
+        for operation in ("chat", "tool_calling")
+    ] + [
+        {"model_id": "vision-current", "operation": "chat", "status": "runtime_verified", "revisions": {"agent_policy": "old"}},
+        {"model_id": "image-current", "operation": "image_generation", "status": "runtime_verified", "revisions": {"agent_policy": "old"}},
+    ]
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({"results": rows}), encoding="utf-8")
+
+    passed, reasons = evaluate_case_model_preflight(
+        [Case()], snapshot, base_model_id="agent-primary",
+        role_models={"image_understanding": "vision-current", "image_generation": "image-current"},
+        expected_agent_policy_revision="new",
+    )
+
+    assert passed is False
+    assert reasons == [
+        "model prerequisite policy revision changed: agent-primary/chat",
+        "model prerequisite policy revision changed: agent-primary/tool_calling",
+        "model prerequisite policy revision changed: image-current/image_generation",
+        "model prerequisite policy revision changed: vision-current/chat",
+    ]
+
+
+def test_case_preflight_rejects_snapshot_for_a_different_agent(tmp_path) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({"agent_id": "my-drsai", "results": []}), encoding="utf-8")
+
+    passed, reasons = evaluate_case_model_preflight(
+        [], snapshot, expected_agent_id="opendrsai",
+    )
+
+    assert passed is False
+    assert reasons == ["capability snapshot agent changed: expected opendrsai, got my-drsai"]
 
 
 def test_profile_runner_writes_atomic_machine_markdown_and_junit_reports(tmp_path, monkeypatch) -> None:

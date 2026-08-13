@@ -16,7 +16,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
-from drsai.relay.api import create_relay_app
+from drsai.backend.runtime.observability import ResourceCorrelation
+from drsai.relay.api import create_relay_app, relay_latency_correlation
 from drsai.relay.generated_contract import CAPABILITIES, PROTOCOL_VERSION
 from drsai.relay.models import ResourceLifecycle, Workspace
 from drsai.relay.registry import RelayRegistry, RelayRegistryError
@@ -47,6 +48,262 @@ def control(idempotency: bool = False) -> dict[str, str]:
     if idempotency:
         result["idempotency_key"] = f"idem-{uuid4()}"
     return result
+
+
+def test_latency_correlation_is_scoped_without_exposing_resource_identity() -> None:
+    first = relay_latency_correlation("runtime-a", "workspace", "session", "event")
+    assert first == relay_latency_correlation(
+        "runtime-a", "workspace", "session", "event"
+    )
+    assert first != relay_latency_correlation(
+        "runtime-b", "workspace", "session", "event"
+    )
+    assert len(first) == 64 and set(first) <= set("0123456789abcdef")
+    assert all(value not in first for value in ("runtime-a", "workspace", "session", "event"))
+    with pytest.raises(ValueError, match="identity"):
+        relay_latency_correlation("", "workspace", "session", "event")
+    with pytest.raises(ValueError, match="identity"):
+        relay_latency_correlation("runtime", "workspace", "session", "e" * 501)
+
+
+def test_capacity_metrics_are_explicit_bounded_and_content_free() -> None:
+    response = TestClient(_testing_app()).get("/v1/metrics/capacity")
+    assert response.status_code == 200
+    report = response.json()
+    assert report["relay_replay"] == {
+        "events_per_session": 10_000,
+        "session_subscriber_queue": 256,
+        "workspace_subscriber_queue": 64,
+        "overflow_strategy": "close_and_replay",
+        "cursor_gap": "cursor_expired",
+        "recovery": "snapshot_then_replay",
+    }
+    assert report["notification_delivery"]["capacity"] == 100_000
+    assert report["notification_delivery"]["retention_seconds"] == 30 * 24 * 60 * 60
+    assert report["notification_delivery"]["overflow_strategy"] == "reject_without_active_eviction"
+    assert report["android_contract"]["events_per_account"] == 100_000
+    serialized = json.dumps(report).lower()
+    assert not any(secret in serialized for secret in (
+        "message", "command", "token", "workspace_id", "session_id", "device_id",
+    ))
+
+
+def test_conversation_latency_shared_database_aggregates_separate_workers(tmp_path) -> None:
+    database = (tmp_path / "shared-conversation-latency.sqlite3").resolve()
+    worker_a = create_relay_app(
+        conversation_latency_database=database, relay_worker_id="worker-a"
+    )
+    worker_b = create_relay_app(
+        conversation_latency_database=database, relay_worker_id="worker-b"
+    )
+    for index in range(20):
+        scoped = relay_latency_correlation(
+            "runtime", "workspace", "session", f"event-{index}"
+        )
+        correlation = ResourceCorrelation(scoped, scoped)
+        for stage in ("journal_append", "runtime_wss_send"):
+            assert worker_a.state.conversation_latency.record_conversation_latency(
+                stage, 1.0 + index, correlation, {"protocol": "oaep/1"}
+            )
+        relay_worker = worker_a if index % 2 == 0 else worker_b
+        assert relay_worker.state.conversation_latency.record_conversation_latency(
+            "relay_fanout", 1.0 + index, correlation,
+            {"protocol": "oaep/1", "relay_worker": relay_worker.state.relay_worker_id},
+        )
+        for stage in ("client_receive", "client_render"):
+            assert worker_b.state.conversation_latency.record_conversation_latency(
+                stage, 1.0 + index, correlation, {"protocol": "oaep/1"}
+            )
+
+    report = TestClient(worker_a).get("/v1/metrics/relay-latency").json()
+    assert report["aggregation_scope"] == "shared"
+    assert report["complete_sample_count"] == 20
+    assert report["incomplete_sample_count"] == 0
+    assert report["ready"] is True
+    assert report["multi_worker_ready"] is True
+    assert report["relay_worker_count"] == 2
+    assert report["required_relay_workers"] == 2
+    assert all(row["p50_ms"] > 0 and row["p95_ms"] > 0 for row in report["stages"].values())
+
+    process_report = TestClient(create_relay_app()).get(
+        "/v1/metrics/relay-latency"
+    ).json()
+    assert process_report["aggregation_scope"] == "process"
+    assert process_report["multi_worker_ready"] is False
+
+
+def test_shared_latency_does_not_claim_multi_worker_ready_from_one_worker(tmp_path) -> None:
+    database = (tmp_path / "single-worker-latency.sqlite3").resolve()
+    app = create_relay_app(
+        conversation_latency_database=database, relay_worker_id="only-worker"
+    )
+    for index in range(20):
+        correlation = ResourceCorrelation(f"corr-{index}", f"corr-{index}")
+        for stage in (
+            "journal_append", "runtime_wss_send", "relay_fanout",
+            "client_receive", "client_render",
+        ):
+            dimensions = {"protocol": "oaep/1"}
+            if stage == "relay_fanout":
+                dimensions["relay_worker"] = "only-worker"
+            app.state.conversation_latency.record_conversation_latency(
+                stage, 1.0, correlation, dimensions,
+            )
+    report = TestClient(app).get("/v1/metrics/relay-latency").json()
+    assert report["ready"] is True
+    assert report["relay_worker_count"] == 1
+    assert report["multi_worker_ready"] is False
+
+
+def test_user_slo_metrics_are_aggregate_only_and_locate_over_threshold_stage(tmp_path) -> None:
+    app = create_relay_app(
+        conversation_latency_database=(tmp_path / "user-slo.sqlite3").resolve()
+    )
+    metrics = app.state.conversation_latency
+    for index in range(20):
+        sample = f"opaque-sample-{index:04d}"
+        for journey, stages in {
+            "first_screen": {"cache_load": 100, "authority_refresh": 200, "first_render": 100},
+            "operation_confirmation": {
+                "request_dispatch": 100, "runtime_commit": 2_200, "confirmation_render": 100,
+            },
+            "reconnect": {
+                "disconnect_detect": 100, "transport_restore": 3_000, "replay_catchup": 400,
+            },
+        }.items():
+            for stage, duration in stages.items():
+                metrics.record_user_slo_stage(journey, stage, duration, sample_id=sample)
+        correlation = ResourceCorrelation(f"private-event-{index}", f"private-op-{index}")
+        for stage, duration in {
+            "journal_append": 10, "runtime_wss_send": 20, "relay_fanout": 50,
+            "client_receive": 5, "client_render": 10,
+        }.items():
+            metrics.record_conversation_latency(stage, duration, correlation)
+
+    response = TestClient(app).get("/v1/metrics/user-slo")
+    assert response.status_code == 200
+    report = response.json()
+    assert report["ready"] is True
+    assert report["schema_version"] == "p6-user-slo/1"
+    assert report["journeys"]["operation_confirmation"]["within_threshold"] is False
+    assert report["journeys"]["operation_confirmation"]["bottleneck"] == "runtime_commit"
+    assert report["journeys"]["first_screen"]["p50_ms"] > 0
+    assert report["journeys"]["event_to_render"]["p95_ms"] > 0
+    serialized = json.dumps(report)
+    assert "opaque-sample" not in serialized
+    assert "private-event" not in serialized
+    assert "private-op" not in serialized
+
+
+@pytest.mark.parametrize("suffix", [
+    "first-screen/sample-0001",
+    "operation-confirmation/sample-0001",
+    "reconnect/sample-0001",
+])
+def test_user_slo_observation_requires_workspace_authorization_before_body_or_storage(
+    tmp_path, suffix
+) -> None:
+    app = create_relay_app(
+        conversation_latency_database=(tmp_path / "user-slo.sqlite3").resolve()
+    )
+    client = TestClient(app)
+    response = client.post(
+        "/v1/runtimes/runtime-one/workspaces/workspace-one/sessions/session-one/slo/" + suffix,
+        json={"unexpected": "body-must-not-be-parsed"},
+    )
+    assert response.status_code == 401
+    report = client.get("/v1/metrics/user-slo").json()
+    assert report["journeys"]["first_screen"]["complete_count"] == 0
+
+
+def test_user_slo_timestamp_routes_are_scoped_strict_and_replace_legacy_stage_api(tmp_path) -> None:
+    app = create_relay_app(
+        principal_resolver=lambda request: request.headers.get("x-subject", ""),
+        conversation_latency_database=(tmp_path / "user-slo.sqlite3").resolve(),
+    )
+    client = TestClient(app)
+    _, runtime_id, token = register(client)
+    app.state.registry.publish_workspaces(runtime_id, token, [Workspace.model_validate({
+        "runtime_id": runtime_id,
+        "workspace_id": "workspace-one",
+        "display_name": "Project",
+    })])
+    _, code, _ = app.state.registry.issue_access_grant(runtime_id, token)
+    device = association_body(code)
+    app.state.registry.associate(
+        "alice", code, device["device_id"], device["device_name"], device["device_public_key"]
+    )
+    base = (
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/session-one/slo"
+    )
+    observations = {
+        "first-screen/sample-first-0001": {
+            "cache_load_at_ms": 1_000,
+            "authority_refresh_at_ms": 1_100,
+            "first_render_at_ms": 1_250,
+        },
+        "operation-confirmation/sample-operation-0001": {
+            "request_dispatch_at_ms": 2_000,
+            "runtime_commit_at_ms": 2_040,
+            "confirmation_render_at_ms": 2_090,
+        },
+        "reconnect/sample-reconnect-0001": {
+            "disconnect_detect_at_ms": 3_000,
+            "transport_restore_at_ms": 3_500,
+            "replay_catchup_at_ms": 3_700,
+        },
+    }
+    for suffix, body in observations.items():
+        response = client.post(f"{base}/{suffix}", headers={"x-subject": "alice"}, json=body)
+        assert response.status_code == 200
+        assert response.json()["ready"] is True
+        assert response.json()["latencies_ms"]["total"] == max(body.values()) - min(body.values())
+
+    report = client.get("/v1/metrics/user-slo").json()
+    assert all(
+        report["journeys"][journey]["complete_count"] == 1
+        for journey in ("first_screen", "operation_confirmation", "reconnect")
+    )
+    assert client.post(
+        f"{base}/first-screen/sample-invalid-0001",
+        headers={"x-subject": "alice"},
+        json={
+            "cache_load_at_ms": 10,
+            "authority_refresh_at_ms": 9,
+            "first_render_at_ms": 11,
+        },
+    ).status_code == 400
+    assert client.post(
+        f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/metrics/user-slo-observations",
+        headers={"x-subject": "alice"}, json={},
+    ).status_code == 404
+    with app.state.conversation_latency._connect() as db:
+        stored = str(db.execute("SELECT * FROM user_slo_stages").fetchall())
+    assert "sample-first" not in stored and "sample-operation" not in stored
+
+
+@pytest.mark.parametrize("worker_id", ["", "worker/one", "x" * 129])
+def test_relay_worker_identity_is_bounded_and_safe(tmp_path, worker_id) -> None:
+    with pytest.raises(ValueError, match="worker id"):
+        create_relay_app(
+            conversation_latency_database=(tmp_path / "latency.sqlite3").resolve(),
+            relay_worker_id=worker_id,
+        )
+
+
+def test_conversation_latency_shared_database_rejects_relative_path() -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        create_relay_app(conversation_latency_database=Path("relative.sqlite3"))
+
+
+def test_conversation_latency_shared_database_can_be_configured_by_environment(
+    tmp_path, monkeypatch
+) -> None:
+    database = (tmp_path / "configured-latency.sqlite3").resolve()
+    monkeypatch.setenv("OPENDRSAI_CONVERSATION_LATENCY_DATABASE", str(database))
+    app = create_relay_app()
+    assert app.state.conversation_latency_shared is True
+    assert app.state.conversation_latency.database == database
 
 
 def association_body(code: str, device_id: str = "android-device-0001") -> dict[str, str]:
@@ -163,6 +420,32 @@ def test_oaep_metrics_are_content_free_and_expose_schema_identity() -> None:
     assert len(payload["schema_hash"]) == 64
     assert payload["counters"] == {}
     assert not ({"event", "payload", "body", "token"} & payload.keys())
+
+
+@pytest.mark.parametrize(
+    ("providers", "worker_running", "expected"),
+    [
+        (frozenset(), False, {"ready": False, "providers": {"fcm": False}, "worker_running": False}),
+        (frozenset(), True, {"ready": False, "providers": {"fcm": False}, "worker_running": True}),
+        (frozenset({"fcm"}), False, {"ready": False, "providers": {"fcm": True}, "worker_running": False}),
+        (frozenset({"fcm"}), True, {"ready": True, "providers": {"fcm": True}, "worker_running": True}),
+    ],
+)
+def test_push_readiness_is_public_exact_and_never_claims_partial_setup_ready(
+    providers: frozenset[str], worker_running: bool, expected: dict[str, object],
+) -> None:
+    client = TestClient(create_relay_app(
+        registry=RelayRegistry(supported_push_providers=providers),
+        push_worker_running=worker_running,
+    ))
+    response = client.get("/v1/push/readiness")
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+def test_push_readiness_rejects_non_boolean_worker_configuration() -> None:
+    with pytest.raises(TypeError, match="push_worker_running must be bool"):
+        create_relay_app(push_worker_running=1)  # type: ignore[arg-type]
 
 
 def test_device_bound_push_registration_route_rotates_and_revokes_without_token_echo() -> None:
@@ -509,6 +792,50 @@ def test_device_key_rotation_is_old_key_authorized_and_immediately_fenced() -> N
     assert replay.json()["code"] == "device_proof_replay"
 
 
+def test_device_proof_nonce_capacity_fails_closed_without_evicting_live_nonce() -> None:
+    registry = RelayRegistry(device_proof_nonce_capacity=2)
+    app = create_relay_app(
+        registry=registry,
+        principal_resolver=lambda request: request.headers.get("x-subject", ""),
+    )
+    client = TestClient(app)
+    _, runtime_id, runtime_token = register(client)
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": runtime_token},
+    ).json()["code"]
+    private = Ed25519PrivateKey.generate()
+    device_id = "android-device-nonce-capacity"
+    assert client.post("/v1/associations", headers={"x-subject": "alice"}, json={
+        **control(), "code": grant, "device_id": device_id,
+        "device_name": "Android Nonce Capacity Device",
+        "device_public_key": encoded(private.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )),
+    }).status_code == 200
+    url = "/v1/runtimes"
+    first = {
+        "x-subject": "alice",
+        **device_proof_headers(private, device_id, "GET", url, "token"),
+    }
+    second = {
+        "x-subject": "alice",
+        **device_proof_headers(private, device_id, "GET", url, "token"),
+    }
+    third = {
+        "x-subject": "alice",
+        **device_proof_headers(private, device_id, "GET", url, "token"),
+    }
+    assert client.get(url, headers=first).status_code == 200
+    assert client.get(url, headers=second).status_code == 200
+    full = client.get(url, headers=third)
+    assert full.status_code == 503
+    assert full.json()["code"] == "backpressure_overflow"
+    replay = client.get(url, headers=first)
+    assert replay.status_code == 401
+    assert replay.json()["code"] == "device_proof_replay"
+
+
 def test_device_key_rotation_is_atomic_across_all_runtime_associations() -> None:
     app = _testing_app()
     client = TestClient(app)
@@ -588,7 +915,7 @@ def test_device_key_rotation_is_atomic_across_all_runtime_associations() -> None
     assert recovered.status_code == 200
 
 
-def test_device_bound_workspace_allowlist_filters_catalog_and_denies_before_proxy() -> None:
+def test_two_device_workspace_idor_matrix_filters_catalog_and_denies_before_proxy() -> None:
     app = _testing_app()
     client = TestClient(app)
     _, runtime_id, runtime_token = register(client)
@@ -619,9 +946,9 @@ def test_device_bound_workspace_allowlist_filters_catalog_and_denies_before_prox
         assert response.status_code == 200
 
     selected_private = Ed25519PrivateKey.generate()
-    all_private = Ed25519PrivateKey.generate()
+    second_private = Ed25519PrivateKey.generate()
     pair("android-selected-0001", selected_private, "selected", ["workspace-one"])
-    pair("android-all-workspaces", all_private, "all", [])
+    pair("android-selected-0002", second_private, "selected", ["workspace-two"])
     access_token = "test-access-token"
     catalog_url = f"/v1/runtimes/{runtime_id}/workspaces"
 
@@ -644,16 +971,24 @@ def test_device_bound_workspace_allowlist_filters_catalog_and_denies_before_prox
     assert forbidden.status_code == 403
     assert forbidden.json()["code"] == "workspace_forbidden"
 
-    all_workspaces = client.get(catalog_url, headers={
+    second_catalog = client.get(catalog_url, headers={
         "x-subject": "alice",
         **device_proof_headers(
-            all_private, "android-all-workspaces", "GET", catalog_url, access_token,
+            second_private, "android-selected-0002", "GET", catalog_url, access_token,
         ),
     })
-    assert all_workspaces.status_code == 200
-    assert [item["workspace_id"] for item in all_workspaces.json()["items"]] == [
-        "workspace-one", "workspace-two",
-    ]
+    assert second_catalog.status_code == 200
+    assert [item["workspace_id"] for item in second_catalog.json()["items"]] == ["workspace-two"]
+
+    second_forbidden_url = f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions"
+    second_forbidden = client.get(second_forbidden_url, headers={
+        "x-subject": "alice",
+        **device_proof_headers(
+            second_private, "android-selected-0002", "GET", second_forbidden_url, access_token,
+        ),
+    })
+    assert second_forbidden.status_code == 403
+    assert second_forbidden.json()["code"] == "workspace_forbidden"
 
 
 def test_authorization_shrink_closes_stream_and_new_requests_use_reduced_permissions() -> None:
@@ -678,7 +1013,11 @@ def test_authorization_shrink_closes_stream_and_new_requests_use_reduced_permiss
         )),
     }).status_code == 200
     association_id = app.state.registry.list_associations(runtime_id, runtime_token)[0]["association_id"]
-    queue = asyncio.run(app.state.oaep_replay.subscribe(runtime_id, "session-one"))
+    queue = asyncio.run(app.state.oaep_replay.subscribe(
+        runtime_id,
+        "session-one",
+        authorization_key=app.state.registry.authorization_key("alice", device_id),
+    ))
 
     shrunk = client.patch(
         f"/v1/runtimes/{runtime_id}/associations/{association_id}",
@@ -725,6 +1064,129 @@ def test_authorization_shrink_closes_stream_and_new_requests_use_reduced_permiss
     assert expansion.json()["code"] == "authorization_expansion_forbidden"
 
 
+@pytest.mark.parametrize(
+    ("permission", "method", "path_template"),
+    [
+        ("send", "POST", "/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions"),
+        ("send", "PATCH", "/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/session-one"),
+        ("send", "POST", "/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/session-one/runs"),
+        ("send", "POST", "/v1/runtimes/{runtime_id}/workspaces/workspace-one/runs/run-one/cancel"),
+        ("send", "PATCH", "/v1/runtimes/{runtime_id}"),
+        ("files", "POST", "/v1/runtimes/{runtime_id}/workspaces/workspace-one/owop"),
+        ("approve", "POST", "/v1/runtimes/{runtime_id}/approvals/approval-one/decision"),
+    ],
+)
+def test_write_permission_is_rejected_before_body_validation_and_runtime_proxy(
+    permission: str, method: str, path_template: str,
+) -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    _, runtime_id, runtime_token = register(client)
+    app.state.registry.publish_workspaces(runtime_id, runtime_token, [Workspace.model_validate({
+        "runtime_id": runtime_id, "workspace_id": "workspace-one", "display_name": "One",
+    })])
+    granted = [value for value in ("read", "send", "approve", "files") if value != permission]
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": runtime_token}, json={"permissions": granted},
+    ).json()["code"]
+    private = Ed25519PrivateKey.generate()
+    device_id = f"android-minimum-{permission}-0001"
+    assert client.post("/v1/associations", headers={"x-subject": "alice"}, json={
+        **association_body(grant, device_id),
+        "device_public_key": encoded(private.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )),
+        "permissions": granted,
+    }).status_code == 200
+
+    path = path_template.format(runtime_id=runtime_id)
+    malformed_body = b"{}"
+    response = client.request(method, path, headers={
+        "x-subject": "alice", "content-type": "application/json",
+        **device_proof_headers(private, device_id, method, path, "token", body=malformed_body),
+    }, content=malformed_body)
+    assert response.status_code == 403
+    assert response.json()["code"] == "permission_forbidden"
+
+
+@pytest.mark.parametrize(
+    ("permission", "path_template"),
+    [
+        ("approve", "/v1/runtimes/{runtime_id}/workspaces/workspace-one/approvals"),
+        ("send", "/v1/runtimes/{runtime_id}/idempotency/session.create/idempotency-one"),
+        ("send", "/v1/runtimes/{runtime_id}/idempotency/run.create/idempotency-one"),
+        ("approve", "/v1/runtimes/{runtime_id}/idempotency/approval.decide/idempotency-one"),
+    ],
+)
+def test_sensitive_readback_requires_its_independent_permission(
+    permission: str, path_template: str,
+) -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    _, runtime_id, runtime_token = register(client)
+    app.state.registry.publish_workspaces(runtime_id, runtime_token, [Workspace.model_validate({
+        "runtime_id": runtime_id, "workspace_id": "workspace-one", "display_name": "One",
+    })])
+    granted = [value for value in ("read", "send", "approve", "files") if value != permission]
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": runtime_token}, json={"permissions": granted},
+    ).json()["code"]
+    private = Ed25519PrivateKey.generate()
+    device_id = f"android-readback-{permission}-0001"
+    assert client.post("/v1/associations", headers={"x-subject": "alice"}, json={
+        **association_body(grant, device_id),
+        "device_public_key": encoded(private.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )),
+        "permissions": granted,
+    }).status_code == 200
+    path = path_template.format(runtime_id=runtime_id)
+    response = client.get(path, headers={
+        "x-subject": "alice",
+        **device_proof_headers(private, device_id, "GET", path, "token"),
+    })
+    assert response.status_code == 403
+    assert response.json()["code"] == "permission_forbidden"
+
+
+def test_push_fanout_honors_read_permission_and_workspace_allowlist() -> None:
+    app = _testing_app()
+    client = TestClient(app)
+    _, runtime_id, runtime_token = register(client)
+    app.state.registry.publish_workspaces(runtime_id, runtime_token, [
+        Workspace.model_validate({
+            "runtime_id": runtime_id, "workspace_id": workspace_id, "display_name": workspace_id,
+        })
+        for workspace_id in ("workspace-one", "workspace-two")
+    ])
+
+    def pair(device_id: str, permissions: list[str], workspace_ids: list[str]) -> None:
+        request = {
+            "workspace_scope": "selected", "workspace_ids": workspace_ids,
+            "permissions": permissions,
+        }
+        grant = client.post(
+            f"/v1/runtimes/{runtime_id}/access-grants",
+            headers={"x-runtime-token": runtime_token}, json=request,
+        ).json()["code"]
+        assert client.post("/v1/associations", headers={"x-subject": "alice"}, json={
+            **association_body(grant, device_id), **request,
+        }).status_code == 200
+
+    pair("android-push-readable-0001", ["read"], ["workspace-one"])
+    pair("android-push-other-0002", ["read"], ["workspace-two"])
+    pair("android-push-send-only-0003", ["send"], ["workspace-one"])
+
+    assert app.state.registry.active_device_ids(runtime_id, "workspace-one") == [
+        "android-push-readable-0001",
+    ]
+    assert app.state.registry.active_device_ids(runtime_id, "workspace-two") == [
+        "android-push-other-0002",
+    ]
+
+
 def test_device_disconnect_closes_stream_and_preserves_other_account_access() -> None:
     app = _testing_app()
     client = TestClient(app)
@@ -752,15 +1214,26 @@ def test_device_disconnect_closes_stream_and_preserves_other_account_access() ->
         assert associated.status_code == 200
         devices[subject] = (device_id, private)
 
-    queue = asyncio.run(app.state.oaep_replay.subscribe(runtime_id, "session-one"))
     alice_device, alice_private = devices["alice"]
+    alice_queue = asyncio.run(app.state.oaep_replay.subscribe(
+        runtime_id,
+        "session-one",
+        authorization_key=app.state.registry.authorization_key("alice", alice_device),
+    ))
+    bob_device, bob_private = devices["bob"]
+    bob_queue = asyncio.run(app.state.oaep_replay.subscribe(
+        runtime_id,
+        "session-one",
+        authorization_key=app.state.registry.authorization_key("bob", bob_device),
+    ))
     revoke_url = f"/v1/associations/{runtime_id}"
     revoked = client.delete(revoke_url, headers={
         "x-subject": "alice",
         **device_proof_headers(alice_private, alice_device, "DELETE", revoke_url, "token"),
     })
     assert revoked.status_code == 200
-    assert asyncio.run(queue.get()) == {"_control": "authorization_changed"}
+    assert asyncio.run(alice_queue.get()) == {"_control": "authorization_changed"}
+    assert bob_queue.empty()
 
     catalog_url = f"/v1/runtimes/{runtime_id}/workspaces"
     alice_denied = client.get(catalog_url, headers={
@@ -770,13 +1243,13 @@ def test_device_disconnect_closes_stream_and_preserves_other_account_access() ->
     assert alice_denied.status_code == 403
     assert alice_denied.json()["code"] == "association_required"
 
-    bob_device, bob_private = devices["bob"]
     bob_allowed = client.get(catalog_url, headers={
         "x-subject": "bob",
         **device_proof_headers(bob_private, bob_device, "GET", catalog_url, "token"),
     })
     assert bob_allowed.status_code == 200
     assert [item["workspace_id"] for item in bob_allowed.json()["items"]] == ["workspace-one"]
+    assert bob_queue.empty()
 
 
 def test_error_envelope_distinguishes_relay_and_has_correlation_id() -> None:
@@ -814,6 +1287,24 @@ def test_generated_openapi_contains_runtime_handshake_and_pagination() -> None:
     assert "patch" in schema["paths"]["/v1/runtimes/{runtime_id}"]
     session_path = "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}"
     assert "patch" in schema["paths"][session_path]
+
+
+def test_generated_openapi_matches_shared_p6_slo_contract_and_has_no_legacy_writer() -> None:
+    schema = create_relay_app().openapi()
+    shared = json.loads(
+        (Path(__file__).resolve().parents[5] / "cores/protocol/relay/runtime-relay.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    assert schema["x-relay-latency-observability"] == shared["x-relay-latency-observability"]
+    assert schema["x-user-slo"] == shared["x-user-slo"]
+    base = "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo"
+    for suffix in ("first-screen", "operation-confirmation", "reconnect"):
+        assert "post" in schema["paths"][f"{base}/{suffix}/{{sample_id}}"]
+    assert "/v1/metrics/user-slo" in schema["paths"]
+    assert (
+        "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/metrics/user-slo-observations"
+        not in schema["paths"]
+    )
 
 
 def test_session_rename_archive_and_unarchive_preserve_history_and_default_visibility() -> None:
@@ -972,17 +1463,23 @@ def test_runtime_oaep_event_cursor_advances_only_after_relay_ack() -> None:
     ])
     latency_url = (
         f"/v1/runtimes/{runtime_id}/workspaces/workspace-one/sessions/"
-        f"{event['session_id']}/conversation-latency"
+        f"{event['session_id']}/events/{event['event_id']}/latency-observation"
     )
-    for stage, duration_ms in (("client_receive", 4.0), ("client_render", 5.0)):
-        response = client.post(latency_url, headers={"x-subject": "alice"}, json={
-            "correlation_id": event["event_id"],
-            "operation_id": event["event_id"],
-            "stage": stage,
-            "duration_ms": duration_ms,
-        })
-        assert response.status_code == 204
-    report = client.get("/v1/metrics/conversation-latency").json()
+    response = client.post(latency_url, headers={"x-subject": "alice"}, json={
+        "client_receive_at_ms": 1_000,
+        "render_at_ms": 1_005,
+    })
+    assert response.status_code == 200
+    assert response.json() == {
+        "ready": True,
+        "stages_present": [
+            "client_receive", "client_render", "journal_append",
+            "relay_fanout", "runtime_wss_send",
+        ],
+        "latencies_ms": {"client_receive_to_render": 5},
+    }
+    assert client.get(latency_url, headers={"x-subject": "alice"}).json() == response.json()
+    report = client.get("/v1/metrics/relay-latency").json()
     assert report["complete_sample_count"] == 1
     assert {stage: values["sample_count"] for stage, values in report["stages"].items()} == {
         "journal_append": 1,
@@ -1168,7 +1665,16 @@ def test_runtime_workspace_catalog_sync_rejects_sensitive_fields() -> None:
 
 def test_runtime_workspace_catalog_sync_requires_strict_empty_body() -> None:
     client = TestClient(_testing_app())
-    _, runtime_id, _ = register(client)
+    _, runtime_id, runtime_token = register(client)
+    grant = client.post(
+        f"/v1/runtimes/{runtime_id}/access-grants",
+        headers={"x-runtime-token": runtime_token},
+    ).json()["code"]
+    assert client.post(
+        "/v1/associations",
+        headers={"x-subject": "alice"},
+        json=association_body(grant),
+    ).status_code == 200
     response = client.post(
         f"/v1/runtimes/{runtime_id}/workspaces/sync",
         headers={"x-subject": "alice"},

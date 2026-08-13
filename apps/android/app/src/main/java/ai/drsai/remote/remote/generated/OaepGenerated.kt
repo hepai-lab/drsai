@@ -2,7 +2,7 @@
 package ai.drsai.remote.remote.generated
 
 object OaepContract {
-    const val SCHEMA_SHA256 = "304304216b4133e6b00dd3d93897d4f84ccc716ee830f2ecca11c77585d0970d"
+    const val SCHEMA_SHA256 = "1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09"
     const val VERSION = "1.0"
     const val PROFILE = "oaep.session-stream/1"
     val ITEM_TYPES = setOf("message", "reasoning", "plan", "command_execution", "file_change", "tool_call", "artifact", "interaction", "subtask", "notice")

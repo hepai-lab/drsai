@@ -34,6 +34,18 @@ class FullRuntimeBindingCoordinatorTest {
         assertTrue(observed.any { it.state == FullRuntimeBindingState.BINDING })
     }
 
+    @Test fun `cold extraction slower than performance slo is not killed as unavailable`() = runTest {
+        val transport = FakeTransport(bindDelayMs = 6_000)
+        val coordinator = FullRuntimeBindingCoordinator(
+            this, transport, maxAttempts = 1, bindTimeoutMs = 10_000, retryDelayMs = 1,
+        )
+
+        coordinator.ensureReady("alice")
+
+        assertEquals(1, transport.binds)
+        assertEquals(FullRuntimeBindingState.READY, coordinator.state.value.state)
+    }
+
     @Test fun `runtime identity rejects malformed or missing digest evidence`() {
         val error = runCatching { identity(kernelSha256 = "not-a-digest") }.exceptionOrNull()
         assertEquals("runtime_identity_digest_invalid", error?.message)
@@ -94,6 +106,7 @@ class FullRuntimeBindingCoordinatorTest {
     private class FakeTransport(
         private var failures: Int = 0,
         private val identity: FullRuntimeIdentity? = null,
+        private val bindDelayMs: Long = 10,
     ) : FullRuntimeBindingTransport {
         var binds = 0
         var closes = 0
@@ -101,7 +114,7 @@ class FullRuntimeBindingCoordinatorTest {
 
         override suspend fun bind() {
             binds += 1
-            delay(10)
+            delay(bindDelayMs)
             if (failures > 0) {
                 failures -= 1
                 error("bind_failed")

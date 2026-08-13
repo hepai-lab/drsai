@@ -1,8 +1,12 @@
-# Windows 流式语音交互完整开发方案
+# Windows 流式语音路线 P1 完整开发方案
 
-最后更新：2026-07-18
+最后更新：2026-08-10
 
-阶段：第二阶段规划
+路线：`streaming`（流式语音）
+
+路线内阶段：P1
+
+文档状态：流式语音路线 P1 实施与验收基线；P2 在独立讨论稿中定义
 
 目标应用：`apps/desktop/windows`
 
@@ -10,16 +14,16 @@
 
 ## 1. 文档目的
 
-本方案定义 Windows App 第二阶段“流式语音交互”的产品范围、系统边界、模块拆分、功能清单、测试方案、指标和发布门禁。
+本方案定义 Windows App **流式语音路线 P1** 的产品范围、系统边界、模块拆分、功能清单、测试方案、指标和发布门禁。该路线通过音频、转写、LLM 正文、TTS 和播放的增量衔接降低等待感，但用户与 AI 不持续同时说话。
 
-第二阶段不是对第一阶段的替换。应用必须长期同时提供两种模式：
+流式语音路线不是对串行语音路线的替换。应用必须长期同时提供两种模式：
 
 | 模式 | 稳定标识 | 链路 | 主要价值 |
 | --- | --- | --- | --- |
 | 串行语音 | `serial` | 完整录音 -> 整段 STT -> 审核 -> LLM -> 整段 TTS | 可靠、可审核、可降级、便于精确输入 |
 | 流式语音 | `streaming` | 音频分块 -> 临时/最终 STT -> LLM Token -> 分段 TTS -> 队列播放 | 更早看到转写、更早听到回复、降低等待感 |
 
-任何第二阶段改动都不得删除、隐式改写或降低串行模式能力。串行模式的现有测试是第二阶段发布的强制回归门禁。
+任何流式 P1 改动都不得删除、隐式改写或降低串行路线能力。串行模式的现有测试是流式 P1 发布的强制回归门禁。
 
 ## 2. 范围与非目标
 
@@ -39,7 +43,7 @@
 - 不持续同时采集用户麦克风和播放 AI 音频。
 - 不理解用户与 AI 的重叠语音。
 - 不把简单的“检测开口后停止播放”描述为全双工。
-- 不在第二阶段默认接入语音原生 Speech-to-Speech 模型。
+- 不在流式 P1 默认接入语音原生 Speech-to-Speech 模型；语音原生属于全双工路线的候选实现。
 - 不取消转写审核、隐私披露或用户主动发送控制。
 - 不用流式实现替换现有整段 STT/TTS Provider 契约。
 
@@ -63,7 +67,7 @@
 
 ### 3.0 实施进度
 
-2026-07-19 第一轮已完成 P0“串行基线冻结与双模式骨架”：
+2026-07-19 第一轮已完成 Streaming-P1-S0“串行基线冻结与双模式骨架”：
 
 - 新增共享模式类型 `serial | streaming`，默认值固定为 `serial`。
 - 语音偏好 schema 从 v2 升级到 v3；v1、v2 和无版本历史数据均保留原偏好并补入串行模式，未知未来版本安全回退默认值。
@@ -72,9 +76,9 @@
 - 新增 `test:voice-mode` 和 `test:voice:serial`，并将模式测试纳入现有 `test:voice` 强制回归。
 - `test:voice`、`typecheck:web`、`verify:voice-feature` 和 `verify:voice-visual` 全部通过；视觉验收覆盖默认串行、流式禁用、完整串行回合、150%/200% 错误布局和资源状态轨迹。
 
-当前功能状态：M1-F1 已完成；M1-F2、M1-F3、M1-F4、M1-F5 已完成骨架，需随 Streaming Runtime 接入补充可用态验收；M1-F6 尚未开始。M2-M12 尚未按第二阶段功能完成，既有第一阶段能力仅作为可复用基线，不计为第二阶段完成。
+当前功能状态：M1-F1 已完成；M1-F2、M1-F3、M1-F4、M1-F5 已完成骨架，需随 Streaming Runtime 接入补充可用态验收；M1-F6 尚未开始。M2-M12 当时尚未按流式 P1 功能完成，既有串行路线能力仅作为可复用基线，不计为流式 P1 完成。
 
-2026-07-19 第二轮已完成 P1 的共享契约与离线内核第一批实现：
+2026-07-19 第二轮已完成 Streaming-P1-S1 的共享契约与离线内核第一批实现：
 
 - `desktopApi.ts` 新增流式能力、PCM16 音频块、ACK、partial/final/endpoint、TTS 文本片段和有序音频片段契约，所有流式事件携带 session、turn 和 sequence。
 - 新增流式请求与音频块严格校验：安全 ID、单声道、PCM16、16/24/48 kHz、10-200 ms 分块、字节/时长一致性和单块上限。
@@ -86,7 +90,7 @@
 
 第二轮功能状态：M2-F1、M2-F3、M2-F4、M2-F5 的类型和离线验证完成；M2-F2 完成会话控制契约但尚未接入 IPC；M2-F6 尚未开始。M4-F1 完成离线有界队列内核；M4-F2 完成 ACK/序号离线内核；M5-F2 完成基础 Fixture Runtime。以上功能在真实 Main/Preload/Renderer 通路完成前不计整模块完成。
 
-2026-07-19 第三轮已完成 P1 的 Electron 集成通路：
+2026-07-19 第三轮已完成 Streaming-P1-S1 的 Electron 集成通路：
 
 - Main 注册受信任的 capabilities/start/stop/cancel 控制 IPC，并通过 `MessagePortMain` 接收高频 PCM 音频块。
 - Preload 为每个 session 创建独立 `MessageChannel`，只向 Renderer 暴露类型化的 start/send/stop/cancel/event API，不暴露任意 IPC 通道。
@@ -99,13 +103,13 @@
 
 第三轮功能状态：M2-F2 已完成；M2-F6 的单端口绑定、窗口销毁和重复绑定完成，重连策略待 M4 弱网恢复阶段完成；M1-F5 的真实能力协商完成。下一步进入 Renderer PCM 采集和流式转写协调器，完成可操作的 Fixture 流式输入闭环。
 
-2026-07-19 第四轮完成 P1 Renderer 输入内核并形成可操作的 Fixture 流式听写闭环：
+2026-07-19 第四轮完成 Streaming-P1-S1 Renderer 输入内核并形成可操作的 Fixture 流式听写闭环：
 
 - 新增 AudioWorklet PCM 采集控制器，支持多声道混合、连续线性重采样、PCM16 饱和转换、20 ms 分帧、约 100 ms 批处理和停止尾帧刷新。
 - 新增 committed/unstable 转写协调器，处理 partial 替换、final 原子提交、revision、事件序号、endpoint、单一终态和晚到事件。
 - 修复 start 接受事件早于 Renderer 保存 session 的竞态：`start()` 返回作为 sequence 0 接受边界，后续重复 accepted 安全忽略。
 - 工作区接入独立流式输入 Hook 和实时转写栏；活动期间锁定模式、设备和语言选择，最终文本复用第一阶段 `VoiceReviewBar`，串行 MediaRecorder 路径保持不变。
-- P2 输入里程碑不再被 P4 流式 TTS 阻塞：只要 AudioWorklet 和 Streaming ASR 可用即可选择流式听写；回复在 P4 前明确复用完整 TTS，流式输出能力仍独立报告为不可用。
+- Streaming-P1-S2 输入里程碑不再被 Streaming-P1-S4 流式 TTS 阻塞：只要 AudioWorklet 和 Streaming ASR 可用即可选择流式听写；回复在 Streaming-P1-S4 前明确复用完整 TTS，流式输出能力仍独立报告为不可用。
 - Mock Runtime 首个音频批次产生可区分的 unstable 文本，停止后依次产生 endpoint、final、completed；视觉验收验证串行→流式→串行切换、实时文字、审核复用和活动期切换保护。
 - `test:voice:streaming`、`test:voice:all`、Node/Web 类型检查、生产构建和 `verify:voice-visual` 全部通过；生产 Renderer 从 2073 增至 2079 个模块，证明流式采集代码已进入实际产品 bundle。
 
@@ -190,7 +194,7 @@ interface VoiceModeController {
 
 ### 3.2 级联、半双工
 
-第二阶段继续采用可审计的级联架构：
+流式 P1 继续采用可审计的级联架构：
 
 ```text
 Renderer AudioWorklet
@@ -443,7 +447,7 @@ scripts/
 
 ## 6. 测试命令规划
 
-第二阶段实施时新增以下脚本，名称可以按仓库规范微调，但职责必须保持分离：
+流式 P1 实施时新增以下脚本，名称可以按仓库规范微调，但职责必须保持分离：
 
 ```text
 npm run test:voice:serial
@@ -467,7 +471,7 @@ npm run verify:voice:release-ready
 
 每个回合记录模式、Runtime 和设备类别，但不得记录原始音频或完整敏感转写。
 
-| 指标 | 定义 | 第二阶段目标 |
+| 指标 | 定义 | 流式 P1 目标 |
 | --- | --- | --- |
 | `timeToFirstTranscriptMs` | 首块有效音频到首个 partial | 正常网络 P95 <= 500 ms |
 | `timeToFinalTranscriptMs` | 用户停说到 final | 正常网络 P95 <= 1,000 ms |
@@ -483,9 +487,9 @@ npm run verify:voice:release-ready
 
 延迟阈值必须分别记录 Fixture、局域网 Live 和真实广域网结果。Fixture 用于回归，不能替代 Live 性能结论。
 
-## 8. 实施里程碑与依赖
+## 8. 流式 P1 实施里程碑与依赖
 
-### P0 基线冻结
+### Streaming-P1-S0 基线冻结
 
 - 校准语音总览和串行完成状态。
 - 为现有串行测试建立稳定入口和基线报告。
@@ -493,31 +497,31 @@ npm run verify:voice:release-ready
 
 退出条件：现有串行门禁结果可复现，模式开关不会改变串行行为。
 
-### P1 流式输入内核
+### Streaming-P1-S1 流式输入内核
 
 包含 M1、M2、M3、M4 的基础能力，以及 M5 Fixture Runtime。
 
 退出条件：离线 Fixture 下 PCM 分块、背压、取消、partial/final 事件稳定；串行回归全通过。
 
-### P2 流式听写产品闭环
+### Streaming-P1-S2 流式听写产品闭环
 
 完成 M5 生产 ASR、M6、M7 输入侧和 M11 对应 UI。
 
 退出条件：用户说话时看到实时文字，停止后进入原有审核发送；一个真实 Provider Live Smoke 通过。
 
-### P3 流式回复内核
+### Streaming-P1-S3 流式回复内核
 
 完成 M8、M9 Fixture Runtime、M10 播放队列。
 
 退出条件：离线 Fixture 下 LLM 尚未完成时首段已经播放，顺序、取消和资源上限全部通过。
 
-### P4 流式回复生产闭环
+### Streaming-P1-S4 流式回复生产闭环
 
 完成生产 TTS、UI、诊断、打包和 Live 验证。
 
 退出条件：真实 Provider 达到首音频指标，完整回合和取消可用。
 
-### P5 双模式对比与发布
+### Streaming-P1-S5 双模式对比与发布
 
 完成 M12 全部门禁、Windows 设备矩阵和对比报告。
 
@@ -535,11 +539,11 @@ npm run verify:voice:release-ready
 | TTS 片段乱序完成 | 朗读顺序错误 | segment index、有序提交和缺段超时 |
 | 流式失败影响串行模式 | 丢失可靠降级路径 | 独立控制器、独立 Runtime、串行强制回归门禁 |
 | Provider 协议快速变化 | 维护成本和行为漂移 | Runtime 适配层、能力快照、契约测试 |
-| 把简单打断误认为全双工 | 产品承诺失真 | 第二阶段保持半双工；重叠理解另行立项 |
+| 把简单打断误认为全双工 | 产品承诺失真 | 流式路线保持半双工；重叠理解在全双工路线单独立项 |
 
 ## 10. 开发完成定义
 
-第二阶段只有同时满足以下条件才可标记完成：
+流式 P1 只有同时满足以下条件才可标记完成：
 
 - M1-M12 所有功能 ID 均有对应实现和自动化测试。
 - 串行模式的录音、整段 STT、审核、聊天、整段 TTS 和播放能力完全保留。

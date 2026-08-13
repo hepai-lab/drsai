@@ -29,7 +29,14 @@ function pendingInteraction(
   if (!snapshot) return null;
   for (let messageIndex = snapshot.messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = snapshot.messages[messageIndex];
-    const structuredParts = message.structuredTurn?.parts ?? [];
+    const structuredTurn = message.structuredTurn;
+    // A terminal structured turn is authoritative. A renderer can briefly
+    // retain an older pending interaction part while the terminal OAEP event
+    // and the catalog update cross process boundaries; that stale child must
+    // not keep the sidebar in an attention state after the Run completed.
+    const structuredParts = isPendingStatus(structuredTurn?.status)
+      ? structuredTurn?.parts ?? []
+      : [];
     for (let partIndex = structuredParts.length - 1; partIndex >= 0; partIndex -= 1) {
       const part = structuredParts[partIndex];
       if (part.kind !== "interaction" || !isPendingStatus(part.status) || part.response) continue;
@@ -44,8 +51,9 @@ function pendingInteraction(
 
 function snapshotIsRunning(snapshot?: DesktopThreadSnapshot): boolean {
   return Boolean(snapshot?.messages.some((message) =>
-    message.streaming
-    || isPendingStatus(message.structuredTurn?.status),
+    message.structuredTurn
+      ? isPendingStatus(message.structuredTurn.status)
+      : message.streaming,
   ));
 }
 

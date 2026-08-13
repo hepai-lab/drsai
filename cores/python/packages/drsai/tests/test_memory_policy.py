@@ -4,7 +4,9 @@ import pytest
 
 from drsai.backend.runtime.agent_kernel import (
     build_memory_policy,
+    build_tool_decision_requirement,
     normalize_memory_policy,
+    resolve_tool_decision,
     validate_memory_tool_call,
 )
 
@@ -28,6 +30,19 @@ def test_memory_policy_supports_chinese_save_and_separate_delete_intent() -> Non
     validate_memory_tool_call(delete, "memory", {"action": "remove", "old_text": "回答偏好"})
     with pytest.raises(ValueError, match="memory_explicit_intent_required"):
         validate_memory_tool_call(save, "memory", {"action": "remove", "old_text": "回答偏好"})
+
+
+@pytest.mark.parametrize("prompt", [
+    "记一下：我更喜欢简洁的中文回答。",
+    "帮我记一笔，我偏好深色主题",
+    "请保存这个偏好信息：回答时先给结论",
+])
+def test_memory_policy_accepts_explicit_colloquial_chinese_save_intent_three_times(prompt: str) -> None:
+    for _ in range(3):
+        policy = build_memory_policy(prompt)
+        assert policy["allowed_mutations"] == ["add", "replace"]
+        result = validate_memory_tool_call(policy, "save_memory", {"content": "用户明确表达了非敏感偏好"})
+        assert result is not None and result["authorized"] is True
 
 
 @pytest.mark.parametrize(
@@ -58,3 +73,15 @@ def test_disabled_and_tampered_memory_policies_fail_closed() -> None:
 def test_memory_search_is_read_only_and_needs_no_mutation_intent() -> None:
     result = validate_memory_tool_call(build_memory_policy("What are my preferences?"), "search_memory", {"query": "preference"})
     assert result is not None and result["operation"] == "read"
+
+
+@pytest.mark.parametrize("prompt", [
+    "What is my saved preference?",
+    "Please check my saved memory for answer style.",
+    "Use search_memory to find my preferred response format.",
+])
+def test_preference_recall_requires_and_accepts_memory_search(prompt: str) -> None:
+    requirement = build_tool_decision_requirement(prompt, ["search_memory"])
+    assert requirement["required_domains"] == ["memory"]
+    decision = resolve_tool_decision(requirement, ["search_memory"])
+    assert decision["category"] == "required_tool_selected"

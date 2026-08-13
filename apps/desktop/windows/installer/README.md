@@ -28,14 +28,19 @@ Installing OpenDrSai
 Finishing OpenDrSai installation
 ```
 
-During the download stage, the MSI updates its own progress bar and displays
-the current percentage, downloaded and total megabytes, and transfer speed in
-MB/s (or KB/s on slow links). The download is written to a `.partial` file and promoted to the runtime
-ZIP only after the transfer completes; size and SHA256 verification still run
-as separate installer stages.
+Every Runtime stage updates the MSI progress bar and the detail line from real
+work completed. Download reports transferred bytes and speed, verification
+reports bytes hashed, extraction reports uncompressed bytes written,
+installation reports bytes copied into activation candidates, and completion
+reports temporary files removed. The download is written to a `.partial` file
+and promoted to the Runtime ZIP only after the transfer completes.
 
-PowerShell is launched through a hidden Windows Script Host runner, so neither
-installation nor removal opens a Command Prompt or PowerShell window.
+The success page includes a `Launch OpenDrSai` checkbox, selected by default.
+OpenDrSai starts only after the user presses Finish and the MSI transaction has
+completed successfully.
+
+PowerShell stages run through hidden, non-impersonated MSI custom actions, so
+neither installation nor removal opens a Command Prompt or PowerShell window.
 
 `OpenDrSaiRuntime-win-x64.zip` is the large OpenDrSai Runtime. It contains the
 packaged Electron desktop app and a prepared `drsai-agent` Python environment.
@@ -114,19 +119,19 @@ point to a different asset and make an otherwise valid installer fail.
 Progress and failures are written to:
 
 ```text
-%USERPROFILE%\.drsai\logs\bootstrapper
+%PROGRAMDATA%\OpenDrSai\Installer\logs
 ```
 
 Completion is recorded in:
 
 ```text
-%LOCALAPPDATA%\Programs\OpenDrSai\install-state.json
+%PROGRAMFILES%\OpenDrSai\install-state.json
 ```
 
-The MSI is a limited, per-user installation and does not request elevation.
-Setup support files, the Electron application, the Python agent runtime, cache,
-and install state live under `%LOCALAPPDATA%\Programs\OpenDrSai`. Configuration,
-defaults, logs, credentials, and workspaces remain under `%USERPROFILE%\.drsai`.
+The MSI is an elevated, per-machine installation. Setup support files, the
+Electron application, Python agent runtime, cache, and install state live under
+`%PROGRAMFILES%\OpenDrSai`. Installer logs live under `%PROGRAMDATA%`; user
+configuration, credentials, and workspaces remain under `%USERPROFILE%\.drsai`.
 
 Windows Installer registers `OpenDrSai` in Apps & features and Control Panel.
 Uninstalling from either location removes the current user's installation and

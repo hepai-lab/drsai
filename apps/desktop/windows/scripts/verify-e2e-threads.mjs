@@ -1,13 +1,22 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+for (const key of ["NO_PROXY", "no_proxy"]) {
+  const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+  for (const host of ["127.0.0.1", "localhost"]) if (!entries.includes(host)) entries.push(host);
+  process.env[key] = entries.join(",");
+}
+
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const repoRoot = resolve(root, "..", "..", "..");
+const pythonSrc = join(repoRoot, "cores", "python", "packages", "drsai", "src");
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const port = Number(process.env.OPENDRSAI_E2E_THREADS_PORT || "18648");
+const oidcSigningSecret = createHash("sha256").update("opendrsai-e2e-threads:" + port).digest("hex");
 const baseUrl = `http://127.0.0.1:${port}`;
 const systemPath = [
   process.env.SystemRoot ? join(process.env.SystemRoot, "System32") : "C:\\Windows\\System32",
@@ -28,18 +37,24 @@ const appHome = join(tempDir, "drsai-home");
 const createResultPath = join(tempDir, "result-create.json");
 const listResultPath = join(tempDir, "result-list.json");
 const threadsJsonPath = join(appHome, "desktop", "threads.json");
+const workspacePath = join(tempDir, "workspace");
+const pythonUserProfile = join(tempDir, "python-user");
+const electronUserData = join(tempDir, "electron-user-data");
+const documentsPath = join(tempDir, "documents");
 mkdirSync(appHome, { recursive: true });
+mkdirSync(workspacePath, { recursive: true });
+mkdirSync(electronUserData, { recursive: true });
+mkdirSync(documentsPath, { recursive: true });
 
-const requests = [];
 let server = null;
 
 try {
   await assertPortFree();
   server = await startGateway();
+  await waitForGateway();
   await runPackagedApp({ appHome, resultPath: createResultPath, phase: "create" });
   const createResult = readResult(createResultPath, "create");
   assertCreatePhase(createResult);
-  assertGatewayRequests(requests, createResult.details.created.id);
   assertThreadsJson(createResult.details.created.id);
 
   await runPackagedApp({
@@ -52,8 +67,27 @@ try {
   assertListPhase(listResult, createResult.details.created.id);
   console.log("E2E threads passed with restart persistence and stable gateway thread_id.");
 } finally {
-  if (server) await new Promise((resolveClose) => server.close(resolveClose));
-  rmSync(tempDir, { recursive: true, force: true });
+  if (server?.pid) await stopProcessTree(server);
+  try {
+    await cleanupTempDir(tempDir);
+  } catch (cleanupError) {
+    process.stderr.write(`[cleanup] ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}; the release-level cleanup gate will retry after this process exits.\n`);
+  }
+}
+process.exit(0);
+
+async function cleanupTempDir(path) {
+  let lastError;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    }
+  }
+  throw lastError;
 }
 
 async function assertPortFree() {
@@ -66,38 +100,35 @@ async function assertPortFree() {
 }
 
 function startGateway() {
-  const serverInstance = createServer(async (req, res) => {
-    if (req.url === "/health") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok" }));
-      return;
-    }
-    if (req.url === "/v1/models") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ object: "list", data: [{ id: "drsai", object: "model" }] }));
-      return;
-    }
-    if (req.url === "/v1/chat/completions" && req.method === "POST") {
-      const body = await readJsonBody(req);
-      requests.push(body);
-      const content = body?.messages?.at(-1)?.content || "thread message";
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      });
-      res.write(`data: {"choices":[{"delta":{"content":"fake-thread: ${escapeJsonContent(content)}"},"index":0}]}\n\n`);
-      res.write("data: [DONE]\n\n");
-      res.end();
-      return;
-    }
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "fake gateway" }));
+  const python = resolvePython();
+  return spawn(python, ["-m", "drsai.backend.gateway"], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      DRSAI_API_HOST: "127.0.0.1",
+      DRSAI_API_PORT: String(port),
+      DRSAI_GATEWAY_FAKE_AGENT: "1",
+      OPENDRSAI_DESKTOP_RUNTIME: "1",
+      OPENDRSAI_OIDC_HS256_SECRET: oidcSigningSecret,
+      DRSAI_HOME: appHome,
+      USERPROFILE: pythonUserProfile,
+      PYTHONPATH: [pythonSrc, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
-  return new Promise((resolveListen, reject) => {
-    serverInstance.once("error", reject);
-    serverInstance.listen(port, "127.0.0.1", () => resolveListen(serverInstance));
-  });
+}
+
+async function waitForGateway() {
+  const deadline = Date.now() + 25_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(800) });
+      if (response.ok) return;
+    } catch {}
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
+  }
+  throw new Error("Runtime-backed threads gateway did not become ready.");
 }
 
 function assertCreatePhase(result) {
@@ -145,7 +176,7 @@ function assertThreadsJson(threadId) {
   const matches = threads.filter((thread) => thread.id === threadId);
   if (matches.length !== 1) throw new Error(`threads.json did not contain exactly one target thread:\n${JSON.stringify(threads, null, 2)}`);
   const thread = matches[0];
-  if (thread.lastRequestId !== "e2e-thread-run-0002" || thread.lastRunId !== "e2e-thread-run-0002" || thread.status !== "idle") {
+  if (thread.lastRequestId !== "e2e-thread-run-0002" || !String(thread.lastRunId || "").startsWith("run-") || thread.status !== "idle") {
     throw new Error(`threads.json target thread metadata is stale:\n${JSON.stringify(thread, null, 2)}`);
   }
 }
@@ -170,9 +201,15 @@ function runPackagedApp({ appHome, resultPath, phase, threadId }) {
         APPDATA: process.env.APPDATA,
         PATH: systemPath,
         DRSAI_HOME: appHome,
+        OPENDRSAI_ELECTRON_USER_DATA: electronUserData,
+        OPENDRSAI_E2E_DOCUMENTS_PATH: documentsPath,
         DRSAI_GATEWAY_DEV_MANAGED: "1",
         OPENDRSAI_GATEWAY_PORT: String(port),
         OPENDRSAI_DEV_AUTH_BYPASS: "1",
+        OPENDRSAI_E2E_OIDC_HS256_SECRET: oidcSigningSecret,
+        OPENDRSAI_OIDC_HS256_SECRET: oidcSigningSecret,
+        OPENDRSAI_E2E_AUTH_USER_ID: "8b7e7cba-8fb1-4bc5-a916-82b083bd5273",
+        OPENDRSAI_E2E_WORKSPACE_PATH: workspacePath,
         OPENDRSAI_E2E_THREADS: "1",
         OPENDRSAI_E2E_THREADS_PHASE: phase,
         ...(threadId ? { OPENDRSAI_E2E_THREADS_ID: threadId } : {}),
@@ -242,10 +279,31 @@ function escapeJsonContent(value) {
   return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+function resolvePython() {
+  const candidates = [process.env.OPENDRSAI_PYTHON, join(repoRoot, ".venv", "Scripts", "python.exe"), "python"].filter(Boolean);
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ["--version"], { stdio: "ignore", windowsHide: true });
+    if (probe.status === 0) return candidate;
+  }
+  throw new Error("Python is required for the Runtime-backed threads E2E.");
+}
+
 function killProcessTree(pid) {
   if (!pid) return;
   spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
     stdio: "ignore",
     windowsHide: true,
   });
+}
+
+async function stopProcessTree(child) {
+  if (!child?.pid) return;
+  const closed = child.exitCode !== null
+    ? Promise.resolve()
+    : new Promise((resolveClose) => child.once("close", resolveClose));
+  killProcessTree(child.pid);
+  await Promise.race([closed, new Promise((resolveTimeout) => setTimeout(resolveTimeout, 2000))]);
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.stdin?.destroy();
 }

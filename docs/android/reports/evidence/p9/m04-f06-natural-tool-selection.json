@@ -1,0 +1,4137 @@
+{
+  "behavior_attempts": 83,
+  "case_count": 30,
+  "cases": [
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "time.current",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "time.timezone",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "device.environment",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "device.network",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "memory.save_name",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 0,
+      "case_id": "memory.save_preference",
+      "failure_counts": {
+        "provider_error": 3
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "memory.find_name",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "memory.find_preference",
+      "failure_counts": {
+        "duplicate_tool_call": 3
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "workspace.list_root",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "workspace.list_docs",
+      "failure_counts": {
+        "duplicate_tool_call": 3,
+        "wrong_tool": 3
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 2,
+      "case_id": "workspace.read_readme",
+      "failure_counts": {
+        "duplicate_tool_call": 1,
+        "missing_required_tool": 2,
+        "provider_error": 1,
+        "wrong_tool": 2
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 2,
+      "case_id": "workspace.read_config",
+      "failure_counts": {
+        "duplicate_tool_call": 2,
+        "missing_required_tool": 2,
+        "provider_error": 1,
+        "wrong_tool": 2
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "workspace.find_settings",
+      "failure_counts": {
+        "duplicate_tool_call": 3,
+        "wrong_tool": 3
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "workspace.find_gradle",
+      "failure_counts": {
+        "duplicate_tool_call": 2,
+        "missing_required_tool": 1,
+        "wrong_tool": 3
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "workspace.create_note",
+      "failure_counts": {
+        "wrong_tool": 2
+      },
+      "gate_passed": false,
+      "passed": 1,
+      "success_rate": 0.3333333333333333,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 1,
+      "case_id": "workspace.change_endpoint",
+      "failure_counts": {
+        "provider_error": 2,
+        "wrong_tool": 1
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "text.count_words",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "text.count_lines",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "plan.create",
+      "failure_counts": {
+        "wrong_tool": 2
+      },
+      "gate_passed": false,
+      "passed": 1,
+      "success_rate": 0.3333333333333333,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "plan.update",
+      "failure_counts": {
+        "wrong_tool": 1
+      },
+      "gate_passed": true,
+      "passed": 2,
+      "success_rate": 0.6666666666666666,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "delegate.compare",
+      "failure_counts": {
+        "duplicate_tool_call": 2,
+        "missing_required_tool": 3,
+        "wrong_tool": 3
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "delegate.research",
+      "failure_counts": {
+        "duplicate_tool_call": 1,
+        "missing_required_tool": 1,
+        "wrong_tool": 2
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 0.66
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "none.greeting",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "none.explain",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "none.rewrite",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "none.translate",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "none.creative",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "none.opinion",
+      "failure_counts": {},
+      "gate_passed": true,
+      "passed": 3,
+      "success_rate": 1.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "unavailable.latest_news",
+      "failure_counts": {
+        "meaningless_tool_call": 3,
+        "wrong_tool": 3
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 1.0
+    },
+    {
+      "attempts": 3,
+      "behavior_attempts": 3,
+      "case_id": "unavailable.shell",
+      "failure_counts": {
+        "meaningless_tool_call": 3,
+        "wrong_tool": 3
+      },
+      "gate_passed": false,
+      "passed": 0,
+      "success_rate": 0.0,
+      "threshold": 1.0
+    }
+  ],
+  "environment": {
+    "abi": "arm64-v8a",
+    "api": 36,
+    "device_id_sha256": "c34be376889cae3969a48767a7b24c5bc0b838c23a266e48e28cfc2ee022f56c",
+    "kind": "physical_device",
+    "manufacturer": "samsung",
+    "model": "SM-X936C"
+  },
+  "feature_id": "M04-F06",
+  "generated_at": "2026-08-08T05:39:29.653995+00:00",
+  "instrumentation_failures": 0,
+  "instrumentation_tests": 1,
+  "minimum_success_rate": 0.85,
+  "passed": false,
+  "provenance": {
+    "app_apk": "OpenDrSai-Android-v1.5.6.apk",
+    "app_apk_sha256": "c462ce6820ed7c373690496458c0775591e66ae152ea41f38add8a287ad6b957",
+    "completed_at": "2026-08-08T05:39:29.653995+00:00",
+    "fixture": "cores/protocol/android-runtime/fixtures/p9-natural-tool-selection-v1.json",
+    "fixture_sha256": "8293ff518aa234790593dec25e835bfe323cceec2a35c955da1483b62e94aebe",
+    "reused_from_feature": "M09-F06",
+    "runner": "ai.drsai.remote.debug.test/androidx.test.runner.AndroidJUnitRunner",
+    "started_at": "2026-08-08T05:13:45.816001+00:00",
+    "test_apk": "app-debug-androidTest.apk",
+    "test_apk_sha256": "730556e3e1b0d7f9b0ae51d49910e9bbcdeb71e907e170084712e1b890845879",
+    "test_class": "ai.drsai.remote.P9NaturalToolSelectionInstrumentedTest"
+  },
+  "provider_errors": 7,
+  "raw_observations": [
+    {
+      "attempt": 1,
+      "case_id": "time.current",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_bujAi8ItiBckuOscDPPV8999",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "time.current",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_uqDAC8LQtVk7VgjtNyt38629",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "time.current",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_z5PiqgiHKRgds4S0a7Y93093",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "time.timezone",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_NBlhFXHLRRjYRGE5L5qh9313",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "time.timezone",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_a99a46e4ac274c8da5cd0a35",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "time.timezone",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_cbe0bedfd916441dbaba46fc",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "device.environment",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_704j0Jo1ma4kejStO9gl7658",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        }
+      ],
+      "selected_tools": [
+        "get_device_info"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "device.environment",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_WziJc9DHnazzXnNiYplO0719",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        }
+      ],
+      "selected_tools": [
+        "get_device_info"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "device.environment",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_e5fac689d8a54aa7b2d20d77",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        }
+      ],
+      "selected_tools": [
+        "get_device_info"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "device.network",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_5496d76abd204e8eabff735f",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        }
+      ],
+      "selected_tools": [
+        "get_device_info"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "device.network",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_vl7J50TSJgiDpo68FrFf4257",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        }
+      ],
+      "selected_tools": [
+        "get_device_info"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "device.network",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_tPRtnJ67rFpyJEHFcUu18572",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        }
+      ],
+      "selected_tools": [
+        "get_device_info"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "memory.save_name",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "content": "用户希望以后被称呼为\"小林\"。",
+            "label": "preference"
+          },
+          "call_id": "call_2359f710e229403b9766a1b5",
+          "name": "save_memory",
+          "requires_approval": false,
+          "risk": "local_write",
+          "summary": "Allow save_memory to run on this device",
+          "title": "Save an app-private user memory"
+        }
+      ],
+      "selected_tools": [
+        "save_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "memory.save_name",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "content": "用户希望以后被称呼为\"小林\"。",
+            "label": "preference"
+          },
+          "call_id": "call_00_8tq0EKEmp1tQCGVVs4eG4506",
+          "name": "save_memory",
+          "requires_approval": false,
+          "risk": "local_write",
+          "summary": "Allow save_memory to run on this device",
+          "title": "Save an app-private user memory"
+        }
+      ],
+      "selected_tools": [
+        "save_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "memory.save_name",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "content": "用户希望以后被称呼为\"小林\"。",
+            "label": "preference"
+          },
+          "call_id": "call_de60b6b6bd2d4b3ca6baa98b",
+          "name": "save_memory",
+          "requires_approval": false,
+          "risk": "local_write",
+          "summary": "Allow save_memory to run on this device",
+          "title": "Save an app-private user memory"
+        }
+      ],
+      "selected_tools": [
+        "save_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "memory.save_preference",
+      "error_detail": "python_runtime_unavailable:model_completed:python_runtime_failed:ValueError: memory_explicit_intent_required",
+      "provider_error": "runtime_IllegalStateException",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "content": "用户更喜欢简洁的中文回答。",
+            "label": "preference"
+          },
+          "call_id": "call_9fec0b04b735420d81c9a140",
+          "name": "save_memory",
+          "requires_approval": false,
+          "risk": "local_write",
+          "summary": "Allow save_memory to run on this device",
+          "title": "Save an app-private user memory"
+        }
+      ],
+      "selected_tools": [
+        "save_memory"
+      ],
+      "terminal": "unknown"
+    },
+    {
+      "attempt": 2,
+      "case_id": "memory.save_preference",
+      "error_detail": "python_runtime_unavailable:model_completed:python_runtime_failed:ValueError: memory_explicit_intent_required",
+      "provider_error": "runtime_IllegalStateException",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "content": "用户更喜欢简洁的中文回答。",
+            "label": "preference"
+          },
+          "call_id": "call_d6959c1a890045ecbbe23750",
+          "name": "save_memory",
+          "requires_approval": false,
+          "risk": "local_write",
+          "summary": "Allow save_memory to run on this device",
+          "title": "Save an app-private user memory"
+        }
+      ],
+      "selected_tools": [
+        "save_memory"
+      ],
+      "terminal": "unknown"
+    },
+    {
+      "attempt": 3,
+      "case_id": "memory.save_preference",
+      "error_detail": "python_runtime_unavailable:model_completed:python_runtime_failed:ValueError: memory_explicit_intent_required",
+      "provider_error": "runtime_IllegalStateException",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "content": "用户更喜欢简洁的中文回答",
+            "label": "preference"
+          },
+          "call_id": "call_00_Y8eO7zTDuMv1n6cX5nla7887",
+          "name": "save_memory",
+          "requires_approval": false,
+          "risk": "local_write",
+          "summary": "Allow save_memory to run on this device",
+          "title": "Save an app-private user memory"
+        }
+      ],
+      "selected_tools": [
+        "save_memory"
+      ],
+      "terminal": "unknown"
+    },
+    {
+      "attempt": 1,
+      "case_id": "memory.find_name",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "query": "称呼 叫法 叫我什么"
+          },
+          "call_id": "call_84b3f22f10394c42b9e711ca",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        }
+      ],
+      "selected_tools": [
+        "search_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "memory.find_name",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "query": "称呼 怎么称呼 名字 如何称呼我"
+          },
+          "call_id": "call_00_Z9N2u7xpjnF7WtUJTti08862",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        }
+      ],
+      "selected_tools": [
+        "search_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "memory.find_name",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "query": "称呼 称谓 叫法"
+          },
+          "call_id": "call_30a66e00eb91484c8e7295e8",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        }
+      ],
+      "selected_tools": [
+        "search_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "memory.find_preference",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "query": "回答风格"
+          },
+          "call_id": "call_00_KEsjD0ceMPzaOWxd9Oov5463",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "回答 风格 偏好"
+          },
+          "call_id": "call_01_IhP9iaROc4boBJ6eexwU1050",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "风格"
+          },
+          "call_id": "call_0acdeda334474ed1b590bddd",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "回答"
+          },
+          "call_id": "call_84646f2d3b154d1bb8d7bcb2",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "语气 表达 方式"
+          },
+          "call_id": "call_2041345906b44d03aec3bb3e",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "语言 简洁 详细 专业"
+          },
+          "call_id": "call_00_aFhZPKIesqeEMbQUW8LN2858",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "preference style"
+          },
+          "call_id": "call_01_SOqN36qLhJVEAxmzNiIS7440",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        }
+      ],
+      "selected_tools": [
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "memory.find_preference",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "limit": 10,
+            "query": "回答风格 偏好 风格 answer style"
+          },
+          "call_id": "call_00_hCKFskpQICO2WND09pRH0133",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "limit": 10,
+            "query": "风格"
+          },
+          "call_id": "call_f2616e7692cb47a780241694",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "limit": 10,
+            "query": "回答"
+          },
+          "call_id": "call_a65a4a681ab04d1788353724",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "limit": 10,
+            "query": "preference"
+          },
+          "call_id": "call_27ebea511b1b4cfcb41ac125",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "limit": 10,
+            "query": "用户"
+          },
+          "call_id": "call_00_tyth3BKKQLxMKlTOOCVH0127",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "limit": 10,
+            "query": "style tone format"
+          },
+          "call_id": "call_01_McLJi1iZpZM9yylw661D0425",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        }
+      ],
+      "selected_tools": [
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "memory.find_preference",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "query": "回答风格"
+          },
+          "call_id": "call_561e8a1d4a994f1d82002147",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "回答风格answering style"
+          },
+          "call_id": "call_bc78e4c2b11c477a9063e3bb",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "风格 tone style 语气"
+          },
+          "call_id": "call_00_8qxbnZ37nQT3YiTtwk7O2244",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "preference 偏好 习惯"
+          },
+          "call_id": "call_01_vPwDDtkQDdbinE7vDbMC0713",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "回答"
+          },
+          "call_id": "call_00_ZTrDPQPsjMIoG8FxZlyZ9469",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "偏好"
+          },
+          "call_id": "call_01_BQvNQKrLSWKzo1PA03wX4284",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        }
+      ],
+      "selected_tools": [
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory",
+        "search_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "workspace.list_root",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_00_SfIuKpHODJvMFDuoieOP1126",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "workspace.list_root",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_00_85eqHDkDuSrsdHGxNOYc0473",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "workspace.list_root",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_db31cddb168d468e9780e36d",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "workspace.list_docs",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_00_yB6nBT3CKdhho0xZfvKB0106",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "docs/**"
+          },
+          "call_id": "call_8163ea081d9b4243aa14e57b",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/docs/**"
+          },
+          "call_id": "call_2b89aa8acec04f82a58873c4",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "*"
+          },
+          "call_id": "call_00_4dIIHx6mlS5BvBNtzePT3204",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "docs"
+          },
+          "call_id": "call_01_qHviSThd1vPgoVu490Ke7836",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_00_EixXvcf1SZoqI5PiUgXh0103",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*"
+          },
+          "call_id": "call_01_qipU5NdjRSSO2DhOrmZh1032",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "/"
+          },
+          "call_id": "call_301f305871664d308cceebcb",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_3fcbe43542974293a9fdbaf8",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        },
+        {
+          "arguments": {
+            "path": ".",
+            "pattern": "*"
+          },
+          "call_id": "call_00_YRJg7KWy07kstCBrQYV56287",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*.*"
+          },
+          "call_id": "call_01_pjg2clxLGKlL3dC76x6C1350",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "."
+          },
+          "call_id": "call_02_ecx3wmyxzbl1gycmNm239237",
+          "name": "workspace.grep",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.grep to run on this device",
+          "title": "Search file contents inside the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.search",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.list",
+        "get_device_info",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.grep"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "workspace.list_docs",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_00_WPjf3JovoqMQNjAEX8493937",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "docs"
+          },
+          "call_id": "call_2685c00af3ec48e2bae599d5",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*"
+          },
+          "call_id": "call_27ab2a97a43d487e9886061a",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "docs"
+          },
+          "call_id": "call_00_hUS8EBwaThJQzslSyaxH1682",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "*"
+          },
+          "call_id": "call_00_nBo1tkWfVDISsvOTa9qB1005",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "docs/**"
+          },
+          "call_id": "call_01_vVXq304vJIdWhHgbhzFb3698",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.search",
+        "workspace.glob",
+        "workspace.glob"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "workspace.list_docs",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_00_ScAOooXr0IEw0N7QeT1A5488",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/docs/**"
+          },
+          "call_id": "call_75d66f2f1e8348d4b9bb13c9",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/docs*"
+          },
+          "call_id": "call_cb7ca927f43547b1805881cc",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "docs"
+          },
+          "call_id": "call_00_OYT2idQQ37UTd4KSS5Fs1818",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "",
+            "pattern": "."
+          },
+          "call_id": "call_01_kGLP62T2QdQaM7sujnQU7363",
+          "name": "workspace.grep",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.grep to run on this device",
+          "title": "Search file contents inside the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.search",
+        "workspace.grep"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "workspace.read_readme",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "pattern": "**/README.md"
+          },
+          "call_id": "call_988d665de17044fa98a53253",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_ae076fd597ab4fdf935fdcaa",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.glob",
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "workspace.read_readme",
+      "error_detail": "python_runtime_unavailable:tool_result:python_runtime_failed:ValueError: context_active_chain_budget_overflow",
+      "provider_error": "runtime_IllegalStateException",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_00_ifSzrnJEUw1cVgvi9gOn8598",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "README.md"
+          },
+          "call_id": "call_01_6d8HHGB5LecQ7fTGzTVs8464",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_e5a9efdd1639463d9b7c7921",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*"
+          },
+          "call_id": "call_d284f87a61544cc59858d32a",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "README"
+          },
+          "call_id": "call_a4bcac777142437bb1177e70",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/README*"
+          },
+          "call_id": "call_c20bb72af8a640608e1948b9",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "*"
+          },
+          "call_id": "call_00_iFOtABTcE0JZBjQEbZ5A9140",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "."
+          },
+          "call_id": "call_01_TfgTM8RiPVay9nf6mjVA9495",
+          "name": "workspace.grep",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.grep to run on this device",
+          "title": "Search file contents inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "/"
+          },
+          "call_id": "call_00_z1ew390XODlPqapwNFAm9565",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "/",
+            "pattern": "**/README.md"
+          },
+          "call_id": "call_01_em8xRcVy5PNca3ooSJ1i1483",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "/storage/emulated/0"
+          },
+          "call_id": "call_00_ET_YLAGQldbawc5ehrS7x3H8657",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "/storage/emulated/0",
+            "pattern": "**/README.md"
+          },
+          "call_id": "call_01_ET_J9Od9T6uw5qCY0BbCfzb5522",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*.md"
+          },
+          "call_id": "call_00_fkAy9FaIf9rw89hlRNW32963",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*.*"
+          },
+          "call_id": "call_01_7NcAg2iveGijL3Eh7IjS5366",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.glob",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.search",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.grep",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.glob"
+      ],
+      "terminal": "unknown"
+    },
+    {
+      "attempt": 3,
+      "case_id": "workspace.read_readme",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_00_akCdinZmh93U6fK7pbu03337",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/README.md"
+          },
+          "call_id": "call_01_HmV4dWsyulKzlrltRU0P5888",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_cab1f92b1b0d4657b93f8e25",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*"
+          },
+          "call_id": "call_6b7bf7a222734f4da6774be0",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "."
+          },
+          "call_id": "call_e3ab370f87804368b175b90b",
+          "name": "workspace.grep",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.grep to run on this device",
+          "title": "Search file contents inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "*"
+          },
+          "call_id": "call_21e3952ef2dd4572ab9529be",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.glob",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.grep",
+        "workspace.glob"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "workspace.read_config",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_51839524a1494e818cbd26d2",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/settings.json"
+          },
+          "call_id": "call_eca1a9cecc17437abc49190a",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "settings.json"
+          },
+          "call_id": "call_f1ed793b060449bdb096ff45",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_45c8287ca48f4b01afe72659",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*.json"
+          },
+          "call_id": "call_48a11aea9a4d42e7ada572ea",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_5c0190ded3a7489185c2644f",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        },
+        {
+          "arguments": {
+            "query": "settings.json project workspace environment"
+          },
+          "call_id": "call_99994c9400c843228779cce5",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.glob",
+        "workspace.search",
+        "workspace.list",
+        "workspace.glob",
+        "get_device_info",
+        "search_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "workspace.read_config",
+      "error_detail": "python_runtime_unavailable:tool_result:python_runtime_failed:ValueError: context_active_chain_budget_overflow",
+      "provider_error": "runtime_IllegalStateException",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_00_tUl2ROflbvKgaJeK3mWH6569",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/settings.json"
+          },
+          "call_id": "call_01_SlMg7aHij2occ9Jwe0dk4315",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*.json"
+          },
+          "call_id": "call_bb69c69edd864cb6aa808fa2",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "settings"
+          },
+          "call_id": "call_32f1955b3ba341f390471665",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_00_Q16LdX9ZFn4sDEYBSDmb7853",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_1f09e1ffd92e46c2a6f70ef9",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        },
+        {
+          "arguments": {
+            "query": "settings.json 项目 环境"
+          },
+          "call_id": "call_fc0dddd78e194418b739fcd0",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*"
+          },
+          "call_id": "call_e46748818b2242fb8d006cf1",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "*"
+          },
+          "call_id": "call_c5e35cc0c73a457a82c64d06",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/settings*"
+          },
+          "call_id": "call_00_mSHbAHUlbn44NE3tuLAE0156",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": ".*"
+          },
+          "call_id": "call_01_fR04w3AjGtw2qpwGmoYF9574",
+          "name": "workspace.grep",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.grep to run on this device",
+          "title": "Search file contents inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "/"
+          },
+          "call_id": "call_fca7b47f89b1481397715ed3",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "workspace"
+          },
+          "call_id": "call_681c7991c49c449093385c5a",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.search",
+        "workspace.list",
+        "get_device_info",
+        "search_memory",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.grep",
+        "workspace.list",
+        "workspace.list"
+      ],
+      "terminal": "unknown"
+    },
+    {
+      "attempt": 3,
+      "case_id": "workspace.read_config",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_a6bb2672cf0b46329e4d596b",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/settings.json"
+          },
+          "call_id": "call_8435b34de4df4ccea3250a9d",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_0d01e95ca8ae4fddad924cb7",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*.json"
+          },
+          "call_id": "call_d565345117b440ec904a1748",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "settings.json"
+          },
+          "call_id": "call_00_K6t7UryVIHBVn5n8NeDI0046",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "settings"
+          },
+          "call_id": "call_01_KXA4IvpHF7PuK8zE4VqM2242",
+          "name": "workspace.grep",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.grep to run on this device",
+          "title": "Search file contents inside the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.glob",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.search",
+        "workspace.grep"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "workspace.find_settings",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "pattern": "**/*settings*"
+          },
+          "call_id": "call_00_x5Hd1f0ACKef6FYkDzvA1377",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "settings"
+          },
+          "call_id": "call_01_Lg2uvolz0scmbLz8ewMb4590",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_00_9IzSaLMQgownbgRZRpNK9427",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_00_oUkKemPUW0CjH6MrBKCb7641",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "*"
+          },
+          "call_id": "call_01_Qd8B0xj2aBDBMD5wfoOG0128",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*"
+          },
+          "call_id": "call_00_tPvT4NGbMWtTgRMSRsRV1461",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "*.*"
+          },
+          "call_id": "call_01_37Oj6LfwZArhhmelZfxe0592",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "setting"
+          },
+          "call_id": "call_02_CJ7KPaCekqFYnTJp2UKr5769",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.glob",
+        "workspace.search",
+        "workspace.list",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.search"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "workspace.find_settings",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "limit": 250,
+            "pattern": "*settings*"
+          },
+          "call_id": "call_00_goQavpfeKAlqE7VfDurl8185",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "settings"
+          },
+          "call_id": "call_01_xbvvsWhIu4nG4HUiYODK6376",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "limit": 250,
+            "pattern": "**/*settings*"
+          },
+          "call_id": "call_00_rsGxp0ZgazjVxnWWv1CI7051",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "limit": 250,
+            "pattern": "**/*settings*.*"
+          },
+          "call_id": "call_01_7F0O7sSVwgkg49uThQOj8620",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "limit": 100,
+            "pattern": "**/*"
+          },
+          "call_id": "call_94aaef207f674954bb07f499",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_e1627d1d55224a91b5217f93",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "/"
+          },
+          "call_id": "call_591cb87db38a42f3aad16606",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_00_6trgNXuR225VvItOt8vF2046",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "./"
+          },
+          "call_id": "call_01_mEnwSW1IPeUlAMrkPo6n7880",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.glob",
+        "workspace.search",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.list",
+        "workspace.list",
+        "workspace.list",
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "workspace.find_settings",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "pattern": "**/*settings*"
+          },
+          "call_id": "call_00_kV62NPl4N6Zw4KHQijFe7320",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "settings"
+          },
+          "call_id": "call_01_k6vDymxwzepr2T725Jhp6687",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_79e47d524a834955b6a5258b",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_00_A9HyWWqPKweXdLkXKzxh9192",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.glob",
+        "workspace.search",
+        "workspace.list",
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "workspace.find_gradle",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "pattern": "**/*gradle*"
+          },
+          "call_id": "call_00_geYflyp3pFQeunDCZ3ew2332",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "gradle"
+          },
+          "call_id": "call_01_sDB2USFut9nkbZIzOaza7698",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_00_ZENnsvaIVAfBr3oE9Hai9452",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.glob",
+        "workspace.search",
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "workspace.find_gradle",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "pattern": "**/*gradle*"
+          },
+          "call_id": "call_d4225da6c17b4406ab205669",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_65b1f7e576dc4213b487d28f",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": ".",
+            "pattern": "**/*gradle*"
+          },
+          "call_id": "call_ccdcc31bf3d64ec8bc8df5e5",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "*gradle*"
+          },
+          "call_id": "call_4a898f6e71dd4046bc39f960",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "gradle"
+          },
+          "call_id": "call_ee04a9cdbb4c4f5ea7910d9e",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_0340215ab7344c6f8e1b613b",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "limit": 250,
+            "pattern": "**/*"
+          },
+          "call_id": "call_73c2c65420804e00bd8e3646",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*.gradle*"
+          },
+          "call_id": "call_00_WlHqfXMJXzQnWmJEK7LR6803",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "*.*"
+          },
+          "call_id": "call_01_N2qUAwYGpLg243HgWIFN7100",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "gradle"
+          },
+          "call_id": "call_02_ZbjJeWn05V1m9JPa5QKA6108",
+          "name": "workspace.grep",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.grep to run on this device",
+          "title": "Search file contents inside the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.glob",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.search",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.grep"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "workspace.find_gradle",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "pattern": "**/*gradle*"
+          },
+          "call_id": "call_0416937822f1498f9025f619",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*Gradle*"
+          },
+          "call_id": "call_a1f6ef9377c94407968d70bb",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_00_DBw6ABIYtzu9JUZN8E4d3398",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "/"
+          },
+          "call_id": "call_8dd017a3e4bb4ec0b827c233",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.list",
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "workspace.create_note",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_44efdd25ff804c73928304cf",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "content": "完成运行时检查",
+            "path": "notes/today.txt"
+          },
+          "call_id": "call_47cddaaf876a49ac93782b4c",
+          "name": "workspace.write",
+          "oaep_output_type": "file_change",
+          "requires_approval": true,
+          "risk": "external_write",
+          "summary": "Allow workspace.write to run on this device",
+          "title": "Write a file in the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.write"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "workspace.create_note",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "content": "完成运行时检查",
+            "path": "notes/today.txt"
+          },
+          "call_id": "call_024bc1deec504026aa4a059e",
+          "name": "workspace.write",
+          "oaep_output_type": "file_change",
+          "requires_approval": true,
+          "risk": "external_write",
+          "summary": "Allow workspace.write to run on this device",
+          "title": "Write a file in the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.write"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "workspace.create_note",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_e90f2778f7cc4f0694cb3f90",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "content": "完成运行时检查",
+            "path": "notes/today.txt"
+          },
+          "call_id": "call_7d9875f8fbe2486b89776ad6",
+          "name": "workspace.write",
+          "oaep_output_type": "file_change",
+          "requires_approval": true,
+          "risk": "external_write",
+          "summary": "Allow workspace.write to run on this device",
+          "title": "Write a file in the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.write"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "workspace.change_endpoint",
+      "error_detail": "python_runtime_unavailable:tool_result:python_runtime_failed:ValueError: context_active_chain_budget_overflow",
+      "provider_error": "runtime_IllegalStateException",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": "config"
+          },
+          "call_id": "call_00_JxOSUPiGPYKJ2nJ2UiuM8861",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "config/test.txt"
+          },
+          "call_id": "call_01_eCEIgvIq7YuzTuHvUUbt7408",
+          "name": "workspace.read",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.read to run on this device",
+          "title": "Read a text file in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "content": "https://test.example",
+            "path": "config/test.txt"
+          },
+          "call_id": "call_00_NWJScuJqd8ptWvsghkS37060",
+          "name": "workspace.write",
+          "oaep_output_type": "file_change",
+          "requires_approval": true,
+          "risk": "external_write",
+          "summary": "Allow workspace.write to run on this device",
+          "title": "Write a file in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "config/test.txt"
+          },
+          "call_id": "call_00_PxmNEapxu5lBUYahy2u13542",
+          "name": "workspace.read",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.read to run on this device",
+          "title": "Read a text file in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "config/test.txt"
+          },
+          "call_id": "call_612463c5c7d84e38b8c1ce55",
+          "name": "workspace.read",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.read to run on this device",
+          "title": "Read a text file in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*"
+          },
+          "call_id": "call_00_dyEMXyXaIVBLXfkYCbz16266",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_01_aQev7maFKFyk5PF3BgP39349",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "test"
+          },
+          "call_id": "call_00_XSSgtvVm62ZNanC6RlYg1382",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "test.txt"
+          },
+          "call_id": "call_01_5VKsUuaCwj7TeKMDTcBh5419",
+          "name": "workspace.read",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.read to run on this device",
+          "title": "Read a text file in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "https"
+          },
+          "call_id": "call_00_ET_Mp9w2fStrxWauTvQaRzI0464",
+          "name": "workspace.grep",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.grep to run on this device",
+          "title": "Search file contents inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "config"
+          },
+          "call_id": "call_01_ET_xmBPnmPEL6UP4PVUtCs82457",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "workspace.read",
+        "workspace.write",
+        "workspace.read",
+        "workspace.read",
+        "workspace.glob",
+        "workspace.list",
+        "workspace.search",
+        "workspace.read",
+        "workspace.grep",
+        "workspace.list"
+      ],
+      "terminal": "unknown"
+    },
+    {
+      "attempt": 2,
+      "case_id": "workspace.change_endpoint",
+      "error_detail": "{\"citation_sha256\":\"374023e90abc91aa4f71cc700f7aedf647a02f888f9a965f2cd1247f6b0df79c\",\"code\":\"citation_evidence_invalid\",\"kind\":\"run.failed\",\"retryable\":true}",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": "config/test.txt"
+          },
+          "call_id": "call_00_aaysndumRR8hNF0OJDcl4763",
+          "name": "workspace.read",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.read to run on this device",
+          "title": "Read a text file in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "content": "https://test.example",
+            "path": "config/test.txt"
+          },
+          "call_id": "call_00_ET_JKcA7EojOcS4Fo8Nxaf46652",
+          "name": "workspace.write",
+          "oaep_output_type": "file_change",
+          "requires_approval": true,
+          "risk": "external_write",
+          "summary": "Allow workspace.write to run on this device",
+          "title": "Write a file in the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.read",
+        "workspace.write"
+      ],
+      "terminal": "run.failed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "workspace.change_endpoint",
+      "error_detail": "python_runtime_unavailable:tool_result:python_runtime_failed:ValueError: context_active_chain_budget_overflow",
+      "provider_error": "runtime_IllegalStateException",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "pattern": "config/test.txt"
+          },
+          "call_id": "call_6bf476ecd7d24d1ea8150065",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_00_7kSwAAWExgQ6eFqdxHiv9939",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/test.txt"
+          },
+          "call_id": "call_e7a76000251c4f889a7b0d60",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*"
+          },
+          "call_id": "call_d92f2bfdd1014f8990795d89",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "config"
+          },
+          "call_id": "call_8fd31110576640f9b8ca41cb",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_fd3372d5dc1a4d1aa497f573",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "config/test.txt"
+          },
+          "call_id": "call_00_LVW2juUr9mTPSfnotnlR3295",
+          "name": "workspace.read",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.read to run on this device",
+          "title": "Read a text file in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "test.txt"
+          },
+          "call_id": "call_01_SnNtH3uWQ2M0IR1Mig3t7335",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "content": "https://test.example",
+            "path": "config/test.txt"
+          },
+          "call_id": "call_00_x99AKvmMgZqj8w3CIcIZ4790",
+          "name": "workspace.write",
+          "oaep_output_type": "file_change",
+          "requires_approval": true,
+          "risk": "external_write",
+          "summary": "Allow workspace.write to run on this device",
+          "title": "Write a file in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "path": "config/test.txt"
+          },
+          "call_id": "call_00_ET_hHgDjmQdWbF8UU8nWUnh3297",
+          "name": "workspace.read",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.read to run on this device",
+          "title": "Read a text file in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "content": "https://test.example",
+            "path": "config/test.txt"
+          },
+          "call_id": "call_00_VbhE5LzmfJQMU0mBdMtD6909",
+          "name": "workspace.write",
+          "oaep_output_type": "file_change",
+          "requires_approval": true,
+          "risk": "external_write",
+          "summary": "Allow workspace.write to run on this device",
+          "title": "Write a file in the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.glob",
+        "workspace.list",
+        "workspace.glob",
+        "workspace.glob",
+        "workspace.list",
+        "workspace.list",
+        "workspace.read",
+        "workspace.search",
+        "workspace.write",
+        "workspace.read",
+        "workspace.write"
+      ],
+      "terminal": "unknown"
+    },
+    {
+      "attempt": 1,
+      "case_id": "text.count_words",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "text": "hello world\nOpenDrSai"
+          },
+          "call_id": "call_a36a8b7ad5594fe9a64e88fc",
+          "name": "core.text_stats",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.text_stats to run inside the shared Core",
+          "title": "Count characters, words, and lines in text inside the shared Python Core"
+        }
+      ],
+      "selected_tools": [
+        "core.text_stats"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "text.count_words",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "text": "hello world\nOpenDrSai"
+          },
+          "call_id": "call_00_aKhILaR6ehcVHW2ccCFx9444",
+          "name": "core.text_stats",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.text_stats to run inside the shared Core",
+          "title": "Count characters, words, and lines in text inside the shared Python Core"
+        }
+      ],
+      "selected_tools": [
+        "core.text_stats"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "text.count_words",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "text": "hello world\nOpenDrSai"
+          },
+          "call_id": "call_71ac7c13c7bc45e2a0e654b9",
+          "name": "core.text_stats",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.text_stats to run inside the shared Core",
+          "title": "Count characters, words, and lines in text inside the shared Python Core"
+        }
+      ],
+      "selected_tools": [
+        "core.text_stats"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "text.count_lines",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "text": "a\nbb\nccc"
+          },
+          "call_id": "call_97280409b07d42c884c80e40",
+          "name": "core.text_stats",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.text_stats to run inside the shared Core",
+          "title": "Count characters, words, and lines in text inside the shared Python Core"
+        }
+      ],
+      "selected_tools": [
+        "core.text_stats"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "text.count_lines",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "text": "a\nbb\nccc"
+          },
+          "call_id": "call_00_XrrYcRTbGmClTQiB3srE8743",
+          "name": "core.text_stats",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.text_stats to run inside the shared Core",
+          "title": "Count characters, words, and lines in text inside the shared Python Core"
+        }
+      ],
+      "selected_tools": [
+        "core.text_stats"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "text.count_lines",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "text": "a\nbb\nccc"
+          },
+          "call_id": "call_00_usnriCwZarvB9jovFWaO7325",
+          "name": "core.text_stats",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.text_stats to run inside the shared Core",
+          "title": "Count characters, words, and lines in text inside the shared Python Core"
+        }
+      ],
+      "selected_tools": [
+        "core.text_stats"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "plan.create",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_uXHIQipbWcs5lf3mk9d42378",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_01_Yi3yzITKDGnigIpzJUbW3208",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        },
+        {
+          "arguments": {
+            "expected_version": 0,
+            "explanation": "为\"检查项目、修复问题、运行测试\"建立三步执行计划，当前工作区为空，先标记所有步骤为待处理。",
+            "steps": [
+              {
+                "id": "1",
+                "status": "pending",
+                "title": "检查项目：审查代码结构、配置与潜在问题"
+              },
+              {
+                "id": "2",
+                "status": "pending",
+                "title": "修复问题：根据检查结果修复缺陷与异常"
+              },
+              {
+                "id": "3",
+                "status": "pending",
+                "title": "运行测试：执行测试并验证修复结果"
+              }
+            ]
+          },
+          "call_id": "call_a392ea06cc43448c99e89da7",
+          "name": "core.update_plan",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.update_plan to run inside the shared Core",
+          "title": "Publish a concise structured execution plan and update step statuses"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "get_current_time",
+        "core.update_plan"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "plan.create",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_EzlHwpiRQFJpSieiVDwD1397",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_01_bEAD7fI63sBbozuVcQwl5356",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        },
+        {
+          "arguments": {
+            "expected_version": 0,
+            "explanation": "按“检查项目 → 修复问题 → 运行测试”建立三步执行计划",
+            "steps": [
+              {
+                "id": "step1",
+                "status": "in_progress",
+                "title": "检查项目：审查项目结构、文件内容与配置，定位问题"
+              },
+              {
+                "id": "step2",
+                "status": "pending",
+                "title": "修复问题：针对检查发现的问题逐项修复"
+              },
+              {
+                "id": "step3",
+                "status": "pending",
+                "title": "运行测试：执行测试并验证修复结果"
+              }
+            ]
+          },
+          "call_id": "call_00_2KO0zln7AMEgMCZLs8a54618",
+          "name": "core.update_plan",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.update_plan to run inside the shared Core",
+          "title": "Publish a concise structured execution plan and update step statuses"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "get_current_time",
+        "core.update_plan"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "plan.create",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "expected_version": 0,
+            "explanation": "为“检查项目、修复问题、运行测试”建立三步执行计划，各步骤初始状态为待执行。",
+            "steps": [
+              {
+                "id": "inspect",
+                "status": "pending",
+                "title": "检查项目"
+              },
+              {
+                "id": "fix",
+                "status": "pending",
+                "title": "修复问题"
+              },
+              {
+                "id": "test",
+                "status": "pending",
+                "title": "运行测试"
+              }
+            ]
+          },
+          "call_id": "call_1f5fcf6796a74da7b7822e4e",
+          "name": "core.update_plan",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.update_plan to run inside the shared Core",
+          "title": "Publish a concise structured execution plan and update step statuses"
+        }
+      ],
+      "selected_tools": [
+        "core.update_plan"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "plan.update",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "expected_version": 0,
+            "explanation": "根据用户提供的进度信息建立执行计划：资料收集已完成，方案比较正在进行，输出报告尚未开始。",
+            "steps": [
+              {
+                "id": "collect",
+                "status": "completed",
+                "title": "资料收集"
+              },
+              {
+                "id": "compare",
+                "status": "in_progress",
+                "title": "方案比较"
+              },
+              {
+                "id": "report",
+                "status": "pending",
+                "title": "输出报告"
+              }
+            ]
+          },
+          "call_id": "call_00_1axTkwqECNRu7Zd0sCsR8452",
+          "name": "core.update_plan",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.update_plan to run inside the shared Core",
+          "title": "Publish a concise structured execution plan and update step statuses"
+        }
+      ],
+      "selected_tools": [
+        "core.update_plan"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "plan.update",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "expected_version": 0,
+            "explanation": "按用户要求建立初始执行计划，并同步当前各阶段状态",
+            "steps": [
+              {
+                "id": "collect",
+                "status": "completed",
+                "title": "资料收集"
+              },
+              {
+                "id": "compare",
+                "status": "in_progress",
+                "title": "方案比较"
+              },
+              {
+                "id": "report",
+                "status": "pending",
+                "title": "输出报告"
+              }
+            ]
+          },
+          "call_id": "call_00_JPz5PdIeodLei5R9PjUm7642",
+          "name": "core.update_plan",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.update_plan to run inside the shared Core",
+          "title": "Publish a concise structured execution plan and update step statuses"
+        }
+      ],
+      "selected_tools": [
+        "core.update_plan"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "plan.update",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_RKB37g3JA7poD4fxmj1x6388",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_01_DPSA3T4fv7Hva5ctH4cZ5203",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        },
+        {
+          "arguments": {
+            "expected_version": 0,
+            "explanation": "根据用户提供的项目进度创建执行计划",
+            "steps": [
+              {
+                "id": "collect",
+                "status": "completed",
+                "title": "资料收集"
+              },
+              {
+                "id": "compare",
+                "status": "in_progress",
+                "title": "方案比较"
+              },
+              {
+                "id": "report",
+                "status": "pending",
+                "title": "输出报告"
+              }
+            ]
+          },
+          "call_id": "call_00_10yAhbB2iHSpZHkxoGPU6488",
+          "name": "core.update_plan",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow core.update_plan to run inside the shared Core",
+          "title": "Publish a concise structured execution plan and update step statuses"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "get_current_time",
+        "core.update_plan"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "delegate.compare",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_9t8xJXlUNApphkMgeEA26128",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "性能 隐私 成本 评估"
+          },
+          "call_id": "call_01_nAllTcFD4uyVxVPY4SLU3738",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "pattern": "**/*"
+          },
+          "call_id": "call_79afc25fae9540eeb858d9a5",
+          "name": "workspace.glob",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.glob to run on this device",
+          "title": "Find paths by glob inside the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_abbcd23305ab47fb8a25040a",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        },
+        {
+          "arguments": {
+            "path": "."
+          },
+          "call_id": "call_00_xSRkm0Dl2TPcUL9vDtQ85499",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "search_memory",
+        "workspace.glob",
+        "get_current_time",
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "delegate.compare",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "path": ""
+          },
+          "call_id": "call_00_0MC0oC7rWuUPHJrgNz9D6063",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "评估 性能 隐私 成本"
+          },
+          "call_id": "call_01_Jxo4ivYXSeLg7xpDyGQe4840",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {
+            "query": "评估"
+          },
+          "call_id": "call_00_h8OQ4lKm7eTaGVJgpUce9992",
+          "name": "workspace.search",
+          "oaep_output_type": "command_execution",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.search to run on this device",
+          "title": "Search names in the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "项目"
+          },
+          "call_id": "call_01_jd35ETN1o8nV0rBOlw2u4845",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "search_memory",
+        "workspace.search",
+        "search_memory"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "delegate.compare",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "query": "评估 性能 隐私 成本"
+          },
+          "call_id": "call_0ae623b600ab423eb6214bea",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_c49a64a7f94747cda22296e2",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_8ec47ec4f121419db89f8e78",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "search_memory",
+        "workspace.list",
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "delegate.research",
+      "selected_tool_calls": [
+        {
+          "arguments": {
+            "tasks": [
+              {
+                "prompt": "调查安卓（Android）进程回收机制。请从操作系统和平台角度系统梳理：1) Android 进程回收的触发条件（内存压力、lru、lmkd / low memory killer、缓存进程回收等）；2) 进程优先级层级（前台、可见、服务、缓存等 oom_adj 划分）；3) 回收与保活的关系、onTrimMemory / onLowMemory 回调、进程 killed 后如何恢复；4) 与系统内存管理（LMK、lmkd、cgroup、kswapd）的关系。请给出结构化、准确、谨慎的总结，注明不确定性。不要编造具体数字或版本行为，除非是公认常识。",
+                "task_id": "android_process_recycling",
+                "type": "general"
+              },
+              {
+                "prompt": "调查'结构化事件'（Structured Events）这一概念在软件工程/可观测性/日志领域的含义与最佳实践。请覆盖：1) 结构化事件 vs 非结构化文本日志的区别；2) 常见表示格式（JSON、logfmt、键值对、OpenTelemetry / semantic conventions、ECS 等）；3) 字段设计原则（时间戳、级别、trace/span id、服务名、结构化字段 vs 自由文本）；4) 与日志、指标、trace 的关系及可观测性三支柱。请给出结构化、准确、谨慎的总结，注明不确定性。",
+                "task_id": "structured_events",
+                "type": "general"
+              },
+              {
+                "prompt": "调查'工具幂等性'（Tool Idempotency / 幂等）概念，尤其在 API 与自动化工具设计中的含义。请覆盖：1) 幂等的定义（同一操作执行多次与执行一次效果相同）；2) 常见幂等实现手段（幂等键 idempotency keys、条件更新、乐观锁、去重、请求/响应缓存）；3) 幂等与安全（GET 幂等、PUT/DELETE 幂等、POST 非幂等等 HTTP 语义）；4) 在自动化代理/工具调用中重试与幂等的关系和风险。请给出结构化、准确、谨慎的总结，注明不确定性。",
+                "task_id": "tool_idempotency",
+                "type": "general"
+              }
+            ]
+          },
+          "call_id": "call_7ecd8caf3215491f96b002d2",
+          "name": "delegate",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow delegate to run inside the shared Core",
+          "title": "Run up to three focused logical subagents and summarize their results"
+        },
+        {
+          "arguments": {
+            "query": "结构化事件 structured events 日志 可观测性"
+          },
+          "call_id": "call_00_bGOd0oixyUI4TZpbTOgL1640",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_01_riQo9B9Nvg421wXLfQmg1970",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_02_t6pNRXeTbXNkLJJC5lms8272",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        },
+        {
+          "arguments": {
+            "tasks": [
+              {
+                "prompt": "调查'结构化事件'（Structured Events）这一概念在软件工程/可观测性/日志领域的含义与最佳实践。请给出结构化、准确、谨慎的总结，注明不确定性。请覆盖：1) 结构化事件 vs 非结构化文本日志的区别；2) 常见表示格式（JSON、logfmt、键值对、OpenTelemetry / semantic conventions、ECS Elastic Common Schema 等）；3) 字段设计原则（时间戳、级别、trace/span id、服务名、结构化字段 vs 自由文本）；4) 与日志、指标、trace 的关系及可观测性三支柱。请务必输出完整内容，不要留空。",
+                "task_id": "structured_events",
+                "type": "general"
+              }
+            ]
+          },
+          "call_id": "call_ba49705e2ba544d1a6d839c0",
+          "name": "delegate",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow delegate to run inside the shared Core",
+          "title": "Run up to three focused logical subagents and summarize their results"
+        }
+      ],
+      "selected_tools": [
+        "delegate",
+        "search_memory",
+        "workspace.list",
+        "get_current_time",
+        "delegate"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "delegate.research",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_1eda09c88eb34234aded962f",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        },
+        {
+          "arguments": {
+            "query": "安卓 进程 回收 结构化事件 工具幂等"
+          },
+          "call_id": "call_4bd29a176c37457e83d408e0",
+          "name": "search_memory",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow search_memory to run on this device",
+          "title": "Search app-private user memories"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_b0a9ade1caea4a5fa8a18047",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        },
+        {
+          "arguments": {
+            "tasks": [
+              {
+                "prompt": "调查安卓进程回收机制（Android process reclamation / LMK / low memory killer）。请覆盖：1) 安卓如何决定回收哪些进程（重要程度/优先级、adj 值、进程重要性层级）；2) 常见的触发场景（内存压力、前台/后台切换、生命周期回调 onTrimMemory/onLowMemory）；3) 与开发者相关的实践（如何在应用被回收时保存状态、onSaveInstanceState、进程死亡后恢复）。请在回答中系统梳理概念、机制和最佳实践，逻辑清晰，分点说明。",
+                "task_id": "android_process_reclaim",
+                "type": "explore"
+              },
+              {
+                "prompt": "调查结构化事件（structured events/event schema）的概念与实践。请覆盖：1) 什么是结构化事件、与普通日志/非结构化文本的区别；2) 常见场景（遥测、埋点分析、审计日志、事件溯源）；3) 设计考量（事件 schema、字段类型、版本演进/兼容性、命名规范）；4) 常见工具或格式（JSON Schema、Avro、Protobuf、CloudEvents 等）。请系统梳理，分点说明。",
+                "task_id": "structured_events",
+                "type": "explore"
+              },
+              {
+                "prompt": "调查工具幂等性（tool idempotency / idempotent operations）。请覆盖：1) 幂等的定义（同一操作重复执行结果相同）与 GET/PUT/DELETE 等 HTTP 语义中的幂等；2) 为什么工具/API 设计需要幂等（重试、网络故障、分布式系统）；3) 如何实现幂等（幂等键、去重、状态校验、副作用最小化）；4) 幂等与安全的区别。请系统梳理，分点说明。",
+                "task_id": "tool_idempotency",
+                "type": "explore"
+              }
+            ]
+          },
+          "call_id": "call_e76dacd8319c4317aac60222",
+          "name": "delegate",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow delegate to run inside the shared Core",
+          "title": "Run up to three focused logical subagents and summarize their results"
+        }
+      ],
+      "selected_tools": [
+        "workspace.list",
+        "search_memory",
+        "get_device_info",
+        "delegate"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "delegate.research",
+      "error_detail": "IllegalStateException:tool_choice={\"available_tool_count\":16,\"matching_tool_count\":0,\"matching_tools\":[],\"mode\":\"auto\",\"policy_version\":\"p9-tool-choice-v1\",\"reason\":\"model_may_select_optional_tool\",\"requirement_sha256\":\"a4c305dfb432bc886623",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.failed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "none.greeting",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "none.greeting",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "none.greeting",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "none.explain",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "none.explain",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "none.explain",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "none.rewrite",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "none.rewrite",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "none.rewrite",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "none.translate",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "none.translate",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "none.translate",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "none.creative",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "none.creative",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "none.creative",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "none.opinion",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "none.opinion",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "none.opinion",
+      "selected_tool_calls": [],
+      "selected_tools": [],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "unavailable.latest_news",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_5496892529174964a50ac9fa",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "unavailable.latest_news",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_5no8yy21lQugynDnXhjd4176",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "unavailable.latest_news",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_Qi3RXcuj3I4tmWz6kZ3r1267",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_01_3YGgkOhA6BRR5BwgbnCy8647",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "get_current_time",
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 1,
+      "case_id": "unavailable.shell",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_oBBSOskEeh9QZV8ttfcu9185",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_01_YlfVtt7Oehs5fYxeVVK17719",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_device_info",
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 2,
+      "case_id": "unavailable.shell",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_DlFfTHMf3ORKmHTVhGID4020",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_01_V6o19lmAuIMH2LvKjaib7525",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        }
+      ],
+      "selected_tools": [
+        "get_device_info",
+        "get_current_time"
+      ],
+      "terminal": "run.completed"
+    },
+    {
+      "attempt": 3,
+      "case_id": "unavailable.shell",
+      "selected_tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "call_00_Yst2yWkfhAAu7L5dgCnB3160",
+          "name": "get_device_info",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_device_info to run on this device",
+          "title": "Get non-identifying Android environment information"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_01_WgrWPmfI899zmmyWxmjX6623",
+          "name": "get_current_time",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow get_current_time to run on this device",
+          "title": "Get current time and timezone"
+        },
+        {
+          "arguments": {},
+          "call_id": "call_77fac6692df549949355fb2a",
+          "name": "workspace.list",
+          "requires_approval": false,
+          "risk": "read_only",
+          "summary": "Allow workspace.list to run on this device",
+          "title": "List the user-granted workspace"
+        }
+      ],
+      "selected_tools": [
+        "get_device_info",
+        "get_current_time",
+        "workspace.list"
+      ],
+      "terminal": "run.completed"
+    }
+  ],
+  "runtime": {
+    "app_version": "1.5.6",
+    "application_id": "ai.drsai.remote.debug",
+    "attempts_per_case": 3,
+    "host_capabilities_sha256": "1c07dbba71e7b7df7d30b15c9fe49473864f6ffd494d0f291d309eb258340e3b",
+    "kernel_id": "drsai-agent-kernel",
+    "kernel_sha256": "24f9bcbda9fe288d39a8e5c82c18d6d4fbae780e1b5e1824e2842768e66c5361",
+    "kernel_version": "p9.1",
+    "model": "deepseek-v4-flash",
+    "model_id": "9b8667ed-56b8-3d1c-be00-0e9b9fa648aa",
+    "model_route_sha256": "32aa70922e254f0fd2228fc8664e79b51a4851b021e740904e7b55282d4c35f5",
+    "prompt_sha256": "48443cb3f6cf1357d34a199cbaa2b8274f6e77af264c58879b67bce36f9d7cf0",
+    "prompt_version": "p9-agent-kernel-v1",
+    "provider": "智增增",
+    "provider_id": "fa318b63-2ba1-498b-bbc4-2c6a7ecb7c42",
+    "temperature": 0,
+    "tool_manifest_sha256": "4918a830e382056c4c92ac2ea22b0fc8c30d853b563d037879364662c92c05a5"
+  },
+  "schema_version": "opendrsai.p9-tool-selection-result/1",
+  "source_sha256": {
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/P9NaturalToolSelectionInstrumentedTest.kt": "ea18374ccf66ae9896562237247113c3da4ed2bc84ef5869771f311bdd79bf57",
+    "cores/protocol/android-runtime/fixtures/p9-natural-tool-selection-v1.json": "0af987a9f486320f62747f18a24fbfb0b0066ea401c3c62b31ea0748f77459ae",
+    "cores/protocol/android-runtime/fixtures/p9-real-model-statistical-gate-v1.json": "4f0c8fab1c81299dffe4376e0a96229ab42a4c5f038146e538b61a82097a0d81",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/real_model_statistics.py": "783ba83dc262bd5e1ce99cbcf630f401ac1c1db38418acb6b60a3b91e08faf31",
+    "scripts/accept_android_p9_real_model_statistics.py": "e4e6550faab52fd268e942079c186132a4f61d977d6072a2c2395eca468cf341"
+  },
+  "success_rate": 0.5903614457831325,
+  "suite_id": "android-p9-m04-f06",
+  "suite_sha256": "8293ff518aa234790593dec25e835bfe323cceec2a35c955da1483b62e94aebe"
+}

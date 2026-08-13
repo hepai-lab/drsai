@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+import ast
 import base64
 import copy
 import hashlib
 import json
+import re
 from typing import Any, Mapping, Sequence
 
 if __package__ == "mobile_core":  # Android packages the shared runtime directory as a top-level Chaquopy source root.
@@ -18,7 +20,7 @@ else:
 from .protocol import MessageType, RuntimeEnvelope
 from .plan_state import event_kind as plan_event_kind, normalize_plan_state, normalize_plan_update
 from .subagents import build_subagent_scheduling_policy
-from .context import assemble_mobile_context, build_citation_evidence, build_context_observability, build_execution_tool_registry, build_memory_policy, build_prompt_layer_diagnostics, build_run_capability_snapshot, build_tool_choice_policy, build_tool_decision_requirement, classify_tool_error, execution_tool_record, freeze_model_tool_snapshot, normalize_citation_evidence, normalize_context_budget, normalize_kernel_host_port, normalize_memory_policy, normalize_memory_selection, normalize_model_route_snapshot, normalize_tool_loop_policy, normalize_tool_output, resolve_tool_decision, select_relevant_memories, validate_context_within_budget, validate_conversation_context, validate_memory_tool_call, validate_tool_call_batch, verify_model_tool_calls, verify_run_capability_snapshot
+from .context import assemble_mobile_context, build_citation_evidence, build_context_observability, build_execution_tool_registry, build_memory_policy, build_prompt_layer_diagnostics, build_run_capability_snapshot, build_tool_choice_policy, build_tool_decision_requirement, classify_tool_error, completed_tool_decision_domains, execution_tool_record, freeze_model_tool_snapshot, normalize_citation_evidence, normalize_context_budget, normalize_kernel_host_port, normalize_memory_policy, normalize_memory_selection, normalize_model_route_snapshot, normalize_tool_loop_policy, normalize_tool_output, resolve_tool_decision, select_relevant_memories, validate_context_within_budget, validate_conversation_context, validate_memory_tool_call, validate_tool_call_batch, verify_model_tool_calls, verify_run_capability_snapshot
 
 
 class RunPhase(StrEnum):
@@ -33,6 +35,144 @@ class RunPhase(StrEnum):
 
 
 TERMINAL_PHASES = {RunPhase.COMPLETED, RunPhase.CANCELLED, RunPhase.FAILED}
+WEB_SEARCH_MAX_ATTEMPTS = 3
+
+
+def _public_retrieval_source_urls(messages: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return exact public URLs already supplied by successful Web retrieval tools."""
+    candidates: dict[str, tuple[float, int]] = {}
+    order = 0
+
+    def collect(value: Any, key: str = "", parent_score: float = 0.0) -> None:
+        nonlocal order
+        if isinstance(value, Mapping):
+            try:
+                local_score = float(value.get("score", parent_score) or parent_score)
+            except (TypeError, ValueError):
+                local_score = parent_score
+            for child_key, child in value.items():
+                collect(child, str(child_key), local_score)
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for child in value:
+                collect(child, key, parent_score)
+        elif isinstance(value, str):
+            if key in {"url", "final_url"} and value.startswith("https://"):
+                url = value.rstrip(".,;:!?")
+                priority = 2.0 if key == "final_url" else parent_score
+                previous = candidates.get(url)
+                if previous is None:
+                    candidates[url] = (priority, order)
+                    order += 1
+                elif priority > previous[0]:
+                    candidates[url] = (priority, previous[1])
+            elif key in {"content", "result"} and value.lstrip().startswith("{"):
+                try:
+                    decoded = json.loads(value)
+                except (TypeError, json.JSONDecodeError):
+                    try:
+                        decoded = ast.literal_eval(value)
+                    except (SyntaxError, ValueError):
+                        decoded = None
+                if isinstance(decoded, Mapping):
+                    collect(decoded)
+
+    for message in messages:
+        if message.get("role") != "tool" or message.get("succeeded") is False:
+            continue
+        if str(message.get("name", "")).casefold() not in {"web.search", "web_search", "web.fetch", "web_fetch"}:
+            continue
+        collect(message.get("content", {}), "content")
+    return [url for url, _ in sorted(candidates.items(), key=lambda item: (-item[1][0], item[1][1]))]
+
+
+def _knowledge_retrieval_sources(messages: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return bounded source references supplied by successful knowledge tools."""
+    sources: dict[str, None] = {}
+
+    def collect(value: Any, key: str = "") -> None:
+        if isinstance(value, Mapping):
+            for child_key, child in value.items():
+                collect(child, str(child_key))
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for child in value:
+                collect(child, key)
+        elif isinstance(value, str):
+            if key == "source" and value and len(value) <= 2000 and "\n" not in value and "\r" not in value:
+                sources.setdefault(value, None)
+            elif key in {"content", "result"} and value.lstrip().startswith("{"):
+                try:
+                    decoded = json.loads(value)
+                except (TypeError, json.JSONDecodeError):
+                    try:
+                        decoded = ast.literal_eval(value)
+                    except (SyntaxError, ValueError):
+                        decoded = None
+                if isinstance(decoded, Mapping):
+                    collect(decoded)
+
+    for message in messages:
+        if message.get("role") != "tool" or message.get("succeeded") is False:
+            continue
+        if str(message.get("name", "")).casefold() != "knowledge_search":
+            continue
+        collect(message.get("content", {}), "content")
+    return list(sources)
+
+
+def _memory_retrieval_sources(messages: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return exact, bounded memory markers supplied by successful memory tools."""
+    sources: dict[str, None] = {}
+    for message in messages:
+        if message.get("role") != "tool" or message.get("succeeded") is False:
+            continue
+        if str(message.get("name", "")).casefold() not in {
+            "search_memory", "retrieve_from_memory", "read_session_memory_by_index",
+        }:
+            continue
+        content = message.get("content", {})
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except (TypeError, json.JSONDecodeError):
+                content = {}
+        if not isinstance(content, Mapping):
+            continue
+        rows = content.get("items", content.get("results", []))
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            continue
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            source_id = str(row.get("source_id") or "").strip()
+            if not source_id:
+                memory_id = str(row.get("id") or "").strip()
+                source_id = f"memory:{memory_id}" if memory_id else ""
+            if re.fullmatch(r"memory:[A-Za-z0-9._:-]{1,160}", source_id):
+                sources.setdefault(f"[{source_id}]", None)
+    return list(sources)
+
+
+def _web_search_query_terms(query: str) -> frozenset[str]:
+    normalized = query.casefold()
+    normalized = re.sub(r"(?<=[a-z])(?=[0-9])|(?<=[0-9])(?=[a-z])", " ", normalized)
+    ignored = {
+        "about", "and", "conference", "current", "find", "for", "latest", "official",
+        "search", "the", "what", "workshop", "介绍", "什么", "如何", "是什么", "查询", "搜索", "最新",
+    }
+    return frozenset(
+        value
+        for value in re.findall(r"[a-z]+|[0-9]+|[\u4e00-\u9fff]{2,}", normalized)
+        if value not in ignored
+    )
+
+
+def _web_search_queries_are_near_duplicates(left: str, right: str) -> bool:
+    left_terms = _web_search_query_terms(left)
+    right_terms = _web_search_query_terms(right)
+    if not left_terms or not right_terms:
+        return " ".join(left.casefold().split()) == " ".join(right.casefold().split())
+    overlap = len(left_terms & right_terms)
+    return left_terms == right_terms or overlap / len(left_terms | right_terms) >= 0.8
 
 
 @dataclass(slots=True)
@@ -66,6 +206,9 @@ class MobileRunState:
     citation_retry_count: int = 0
     citation_evidence: dict[str, Any] = field(default_factory=dict)
     tool_round_count: int = 0
+    tool_execution_disabled: bool = False
+    web_search_queries: list[str] = field(default_factory=list)
+    web_search_exhausted: bool = False
     lifecycle_state: str = "foreground"
     subagent_scheduling_policy: dict[str, Any] = field(default_factory=dict)
     pending_subagents: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -134,13 +277,19 @@ class DrSaiAgentKernel:
         )
         raw_tools = command.payload.get("tools", [])
         raw_skills = command.payload.get("skills", [])
+        # `host_port` is the sole current capability contract. The flat field
+        # remains read-only migration input for pre-Host-Port checkpoints and
+        # clients, and may never contradict the versioned contract.
+        legacy_host_capabilities_present = "host_capabilities" in command.payload
         raw_host_capabilities = command.payload.get("host_capabilities", [])
         raw_diagnostics = command.payload.get("capability_diagnostics", {})
         if not isinstance(raw_tools, list) or not all(isinstance(value, Mapping) for value in raw_tools):
             raise ValueError("run_tools_invalid")
         if not isinstance(raw_skills, list) or not all(isinstance(value, Mapping) for value in raw_skills):
             raise ValueError("run_skills_invalid")
-        if not isinstance(raw_host_capabilities, list):
+        if not isinstance(raw_host_capabilities, list) or not all(
+            isinstance(value, str) for value in raw_host_capabilities
+        ):
             raise ValueError("run_host_capabilities_invalid")
         if not isinstance(raw_diagnostics, Mapping):
             raise ValueError("run_capability_diagnostics_invalid")
@@ -158,6 +307,9 @@ class DrSaiAgentKernel:
             surface=runtime_surface,
             legacy_capabilities=raw_host_capabilities,
         )
+        if command.payload.get("host_port") is not None and legacy_host_capabilities_present:
+            if sorted(set(raw_host_capabilities)) != list(host_port["capabilities"]):
+                raise ValueError("run_host_capabilities_conflict")
         state.host_capabilities = list(host_port["capabilities"])
         state.blocked_capabilities = [dict(value) for value in raw_blocked]
         state.remote_capabilities = list(raw_remote)
@@ -192,6 +344,34 @@ class DrSaiAgentKernel:
         state.tool_decision_requirement = build_tool_decision_requirement(
             input_text, [str(value["name"]) for value in state.tools],
         )
+        raw_satisfied_domains = command.payload.get("satisfied_capability_domains", [])
+        if not isinstance(raw_satisfied_domains, list) or not all(
+            isinstance(value, str) for value in raw_satisfied_domains
+        ):
+            raise ValueError("run_satisfied_capability_domains_invalid")
+        satisfied_domains = set(raw_satisfied_domains)
+        # Keep this set aligned with agent_kernel._tool_decision_domain. A
+        # trusted Host may satisfy any domain with already-captured evidence;
+        # restricting this to the original five domains made isolated
+        # regression Judges re-run process/image/plan capabilities even though
+        # their complete candidate evidence was supplied inline.
+        if not satisfied_domains.issubset({
+            "retrieval", "workspace", "process", "device", "time", "memory",
+            "plan", "image_generation", "image_edit",
+        }):
+            raise ValueError("run_satisfied_capability_domains_invalid")
+        if satisfied_domains:
+            requirement = dict(state.tool_decision_requirement)
+            requirement["required_domains"] = [
+                value for value in requirement.get("required_domains", []) if value not in satisfied_domains
+            ]
+            if not requirement["required_domains"]:
+                requirement["reason"] = "requirement_satisfied_by_trusted_evidence"
+            unsigned_requirement = {key: value for key, value in requirement.items() if key != "sha256"}
+            requirement["sha256"] = hashlib.sha256(json.dumps(
+                unsigned_requirement, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
+            ).encode("utf-8")).hexdigest()
+            state.tool_decision_requirement = requirement
         state.context_budget = normalize_context_budget(command.payload.get("context_budget"))
         memory_enabled = command.payload.get("memory_enabled", True)
         if not isinstance(memory_enabled, bool):
@@ -256,6 +436,8 @@ class DrSaiAgentKernel:
             "execution_tool_registry_sha256": state.execution_tool_registry["sha256"],
             "tool_loop_policy_version": state.tool_loop_policy["policy_version"],
             "tool_loop_policy_sha256": state.tool_loop_policy["sha256"],
+            "tool_decision_required_domains": list(state.tool_decision_requirement.get("required_domains", [])),
+            "tool_decision_reason": state.tool_decision_requirement.get("reason"),
             "prompt_layers": state.prompt_layer_diagnostics,
             "context_budget": validate_context_within_budget(state.messages, state.context_budget),
             "context_observability": state.context_observability,
@@ -300,6 +482,17 @@ class DrSaiAgentKernel:
         if command.run_id in self._runs:
             raise ValueError("run_already_exists")
         phase = RunPhase(self._required_string(raw, "phase"))
+        raw_web_search_queries = raw.get("web_search_queries", [])
+        raw_web_search_exhausted = raw.get("web_search_exhausted", False)
+        raw_tool_execution_disabled = raw.get("tool_execution_disabled", False)
+        if not isinstance(raw_web_search_queries, list) or not all(
+            isinstance(value, str) and len(value) <= 500 for value in raw_web_search_queries
+        ):
+            raise ValueError("web_search_queries_invalid")
+        if not isinstance(raw_web_search_exhausted, bool):
+            raise ValueError("web_search_exhausted_invalid")
+        if not isinstance(raw_tool_execution_disabled, bool):
+            raise ValueError("tool_execution_disabled_invalid")
         state = MobileRunState(
             run_id=command.run_id,
             session_id=command.session_id,
@@ -326,6 +519,9 @@ class DrSaiAgentKernel:
                 raw.get("model_route_snapshot"), self._required_string(raw, "model_id"),
             ),
             tool_round_count=int(raw.get("tool_round_count", 0)),
+            tool_execution_disabled=raw_tool_execution_disabled,
+            web_search_queries=list(raw_web_search_queries),
+            web_search_exhausted=raw_web_search_exhausted,
             tool_decision_requirement=dict(raw.get("tool_decision_requirement", {})),
             verification_retry_count=int(raw.get("verification_retry_count", 0)),
             citation_retry_count=int(raw.get("citation_retry_count", 0)),
@@ -484,6 +680,204 @@ class DrSaiAgentKernel:
                 replies.append(self._event(state, "message.delta", {"text": delta}))
         return tuple(replies)
 
+    @staticmethod
+    def _visible_tools(state: MobileRunState) -> list[dict[str, Any]]:
+        if state.tool_execution_disabled:
+            return []
+        if not state.web_search_exhausted:
+            return list(state.tools)
+        return [tool for tool in state.tools if tool.get("name") != "web_search"]
+
+    def _request_budget_finalization(
+        self,
+        state: MobileRunState,
+        *,
+        code: str,
+        reasoning_events: Sequence[RuntimeEnvelope],
+        decision_event: RuntimeEnvelope,
+        details: Mapping[str, Any],
+    ) -> Sequence[RuntimeEnvelope]:
+        """Stop admitting tools but give the model one tool-free turn to deliver the result."""
+
+        state.tool_execution_disabled = True
+        instruction = (
+            "The tool-execution budget for this turn is exhausted. Do not call more tools. "
+            "Complete the user's request now from the evidence and artifacts already available. "
+            "Be explicit about any remaining limitation instead of asking the user to restart."
+        )
+        maximum_messages = int(state.context_budget.get("max_messages", 20))
+        if len(state.messages) < maximum_messages:
+            state.messages.append({"role": "system", "content": instruction})
+        else:
+            # Preserve every completed Tool call/result pair when the message
+            # budget is exactly full; fold the finalization directive into the
+            # authoritative system message instead of splitting a Tool chain.
+            state.messages[0] = {
+                **state.messages[0],
+                "content": f"{state.messages[0].get('content', '')}\n\n{instruction}",
+            }
+        state.phase = RunPhase.WAITING_MODEL
+        return (
+            *reasoning_events,
+            decision_event,
+            self._event(state, "tool.budget_exhausted", {
+                "code": code,
+                "retryable": False,
+                "action": "finalize_without_tools",
+                **dict(details),
+            }),
+            self._checkpoint(state, "before_budget_finalization"),
+            self._request(state, MessageType.MODEL_REQUEST, {
+                "model_id": state.model_id,
+                "messages": state.messages,
+                "tools": [],
+                "skills": state.skills,
+                "capability_snapshot_sha256": state.capability_snapshot["sha256"],
+            }, "budget_finalization"),
+        )
+
+    def _finish_rejected_web_search_round(
+        self,
+        state: MobileRunState,
+        tool_calls: Sequence[Mapping[str, Any]],
+        *,
+        reason: str,
+        reasoning_events: Sequence[RuntimeEnvelope],
+        decision_event: RuntimeEnvelope,
+    ) -> Sequence[RuntimeEnvelope]:
+        """Close the model's Tool protocol while enforcing a per-turn search circuit breaker."""
+
+        normalized_calls = [
+            {
+                "call_id": self._required_string(call, "call_id"),
+                "name": "web_search",
+                "arguments": dict(call.get("arguments", {})),
+            }
+            for call in tool_calls
+        ]
+        state.messages.append({"role": "assistant", "content": "", "tool_calls": normalized_calls})
+        events: list[RuntimeEnvelope] = []
+        for call in normalized_calls:
+            query = str(call["arguments"].get("query", "")).strip()
+            result = {
+                "version": 1,
+                "query": query,
+                "provider": "runtime-policy",
+                "results": [],
+                "partial": True,
+                "warnings": [reason],
+            }
+            state.messages.append({
+                "role": "tool",
+                "tool_call_id": call["call_id"],
+                "name": "web_search",
+                "content": result,
+                "succeeded": True,
+            })
+            state.completed_side_effects.add(call["call_id"])
+            events.append(self._event(state, "tool.result", {
+                "call_id": call["call_id"],
+                "item_id": f"{state.run_id}:tool:{call['call_id']}",
+                "name": "web_search",
+                "tool_kind": "host",
+                "arguments": dict(call["arguments"]),
+                "result": result,
+                "succeeded": True,
+                "policy_blocked": True,
+            }))
+        state.web_search_exhausted = True
+        exhausted_event = self._event(state, "web_search.exhausted", {
+            "reason": reason,
+            "attempt_count": len(state.web_search_queries),
+            "maximum_attempts": WEB_SEARCH_MAX_ATTEMPTS,
+        })
+        evidence = build_citation_evidence(state.messages, "", retrieval_required=False)
+        if not evidence["source_url_sha256"]:
+            limitation = self._web_search_limitation(state)
+            state.messages.append({"role": "assistant", "content": limitation})
+            state.phase = RunPhase.COMPLETED
+            self._active_run_by_session.pop(state.session_id, None)
+            return (
+                *reasoning_events,
+                decision_event,
+                *events,
+                exhausted_event,
+                self._event(state, "message.completed", {
+                    "item_id": f"{state.run_id}:assistant",
+                    "role": "assistant",
+                    "text": limitation,
+                    "phase": "final",
+                }),
+                self._event(state, "run.completed", {"status": "completed_with_limitation"}),
+                self._checkpoint(state, "terminal"),
+            )
+        state.phase = RunPhase.WAITING_MODEL
+        return (
+            *reasoning_events,
+            decision_event,
+            *events,
+            exhausted_event,
+            self._checkpoint(state, "after_web_search_circuit_breaker"),
+            self._request(
+                state,
+                MessageType.MODEL_REQUEST,
+                {
+                    "model_id": state.model_id,
+                    "messages": state.messages,
+                    "tools": state.tools,
+                    "skills": state.skills,
+                    "capability_snapshot_sha256": state.capability_snapshot["sha256"],
+                    "tool_choice": build_tool_choice_policy(
+                        state.tool_decision_requirement,
+                        [str(tool.get("name", "")) for tool in self._visible_tools(state)],
+                        prior_tool_use=True,
+                        disabled=True,
+                    ),
+                },
+                "model_after_web_search_circuit_breaker",
+            ),
+        )
+
+    @staticmethod
+    def _web_search_limitation(state: MobileRunState) -> str:
+        user_text = next(
+            (str(message.get("content", "")) for message in reversed(state.messages) if message.get("role") == "user"),
+            "",
+        )
+        if any("\u4e00" <= character <= "\u9fff" for character in user_text):
+            return "未找到足够可靠的公开网络搜索结果。你可以补充更完整的名称、官方网站或相关领域后重试。"
+        return (
+            "No sufficiently reliable public web results were found. "
+            "Provide a fuller name, an official site, or the relevant field and try again."
+        )
+
+    def _complete_ignored_exhausted_web_search(
+        self,
+        state: MobileRunState,
+        *,
+        reasoning_events: Sequence[RuntimeEnvelope],
+    ) -> Sequence[RuntimeEnvelope]:
+        limitation = self._web_search_limitation(state)
+        state.messages.append({"role": "assistant", "content": limitation})
+        state.phase = RunPhase.COMPLETED
+        self._active_run_by_session.pop(state.session_id, None)
+        return (
+            *reasoning_events,
+            self._event(state, "web_search.exhausted_tool_ignored", {
+                "code": "web_search_budget_exhausted",
+                "attempt_count": len(state.web_search_queries),
+                "retryable": False,
+            }),
+            self._event(state, "message.completed", {
+                "item_id": f"{state.run_id}:assistant",
+                "role": "assistant",
+                "text": limitation,
+                "phase": "final",
+            }),
+            self._event(state, "run.completed", {"status": "completed_with_limitation"}),
+            self._checkpoint(state, "terminal"),
+        )
+
     def _model_completed(self, command: RuntimeEnvelope) -> Sequence[RuntimeEnvelope]:
         state = self._require_phase(command.run_id, RunPhase.WAITING_MODEL)
         content = command.payload.get("content", "")
@@ -503,14 +897,38 @@ class DrSaiAgentKernel:
         tool_calls = command.payload.get("tool_calls", [])
         if not isinstance(tool_calls, list):
             raise ValueError("tool_calls_invalid")
-        verify_model_tool_calls(state.model_tool_snapshot, tool_calls)
+        preferred_tools = state.tool_decision_requirement.get("preferred_tools", [])
+        if isinstance(preferred_tools, list) and len(preferred_tools) == 1:
+            preferred_name = preferred_tools[0]
+            matching_calls = [
+                value for value in tool_calls
+                if isinstance(value, Mapping) and value.get("name") == preferred_name
+            ]
+            # A specified P9 task executes at most one matching call per
+            # model turn. Reasoning providers sometimes emit duplicate calls
+            # with alternate queries even when only one Tool is visible.
+            if matching_calls:
+                tool_calls = matching_calls[:1]
+        if state.web_search_exhausted and any(
+            isinstance(value, Mapping) and value.get("name") == "web_search" for value in tool_calls
+        ):
+            return self._complete_ignored_exhausted_web_search(
+                state,
+                reasoning_events=reasoning_events,
+            )
+        verify_model_tool_calls(
+            freeze_model_tool_snapshot(self._runtime_surface(), self._visible_tools(state)),
+            tool_calls,
+        )
         decision = resolve_tool_decision(
             state.tool_decision_requirement,
             [str(value.get("name", "")) for value in tool_calls if isinstance(value, Mapping)],
             prior_tool_use=state.tool_round_count > 0 or bool(state.completed_side_effects),
+            prior_tool_domains=completed_tool_decision_domains(state.messages),
         )
         decision_event = self._event(state, "tool.decision", {
             **decision,
+            "required_domains": list(state.tool_decision_requirement.get("required_domains", [])),
             "tool_round_count": state.tool_round_count,
         })
         if decision["category"] == "required_tool_unavailable":
@@ -565,16 +983,33 @@ class DrSaiAgentKernel:
                 }, "verification_retry"),
             )
         if tool_calls:
+            max_messages = int(state.context_budget.get("max_messages", 20))
+            # Reserve one message for a policy instruction or final answer.
+            # This guards the next model request before mutating the active
+            # chain, instead of letting validation raise after Tool execution.
+            projected_messages = len(state.messages) + 1 + len(tool_calls) + 1
+            if projected_messages > max_messages:
+                return self._request_budget_finalization(
+                    state,
+                    code="tool_context_budget_exhausted",
+                    reasoning_events=reasoning_events,
+                    decision_event=decision_event,
+                    details={
+                        "message_count": len(state.messages),
+                        "projected_message_count": projected_messages,
+                        "maximum_messages": max_messages,
+                    },
+                )
             if state.tool_round_count >= state.tool_loop_policy["max_tool_rounds"]:
-                state.phase = RunPhase.FAILED
-                self._active_run_by_session.pop(state.session_id, None)
-                return (*reasoning_events, decision_event,
-                    self._event(state, "run.failed", {
-                        "code": "tool_round_limit",
+                return self._request_budget_finalization(
+                    state,
+                    code="tool_round_limit",
+                    reasoning_events=reasoning_events,
+                    decision_event=decision_event,
+                    details={
                         "tool_round_count": state.tool_round_count,
                         "max_tool_rounds": state.tool_loop_policy["max_tool_rounds"],
-                    }),
-                    self._checkpoint(state, "terminal"),
+                    },
                 )
             validate_tool_call_batch(
                 state.execution_tool_registry,
@@ -595,35 +1030,79 @@ class DrSaiAgentKernel:
             state.citation_evidence = citation
             if not citation["valid"]:
                 if state.citation_retry_count >= 1:
-                    state.phase = RunPhase.FAILED
-                    self._active_run_by_session.pop(state.session_id, None)
+                    # The retrieval itself succeeded, so a model formatting miss
+                    # must not discard an otherwise useful answer. When the only
+                    # problem is a missing citation, append an exact URL from the
+                    # trusted Tool result and validate the repaired answer again.
+                    source_urls = _public_retrieval_source_urls(state.messages)
+                    knowledge_sources = _knowledge_retrieval_sources(state.messages)
+                    memory_sources = _memory_retrieval_sources(state.messages)
+                    trusted_sources = [*source_urls, *knowledge_sources, *memory_sources]
+                    if trusted_sources:
+                        # Remove every model-authored URL before attaching trusted
+                        # Tool URLs. This also safely handles subtly altered paths,
+                        # tracking parameters, or genuinely fabricated citations.
+                        content = re.sub(r"https://[^\s<>\]\[(){}\"']+", "", content).rstrip()
+                        content = re.sub(r"\[([^\]]+)\]\(\s*\)", r"\1", content)
+                        content += "\n\nSources:\n" + "\n".join(
+                            f"- {source}" for source in trusted_sources[:3]
+                        )
+                        citation = build_citation_evidence(
+                            state.messages, content,
+                            retrieval_required="retrieval" in state.tool_decision_requirement.get("required_domains", ()),
+                        )
+                        state.citation_evidence = citation
+                    if not citation["valid"]:
+                        warning = (
+                            "\n\n> Note: Retrieved information was available, but some source citations "
+                            "could not be fully verified. Review the listed sources before relying on sensitive details."
+                        )
+                        content = f"{content.rstrip()}{warning}"
+                        state.messages.append({"role": "assistant", "content": content})
+                        state.phase = RunPhase.COMPLETED
+                        self._active_run_by_session.pop(state.session_id, None)
+                        return (*reasoning_events, decision_event,
+                            self._event(state, "citation.warning", {
+                                "code": "citation_evidence_incomplete",
+                                "message": "Retrieved information was available, but some source citations could not be fully verified.",
+                                "citation_sha256": citation["sha256"],
+                            }),
+                            self._event(state, "message.completed", {
+                                "item_id": f"{state.run_id}:assistant",
+                                "role": "assistant",
+                                "text": content,
+                                "phase": "final",
+                                "warning_code": "citation_evidence_incomplete",
+                            }),
+                            self._event(state, "run.completed", {
+                                "status": "completed_with_warning",
+                                "warning_code": "citation_evidence_incomplete",
+                            }),
+                            self._checkpoint(state, "terminal"),
+                        )
+                else:
+                    state.citation_retry_count += 1
+                    state.messages.append({
+                        "role": "system",
+                        "content": "Your answer must cite at least one exact source reference from the successful retrieval "
+                                   "tool results (an HTTPS URL, an internal knowledge source URI, or every exact "
+                                   "[memory:<id>] marker returned by memory search) and must not invent sources. "
+                                   "For conflicting memory results, state the conflict rather than silently choosing one. Revise the answer now.",
+                    })
+                    state.phase = RunPhase.WAITING_MODEL
                     return (*reasoning_events, decision_event,
-                        self._event(state, "run.failed", {
-                            "code": "citation_evidence_invalid", "retryable": True,
-                            "citation_sha256": citation["sha256"],
+                        self._event(state, "citation.required", {
+                            "citation_sha256": citation["sha256"], "missing": citation["missing"],
+                            "fabricated_count": len(citation["fabricated_url_sha256"]),
+                            "source_call_ids": citation["source_call_ids"],
+                            "retry_count": state.citation_retry_count,
                         }),
-                        self._checkpoint(state, "terminal"),
+                        self._checkpoint(state, "before_citation_retry"),
+                        self._request(state, MessageType.MODEL_REQUEST, {
+                            "model_id": state.model_id, "messages": state.messages, "tools": [], "skills": state.skills,
+                            "capability_snapshot_sha256": state.capability_snapshot["sha256"],
+                        }, "citation_retry"),
                     )
-                state.citation_retry_count += 1
-                state.messages.append({
-                    "role": "system",
-                    "content": "Your answer must cite at least one exact HTTPS source URL from the successful retrieval "
-                               "tool results and must not include URLs absent from those results. Revise the answer now.",
-                })
-                state.phase = RunPhase.WAITING_MODEL
-                return (*reasoning_events, decision_event,
-                    self._event(state, "citation.required", {
-                        "citation_sha256": citation["sha256"], "missing": citation["missing"],
-                        "fabricated_count": len(citation["fabricated_url_sha256"]),
-                        "source_call_ids": citation["source_call_ids"],
-                        "retry_count": state.citation_retry_count,
-                    }),
-                    self._checkpoint(state, "before_citation_retry"),
-                    self._request(state, MessageType.MODEL_REQUEST, {
-                        "model_id": state.model_id, "messages": state.messages, "tools": state.tools, "skills": state.skills,
-                        "capability_snapshot_sha256": state.capability_snapshot["sha256"],
-                    }, "citation_retry"),
-                )
             if citation["required"] or citation["source_url_sha256"]:
                 citation_event = (self._event(state, "citation.verified", {
                     "citation_sha256": citation["sha256"],
@@ -643,6 +1122,46 @@ class DrSaiAgentKernel:
             validate_memory_tool_call(state.memory_policy, name, arguments)
             if name not in tool_definitions:
                 raise ValueError(f"tool_not_available:{name}")
+        search_calls = [
+            value for value in tool_calls
+            if isinstance(value, Mapping) and value.get("name") == "web_search"
+        ]
+        if search_calls:
+            fetch_calls = [
+                value for value in tool_calls
+                if isinstance(value, Mapping) and value.get("name") == "web_fetch"
+            ]
+            if len(search_calls) + len(fetch_calls) != len(tool_calls):
+                raise ValueError("web_search_mixed_batch_not_allowed")
+            # Search is intentionally serialized. Some model providers emit several
+            # alternative queries in one response even when parallel tool use is
+            # disabled. Execute the first deterministic query instead of rejecting
+            # the entire batch and losing the required retrieval round.
+            search_calls = search_calls[:1]
+            # A model may also open an already-known primary-source URL in the
+            # same read-only batch. Keep those fetches; unlike an arbitrary
+            # mixed tool call, they are independently URL-admitted by the Host.
+            tool_calls = [*search_calls, *fetch_calls]
+            raw_queries = [str(value.get("arguments", {}).get("query", "")).strip() for value in search_calls]
+            repeated = any(
+                _web_search_queries_are_near_duplicates(query, previous)
+                for query in raw_queries
+                for previous in state.web_search_queries
+            )
+            state.web_search_queries.extend(raw_queries)
+            reason = (
+                "duplicate_query" if repeated
+                else "search_attempt_limit" if len(state.web_search_queries) > WEB_SEARCH_MAX_ATTEMPTS
+                else None
+            )
+            if reason is not None:
+                return self._finish_rejected_web_search_round(
+                    state,
+                    search_calls,
+                    reason=reason,
+                    reasoning_events=reasoning_events,
+                    decision_event=decision_event,
+                )
         delegate_calls = [value for value in tool_calls if isinstance(value, Mapping) and value.get("name") == "delegate"]
         if delegate_calls:
             if len(tool_calls) != 1:
@@ -668,12 +1187,12 @@ class DrSaiAgentKernel:
                 )
             state.phase = RunPhase.COMPLETED
             self._active_run_by_session.pop(state.session_id, None)
-            verified_message = ()
-            if decision["category"] == "required_tool_satisfied" and content:
-                verified_message = (self._event(state, "message.completed", {
+            completed_message = ()
+            if content:
+                completed_message = (self._event(state, "message.completed", {
                     "item_id": f"{state.run_id}:assistant", "role": "assistant", "text": content, "phase": "final",
                 }),)
-            return (*reasoning_events, decision_event, *citation_event, *verified_message,
+            return (*reasoning_events, decision_event, *citation_event, *completed_message,
                 self._event(state, "run.completed", {"status": "completed"}),
                 self._checkpoint(state, "terminal"),
             )
@@ -781,6 +1300,9 @@ class DrSaiAgentKernel:
         if not isinstance(raw_artifacts, list) or any(not isinstance(value, Mapping) for value in raw_artifacts):
             raise ValueError("tool_output_artifacts_invalid")
         output_content, artifact_descriptors = normalize_tool_output(raw_content, raw_artifacts)
+        inspection = command.payload.get("inspection")
+        if inspection is not None and not isinstance(inspection, Mapping):
+            raise ValueError("tool_output_inspection_invalid")
         artifact_ids = command.payload.get("artifact_ids", [])
         if not isinstance(artifact_ids, list) or any(not isinstance(value, str) or not value for value in artifact_ids):
             raise ValueError("tool_artifact_ids_invalid")
@@ -813,6 +1335,7 @@ class DrSaiAgentKernel:
                 "tool_kind": "host",
                 "arguments": dict(call.get("arguments", {})),
                 "result": output_content,
+                **({"inspection": dict(inspection)} if isinstance(inspection, Mapping) else {}),
                 "succeeded": succeeded,
                 "code": None if error is None else error["code"],
                 "category": None if error is None else error["category"],
@@ -868,11 +1391,51 @@ class DrSaiAgentKernel:
             }),)
         if state.pending_tool_calls:
             return (tool_event, *semantic_events, *artifact_events)
+        exhaustion_events: tuple[RuntimeEnvelope, ...] = ()
+        if (
+            call["name"] == "web_search"
+            and len(state.web_search_queries) >= WEB_SEARCH_MAX_ATTEMPTS
+            and not state.web_search_exhausted
+        ):
+            state.web_search_exhausted = True
+            state.messages.append({
+                "role": "system",
+                "content": "The WebSearch attempt budget is exhausted. Do not search again. "
+                           "Answer from the best reliable evidence already returned, or clearly state that no "
+                           "reliable public result was found.",
+            })
+            exhaustion_events = (self._event(state, "web_search.exhausted", {
+                "reason": "search_attempt_limit",
+                "attempt_count": len(state.web_search_queries),
+                "maximum_attempts": WEB_SEARCH_MAX_ATTEMPTS,
+            }),)
+        if exhaustion_events:
+            evidence = build_citation_evidence(state.messages, "", retrieval_required=False)
+            if not evidence["source_url_sha256"]:
+                limitation = self._web_search_limitation(state)
+                state.messages.append({"role": "assistant", "content": limitation})
+                state.phase = RunPhase.COMPLETED
+                self._active_run_by_session.pop(state.session_id, None)
+                return (
+                    tool_event,
+                    *semantic_events,
+                    *artifact_events,
+                    *exhaustion_events,
+                    self._event(state, "message.completed", {
+                        "item_id": f"{state.run_id}:assistant",
+                        "role": "assistant",
+                        "text": limitation,
+                        "phase": "final",
+                    }),
+                    self._event(state, "run.completed", {"status": "completed_with_limitation"}),
+                    self._checkpoint(state, "terminal"),
+                )
         state.phase = RunPhase.WAITING_MODEL
         return (
             tool_event,
             *semantic_events,
             *artifact_events,
+            *exhaustion_events,
             self._checkpoint(state, "after_tool"),
             self._request(
                 state,
@@ -982,8 +1545,22 @@ class DrSaiAgentKernel:
                 and tool.get("name") not in {"delegate", "core.update_plan"}
             )]
             safe_names = {str(tool["name"]) for tool in safe_tools}
+            # A general child is a bounded reasoning worker. The mobile
+            # coordinator currently accepts one child model completion and
+            # does not execute a nested child Tool loop. Only an explicit
+            # allowlist opts an explore child into a Tool surface.
+            if requested_tools is None:
+                safe_tools = []
+                safe_names = set()
             if requested_tools is not None:
-                requested = set(requested_tools)
+                # OpenAI-compatible providers may encode punctuation in nested
+                # string arguments using the same reversible spelling used for
+                # function names. Resolve only exact aliases of already-safe
+                # tools; this cannot expand a child beyond the parent allowlist.
+                requested = {
+                    value.replace("__dot__", ".") if value.replace("__dot__", ".") in safe_names else value
+                    for value in requested_tools
+                }
                 if not requested <= safe_names:
                     raise ValueError("subagent_tool_whitelist_denied")
                 safe_tools = [tool for tool in safe_tools if tool["name"] in requested]
@@ -995,14 +1572,23 @@ class DrSaiAgentKernel:
             child = self._new_subagent_kernel()
             child_run_id = f"{state.run_id}:subagent:{task_id}"
             child_session_id = f"{state.session_id}:subagent:{task_id}"
+            child_host_capabilities = sorted({
+                str(capability) for tool in safe_tools for capability in tool.get("required_capabilities", [])
+                if capability in state.host_capabilities
+            })
             start = RuntimeEnvelope(
                 MessageType.START_RUN, f"{child_run_id}:start", child_run_id, child_session_id, 0,
                 f"{child_run_id}:start", {
                     "input": prompt, "model_id": state.model_id, "tools": safe_tools, "skills": child_skills,
-                    "host_capabilities": sorted({
-                        str(capability) for tool in safe_tools for capability in tool.get("required_capabilities", [])
-                        if capability in state.host_capabilities
-                    }),
+                    "host_port": {
+                        "schema_version": 1,
+                        "protocol_version": "p9-host-port-v1",
+                        "surface": self._runtime_surface(),
+                        "capabilities": [
+                            {"id": capability, "version": 1, "required": False}
+                            for capability in child_host_capabilities
+                        ],
+                    },
                 },
             )
             child_outbound = child.handle(start)
@@ -1096,7 +1682,10 @@ class DrSaiAgentKernel:
                 "name": call["name"], "call_id": call["call_id"], "tool_kind": "core",
                 "arguments": dict(call["arguments"]),
             }))
-            state.messages.append({"role": "tool", "tool_call_id": call["call_id"], "content": json.dumps(result, sort_keys=True)})
+            state.messages.append({
+                "role": "tool", "tool_call_id": call["call_id"], "name": call["name"],
+                "succeeded": True, "content": json.dumps(result, sort_keys=True),
+            })
             replies.append(self._event(state, "tool.result", {
                 "name": call["name"], "call_id": call["call_id"], "tool_kind": "core",
                 "arguments": dict(call["arguments"]), "result": result,
@@ -1153,7 +1742,7 @@ class DrSaiAgentKernel:
         ordered = "\n".join(f"[{key}] completed: {value}" for key, value in state.subagent_results.items())
         completed_delegate_call_id = state.delegate_call_id
         state.messages.append({
-            "role": "tool", "tool_call_id": state.delegate_call_id,
+            "role": "tool", "tool_call_id": state.delegate_call_id, "name": "delegate", "succeeded": True,
             "content": ordered,
         })
         if completed_delegate_call_id is not None:
@@ -1191,7 +1780,11 @@ class DrSaiAgentKernel:
             self._event(
                 state,
                 "run.failed",
-                {"code": command.payload.get("code", "model_failed"), "retryable": bool(command.payload.get("retryable", True))},
+                {
+                    "code": command.payload.get("code", "model_failed"),
+                    "message": command.payload.get("message", ""),
+                    "retryable": bool(command.payload.get("retryable", True)),
+                },
             ),
             self._checkpoint(state, "terminal"),
         )
@@ -1220,7 +1813,10 @@ class DrSaiAgentKernel:
         lines = [f"[{key}] completed: {value}" for key, value in state.subagent_results.items()]
         lines.extend(f"[{key}] failed: {value['code']}" for key, value in state.subagent_failures.items())
         delegate_call_id = state.delegate_call_id
-        state.messages.append({"role": "tool", "tool_call_id": delegate_call_id, "content": "\n".join(lines)})
+        state.messages.append({
+            "role": "tool", "tool_call_id": delegate_call_id, "name": "delegate", "succeeded": True,
+            "content": "\n".join(lines),
+        })
         if delegate_call_id is not None:
             state.completed_side_effects.add(delegate_call_id)
         state.delegate_call_id = None
@@ -1266,7 +1862,10 @@ class DrSaiAgentKernel:
             if state.pending_subagents:
                 return (cancelled, self._checkpoint(state, "after_subagent_cancel"))
             ordered = "\n".join(f"[{key}] completed: {value}" for key, value in state.subagent_results.items())
-            state.messages.append({"role": "tool", "tool_call_id": state.delegate_call_id, "content": ordered})
+            state.messages.append({
+                "role": "tool", "tool_call_id": state.delegate_call_id, "name": "delegate", "succeeded": True,
+                "content": ordered,
+            })
             if state.delegate_call_id is not None:
                 state.completed_side_effects.add(state.delegate_call_id)
             state.delegate_call_id = None
@@ -1299,7 +1898,7 @@ class DrSaiAgentKernel:
                 f"[{subagent_id}] cancelled: parent_cancelled" for subagent_id in state.pending_subagents
             )
             state.messages.append({
-                "role": "tool", "tool_call_id": state.delegate_call_id,
+                "role": "tool", "tool_call_id": state.delegate_call_id, "name": "delegate", "succeeded": False,
                 "content": cancelled_summary or "cancelled: parent_cancelled",
             })
             state.completed_side_effects.add(state.delegate_call_id)
@@ -1350,6 +1949,9 @@ class DrSaiAgentKernel:
                 ),
             ),
             "tool_round_count": state.tool_round_count,
+            "tool_execution_disabled": state.tool_execution_disabled,
+            "web_search_queries": list(state.web_search_queries),
+            "web_search_exhausted": state.web_search_exhausted,
             "lifecycle_state": state.lifecycle_state,
             "subagent_scheduling_policy": dict(state.subagent_scheduling_policy),
             "pending_subagents": dict(state.pending_subagents),
@@ -1406,6 +2008,12 @@ class DrSaiAgentKernel:
             visible_tools = request_payload.get("tools", [])
             if not isinstance(visible_tools, list):
                 raise ValueError("model_request_tools_invalid")
+            if state.tool_execution_disabled:
+                visible_tools = []
+                request_payload["tools"] = visible_tools
+            elif state.web_search_exhausted:
+                visible_tools = [tool for tool in visible_tools if tool.get("name") != "web_search"]
+                request_payload["tools"] = visible_tools
             request_payload["model_tool_snapshot_sha256"] = freeze_model_tool_snapshot(
                 self._runtime_surface(), visible_tools,
             )["sha256"]
@@ -1414,6 +2022,7 @@ class DrSaiAgentKernel:
                 state.tool_decision_requirement,
                 [str(value.get("name", "")) for value in visible_tools if isinstance(value, Mapping)],
                 prior_tool_use=state.tool_round_count > 0 or bool(state.completed_side_effects),
+                prior_tool_domains=completed_tool_decision_domains(state.messages),
             ))
         return self._outbound(state, message_type, request_payload, suffix)
 

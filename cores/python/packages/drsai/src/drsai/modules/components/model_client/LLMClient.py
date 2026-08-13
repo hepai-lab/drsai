@@ -17,7 +17,7 @@ from typing import (
 )
 from typing_extensions import Required
 from pydantic import BaseModel
-from drsai.platform_auth import get_model_credential_provider, static_model_credentials_allowed
+from drsai.platform_auth import OidcModelCredentialProvider, get_model_credential_provider, static_model_credentials_allowed
 
 from openai.types.chat import ChatCompletionChunk
 from tiktoken.model import MODEL_TO_ENCODING
@@ -72,10 +72,14 @@ class HepAIModelInfo(ModelInfo):
 # See OpenAI docs for explanation of these parameters
 class HepAIClientConfiguration(OpenAIClientConfiguration, total=False):
     api_version: str | None = None
+    use_responses_api: bool
+    allow_deferred_oidc: bool
 
 
 class HepAIClientConfigurationConfigModel(OpenAIClientConfigurationConfigModel):
     api_version: str | None = None
+    use_responses_api: bool = False
+    allow_deferred_oidc: bool = True
 
 
 class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClientConfigurationConfigModel]):
@@ -86,14 +90,51 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
 
     def __init__(self, **kwargs: Unpack[HepAIClientConfiguration]):
 
+        self._use_responses_api = bool(kwargs.pop("use_responses_api", False))
+        self._allow_deferred_oidc = bool(kwargs.pop("allow_deferred_oidc", True))
+        # Cached/independent Agent clients can be reconstructed after the
+        # resolved SecretValue has deliberately been omitted from serialized
+        # component state. Recover only an exact configured Provider match;
+        # never guess by model name or send one Provider's key to another URL.
+        if (
+            not kwargs.get("api_key")
+            and kwargs.get("base_url")
+            and not self._allow_deferred_oidc
+        ):
+            try:
+                from drsai.config import load_user_config
+                from drsai.config.resolver import resolve_model_config
+
+                config = load_user_config()
+                expected_url = str(kwargs["base_url"]).rstrip("/")
+                provider_name = next((
+                    name for name, provider in config.providers.items()
+                    if str(provider.base_url or "").rstrip("/") == expected_url
+                ), None)
+                if provider_name is not None:
+                    resolved_model = resolve_model_config(
+                        config,
+                        environ=os.environ,
+                        provider=provider_name,
+                        require_credentials=True,
+                    )
+                    if resolved_model.provider.api_key is not None:
+                        kwargs["api_key"] = resolved_model.provider.api_key.reveal()
+            except Exception:
+                # The explicit actionable error below is safer than changing
+                # transport or silently borrowing the platform OIDC token.
+                pass
         self._oidc_credential_pending = False
+        self._uses_platform_auth = False
         credential = get_model_credential_provider(
             kwargs.get("api_key"),
             kwargs.get("base_url"),
+            configured_provider=not self._allow_deferred_oidc,
         )
         if credential:
             kwargs["api_key"] = credential.access_token
             kwargs["base_url"] = credential.openai_base_url
+            self._uses_platform_auth = isinstance(credential, OidcModelCredentialProvider)
         else:
             if not static_model_credentials_allowed():
                 kwargs["api_key"] = None
@@ -102,9 +143,14 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             if "base_url" not in kwargs:
                 kwargs["base_url"] = os.environ.get(
                     "OPENDRSAI_MODEL_BASE_URL",
-                    "https://ai.ihep.ac.cn/apiv2/v1",
+                    "https://ai-dev.ihep.ac.cn/apiv2/v1",
                 )
             if not kwargs.get("api_key"):
+                if not self._allow_deferred_oidc:
+                    raise RuntimeError(
+                        "The configured model provider API credential is unavailable; "
+                        "enter the provider API Key again in Model Settings."
+                    )
                 # The desktop gateway supplies a request-scoped OIDC token.
                 # OpenAI validates credentials during construction, before the
                 # request scope may reach an agent created in a worker thread.
@@ -112,6 +158,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                 # replaced by _bind_platform_auth before any provider call.
                 kwargs["api_key"] = "opendrsai-oidc-pending"
                 self._oidc_credential_pending = True
+                self._uses_platform_auth = True
 
         if "model_info" not in kwargs:
             model_info: Optional[HepAIModelInfo] ={
@@ -237,8 +284,18 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                 break
 
         super().__init__(**kwargs)
+        # AutoGen clones this client from _raw_config for local subagents.
+        # Keep the transport choice there so clones do not silently fall back
+        # to Chat Completions.
+        self._raw_config["use_responses_api"] = self._use_responses_api
+        self._raw_config["allow_deferred_oidc"] = self._allow_deferred_oidc
+
+    def _to_config(self) -> HepAIClientConfigurationConfigModel:
+        return HepAIClientConfigurationConfigModel(**self._raw_config)
 
     def _bind_platform_auth(self) -> None:
+        if not getattr(self, "_uses_platform_auth", True) and not getattr(self, "_oidc_credential_pending", False):
+            return
         credential = get_model_credential_provider()
         if not credential:
             if getattr(self, "_oidc_credential_pending", False):
@@ -250,6 +307,14 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
 
     async def create(self, *args: Any, **kwargs: Any):
         self._bind_platform_auth()
+        if self._use_responses_api:
+            result = None
+            async for item in self.create_stream(*args, **kwargs):
+                if isinstance(item, CreateResult):
+                    result = item
+            if result is None:
+                raise RuntimeError("Responses API returned no final result.")
+            return result
         return await super().create(*args, **kwargs)
     
     async def create_stream(
@@ -285,6 +350,29 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
         """
 
         self._bind_platform_auth()
+
+        if self._use_responses_api:
+            responses_emitted = False
+            try:
+                async for item in self._create_responses_stream(
+                    messages,
+                    tools=tools,
+                    json_output=json_output,
+                    extra_create_args=extra_create_args,
+                    cancellation_token=cancellation_token,
+                ):
+                    responses_emitted = True
+                    yield item
+                return
+            except Exception as exc:
+                # Unified OpenAI routing prefers Responses. A configured
+                # compatibility endpoint may still expose only Chat
+                # Completions, so fall back solely for a clean endpoint-level
+                # rejection before any output; authentication, quota, model,
+                # and mid-stream failures must remain visible to the caller.
+                if responses_emitted or getattr(exc, "status_code", None) not in {404, 405, 501}:
+                    raise
+                logger.info("Responses endpoint unavailable; using Chat Completions compatibility route.")
 
         create_params = self._process_create_args(
             messages,
@@ -583,6 +671,200 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
 
         # Yield the CreateResult.
         yield result
+
+    async def _create_responses_stream(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        tools: Sequence[Tool | ToolSchema],
+        json_output: Optional[bool | type[BaseModel]],
+        extra_create_args: Mapping[str, Any],
+        cancellation_token: Optional[CancellationToken],
+    ) -> AsyncGenerator[Union[str, CreateResult], None]:
+        """Adapt AutoGen's chat model contract to OpenAI's Responses API."""
+        create_params = self._process_create_args(messages, tools, json_output, extra_create_args)
+        request = self._responses_request(create_params)
+        import asyncio
+
+        stream_future = asyncio.ensure_future(self._client.responses.create(**request, stream=True))
+        if cancellation_token is not None:
+            cancellation_token.link_future(stream_future)
+        stream = await stream_future
+
+        content_deltas: list[str] = []
+        thought_deltas: list[str] = []
+        function_calls: dict[str, FunctionCall] = {}
+        function_order: list[str] = []
+        usage = RequestUsage(prompt_tokens=0, completion_tokens=0)
+        finish_reason = "stop"
+
+        logger.info(LLMStreamStartEvent(messages=cast(List[Dict[str, Any]], create_params.messages)))
+        async for event in stream:
+            event_type = getattr(event, "type", "")
+            if event_type == "response.output_text.delta":
+                delta = getattr(event, "delta", "")
+                if delta:
+                    content_deltas.append(delta)
+                    yield delta
+            elif event_type in {"response.reasoning_summary_text.delta", "response.reasoning_text.delta"}:
+                delta = getattr(event, "delta", "")
+                if delta:
+                    thought_deltas.append(delta)
+            elif event_type == "response.output_item.added":
+                item = getattr(event, "item", None)
+                if getattr(item, "type", "") == "function_call":
+                    key = getattr(item, "id", None) or getattr(item, "call_id", None) or str(getattr(event, "output_index", len(function_order)))
+                    function_calls[key] = FunctionCall(
+                        id=getattr(item, "call_id", None) or getattr(item, "id", ""),
+                        name=getattr(item, "name", ""),
+                        arguments=getattr(item, "arguments", "") or "",
+                    )
+                    function_order.append(key)
+            elif event_type == "response.function_call_arguments.delta":
+                key = getattr(event, "item_id", None)
+                call = function_calls.get(key)
+                if call is None and function_order:
+                    call = function_calls[function_order[-1]]
+                if call is not None:
+                    call.arguments += getattr(event, "delta", "") or ""
+            elif event_type == "response.completed":
+                response = getattr(event, "response", None)
+                for item in getattr(response, "output", None) or []:
+                    if getattr(item, "type", "") != "function_call":
+                        continue
+                    key = getattr(item, "id", None) or getattr(item, "call_id", None)
+                    if key not in function_calls:
+                        function_calls[key] = FunctionCall(
+                            id=getattr(item, "call_id", None) or getattr(item, "id", ""),
+                            name=getattr(item, "name", ""),
+                            arguments=getattr(item, "arguments", "") or "",
+                        )
+                        function_order.append(key)
+                    else:
+                        function_calls[key].arguments = getattr(item, "arguments", "") or function_calls[key].arguments
+                response_usage = getattr(response, "usage", None)
+                if response_usage is not None:
+                    usage = RequestUsage(
+                        prompt_tokens=getattr(response_usage, "input_tokens", 0) or 0,
+                        completion_tokens=getattr(response_usage, "output_tokens", 0) or 0,
+                    )
+                if getattr(response, "status", None) == "incomplete":
+                    finish_reason = "length"
+
+        content: Union[str, List[FunctionCall]]
+        thought = "".join(thought_deltas) or None
+        if function_calls:
+            content = [function_calls[key] for key in function_order]
+            if content_deltas and thought is None:
+                thought = "".join(content_deltas)
+        else:
+            content = "".join(content_deltas)
+        result = CreateResult(
+            finish_reason=normalize_stop_reason(finish_reason),
+            content=content,
+            usage=usage,
+            cached=False,
+            thought=thought,
+        )
+        logger.info(LLMStreamEndEvent(
+            response=result.model_dump(),
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+        ))
+        self._total_usage = _add_usage(self._total_usage, usage)
+        self._actual_usage = _add_usage(self._actual_usage, usage)
+        yield result
+
+    @staticmethod
+    def _responses_request(create_params: Any) -> dict[str, Any]:
+        def response_content(content: Any) -> Any:
+            if not isinstance(content, list):
+                return content or ""
+            converted = []
+            for part in content:
+                if not isinstance(part, dict):
+                    converted.append(part)
+                elif part.get("type") == "text":
+                    converted.append({"type": "input_text", "text": part.get("text", "")})
+                elif part.get("type") == "image_url":
+                    image = part.get("image_url", {})
+                    converted.append({
+                        "type": "input_image",
+                        "image_url": image.get("url", "") if isinstance(image, dict) else image,
+                        **({"detail": image["detail"]} if isinstance(image, dict) and image.get("detail") else {}),
+                    })
+                else:
+                    converted.append(part)
+            return converted
+
+        input_items: list[dict[str, Any]] = []
+        for message in create_params.messages:
+            role = message.get("role")
+            if role == "tool":
+                input_items.append({
+                    "type": "function_call_output",
+                    "call_id": message.get("tool_call_id", ""),
+                    "output": message.get("content", "") or "",
+                })
+                continue
+            if role == "assistant" and message.get("tool_calls"):
+                if message.get("content"):
+                    input_items.append({"role": "assistant", "content": response_content(message["content"])})
+                for call in message["tool_calls"]:
+                    function = call.get("function", {})
+                    input_items.append({
+                        "type": "function_call",
+                        "call_id": call.get("id", ""),
+                        "name": function.get("name", ""),
+                        "arguments": function.get("arguments", ""),
+                    })
+                continue
+            item = {"role": role, "content": response_content(message.get("content", ""))}
+            input_items.append(item)
+
+        response_tools = []
+        for tool in create_params.tools or []:
+            function = tool.get("function", tool)
+            response_tools.append({
+                "type": "function",
+                "name": function.get("name", ""),
+                "description": function.get("description", ""),
+                "parameters": function.get("parameters", {}),
+                **({"strict": function["strict"]} if "strict" in function else {}),
+            })
+
+        request = dict(create_params.create_args)
+        request.pop("stream", None)
+        request.pop("stream_options", None)
+        request.pop("n", None)
+        configured_response_format = request.pop("response_format", None)
+        if "max_tokens" in request:
+            request["max_output_tokens"] = request.pop("max_tokens")
+        if "max_completion_tokens" in request:
+            request["max_output_tokens"] = request.pop("max_completion_tokens")
+        if "reasoning_effort" in request:
+            request["reasoning"] = {"effort": request.pop("reasoning_effort")}
+        request["input"] = input_items
+        if response_tools:
+            request["tools"] = response_tools
+        schema = create_params.response_format or configured_response_format
+        if schema is not None:
+            if isinstance(schema, dict):
+                if schema.get("type") == "json_schema" and isinstance(schema.get("json_schema"), dict):
+                    response_format = {"type": "json_schema", **schema["json_schema"]}
+                else:
+                    response_format = schema
+            elif isinstance(schema, BaseModel):
+                response_format = schema.model_dump(exclude_none=True)
+            else:
+                response_format = {
+                    "type": "json_schema",
+                    "name": schema.__name__,
+                    "schema": schema.model_json_schema(),
+                    "strict": True,
+                }
+            request["text"] = {"format": response_format}
+        return request
     
     def count_tokens(self, messages: Sequence[LLMMessage], *, tools: Sequence[Tool | ToolSchema] = []) -> int:
 

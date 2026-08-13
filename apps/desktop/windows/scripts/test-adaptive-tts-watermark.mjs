@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+const { AdaptiveTtsPrefetchWatermark, estimateSpeechAudioMs } = await import("../../shared/renderer/src/voice/streaming/adaptiveTtsWatermark.ts");
+assert.ok(estimateSpeechAudioMs("这是一段中文语音") > 1_000);
+assert.ok(estimateSpeechAudioMs("hello world", 2) < estimateSpeechAudioMs("hello world", 1));
+const fast = new AdaptiveTtsPrefetchWatermark();
+for (let index = 0; index < 8; index += 1) fast.observe(100, 1_000);
+assert.equal(fast.targetSegments, 1, "fast stable synthesis should use a low watermark");
+assert.equal(fast.shouldPrefetch(1, 0), false);
+const slow = new AdaptiveTtsPrefetchWatermark();
+for (let index = 0; index < 8; index += 1) slow.observe(900, 1_000);
+assert.equal(slow.targetSegments, 2, "slow synthesis should prefetch the bounded second segment");
+assert.equal(slow.shouldPrefetch(0, 1), true);
+const jitter = new AdaptiveTtsPrefetchWatermark();
+for (const duration of [100, 900, 120, 850, 110, 800]) jitter.observe(duration, 1_500);
+assert.equal(jitter.targetSegments, 2, "network/provider jitter should raise the watermark");
+console.log("Adaptive TTS watermark tests passed (speech estimate, fast/slow Provider, jitter, and bounded prefetch decisions).");

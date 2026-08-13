@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowUpRight,
@@ -17,6 +17,8 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { userFacingBusinessText } from "../userFacingLanguage";
+import { formatWebSearchActivitySummary } from "../webSearchPresentation";
+import { stripTrailingSourceList } from "../sourceListPresentation";
 import { boundedProcessWindow, PROCESS_ACTIVITY_WINDOW_SIZE, PROCESS_PART_WINDOW_SIZE } from "../boundedProcessWindow";
 import type {
   ArtifactPart,
@@ -29,11 +31,13 @@ import type {
 } from "@shared/structuredConversation";
 import type { RunReproducibilityLevel } from "@shared/runInspection";
 import { ChatMessageContent } from "./ChatMessageContent";
+import { desktopApi } from "../desktopApi";
 
 export interface InteractionResponse extends Record<string, unknown> {
   approved?: boolean;
   decision?: "accept" | "acceptForSession" | "decline" | "revise";
   goal?: { objective: string; materials: string[]; outputs: string[]; constraints: string[] };
+  capabilityAction?: "configured" | "answer_without_network";
 }
 
 interface StructuredMessagePartsProps {
@@ -41,6 +45,7 @@ interface StructuredMessagePartsProps {
   runId?: string;
   language: "en" | "zh";
   respondedRequestIds: ReadonlySet<string>;
+  configuredCapabilityRequestIds: ReadonlySet<string>;
   onOpenLink: (href: string | undefined) => void;
   onOpenArtifact: (part: ArtifactPart) => void;
   onOpenCitation: (part: CitationPart) => void;
@@ -68,6 +73,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   runId,
   language,
   respondedRequestIds,
+  configuredCapabilityRequestIds,
   onOpenLink,
   onOpenArtifact,
   onOpenCitation,
@@ -89,9 +95,15 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   const progressParts = turn.parts.filter((part) => part.kind === "progress");
   const reasoningParts = turn.parts.filter((part) => part.kind === "reasoning");
   const subtaskParts = turn.parts.filter((part) => part.kind === "subtask");
-  const interactionParts = turn.parts.filter((part): part is InteractionPart => part.kind === "interaction" && (part.status === "running" || part.status === "pending"));
+  const interactionParts = turn.parts.filter((part): part is InteractionPart =>
+    part.kind === "interaction"
+    && (part.status === "running" || part.status === "pending")
+    && (turn.status === "running" || !respondedRequestIds.has(part.requestId))
+  );
   const resultParts = turn.parts.filter((part) => part.kind === "markdown" || part.kind === "artifact" || part.kind === "citation");
   const noticeParts = turn.parts.filter((part): part is NoticePart => part.kind === "notice");
+  const publicSources = useMemo(() => extractPublicSources(turn), [turn]);
+  const hasUserWarning = noticeParts.some((part) => part.level === "warning") || turn.parts.some((part) => part.kind === "markdown" && /could not be fully verified|citation_evidence_incomplete/i.test(part.markdown));
   const hasProcess = progressParts.length > 0 || reasoningParts.length > 0 || subtaskParts.length > 0 || turn.activities.length > 0 || noticeParts.length > 0;
   const waitingApproval = turn.parts.some((part) => part.kind === "interaction" && part.interactionType === "approval" && (part.status === "pending" || part.status === "running"));
   const turnStatusLabel = waitingApproval
@@ -99,6 +111,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     : turn.status === "pending" ? (language === "zh" ? "排队中" : "Queued")
     : turn.status === "running" && !hasProcess ? (language === "zh" ? "已发送" : "Sent")
     : turn.status === "running" ? (language === "zh" ? "生成中" : "Generating")
+    : turn.status === "completed" && hasUserWarning ? (language === "zh" ? "已完成 · 有警告" : "Completed · Warning")
     : turn.status === "completed" ? (language === "zh" ? "已完成" : "Completed")
     : turn.status === "error" ? (language === "zh" ? "失败" : "Failed")
     : (language === "zh" ? "已停止" : "Stopped");
@@ -128,8 +141,8 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
 
   useEffect(() => {
     if (turn.status === "running" || turn.status === "error") setProcessOpen(true);
-    else if (turn.status === "completed") setProcessOpen(false);
-  }, [turn.status]);
+    else if (turn.status === "completed") setProcessOpen(hasUserWarning);
+  }, [hasUserWarning, turn.status]);
 
   function focusPart(partId: string): void {
     setFocusedPartId(partId);
@@ -143,9 +156,10 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
 
   function renderPart(part: StructuredAssistantPart): React.JSX.Element | null {
     if (part.kind === "markdown") {
-      return part.markdown ? (
+      const displayedMarkdown = publicSources.length ? stripTrailingSourceList(part.markdown) : part.markdown;
+      return displayedMarkdown ? (
         <div key={part.id} className={`structured-markdown-part ${focusedPartId === part.id ? "relation-focus" : ""}`} data-structured-part-id={part.id}>
-          <ChatMessageContent content={part.markdown} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
+          <ChatMessageContent content={displayedMarkdown} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
           {part.citationIds?.length ? <div className="structured-inline-citations" aria-label={language === "zh" ? "本段引用" : "Citations for this section"}>
             {part.citationIds.map((citationId) => {
               const citation = citationParts.find((candidate) => candidate.citationId === citationId);
@@ -165,9 +179,9 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     </div>;
     if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} />;
     if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
-    if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} />;
+    if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} capabilityConfigured={configuredCapabilityRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} onOpenLink={onOpenLink} />;
     if (part.kind === "subtask") return <div className={`structured-subtask ${part.status}`} key={part.id}><ListChecks size={14} aria-hidden="true" /><span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span></div>;
-    return <NoticeItem key={part.id} part={part} />;
+    return <NoticeItem key={part.id} part={part} language={language} onOpenDebug={onOpenDebug} />;
   }
 
   return (
@@ -186,6 +200,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
         {processOpen ? <div className="structured-process-content" data-testid="structured-process-content">
           {onOpenRun && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onOpenRun(runId)}>{language === "zh" ? "查看运行" : "View run"}<ArrowUpRight size={13} aria-hidden /></button> : null}
           {onCreateRunExperiment && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onCreateRunExperiment(runId)}>{language === "zh" ? "创建实验" : "Create experiment"}<FlaskConical size={13} aria-hidden /></button> : null}
+          <RetrievalStageSummary turn={turn} language={language} />
           <StructuredActivityTimeline turn={turn} language={language} onOpenDebug={onOpenDebug} />
           <BoundedProcessSection title={language === "zh" ? "过程记录" : "Progress"} items={progressParts} language={language} renderPart={renderPart} />
           <BoundedProcessSection title={language === "zh" ? "分析摘要" : "Analysis summary"} items={reasoningParts} language={language} renderPart={renderPart} />
@@ -204,9 +219,55 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       </header>}
       {interactionParts.length ? <section className="structured-interaction-layer" aria-label={language === "zh" ? "待用户交互" : "User action required"}>{interactionParts.map(renderPart)}</section> : null}
       {resultParts.length ? <section className="structured-result-layer"><h3>{language === "zh" ? "最终回答" : "Final answer"}</h3>{resultParts.map(renderPart)}</section> : null}
+      {publicSources.length ? <section className="structured-source-list" aria-label={language === "zh" ? "回答来源" : "Answer sources"}>
+        <h3>{language === "zh" ? `来源 · ${publicSources.length}` : `Sources · ${publicSources.length}`}</h3>
+        {publicSources.map((source, index) => <button type="button" key={source.url} onClick={() => onOpenLink(source.url)}>
+          <span><small>{index + 1}</small><strong>{source.label}</strong></span>
+          <em>{language === "zh" ? "已获取" : "Retrieved"}</em><ArrowUpRight size={13} aria-hidden />
+        </button>)}
+      </section> : null}
     </div>
   );
 });
+
+function extractPublicSources(turn: StructuredTurnState): Array<{ url: string; label: string }> {
+  const urls: string[] = [];
+  for (const part of turn.parts) {
+    if (part.kind === "citation" && part.url?.startsWith("https://")) urls.push(part.url);
+    if (part.kind !== "markdown") continue;
+    urls.push(...(part.markdown.match(/https:\/\/[^\s<>\]\[(){}"']+/g) ?? []).map((url) => url.replace(/[.,;:!?]+$/, "")));
+  }
+  return [...new Set(urls)].slice(0, 8).map((url) => {
+    try { return { url, label: new URL(url).hostname.replace(/^www\./, "") }; }
+    catch { return { url, label: url }; }
+  });
+}
+
+function RetrievalStageSummary({ turn, language }: { turn: StructuredTurnState; language: "en" | "zh" }): React.JSX.Element | null {
+  const retrieval = turn.activities.filter((activity): activity is Extract<StructuredActivityEvent, { kind: "tool" }> => activity.kind === "tool" && /web[._](search|fetch)/i.test(activity.toolName));
+  if (!retrieval.length) return null;
+  const search = retrieval.filter((activity) => /search/i.test(activity.toolName));
+  const fetch = retrieval.filter((activity) => /fetch/i.test(activity.toolName));
+  const text = turn.parts.filter((part) => part.kind === "markdown").map((part) => part.markdown).join("\n");
+  const warning = /could not be fully verified|citation_evidence_incomplete/i.test(text)
+    || turn.parts.some((part) => part.kind === "notice" && /citation|source|引用|来源/i.test(part.message) && part.level !== "success");
+  const stages = [
+    { label: language === "zh" ? "搜索网络" : "Search web", values: search },
+    { label: language === "zh" ? "读取网页" : "Read pages", values: fetch },
+    { label: language === "zh" ? "整理回答" : "Compose answer", values: [], complete: Boolean(text.trim()) },
+    { label: language === "zh" ? "验证来源" : "Verify sources", values: [], complete: turn.status === "completed", warning },
+  ];
+  return <section className="structured-retrieval-stages" aria-label={language === "zh" ? "网络感知阶段" : "Web perception stages"}>
+    <h4>{language === "zh" ? "运行阶段" : "Run stages"}</h4>
+    <div>{stages.map((stage) => {
+      const failed = stage.values.some((value) => value.status === "error");
+      const running = stage.values.some((value) => value.status === "running" || value.status === "pending");
+      const complete = stage.complete || (stage.values.length > 0 && !failed && !running);
+      const status = stage.warning ? "warning" : failed ? "error" : complete ? "completed" : "running";
+      return <span className={status} key={stage.label}>{status === "completed" ? <CheckCircle2 size={13} /> : status === "warning" || status === "error" ? <TriangleAlert size={13} /> : <CircleEllipsis size={13} />}<strong>{stage.label}</strong>{stage.values.length ? <small>{stage.values.length}</small> : null}</span>;
+    })}</div>
+  </section>;
+}
 
 function BoundedProcessSection({
   title,
@@ -383,7 +444,9 @@ function StructuredActivityDetails({
       <span>{formatActivitySummary(activity, language)}</span>
       {activity.kind === "file_change" ? <small>{activity.action}</small> : null}
       {activity.kind === "tool" ? <small>{language === "zh" ? "执行记录已保存" : "Execution record saved"}</small> : null}
-      {activity.kind === "tool" && activity.durationMs !== undefined ? <time>{formatRunDuration(activity.durationMs, language)}</time> : null}
+      {activity.kind === "tool" && activity.toolName !== "web_search" && activity.durationMs !== undefined
+        ? <time>{formatRunDuration(activity.durationMs, language)}</time>
+        : null}
       {onOpenRun && activity.oaepItemId ? <button type="button" className="structured-activity-inspect" onClick={() => onOpenRun(activity.oaepItemId!)} aria-label={`${language === "zh" ? "查看运行项目" : "Inspect run item"}: ${activity.title}`}><ArrowUpRight size={12} /></button> : null}
       {onCreateExperiment && activity.oaepItemId ? <button type="button" className="structured-activity-inspect" onClick={() => onCreateExperiment(activity.oaepItemId!)} aria-label={`${language === "zh" ? "从运行项目创建实验" : "Create experiment from run item"}: ${activity.title}`}><FlaskConical size={12} /></button> : null}
     </div>)}
@@ -443,7 +506,10 @@ function formatRunDuration(durationMs: number, language: "en" | "zh"): string {
 }
 
 export function formatActivitySummary(activity: StructuredActivityEvent, language: "en" | "zh"): string {
-  if (activity.kind === "tool") return userFacingBusinessText(activity.toolName, language === "zh" ? "执行任务步骤" : "Run task step");
+  if (activity.kind === "tool") {
+    if (activity.toolName === "web_search") return formatWebSearchActivitySummary(activity, language);
+    return userFacingBusinessText(activity.toolName, language === "zh" ? "执行任务步骤" : "Run task step");
+  }
   if (activity.kind === "model") return language === "zh" ? "正在生成" : "Generating";
   if (activity.kind === "retry") {
     return language === "zh"
@@ -577,17 +643,21 @@ function InteractionItem({
   part,
   language,
   responded,
+  capabilityConfigured,
   onRespond,
   onRequestText,
   onOpenResult,
+  onOpenLink,
 }: {
   compact?: boolean;
   part: InteractionPart;
   language: "en" | "zh";
   responded: boolean;
+  capabilityConfigured: boolean;
   onRespond: (part: InteractionPart, response: InteractionResponse) => void;
   onRequestText: (part: InteractionPart) => void;
   onOpenResult?: () => void;
+  onOpenLink?: (href: string | undefined) => void;
 }): React.JSX.Element {
   const zh = language === "zh";
   const isGoalConfirmation = part.interactionType === "confirmation" && part.requestId.startsWith("goal:");
@@ -596,6 +666,11 @@ function InteractionItem({
     return separator > 0 ? [line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim()] : ["", ""];
   }));
   const [editingGoal, setEditingGoal] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [configurationError, setConfigurationError] = useState("");
+  const [configurationWarning, setConfigurationWarning] = useState("");
+  const [savingConfiguration, setSavingConfiguration] = useState(false);
+  const [configurationSaved, setConfigurationSaved] = useState(false);
   const [goalDraft, setGoalDraft] = useState(() => ({
     objective: goalLines.goal || "",
     materials: goalLines.materials === "None supplied" ? "" : goalLines.materials || "",
@@ -603,6 +678,114 @@ function InteractionItem({
     constraints: goalLines.constraints === "None supplied" ? "" : goalLines.constraints || "",
   }));
   const splitGoalList = (value: string): string[] => value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+  if (part.interactionType === "capability_configuration") {
+    const capabilityPrompt = !part.prompt.trim() || part.prompt.trim() === "[REDACTED]"
+      ? (zh
+          ? "这个问题需要联网获取当前信息。请配置网络感知器后继续，或选择暂不联网回答。"
+          : "This question needs current information from the web. Configure a network perceptor to continue, or answer without web access.")
+      : part.prompt;
+    const configure = async () => {
+      const key = apiKey.trim();
+      if (!key) {
+        setConfigurationError(zh ? "请输入 Tavily API Key。" : "Enter a Tavily API key.");
+        return;
+      }
+      setSavingConfiguration(true);
+      setConfigurationError("");
+      setConfigurationWarning("");
+      let configurationPersisted = false;
+      try {
+        await desktopApi.savePerceptor({
+          perceptor_id: "web-tavily-main",
+          name: zh ? "网页搜索" : "Web search",
+          kind: "public_web",
+          adapter: "tavily",
+          enabled: true,
+          capabilities: ["web.search", "web.extract"],
+          config: {
+            api_key: key,
+            base_url: "https://api.tavily.com",
+            search_depth: "basic",
+            extract_depth: "basic",
+            timeout_seconds: 15,
+            max_document_chars: 20000,
+          },
+        });
+        configurationPersisted = true;
+        const tested = await desktopApi.testPerceptor("web-tavily-main", "search");
+        if (!tested.ok) {
+          const messages: Record<string, string> = zh ? {
+            credential_required: "请输入 API Key。",
+            credential_invalid: "Tavily 未接受当前 API Key，请检查后重试。",
+            quota_exhausted: "Tavily 账户额度不足，请检查账户后重试。",
+            network_unavailable: "当前无法连接 Tavily，请检查网络后重试。",
+            provider_timeout: "Tavily 响应超时，请稍后重试。",
+          } : {
+            credential_required: "Enter an API key.",
+            credential_invalid: "Tavily did not accept this API key. Check it and retry.",
+            quota_exhausted: "The Tavily account has insufficient quota.",
+            network_unavailable: "Tavily cannot be reached. Check the network and retry.",
+            provider_timeout: "Tavily timed out. Please retry.",
+          };
+          if (["network_unavailable", "provider_timeout", "runtime_unavailable", "degraded"].includes(tested.status)) {
+            setApiKey("");
+            setConfigurationWarning(zh
+              ? "网络感知器已保存；自动验证暂时未完成，正在使用已保存配置继续。实际搜索会自动重试。"
+              : "The network perceptor was saved, but automatic validation is temporarily inconclusive. Continuing with the saved configuration; web search will retry automatically.");
+            setConfigurationSaved(true);
+            onRespond(part, { decision: "accept", capabilityAction: "configured" });
+            return;
+          }
+          throw new Error(messages[tested.status] || (zh ? "连接测试失败，请稍后重试。" : "Connection test failed. Please retry."));
+        }
+        setApiKey("");
+        setConfigurationSaved(true);
+        onRespond(part, { decision: "accept", capabilityAction: "configured" });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        if (configurationPersisted) {
+          setApiKey("");
+          setConfigurationWarning(zh
+            ? "网络感知器已保存；自动验证请求未完成，正在使用已保存配置继续。实际搜索会自动重试。"
+            : "The network perceptor was saved, but its automatic validation request did not complete. Continuing with the saved configuration; web search will retry automatically.");
+          setConfigurationSaved(true);
+          onRespond(part, { decision: "accept", capabilityAction: "configured" });
+          return;
+        }
+        setConfigurationError(zh
+          ? `网页搜索配置未通过验证：${detail}`
+          : `Web search configuration could not be verified: ${detail}`);
+      } finally {
+        setSavingConfiguration(false);
+      }
+    };
+    if (configurationSaved || capabilityConfigured) {
+      return <section className="chat-agent-input-request structured-interaction capability-configuration-card capability-configuration-complete" data-testid="capability-configuration-card" data-state="configured" aria-label={zh ? "网络感知器已配置" : "Network perceptor configured"} role="status">
+        <div className="capability-configuration-title">
+          <CheckCircle2 size={18} aria-hidden="true" />
+          <strong>{zh ? "网络感知器已配置" : "Network perceptor configured"}</strong>
+          <span className="streaming-status capability-configuration-resume-status" aria-live="polite">
+            <span className="streaming-dot" aria-hidden />
+            <span>{zh ? "正在继续处理" : "Continuing the task"}</span>
+          </span>
+        </div>
+        {configurationWarning ? <p className="capability-configuration-warning" role="status">{configurationWarning}</p> : null}
+      </section>;
+    }
+    return <section className="chat-agent-input-request structured-interaction capability-configuration-card" data-testid="capability-configuration-card" data-state="required" aria-label={zh ? "配置网页搜索" : "Configure web search"}>
+      <div className="capability-configuration-title"><Globe2 size={18} aria-hidden="true" /><strong>{zh ? "需要网络感知器" : "A network perceptor is needed"}</strong></div>
+      <p>{capabilityPrompt}</p>
+      <p>{zh ? "你也可以稍后在“设置 → 感知器配置”中管理 Tavily。" : "You can also manage Tavily later in Settings → Perceptors."}</p>
+      <p className="capability-configuration-privacy">{zh ? "隐私说明：保存并验证之前，不会把本次问题发送给 Tavily。API Key 将安全保存在本机。" : "Privacy: this query is not sent to Tavily before you save and verify the configuration. The API key is stored securely on this device."}</p>
+      <label>{zh ? "Tavily API Key" : "Tavily API key"}<input data-testid="capability-api-key" type="password" autoComplete="off" value={apiKey} disabled={responded || savingConfiguration} onChange={(event) => setApiKey(event.target.value)} placeholder="tvly-…" /></label>
+      <button type="button" className="link-button" onClick={() => onOpenLink?.("https://app.tavily.com/home")}>{zh ? "如何获取 API Key" : "How to get an API key"}<ArrowUpRight size={13} aria-hidden="true" /></button>
+      {configurationError ? <p className="capability-configuration-error" role="alert">{configurationError}</p> : null}
+      <div>
+        <button type="button" disabled={responded || savingConfiguration} onClick={() => onRespond(part, { decision: "decline", capabilityAction: "answer_without_network" })}>{zh ? "暂不联网，继续回答" : "Continue without web"}</button>
+        <button type="button" data-testid="capability-save-and-continue" disabled={responded || savingConfiguration || !apiKey.trim()} onClick={() => void configure()}>{savingConfiguration ? (zh ? "正在验证…" : "Verifying…") : (zh ? "保存并继续" : "Save and continue")}</button>
+      </div>
+    </section>;
+  }
   if (compact) {
     const label = isGoalConfirmation
       ? (responded ? (zh ? "任务目标已处理" : "Task goal handled") : (zh ? "任务目标等待确认，请在输入栏处理" : "Task goal is awaiting confirmation in the composer"))
@@ -650,7 +833,7 @@ function InteractionItem({
   );
 }
 
-function NoticeItem({ part }: { part: NoticePart }): React.JSX.Element {
+function NoticeItem({ part, language, onOpenDebug }: { part: NoticePart; language: "en" | "zh"; onOpenDebug?: () => void }): React.JSX.Element {
   const Icon = part.level === "error"
     ? AlertCircle
     : part.level === "warning"
@@ -661,7 +844,22 @@ function NoticeItem({ part }: { part: NoticePart }): React.JSX.Element {
   return (
     <div className={`structured-notice ${part.level}`} role={part.level === "error" ? "alert" : "status"}>
       <Icon size={14} aria-hidden="true" />
-      <span>{part.message}</span>
+      <span>{userFacingNotice(part.message, language)}</span>
+      {(part.level === "error" || part.level === "warning") && onOpenDebug ? <button type="button" onClick={onOpenDebug}>{language === "zh" ? "技术详情" : "Technical details"}</button> : null}
     </div>
   );
+}
+
+function userFacingNotice(message: string, language: "en" | "zh"): string {
+  if (!message || message === "[REDACTED]") {
+    return language === "zh"
+      ? "本次运行未能完成，旧版本没有保存可显示的详细原因。你可以重试，或查看技术详情。"
+      : "This run did not finish, and the older record has no displayable reason. Retry or view technical details.";
+  }
+  if (/citation_evidence_(invalid|incomplete)/i.test(message)) {
+    return language === "zh"
+      ? "已获取网页信息，但部分来源引用未能完整验证。回答和已找到的来源仍然保留。"
+      : "Web information was retrieved, but some citations could not be fully verified. The answer and retrieved sources were preserved.";
+  }
+  return message;
 }

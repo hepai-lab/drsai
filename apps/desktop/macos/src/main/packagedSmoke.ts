@@ -7,8 +7,10 @@ import { stopGateway } from "./gateway";
 import type { NativeHelperSupervisor } from "./native/nativeHelperSupervisor";
 import { clickLatestCompletionNotificationForE2e } from "../../../shared/main/completionNotifications";
 import { setPackagedNetworkOnlineForE2e } from "./bootstrap/installAppIntegrations";
+import { wasLatestPermissionNotificationShownForE2e } from "./systemPermissions";
+import { requireAuthContext } from "../../../shared/main/auth";
 
-type PackagedScenario = "smoke" | "core" | "product-state" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "system-events" | "sleep-wake" | "tcc" | "online-update-lab" | "ssh-loopback";
+type PackagedScenario = "smoke" | "core" | "product-state" | "auth-cycle" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "system-events" | "sleep-wake" | "tcc" | "online-update-lab" | "ssh-loopback" | "hepai-provider";
 
 interface PackagedScenarioConfig {
   workspacePath?: string;
@@ -27,6 +29,7 @@ interface PackagedScenarioConfig {
   durationMs?: number;
   intervalMs?: number;
   warmupMs?: number;
+  resourceSettleMs?: number;
   targetVersion?: string;
   readyPath?: string;
 }
@@ -47,7 +50,10 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
         ? await runSleepWakeScenario(window, config)
         : scenario === "system-events"
           ? await runSystemEventsScenario(window)
+        : scenario === "hepai-provider"
+          ? await runHepaiProviderScenario()
         : await window.webContents.executeJavaScript(buildScenarioScript(scenario, config), true);
+      if (scenario === "tcc") result = { ...(result as object), notificationShown: wasLatestPermissionNotificationShownForE2e() };
       if (scenario === "ssh-loopback") result = await verifyPackagedSshForward(window, result);
       if (scenario === "managed-process-crash") {
         const gatewayBefore = (result as { gateway?: { pid?: number } }).gateway;
@@ -91,8 +97,52 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
 
 function normalizeScenario(value: string | undefined): PackagedScenario {
   const scenario = value?.trim() || "smoke";
-  if (["smoke", "core", "product-state", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "system-events", "sleep-wake", "tcc", "online-update-lab", "ssh-loopback"].includes(scenario)) return scenario as PackagedScenario;
+  if (["smoke", "core", "product-state", "auth-cycle", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "system-events", "sleep-wake", "tcc", "online-update-lab", "ssh-loopback", "hepai-provider"].includes(scenario)) return scenario as PackagedScenario;
   throw new Error(`Unsupported packaged acceptance scenario: ${scenario}`);
+}
+
+async function runHepaiProviderScenario(): Promise<unknown> {
+  const origin = new URL(process.env.OPENDRSAI_HEPAI_ORIGIN || "https://ai-dev.ihep.ac.cn");
+  if (origin.protocol !== "https:" || origin.username || origin.password) throw new Error("HepAI platform origin must be a credential-free HTTPS URL");
+  const auth = await requireAuthContext();
+  if (auth.authMode !== "oidc" || !auth.accessToken) throw new Error("HepAI Provider acceptance requires an OIDC session");
+  const base = new URL("/apiv2/v1/", origin);
+  const timeoutMs = 120_000;
+  const catalog = await fetchWithAcceptanceDeadline(new URL("models", base), { headers: { Authorization: `Bearer ${auth.accessToken}`, Accept: "application/json" }, redirect: "error" }, timeoutMs);
+  const payload = await catalog.json().catch(() => null) as { data?: Array<{ id?: unknown }> } | null;
+  if (!catalog.ok) throw new Error(`HepAI model catalog failed with HTTP ${catalog.status}`);
+  const availableModelIds = Array.isArray(payload?.data) ? payload.data.map((item) => item?.id).filter((id): id is string => typeof id === "string" && id.length > 0) : [];
+  const preferred = ["deepseek-v4-flash", "deepseek-v4-pro", "gpt-5.6-luna"];
+  const selectedModelIds = preferred.filter((id) => availableModelIds.includes(id));
+  if (selectedModelIds.length !== preferred.length) throw new Error(`HepAI catalog is missing configured release models: ${preferred.filter((id) => !selectedModelIds.includes(id)).join(", ")}`);
+  const results: Array<{ modelId: string; passed: boolean; statusCode: number; contentType: string; sawData: boolean; sawDone: boolean; durationMs: number }> = [];
+  for (const modelId of selectedModelIds) results.push(await probeHepaiModel(base, modelId, auth.accessToken, timeoutMs));
+  if (!results.every((item) => item.passed)) throw new Error("one or more HepAI live model probes failed");
+  return { providerId: "hepai", authentication: "oidc-safe-storage", endpoint: { origin: origin.origin, modelApiPath: base.pathname, protocol: "openai-compatible" }, catalogStatus: catalog.status, availableModelCount: availableModelIds.length, selectedModelIds, results, secretMaterialRecorded: false };
+}
+
+async function probeHepaiModel(base: URL, modelId: string, accessToken: string, timeoutMs: number): Promise<{ modelId: string; passed: boolean; statusCode: number; contentType: string; sawData: boolean; sawDone: boolean; durationMs: number }> {
+  const startedAt = Date.now();
+  const response = await fetchWithAcceptanceDeadline(new URL("chat/completions", base), { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: "Reply with OK." }], stream: true, max_tokens: 16 }), redirect: "error" }, timeoutMs);
+  const contentType = (response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+  let sawData = false; let sawDone = false;
+  if (response.ok && contentType === "text/event-stream" && response.body) {
+    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffered = ""; const deadline = Date.now() + timeoutMs;
+    try {
+      while (Date.now() < deadline && !sawDone) {
+        const remaining = Math.max(1, deadline - Date.now());
+        const chunk = await Promise.race([reader.read(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`HepAI stream timed out for ${modelId}`)), remaining))]);
+        if (chunk.done) break;
+        buffered += decoder.decode(chunk.value, { stream: true }); sawData ||= /data:\s*\{/.test(buffered); sawDone ||= /data:\s*\[DONE\]/.test(buffered); if (buffered.length > 64_000) buffered = buffered.slice(-32_000);
+      }
+    } finally { await reader.cancel().catch(() => undefined); }
+  }
+  return { modelId, passed: response.ok && contentType === "text/event-stream" && sawData && sawDone, statusCode: response.status, contentType, sawData, sawDone, durationMs: Date.now() - startedAt };
+}
+
+async function fetchWithAcceptanceDeadline(url: URL, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try { return await fetch(url, { ...init, signal: controller.signal }); } finally { clearTimeout(timer); }
 }
 
 function parseConfig(raw: string | undefined): PackagedScenarioConfig {
@@ -211,6 +261,19 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
 
   if (scenario === "performance-ready") return { descriptor, interactive: true };
 
+  if (scenario === "auth-cycle") {
+    await api.logout({ clearLocalData: false });
+    const before = await api.getAuthSession();
+    if (before.authenticated) throw new Error("auth-cycle did not start logged out");
+    const login = await api.login({ developerBypass: true, rememberMe: false });
+    const authenticated = await api.getAuthSession();
+    if (!login.ok || !authenticated.authenticated || authenticated.user?.id !== "packaged-l5-user") throw new Error("auth-cycle login did not establish the isolated identity");
+    const logout = await api.logout({ clearLocalData: false });
+    const after = await api.getAuthSession();
+    if (!logout.ok || after.authenticated) throw new Error("auth-cycle logout did not invalidate the session");
+    return { descriptor, loggedOutBefore: true, loggedIn: true, loggedOutAfter: true, userId: authenticated.user?.id };
+  }
+
   if (scenario === "ssh-loopback") {
     const phase = (name: string) => console.info(`[packaged-ssh-loopback] ${name}`);
     if (!config.remotePort || !config.remoteWorkspacePath) throw new Error("ssh-loopback scenario requires remotePort and remoteWorkspacePath");
@@ -257,7 +320,7 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     const workspaceStatus = await api.getRemoteWorkspaceStatus(workspace.id);
     if (!workspaceStatus.connected || !workspaceStatus.gatewayReady || !workspaceStatus.runtimeId || !workspaceStatus.instanceId) throw new Error("packaged Remote Workspace handshake was incomplete");
     const localGatewayBeforeMobile = await api.getGatewayStatus();
-    const mobileReadiness = await api.getMobilePairingReadiness({ workspaceId: workspace.id, workspacePath: workspace.path });
+    const mobileReadiness = await api.getMobilePairingReadiness();
     const localGatewayAfterMobile = await api.getGatewayStatus();
     if (mobileReadiness.gateway_runtime_id !== workspaceStatus.runtimeId) throw new Error("mobile pairing did not target the selected Remote Workspace Runtime");
     if (localGatewayBeforeMobile.ready || localGatewayAfterMobile.ready) throw new Error("remote mobile pairing unexpectedly started or used the local Runtime");
@@ -429,7 +492,7 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     let activeRunsRecovered = false;
     if (scenario === "recovery" && config.activeChatRequestId && config.activeChatThreadId && config.activeAgentThreadId) {
       const recoveredChat = await api.recoverChatRun({ requestId: config.activeChatRequestId, sessionId: config.activeChatThreadId });
-      const recoveredChatContent = recoveredChat.filter((item) => item.type === "chunk").map((item) => item.content ?? "").join("");
+      const recoveredChatContent = recoveredChat.filter((item) => item.type === "oaep" && item.oaepEvent?.type === "event.item.delta").map((item) => (item.oaepEvent?.data?.delta as { text?: string } | undefined)?.text ?? "").join("");
       const recoveredAgent = await api.recoverAgentRun(config.activeAgentThreadId);
       if (recoveredChatContent !== "preserved before crash" || !recoveredChat.some((item) => item.type === "error") || recoveredChat.some((item) => item.type === "done") || !recoveredAgent.some((item) => item.type === "start") || !recoveredAgent.some((item) => item.type === "error" && /interrupted/i.test(item.error ?? "")) || recoveredAgent.some((item) => item.type === "done")) throw new Error("active Chat/Agent runs were not recovered into explicit reviewable terminal states after forced App crash");
       activeRunsRecovered = true;
@@ -441,6 +504,8 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
       if ((await api.listPendingApprovals()).some((item) => item.id === config.approvalId)) throw new Error("rejected recovered approval remained pending");
       return { descriptor, threadId: config.threadId, threadRecovered: true, preferenceRecovered: true, approvalRecoveredRejected: true, activeRunsRecovered };
     }
+    const resourceSettleMs = config.resourceSettleMs;
+    if (scenario === "restart" && resourceSettleMs) await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(resourceSettleMs, 5_000))));
     return { descriptor, threadId: config.threadId, threadRecovered: true, preferenceRecovered: true, scheduledTaskRecovered: Boolean(config.scheduledTaskId) };
   }
 
@@ -472,9 +537,38 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (!(await api.deleteThread(lifecycleThread.id)) || await api.deleteThread(lifecycleThread.id) || await api.getThreadSnapshot(lifecycleThread.id) !== null) throw new Error("thread delete was not idempotent or left its snapshot behind");
 
     const agents = await api.listAgents();
-    if (!agents.some((item) => item.id === "my-drsai" && item.source === "local")) throw new Error("local Agent was missing from the packaged catalog");
-    if (!(await api.setDefaultAgent("my-drsai")).saved || !(await api.recordAgentUsage("my-drsai")).saved) throw new Error("local Agent default or usage preference did not persist");
+    const localAgent = agents.find((item) => item.source === "local" && item.id !== "my-codex");
+    if (!localAgent) throw new Error(`local Agent was missing from the packaged catalog: ${JSON.stringify(agents.map((item) => ({ id: item.id, source: item.source, available: item.available, error: item.error })))}`);
+    const localAgentId = localAgent.id;
+    if (!(await api.setDefaultAgent(localAgentId)).saved || !(await api.recordAgentUsage(localAgentId)).saved) throw new Error("local Agent default or usage preference did not persist");
     if ((await api.setDefaultAgent("packaged-missing-agent")).saved) throw new Error("unknown Agent was accepted as the default");
+    const packagedProviderId = "packaged-fixture";
+    const packagedModelId = "packaged-model";
+    await api.saveMyDrSaiModelProvider(packagedProviderId, {
+      base_url: "http://127.0.0.1:9/v1",
+      wire_api: "openai",
+      requires_api_key: false,
+      models: {
+        [packagedModelId]: {
+          input_modalities: ["text"], output_modalities: ["text"], api_protocol: "openai",
+          enabled: true, capabilities: ["chat", "tool_calling", "reasoning"],
+        },
+      },
+    });
+    const currentModelPolicy = await api.getMyDrSaiAgentModelPolicy(localAgentId);
+    const packagedModelPolicy = await api.updateMyDrSaiAgentModelPolicy(localAgentId, {
+      agent_id: localAgentId,
+      primary_model: { mode: "explicit", ref: { provider_id: packagedProviderId, model_id: packagedModelId } },
+      image_understanding_model: null,
+      image_generation_model: null,
+      text_to_speech_model: null,
+      speech_to_text_model: null,
+      reasoning_effort: null,
+      expected_revision: currentModelPolicy.revision,
+    });
+    if (!packagedModelPolicy.valid || packagedModelPolicy.effective_ref?.provider_id !== packagedProviderId || packagedModelPolicy.effective_ref.model_id !== packagedModelId) {
+      throw new Error(`packaged Agent primary model policy did not converge: ${JSON.stringify(packagedModelPolicy)}`);
+    }
 
     const chatRequestId = "packaged_chat_abort_001";
     const chatThreadId = "packaged-chat-thread-001";
@@ -486,11 +580,15 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
       chatEvents.push({ type: event.type, seq: event.seq });
       if (event.type === "done" || event.type === "error" || event.type === "aborted") resolveChatTerminal?.(event.type);
     });
-    const startedChatId = await api.startChat({ requestId: chatRequestId, threadId: chatThreadId, sessionId: chatThreadId, runId: "packaged-chat-run-001", agentId: "my-drsai", workspacePath: workspace.path, messages: [{ role: "user", content: "Hold this packaged Chat until explicit cancellation." }] });
-    if (startedChatId !== chatRequestId || !(await api.abortChat(chatRequestId))) throw new Error("packaged Chat did not start and accept explicit cancellation");
+    const startedChatId = await api.startChat({ requestId: chatRequestId, threadId: chatThreadId, sessionId: chatThreadId, runId: "packaged-chat-run-001", agentId: localAgentId, workspacePath: workspace.path, messages: [{ role: "user", content: "Hold this packaged Chat until explicit cancellation." }] });
+    const cancelled = await api.cancelChatTurn({ requestId: chatRequestId, sessionId: chatThreadId });
+    if (startedChatId !== chatRequestId || !cancelled.accepted) throw new Error("packaged Chat did not start and accept explicit cancellation");
     const chatTerminalType = await Promise.race([chatTerminal, new Promise<string>((_, reject) => setTimeout(() => reject(new Error("packaged Chat cancellation timed out")), 10_000))]);
     offChat();
-    if (chatTerminalType !== "aborted" || !chatEvents.some((item) => item.type === "start") || chatEvents.some((item) => item.type === "done") || chatEvents.some((item, index) => index > 0 && Number(item.seq) <= Number(chatEvents[index - 1]?.seq))) throw new Error("packaged Chat event stream did not terminate once in monotonic aborted state");
+    const chatTerminalEvents = chatEvents.filter((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+    if (chatTerminalType !== "aborted" || chatTerminalEvents.length !== 1 || chatTerminalEvents[0]?.type !== "aborted" || chatEvents.some((item, index) => index > 0 && Number(item.seq) <= Number(chatEvents[index - 1]?.seq))) {
+      throw new Error(`packaged Chat event stream did not terminate once in monotonic aborted state: ${JSON.stringify(chatEvents)}`);
+    }
     let recoveredChat: Awaited<ReturnType<typeof api.recoverChatRun>> = [];
     for (let attempt = 0; attempt < 50; attempt += 1) {
       recoveredChat = await api.recoverChatRun({ requestId: chatRequestId, sessionId: chatThreadId });
@@ -498,34 +596,50 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     const acceptedLateChatInput = await api.respondChatInput(chatRequestId, "late input");
-    if (!recoveredChat.some((item) => item.type === "start") || !recoveredChat.some((item) => item.type === "aborted") || new Set(recoveredChat.map((item) => item.seq)).size !== recoveredChat.length || acceptedLateChatInput) {
+    const recoveredChatTerminals = recoveredChat.filter((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+    if (recoveredChatTerminals.length !== 1 || recoveredChatTerminals[0]?.type !== "aborted" || new Set(recoveredChat.map((item) => item.seq)).size !== recoveredChat.length || acceptedLateChatInput) {
       throw new Error(`cancelled Chat did not recover an ordered deduplicated journal or rejected late input: ${JSON.stringify({ events: recoveredChat.map((item) => ({ type: item.type, seq: item.seq, runId: item.runId })), acceptedLateChatInput })}`);
     }
 
     const recoveryChatRequestId = "packaged_chat_recovery_001";
     const recoveryChatThreadId = "packaged-chat-recovery-thread-001";
-    const recoveryChatEvents: Array<{ type: string; content?: string; error?: string; connection?: string; seq?: number }> = [];
+    const recoveryChatEvents: Array<{ type: string; content?: string; error?: string; connection?: string; seq?: number; oaepType?: string; oaepSequence?: number }> = [];
     let resolveRecoveryChatTerminal: ((type: string) => void) | undefined;
     const recoveryChatTerminal = new Promise<string>((resolve) => { resolveRecoveryChatTerminal = resolve; });
     const offRecoveryChat = api.onChatEvent((event) => {
       if (event.requestId !== recoveryChatRequestId) return;
-      recoveryChatEvents.push({ type: event.type, content: event.content, error: event.error, connection: event.connection?.status, seq: event.seq });
+      const oaepDelta = event.oaepEvent?.data?.delta as { text?: string } | undefined;
+      recoveryChatEvents.push({ type: event.type, content: event.content ?? oaepDelta?.text, error: event.error, connection: event.connection?.status, seq: event.seq, oaepType: event.oaepEvent?.type, oaepSequence: event.oaepEvent?.sequence });
       if (event.type === "done" || event.type === "error" || event.type === "aborted") resolveRecoveryChatTerminal?.(event.type);
+      if (event.type === "structured" && event.structuredEvent?.type === "turn.completed") resolveRecoveryChatTerminal?.("done");
+      if (event.type === "structured" && event.structuredEvent?.type === "turn.error") resolveRecoveryChatTerminal?.("error");
+      if (event.type === "structured" && event.structuredEvent?.type === "turn.cancelled") resolveRecoveryChatTerminal?.("aborted");
     });
-    const startedRecoveryChat = await api.startChat({ requestId: recoveryChatRequestId, threadId: recoveryChatThreadId, sessionId: recoveryChatThreadId, runId: "packaged-chat-recovery-run-001", agentId: "my-drsai", workspacePath: workspace.path, metadata: { packaged_recovery_fixture: true }, messages: [{ role: "user", content: "Exercise the packaged incomplete SSE recovery fixture." }] });
+    const startedRecoveryChat = await api.startChat({ requestId: recoveryChatRequestId, threadId: recoveryChatThreadId, sessionId: recoveryChatThreadId, runId: "packaged-chat-recovery-run-001", agentId: localAgentId, workspacePath: workspace.path, metadata: { packaged_recovery_fixture: true }, messages: [{ role: "user", content: "Exercise the packaged incomplete SSE recovery fixture." }] });
     if (startedRecoveryChat !== recoveryChatRequestId) throw new Error("packaged recovery Chat returned the wrong request identity");
     const recoveryChatTerminalType = await Promise.race([recoveryChatTerminal, new Promise<string>((_, reject) => setTimeout(() => reject(new Error("packaged Chat reconnect timed out")), 15_000))]);
     offRecoveryChat();
-    const liveRecoveryContent = recoveryChatEvents.filter((item) => item.type === "chunk").map((item) => item.content ?? "").join("");
+    const liveRecoveryContent = recoveryChatEvents.filter((item) => item.type === "oaep" && item.oaepType === "event.item.delta").map((item) => item.content ?? "").join("");
     if (recoveryChatTerminalType !== "done" || !recoveryChatEvents.some((item) => item.type === "connection" && item.connection === "retrying") || !recoveryChatEvents.some((item) => item.type === "connection" && item.connection === "restored") || liveRecoveryContent !== "alpha beta" || (liveRecoveryContent.match(/alpha/g) ?? []).length !== 1 || recoveryChatEvents.some((item, index) => index > 0 && Number(item.seq) <= Number(recoveryChatEvents[index - 1]?.seq))) throw new Error(`packaged Chat did not reconnect with a monotonic duplicate-free resumed stream: ${JSON.stringify({ terminal: recoveryChatTerminalType, content: liveRecoveryContent, events: recoveryChatEvents })}`);
+    const liveOaepEvents = recoveryChatEvents.filter((item) => item.type === "oaep");
+    if (!liveOaepEvents.some((item) => item.oaepType === "event.item.delta")
+      || !liveOaepEvents.some((item) => item.oaepType === "event.run.completed")
+      || liveOaepEvents.some((item, index) => index > 0 && Number(item.oaepSequence) <= Number(liveOaepEvents[index - 1]?.oaepSequence))) {
+      throw new Error(`packaged Chat did not expose the authoritative monotonic OAEP reply stream: ${JSON.stringify(liveOaepEvents)}`);
+    }
     let recoveredNetworkChat: Awaited<ReturnType<typeof api.recoverChatRun>> = [];
     for (let attempt = 0; attempt < 50; attempt += 1) {
       recoveredNetworkChat = await api.recoverChatRun({ requestId: recoveryChatRequestId, sessionId: recoveryChatThreadId });
-      if (recoveredNetworkChat.some((item) => item.type === "done")) break;
+      if (recoveredNetworkChat.some((item) => item.type === "done" || (item.type === "structured" && item.structuredEvent?.type === "turn.completed"))) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    const recoveredNetworkContent = recoveredNetworkChat.filter((item) => item.type === "chunk").map((item) => item.content ?? "").join("");
-    if (!recoveredNetworkChat.some((item) => item.type === "connection" && item.connection?.status === "retrying") || !recoveredNetworkChat.some((item) => item.type === "connection" && item.connection?.status === "restored") || !recoveredNetworkChat.some((item) => item.type === "done") || recoveredNetworkContent !== "alpha beta" || (recoveredNetworkContent.match(/alpha/g) ?? []).length !== 1 || new Set(recoveredNetworkChat.map((item) => item.seq)).size !== recoveredNetworkChat.length) throw new Error(`recovered Chat journal lost reconnect state or reintroduced replayed content: ${JSON.stringify({ content: recoveredNetworkContent, events: recoveredNetworkChat.map((item) => ({ type: item.type, seq: item.seq, content: item.content, connection: item.connection?.status })) })}`);
+    const recoveredNetworkContent = recoveredNetworkChat.filter((item) => item.type === "oaep" && item.oaepEvent?.type === "event.item.delta").map((item) => (item.oaepEvent?.data?.delta as { text?: string } | undefined)?.text ?? "").join("");
+    const recoveredNetworkCompleted = recoveredNetworkChat.some((item) => item.type === "done" || (item.type === "structured" && item.structuredEvent?.type === "turn.completed"));
+    if (!recoveredNetworkChat.some((item) => item.type === "connection" && item.connection?.status === "retrying") || !recoveredNetworkChat.some((item) => item.type === "connection" && item.connection?.status === "restored") || !recoveredNetworkCompleted || recoveredNetworkContent !== "alpha beta" || (recoveredNetworkContent.match(/alpha/g) ?? []).length !== 1 || new Set(recoveredNetworkChat.map((item) => item.seq)).size !== recoveredNetworkChat.length) throw new Error(`recovered Chat journal lost reconnect state or reintroduced replayed content: ${JSON.stringify({ content: recoveredNetworkContent, events: recoveredNetworkChat.map((item) => ({ type: item.type, seq: item.seq, content: item.content, connection: item.connection?.status })) })}`);
+    const historicalOaep = await api.getThreadSnapshotEnvelope(recoveryChatThreadId, "packaged-oaep-history", { forceFresh: true });
+    if (!historicalOaep || historicalOaep.projection !== "oaep/1" || !JSON.stringify(historicalOaep.snapshot).includes("alpha beta")) {
+      throw new Error(`packaged OAEP history did not reproduce the completed live answer: ${JSON.stringify(historicalOaep)}`);
+    }
 
     const agentRequestId = "packaged_agent_abort_001";
     const agentThreadId = "packaged-agent-thread-001";
@@ -541,14 +655,16 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (startedAgent.requestId !== agentRequestId || startedAgent.runId !== "packaged-agent-run-001" || !(await api.abortAgentRun(agentRequestId))) throw new Error("packaged Agent did not start and accept explicit cancellation");
     const agentTerminalType = await Promise.race([agentTerminal, new Promise<string>((_, reject) => setTimeout(() => reject(new Error("packaged Agent cancellation timed out")), 10_000))]);
     offAgent();
-    if (agentTerminalType !== "aborted" || !agentEvents.some((item) => item.type === "start") || agentEvents.some((item) => item.type === "done")) throw new Error("packaged Agent stream did not terminate once in aborted state");
+    const agentTerminalEvents = agentEvents.filter((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+    if (agentTerminalType !== "aborted" || agentTerminalEvents.length !== 1 || agentTerminalEvents[0]?.type !== "aborted") throw new Error(`packaged Agent stream did not terminate once in aborted state: ${JSON.stringify(agentEvents)}`);
     let recoveredAgent: Awaited<ReturnType<typeof api.recoverAgentRun>> = [];
     for (let attempt = 0; attempt < 50; attempt += 1) {
       recoveredAgent = await api.recoverAgentRun(agentThreadId);
       if (recoveredAgent.some((item) => item.type === "aborted")) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    if (!recoveredAgent.some((item) => item.type === "start") || !recoveredAgent.some((item) => item.type === "aborted") || await api.abortAgentRun(agentRequestId)) throw new Error("cancelled Agent did not recover its journal or allowed duplicate cancellation");
+    const recoveredAgentTerminals = recoveredAgent.filter((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+    if (recoveredAgentTerminals.length !== 1 || recoveredAgentTerminals[0]?.type !== "aborted" || await api.abortAgentRun(agentRequestId)) throw new Error("cancelled Agent did not recover its journal or allowed duplicate cancellation");
 
     const gitProposal = await api.requestGitCommitApproval({ workspacePath: workspace.path, message: "Packaged L5 approved commit", body: "Verify durable packaged Approval Center execution.", requestId: "packaged-l5-git-approval" });
     if (!gitProposal.queued || !gitProposal.approval || gitProposal.alreadyExecuted) throw new Error("git commit did not stop at Approval Center");
@@ -766,7 +882,7 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
       try { await api.generateManagerPresentation({ requestId: retryRequestId, workspacePath: workspace.path, sourcePath: presentationSourcePath, audience: "non_expert_managers", requirements: ["Preserve source evidence."] }); } catch { failed = true; }
       if (!failed || await waitForPresentationPhase(retryRequestId, ["failed"]) !== "failed") throw new Error("packaged presentation failure did not publish its retryable terminal state");
       const retriedPresentation = await api.generateManagerPresentation({ requestId: retryRequestId, workspacePath: workspace.path, sourcePath: presentationSourcePath, audience: "non_expert_managers", requirements: ["Preserve source evidence."] });
-      if (!retriedPresentation.quality.ok || retriedPresentation.slideCount < 6 || retriedPresentation.sourcePageCoverage !== 1 || retriedPresentation.speakerNotesCoverage !== 1) throw new Error("packaged presentation retry did not produce a verified editable deck");
+      if (!retriedPresentation || !retriedPresentation.quality.ok || retriedPresentation.slideCount < 6 || retriedPresentation.sourcePageCoverage !== 1 || retriedPresentation.speakerNotesCoverage !== 1) throw new Error("packaged presentation retry did not produce a verified editable deck");
     } finally { offPresentation(); }
 
     await api.recordDiagnostic({ module: "packaged-l5", component: "product-state", operation: "roundtrip", message: "Packaged diagnostic roundtrip", status: "completed", level: "info", kind: "operation" });
@@ -869,7 +985,7 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (!(await api.stopGateway())) throw new Error("packaged product journey could not stop its managed Gateway");
     if ((await api.getGatewayStatus()).ready) throw new Error("packaged product journey Gateway remained healthy after explicit stop");
 
-    return { descriptor, workspaceId: workspace.id, scheduledTaskId: scheduledTask.id, scheduledRunId: scheduledRun.id, gitApprovalId: gitProposal.approval.id, threadLifecycle: true, chatAbortRecoveryLifecycle: true, chatNetworkRecoveryLifecycle: true, agentCatalogAbortRecoveryLifecycle: true, gitApprovalExecution: true, workspaceGitReviewLifecycle: true, checkpointLifecycle: true, worktreeQueueLifecycle: true, desktopHandoffLifecycle: true, customCommandCrud: true, projectMemoryCrud: true, projectSkillApprovalInstall: true, workflowLifecycle: true, reusableAndScheduledLifecycle: true, managerPresentationLifecycle: true, diagnosticsRoundtrip: true, diagnosticSourceAndPackage: true, backgroundTaskLifecycle: true, resultShareVersionLifecycle: true, interactiveDebuggerRoundtrip: true, pythonDebuggerRoundtrip: true };
+    return { descriptor, workspaceId: workspace.id, scheduledTaskId: scheduledTask.id, scheduledRunId: scheduledRun.id, gitApprovalId: gitProposal.approval.id, threadLifecycle: true, chatAbortRecoveryLifecycle: true, chatNetworkRecoveryLifecycle: true, chatSlowNetworkRecoveryLifecycle: true, agentCatalogAbortRecoveryLifecycle: true, gitApprovalExecution: true, workspaceGitReviewLifecycle: true, checkpointLifecycle: true, worktreeQueueLifecycle: true, desktopHandoffLifecycle: true, customCommandCrud: true, projectMemoryCrud: true, projectSkillApprovalInstall: true, workflowLifecycle: true, reusableAndScheduledLifecycle: true, managerPresentationLifecycle: true, diagnosticsRoundtrip: true, diagnosticSourceAndPackage: true, backgroundTaskLifecycle: true, resultShareVersionLifecycle: true, interactiveDebuggerRoundtrip: true, pythonDebuggerRoundtrip: true };
   }
 
   if (scenario === "crash-ready") {
@@ -881,8 +997,11 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     const activeChatThreadId = "packaged-chat-crash-thread-001";
     let resolveCrashChatReady: (() => void) | undefined;
     const crashChatReady = new Promise<void>((resolve) => { resolveCrashChatReady = resolve; });
-    const offCrashChat = api.onChatEvent((event) => { if (event.requestId === activeChatRequestId && event.type === "chunk" && event.content === "preserved before crash") resolveCrashChatReady?.(); });
-    if (await api.startChat({ requestId: activeChatRequestId, threadId: activeChatThreadId, sessionId: activeChatThreadId, runId: "packaged-chat-crash-display-run", agentId: "my-drsai", workspacePath: config.workspacePath, messages: [{ role: "user", content: "Remain active until the packaged App process is forcibly terminated." }] }) !== activeChatRequestId) throw new Error("crash-ready Chat did not start");
+    const offCrashChat = api.onChatEvent((event) => {
+      const delta = event.oaepEvent?.data?.delta as { text?: string } | undefined;
+      if (event.requestId === activeChatRequestId && event.type === "oaep" && delta?.text === "preserved before crash") resolveCrashChatReady?.();
+    });
+    if (await api.startChat({ requestId: activeChatRequestId, threadId: activeChatThreadId, sessionId: activeChatThreadId, runId: "packaged-chat-crash-display-run", agentId: "my-drsai", workspacePath: config.workspacePath, metadata: { packaged_crash_fixture: true }, messages: [{ role: "user", content: "Remain active until the packaged App process is forcibly terminated." }] }) !== activeChatRequestId) throw new Error("crash-ready Chat did not start");
     await Promise.race([crashChatReady, new Promise<void>((_, reject) => setTimeout(() => reject(new Error("crash-ready Chat did not emit active Runtime output before forced exit")), 5_000))]);
     offCrashChat();
     const activeAgentRequestId = "packaged_agent_crash_001";

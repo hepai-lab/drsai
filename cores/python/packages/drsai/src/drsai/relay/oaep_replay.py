@@ -38,15 +38,50 @@ class OAEPReplayHub:
         self._generations: dict[str, str] = {}
         self._events: dict[tuple[str, str], deque[_StoredEvent]] = {}
         self._workspaces: dict[tuple[str, str], str] = {}
-        self._subscribers: dict[tuple[str, str], set[asyncio.Queue[dict[str, Any]]]] = {}
-        self._workspace_subscribers: dict[tuple[str, str], set[asyncio.Queue[dict[str, Any]]]] = {}
+        self._subscribers: dict[
+            tuple[str, str], dict[asyncio.Queue[dict[str, Any]], tuple[str, str] | None]
+        ] = {}
+        self._workspace_subscribers: dict[
+            tuple[str, str], dict[asyncio.Queue[dict[str, Any]], tuple[str, str] | None]
+        ] = {}
+        # Once a live queue overflows it must not resume best-effort delivery.
+        # Doing so could hide a lost terminal/approval event behind later
+        # contiguous-looking frames.  A control marker closes the stream and
+        # forces replay from the consumer's last durably committed cursor.
+        self._overflowed_subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._metrics: Counter[str] = Counter()
         self._lock = asyncio.Lock()
+
+    def _require_replay(
+        self, queue: asyncio.Queue[dict[str, Any]], *, metric: str
+    ) -> None:
+        if queue in self._overflowed_subscribers:
+            return
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        queue.put_nowait({
+            "_control": "replay_required",
+            "reason": "subscriber_overflow",
+        })
+        self._overflowed_subscribers.add(queue)
+        self._metrics[metric] += 1
+        self._metrics["replay_required"] += 1
 
     def metrics(self) -> dict[str, Any]:
         return {
             "protocol": "oaep/1",
             "schema_hash": self.protocol.schema_hash,
+            "capacity": {
+                "events_per_session": self.max_events_per_session,
+                "session_subscriber_queue": 256,
+                "workspace_subscriber_queue": 64,
+                "overflow_strategy": "close_and_replay",
+                "cursor_gap": "cursor_expired",
+                "recovery": "snapshot_then_replay",
+            },
             "counters": dict(sorted(self._metrics.items())),
             "active_runtimes": len(self._generations),
             "cached_sessions": len(self._events),
@@ -152,11 +187,12 @@ class OAEPReplayHub:
             ) if str(event.get("type", "")).startswith("event.session.") else ()
             self._metrics["accepted"] += 1
         for queue in subscribers:
+            if queue in self._overflowed_subscribers:
+                continue
             try:
                 queue.put_nowait(deepcopy(event))
             except asyncio.QueueFull:
-                # The client reconnects from its last committed Session cursor.
-                self._metrics["subscriber_overflow"] += 1
+                self._require_replay(queue, metric="subscriber_overflow")
         catalog_event = {
             "event_id": str(event["event_id"]),
             "session_id": session_id,
@@ -164,10 +200,14 @@ class OAEPReplayHub:
             "sequence": int(event["sequence"]),
         }
         for queue in workspace_subscribers:
+            if queue in self._overflowed_subscribers:
+                continue
             try:
                 queue.put_nowait(deepcopy(catalog_event))
             except asyncio.QueueFull:
-                self._metrics["workspace_subscriber_overflow"] += 1
+                self._require_replay(
+                    queue, metric="workspace_subscriber_overflow"
+                )
         if self.notification_sink is not None:
             self.notification_sink(runtime_id, workspace_id, session_id, deepcopy(event))
         return True
@@ -230,12 +270,13 @@ class OAEPReplayHub:
             return any(str(row.event.get("event_id") or "") == event_id for row in rows)
 
     async def subscribe(
-        self, runtime_id: str, session_id: str, *, queue_size: int = 256
+        self, runtime_id: str, session_id: str, *, queue_size: int = 256,
+        authorization_key: tuple[str, str] | None = None,
     ) -> asyncio.Queue[dict[str, Any]]:
         key = (runtime_id, session_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=queue_size)
         async with self._lock:
-            self._subscribers.setdefault(key, set()).add(queue)
+            self._subscribers.setdefault(key, {})[queue] = authorization_key
         return queue
 
     async def unsubscribe(
@@ -245,16 +286,18 @@ class OAEPReplayHub:
         async with self._lock:
             subscribers = self._subscribers.get(key)
             if subscribers is not None:
-                subscribers.discard(queue)
+                subscribers.pop(queue, None)
                 if not subscribers:
                     self._subscribers.pop(key, None)
+            self._overflowed_subscribers.discard(queue)
 
     async def subscribe_workspace(
-        self, runtime_id: str, workspace_id: str, *, queue_size: int = 64
+        self, runtime_id: str, workspace_id: str, *, queue_size: int = 64,
+        authorization_key: tuple[str, str] | None = None,
     ) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=queue_size)
         async with self._lock:
-            self._workspace_subscribers.setdefault((runtime_id, workspace_id), set()).add(queue)
+            self._workspace_subscribers.setdefault((runtime_id, workspace_id), {})[queue] = authorization_key
         return queue
 
     async def unsubscribe_workspace(
@@ -264,9 +307,10 @@ class OAEPReplayHub:
         async with self._lock:
             subscribers = self._workspace_subscribers.get(key)
             if subscribers is not None:
-                subscribers.discard(queue)
+                subscribers.pop(queue, None)
                 if not subscribers:
                     self._workspace_subscribers.pop(key, None)
+            self._overflowed_subscribers.discard(queue)
 
     async def invalidate_runtime(self, runtime_id: str) -> int:
         """Immediately terminate live streams so they re-authorize on reconnect."""
@@ -281,6 +325,38 @@ class OAEPReplayHub:
                 if candidate == runtime_id for queue in subscribers
             )
             queues = queues + workspace_queues
+        for queue in queues:
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            try:
+                queue.put_nowait(marker)
+            except asyncio.QueueFull:
+                pass
+        self._metrics["authorization_invalidations"] += len(queues)
+        return len(queues)
+
+    async def invalidate_authorization(
+        self, runtime_id: str, authorization_key: tuple[str, str]
+    ) -> int:
+        """Terminate only streams owned by the changed/revoked association."""
+        marker = {"_control": "authorization_changed"}
+        async with self._lock:
+            queues = tuple(
+                queue
+                for (candidate, _), subscribers in self._subscribers.items()
+                if candidate == runtime_id
+                for queue, owner in subscribers.items()
+                if owner == authorization_key
+            ) + tuple(
+                queue
+                for (candidate, _), subscribers in self._workspace_subscribers.items()
+                if candidate == runtime_id
+                for queue, owner in subscribers.items()
+                if owner == authorization_key
+            )
         for queue in queues:
             while not queue.empty():
                 try:

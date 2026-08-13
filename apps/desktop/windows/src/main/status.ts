@@ -62,13 +62,14 @@ export async function getInstallStatus(): Promise<InstallStatus> {
 
 export async function getDesktopHealth(): Promise<DesktopHealth> {
   const install = getStartupInstallStatus();
+  const gateway = getGatewaySnapshot();
   return {
     installed: install.installed,
-    gatewayReady: false,
+    gatewayReady: gateway.ready,
     mode: "local",
     version: install.version,
     install,
-    gateway: getGatewaySnapshot(),
+    gateway,
     update: getUpdateStatus(),
   };
 }

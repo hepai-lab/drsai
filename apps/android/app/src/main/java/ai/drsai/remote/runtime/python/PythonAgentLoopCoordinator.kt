@@ -1,5 +1,7 @@
 package ai.drsai.remote.runtime.python
 
+import ai.drsai.remote.data.ApiException
+import ai.drsai.remote.runtime.security.SensitiveDataRedactor
 import java.util.ArrayDeque
 import java.util.Base64
 import kotlinx.coroutines.flow.Flow
@@ -21,6 +23,9 @@ private data class ModelHostOutcome(
     val toolCalls: JSONArray,
     val reasoningSummaries: List<String>,
     val errorCode: String? = null,
+    val errorMessage: String? = null,
+    val errorRetryable: Boolean = false,
+    val errorStatus: Int? = null,
 )
 
 enum class PythonSideEffectFaultPoint {
@@ -145,6 +150,9 @@ class PythonAgentLoopCoordinator(
             var toolCalls = JSONArray()
             val reasoningSummaries = mutableListOf<String>()
             var errorCode: String? = null
+            var errorMessage: String? = null
+            var errorRetryable = false
+            var errorStatus: Int? = null
             try {
                 ports.model.stream(request).collect { chunk ->
                     if (chunk.delta.isNotEmpty()) deltas += chunk.delta
@@ -156,10 +164,19 @@ class PythonAgentLoopCoordinator(
                 throw cancelled
             } catch (error: Throwable) {
                 val name = error::class.simpleName.orEmpty().lowercase()
-                errorCode = if ("timeout" in name) "model_timeout" else "model_host_failed"
+                val api = error as? ApiException
+                errorCode = api?.code?.takeIf(String::isNotBlank)
+                    ?: api?.status?.takeIf { it > 0 }?.let { "provider_http_$it" }
+                    ?: if ("timeout" in name) "model_timeout" else "model_transport_failed"
+                errorMessage = SensitiveDataRedactor.redact(
+                    error.message?.trim().orEmpty().ifBlank { errorCode.orEmpty() },
+                ).take(1000)
+                errorRetryable = api?.retryable ?: ("timeout" in name)
+                errorStatus = api?.status?.takeIf { it > 0 }
             }
             return ModelHostOutcome(
-                payload.optString("subagent_id").ifBlank { null }, deltas, finishReason, toolCalls, reasoningSummaries, errorCode,
+                payload.optString("subagent_id").ifBlank { null }, deltas, finishReason, toolCalls,
+                reasoningSummaries, errorCode, errorMessage, errorRetryable, errorStatus,
             )
         }
 
@@ -167,7 +184,10 @@ class PythonAgentLoopCoordinator(
             if (outcome.errorCode != null) {
                 send(response(
                     PythonRuntimeMessageType.MODEL_FAILED,
-                    JSONObject().put("code", outcome.errorCode).put("retryable", outcome.errorCode == "model_timeout")
+                    JSONObject().put("code", outcome.errorCode)
+                        .put("message", outcome.errorMessage ?: outcome.errorCode)
+                        .put("retryable", outcome.errorRetryable)
+                        .apply { if (outcome.errorStatus != null) put("status", outcome.errorStatus) }
                         .apply { if (outcome.subagentId != null) put("subagent_id", outcome.subagentId) },
                     "model_failed",
                 ))

@@ -1,7 +1,7 @@
 schema_version: opendrsai.agent-regression-case/1
 
 id: skill.presentation
-revision: 1
+revision: 4
 title: 创建 OpenDrSai Runtime 核心概念演示文稿
 description: 验证 Presentation Skill、可编辑 PPTX、渲染视觉检查和 Artifact 交付。
 owner: agent-runtime
@@ -27,6 +27,8 @@ input:
             - 不使用外部图片；
             - 每页必须包含页码；
             - 完成后检查是否存在文字溢出、元素遮挡或内容被裁切。
+            - 中间 JSON 规格保存为 tmp/presentation-render/spec.json；最终文件保存为 artifacts/opendrsai-runtime-core-concepts.pptx。
+            - 创建、验证和渲染脚本必须分别单独执行，一次工具调用只运行一个前台命令；不要使用分号、管道、重定向或命令串联。
 
             页面内容如下：
 
@@ -54,7 +56,7 @@ environment:
   session:
     type: new
     history: empty
-  required_skills: [presentations]
+  required_skills: [pptx]
   workspace:
     isolation: required
     allowed_write_paths:
@@ -64,6 +66,27 @@ environment:
     - web_search
     - knowledge_search
     - image_generation
+  allowed_commands:
+    - skill_script:
+        skill_id: pptx
+        relative_path: scripts/create_deck.py
+        sha256: 7f4cd8cf8100a63ac8f6ee58c929c20b61b41589eed0af91ac4b026058c78e5b
+      args:
+        - exact: tmp/presentation-render/spec.json
+        - exact: artifacts/opendrsai-runtime-core-concepts.pptx
+    - skill_script:
+        skill_id: pptx
+        relative_path: scripts/validate_deck.py
+        sha256: 5e1d70a2c12f3d29b427d6df655e0af76119ab257549b26b733f9579a290e3a9
+      args:
+        - exact: artifacts/opendrsai-runtime-core-concepts.pptx
+    - skill_script:
+        skill_id: pptx
+        relative_path: scripts/render_deck.py
+        sha256: 1cdacc016dd33bcc7b6ceed7b311326b07e0df5e99deaaf93c6978730dda711c
+      args:
+        - exact: artifacts/opendrsai-runtime-core-concepts.pptx
+        - exact: tmp/presentation-render
 
 baseline:
   presentation:
@@ -80,7 +103,7 @@ expect:
     skill_activations:
       exact: 1
       required:
-        - skill_id: presentations
+        - skill_id: pptx
           status: completed
           required_steps:
             - instructions_loaded

@@ -1,0 +1,719 @@
+{
+  "schema_version": "p6-progress/1",
+  "updated_round": 169,
+  "feature_count": 40,
+  "completed_count": 18,
+  "progress_percent": 45.0,
+  "completion_rule": "completed only when every required evidence kind is verified",
+  "features": [
+    {
+      "id": "P6-M01-F01",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M01-F02",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M01-F03",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M01-F04",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M01-F05",
+      "verification_state": "release_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "production",
+        "release"
+      ],
+      "verified_kinds": [
+        "local",
+        "production",
+        "release"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M02-F01",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M02-F02",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M02-F03",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M02-F04",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M02-F05",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M03-F01",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M03-F02",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M03-F03",
+      "verification_state": "physical_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "physical"
+      ],
+      "verified_kinds": [
+        "local",
+        "physical"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M03-F04",
+      "verification_state": "physical_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "physical"
+      ],
+      "verified_kinds": [
+        "local",
+        "physical"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M03-F05",
+      "verification_state": "physical_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "physical"
+      ],
+      "verified_kinds": [
+        "local",
+        "physical"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M04-F01",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M04-F02",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M04-F03",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M04-F04",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M04-F05",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M05-F01",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M05-F02",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical",
+        "production"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending",
+        "production_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M05-F03",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M05-F04",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M05-F05",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical",
+        "production"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending",
+        "production_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M06-F01",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M06-F02",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M06-F03",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "release"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical",
+        "release"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending",
+        "release_build_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M06-F04",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production",
+        "release"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical",
+        "production",
+        "release"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending",
+        "production_evidence_pending",
+        "release_build_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M06-F05",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical",
+        "production"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending",
+        "production_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M07-F01",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M07-F02",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M07-F03",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M07-F04",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M07-F05",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [
+        "physical"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M08-F01",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production",
+        "release",
+        "human"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical",
+        "production",
+        "release",
+        "human"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending",
+        "production_evidence_pending",
+        "release_build_evidence_pending",
+        "human_acceptance_pending"
+      ]
+    },
+    {
+      "id": "P6-M08-F02",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "human"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical",
+        "human"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending",
+        "human_acceptance_pending"
+      ]
+    },
+    {
+      "id": "P6-M08-F03",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "production",
+        "release"
+      ],
+      "verified_kinds": [
+        "local",
+        "production"
+      ],
+      "pending_kinds": [
+        "release"
+      ],
+      "blockers": [
+        "release_build_evidence_pending"
+      ]
+    },
+    {
+      "id": "P6-M08-F04",
+      "verification_state": "local_pass",
+      "completed": true,
+      "required_kinds": [
+        "local"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [],
+      "blockers": []
+    },
+    {
+      "id": "P6-M08-F05",
+      "verification_state": "local_pass",
+      "completed": false,
+      "required_kinds": [
+        "local",
+        "physical",
+        "production",
+        "release",
+        "human"
+      ],
+      "verified_kinds": [
+        "local"
+      ],
+      "pending_kinds": [
+        "physical",
+        "production",
+        "release",
+        "human"
+      ],
+      "blockers": [
+        "physical_device_evidence_pending",
+        "production_evidence_pending",
+        "release_build_evidence_pending",
+        "human_acceptance_pending"
+      ]
+    }
+  ]
+}

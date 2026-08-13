@@ -235,8 +235,6 @@ import type {
   DesktopWorkflowRunStepDispatchResult,
   DesktopWorkflowRunStartRequest,
   DesktopWorkflowRunStartResult,
-  DesktopSsoPollResult,
-  DesktopSsoStartResult,
   GatewayStatus,
   InstallStatus,
   InstallProgress,
@@ -311,6 +309,7 @@ import type {
 } from "../api/desktopApi";
 
 const streamingVoicePorts = new Map<string, MessagePort>();
+const duplexVoicePorts = new Map<string, MessagePort>();
 
 const api: DesktopApi = {
   isAppDialogE2eEnabled: () => process.env.OPENDRSAI_E2E_APP_DIALOG === "1",
@@ -384,18 +383,12 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:start-oidc-login", request),
   cancelOidcLogin: (): Promise<boolean> =>
     ipcRenderer.invoke("desktop:cancel-oidc-login"),
-  startDesktopSsoLogin: (): Promise<DesktopSsoStartResult> =>
-    ipcRenderer.invoke("desktop:start-desktop-sso-login"),
-  startWechatDesktopLogin: (): Promise<DesktopSsoStartResult> =>
-    ipcRenderer.invoke("desktop:start-wechat-desktop-login"),
-  pollDesktopSsoLogin: (deviceCode: string): Promise<DesktopSsoPollResult> =>
-    ipcRenderer.invoke("desktop:poll-desktop-sso-login", deviceCode),
-  cancelDesktopSsoLogin: (deviceCode: string): Promise<boolean> =>
-    ipcRenderer.invoke("desktop:cancel-desktop-sso-login", deviceCode),
   logout: (
     options?: LogoutOptions,
   ): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke("desktop:logout", options),
+  restartApplication: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:restart-application"),
   previewLocalDataCleanup: (scope: DesktopDataCleanupScope) =>
     ipcRenderer.invoke("desktop:local-data-cleanup-preview", scope),
   clearLocalData: (request: DesktopDataCleanupRequest) =>
@@ -475,8 +468,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:mobile-associations-list"),
   revokeMobileAssociation: (associationId: string) =>
     ipcRenderer.invoke("desktop:mobile-association-revoke", associationId),
-  shrinkMobileAssociation: (associationId, permissions) =>
-    ipcRenderer.invoke("desktop:mobile-association-shrink", associationId, permissions),
+  shrinkMobileAssociation: (associationId, permissions, scope) =>
+    ipcRenderer.invoke("desktop:mobile-association-shrink", associationId, permissions, scope),
   revokeMobileRuntimeEnrollment: () =>
     ipcRenderer.invoke("desktop:mobile-enrollment-revoke"),
   listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
@@ -584,6 +577,27 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:get-my-drsai-config", workspacePath),
   getMyDrSaiRuntimeModelCatalog: () => ipcRenderer.invoke("desktop:get-my-drsai-runtime-model-catalog"),
   getMyDrSaiAgentModelPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-policy", agentId),
+  getMyDrSaiAgentToolPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-tool-policy", agentId),
+  updateMyDrSaiAgentToolPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-tool-policy", agentId, policy),
+  previewMyDrSaiAgentTools: (agentId) => ipcRenderer.invoke("desktop:preview-my-drsai-agent-tools", agentId),
+  testAgentTool: (toolId) => ipcRenderer.invoke("desktop:test-agent-tool", toolId),
+  getMyDrSaiAgentSkillPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-skill-policy", agentId),
+  updateMyDrSaiAgentSkillPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-skill-policy", agentId, policy),
+  previewMyDrSaiAgentSkills: (agentId) => ipcRenderer.invoke("desktop:preview-my-drsai-agent-skills", agentId),
+  getMyDrSaiAgentKnowledgePolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-knowledge-policy", agentId),
+  updateMyDrSaiAgentKnowledgePolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-knowledge-policy", agentId, policy),
+  previewMyDrSaiAgentKnowledge: (agentId) => ipcRenderer.invoke("desktop:preview-my-drsai-agent-knowledge", agentId),
+  indexKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:index-knowledge-base", knowledgeId),
+  testKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:test-knowledge-base", knowledgeId),
+  searchKnowledgeBase: (knowledgeId, query) => ipcRenderer.invoke("desktop:search-knowledge-base", knowledgeId, query),
+  listKnowledgeBases: () => ipcRenderer.invoke("desktop:list-knowledge-bases"),
+  listPerceptors: () => ipcRenderer.invoke("desktop:list-perceptors"),
+  savePerceptor: (request) => ipcRenderer.invoke("desktop:save-perceptor", request),
+  updatePerceptor: (perceptorId, request) => ipcRenderer.invoke("desktop:update-perceptor", perceptorId, request),
+  testPerceptor: (perceptorId, capability) => ipcRenderer.invoke("desktop:test-perceptor", perceptorId, capability),
+  deletePerceptor: (perceptorId) => ipcRenderer.invoke("desktop:delete-perceptor", perceptorId),
+  createKnowledgeBase: (request) => ipcRenderer.invoke("desktop:create-knowledge-base", request),
+  deleteKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:delete-knowledge-base", knowledgeId),
   getMyDrSaiAgentModelCapabilityStatus: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-capability-status", agentId),
   updateMyDrSaiAgentModelPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-model-policy", agentId, policy),
   migrateMyDrSaiAgentModelPolicy: (agentId, legacyModel, expectedRevision) => ipcRenderer.invoke("desktop:migrate-my-drsai-agent-model-policy", agentId, legacyModel, expectedRevision),
@@ -612,6 +626,8 @@ const api: DesktopApi = {
     model?: string,
   ): Promise<MyDrSaiProviderTestResult> =>
     ipcRenderer.invoke("desktop:test-my-drsai-model-provider", provider, model),
+  probeMyDrSaiProviderModel: (provider, request) =>
+    ipcRenderer.invoke("desktop:probe-my-drsai-provider-model", provider, request),
   testMyDrSaiModelDraft: (request, mode) =>
     ipcRenderer.invoke("desktop:test-my-drsai-model-draft", request, mode),
   listMyDrSaiModelProviderPresets: () =>
@@ -672,6 +688,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:search-thread-messages", request),
   updateThreadSnapshot: (snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot> =>
     ipcRenderer.invoke("desktop:update-thread-snapshot", snapshot),
+  appendDuplexVoiceHistory: (request) => ipcRenderer.invoke("desktop:append-duplex-voice-history", request),
   createThreadShare: (
     request: CreateThreadShareRequest,
   ): Promise<DesktopThreadShareResult> =>
@@ -754,8 +771,8 @@ const api: DesktopApi = {
   startChat: (request: ChatRequest): Promise<string> =>
     ipcRenderer.invoke("desktop:start-chat", request),
   recoverChatRun: (request) => ipcRenderer.invoke("desktop:recover-chat-run", request),
-  abortChat: (requestId: string): Promise<boolean> =>
-    ipcRenderer.invoke("desktop:abort-chat", requestId),
+  cancelChatTurn: (request): Promise<import("../api/desktopApi").ChatTurnCancelResult> =>
+    ipcRenderer.invoke("desktop:cancel-chat-turn", request),
   listSessionRuns: (request) => ipcRenderer.invoke("desktop:run-list", request),
   getRunInspection: (request) => ipcRenderer.invoke("desktop:run-inspection", request),
   locateRunItem: (request) => ipcRenderer.invoke("desktop:run-item-locator", request),
@@ -776,6 +793,8 @@ const api: DesktopApi = {
   executeReplayPlan: (request) => ipcRenderer.invoke("desktop:replay-plan-execute", request),
   createRunComparison: (request) => ipcRenderer.invoke("desktop:run-comparison-create", request),
   getRunComparison: (request) => ipcRenderer.invoke("desktop:run-comparison-get", request),
+  listRunComparisonEvaluations: (request) => ipcRenderer.invoke("desktop:run-comparison-evaluations-list", request),
+  createRunComparisonEvaluation: (request) => ipcRenderer.invoke("desktop:run-comparison-evaluation-create", request),
   getWorktreeAdoptionPreview: (request) => ipcRenderer.invoke("desktop:worktree-adoption-preview", request),
   applyWorktreeAdoption: (request) => ipcRenderer.invoke("desktop:worktree-adoption-apply", request),
   getRunAdoptionPreview: (request) => ipcRenderer.invoke("desktop:run-adoption-preview", request),
@@ -795,6 +814,34 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:voice-runtime-status"),
   getStreamingVoiceCapabilities: (): Promise<DesktopStreamingVoiceCapabilities> =>
     ipcRenderer.invoke("desktop:voice-streaming-capabilities"),
+  getDuplexVoiceCapabilities: () => ipcRenderer.invoke("desktop:voice-duplex-capabilities"),
+  startDuplexVoiceSession: async (request) => {
+    const result = await ipcRenderer.invoke("desktop:voice-duplex-start", request);
+    const channel = new MessageChannel();
+    duplexVoicePorts.set(result.sessionId, channel.port2);
+    ipcRenderer.postMessage("desktop:voice-duplex-audio-port", { sessionId: result.sessionId }, [channel.port1]);
+    return result;
+  },
+  sendDuplexVoiceAudioChunk: (chunk) => {
+    const port = duplexVoicePorts.get(chunk.sessionId);
+    if (!port) return false;
+    port.postMessage({ ...chunk, audioData: new Uint8Array(chunk.audioData) });
+    return true;
+  },
+  updateDuplexVoiceSession: (request) => ipcRenderer.invoke("desktop:voice-duplex-update", request),
+  interruptDuplexVoiceSession: (request) => ipcRenderer.invoke("desktop:voice-duplex-interrupt", request),
+  submitDuplexVoiceToolResult: (request) => ipcRenderer.invoke("desktop:voice-duplex-tool-result", request),
+  stopDuplexVoiceSession: (sessionId) => ipcRenderer.invoke("desktop:voice-duplex-stop", sessionId),
+  cancelDuplexVoiceSession: async (sessionId) => {
+    const result = await ipcRenderer.invoke("desktop:voice-duplex-cancel", sessionId);
+    if (result) { duplexVoicePorts.get(sessionId)?.close(); duplexVoicePorts.delete(sessionId); }
+    return result;
+  },
+  disposeDuplexVoiceSession: async (sessionId) => {
+    const result = await ipcRenderer.invoke("desktop:voice-duplex-dispose", sessionId);
+    duplexVoicePorts.get(sessionId)?.close(); duplexVoicePorts.delete(sessionId);
+    return result;
+  },
   startStreamingVoiceTranscription: async (
     request: DesktopStreamingVoiceStartRequest,
   ): Promise<DesktopStreamingVoiceStartResult> => {
@@ -1269,6 +1316,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:browser-task-approve", request),
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke("desktop:open-external", url),
+  openRegressionReference: (uri: string): Promise<string> =>
+    ipcRenderer.invoke("desktop:open-regression-reference", uri),
   openPath: (path: string): Promise<string> =>
     ipcRenderer.invoke("desktop:open-path", path),
   openPdfPage: (request: PdfPageOpenRequest): Promise<PdfPageOpenResult> =>
@@ -1335,6 +1384,16 @@ const api: DesktopApi = {
     };
     ipcRenderer.on("desktop:voice-streaming-transcription-event", listener);
     return () => ipcRenderer.removeListener("desktop:voice-streaming-transcription-event", listener);
+  },
+  onDuplexVoiceEvents: (callback) => {
+    const listener = (_event: IpcRendererEvent, events: import("../api/desktopApi").DesktopDuplexVoiceEvent[]): void => {
+      callback(events);
+      for (const item of events) if (item.type === "completed" || item.type === "cancelled" || item.type === "failed") {
+        duplexVoicePorts.get(item.sessionId)?.close(); duplexVoicePorts.delete(item.sessionId);
+      }
+    };
+    ipcRenderer.on("desktop:voice-duplex-events", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-duplex-events", listener);
   },
   onVoiceSynthesisEvent: (
     callback: (event: DesktopVoiceSynthesisEvent) => void,

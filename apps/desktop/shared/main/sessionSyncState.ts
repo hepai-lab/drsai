@@ -3,12 +3,14 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, join } from "path";
 import { DRSAI_HOME } from "./paths";
 import { replaceFileSafely } from "./atomicFileReplace";
+import { advanceMessageDelivery, type MessageDeliveryState } from "./messageDelivery";
 
 export interface SessionOutboxEntry {
   sourceMessageId: string;
   idempotencyKey: string;
   payloadHash: string;
   runId?: string;
+  deliveryState: MessageDeliveryState;
   createdAt: string;
 }
 
@@ -82,7 +84,10 @@ export class SessionSyncStateStore {
     );
   }
 
-  beginOutbox(sessionId: string, entry: Omit<SessionOutboxEntry, "createdAt" | "runId">): Promise<SessionOutboxEntry> {
+  beginOutbox(
+    sessionId: string,
+    entry: Omit<SessionOutboxEntry, "createdAt" | "runId" | "deliveryState">,
+  ): Promise<SessionOutboxEntry> {
     this.requireId(sessionId);
     this.requireId(entry.sourceMessageId);
     if (!ID.test(entry.idempotencyKey) || !HASH.test(entry.payloadHash)) throw new Error("Session outbox entry is invalid.");
@@ -96,7 +101,7 @@ export class SessionSyncStateStore {
         ) throw new Error("Another Session message is awaiting Runtime acknowledgement.");
         return current.outbox;
       }
-      const outbox = { ...entry, createdAt: new Date().toISOString() };
+      const outbox = { ...entry, deliveryState: "optimistic" as const, createdAt: new Date().toISOString() };
       file.sessions[sessionId] = { ...current, outbox, updatedAt: new Date().toISOString() };
       return outbox;
     });
@@ -111,7 +116,32 @@ export class SessionSyncStateStore {
       if (!current?.outbox || current.outbox.sourceMessageId !== sourceMessageId) {
         throw new Error("Session outbox acknowledgement does not match.");
       }
-      const outbox = { ...current.outbox, runId };
+      const outbox = {
+        ...current.outbox,
+        runId,
+        deliveryState: advanceMessageDelivery(current.outbox.deliveryState, "accepted"),
+      };
+      file.sessions[sessionId] = { ...current, outbox, updatedAt: new Date().toISOString() };
+      return outbox;
+    });
+  }
+
+  markOutboxDelivery(
+    sessionId: string,
+    sourceMessageId: string,
+    deliveryState: MessageDeliveryState,
+  ): Promise<SessionOutboxEntry> {
+    this.requireId(sessionId);
+    this.requireId(sourceMessageId);
+    return this.mutate((file) => {
+      const current = file.sessions[sessionId];
+      if (!current?.outbox || current.outbox.sourceMessageId !== sourceMessageId) {
+        throw new Error("Session outbox delivery update does not match.");
+      }
+      const outbox = {
+        ...current.outbox,
+        deliveryState: advanceMessageDelivery(current.outbox.deliveryState, deliveryState),
+      };
       file.sessions[sessionId] = { ...current, outbox, updatedAt: new Date().toISOString() };
       return outbox;
     });
@@ -150,7 +180,12 @@ export class SessionSyncStateStore {
           updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : new Date(0).toISOString(),
           ...(row.outbox && ID.test(row.outbox.sourceMessageId) && ID.test(row.outbox.idempotencyKey)
             && HASH.test(row.outbox.payloadHash)
-            ? { outbox: { ...row.outbox, ...(row.outbox.runId && ID.test(row.outbox.runId) ? { runId: row.outbox.runId } : {}) } }
+            ? { outbox: {
+              ...row.outbox,
+              deliveryState: isMessageDeliveryState(row.outbox.deliveryState)
+                ? row.outbox.deliveryState : row.outbox.runId ? "accepted" : "optimistic",
+              ...(row.outbox.runId && ID.test(row.outbox.runId) ? { runId: row.outbox.runId } : {}),
+            } }
             : {}),
         };
       }
@@ -173,6 +208,10 @@ export class SessionSyncStateStore {
     this.queue = next.catch(() => undefined);
     return next;
   }
+}
+
+function isMessageDeliveryState(value: unknown): value is MessageDeliveryState {
+  return ["optimistic", "sending", "accepted", "running", "terminal", "uncertain", "failed"].includes(String(value));
 }
 
 export const sessionSyncState = new SessionSyncStateStore();

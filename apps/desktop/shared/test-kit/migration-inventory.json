@@ -15,8 +15,12 @@
     { "source": "diagnostics.ts", "target": "diagnostics.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
     { "source": "executionPolicy.ts", "target": "executionPolicy.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
     { "source": "owop.generated.ts", "target": "owop.generated.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "pathUtils.ts", "target": "pathUtils.ts", "status": "pending", "compatibility": "Windows implementation awaiting shared API migration" },
     { "source": "remoteSshProtocol.ts", "target": "remoteSshProtocol.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
     { "source": "structuredConversation.ts", "target": "structuredConversation.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "threadSessionMap.ts", "target": "threadSessionMap.ts", "status": "pending", "compatibility": "Windows implementation awaiting shared API migration" },
+    { "source": "threadShareHtml.ts", "target": "threadShareHtml.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
+    { "source": "threadTitle.ts", "target": "threadTitle.ts", "status": "pending", "compatibility": "Windows implementation awaiting shared API migration" },
     { "source": "workspaceDomain.ts", "target": "workspaceDomain.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
     { "source": "workspaceLocation.ts", "target": "workspaceLocation.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" },
     { "source": "workspaceResources.ts", "target": "workspaceResources.ts", "status": "migrated", "compatibility": "windows/src/shared re-export" }
