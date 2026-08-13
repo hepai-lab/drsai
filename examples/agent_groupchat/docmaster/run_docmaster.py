@@ -13,6 +13,19 @@ import sys
 from pathlib import Path
 from loguru import logger
 from dotenv import load_dotenv
+
+# Resolve imports before importing anything from ``drsai``.  This repository
+# can coexist with other DrSai checkouts/installations, and importing drsai
+# first would pin whichever copy happened to be earlier on sys.path (whose
+# worker model name may remain at the legacy default ``drsai/besiii``).
+_THIS_FILE = Path(__file__).resolve()
+_REPO_ROOT = _THIS_FILE.parents[3]
+_DRSAI_SRC = _REPO_ROOT / "cores" / "python" / "packages" / "drsai" / "src"
+_AGENT_GROUPCHAT_DIR = _THIS_FILE.parents[1]
+
+sys.path.insert(0, str(_DRSAI_SRC))
+sys.path.insert(0, str(_AGENT_GROUPCHAT_DIR))
+
 from drsai.modules.managers.database import DatabaseManager
 
 
@@ -23,10 +36,6 @@ def _gfs_log(level: str, step: str, user_id: str = "", **fields) -> None:
         record["user_id"] = user_id
     record.update(fields)
     getattr(logger, level)(json.dumps(record, ensure_ascii=False))
-
-# 添加父目录到路径，以便导入DrSai模块
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))  # repo root (for drsai)
-sys.path.insert(0, str(Path(__file__).parent.parent))                        # examples/agent_groupchat (for docmaster.*)
 
 from docmaster.constants import HERE, WORKDIR, LLM_MODE_CONFIG
 from docmaster.model_config import create_model_client
@@ -370,7 +379,7 @@ def main():
                     {"en": "I have a reference pptx template, please create a report following its page system", "zh": "我有一份参考 pptx 模板，请按它的页面系统做一份汇报"},
                 ],
                 "agent_config": LLM_MODE_CONFIG,
-                "defult_config_name": "hepai/deepseek-v4-flash",
+                "defult_config_name": "deepseek-v4-flash",
                 "announcements": [
                     {"en": "OpenDrSai is ready to serve you!", "zh": "OpenDrSai 已准备好为您服务！"},
                     {"en": "reasoning is coming!", "zh": "推理功能即将上线！"},
@@ -382,7 +391,7 @@ def main():
             # ── 智能体实体 ──
             agent_factory=create_word_editor_agent,
             # ── 后端服务配置 ──
-            # controller_address = "http://127.0.0.1:42501",
+            controller_address = "https://ai-dev.ihep.ac.cn",
             port=42819,
             no_register=False,
             # drsai_dir=DATASET,
