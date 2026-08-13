@@ -602,6 +602,7 @@ class RAGFlowAgent(DrSaiAgent):
                     elif isinstance(chunk, str):
                         if first_chunk:
                             yield ModelClientStreamingChunkEvent(content=chunk, source=user_agenty_name, metadata={"start_flag": "yes"})
+                            first_chunk = False
                         else:
                             yield ModelClientStreamingChunkEvent(content=chunk, source=user_agenty_name)
                     else:

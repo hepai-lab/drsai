@@ -374,8 +374,11 @@ class WebSocketManager:
                 # Must run BEFORE the internal-message skip, because internal
                 # TextMessages (which is all non-user ones from round-robin)
                 # get `continue`-d and would never reach the clear below.
+                streamed_source = False
                 if isinstance(message, TextMessage) and run_id in self._chunk_buffers:
-                    self._chunk_buffers[run_id].pop(message.source or "assistant", None)
+                    src = message.source or "assistant"
+                    streamed_source = bool(self._chunk_buffers[run_id].get(src))
+                    self._chunk_buffers[run_id].pop(src, None)
 
                 # Skip internal messages not meant for client display
                 if (
@@ -384,6 +387,26 @@ class WebSocketManager:
                 ):
                     if message.metadata.get("is_save") == "yes":
                         await self._save_message(run_id, message)
+                        # Reasoning models (glm-5.2 / YuanYuan) stream `<think>...`
+                        # so the live draft's visible reply is empty or truncated.
+                        # The canonical TextMessage is the clean answer — forward it
+                        # so the client can replace the think-tagged draft.
+                        if (
+                            streamed_source
+                            and isinstance(message, TextMessage)
+                            and isinstance(message.content, str)
+                            and message.content.strip()
+                        ):
+                            formatted_final = self._format_message(message)
+                            if formatted_final:
+                                await self._send_message(run_id, formatted_final)
+                                logger.info(
+                                    "[CHUNK_SEAL_SEND] run=%s source=%s chars=%s "
+                                    "(internal is_save reply after stream)",
+                                    run_id,
+                                    message.source,
+                                    len(message.content),
+                                )
                     continue
 
                 # ── Accumulate streaming chunks (+ ensure start_flag on first) ──
@@ -393,6 +416,9 @@ class WebSocketManager:
                     if run_id not in self._chunk_buffers:
                         self._chunk_buffers[run_id] = {}
                     prev = self._chunk_buffers[run_id].get(chunk_source, "")
+                    incoming_flag = bool(
+                        message.metadata and message.metadata.get("start_flag")
+                    )
                     # First token of a new burst: mark start_flag so the client can
                     # replace the draft when a TextMessage later arrives.
                     if not prev:
@@ -400,6 +426,28 @@ class WebSocketManager:
                             message.metadata = {}
                         if not message.metadata.get("start_flag"):
                             message.metadata["start_flag"] = "yes"
+                        logger.info(
+                            "[CHUNK_START] run=%s source=%s incoming_flag=%s delta=%s "
+                            "preview=%r",
+                            run_id,
+                            chunk_source,
+                            incoming_flag,
+                            len(chunk_content),
+                            (chunk_content or "")[:80],
+                        )
+                    elif message.metadata and message.metadata.get("start_flag"):
+                        # Later tokens of the same burst must not reset the client
+                        # draft — the UI treats start_flag as "replace with this delta".
+                        message.metadata.pop("start_flag", None)
+                        logger.info(
+                            "[CHUNK_FLAG_STRIP] run=%s source=%s delta=%s buf=%s "
+                            "preview=%r",
+                            run_id,
+                            chunk_source,
+                            len(chunk_content),
+                            len(prev),
+                            (chunk_content or "")[:80],
+                        )
                     self._chunk_buffers[run_id][chunk_source] = prev + chunk_content
 
                 # ── Flush chunk buffer before tool/thought events ──
@@ -419,6 +467,11 @@ class WebSocketManager:
                 ):
                     buf = self._chunk_buffers.get(run_id, {})
                     send_flush = not isinstance(message, ThoughtEvent)
+                    # ThoughtEvent is often emitted by reasoning models (e.g. glm-5.2)
+                    # in the middle of / right after the answer stream. Clearing the
+                    # buffer would re-apply start_flag on the next token and the UI
+                    # would replace the draft with only the trailing lines.
+                    clear_buf = send_flush
                     for source in list(buf.keys()):
                         text = buf[source].strip()
                         if text and len(text) > 10:
@@ -451,9 +504,10 @@ class WebSocketManager:
                             else:
                                 logger.info(
                                     f"[CHUNK_FLUSH_SAVE] run={run_id} source={source} "
-                                    f"chars={len(text)} before=ThoughtEvent (no live re-send)"
+                                    f"chars={len(text)} before=ThoughtEvent keep_buffer"
                                 )
-                        buf[source] = ""
+                        if clear_buf:
+                            buf[source] = ""
 
                 formatted_message = self._format_message(message)
                 if formatted_message:

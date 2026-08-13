@@ -194,6 +194,7 @@ app.add_middleware(
     allow_origins=[
         "http://drsai.ihep.ac.cn",
         "https://drsai.ihep.ac.cn",
+        "https://drsaiv2.ihep.ac.cn",
         "https://aitest.ihep.ac.cn",
      ],
     allow_origin_regex=(
