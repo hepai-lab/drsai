@@ -392,16 +392,16 @@ api.include_router(
 )
 
 api.include_router(
+    releases.router,
+    prefix="/releases",
+    tags=["releases"],
+)
+
+api.include_router(
     cloud.router,
     prefix="/cloud",
     tags=["cloud"],
     responses={404: {"description": "Not found"}},
-)
-
-api.include_router(
-    releases.router,
-    prefix="/releases",
-    tags=["releases"],
 )
 
 # Version endpoint

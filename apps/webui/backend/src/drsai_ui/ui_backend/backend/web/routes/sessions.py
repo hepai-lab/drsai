@@ -2,11 +2,12 @@
 import re
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 
 from ...datamodel import Message, Run, Session, RunStatus
 from ..deps import get_db
+from .....drsai_adapter.sso.jwt import get_current_user_id
 
 router = APIRouter()
 
@@ -124,9 +125,30 @@ def _get_owned_session(db, session_id: int, user_id: str) -> Session:
     return response.data[0]
 
 
+async def _list_session_runs_impl(session_id: int, user_id: str, db) -> Dict:
+    """Internal implementation of list_session_runs — callable from other routes without auth."""
+    try:
+        _get_owned_session(db, session_id, user_id)
+        run_data = _build_runs_payload(db, session_id)
+        return {"status": True, "data": {"runs": run_data}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in list_messages: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail="Internal server error while fetching session data"
+        ) from e
+
+
 @router.get("/")
-async def list_sessions(user_id: str, db=Depends(get_db)) -> Dict:
+async def list_sessions(
+    user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     """List all sessions for a user"""
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     response = db.get(Session, filters={"user_id": user_id})
     if response.data and len(response.data) > 0:
         agent_modes = {}
@@ -166,8 +188,14 @@ async def get_shared_session(share_token: str, db=Depends(get_db)) -> Dict:
 
 
 @router.get("/{session_id}")
-async def get_session(session_id: int, user_id: str, db=Depends(get_db)) -> Dict:
+async def get_session(
+    session_id: int, user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     """Get a specific session"""
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     response = db.get(Session, filters={"id": session_id, "user_id": user_id})
     if not response.status or not response.data:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -180,8 +208,11 @@ async def set_session_share(
     user_id: str,
     enabled: bool = True,
     db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
 ) -> Dict:
     """Enable or disable public read-only sharing for a session."""
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     session = _get_owned_session(db, session_id, user_id)
     session = _set_session_shared(session, enabled)
     response = db.upsert(session)
@@ -198,8 +229,14 @@ async def set_session_share(
 
 
 @router.post("/")
-async def create_session(session: Session, db=Depends(get_db)) -> Dict:
+async def create_session(
+    session: Session,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     """Create a new session with an associated run"""
+    if current_user != session.user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     # Set default mode if not provided
     if not session.agent_mode_config:
         session.agent_mode_config = {"mode": "magentic-one", "config": {}}
@@ -232,9 +269,13 @@ async def create_session(session: Session, db=Depends(get_db)) -> Dict:
 
 @router.put("/{session_id}")
 async def update_session(
-    session_id: int, user_id: str, session: Session, db=Depends(get_db)
+    session_id: int, user_id: str, session: Session,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
 ) -> Dict:
     """Update an existing session"""
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     # First verify the session belongs to user
     existing = db.get(Session, filters={"id": session_id, "user_id": user_id})
     if not existing.status or not existing.data:
@@ -254,34 +295,40 @@ async def update_session(
 
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: int, user_id: str, db=Depends(get_db)) -> Dict:
+async def delete_session(
+    session_id: int, user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     """Delete a session and all its associated runs and messages"""
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     db.delete(filters={"id": session_id, "user_id": user_id}, model_class=Session)
 
     return {"status": True, "message": "Session deleted successfully"}
 
 
 @router.get("/{session_id}/runs")
-async def list_session_runs(session_id: int, user_id: str, db=Depends(get_db)) -> Dict:
+async def list_session_runs(
+    session_id: int, user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     """Get complete session history organized by runs"""
-    try:
-        _get_owned_session(db, session_id, user_id)
-        run_data = _build_runs_payload(db, session_id)
-        return {"status": True, "data": {"runs": run_data}}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in list_messages: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail="Internal server error while fetching session data"
-        ) from e
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return await _list_session_runs_impl(session_id, user_id, db)
 
 
 @router.put("/{session_id}/run")
 async def update_session(
-    session_id: int, user_id: str, run: Run, db=Depends(get_db)
+    session_id: int, user_id: str, run: Run,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
 ) -> Dict:
     """Update an existing run"""
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     runs = db.get(
             Run, filters={"id": run.id, "user_id": user_id, "session_id": session_id}, order="asc", return_json=False
         )

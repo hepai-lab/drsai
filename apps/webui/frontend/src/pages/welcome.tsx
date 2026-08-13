@@ -328,7 +328,7 @@ const WelcomePage = () => {
               href="/login"
               orderClass="order-2 sm:order-1"
             />
-            <ClientItem
+            {/* <ClientItem
               icon={<WindowsLogo />}
               title="Windows"
               detail={isZh ? "连接本地工作区" : "Connect local workspaces"}
@@ -336,8 +336,8 @@ const WelcomePage = () => {
               active={activeClient === "windows"}
               onClick={() => toggleClient("windows")}
               orderClass="order-3 sm:order-2"
-            />
-            <ClientItem
+            /> */}
+            {/* <ClientItem
               icon={<AndroidLogo />}
               title="Android"
               detail={isZh ? "移动处理与查看进度" : "Work and follow progress"}
@@ -345,7 +345,7 @@ const WelcomePage = () => {
               active={activeClient === "android"}
               onClick={() => toggleClient("android")}
               orderClass="order-1 border-l-0 sm:order-3 sm:border-l"
-            />
+            /> */}
             <button
               type="button"
               onClick={() => toggleClient("terminal")}

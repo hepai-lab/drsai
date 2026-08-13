@@ -15,7 +15,7 @@ from ....learning.memory_provider import MemoryControllerProvider
 
 from ...datamodel import Plan
 from ..deps import get_db
-from .sessions import list_session_runs
+from .sessions import _list_session_runs_impl
 
 router = APIRouter()
 
@@ -127,7 +127,7 @@ async def learn_plan(
             )
 
         # 1. Retrieve messages from database
-        runs_result = await list_session_runs(
+        runs_result = await _list_session_runs_impl(
             session_id=session_id, user_id=user_id, db=db
         )
 

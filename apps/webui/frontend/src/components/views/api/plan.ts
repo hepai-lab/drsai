@@ -1,4 +1,5 @@
 import { getServerUrl } from "../../utils";
+import { getAuthToken } from "../../../utils/authSession";
 
 export class PlanAPI {
     private getBaseUrl(): string {
@@ -6,9 +7,14 @@ export class PlanAPI {
     }
 
     private getHeaders(): HeadersInit {
-        return {
+        const headers: Record<string, string> = {
             "Content-Type": "application/json",
         };
+        const token = getAuthToken();
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
+        return headers;
     }
 
     async listPlans(userId: string): Promise<any[]> {
