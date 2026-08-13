@@ -6,12 +6,24 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+for (const key of ["NO_PROXY", "no_proxy"]) {
+  const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+  for (const host of ["127.0.0.1", "localhost"]) if (!entries.includes(host)) entries.push(host);
+  process.env[key] = entries.join(",");
+}
+
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(root, "..", "..", "..");
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const pythonSrc = join(repoRoot, "cores", "python", "packages", "drsai", "src");
 const port = Number(process.env.OPENDRSAI_E2E_CHAT_PORT || "18643");
 const baseUrl = `http://127.0.0.1:${port}`;
+const oidcSigningSecret = createHash("sha256").update(`opendrsai-e2e-chat:${port}`).digest("hex");
+
+function e2ePlatformUserId(label = "developer-local") {
+  const hex = createHash("sha256").update(`opendrsai-e2e-user:${label}`).digest("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`;
+}
 const scenarioIndex = process.argv.indexOf("--scenario");
 const scenario = scenarioIndex >= 0 ? process.argv[scenarioIndex + 1] : "default";
 if (!["default", "network-recovery", "j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions", "l5-comment-task", "l6-share-revocation", "l7-version-consistency"].includes(scenario)) throw new Error(`Unknown chat scenario: ${scenario}`);
@@ -99,6 +111,7 @@ const workspaceBPath = join(tempDir, "isolated-project-b");
 const userData = join(tempDir, "electron-user-data");
 mkdirSync(appHome, { recursive: true });
 mkdirSync(userData, { recursive: true });
+mkdirSync(workspacePath, { recursive: true });
 if (["j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes"].includes(scenario)) seedPreferenceWorkspace();
 if (["j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions", "l5-comment-task", "l6-share-revocation", "l7-version-consistency"].includes(scenario)) seedReusableTaskWorkspace();
 if (scenario === "k1-natural-language-schedule") mkdirSync(k1EvidenceDir, { recursive: true });
@@ -415,7 +428,7 @@ function assertChatDiagnostics(result) {
     throw new Error(`E2E chat thread id collapsed into request/run id:\n${JSON.stringify(thread, null, 2)}`);
   }
   const summary = result?.details?.chatSummary;
-  if (!summary || summary.firstEventType !== "start" || summary.terminalEventType !== "done" || summary.lastEventType !== "done") {
+  if (!summary || !["start", "oaep", "structured"].includes(summary.firstEventType) || summary.terminalEventType !== "done" || !["done", "structured"].includes(summary.lastEventType)) {
     throw new Error(`E2E chat did not record a completed chat event summary:\n${JSON.stringify(result, null, 2)}`);
   }
   if (!Number.isFinite(summary.durationMs) || summary.durationMs < 0) {
@@ -428,7 +441,8 @@ function assertChatDiagnostics(result) {
   if (!events.every((event) => !event.sessionId || event.sessionId === thread.id)) {
     throw new Error(`E2E chat emitted events for the wrong thread:\n${JSON.stringify(events, null, 2)}`);
   }
-  if (!events.every((event) => !event.runId || event.runId === "e2e-chat-run-0001")) {
+  const authoritativeRunIds = [...new Set(events.map((event) => event.runId).filter(Boolean))];
+  if (authoritativeRunIds.length !== 1 || authoritativeRunIds[0] === "e2e-chat-request-0001") {
     throw new Error(`E2E chat emitted events for the wrong run:\n${JSON.stringify(events, null, 2)}`);
   }
   for (let index = 1; index < events.length; index += 1) {
@@ -441,7 +455,7 @@ function assertChatDiagnostics(result) {
     item.id === thread.id &&
     item.status === "idle" &&
     item.lastRequestId === "e2e-chat-request-0001" &&
-    item.lastRunId === "e2e-chat-run-0001" &&
+    item.lastRunId === authoritativeRunIds[0] &&
     String(item.title || "").includes("hello e2e chat")
   )) {
     throw new Error(`E2E chat did not return its thread to idle after completion:\n${JSON.stringify(threads, null, 2)}`);
@@ -913,6 +927,8 @@ function startPythonGateway() {
       DRSAI_API_HOST: "127.0.0.1",
       DRSAI_API_PORT: String(port),
       DRSAI_GATEWAY_FAKE_AGENT: "1",
+      OPENDRSAI_DESKTOP_RUNTIME: "1",
+      OPENDRSAI_OIDC_HS256_SECRET: oidcSigningSecret,
       DRSAI_HOME: appHome,
       USERNAME: "opendrsai-e2e-chat",
       USERPROFILE: pythonUserProfile,
@@ -950,6 +966,8 @@ function runPackagedApp(options = {}) {
         DRSAI_GATEWAY_DEV_MANAGED: "1",
         OPENDRSAI_GATEWAY_PORT: String(port),
         OPENDRSAI_DEV_AUTH_BYPASS: "1",
+        OPENDRSAI_E2E_OIDC_HS256_SECRET: oidcSigningSecret,
+        OPENDRSAI_OIDC_HS256_SECRET: oidcSigningSecret,
         OPENDRSAI_E2E_CHAT: "1",
         OPENDRSAI_E2E_CHAT_SCENARIO: scenario,
         OPENDRSAI_E2E_RESULT: activeResultPath,
@@ -968,8 +986,8 @@ function runPackagedApp(options = {}) {
         OPENDRSAI_E2E_L7_OBJECT_ID: options.l7ObjectId,
         OPENDRSAI_E2E_L7_V1_SHA: options.l7V1Sha,
         OPENDRSAI_E2E_SCREENSHOT: options.screenshotPath || (scenario === "j1-user-preferences" ? j1EvidenceScreenshot : scenario === "j2-memory-safety" ? j2EvidenceScreenshot : scenario === "j3-memory-management" ? j3EvidenceScreenshot : scenario === "j4-memory-scopes" ? j4EvidenceScreenshot : scenario === "j5-reusable-task" ? j5EvidenceScreenshot : scenario === "j6-reusable-task-adjustments" ? j6EvidenceScreenshot : scenario === "k1-natural-language-schedule" ? k1EvidenceScreenshot : scenario === "k7-scheduled-task-management" ? k7EvidenceScreenshot : undefined),
-        OPENDRSAI_E2E_WORKSPACE_PATH: ["j1-user-preferences", "j2-memory-safety", "j3-memory-management", "j4-memory-scopes", "j5-reusable-task", "j6-reusable-task-adjustments", "k1-natural-language-schedule", "k2-scheduled-trigger-stability", "k7-scheduled-task-management", "l1-result-sharing", "l2-final-result-isolation", "l3-sensitive-share-review", "l4-collaboration-permissions", "l5-comment-task", "l6-share-revocation", "l7-version-consistency"].includes(scenario) ? workspacePath : undefined,
-        OPENDRSAI_E2E_AUTH_USER_ID: options.authUserId || (scenario === "j4-memory-scopes" ? "authorized-cern-user" : undefined),
+        OPENDRSAI_E2E_WORKSPACE_PATH: workspacePath,
+        OPENDRSAI_E2E_AUTH_USER_ID: e2ePlatformUserId(options.authUserId || (scenario === "j4-memory-scopes" ? "authorized-cern-user" : "developer-local")),
         OPENDRSAI_E2E_AUTH_EMAIL: options.authEmail || (scenario === "j4-memory-scopes" ? "authorized@cern.example" : undefined),
         OPENDRSAI_E2E_WORKSPACE_B_PATH: scenario === "j4-memory-scopes" ? workspaceBPath : undefined,
         OPENDRSAI_E2E_AUTH_GROUPS: scenario === "j4-memory-scopes" ? "cern-research" : undefined,

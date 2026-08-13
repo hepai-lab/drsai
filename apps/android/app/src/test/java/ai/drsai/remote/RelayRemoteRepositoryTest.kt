@@ -57,6 +57,35 @@ class RelayRemoteRepositoryTest {
         }
     }
 
+    @Test fun `push readiness accepts only exact consistent end to end state`() = runTest {
+        server.enqueue(MockResponse().setBody(
+            """{"ready":true,"providers":{"fcm":true},"worker_running":true}"""
+        ))
+
+        assertEquals(
+            RemotePushReadiness(ready = true, fcm = true, workerRunning = true),
+            repository.pushReadiness(),
+        )
+        server.takeRequest().apply {
+            assertEquals("GET", method)
+            assertEquals("/v1/push/readiness", path)
+        }
+    }
+
+    @Test fun `push readiness fails closed for drift and impossible success`() = runTest {
+        val invalid = listOf(
+            """{"ready":true,"providers":{"fcm":true},"worker_running":true,"extra":1}""",
+            """{"ready":true,"providers":{"fcm":true,"apns":true},"worker_running":true}""",
+            """{"ready":true,"providers":{"fcm":false},"worker_running":true}""",
+            """{"ready":"true","providers":{"fcm":true},"worker_running":true}""",
+        )
+        invalid.forEach { body -> server.enqueue(MockResponse().setBody(body)) }
+
+        invalid.forEach {
+            assertTrue(runCatching { repository.pushReadiness() }.isFailure)
+        }
+    }
+
     @Test fun `session paging remains runtime workspace scoped`() = runTest {
         server.enqueue(MockResponse().setBody("""{"items":[{"runtime_id":"rt","workspace_id":"ws","session_id":"s","title":"T","backend_id":"codex","agent_definition_id":"a","agent_definition_version":"1","last_run_status":"running","updated_at":"now","lifecycle":"active"}],"next_cursor":"1"}"""))
         val page = repository.sessions(RuntimeId("rt"), WorkspaceId("ws"), query = "T")
@@ -277,7 +306,7 @@ class RelayRemoteRepositoryTest {
     }
 
     @Test fun `exact healthy definition creates session and stable idempotency header body`() = runTest {
-        server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","title":"T","backend_id":"codex"}"""))
+        server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","title":"T","backend_id":"codex","lifecycle":"active","updated_at":"now"}"""))
         val definition = RemoteAgentDefinition("a", "1.2.3", "Agent", "codex", "healthy", setOf("chat"))
         assertEquals("s", repository.createSession(RuntimeId("rt"), WorkspaceId("ws"), "T", definition, "idem-session").sessionId.value)
         assertTrue(server.takeRequest().body.readUtf8().contains("\"idempotency_key\":\"idem-session\""))
@@ -285,13 +314,13 @@ class RelayRemoteRepositoryTest {
 
     @Test fun `run sends attachment references never local path and cancel is scoped`() = runTest {
         val session = RemoteSessionRef(RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), "T", "codex")
-        server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","backend_id":"codex"}"""))
+        server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","backend_id":"codex","status":"queued","correlation_id":"corr","created_at":"now","message":"hi","attachment_refs":["att_1"]}"""))
         val run = repository.createRun(session, "hi", listOf("att_1"), "idem-run")
         val body = JSONObject(server.takeRequest().body.readUtf8())
         assertFalse(body.toString().contains("sdcard"))
         assertEquals("idem-run", body.getString("idempotency_key"))
         assertEquals("idem-run", body.getString("source_message_id"))
-        server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","backend_id":"codex","status":"cancelled"}"""))
+        server.enqueue(MockResponse().setBody("""{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","backend_id":"codex","status":"cancelled","correlation_id":"corr","created_at":"now","message":"hi","attachment_refs":["att_1"]}"""))
         assertEquals("cancelled", repository.cancel(run))
         assertTrue(server.takeRequest().path!!.contains("/workspaces/ws/runs/r/cancel"))
     }
@@ -312,7 +341,7 @@ class RelayRemoteRepositoryTest {
             chain.proceed(chain.request())
         }.build()
         repository = RelayRemoteRepository(server.url("/").toString(), { "token" }, timeoutClient)
-        server.enqueue(MockResponse().setBody("""{"status":"succeeded","operation":"session.create","resource":{"runtime_id":"rt","workspace_id":"ws","session_id":"recovered","title":"T","backend_id":"opendrsai"}}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"succeeded","operation":"session.create","resource":{"runtime_id":"rt","workspace_id":"ws","session_id":"recovered","title":"T","backend_id":"opendrsai","lifecycle":"active","updated_at":"now"}}"""))
 
         val session = repository.createSession(
             RuntimeId("rt"), WorkspaceId("ws"), "T",
@@ -339,19 +368,34 @@ class RelayRemoteRepositoryTest {
         assertTrue(server.takeRequest().path!!.endsWith("/audit?run_id=r"))
     }
 
-    @Test fun `approval lost response retries with one stable idempotency key`() = runTest {
+    @Test fun `approval lost response recovers by idempotency query without duplicate post`() = runTest {
         server.enqueue(MockResponse().setBody("""{"status":"approved"}""")
             .setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
-        server.enqueue(MockResponse().setBody("""{"status":"approved"}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"succeeded","operation":"approval.decide","resource":{"runtime_id":"rt","approval_id":"approval-1","status":"approved"}}"""))
 
         assertEquals("approved", repository.decide(RuntimeId("rt"), ApprovalId("approval-1"), "approve"))
 
         val first = JSONObject(server.takeRequest().body.readUtf8())
-        val second = JSONObject(server.takeRequest().body.readUtf8())
+        val recovery = server.takeRequest()
         assertEquals("approval:approval-1:approve", first.getString("idempotency_key"))
-        assertEquals(first.getString("idempotency_key"), second.getString("idempotency_key"))
-        assertNotEquals(first.getString("request_id"), second.getString("request_id"))
+        assertEquals("GET", recovery.method)
+        assertEquals(
+            "/v1/runtimes/rt/idempotency/approval.decide/approval:approval-1:approve",
+            recovery.path,
+        )
         assertEquals(2, server.requestCount)
+    }
+
+    @Test fun `approval recovery tolerates runtime restart and validates authority scope`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(503).setBody("""{"code":"runtime_offline"}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"succeeded","operation":"approval.decide","resource":{"runtime_id":"rt","approval_id":"approval-1","status":"denied"}}"""))
+
+        assertNull(repository.recoverApprovalDecision(
+            RuntimeId("rt"), ApprovalId("approval-1"), "deny",
+        ))
+        assertEquals("denied", repository.recoverApprovalDecision(
+            RuntimeId("rt"), ApprovalId("approval-1"), "deny",
+        ))
     }
 
     @Test fun `session run history and rest events retain complete authority scope`() = runTest {
@@ -388,7 +432,7 @@ class RelayRemoteRepositoryTest {
 
     @Test fun `uncertain run recovery tolerates runtime restart without reposting`() = runTest {
         server.enqueue(MockResponse().setResponseCode(503).setBody("""{"code":"runtime_offline"}"""))
-        server.enqueue(MockResponse().setBody("""{"status":"succeeded","operation":"run.create","resource":{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","backend_id":"opendrsai"}}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"succeeded","operation":"run.create","resource":{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"r","backend_id":"opendrsai","status":"queued","correlation_id":"corr","created_at":"now","message":"hello","attachment_refs":[]}}"""))
 
         assertNull(repository.recoverRun(RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), "stable-key"))
         assertEquals(
@@ -403,7 +447,7 @@ class RelayRemoteRepositoryTest {
     }
 
     @Test fun `twenty caller retries keep one source message and idempotency identity`() = runTest {
-        val response = """{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"same-run","backend_id":"opendrsai"}"""
+        val response = """{"runtime_id":"rt","workspace_id":"ws","session_id":"s","run_id":"same-run","backend_id":"opendrsai","status":"queued","correlation_id":"corr","created_at":"now","message":"hello","attachment_refs":[]}"""
         repeat(20) { server.enqueue(MockResponse().setBody(response)) }
         val session = RemoteSessionRef(
             RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), "T", "opendrsai",
@@ -425,29 +469,85 @@ class RelayRemoteRepositoryTest {
     }
 
     @Test fun `conversation latency report is content free and event correlated`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(204))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"ready":true,"stages_present":["client_receive","client_render"],"latencies_ms":{"client_receive_to_render":5}}"""
+        ))
 
         repository.recordConversationLatency(
             RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"),
-            eventId = "event-one", stage = "client_render", durationMs = 4.25,
+            eventId = "event/one", clientReceiveAtMs = 1_000, renderAtMs = 1_005,
         )
 
         val request = server.takeRequest()
         assertEquals(
-            "/v1/runtimes/rt/workspaces/ws/sessions/s/conversation-latency",
+            "/v1/runtimes/rt/workspaces/ws/sessions/s/events/event%2Fone/latency-observation",
             request.path,
         )
         val body = JSONObject(request.body.readUtf8())
-        assertEquals("event-one", body.getString("correlation_id"))
-        assertEquals("event-one", body.getString("operation_id"))
-        assertEquals("client_render", body.getString("stage"))
-        assertEquals(setOf("correlation_id", "operation_id", "stage", "duration_ms"), body.keySet())
-        val invalidStage = runCatching {
+        assertEquals(1_000, body.getLong("client_receive_at_ms"))
+        assertEquals(1_005, body.getLong("render_at_ms"))
+        assertEquals(setOf("client_receive_at_ms", "render_at_ms"), body.keySet())
+        val invalidOrder = runCatching {
             repository.recordConversationLatency(
                 RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"),
-                eventId = "event-one", stage = "message", durationMs = 1.0,
+                eventId = "event-one", clientReceiveAtMs = 2, renderAtMs = 1,
             )
         }.exceptionOrNull()
-        assertTrue(invalidStage is IllegalArgumentException)
+        assertTrue(invalidOrder is IllegalArgumentException)
     }
+
+    @Test fun `user slo journeys use strict production timestamp routes`() = runTest {
+        repeat(3) {
+            server.enqueue(MockResponse().setResponseCode(200).setBody(
+                """{"ready":true,"stages_present":["one","two","three"],"latencies_ms":{"total":30}}"""
+            ))
+        }
+        val runtime = RuntimeId("rt")
+        val workspace = WorkspaceId("ws")
+        val session = SessionId("s")
+
+        assertTrue(repository.recordFirstScreenSlo(
+            runtime, workspace, session, "sample-first-0001", 10, 20, 40,
+        ).ready)
+        assertTrue(repository.recordOperationConfirmationSlo(
+            runtime, workspace, session, "sample-operation-0001", 100, 110, 130,
+        ).ready)
+        assertTrue(repository.recordReconnectSlo(
+            runtime, workspace, session, "sample-reconnect-0001", 200, 210, 230,
+        ).ready)
+
+        val expected = listOf(
+            "/v1/runtimes/rt/workspaces/ws/sessions/s/slo/first-screen/sample-first-0001" to
+                setOf("cache_load_at_ms", "authority_refresh_at_ms", "first_render_at_ms"),
+            "/v1/runtimes/rt/workspaces/ws/sessions/s/slo/operation-confirmation/sample-operation-0001" to
+                setOf("request_dispatch_at_ms", "runtime_commit_at_ms", "confirmation_render_at_ms"),
+            "/v1/runtimes/rt/workspaces/ws/sessions/s/slo/reconnect/sample-reconnect-0001" to
+                setOf("disconnect_detect_at_ms", "transport_restore_at_ms", "replay_catchup_at_ms"),
+        )
+        expected.forEach { (path, keys) ->
+            server.takeRequest().apply {
+                assertEquals("POST", method)
+                assertEquals(path, this.path)
+                assertEquals(keys, JSONObject(body.readUtf8()).keySet())
+            }
+        }
+    }
+
+    @Test fun `user slo observations reject identity and timestamp drift before network`() = runTest {
+        val runtime = RuntimeId("rt")
+        val workspace = WorkspaceId("ws")
+        val session = SessionId("s")
+        assertTrue(runCatching {
+            repository.recordFirstScreenSlo(
+                runtime, workspace, session, "contains/path", 1, 2, 3,
+            )
+        }.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(runCatching {
+            repository.recordReconnectSlo(
+                runtime, workspace, session, "sample-reconnect-0001", 3, 2, 4,
+            )
+        }.exceptionOrNull() is IllegalArgumentException)
+        assertEquals(0, server.requestCount)
+    }
+
 }

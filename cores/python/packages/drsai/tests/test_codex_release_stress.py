@@ -105,11 +105,11 @@ def test_twenty_megabyte_answer_streams_without_loss_or_quadratic_batches():
 def test_runtime_redaction_is_linear_for_large_unbroken_deltas_and_masks_url_userinfo():
     value = "x" * (64 * 1024)
     started = time.monotonic()
-    result = redact_sensitive(value)
+    result = redact_sensitive(value, "", "audit")
     elapsed = time.monotonic() - started
     assert result.endswith("[TRUNCATED 61440 CHARS]")
     assert elapsed < 0.5
-    assert redact_sensitive("https://alice:secret@example.invalid/path") == (
+    assert redact_sensitive("https://alice:secret@example.invalid/path", "", "audit") == (
         "https://[REDACTED]@example.invalid/path"
     )
 

@@ -22,8 +22,13 @@ class ModelProviderRuntimeDiagnosticTest {
                     "models=${provider.modelIds.joinToString(",")}",
             )
         }
+        val databaseFile = context.getDatabasePath("opendrsai.db")
+        if (!databaseFile.exists()) {
+            Log.i(TAG, "MODEL_PROVIDER_DIAGNOSTIC database=not_initialized")
+            return
+        }
         val database = android.database.sqlite.SQLiteDatabase.openDatabase(
-            context.getDatabasePath("opendrsai.db").absolutePath,
+            databaseFile.absolutePath,
             null,
             android.database.sqlite.SQLiteDatabase.OPEN_READONLY,
         )

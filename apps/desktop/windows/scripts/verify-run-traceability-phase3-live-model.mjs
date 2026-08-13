@@ -121,6 +121,14 @@ if (process.argv.includes("--self-test")) {
   assert.ok(!liveSource.includes(["safe", "Storage"].join("")), "live verifier must not decrypt the App credential file");
   assert.ok(desktopMainSource.includes('child.stdin.end(auth.accessToken, "utf8")'),
     "Desktop must delegate the current OIDC credential through the child stdin pipe");
+  const acceptanceHandler = desktopMainSource.slice(
+    desktopMainSource.indexOf("async function runPhase3LiveAcceptance"),
+    desktopMainSource.indexOf("function validateMobileRuntimeDisplayName"),
+  );
+  assert.ok(acceptanceHandler.includes("await startGateway()"),
+    "Desktop live acceptance must start the existing App-owned Gateway on demand");
+  assert.ok(acceptanceHandler.includes("syncAuthIdentityToGateway(auth.userId)"),
+    "Desktop live acceptance must synchronize the existing OIDC principal into the Gateway");
   assert.ok(!desktopMainSource.includes(["OPENDRSAI", "LIVE", "ACCESS_TOKEN"].join("_")),
     "Desktop must not copy the OIDC credential into an environment variable");
   const assistant = { id:"m1", type:"message", status:"completed", content:{ role:"assistant", text:"answer", citations:[{ citation_id:"c1" }] } };

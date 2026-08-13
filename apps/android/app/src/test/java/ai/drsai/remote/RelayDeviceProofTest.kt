@@ -7,6 +7,8 @@ import ai.drsai.remote.remote.security.RelayDeviceSigner
 import ai.drsai.remote.remote.security.rawEd25519PrivateSeed
 import ai.drsai.remote.remote.security.rawEd25519PublicKey
 import ai.drsai.remote.remote.security.authorizeRelayRequest
+import ai.drsai.remote.remote.data.withRelayPath
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -52,6 +54,29 @@ class RelayDeviceProofTest {
             """.trimIndent(),
             signer.message,
         )
+    }
+
+    @Test
+    fun `proof signs the exact safely encoded opaque path`() {
+        val signer = CapturingSigner()
+        val proof = RelayDeviceProof(
+            signer,
+            epochSeconds = { 1_785_100_000L },
+            nonce = { "nonce-0123456789abcdef" },
+        )
+        val url = "https://ai-dev.ihep.ac.cn/api/runtime-relay/".toHttpUrl().withRelayPath(
+            listOf("v1", "runtimes", "rt/a ?#%\u4e2d", "workspaces"),
+            listOf("cursor" to "next&admin=true"),
+        )
+
+        proof.authorize(Request.Builder().url(url).build(), "access-token")
+
+        val canonical = checkNotNull(signer.message)
+        assertEquals(
+            "/api/runtime-relay/v1/runtimes/rt%2Fa%20%3F%23%25%E4%B8%AD/workspaces",
+            canonical.lineSequence().elementAt(2),
+        )
+        assertEquals("cursor=next%26admin%3Dtrue", canonical.lineSequence().elementAt(3))
     }
 
     @Test

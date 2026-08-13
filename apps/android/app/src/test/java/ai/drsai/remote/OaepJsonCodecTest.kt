@@ -1,11 +1,13 @@
 package ai.drsai.remote
 
 import ai.drsai.remote.remote.data.OaepJsonCodec
+import ai.drsai.remote.remote.data.OaepProjectionIntegrity
 import ai.drsai.remote.remote.generated.OaepArtifactContent
 import ai.drsai.remote.remote.generated.OaepCommandExecutionContent
 import ai.drsai.remote.remote.generated.OaepContract
 import ai.drsai.remote.remote.generated.OaepMessageContent
 import ai.drsai.remote.remote.generated.OaepNoticeContent
+import ai.drsai.remote.remote.generated.OaepReasoningContent
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -140,18 +142,75 @@ class OaepJsonCodecTest {
     }
 
     @Test
+    fun `complete snapshot verifies runtime canonical checkpoint digest`() {
+        val root = snapshotFixture()
+        val items = root.getJSONArray("items")
+        val digest = OaepProjectionIntegrity.digestItems(items)
+        root.put("checkpoint", JSONObject()
+            .put("sequence", root.getLong("snapshot_sequence"))
+            .put("snapshot_hash", digest)
+            .put("item_count", items.length()))
+        root.put("window", JSONObject().put("limit", 100)
+            .put("has_more", false).put("next_cursor", JSONObject.NULL))
+        assertEquals(digest, OaepJsonCodec.snapshot(root).checkpoint?.snapshotHash)
+        root.getJSONObject("checkpoint").put("snapshot_hash", "0".repeat(64))
+        assertEquals(
+            "oaep_snapshot_checkpoint_digest_mismatch",
+            runCatching { OaepJsonCodec.snapshot(root) }.exceptionOrNull()?.message,
+        )
+    }
+
+    @Test
+    fun `reasoning metadata and replay policy survive canonical round trip`() {
+        val root = snapshotFixture()
+        val reasoning = (0 until root.getJSONArray("items").length())
+            .map { root.getJSONArray("items").getJSONObject(it) }
+            .first { it.getString("type") == "reasoning" }
+        val segment = reasoning.getJSONObject("content").getJSONArray("segments").getJSONObject(0)
+            .put("kind", "analysis").put("visibility", "hidden").put("source", "adapter")
+        val decodedReasoning = OaepJsonCodec.item(reasoning).content as OaepReasoningContent
+        assertEquals("hidden", decodedReasoning.segments.single()["visibility"])
+        assertEquals("adapter", decodedReasoning.segments.single()["source"])
+        assertEquals("hidden", JSONObject(OaepJsonCodec.contentJson(decodedReasoning))
+            .getJSONArray("segments").getJSONObject(0).getString("visibility"))
+
+        val command = (0 until root.getJSONArray("items").length())
+            .map { root.getJSONArray("items").getJSONObject(it) }
+            .first { it.getString("type") == "command_execution" }
+        command.getJSONObject("content").put("replay_policy", JSONObject()
+            .put("classification", "workspace_write").put("input_digest", "abc"))
+        val decodedCommand = OaepJsonCodec.item(command).content as OaepCommandExecutionContent
+        assertEquals("workspace_write", decodedCommand.replayPolicy["classification"])
+        assertEquals("abc", JSONObject(OaepJsonCodec.contentJson(decodedCommand))
+            .getJSONObject("replay_policy").getString("input_digest"))
+    }
+
+    @Test
     fun `shared snapshot window fixture decodes every page without gaps`() {
         val fixture = windowFixture()
         val pages = fixture.getJSONArray("pages")
+        val canonicalItems = JSONArray()
+        val decodedItems = mutableListOf<ai.drsai.remote.remote.generated.OaepItem>()
         val ids = buildSet {
             repeat(pages.length()) { pageIndex ->
-                OaepJsonCodec.snapshot(pages.getJSONObject(pageIndex)).items.forEach { add(it.id) }
+                val page = pages.getJSONObject(pageIndex)
+                OaepJsonCodec.snapshot(page).items.forEach { add(it.id); decodedItems += it }
+                val items = page.getJSONArray("items")
+                repeat(items.length()) { canonicalItems.put(items.getJSONObject(it)) }
             }
         }
         val expected = fixture.getJSONArray("expected_item_ids")
         assertEquals(
             (0 until expected.length()).map(expected::getString).toSet(),
             ids,
+        )
+        assertEquals(
+            fixture.getString("expected_snapshot_hash"),
+            OaepProjectionIntegrity.digestItems(canonicalItems),
+        )
+        assertEquals(
+            fixture.getString("expected_snapshot_hash"),
+            OaepProjectionIntegrity.digestItems(decodedItems),
         )
     }
 

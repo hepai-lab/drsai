@@ -11,6 +11,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 import aiohttp
 
 from .runtime_client import RuntimeCredential, RuntimeCredentialStore
+from .url_path import encoded_path
 
 
 GRANT_ID = re.compile(r"^ag_[0-9a-f]{32}$")
@@ -63,6 +64,7 @@ class MobileAssociation:
     revoked_at: datetime | None = None
     device_type: str = "android"
     workspace_scope: str = "all"
+    workspace_ids: tuple[str, ...] = ()
     permissions: tuple[str, ...] = ("read", "send", "approve", "files")
 
     def public(self) -> dict[str, Any]:
@@ -78,6 +80,7 @@ class MobileAssociation:
             "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
             "device_type": self.device_type,
             "workspace_scope": self.workspace_scope,
+            "workspace_ids": list(self.workspace_ids),
             "permissions": list(self.permissions),
         }
 
@@ -97,6 +100,8 @@ class MobilePairingTransport(Protocol):
     ) -> MobileAssociation: ...
     async def shrink_association(
         self, credential: RuntimeCredential, association_id: str, permissions: tuple[str, ...],
+        workspace_scope: str | None = None,
+        workspace_ids: tuple[str, ...] | None = None,
     ) -> MobileAssociation: ...
     async def revoke_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]: ...
     async def pause_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]: ...
@@ -170,7 +175,7 @@ class AiohttpMobilePairingTransport:
         return await self._request(
             credential,
             "POST",
-            f"/v1/runtimes/{credential.runtime_id}/access-grants",
+            encoded_path("v1", "runtimes", credential.runtime_id, "access-grants"),
             True,
             {"workspace_scope": workspace_scope, "workspace_ids": list(workspace_ids)},
         )
@@ -178,16 +183,18 @@ class AiohttpMobilePairingTransport:
     async def read(self, credential: RuntimeCredential, grant_id: str) -> MobilePairingGrant:
         self._validate_grant_id(grant_id)
         return await self._request(credential, "GET",
-                                   f"/v1/runtimes/{credential.runtime_id}/access-grants/{grant_id}", False)
+                                   encoded_path("v1", "runtimes", credential.runtime_id,
+                                                "access-grants", grant_id), False)
 
     async def revoke(self, credential: RuntimeCredential, grant_id: str) -> MobilePairingGrant:
         self._validate_grant_id(grant_id)
         return await self._request(credential, "DELETE",
-                                   f"/v1/runtimes/{credential.runtime_id}/access-grants/{grant_id}", False)
+                                   encoded_path("v1", "runtimes", credential.runtime_id,
+                                                "access-grants", grant_id), False)
 
     async def list_associations(self, credential: RuntimeCredential) -> list[MobileAssociation]:
         body = await self._request_json(
-            credential, "GET", f"/v1/runtimes/{credential.runtime_id}/associations"
+            credential, "GET", encoded_path("v1", "runtimes", credential.runtime_id, "associations")
         )
         rows = body.get("items", []) if isinstance(body, dict) else body
         if not isinstance(rows, list):
@@ -205,7 +212,8 @@ class AiohttpMobilePairingTransport:
         body = await self._request_json(
             credential,
             "DELETE",
-            f"/v1/runtimes/{credential.runtime_id}/associations/{association_id}",
+            encoded_path("v1", "runtimes", credential.runtime_id,
+                         "associations", association_id),
         )
         return self._decode_association(body)
 
@@ -214,23 +222,37 @@ class AiohttpMobilePairingTransport:
         credential: RuntimeCredential,
         association_id: str,
         permissions: tuple[str, ...],
+        workspace_scope: str | None = None,
+        workspace_ids: tuple[str, ...] | None = None,
     ) -> MobileAssociation:
         if not ASSOCIATION_ID.fullmatch(association_id):
             raise MobilePairingError(
                 "association_id_invalid", "Association ID is invalid.",
                 retryable=False, action="refresh",
             )
+        payload: dict[str, Any] = {"permissions": list(permissions)}
+        if workspace_scope is not None:
+            if workspace_ids is None:
+                raise MobilePairingError(
+                    "workspace_scope_invalid", "Workspace scope is invalid.",
+                    retryable=False, action="refresh",
+                )
+            payload.update({
+                "workspace_scope": workspace_scope,
+                "workspace_ids": list(workspace_ids),
+            })
         body = await self._request_json(
             credential,
             "PATCH",
-            f"/v1/runtimes/{credential.runtime_id}/associations/{association_id}",
-            {"permissions": list(permissions)},
+            encoded_path("v1", "runtimes", credential.runtime_id,
+                         "associations", association_id),
+            payload,
         )
         return self._decode_association(body)
 
     async def revoke_enrollment(self, credential: RuntimeCredential) -> dict[str, Any]:
         body = await self._request_json(
-            credential, "DELETE", f"/v1/runtimes/{credential.runtime_id}/enrollment"
+            credential, "DELETE", encoded_path("v1", "runtimes", credential.runtime_id, "enrollment")
         )
         if not isinstance(body, dict) or body.get("runtime_id") != credential.runtime_id or body.get("status") != "revoked":
             raise self._invalid_response()
@@ -250,7 +272,7 @@ class AiohttpMobilePairingTransport:
         body = await self._request_json(
             credential,
             "POST",
-            f"/v1/runtimes/{credential.runtime_id}/enrollment/{operation}",
+            encoded_path("v1", "runtimes", credential.runtime_id, "enrollment", operation),
         )
         expected = "paused" if paused else "active"
         if (
@@ -276,7 +298,8 @@ class AiohttpMobilePairingTransport:
         body = await self._request_json(
             credential,
             "POST",
-            f"/v1/runtimes/{credential.runtime_id}/fault-injections/connection-owner-restart",
+            encoded_path("v1", "runtimes", credential.runtime_id,
+                         "fault-injections", "connection-owner-restart"),
             json_body={"ttl_seconds": ttl_seconds},
         )
         if not isinstance(body, dict):
@@ -506,6 +529,9 @@ class AiohttpMobilePairingTransport:
         device_name = str(body.get("device_name", ""))
         status = str(body.get("status", ""))
         access_state = str(body.get("access_state", ""))
+        workspace_scope = str(body.get("workspace_scope") or "all")
+        raw_workspace_ids = body.get("workspace_ids", [])
+        raw_permissions = body.get("permissions", ["read", "send", "approve", "files"])
         try:
             created_at = datetime.fromisoformat(
                 str(body.get("created_at", "")).replace("Z", "+00:00")
@@ -532,6 +558,16 @@ class AiohttpMobilePairingTransport:
             or (status == "revoked" and access_state != "revoked")
             or (status == "active" and revoked_at is not None)
             or (status == "revoked" and revoked_at is None)
+            or workspace_scope not in {"all", "selected"}
+            or not isinstance(raw_workspace_ids, list)
+            or any(not isinstance(item, str) or not item or len(item) > 256 for item in raw_workspace_ids)
+            or len(raw_workspace_ids) != len(set(raw_workspace_ids))
+            or (workspace_scope == "all" and raw_workspace_ids)
+            or (workspace_scope == "selected" and not raw_workspace_ids)
+            or not isinstance(raw_permissions, list)
+            or not raw_permissions
+            or any(item not in {"read", "send", "approve", "files"} for item in raw_permissions)
+            or len(raw_permissions) != len(set(raw_permissions))
         ):
             raise AiohttpMobilePairingTransport._invalid_response()
         return MobileAssociation(
@@ -545,11 +581,9 @@ class AiohttpMobilePairingTransport:
             last_seen_at=last_seen_at,
             revoked_at=revoked_at,
             device_type="android",
-            workspace_scope=str(body.get("workspace_scope") or "all"),
-            permissions=tuple(
-                item for item in body.get("permissions", ["read", "send", "approve", "files"])
-                if isinstance(item, str)
-            ),
+            workspace_scope=workspace_scope,
+            workspace_ids=tuple(raw_workspace_ids),
+            permissions=tuple(raw_permissions),
         )
 
     @staticmethod
@@ -633,16 +667,45 @@ class MobilePairingService:
         )
 
     async def shrink_association(
-        self, association_id: str, permissions: tuple[str, ...]
+        self,
+        association_id: str,
+        permissions: tuple[str, ...],
+        workspace_scope: str | None = None,
+        workspace_ids: tuple[str, ...] | None = None,
     ) -> MobileAssociation:
         if not permissions or not set(permissions).issubset({"read", "send", "approve", "files"}):
             raise MobilePairingError(
                 "association_permissions_invalid", "Association permissions are invalid.",
                 retryable=False, action="refresh",
             )
+        if (workspace_scope is None) != (workspace_ids is None):
+            raise MobilePairingError(
+                "workspace_scope_invalid", "Workspace scope is invalid.",
+                retryable=False, action="refresh",
+            )
+        if workspace_scope is not None:
+            ids = tuple(dict.fromkeys(workspace_ids or ()))
+            if (
+                workspace_scope not in {"all", "selected"}
+                or (workspace_scope == "all" and ids)
+                or (workspace_scope == "selected" and not ids)
+                or len(ids) > 1000
+                or any(not item or len(item) > 256 for item in ids)
+            ):
+                raise MobilePairingError(
+                    "workspace_scope_invalid", "Workspace scope is invalid.",
+                    retryable=False, action="refresh",
+                )
+            workspace_ids = ids
         credential, _, transport = self._configured()
+        if workspace_scope is None:
+            pending = transport.shrink_association(credential, association_id, permissions)
+        else:
+            pending = transport.shrink_association(
+                credential, association_id, permissions, workspace_scope, workspace_ids,
+            )
         return await self._with_connectivity_state(
-            transport.shrink_association(credential, association_id, permissions)
+            pending
         )
 
     async def revoke_enrollment(self) -> dict[str, Any]:

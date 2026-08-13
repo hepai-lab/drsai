@@ -16,6 +16,8 @@ for (const pane of ["perceptors", "executors", "memories"]) {
 for (const marker of ["listPerceptors", "savePerceptor", "updatePerceptor", "testPerceptor", "deletePerceptor"]) {
   assert.ok(panel.includes(`desktopApi.${marker}`), `Perceptor UI is missing ${marker}.`);
 }
+assert.ok(panel.includes("requestAppDecision"), "Perceptor deletion must use the focus-safe app decision dialog.");
+assert.ok(!panel.includes("window.confirm"), "Perceptor settings must not use native confirm dialogs on Windows.");
 for (const kind of ["public_web", "large_facility_data", "tavily", "facility_gateway"]) {
   assert.ok(panel.includes(kind), `Perceptor UI is missing ${kind}.`);
 }

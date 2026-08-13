@@ -53,6 +53,7 @@ from .service import (
     load_config_snapshot,
 )
 from .migration import MigrationResult, migrate_legacy_model_config
+from .desktop_bootstrap import DesktopBootstrapResult, ensure_desktop_runtime_config
 from .resolver import resolve_model_config, resolve_model_ref
 from .writer import delete_provider, remove_legacy_model_selection, update_current_agent, update_model_selection, upsert_provider
 from .schema import (
@@ -110,12 +111,14 @@ __all__ = [
     "DrSaiConfig",
     "ModelCapabilities",
     "MigrationResult",
+    "DesktopBootstrapResult",
     "ProviderConfig",
     "ReasoningCapabilities",
     "ResolvedModelConfig",
     "SecretValue",
     "load_user_config",
     "migrate_legacy_model_config",
+    "ensure_desktop_runtime_config",
     "resolve_model_config",
     "resolve_model_ref",
     "delete_provider",

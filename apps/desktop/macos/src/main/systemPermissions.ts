@@ -16,6 +16,11 @@ const SETTINGS: Record<DesktopSystemPermissionKind, string> = {
 };
 const execFileAsync = promisify(execFile);
 let automationState: DesktopSystemPermissionState = "unknown";
+let latestPermissionNotificationShown = false;
+
+export function wasLatestPermissionNotificationShownForE2e(): boolean {
+  return latestPermissionNotificationShown;
+}
 
 export function getMacosSystemPermissions(): DesktopSystemPermissionStatus[] {
   return KINDS.map(getMacosSystemPermission);
@@ -38,8 +43,13 @@ export async function requestMacosSystemPermission(value: unknown): Promise<Desk
   if (native && typeof native !== "boolean" && !(kind === "automation" && native.state === "unknown")) return native;
   if (kind === "microphone") await systemPreferences.askForMediaAccess("microphone");
   else if (kind === "notifications") {
-    if (Notification.isSupported()) new Notification({ title: "OpenDrSai", body: "Notifications are enabled for task completion.", silent: true }).show();
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    latestPermissionNotificationShown = false;
+    if (Notification.isSupported()) {
+      const notification = new Notification({ title: "OpenDrSai", body: "Notifications are enabled for task completion.", silent: true });
+      const shown = new Promise((resolve) => notification.once("show", () => { latestPermissionNotificationShown = true; resolve(undefined); }));
+      notification.show();
+      await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, 5_000))]);
+    }
   } else if (kind === "automation") {
     try {
       await execFileAsync("/usr/bin/osascript", ["-e", "tell application \"Finder\" to get name of startup disk"], { timeout: 30_000 });

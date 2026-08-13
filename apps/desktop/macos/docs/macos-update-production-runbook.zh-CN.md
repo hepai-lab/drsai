@@ -2,7 +2,7 @@
 
 ## 1. 当前发布判定
 
-代码、unsigned 构建、CDN/GitHub 回退策略、OSS 发布事务和 stable 失败恢复已经实现。生产发布必须同时满足：
+代码、unsigned 构建、OSS/CDN 发布事务和 stable 失败恢复已经实现。本次生产发布为 OSS-only，GitHub Release 只是可选备份渠道。生产发布必须同时满足：
 
 - Apple Silicon 自托管 Runner 标签：`self-hosted, macOS, ARM64, opendrsai-release`；
 - 唯一有效的 `Developer ID Application` 身份；
@@ -10,11 +10,11 @@
 - 可执行的 ossutil v1.7.19 或经兼容验证的版本；
 - `hepai-release` Bucket 最小权限凭据；
 - 一份早于当前候选版本的稳定签名 macOS Release；
-- GitHub Environment `macos-production-release` 已设置 required reviewers。
+- 发布操作由受控的 macOS Runner 与明确的人工审批触发。
 
 缺少任意一项时，工作流必须保持失败，不得手工跳过 signed L6 或直接覆盖 stable 元数据。
 
-## 2. GitHub 配置
+## 2. 发布环境配置
 
 在 `macos-production-release` Environment 配置：
 
@@ -22,14 +22,14 @@
 | --- | --- | --- |
 | Secret | `MACOS_CSC_LINK` | Developer ID Application 证书 PKCS#12/base64 或 electron-builder 支持的位置 |
 | Secret | `MACOS_CSC_KEY_PASSWORD` | PKCS#12 密码 |
-| Secret | `APPLE_API_KEY` | App Store Connect API 私钥内容或受控文件位置 |
+| Secret | `APPLE_API_KEY` | App Store Connect API 私钥完整内容；工作流会以 0600 权限写入 runner 临时文件。也兼容 self-hosted runner 上的受控绝对路径 |
 | Secret | `APPLE_API_KEY_ID` | API Key ID |
 | Secret | `APPLE_API_ISSUER` | Issuer ID |
 | Variable | `OPENDRSAI_OSSUTIL_BIN` | Runner 上 ossutil 的绝对路径，例如 `/usr/local/bin/ossutil` |
 
 OSS AccessKey/STS 不通过命令行参数或工作流日志传递。由发布 Runner 的受限服务账号预配置 ossutil config，文件权限必须为 `0600`，Runner 不得被普通开发任务复用。
 
-Environment 应至少启用一名 required reviewer。`publish_release=true` 的手动生产发布只允许从 `main` 运行；tag 发布必须严格等于 `v<apps/desktop/macos/package.json version>`。
+如使用 GitHub Actions 作为 Runner 调度器，Environment 应至少启用一名 required reviewer。`publish_release=true` 的手动生产发布只允许从 `main` 运行；tag 发布必须严格等于 `v<apps/desktop/macos/package.json version>`。不要求 `gh` 登录、GitHub Release 写权限或 GitHub 资产上传。
 
 ## 3. OSS 最小权限边界
 
@@ -79,13 +79,12 @@ npm --prefix apps/desktop run preflight:release --workspace opendrsai-macos-desk
 4. unsigned、L4、L5 通过；
 5. release Runner 构建完整签名 DMG和不携带 Runtime archive 的签名更新 ZIP；
 6. 完成 Gatekeeper、公证、stapling、干净安装和真实在线更新 L6；
-7. 发布 job 预检 OSS，创建 GitHub draft；
+7. 发布 job 预检 OSS 读/写/删的隔离探针；
 8. 上传 OSS 不可变资产，不修改 stable；
-9. 校验 CDN HEAD、Range、Content-Length、SHA-256 及 GitHub draft 字节一致性；
-10. GitHub Release 转为正式；
-11. 保存旧 stable 快照；
-12. 最后覆盖 `latest-mac.yml`；
-13. 校验 stable CDN；失败则自动恢复旧 stable 状态。
+9. 校验 CDN HEAD、Range、Content-Length、SHA-256 及本地产物字节一致性；
+10. 保存旧 stable 快照；
+11. 最后覆盖 `latest-mac.yml`；
+12. 校验 stable OSS/CDN 与 `opendrsai-dev.ihep.ac.cn`；失败则自动恢复旧 stable 状态。
 
 首次发布没有旧 stable 时，快照状态记录 `previousExists=false`；若晋级后校验失败，只删除本次创建的 stable key，不删除任何版本资产。
 
@@ -104,14 +103,12 @@ App 下载 ZIP 前与 `~/.drsai/drsai-agent/.opendrsai-runtime.json` 比对。�
 
 ## 7. 故障处置
 
-- GitHub draft 创建失败：不上传 OSS，不影响 stable；
 - OSS 版本对象已存在：视为不可变冲突，停止发布；
-- CDN/GitHub 双源摘要不同：保持 GitHub draft，不晋级 stable；
-- GitHub 正式发布失败：不晋级 stable；
+- CDN 资产与本地摘要不同：不晋级 stable；
 - stable 校验失败：工作流调用 `--rollback-metadata`；
 - 新 App 启动不健康：App 内 watchdog 恢复上一签名 App，用户数据不回滚；
 - Runtime 不匹配：用户改用完整 DMG，不允许薄 ZIP强制安装；
-- 发布 job 中断：先检查 GitHub Release 状态和 stable 当前摘要，再决定重跑；版本化对象不得使用 `--clobber` 或手工覆盖。
+- 发布 job 中断：先检查 OSS 版本化对象和 stable 当前摘要，再决定重跑；版本化对象不得使用 `--clobber` 或手工覆盖。
 
 ## 8. 完成证据
 
@@ -122,8 +119,8 @@ App 下载 ZIP 前与 `~/.drsai/drsai-agent/.opendrsai-runtime.json` 比对。�
 - `macos-update-assets.json`；
 - `online-signed-update.json`；
 - signed update rollback receipt；
-- CDN/GitHub 双源校验日志；
+- OSS/CDN 与本地产物校验日志；
 - stable 晋级或回滚日志；
-- GitHub Release URL、tag、commit 和最终资产摘要。
+- OSS 对象路径、tag、commit 和最终资产摘要。
 
 只有上述证据全部通过，状态才可从 `production-promotion-blocked` 改为 `signed-update-verified / production-promotion-enabled`。

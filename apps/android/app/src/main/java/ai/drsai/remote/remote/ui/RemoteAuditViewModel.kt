@@ -34,7 +34,7 @@ class RemoteAuditViewModel(
     runtimeName: String,
     workspaceName: String,
 ) : AndroidViewModel(app) {
-    private val repository = RemoteWorkspaceContainer.get(app).repository
+    private val repository = RemoteWorkspaceContainer.get(app).boundaries.approval.client
     private val mutableState = MutableStateFlow(RemoteAuditUiState(runtimeName, workspaceName))
     val state: StateFlow<RemoteAuditUiState> = mutableState.asStateFlow()
 

@@ -18,8 +18,8 @@ from preflight_remote_workspace_push import (
 
 def test_android_configuration_is_validated_without_values() -> None:
     environment = {
-        "OPENDRSAI_ANDROID_FIREBASE_API_KEY": "private-api-key",
-        "OPENDRSAI_ANDROID_FIREBASE_APPLICATION_ID": "1:2:android:abcdef",
+        "OPENDRSAI_ANDROID_FIREBASE_API_KEY": "AIza" + "a" * 35,
+        "OPENDRSAI_ANDROID_FIREBASE_APPLICATION_ID": "1:123456789:android:abcdef",
         "OPENDRSAI_ANDROID_FIREBASE_PROJECT_ID": "opendrsai-dev",
         "OPENDRSAI_ANDROID_FIREBASE_SENDER_ID": "123456789",
     }
@@ -27,6 +27,20 @@ def test_android_configuration_is_validated_without_values() -> None:
     serialized = json.dumps(result)
     assert result["passed"] is True
     assert "private-api-key" not in serialized
+
+
+def test_android_rejects_sender_mismatch_and_non_firebase_key() -> None:
+    environment = {
+        "OPENDRSAI_ANDROID_FIREBASE_API_KEY": "not-a-firebase-key",
+        "OPENDRSAI_ANDROID_FIREBASE_APPLICATION_ID": "1:123456789:android:abcdef",
+        "OPENDRSAI_ANDROID_FIREBASE_PROJECT_ID": "opendrsai-dev",
+        "OPENDRSAI_ANDROID_FIREBASE_SENDER_ID": "3",
+    }
+    with pytest.raises(PreflightError, match="firebase_api_key"):
+        check_android(environment)
+    environment["OPENDRSAI_ANDROID_FIREBASE_API_KEY"] = "AIza" + "a" * 35
+    with pytest.raises(PreflightError, match="firebase_sender_mismatch"):
+        check_android(environment)
 
 
 def test_android_missing_configuration_fails_closed() -> None:
@@ -41,7 +55,7 @@ def test_relay_keyring_and_active_key_are_validated(tmp_path: Path) -> None:
         "project_id": "opendrsai-dev",
         "client_email": "relay@example.invalid",
         "private_key_id": "test-key-id",
-        "private_key": "test-private-key",
+        "private_key": "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----",
     }), encoding="utf-8")
     encoded = base64.urlsafe_b64encode(b"k" * 32).decode().rstrip("=")
     environment = {
@@ -64,7 +78,7 @@ def test_relay_rejects_wrong_key_length(tmp_path: Path) -> None:
         "project_id": "opendrsai-dev",
         "client_email": "relay@example.invalid",
         "private_key_id": "test-key-id",
-        "private_key": "test-private-key",
+        "private_key": "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----",
     }), encoding="utf-8")
     environment = {
         "HAI_RUNTIME_RELAY_FCM_PROJECT_ID": "opendrsai-dev",
@@ -83,7 +97,7 @@ def test_relay_rejects_credentials_for_another_project(tmp_path: Path) -> None:
         "project_id": "another-project",
         "client_email": "relay@example.invalid",
         "private_key_id": "test-key-id",
-        "private_key": "test-private-key",
+        "private_key": "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----",
     }), encoding="utf-8")
     encoded = base64.urlsafe_b64encode(b"k" * 32).decode().rstrip("=")
     environment = {
@@ -140,3 +154,13 @@ def test_public_diagnostic_does_not_claim_unready_provider_passed() -> None:
 def test_public_readiness_rejects_http() -> None:
     with pytest.raises(PreflightError, match="https_required"):
         check_public("http://example.test/api/runtime-relay")
+
+
+def test_public_readiness_rejects_additional_fields() -> None:
+    payload = {
+        "ready": True, "providers": {"fcm": True}, "worker_running": True,
+        "credential_path": "must-not-be-public",
+    }
+    with patch("preflight_remote_workspace_push.urlopen", return_value=_Response(payload)):
+        with pytest.raises(PreflightError, match="readiness_invalid"):
+            check_public("https://example.test/api/runtime-relay")

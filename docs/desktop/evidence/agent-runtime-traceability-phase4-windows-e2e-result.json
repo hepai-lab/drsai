@@ -1,0 +1,16 @@
+{
+  "schema_version": "opendrsai.agent-runtime-phase4-windows-e2e-result/1",
+  "generated_at": "2026-08-11T17:38:45.402Z",
+  "passed": true,
+  "checks": [
+    "truthful_relation_labels",
+    "unsaved_close_guard",
+    "comparison_metrics",
+    "append_only_evaluation_revision",
+    "focused_evidence_navigation",
+    "executed_comparison_recovery",
+    "nonterminal_candidate_navigation",
+    "draft_discard_lifecycle"
+  ],
+  "screenshot": "docs/desktop/evidence/agent-runtime-traceability-phase4-windows-e2e.png"
+}

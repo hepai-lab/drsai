@@ -35,11 +35,15 @@ const startRequest = {
   providerEndpointing: true,
 };
 assert.doesNotThrow(() => validateStreamingVoiceStartRequest(startRequest));
+assert.doesNotThrow(() => validateStreamingVoiceStartRequest({ ...startRequest, protocolVersion: 2 }));
+assert.throws(() => validateStreamingVoiceStartRequest({ ...startRequest, protocolVersion: 3 }), /protocol version/);
 assert.throws(() => validateStreamingVoiceStartRequest({ ...startRequest, sampleRateHz: 44_100 }), /sample rate/);
 assert.throws(() => validateStreamingVoiceStartRequest({ ...startRequest, channels: 2 }), /mono/);
 assert.throws(() => validateStreamingVoiceStartRequest({ ...startRequest, frameDurationMs: 1 }), /duration/);
 assert.throws(() => validateStreamingVoiceStartRequest({ ...startRequest, turnId: "../unsafe" }), /turn ID/);
 assert.doesNotThrow(() => validateStreamingVoiceAudioChunk(chunk(0), { ...startRequest, sessionId: "session-1" }));
+assert.doesNotThrow(() => validateStreamingVoiceAudioChunk(chunk(0, 100, { protocolVersion: 2 }), { ...startRequest, protocolVersion: 2, sessionId: "session-1" }));
+assert.throws(() => validateStreamingVoiceAudioChunk(chunk(0), { ...startRequest, protocolVersion: 2, sessionId: "session-1" }), /protocol version/);
 assert.throws(() => validateStreamingVoiceAudioChunk(chunk(0, 100, { sessionId: "other" }), { ...startRequest, sessionId: "session-1" }), /session mismatch/);
 assert.throws(() => validateStreamingVoiceAudioChunk(chunk(0, 100, { audioData: new Uint8Array(3_000) }), { ...startRequest, sessionId: "session-1" }), /byte length/);
 assert.throws(() => validateStreamingVoiceAudioChunk(chunk(0, 100, { audioData: new Uint8Array(MAX_STREAMING_AUDIO_CHUNK_BYTES + 2) }), { ...startRequest, sessionId: "session-1" }), /too large/);

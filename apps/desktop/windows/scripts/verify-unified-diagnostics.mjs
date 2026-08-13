@@ -22,6 +22,9 @@ function loadTypeScript(path, requireFn) {
 
 const sharedPath = join(root, "../shared/api/diagnostics.ts");
 const shared = loadTypeScript(sharedPath, (specifier) => { throw new Error(`Unexpected shared import: ${specifier}`); });
+const sensitiveData = loadTypeScript(join(root, "../shared/api/sensitiveData.ts"), (specifier) => {
+  throw new Error(`Unexpected sensitive-data import: ${specifier}`);
+});
 const rootCause = loadTypeScript(join(root, "../shared/main/rootCauseAnalysis.ts"), (specifier) => {
   if (specifier === "../api/diagnostics") return shared;
   return require(specifier);
@@ -41,6 +44,7 @@ const incidentProjector = loadTypeScript(join(root, "../shared/main/diagnosticIn
 const mainPath = join(root, "../shared/main/diagnostics.ts");
 const main = loadTypeScript(mainPath, (specifier) => {
   if (specifier === "../api/diagnostics") return shared;
+  if (specifier === "../api/sensitiveData") return sensitiveData;
   if (specifier === "./rootCauseAnalysis") return rootCause;
   if (specifier === "./diagnosticClassifier") return classifier;
   if (specifier === "./agentDiagnosticProjector") return agentProjector;

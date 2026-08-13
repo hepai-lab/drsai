@@ -82,6 +82,32 @@ class FakeTransport:
             datetime.now(UTC),
         )
 
+    async def shrink_association(
+        self,
+        credential: RuntimeCredential,
+        association_id: str,
+        permissions: tuple[str, ...],
+        workspace_scope: str | None = None,
+        workspace_ids: tuple[str, ...] | None = None,
+    ) -> MobileAssociation:
+        self.calls.append((
+            "shrink_association",
+            f"{association_id}:{','.join(permissions)}:{workspace_scope}:{','.join(workspace_ids or ())}",
+        ))
+        return MobileAssociation(
+            association_id,
+            "sub_" + "c" * 12,
+            "dev_" + "d" * 12,
+            "Samsung SM-X936C",
+            "active",
+            "online",
+            datetime.now(UTC),
+            datetime.now(UTC),
+            workspace_scope=workspace_scope or "all",
+            workspace_ids=workspace_ids or (),
+            permissions=permissions,
+        )
+
     async def revoke_enrollment(self, credential: RuntimeCredential) -> dict:
         self.calls.append(("revoke_enrollment", credential.runtime_id))
         return {
@@ -171,6 +197,19 @@ def test_service_keeps_runtime_token_out_of_public_grant(tmp_path: Path) -> None
     assert [item[0] for item in transport.calls] == ["create", "read", "revoke"]
 
 
+def test_expired_grant_refresh_creates_only_a_new_grant_without_runtime_restart(tmp_path: Path) -> None:
+    service, transport = configured_service(tmp_path)
+    transport.expires = datetime.now(UTC) - timedelta(seconds=1)
+    expired = asyncio.run(service.create())
+    assert expired.expires_at < datetime.now(UTC)
+
+    transport.expires = datetime.now(UTC) + timedelta(seconds=120)
+    refreshed = asyncio.run(service.create())
+
+    assert refreshed.status == "pending" and refreshed.expires_at > datetime.now(UTC)
+    assert transport.calls == [("create", "rt_one"), ("create", "rt_one")]
+
+
 def test_service_lists_redacted_associations_and_revokes_selected_device(tmp_path: Path) -> None:
     service, transport = configured_service(tmp_path)
 
@@ -184,6 +223,27 @@ def test_service_lists_redacted_associations_and_revokes_selected_device(tmp_pat
     assert [item[0] for item in transport.calls] == [
         "associations", "revoke_association",
     ]
+
+
+def test_service_shrinks_workspace_scope_and_rejects_invalid_scope_pair(tmp_path: Path) -> None:
+    service, transport = configured_service(tmp_path)
+    association_id = "assoc_" + "b" * 32
+    shrunk = asyncio.run(service.shrink_association(
+        association_id,
+        ("read",),
+        "selected",
+        ("workspace-one",),
+    ))
+    assert shrunk.workspace_scope == "selected"
+    assert shrunk.workspace_ids == ("workspace-one",)
+    assert shrunk.permissions == ("read",)
+    assert transport.calls[0][0] == "shrink_association"
+
+    with pytest.raises(MobilePairingError) as invalid:
+        asyncio.run(service.shrink_association(
+            association_id, ("read",), "selected", (),
+        ))
+    assert invalid.value.code == "workspace_scope_invalid"
 
 
 def test_pause_is_reversible_and_preserves_associations(tmp_path: Path) -> None:
@@ -316,9 +376,13 @@ def test_association_decoder_requires_device_identity_fields() -> None:
         "created_at": created_at,
         "last_seen_at": created_at,
         "revoked_at": None,
+        "workspace_scope": "selected",
+        "workspace_ids": ["workspace-one"],
+        "permissions": ["read"],
     })
     assert decoded.device_summary == "dev_" + "c" * 12
     assert decoded.device_name == "Samsung SM-X936C"
+    assert decoded.workspace_ids == ("workspace-one",)
 
     for missing in ("device_summary", "device_name", "created_at", "access_state"):
         payload = decoded.public()
@@ -462,6 +526,19 @@ def test_full_runtime_exposes_authenticated_pairing_control_api(monkeypatch, tmp
             associations = client.get("/v1/mobile-pairing/associations", headers=headers)
             assert associations.status_code == 200
             association_id = associations.json()["items"][0]["association_id"]
+            shrunk = client.patch(
+                f"/v1/mobile-pairing/associations/{association_id}",
+                headers=headers,
+                json={
+                    "permissions": ["read"],
+                    "workspace_scope": "selected",
+                    "workspace_ids": ["workspace-one"],
+                },
+            )
+            assert shrunk.status_code == 200
+            assert shrunk.json()["permissions"] == ["read"]
+            assert shrunk.json()["workspace_scope"] == "selected"
+            assert shrunk.json()["workspace_ids"] == ["workspace-one"]
             revoked = client.delete(
                 f"/v1/mobile-pairing/associations/{association_id}",
                 headers=headers,

@@ -20,8 +20,10 @@ assert.doesNotMatch(setup, /stub files|Stub install|python stub|CLI stub/i, "dev
 
 assert.match(dev, /drsai-agent\/venv\/bin\/python/, "dev launcher must use the isolated Runtime created by setup");
 assert.match(dev, /"\$DRSAI_DEV_PYTHON" -m uvicorn/, "dev launcher must not depend on a global uvicorn executable");
-assert.match(dev, /kill -0[\s\S]*\/health/, "dev launcher must fail when the Gateway process exits or never becomes healthy");
-assert.match(dev, /cleanup 1/, "Gateway startup failure must preserve a non-zero launcher exit status");
+assert.match(dev, /\/health/, "dev launcher must probe the authenticated Gateway health endpoint");
+assert.match(dev, /kill -0 "\$DRSAI_API_PID"/, "dev launcher must detect an exited Gateway process");
+assert.match(dev, /API_READY[\s\S]*exit 1/, "Gateway startup failure must preserve a non-zero launcher exit status");
+assert.match(dev, /kill -TERM "\$DRSAI_API_PID"[\s\S]*kill -KILL "\$DRSAI_API_PID"[\s\S]*wait "\$DRSAI_API_PID"/, "dev launcher must drain the Gateway gracefully before forcing and reaping it");
 
 assert.doesNotMatch(auth, /createPasswordPlaceholderSession/, "unverified password login must not create a placeholder session");
 assert.match(auth, /Password sign-in is unavailable because this desktop build has no password verification service/, "unverified password login must fail closed with actionable guidance");

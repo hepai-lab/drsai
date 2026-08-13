@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 import httpx
 
+from drsai.platform_auth import get_model_credential_provider
+
 from .schema import ResolvedModelConfig
 from .guidance import guidance_for
 from .probe_history import probe_fingerprint, record_probe_result
@@ -29,35 +31,47 @@ async def test_provider_connection(
     """Probe a provider, returning only bounded model text for explicit model calls."""
     provider = resolved.provider
     model_id = resolved.model_id or resolved.model
-    secret = provider.api_key.reveal() if provider.api_key is not None else ""
+    static_secret = provider.api_key.reveal() if provider.api_key is not None else ""
+    credential = (
+        get_model_credential_provider(static_secret or None, provider.base_url)
+        if provider.name in {"hepai", "hepai-anthropic"} else None
+    )
+    secret = credential.access_token if credential is not None else static_secret
+    base_url = (
+        credential.anthropic_base_url
+        if credential is not None and provider.wire_api == "anthropic"
+        else credential.openai_base_url
+        if credential is not None
+        else provider.base_url
+    ).rstrip("/")
     started = time.monotonic()
     response = None
     used_minimal_call = mode == "model"
-    fingerprint = probe_fingerprint(provider.name, model_id, provider.base_url, provider.wire_api, secret)
+    fingerprint = probe_fingerprint(provider.name, model_id, base_url, provider.wire_api, secret)
     for attempt in range(max(0, min(retries, 2)) + 1):
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 if provider.wire_api == "anthropic" and mode == "model":
-                    url = f"{provider.base_url}/messages" if provider.base_url.endswith("/v1") else f"{provider.base_url}/v1/messages"
+                    url = f"{base_url}/messages" if base_url.endswith("/v1") else f"{base_url}/v1/messages"
                     response = await client.post(url, headers={"x-api-key": secret, "anthropic-version": "2023-06-01", "content-type": "application/json"}, json={"model": resolved.model, "max_tokens": _MODEL_PROBE_MAX_TOKENS, "system": "Reply with exactly one lowercase word: pong", "messages": [{"role": "user", "content": "ping"}]})
                 elif provider.wire_api == "anthropic":
-                    response = await client.get(f"{provider.base_url}/models", headers={"x-api-key": secret, "anthropic-version": "2023-06-01"})
+                    response = await client.get(f"{base_url}/models", headers={"x-api-key": secret, "anthropic-version": "2023-06-01"})
                 elif provider.wire_api == "gemini":
                     headers = {"x-goog-api-key": secret} if secret else {}
                     if mode == "model":
                         model_path = resolved.model if resolved.model.startswith("models/") else f"models/{resolved.model}"
                         response = await client.post(
-                            f"{provider.base_url.rstrip('/')}/{model_path}:generateContent",
+                            f"{base_url}/{model_path}:generateContent",
                             headers={**headers, "content-type": "application/json"},
                             json={"systemInstruction": {"parts": [{"text": "Reply with exactly one lowercase word: pong"}]}, "contents": [{"role": "user", "parts": [{"text": "ping"}]}], "generationConfig": {"maxOutputTokens": _MODEL_PROBE_MAX_TOKENS}},
                         )
                     else:
-                        response = await client.get(f"{provider.base_url.rstrip('/')}/models", headers=headers)
+                        response = await client.get(f"{base_url}/models", headers=headers)
                 else:
                     headers = {"Authorization": f"Bearer {secret}"} if secret else {}
                     if mode == "model":
                         response = await client.post(
-                            f"{provider.base_url}/responses",
+                            f"{base_url}/responses",
                             headers={**headers, "content-type": "application/json"},
                             json={
                                 "model": resolved.model,
@@ -68,7 +82,7 @@ async def test_provider_connection(
                         )
                         if response.status_code == 404 and not _response_mentions_model(response):
                             response = await client.post(
-                                f"{provider.base_url}/chat/completions",
+                                f"{base_url}/chat/completions",
                                 headers={**headers, "content-type": "application/json"},
                                 json={
                                     "model": resolved.model,
@@ -77,7 +91,7 @@ async def test_provider_connection(
                                 },
                             )
                     else:
-                        response = await client.get(f"{provider.base_url}/models", headers=headers)
+                        response = await client.get(f"{base_url}/models", headers=headers)
             break
         except httpx.TimeoutException:
             return _complete(provider.name, model_id, mode, _failure("timeout"), started, fingerprint, record_history)

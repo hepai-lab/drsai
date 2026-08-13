@@ -227,21 +227,28 @@ class RealRemoteWorkspaceE2ETest {
             return@runBlocking
         }
         if (phase == "target-proof") {
-            val candidates = workspaces.items.flatMap { workspace ->
-                repository.sessions(runtimeId, workspace.workspaceId).items
-                    .map { session -> workspace.workspaceId to session }
+            var selected: Pair<WorkspaceId, ai.drsai.remote.remote.data.RemoteSessionSummary>? = null
+            var selectedWorkspaceSessionCount = 0
+            for (workspace in workspaces.items) {
+                val sessions = repository.sessions(runtimeId, workspace.workspaceId).items
+                val latest = sessions.maxByOrNull { it.updatedAt }
+                if (latest != null) {
+                    selected = workspace.workspaceId to latest
+                    selectedWorkspaceSessionCount = sessions.size
+                    break
+                }
             }
-            val selected = requireNotNull(candidates.maxByOrNull { it.second.updatedAt }) {
+            val targetSession = requireNotNull(selected) {
                 "real_active_session_required"
             }
             emitProof(
                 JSONObject()
                     .put("phase", phase)
                     .put("runtime_id", runtimeId.value)
-                    .put("workspace_id", selected.first.value)
-                    .put("session_id", selected.second.reference.sessionId.value)
+                    .put("workspace_id", targetSession.first.value)
+                    .put("session_id", targetSession.second.reference.sessionId.value)
                     .put("workspace_count", workspaces.items.size)
-                    .put("active_session_count", candidates.size)
+                    .put("active_session_count", selectedWorkspaceSessionCount)
             )
             return@runBlocking
         }

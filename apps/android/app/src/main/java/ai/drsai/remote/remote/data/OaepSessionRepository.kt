@@ -12,7 +12,9 @@ import kotlinx.coroutines.flow.Flow
 class OaepSessionRepository(
     private val relay: RelayRemoteRepository,
     private val stream: RelaySseClient,
+    private val latency: RemoteLatencyTracker = RemoteLatencyTracker(),
 ) {
+
     suspend fun snapshot(
         runtimeId: RuntimeId,
         workspaceId: WorkspaceId,
@@ -44,14 +46,57 @@ class OaepSessionRepository(
         onReceived,
     )
 
-    suspend fun recordLatency(
+    fun markLatencyReceived(event: OaepEvent) {
+        latency.received(event)
+    }
+
+    suspend fun recordLatencyRendered(
         runtimeId: RuntimeId,
         workspaceId: WorkspaceId,
         sessionId: SessionId,
         event: OaepEvent,
-        stage: String,
-        durationMs: Double,
-    ) = relay.recordConversationLatency(
-        runtimeId, workspaceId, sessionId, event.eventId, stage, durationMs,
+    ) {
+        val (receivedAt, renderedAt) = latency.rendered(event)
+        relay.recordConversationLatency(
+            runtimeId,
+            workspaceId,
+            sessionId,
+            event.eventId,
+            receivedAt.coerceAtMost(renderedAt),
+            renderedAt,
+        )
+    }
+
+    suspend fun recordFirstScreen(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        observation: FirstScreenSloObservation,
+    ) = relay.recordFirstScreenSlo(
+        runtimeId, workspaceId, sessionId, observation.sampleId,
+        observation.cacheLoadAtMs, observation.authorityRefreshAtMs, observation.firstRenderAtMs,
     )
+
+    suspend fun recordOperationConfirmation(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        observation: OperationConfirmationSloObservation,
+    ) = relay.recordOperationConfirmationSlo(
+        runtimeId, workspaceId, sessionId, observation.sampleId,
+        observation.requestDispatchAtMs, observation.runtimeCommitAtMs,
+        observation.confirmationRenderAtMs,
+    )
+
+    suspend fun recordReconnect(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        observation: ReconnectSloObservation,
+    ) = relay.recordReconnectSlo(
+        runtimeId, workspaceId, sessionId, observation.sampleId,
+        observation.disconnectDetectAtMs, observation.transportRestoreAtMs,
+        observation.replayCatchupAtMs,
+    )
+
 }

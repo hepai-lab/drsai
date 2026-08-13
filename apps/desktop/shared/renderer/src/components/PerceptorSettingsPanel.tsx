@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, Database, Globe2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import type { PerceptorResource, SavePerceptorRequest } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
+import { requestAppDecision } from "./AppDecisionDialog";
 
 type DraftKind = "tavily" | "facility";
 
@@ -115,7 +116,21 @@ export function PerceptorSettingsPanel({ language }: { language: "zh" | "en" }):
   }
 
   async function remove(resource: PerceptorResource): Promise<void> {
-    if (!window.confirm(zh ? `删除感知器“${resource.name || resource.perceptor_id}”？安全凭据引用也会被清理。` : `Delete perceptor “${resource.name || resource.perceptor_id}”? Its secure credential reference will also be cleaned up.`)) return;
+    const confirmed = await requestAppDecision({
+      id: `delete-perceptor-${resource.perceptor_id}`,
+      tone: "danger",
+      title: zh
+        ? `删除感知器“${resource.name || resource.perceptor_id}”？`
+        : `Delete perceptor “${resource.name || resource.perceptor_id}”?`,
+      description: zh
+        ? "该感知器将不再提供给新的智能体运行。"
+        : "This perceptor will no longer be available to new Agent runs.",
+      impact: zh
+        ? "关联的安全凭据引用也会被清理；此操作不可撤销。"
+        : "Its secure credential reference will also be cleaned up. This action cannot be undone.",
+      confirmLabel: zh ? "删除感知器" : "Delete perceptor",
+    });
+    if (!confirmed) return;
     setBusy(true); setError(null);
     try { await desktopApi.deletePerceptor(resource.perceptor_id); if (draft?.originalId === resource.perceptor_id) setDraft(null); await refresh(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setBusy(false); }

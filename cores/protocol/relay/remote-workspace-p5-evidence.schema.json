@@ -10,22 +10,26 @@
     "environment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["environment_id", "relay_url", "runtime_version", "schema_hash", "platform_contract_sha256"],
+      "required": ["environment_id", "relay_url", "runtime_version", "schema_hash", "platform_contract_sha256", "android_signer_policy_sha256"],
       "properties": {
         "environment_id": {"type": "string", "minLength": 1},
         "relay_url": {"type": "string", "pattern": "^https://"},
         "runtime_version": {"type": "string", "minLength": 1},
         "schema_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "platform_contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "platform_contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "android_signer_policy_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
       }
     },
     "build": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "version", "artifact", "bytes", "sha256"],
+      "required": ["type", "version", "package_name", "version_code", "signing_cert_sha256", "artifact", "bytes", "sha256"],
       "properties": {
         "type": {"const": "release"},
         "version": {"type": "string", "minLength": 1},
+        "package_name": {"const": "ai.drsai.remote"},
+        "version_code": {"type": "integer", "minimum": 1},
+        "signing_cert_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "artifact": {"$ref": "#/$defs/artifactPath"},
         "bytes": {"type": "integer", "minimum": 1},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
@@ -237,12 +241,13 @@
     "secret_scan": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "profile", "environment_id", "canary_run_id", "artifact", "artifact_bytes", "artifact_sha256", "passed", "matches", "raw_artifacts_crossed_trust_boundary", "sources", "boundary_reports"],
+      "required": ["schema_version", "profile", "environment_id", "canary_run_id", "canary_set_sha256", "artifact", "artifact_bytes", "artifact_sha256", "passed", "matches", "raw_artifacts_crossed_trust_boundary", "sources", "boundary_reports"],
       "properties": {
         "schema_version": {"const": "p5-secret/1"},
         "profile": {"const": "mobile-remote-workspace-p5"},
         "environment_id": {"type": "string", "minLength": 1},
         "canary_run_id": {"type": "string", "minLength": 1},
+        "canary_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "artifact": {"$ref": "#/$defs/artifactPath"},
         "artifact_bytes": {"type": "integer", "minimum": 1},
         "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},

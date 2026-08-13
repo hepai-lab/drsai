@@ -4,12 +4,16 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
-const [launcher, bootstrap] = await Promise.all([
+const [launcher, bootstrap, cleanup] = await Promise.all([
   readFile(path.join(scriptsDir, "start-p3-windows-sandbox.ps1"), "utf8"),
   readFile(path.join(scriptsDir, "bootstrap-p3-windows-sandbox.ps1"), "utf8"),
+  readFile(path.join(scriptsDir, "cleanup-p3-provider-stage.ps1"), "utf8"),
 ]);
+const trustedAgent = await readFile(path.join(scriptsDir, "prepare-ci-python-agent.ps1"), "utf8");
 
-assert.match(launcher, /OpenDrSai-Windows-v1\.5\.6-x64\.zip/, "launcher must stage the current-source Runtime");
+assert.match(launcher, /Get-Content -LiteralPath \(Join-Path \$PSScriptRoot "\.\.\\\\package\.json"\) -Raw \| ConvertFrom-Json/, "launcher must derive the Runtime version from the current Desktop package");
+assert.match(launcher, /\$runtimeFileName = "OpenDrSai-Windows-v\$desktopVersion-x64\.zip"/, "launcher must bind the Runtime filename to the current Desktop version");
+assert.doesNotMatch(launcher, /OpenDrSai-Windows-v1\.5\.6-x64\.zip/, "launcher must not pin a stale Runtime version");
 assert.match(launcher, /OpenDrSaiSetup-P3-current-source\.msi/, "launcher must stage the current-source MSI");
 assert.match(launcher, /run-p3-packaged-sandbox-suite\.cmd/, "launcher must stage the packaged P3 suite runner");
 assert.match(launcher, /eval\\regression/, "launcher must stage the P3 regression definitions");
@@ -21,6 +25,12 @@ assert.match(launcher, /<SandboxFolder>C:\\P3\\evidence<\/SandboxFolder>/, "evid
 assert.match(launcher, /windows-sandbox-session\.ps1/, "launcher must use the monitorable Sandbox controller");
 assert.match(launcher, /-Action Start/, "launcher must create a monitorable Sandbox session");
 assert.match(launcher, /<Networking>Enable<\/Networking>/, "real model verification requires sandbox networking");
+assert.match(launcher, /Join-Path \$env:TEMP "OpenDrSaiP3Provider"/, "private Provider staging must stay outside the evidence tree");
+assert.match(launcher, /cleanup-p3-provider-stage\.ps1/, "private Provider staging must have a lifecycle cleanup monitor");
+assert.match(launcher, /-WindowStyle Hidden/, "the cleanup monitor must not open an interactive window");
+assert.match(cleanup, /StartsWith\(\$privateRoot \+ \[IO\.Path\]::DirectorySeparatorChar/, "cleanup must enforce the private temporary root");
+assert.match(cleanup, /Remove-Item -LiteralPath \$resolvedStage -Recurse -Force/, "cleanup must remove only the validated Provider stage");
+assert.match(trustedAgent, /\.venv\\Scripts\\python\.exe/, "trusted Agent preparation must prefer the repository-controlled Python runtime");
 assert.match(bootstrap, /Get-FileHash -Algorithm SHA256/, "guest must verify staged artifacts");
 assert.match(bootstrap, /Start-Process -FilePath msiexec\.exe/, "guest must install the MSI rather than use the host app");
 assert.match(bootstrap, /\$installRoot = Join-Path \$env:ProgramFiles "OpenDrSai"/, "guest must use the MSI installation root");

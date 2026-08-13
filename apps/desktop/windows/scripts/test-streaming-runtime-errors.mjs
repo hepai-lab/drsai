@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-const { normalizeStreamingVoiceError, redactStreamingVoiceError } = await import("../src/main/voiceStreaming/errors.ts");
+const { normalizeStreamingVoiceError, redactStreamingVoiceError } = await import("../../shared/main/voiceStreaming/errors.ts");
 const cases = [
   [{ status: 401, message: "bad" }, "auth_required", false],
   [{ status: 429, message: "slow" }, "rate_limited", true],

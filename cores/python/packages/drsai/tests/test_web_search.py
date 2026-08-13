@@ -14,6 +14,7 @@ from drsai.backend.runtime.web_search.bing_playwright import (
     PlaywrightSearchConfig,
     WebSearchRuntimeError,
     _extract_search_rows,
+    _extract_page_links,
     _launch_candidates,
     _result_matches_query,
     _search_locale,
@@ -234,8 +235,21 @@ class _RowsPage:
         self.rows = rows
 
     def locator(self, selector):
-        assert selector == "li.b_algo"
+        assert selector in {"li.b_algo", "a[href]"}
         return _RowsLocator(self.rows)
+
+
+def test_fetched_page_links_are_bounded_normalized_and_not_citation_results() -> None:
+    links = asyncio.run(_extract_page_links(_RowsPage([
+        {"href": "https://indico.cern.ch/event/1598655/#top", "text": " Spring 2026  "},
+        {"href": "https://indico.cern.ch/event/1598655/", "text": "duplicate"},
+        {"href": "javascript:alert(1)", "text": "unsafe"},
+    ])))
+
+    assert links == [{
+        "href": "https://indico.cern.ch/event/1598655/",
+        "text": "Spring 2026",
+    }]
 
 
 def test_bing_dom_rows_are_normalized_deduplicated_and_limited() -> None:
@@ -354,7 +368,7 @@ def test_windows_browser_candidates_prefer_installed_channels(monkeypatch) -> No
     assert _launch_candidates() == [{"channel": "msedge"}, {"channel": "chrome"}, {}]
 
 
-def test_runtime_reports_installed_windows_browser_and_gateway_capability(monkeypatch, tmp_path) -> None:
+def test_runtime_browser_does_not_bypass_gateway_perceptor_requirement(monkeypatch, tmp_path) -> None:
     executable = tmp_path / "msedge.exe"
     executable.touch()
     monkeypatch.setenv("DRSAI_PLAYWRIGHT_EXECUTABLE_PATH", str(executable))
@@ -367,26 +381,45 @@ def test_runtime_reports_installed_windows_browser_and_gateway_capability(monkey
 
     payload = asyncio.run(gateway.get_tool_capabilities("builtin.web-search"))
 
-    assert payload["status"] == "available"
+    assert payload["status"] == "configuration_required"
+    assert payload["error"] == "perceptor_required"
     assert payload["references"] == ["opendrsai"]
     assert "network.public_https" in payload["capabilities"]
 
 
-def test_agent_tool_preview_reports_web_search_runtime_state(monkeypatch) -> None:
+def test_agent_tool_preview_requires_configured_web_perceptor(monkeypatch) -> None:
     async def no_remote_tools():
         return [], None
 
     monkeypatch.setattr(gateway, "load_agent_runtime_policy", lambda _agent_id: _runtime_policy())
     monkeypatch.setattr(gateway, "list_tool_resources", lambda _config_dir: ())
     monkeypatch.setattr(gateway, "_load_remote_hepai_tools", no_remote_tools)
-    monkeypatch.setattr(gateway, "web_search_runtime_status", lambda: {"status": "available", "error": None})
+
+    preview = asyncio.run(gateway.preview_agent_tools("opendrsai"))
+    web = next(row for row in preview["tools"] if row["tool_id"] == "builtin.web-search")
+
+    assert web["selected"] is False
+    assert web["status"] == "configuration_required"
+    assert "network.public_https" in web["capabilities"]
+
+
+def test_agent_tool_preview_auto_binds_configured_web_perceptor(monkeypatch) -> None:
+    async def no_remote_tools():
+        return [], None
+
+    monkeypatch.setattr(gateway, "load_agent_runtime_policy", lambda _agent_id: _runtime_policy())
+    monkeypatch.setattr(gateway, "list_tool_resources", lambda _config_dir: ())
+    monkeypatch.setattr(gateway, "_load_remote_hepai_tools", no_remote_tools)
+    monkeypatch.setattr(gateway, "_web_search_status", lambda _user_id=None: {
+        "status": "available", "provider": "tavily", "error": None,
+        "capabilities": ["web.search", "web.extract", "network.public_https"],
+    })
 
     preview = asyncio.run(gateway.preview_agent_tools("opendrsai"))
     web = next(row for row in preview["tools"] if row["tool_id"] == "builtin.web-search")
 
     assert web["selected"] is True
     assert web["status"] == "available"
-    assert "network.public_https" in web["capabilities"]
 
 
 def test_web_search_is_read_only_without_approval_and_requires_network_capability() -> None:
@@ -425,6 +458,15 @@ def test_web_search_capabilities_survive_host_negotiation_and_tool_registration(
     assert registry["tools"][0]["name"] == "web_search"
 
 
+def test_web_fetch_can_use_the_keyless_browser_fallback() -> None:
+    """An available local browser is a complete fetch provider on its own."""
+    from drsai.backend.runtime.web_search import create_web_fetch_tool
+
+    tool = create_web_fetch_tool()
+
+    assert tool.schema["name"] == "web_fetch"
+
+
 def _runtime_policy(*, disabled=()):
     return SimpleNamespace(
         revision="sha256:" + "a" * 64,
@@ -435,7 +477,7 @@ def _runtime_policy(*, disabled=()):
 
 
 def test_run_resource_snapshot_binds_web_search_per_agent(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(gateway, "web_search_runtime_status", lambda: {"status": "available", "error": None})
+    monkeypatch.setattr(gateway, "_active_tavily_config_for_dir", lambda _config_dir: {"api_key": "configured"})
     enabled = gateway._resolved_agent_resource_snapshot(
         agent_name="opendrsai",
         runtime_policy=_runtime_policy(),
@@ -456,11 +498,6 @@ def test_run_resource_snapshot_binds_web_search_per_agent(tmp_path, monkeypatch)
 
 
 def test_run_resource_snapshot_does_not_expose_unavailable_browser(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(gateway, "web_search_runtime_status", lambda: {
-        "status": "runtime_unavailable",
-        "error": "No browser",
-    })
-
     snapshot = gateway._resolved_agent_resource_snapshot(
         agent_name="opendrsai",
         runtime_policy=_runtime_policy(),

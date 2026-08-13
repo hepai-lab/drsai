@@ -162,8 +162,10 @@ def main() -> None:
                     "-p", f"127.0.0.1:{ssh_port}:22", image, timeout=60)
             checked("docker", "exec", "-d", "-e", f"OPENDRSAI_CODEX_BRIDGE_TOKEN={token}",
                     "-e", "DRSAI_CODEX_DEVELOPMENT=1", "-e", "CODEX_BIN=/usr/local/bin/codex-p10-fixture",
-                    container, "python3", "-m", "drsai.backend.codex_adapter.bridge_server",
-                    "--host", "127.0.0.1", "--port", "18643", "--state-root", "/tmp/drsai-p10")
+                    container, "sh", "-c",
+                    "python3 -m drsai.backend.codex_adapter.bridge_server "
+                    "--host 127.0.0.1 --port 18643 --state-root /tmp/drsai-p10 "
+                    ">/tmp/opendrsai-codex-bridge.log 2>&1")
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 probe = subprocess.run(["docker", "exec", container, "python3", "-c",
@@ -188,7 +190,27 @@ def main() -> None:
                         break
                 except OSError:
                     time.sleep(0.2)
-            remote = asyncio.run(exchange(tunnel_port, token))
+            try:
+                remote = asyncio.run(exchange(tunnel_port, token))
+            except Exception as exc:
+                logs = subprocess.run(
+                    ["docker", "logs", container], cwd=ROOT, text=True,
+                    encoding="utf-8", errors="replace", capture_output=True, timeout=30,
+                )
+                bridge_logs = subprocess.run(
+                    ["docker", "exec", container, "sh", "-c",
+                     "cat /tmp/opendrsai-codex-bridge.log 2>/dev/null || true"],
+                    cwd=ROOT, text=True, encoding="utf-8", errors="replace",
+                    capture_output=True, timeout=30,
+                )
+                diagnostic = (
+                    f"Bridge:\n{bridge_logs.stdout}\n{bridge_logs.stderr}\n"
+                    f"Container:\n{logs.stdout}\n{logs.stderr}"
+                ).strip()[-8000:]
+                raise RuntimeError(
+                    f"Linux Codex Bridge exchange failed: {type(exc).__name__}: {exc}\n"
+                    f"Container logs:\n{diagnostic or '<empty>'}"
+                ) from exc
             spec = importlib.util.spec_from_file_location("p10_fake_codex", FIXTURE)
             assert spec is not None and spec.loader is not None
             fixture_module = importlib.util.module_from_spec(spec)

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.local/schemas/remote-workspace-p6-progress.schema.json",
+  "title": "OpenDrSai Mobile Remote Workspace P6 Progress",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "updated_round",
+    "feature_count",
+    "completed_count",
+    "progress_percent",
+    "completion_rule",
+    "features"
+  ],
+  "properties": {
+    "schema_version": { "const": "p6-progress/1" },
+    "updated_round": { "type": "integer", "minimum": 1 },
+    "feature_count": { "const": 40 },
+    "completed_count": { "type": "integer", "minimum": 0, "maximum": 40 },
+    "progress_percent": { "type": "number", "minimum": 0, "maximum": 100 },
+    "completion_rule": { "type": "string", "minLength": 1 },
+    "features": {
+      "type": "array",
+      "minItems": 40,
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "verification_state",
+          "completed",
+          "required_kinds",
+          "verified_kinds",
+          "pending_kinds",
+          "blockers"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^P6-M0[1-8]-F0[1-5]$" },
+          "verification_state": {
+            "enum": ["not_started", "code_complete", "local_pass", "physical_pass", "release_pass"]
+          },
+          "completed": { "type": "boolean" },
+          "required_kinds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "enum": ["local", "production", "physical", "release", "human"] }
+          },
+          "verified_kinds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "enum": ["local", "production", "physical", "release", "human"] }
+          },
+          "pending_kinds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "enum": ["local", "production", "physical", "release", "human"] }
+          },
+          "blockers": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+          }
+        }
+      }
+    }
+  }
+}
+

@@ -146,7 +146,9 @@ from sqlmodel import SQLModel
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Preserve loggers owned by the hosting application when Alembic runs
+    # in-process; fileConfig otherwise disables them globally by default.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 

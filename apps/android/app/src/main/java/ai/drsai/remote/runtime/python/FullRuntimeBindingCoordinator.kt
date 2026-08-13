@@ -108,7 +108,10 @@ class FullRuntimeBindingCoordinator(
     private val transport: FullRuntimeBindingTransport,
     private val diagnostics: FullRuntimeBindingDiagnosticSink = FullRuntimeBindingDiagnosticSink.None,
     private val maxAttempts: Int = 2,
-    private val bindTimeoutMs: Long = 5_000,
+    // Transport binding includes one-time Python extraction after install/data
+    // clear. Performance is measured separately; this deadline prevents a hung
+    // bind without cancelling a healthy cold start and forcing it to begin again.
+    private val bindTimeoutMs: Long = 45_000,
     private val retryDelayMs: Long = 100,
 ) : FullRuntimeReadiness, Closeable {
     private val lock = Mutex()

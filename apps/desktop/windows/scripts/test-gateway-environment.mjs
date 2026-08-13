@@ -7,10 +7,12 @@ import {
 
 assert.equal(resolveGatewayPort({}, true), DEVELOPMENT_GATEWAY_PORT);
 assert.equal(resolveGatewayPort({ OPENDRSAI_DESKTOP_DEV: "1" }, false), DEVELOPMENT_GATEWAY_PORT);
+assert.equal(resolveGatewayPort({ OPENDRSAI_DESKTOP_LAUNCH_MODE: "production" }, true), PRODUCTION_GATEWAY_PORT);
+assert.equal(resolveGatewayPort({ OPENDRSAI_DESKTOP_DEV: "0" }, true), PRODUCTION_GATEWAY_PORT);
 assert.equal(resolveGatewayPort({}, false), PRODUCTION_GATEWAY_PORT);
 assert.equal(resolveGatewayPort({ OPENDRSAI_GATEWAY_PORT: "30001" }, false), "30001");
 assert.equal(resolveGatewayPort({ DRSAI_API_PORT: "30002" }, false), "30002");
 assert.equal(resolveGatewayPort({ OPENDRSAI_DESKTOP_DEV: "1", OPENDRSAI_GATEWAY_PORT: "invalid" }, false), DEVELOPMENT_GATEWAY_PORT);
 assert.equal(resolveGatewayPort({ OPENDRSAI_GATEWAY_PORT: "70000" }, false), PRODUCTION_GATEWAY_PORT);
 
-console.log("Gateway environment verification passed (7 checks).");
+console.log("Gateway environment verification passed (9 checks).");

@@ -6,6 +6,7 @@ const validationSource = readFileSync(new URL("../../shared/main/voiceValidation
 const ttsSource = readFileSync(new URL("../../shared/main/voiceTts.ts", import.meta.url), "utf8");
 const ttsValidationSource = readFileSync(new URL("../../shared/main/voiceTtsValidation.ts", import.meta.url), "utf8");
 const tempSource = readFileSync(new URL("../../shared/main/voiceTempFiles.ts", import.meta.url), "utf8");
+const gatewaySource = readFileSync(new URL("../../shared/main/gateway.ts", import.meta.url), "utf8");
 const checks = [
   ["byte limit", validationSource.includes("MAX_VOICE_RECORDING_BYTES")],
   ["duration limit", validationSource.includes("MAX_VOICE_RECORDING_SECONDS")],
@@ -28,6 +29,9 @@ const checks = [
   ["TTS cancellation", ttsSource.includes("cancelVoiceSynthesis") && ttsSource.includes("controller.abort()")],
   ["TTS fixture", ttsSource.includes("synthesizeFixture") && ttsSource.includes("createSilentWav")],
   ["TTS provider", ttsSource.includes("/v1/audio/speech") && ttsSource.includes("synthesizeThroughGateway")],
+  ["STT OIDC propagation", source.includes("getAuthenticatedGatewayRequestHeaders")],
+  ["TTS OIDC propagation", ttsSource.includes("getAuthenticatedGatewayRequestHeaders")],
+  ["authenticated Gateway headers", gatewaySource.includes('"X-OpenDrSai-Auth-Mode": "oidc"') && gatewaySource.includes('"X-OpenDrSai-Principal": auth.userId')],
   ["TTS sender listener cleanup", ttsSource.includes('removeListener("destroyed", handleSenderDestroyed)')],
 ];
 const failed = checks.filter(([, ok]) => !ok);

@@ -1,4 +1,4 @@
-import type { DesktopStreamingVoiceCapabilities, DesktopVoiceInteractionMode, DesktopVoiceRuntimeStatus } from "@shared/desktopApi";
+import type { DesktopDuplexVoiceCapabilities, DesktopStreamingVoiceCapabilities, DesktopVoiceInteractionMode, DesktopVoiceRuntimeStatus } from "@shared/desktopApi";
 import type { VoiceTurnPhase } from "./voiceTurnReducer";
 
 export interface VoiceModeCapabilities {
@@ -7,6 +7,7 @@ export interface VoiceModeCapabilities {
   serialTts: boolean;
   streamingStt: boolean;
   streamingTts: boolean;
+  duplex: boolean;
 }
 
 export interface VoiceModeAvailability {
@@ -17,7 +18,7 @@ export interface VoiceModeAvailability {
 export const DEFAULT_VOICE_MODE: DesktopVoiceInteractionMode = "serial";
 
 export function normalizeVoiceInteractionMode(value: unknown): DesktopVoiceInteractionMode {
-  return value === "streaming" ? "streaming" : DEFAULT_VOICE_MODE;
+  return value === "streaming" || value === "duplex" ? value : DEFAULT_VOICE_MODE;
 }
 
 export function deriveVoiceModeCapabilities(
@@ -27,6 +28,8 @@ export function deriveVoiceModeCapabilities(
     serialTts?: boolean;
     streamingTts?: boolean;
     streamingCapabilities?: DesktopStreamingVoiceCapabilities | null;
+    duplexCapabilities?: DesktopDuplexVoiceCapabilities | null;
+    duplexEnabled?: boolean;
   } = {},
 ): VoiceModeCapabilities {
   const runtimeReady = runtime?.state === "ready" || runtime?.state === "degraded";
@@ -37,6 +40,7 @@ export function deriveVoiceModeCapabilities(
     serialTts: negotiated?.serialTts ?? options.serialTts !== false,
     streamingStt: Boolean(options.audioWorklet && (negotiated?.streamingStt ?? (runtimeReady && runtime?.supportsPartial))),
     streamingTts: negotiated?.streamingTts ?? options.streamingTts === true,
+    duplex: Boolean(options.duplexEnabled && options.audioWorklet && options.duplexCapabilities),
   };
 }
 
@@ -48,6 +52,12 @@ export function getVoiceModeAvailability(
     return capabilities.serialStt && capabilities.serialTts
       ? { available: true, reason: null }
       : { available: false, reason: "Serial voice requires transcription and speech playback." };
+  }
+  if (mode === "duplex") {
+    if (!capabilities.audioWorklet) return { available: false, reason: "Realtime voice requires AudioWorklet support." };
+    return capabilities.duplex
+      ? { available: true, reason: null }
+      : { available: false, reason: "Realtime voice is disabled or no compatible realtime model is configured." };
   }
   if (!capabilities.audioWorklet) {
     return { available: false, reason: "Streaming voice requires AudioWorklet support." };

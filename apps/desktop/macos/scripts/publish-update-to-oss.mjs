@@ -15,6 +15,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const release = resolve(valueAfter("--release-dir") || join(root, "release"));
 const bucket = process.env.OPENDRSAI_OSS_BUCKET?.trim() || "hepai-release";
 const binary = process.env.OPENDRSAI_OSSUTIL_BIN?.trim() || "ossutil";
+const configFile = process.env.OPENDRSAI_OSSUTIL_CONFIG?.trim() || "";
 const metadata = join(release, "latest-mac.yml");
 assert.ok(existsSync(metadata), `Missing ${metadata}`);
 const source = readFileSync(metadata, "utf8");
@@ -71,14 +72,14 @@ function upload(local, key, cacheControl) {
 }
 function run(command) {
   if (command.display.forbidOverwrite) assertObjectAbsent(command.display.target);
-  const result = spawnSync(binary, command.args, { stdio: "inherit", timeout: 600_000 });
+  const result = spawnSync(binary, withConfig(command.args), { stdio: "inherit", timeout: 600_000 });
   if (result.error || result.status !== 0) throw new Error(`${binary} failed while publishing macOS update assets.`);
 }
 function assertObjectAbsent(target) {
   if (objectExists(target)) throw new Error(`Immutable OSS object already exists: ${target}`);
 }
 function objectExists(target) {
-  const result = spawnSync(binary, ["stat", target], { encoding: "utf8", timeout: 60_000 });
+  const result = spawnSync(binary, withConfig(["stat", target]), { encoding: "utf8", timeout: 60_000 });
   if (result.error) throw result.error;
   if (result.status === 0) return true;
   const detail = `${result.stdout || ""}\n${result.stderr || ""}`;
@@ -103,8 +104,9 @@ function rollbackStableMetadata() {
   console.log("Restored the previous macOS stable metadata state.");
 }
 function runRaw(args) {
-  const result = spawnSync(binary, args, { stdio: "inherit", timeout: 600_000 });
+  const result = spawnSync(binary, withConfig(args), { stdio: "inherit", timeout: 600_000 });
   if (result.error || result.status !== 0) throw new Error(`${binary} failed during stable metadata recovery.`);
 }
 function valueAfter(flag) { const index = process.argv.indexOf(flag); return index >= 0 ? process.argv[index + 1] : null; }
 function capture(text, pattern, label) { const match = text.match(pattern); assert.ok(match, `latest-mac.yml omits ${label}`); return match[1].trim(); }
+function withConfig(args) { return configFile ? [...args, "--config-file", configFile] : args; }

@@ -5,8 +5,9 @@ import { desktopApi } from "../desktopApi";
 import { ReplayPlanReview } from "./ReplayPlanReview";
 import { RunComparisonView } from "./RunComparisonView";
 
-export function RunExperimentPanel({ request, itemId, language, onClose }: {
+export function RunExperimentPanel({ request, itemId, language, onClose, onOpenEvidence }: {
   request: RunInspectionOpenRequest; itemId?: string; language: "en" | "zh"; onClose: () => void;
+  onOpenEvidence?: (runId: string, itemId?: string) => void;
 }): React.JSX.Element {
   const zh = language === "zh";
   const createKey = useRef(`desktop:create-experiment:${crypto.randomUUID()}`);
@@ -29,6 +30,11 @@ export function RunExperimentPanel({ request, itemId, language, onClose }: {
   const [exportNotice, setExportNotice] = useState("");
   const [candidateSnapshotNotice, setCandidateSnapshotNotice] = useState("");
   const [restoredDraftNotice, setRestoredDraftNotice] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => { panelRef.current?.focus(); }, []);
 
   useEffect(() => {
     let active = true;
@@ -48,7 +54,7 @@ export function RunExperimentPanel({ request, itemId, language, onClose }: {
     }).then((relations) => {
       if (!active) return;
       const recovered = [...relations.experiments]
-        .filter((experiment) => experiment.status === "draft" && experiment.base_run_id === request.runId)
+        .filter((experiment) => experiment.base_run_id === request.runId)
         .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)))[0];
       if (!recovered) return;
       setDraft(recovered);
@@ -58,7 +64,23 @@ export function RunExperimentPanel({ request, itemId, language, onClose }: {
       setModelId(recovered.overrides.model?.model_id || "");
       setAttachmentRefs((recovered.overrides.attachments || []).map((item) => item.reference).join("\n"));
       setMode(recovered.replay_mode);
-      setRestoredDraftNotice(language === "zh" ? "已恢复上次保存的实验草稿。" : "Restored the last saved experiment draft.");
+      setDirty(false);
+      if (recovered.status === "executed" && recovered.executed_run_id) {
+        setCandidateRunId(recovered.executed_run_id);
+        setRestoredDraftNotice(language === "zh" ? "已恢复上次执行的实验，正在恢复比较。" : "Restored the last executed experiment; recovering its Comparison.");
+        void desktopApi.getRunInspection({
+          workspacePath: request.workspacePath, workspaceId: request.workspaceId,
+          runId: recovered.executed_run_id, limit: 1,
+        }).then((inspection) => {
+          if (!active || !["completed", "failed", "cancelled"].includes(String(inspection.run.status))) return;
+          return desktopApi.createRunComparison({
+            workspacePath: request.workspacePath, workspaceId: request.workspaceId,
+            baselineRunId: request.runId, candidateRunId: recovered.executed_run_id!,
+          }).then((value) => { if (active) setComparison(value); });
+        }).catch((reason: unknown) => { if (active) setError(actionableError(reason, language)); });
+      } else {
+        setRestoredDraftNotice(language === "zh" ? "已恢复上次保存的实验草稿。" : "Restored the last saved experiment draft.");
+      }
     }).catch((reason: unknown) => { if (active) setError(actionableError(reason, language)); });
     return () => { active = false; };
   }, [language, request.runId, request.workspaceId, request.workspacePath]);
@@ -87,6 +109,7 @@ export function RunExperimentPanel({ request, itemId, language, onClose }: {
         patch: { title, replay_mode: mode, overrides },
       });
       setDraft(updated);
+      setDirty(false);
       return updated;
     } catch (reason) { setError(actionableError(reason, language)); return null; }
     finally { setBusy(false); }
@@ -187,6 +210,24 @@ export function RunExperimentPanel({ request, itemId, language, onClose }: {
     finally { setBusy(false); }
   }
 
+  async function discardDraft(): Promise<void> {
+    if (!draft || draft.status !== "draft") return;
+    setBusy(true); setError("");
+    try {
+      await desktopApi.deleteRunExperiment({
+        workspacePath: request.workspacePath, workspaceId: request.workspaceId,
+        experimentId: draft.experiment_id,
+      });
+      setDraft(null); setDirty(false); onClose();
+    } catch (reason) { setError(actionableError(reason, language)); }
+    finally { setBusy(false); }
+  }
+
+  function requestClose(): void {
+    if (dirty) { setCloseConfirmOpen(true); return; }
+    onClose();
+  }
+
   async function approveAndContinue(): Promise<void> {
     if (!executionApprovalId) return;
     setBusy(true); setError("");
@@ -215,23 +256,27 @@ export function RunExperimentPanel({ request, itemId, language, onClose }: {
     finally { setBusy(false); }
   }
 
-  return <div className="run-experiment-overlay"><section className="run-experiment-panel" role="dialog" aria-modal="true" aria-label={zh ? "运行实验" : "Run experiment"}>
-    <header><div><small>{zh ? "基线" : "Baseline"} · {request.runId}</small><h2>{zh ? "创建运行实验" : "Create run experiment"}</h2></div><button type="button" onClick={onClose} aria-label={zh ? "关闭" : "Close"}>×</button></header>
+  const executed = draft?.status === "executed";
+  return <div className="run-experiment-overlay"><section ref={panelRef} tabIndex={-1} className="run-experiment-panel" role="dialog" aria-modal="true" aria-label={zh ? "运行实验" : "Run experiment"} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); requestClose(); } }}>
+    <header><div><small>{zh ? "基线" : "Baseline"} · {request.runId}</small><h2>{zh ? "创建运行实验" : "Create run experiment"}</h2></div><button type="button" onClick={requestClose} aria-label={zh ? "关闭" : "Close"}>×</button></header>
+    {executed ? <p role="status">{zh ? "该实验已经执行，配置保持只读；你可以继续查看候选运行、比较和评价。" : "This experiment has executed and is now read-only. You can continue with its candidate Run, Comparison, and Evaluation."}</p> : null}
     <form onSubmit={(event) => { event.preventDefault(); void generatePlan(); }}>
-      <label>{zh ? "实验名称" : "Experiment name"}<input value={title} maxLength={500} onChange={(event) => setTitle(event.target.value)} required /></label>
-      <label>{zh ? "输入覆盖（留空则使用原值）" : "Input override (blank keeps original)"}<textarea value={input} maxLength={200000} onChange={(event) => setInput(event.target.value)} rows={4} /></label>
-      {capabilities?.models.length ? <label>{zh ? "模型" : "Model"}<select value={providerId && modelId ? `${providerId}/${modelId}` : ""} onChange={(event) => { if (!event.target.value) { setProviderId(""); setModelId(""); return; } const selected = capabilities.models.find((model) => `${model.provider_id}/${model.model_id}` === event.target.value); if (selected) { setProviderId(selected.provider_id); setModelId(selected.model_id); } }}><option value="">{zh ? "使用基线模型" : "Use baseline model"}</option>{capabilities.models.map((model) => <option key={`${model.provider_id}/${model.model_id}`} value={`${model.provider_id}/${model.model_id}`}>{model.display_name} · {model.provider_id}/{model.model_id}</option>)}</select></label> : <p role="status">{capabilities ? (zh ? "当前 Runtime 没有可用于实验的模型目录；将使用基线模型。" : "Runtime has no experiment model catalog; the baseline model will be used.") : (zh ? "正在读取 Runtime 模型目录…" : "Loading Runtime model catalog…")}</p>}
+      <label>{zh ? "实验名称" : "Experiment name"}<input value={title} maxLength={500} disabled={executed} onChange={(event) => { setTitle(event.target.value); setDirty(true); }} required /></label>
+      <label>{zh ? "输入覆盖（留空则使用原值）" : "Input override (blank keeps original)"}<textarea value={input} maxLength={200000} disabled={executed} onChange={(event) => { setInput(event.target.value); setDirty(true); }} rows={4} /></label>
+      {capabilities?.models.length ? <label>{zh ? "模型" : "Model"}<select disabled={executed} value={providerId && modelId ? `${providerId}/${modelId}` : ""} onChange={(event) => { setDirty(true); if (!event.target.value) { setProviderId(""); setModelId(""); return; } const selected = capabilities.models.find((model) => `${model.provider_id}/${model.model_id}` === event.target.value); if (selected) { setProviderId(selected.provider_id); setModelId(selected.model_id); } }}><option value="">{zh ? "使用基线模型" : "Use baseline model"}</option>{capabilities.models.map((model) => <option key={`${model.provider_id}/${model.model_id}`} value={`${model.provider_id}/${model.model_id}`}>{model.display_name} · {model.provider_id}/{model.model_id}</option>)}</select></label> : <p role="status">{capabilities ? (zh ? "当前 Runtime 没有可用于实验的模型目录；将使用基线模型。" : "Runtime has no experiment model catalog; the baseline model will be used.") : (zh ? "正在读取 Runtime 模型目录…" : "Loading Runtime model catalog…")}</p>}
       <p>{zh ? "当前仅支持从头重新运行。更多重放方式将在 Runtime 能证明安全兼容时自动开放。" : "Only rerun from start is currently available. More replay modes will appear after Runtime can prove safe compatibility."}</p>
-      <label>{zh ? "附件引用（每行一个）" : "Attachment references (one per line)"}<textarea rows={2} value={attachmentRefs} onChange={(event) => setAttachmentRefs(event.target.value)} placeholder="workspace://artifact.csv" /></label>
-      <div className="experiment-actions"><button type="button" disabled={busy} onClick={() => { setInput(""); setProviderId(""); setModelId(""); setAttachmentRefs(""); setMode("rerun_from_start"); }}>{zh ? "恢复原值" : "Restore originals"}</button><button type="button" disabled={busy || !draft} onClick={() => void exportPackage()}>{zh ? "导出脱敏实验包" : "Export redacted package"}</button><button type="submit" className="primary" disabled={busy}>{zh ? "保存并生成计划" : "Save and generate plan"}</button></div>
+      <label>{zh ? "附件引用（每行一个）" : "Attachment references (one per line)"}<textarea rows={2} value={attachmentRefs} disabled={executed} onChange={(event) => { setAttachmentRefs(event.target.value); setDirty(true); }} placeholder="workspace://artifact.csv" /></label>
+      <div className="experiment-actions"><button type="button" disabled={busy || executed} onClick={() => { setInput(""); setProviderId(""); setModelId(""); setAttachmentRefs(""); setMode("rerun_from_start"); setDirty(true); }}>{zh ? "恢复原值" : "Restore originals"}</button><button type="button" disabled={busy || !draft} onClick={() => void exportPackage()}>{zh ? "导出脱敏实验包" : "Export redacted package"}</button>{draft?.status === "draft" ? <button type="button" disabled={busy} onClick={() => void discardDraft()}>{zh ? "放弃草稿" : "Discard draft"}</button> : null}<button type="submit" className="primary" disabled={busy || executed}>{zh ? "保存并生成计划" : "Save and generate plan"}</button></div>
     </form>
+    {closeConfirmOpen ? <div className="run-inspector-export-notice" role="alertdialog" aria-label={zh ? "未保存编辑" : "Unsaved edits"}><strong>{zh ? "有未保存的编辑" : "You have unsaved edits"}</strong><p>{zh ? "关闭会丢失本次尚未生成计划的修改。" : "Closing will discard changes that have not been saved into a Replay Plan."}</p><button type="button" onClick={() => setCloseConfirmOpen(false)}>{zh ? "继续编辑" : "Keep editing"}</button><button type="button" onClick={onClose}>{zh ? "放弃并关闭" : "Discard and close"}</button></div> : null}
     {exportNotice ? <p className="run-experiment-export-notice" role="status">{exportNotice}</p> : null}
     {restoredDraftNotice ? <p className="run-experiment-export-notice" role="status">{restoredDraftNotice}</p> : null}
     {candidateSnapshotNotice ? <p className="run-experiment-candidate-notice" role="status">{candidateSnapshotNotice}</p> : null}
     {error ? <p className="run-experiment-error" role="alert">{error}</p> : null}
     {executionApprovalId ? <div className="experiment-actions"><button type="button" className="primary" disabled={busy} onClick={() => void approveAndContinue()}>{zh ? "批准并继续" : "Approve and continue"}</button></div> : null}
     {plan ? <ReplayPlanReview plan={plan} language={language} executing={busy} onExecute={() => void execute()} /> : null}
-    {comparison ? <RunComparisonView comparison={comparison} request={request} language={language} /> : null}
+    {candidateRunId ? <div className="experiment-actions"><button type="button" onClick={() => onOpenEvidence?.(candidateRunId)}>{zh ? "查看候选运行" : "View candidate Run"}</button></div> : null}
+    {comparison ? <RunComparisonView comparison={comparison} request={request} language={language} onOpenEvidence={(runId, evidenceItemId) => onOpenEvidence?.(runId, evidenceItemId)} /> : null}
   </section></div>;
 }
 

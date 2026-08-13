@@ -123,6 +123,8 @@ export function sanitizeSessionRunList(input: SessionRunList): SessionRunList {
     data: input.data.slice(0, 500).map((row) => ({
       ...(sanitizeRunInspectionValue(row) as Record<string, unknown>),
       run_id: safeIdentifier(row.run_id),
+      relation_type: ["root", "subagent", "experiment_replay", "retry"].includes(String(row.relation_type))
+        ? row.relation_type : "unknown",
       manifest: sanitizeRunReproductionManifest(row.manifest),
     })),
     next_cursor: input.next_cursor ? safeIdentifier(input.next_cursor) : null,

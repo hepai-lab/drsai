@@ -1,0 +1,4 @@
+interface:
+  display_name: "PowerPoint Presentation"
+  short_description: "Create and inspect editable PowerPoint decks"
+  default_prompt: "Use $pptx to create an editable presentation from my content."

@@ -66,6 +66,11 @@ class RuntimeArtifactStore:
             "display_name": str(arguments.get("display_name") or path.name)[:240],
             "mime_type": str(arguments.get("mime_type") or mimetypes.guess_type(path.name)[0] or "application/octet-stream"),
             "size": size, "sha256": digest.hexdigest(), "created_at": datetime.now(UTC).isoformat(),
+            # Runtime metadata/chunk handlers make every registered file locally
+            # downloadable. Preview remains MIME-specific and is intentionally
+            # not claimed for Office packages.
+            "artifact_type": "file", "name": path.name, "path": path.relative_to(root).as_posix(),
+            "downloadable": True, "previewable": str(arguments.get("mime_type") or mimetypes.guess_type(path.name)[0] or "").startswith(("image/", "text/")),
         }
         with self._connect() as db:
             db.execute(
@@ -73,7 +78,7 @@ class RuntimeArtifactStore:
                   artifact_id,workspace_id,session_id,run_id,relative_path,display_name,
                   mime_type,size,sha256,created_at,storage_kind
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                (*item.values(), "workspace"),
+                (*(item[key] for key in ("artifact_id", "workspace_id", "session_id", "run_id", "relative_path", "display_name", "mime_type", "size", "sha256", "created_at")), "workspace"),
             )
         return item
 
@@ -103,6 +108,10 @@ class RuntimeArtifactStore:
             "size": len(content),
             "sha256": hashlib.sha256(content).hexdigest(),
             "created_at": datetime.now(UTC).isoformat(),
+            "artifact_type": "file",
+            "name": str(display_name or "tool-output")[:240],
+            "downloadable": True,
+            "previewable": str(mime_type or "").startswith(("image/", "text/")),
         }
         try:
             with self._connect() as db:
@@ -111,12 +120,23 @@ class RuntimeArtifactStore:
                       artifact_id,workspace_id,session_id,run_id,relative_path,display_name,
                       mime_type,size,sha256,created_at,storage_kind
                     ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                    (*item.values(), "runtime"),
+                    (*(item[key] for key in ("artifact_id", "workspace_id", "session_id", "run_id", "relative_path", "display_name", "mime_type", "size", "sha256", "created_at")), "runtime"),
                 )
         except Exception:
             target.unlink(missing_ok=True)
             raise
         return item
+
+    def list_for_run(self, workspace_id: str, run_id: str) -> list[dict[str, Any]]:
+        """Return public descriptors already registered by one Run."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT artifact_id,workspace_id,session_id,run_id,relative_path,display_name,"
+                "mime_type,size,sha256,created_at,storage_kind FROM runtime_artifacts "
+                "WHERE workspace_id=? AND run_id=? ORDER BY created_at,artifact_id",
+                (workspace_id, run_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def metadata(self, workspace_id: str, artifact_id: str) -> dict[str, Any]:
         with self._connect() as db:

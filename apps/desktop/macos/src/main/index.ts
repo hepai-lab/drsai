@@ -305,6 +305,14 @@ app.on("before-quit", (event) => {
   if (shutdownCoordinator.running) return;
   event.preventDefault();
   const plan = createMacosShutdownPlan({
+    closeRenderer: async () => {
+      openRequests.detach();
+      const window = mainWindow;
+      if (window && !window.isDestroyed()) window.destroy();
+      // Let destruction callbacks and already-dispatched IPC settle while the
+      // Gateway is still available, before the remaining services are drained.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    },
     stopScheduledTaskWorker: () => { scheduledTaskWorker?.stop(); scheduledTaskWorker = null; },
     killTerminalSessions: killAllTerminalSessions,
     cleanupVoiceFiles: cleanupAllVoiceTempFiles,

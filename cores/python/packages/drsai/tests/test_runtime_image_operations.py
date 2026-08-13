@@ -3,15 +3,18 @@ from __future__ import annotations
 import base64
 import hashlib
 import threading
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image as PILImage
 
 from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.backend.runtime.image_operations import RuntimeImageOperationAdapter
 from drsai.config.loader import parse_user_config
 from drsai.config.model_catalog import AgentModelPolicy, AgentModelSelection, ModelRef
+from drsai.platform_auth import PlatformAuthContext, platform_auth_scope
 
 
 PNG = base64.b64decode(
@@ -23,10 +26,13 @@ class ArtifactStore:
     def __init__(self):
         self.published = []
 
-    def publish_content(self, context, content, *, display_name, mime_type):
+    def publish(self, context, arguments):
+        content = (context.workspace_path / arguments["path"]).read_bytes()
+        display_name = arguments["display_name"]
+        mime_type = arguments["mime_type"]
         self.published.append((context, content, display_name, mime_type))
         return {
-            "artifact_id": "artifact-1", "display_name": display_name,
+            "artifact_id": "artifact-1", "display_name": display_name, "relative_path": arguments["path"],
             "mime_type": mime_type, "sha256": hashlib.sha256(content).hexdigest(),
         }
 
@@ -100,9 +106,45 @@ def test_generation_uses_exact_model_route_and_publishes_bounded_artifact(tmp_pa
         "json": {"model": "vendor/image-v2", "prompt": "draw a moon", "size": "1024x1024", "n": 1, "response_format": "b64_json"},
     })]
     assert artifacts.published[0][1:] == (PNG, "opendrsai-image_generation.png", "image/png")
+    assert (tmp_path / "artifacts" / "opendrsai-image_generation.png").read_bytes() == PNG
     assert events[0][1] == "artifact.created"
     assert result["model_ref"] == {"provider_id": "provider-a", "model_id": "image-model"}
     assert "b64_json" not in repr(result)
+
+
+def test_generation_normalizes_provider_jpeg_when_png_was_requested(tmp_path, monkeypatch) -> None:
+    encoded = BytesIO()
+    PILImage.new("RGB", (8, 4), "navy").save(encoded, format="JPEG")
+    instance, artifacts, _events, _calls = adapter(
+        monkeypatch, {"data": [{"b64_json": base64.b64encode(encoded.getvalue()).decode("ascii")}]},
+    )
+
+    result = instance.generate(context(tmp_path), {
+        "prompt": "draw", "display_name": "requested.png", "size": "1536x1024",
+    })
+
+    assert result["mime_type"] == "image/png"
+    assert result["relative_path"] == "artifacts/requested.png"
+    assert artifacts.published[0][1].startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_generation_applies_controlled_visual_forbidden_constraints(tmp_path, monkeypatch) -> None:
+    instance, _artifacts, _events, calls = adapter(
+        monkeypatch, {"data": [{"b64_json": base64.b64encode(PNG).decode("ascii")}]},
+    )
+    control = {
+        "schema_version": "opendrsai.regression-control/1",
+        "image_constraints": {"forbidden": ["字母", "数字", "Logo", "水印"]},
+    }
+    resource = {"kind": "selection", "name": "OpenDrSai regression control", "content": __import__("json").dumps(control)}
+
+    result = instance.generate(context(tmp_path, [resource]), {"prompt": "abstract runtime"})
+
+    sent_prompt = calls[0][1]["json"]["prompt"]
+    assert "Hard negative constraints" in sent_prompt
+    assert "Never render the theme name" in sent_prompt
+    assert result["applied_constraint_count"] == 4
+    assert len(result["applied_constraints_sha256"]) == 64
 
 
 def test_gemini_generation_uses_generate_content_and_publishes_artifact(tmp_path, monkeypatch) -> None:
@@ -234,6 +276,39 @@ def test_custom_provider_credentials_do_not_get_replaced_by_platform_identity(tm
 
     assert calls[0][0] == "https://custom.example/v1/images/generations"
     assert calls[0][1]["headers"]["Authorization"] == "Bearer custom-secret"
+
+
+def test_hepai_image_generation_uses_request_scoped_oidc(tmp_path, monkeypatch) -> None:
+    calls = []
+    artifacts = ArtifactStore()
+    instance = RuntimeImageOperationAdapter(artifacts, lambda *_args: None)
+    resolved = SimpleNamespace(
+        model="gemini-3.1-flash-lite-image",
+        provider=SimpleNamespace(
+            wire_api="openai", requires_api_key=False,
+            base_url="https://configured.invalid/apiv2/v1", api_key=None,
+        ),
+    )
+    monkeypatch.setattr(instance, "_resolve_declared_model", lambda _operation: (resolved, "hepai", "gemini-3.1-flash-lite-image"))
+    monkeypatch.setattr(
+        "drsai.backend.runtime.image_operations.httpx.Client",
+        lambda **_kwargs: Client(
+            {"data": [{"b64_json": base64.b64encode(PNG).decode("ascii")}]}, calls,
+        ),
+    )
+    auth = PlatformAuthContext(
+        access_token="oidc-image-token",
+        subject="user-1",
+        issuer="https://issuer.example",
+        expires_at=4_102_444_800,
+        model_base_url="https://ai-dev.example/apiv2/v1",
+    )
+
+    with platform_auth_scope(auth):
+        instance.generate(context(tmp_path), {"prompt": "draw"})
+
+    assert calls[0][0] == "https://ai-dev.example/apiv2/v1/images/generations"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer oidc-image-token"
 
 
 def test_generation_declaration_does_not_implicitly_enable_edit(monkeypatch) -> None:

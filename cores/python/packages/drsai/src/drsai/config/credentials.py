@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import os
-import subprocess
 import sys
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -29,12 +29,7 @@ def store_credential(secret: str, *, root: Path | None = None) -> str:
         raise ConfigError("API key must be a non-empty string no larger than 64 KiB")
     credential_id = str(uuid4())
     if sys.platform == "darwin" and root is None:
-        result = subprocess.run(
-            ["/usr/bin/security", "add-generic-password", "-U", "-a", credential_id,
-             "-s", _KEYCHAIN_SERVICE, "-w"],
-            input=f"{secret}\n", capture_output=True, text=True, timeout=5, check=False,
-        )
-        if result.returncode != 0:
+        if not _macos_store_secret(credential_id, secret):
             raise ConfigError("macOS Keychain could not store the model Provider credential")
     else:
         try:
@@ -54,12 +49,7 @@ def store_credential(secret: str, *, root: Path | None = None) -> str:
 def resolve_credential(reference: str, *, root: Path | None = None) -> str | None:
     credential_id = _parse_reference(reference)
     if sys.platform == "darwin" and root is None:
-        result = subprocess.run(
-            ["/usr/bin/security", "find-generic-password", "-a", credential_id,
-             "-s", _KEYCHAIN_SERVICE, "-w"],
-            capture_output=True, text=True, timeout=5, check=False,
-        )
-        return result.stdout.rstrip("\r\n") if result.returncode == 0 else None
+        return _macos_resolve_secret(credential_id)
     target_root = root or default_credentials_dir()
     target = target_root / f"{credential_id}.bin"
     if not target.is_file():
@@ -78,12 +68,7 @@ def credential_available(reference: str, *, root: Path | None = None) -> bool:
 def delete_credential(reference: str, *, root: Path | None = None) -> bool:
     credential_id = _parse_reference(reference)
     if sys.platform == "darwin" and root is None:
-        result = subprocess.run(
-            ["/usr/bin/security", "delete-generic-password", "-a", credential_id,
-             "-s", _KEYCHAIN_SERVICE],
-            capture_output=True, text=True, timeout=5, check=False,
-        )
-        return result.returncode == 0
+        return _macos_delete_secret(credential_id)
     target = (root or default_credentials_dir()) / f"{credential_id}.bin"
     try:
         target.unlink(missing_ok=True)
@@ -100,6 +85,97 @@ def _parse_reference(reference: str) -> str:
         return str(UUID(value))
     except ValueError as exc:
         raise ConfigError("Invalid model Provider credential reference") from exc
+
+
+def _macos_security_framework() -> tuple[ctypes.CDLL, ctypes.CDLL]:
+    security = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
+    core_foundation = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    security.SecKeychainAddGenericPassword.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32,
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+    ]
+    security.SecKeychainAddGenericPassword.restype = ctypes.c_int32
+    security.SecKeychainFindGenericPassword.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32,
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    security.SecKeychainFindGenericPassword.restype = ctypes.c_int32
+    security.SecKeychainItemFreeContent.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    security.SecKeychainItemFreeContent.restype = ctypes.c_int32
+    security.SecKeychainItemDelete.argtypes = [ctypes.c_void_p]
+    security.SecKeychainItemDelete.restype = ctypes.c_int32
+    core_foundation.CFRelease.argtypes = [ctypes.c_void_p]
+    core_foundation.CFRelease.restype = None
+    return security, core_foundation
+
+
+def _macos_store_secret(account: str, secret: str) -> bool:
+    """Store secret bytes through Security.framework, never a process argument."""
+    security, _ = _macos_security_framework()
+    service = _KEYCHAIN_SERVICE.encode("utf-8")
+    account_bytes = account.encode("utf-8")
+    secret_bytes = secret.encode("utf-8")
+    status = security.SecKeychainAddGenericPassword(
+        None,
+        len(service),
+        service,
+        len(account_bytes),
+        account_bytes,
+        len(secret_bytes),
+        secret_bytes,
+        None,
+    )
+    return status == 0
+
+
+def _macos_resolve_secret(account: str) -> str | None:
+    security, _ = _macos_security_framework()
+    service = _KEYCHAIN_SERVICE.encode("utf-8")
+    account_bytes = account.encode("utf-8")
+    length = ctypes.c_uint32()
+    data = ctypes.c_void_p()
+    status = security.SecKeychainFindGenericPassword(
+        None,
+        len(service),
+        service,
+        len(account_bytes),
+        account_bytes,
+        ctypes.byref(length),
+        ctypes.byref(data),
+        None,
+    )
+    if status != 0:
+        return None
+    try:
+        return ctypes.string_at(data, length.value).decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        return None
+    finally:
+        security.SecKeychainItemFreeContent(None, data)
+
+
+def _macos_delete_secret(account: str) -> bool:
+    security, core_foundation = _macos_security_framework()
+    service = _KEYCHAIN_SERVICE.encode("utf-8")
+    account_bytes = account.encode("utf-8")
+    item = ctypes.c_void_p()
+    status = security.SecKeychainFindGenericPassword(
+        None,
+        len(service),
+        service,
+        len(account_bytes),
+        account_bytes,
+        None,
+        None,
+        ctypes.byref(item),
+    )
+    if status != 0 or not item.value:
+        return False
+    try:
+        return security.SecKeychainItemDelete(item) == 0
+    finally:
+        core_foundation.CFRelease(item)
 
 
 def _protect(value: bytes, root: Path) -> bytes:

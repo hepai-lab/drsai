@@ -14,6 +14,7 @@ class LegacyRemovalMetrics:
     migration_ratio: float
     legacy_request_ratio: float
     fallback_error_rate: float
+    supported_runtime_requires_legacy: bool
     rollback_artifact_verified: bool
     rollback_artifact_sha256: str
     migration_transcript_before_sha256: str
@@ -25,6 +26,7 @@ class LegacyRemovalMetrics:
         required = {
             "release_cycles", "observation_days", "oaep_client_ratio",
             "migration_ratio", "legacy_request_ratio", "fallback_error_rate",
+            "supported_runtime_requires_legacy",
             "rollback_artifact_verified",
             "rollback_artifact_sha256", "migration_transcript_before_sha256",
             "migration_transcript_after_sha256", "database_migration_verified",
@@ -32,6 +34,8 @@ class LegacyRemovalMetrics:
         missing = sorted(required - value.keys())
         if missing:
             raise ValueError(f"oaep_legacy_removal_metrics_missing:{','.join(missing)}")
+        if not isinstance(value["supported_runtime_requires_legacy"], bool):
+            raise ValueError("oaep_legacy_removal_metric_invalid:supported_runtime_requires_legacy")
         metrics = cls(
             release_cycles=int(value["release_cycles"]),
             observation_days=int(value["observation_days"]),
@@ -39,6 +43,9 @@ class LegacyRemovalMetrics:
             migration_ratio=float(value["migration_ratio"]),
             legacy_request_ratio=float(value["legacy_request_ratio"]),
             fallback_error_rate=float(value["fallback_error_rate"]),
+            supported_runtime_requires_legacy=(
+                value["supported_runtime_requires_legacy"] is True
+            ),
             rollback_artifact_verified=value["rollback_artifact_verified"] is True,
             rollback_artifact_sha256=str(value["rollback_artifact_sha256"]),
             migration_transcript_before_sha256=str(value["migration_transcript_before_sha256"]),
@@ -67,6 +74,7 @@ def legacy_removal_decision(metrics: LegacyRemovalMetrics) -> dict[str, Any]:
         "migration_complete": metrics.migration_ratio == 1.0,
         "legacy_requests_below_0_1_percent": metrics.legacy_request_ratio < 0.001,
         "fallback_errors_below_0_1_percent": metrics.fallback_error_rate <= 0.001,
+        "supported_runtimes_are_oaep_capable": not metrics.supported_runtime_requires_legacy,
         "rollback_artifact_verified": metrics.rollback_artifact_verified,
         "rollback_artifact_digest_present": bool(metrics.rollback_artifact_sha256),
         "database_migration_verified": metrics.database_migration_verified,

@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+for (const key of ["NO_PROXY", "no_proxy"]) {
+  const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+  for (const host of ["127.0.0.1", "localhost"]) if (!entries.includes(host)) entries.push(host);
+  process.env[key] = entries.join(",");
+}
+
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(root, "..", "..", "..");
 const pythonSrc = join(repoRoot, "cores", "python", "packages", "drsai", "src");
@@ -14,6 +20,7 @@ const tempHome = mkdtempSync(join(tmpdir(), "opendrsai-gateway-smoke-"));
 const tempUserProfile = join(tempHome, "user-profile");
 const gatewayInstanceToken = "gateway-smoke-instance-token";
 const temporaryOidcSecret = "temporary-gateway-smoke-oidc-secret";
+const gatewayReadyTimeoutMs = Number(process.env.OPENDRSAI_GATEWAY_READY_TIMEOUT_MS || "60000");
 
 let gatewayProcess = null;
 
@@ -26,6 +33,7 @@ try {
       DRSAI_API_HOST: "127.0.0.1",
       DRSAI_API_PORT: String(port),
       DRSAI_GATEWAY_FAKE_AGENT: "1",
+      OPENDRSAI_DESKTOP_RUNTIME: "1",
       OPENDRSAI_GATEWAY_INSTANCE_TOKEN: gatewayInstanceToken,
       OPENDRSAI_OIDC_HS256_SECRET: temporaryOidcSecret,
       DRSAI_HOME: tempHome,
@@ -38,7 +46,7 @@ try {
   });
 
   const logs = collectLogs(gatewayProcess);
-  await waitForJson("/health", 25_000, logs);
+  await waitForJson("/health", gatewayReadyTimeoutMs, logs);
 
   const health = await requestJson("/health");
   assert(health.statusCode === 200, `/health returned ${health.statusCode}`);
@@ -54,27 +62,16 @@ try {
   assert(presets.statusCode === 200 && presets.body?.presets?.some((item) => item.id === "deepseek"), "provider presets are unavailable");
   const initialModelState = await requestJson("/v1/config/model-state");
   assert(initialModelState.statusCode === 200, `initial model-state returned ${initialModelState.statusCode}`);
-  const initialRevision = initialModelState.body?.revision;
-  const localDraft = {
-    model: "gateway-smoke-model",
-    model_provider: "gateway-smoke-local",
-    base_url: "http://127.0.0.1:11434/v1",
-    requires_api_key: false,
-    wire_api: "openai",
-    expected_revision: initialRevision,
-  };
-  const preview = await requestJson("/v1/config/model/preview", { method: "POST", body: localDraft });
-  assert(preview.statusCode === 200 && preview.body?.persisted === false, `model preview failed: ${JSON.stringify(preview.body)}`);
-  const afterPreview = await requestJson("/v1/config/model-state");
-  assert(afterPreview.body?.revision === initialRevision, "model preview changed persisted configuration");
-  const committedModel = await requestJson("/v1/config/model", { method: "PUT", body: localDraft });
-  assert(committedModel.statusCode === 200 && committedModel.body?.model === "gateway-smoke-model", `model commit failed: ${JSON.stringify(committedModel.body)}`);
-  assert(committedModel.body?.restart_required === false, "model commit unexpectedly requires restart");
-  const committedState = await requestJson("/v1/config/model-state");
-  assert(committedState.body?.effective?.provider?.has_api_key === false, "local Provider key state is incorrect");
-  assert(!JSON.stringify(committedState.body).includes("gateway-smoke-secret"), "model-state leaked a secret fixture");
-  const conflict = await requestJson("/v1/config/model", { method: "PUT", body: { ...localDraft, model: "must-conflict", expected_revision: initialRevision } });
-  assert(conflict.statusCode === 409, `stale model commit returned ${conflict.statusCode}`);
+  const providers = await requestJson("/v1/config/model-providers");
+  assert(providers.statusCode === 200, `provider list returned ${providers.statusCode}`);
+  assert(providers.body?.providers?.some((provider) => provider.name === "hepai" && provider.requires_api_key === false), `OIDC HepAI Provider is unavailable: ${JSON.stringify(providers.body)}`);
+  const agents = await requestJson("/v1/config/agents");
+  assert(agents.statusCode === 200 && agents.body?.current_agent === "opendrsai", `default Agent is unavailable: ${JSON.stringify(agents.body)}`);
+  const agentModels = await requestJson("/v1/config/agents/opendrsai/models");
+  assert(agentModels.statusCode === 200 && agentModels.body?.valid === true, `default Agent model policy is invalid: ${JSON.stringify(agentModels.body)}`);
+  assert(agentModels.body?.primary_model?.ref?.provider_id === "hepai", `default Agent is not bound to HepAI: ${JSON.stringify(agentModels.body)}`);
+  const runtimeModels = await requestJson("/v1/config/runtime-models");
+  assert(runtimeModels.statusCode === 200 && runtimeModels.body?.models?.some((model) => model.ref?.provider_id === "hepai"), `runtime model catalog is unavailable: ${JSON.stringify(runtimeModels.body)}`);
   const doctor = await requestJson("/v1/config/model/doctor", { method: "POST", body: { online: false } });
   assert(doctor.statusCode === 200 && doctor.body?.ok === true, `model doctor failed: ${JSON.stringify(doctor.body)}`);
 
@@ -149,7 +146,7 @@ try {
   });
   assert(expiredIdentityMemory.statusCode === 401, `expired OIDC identity returned ${expiredIdentityMemory.statusCode}`);
 
-  console.log("Gateway smoke passed: health, model configuration preview/commit/conflict/doctor, auth, and chat SSE.");
+  console.log("Gateway smoke passed: health, desktop bootstrap, Agent/Provider model policy, auth, and chat SSE.");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

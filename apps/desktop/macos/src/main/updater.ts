@@ -226,7 +226,7 @@ function signedUpdateLabFeed(): string | null {
 
 async function runtimeCompatibleWith(info: UpdateInfo): Promise<boolean> {
   const metadata = info as UpdateInfo & { opendrsaiRuntimeVersion?: unknown; opendrsaiRuntimeSha256?: unknown };
-  return runtimeMetadataMatchesInstalled(metadata, await inspectInstalledRuntime());
+  return runtimeMetadataMatchesInstalled(metadata, await inspectInstalledRuntime(true));
 }
 
 function configureSignedUpdateLabFeed(): void {

@@ -85,6 +85,9 @@ assert.equal(index.includes('ipcMain.handle("desktop:terminal-create"'), false, 
 assert.equal(index.includes('rawIpcMain.on("desktop:voice-streaming-audio-port"'), false, "voice raw IPC channel must not leak back into the composition root");
 assert.equal(index.includes('ipcMain.handle("desktop:get-auth-session"'), false, "runtime services IPC channels must not leak back into the composition root");
 assert.equal(index.includes('ipcMain.handle("desktop:mobile-pairing-create"'), false, "catalog IPC channels must not leak back into the composition root");
+for (const channel of ["list-perceptors", "save-perceptor", "update-perceptor", "test-perceptor", "delete-perceptor"]) {
+  assert.ok(catalogIpc.includes(`ipcMain.handle("desktop:${channel}"`), `catalog IPC registrar omits ${channel}`);
+}
 assert.equal([...index.matchAll(/ipcMain\.handle\(\s*["']desktop:/g)].length, 0, "all desktop invoke channels must live outside the composition root");
 assert.equal(index.includes("function isRemoteWorkspaceTarget"), false, "remote workspace routing helper must not leak back into the composition root");
 assert.equal(index.includes("async function proposeChannelOutboundDraft"), false, "connections approval workflow must not leak back into the composition root");
@@ -164,6 +167,8 @@ assert.ok(index.includes("disposeAppIntegrations = installMacosAppIntegrations({
 assert.ok(index.includes("disposeAppIntegrations();"), "app-ready integration monitor must be disposed on quit");
 
 const channels = (source) => new Set([...source.matchAll(/ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g)].map((match) => match[1]));
-assert.equal(channels(macosIpcSource(desktopRoot)).size, 275, "composition refactoring must preserve all 275 macOS IPC channels");
+const preloadChannels = new Set([...read("shared/main/preload.ts").matchAll(/ipcRenderer\.invoke\(\s*["'](desktop:[^"']+)["']/g)].map((match) => match[1]));
+const ipcCount = channels(macosIpcSource(desktopRoot)).size;
+assert.equal(ipcCount, preloadChannels.size, `composition must expose all ${preloadChannels.size} shared preload IPC channels`);
 
-console.log(`macOS main composition verified (index=${lineCount(index)} lines, window=${lineCount(windowModule)} lines, platformIpc=${lineCount(platformIpc)} lines, sharingIpc=${lineCount(sharingIpc)} lines, customizationIpc=${lineCount(customizationIpc)} lines, automationIpc=${lineCount(automationIpc)} lines, connectionsIpc=${lineCount(connectionsIpc)} lines, workspaceIpc=${lineCount(workspaceIpc)} lines, workspaceHistoryIpc=${lineCount(workspaceHistoryIpc)} lines, remoteAccessIpc=${lineCount(remoteAccessIpc)} lines, diagnosticsIpc=${lineCount(diagnosticsIpc)} lines, trustIpc=${lineCount(trustIpc)} lines, terminalIpc=${lineCount(terminalIpc)} lines, voiceIpc=${lineCount(voiceIpc)} lines, runtimeServicesIpc=${lineCount(runtimeServicesIpc)} lines, catalogIpc=${lineCount(catalogIpc)} lines, presentationIpc=${lineCount(presentationIpc)} lines, executionIpc=${lineCount(executionIpc)} lines, services=${lineCount(serviceContainer)} lines, IPC=275).`);
+console.log(`macOS main composition verified (index=${lineCount(index)} lines, window=${lineCount(windowModule)} lines, platformIpc=${lineCount(platformIpc)} lines, sharingIpc=${lineCount(sharingIpc)} lines, customizationIpc=${lineCount(customizationIpc)} lines, automationIpc=${lineCount(automationIpc)} lines, connectionsIpc=${lineCount(connectionsIpc)} lines, workspaceIpc=${lineCount(workspaceIpc)} lines, workspaceHistoryIpc=${lineCount(workspaceHistoryIpc)} lines, remoteAccessIpc=${lineCount(remoteAccessIpc)} lines, diagnosticsIpc=${lineCount(diagnosticsIpc)} lines, trustIpc=${lineCount(trustIpc)} lines, terminalIpc=${lineCount(terminalIpc)} lines, voiceIpc=${lineCount(voiceIpc)} lines, runtimeServicesIpc=${lineCount(runtimeServicesIpc)} lines, catalogIpc=${lineCount(catalogIpc)} lines, presentationIpc=${lineCount(presentationIpc)} lines, executionIpc=${lineCount(executionIpc)} lines, services=${lineCount(serviceContainer)} lines, IPC=${ipcCount}).`);

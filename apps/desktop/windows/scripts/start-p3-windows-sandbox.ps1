@@ -1,5 +1,5 @@
 param(
-    [string] $RuntimePath = (Join-Path $PSScriptRoot "..\\release\\bootstrapper\\OpenDrSai-Windows-v1.5.6-x64.zip"),
+    [string] $RuntimePath,
     [string] $MsiPath = (Join-Path $PSScriptRoot "..\\release\\bootstrapper\\OpenDrSaiSetup-P3-current-source.msi"),
     [string] $EvidenceRoot = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\\..\\..\\..\\tmp\\eval-results")).Path "p3-sandbox"),
     [switch] $DeveloperMode,
@@ -10,13 +10,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\\..\\..\\..")).Path
+$desktopPackage = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\\package.json") -Raw | ConvertFrom-Json
+$desktopVersion = [string]$desktopPackage.version
+if ($desktopVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { throw "Desktop package version is invalid." }
+$runtimeFileName = "OpenDrSai-Windows-v$desktopVersion-x64.zip"
+if (-not $RuntimePath) { $RuntimePath = Join-Path $PSScriptRoot "..\\release\\bootstrapper\\$runtimeFileName" }
 $controller = Join-Path $PSScriptRoot "windows-sandbox-session.ps1"
 $bootstrap = Join-Path $PSScriptRoot "bootstrap-p3-windows-sandbox.ps1"
 $packagedLauncher = Join-Path $PSScriptRoot "run-p3-packaged-desktop-e2e.ps1"
 $suiteRunner = Join-Path $PSScriptRoot "run-p3-packaged-sandbox-suite.cmd"
 $providerStager = Join-Path $PSScriptRoot "stage-p3-developer-provider.py"
+$providerCleanup = Join-Path $PSScriptRoot "cleanup-p3-provider-stage.ps1"
 $regressionRoot = Join-Path $repoRoot "eval\regression"
-foreach ($required in @($RuntimePath, $MsiPath, $controller, $bootstrap, $packagedLauncher, $suiteRunner, (Join-Path $regressionRoot "run_regression.py"))) {
+foreach ($required in @($RuntimePath, $MsiPath, $controller, $bootstrap, $packagedLauncher, $suiteRunner, $providerCleanup, (Join-Path $regressionRoot "run_regression.py"))) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required P3 input is missing: $required" }
 }
 if ($ProviderProfilePath -and -not $DeveloperMode) { throw "ProviderProfilePath is permitted only with DeveloperMode." }
@@ -29,9 +35,9 @@ $runId = "p3-current-source-" + (Get-Date -Format "yyyyMMdd-HHmmss")
 $runRoot = Join-Path ([IO.Path]::GetFullPath($EvidenceRoot)) $runId
 $packageRoot = Join-Path $runRoot "package"
 $evidenceDir = Join-Path $runRoot "evidence"
-$providerStageDir = Join-Path $runRoot "developer-provider-private"
+$providerStageDir = Join-Path (Join-Path $env:TEMP "OpenDrSaiP3Provider") $runId
 New-Item -ItemType Directory -Force -Path $packageRoot, $evidenceDir | Out-Null
-$runtimeDestination = Join-Path $packageRoot "OpenDrSai-Windows-v1.5.6-x64.zip"
+$runtimeDestination = Join-Path $packageRoot $runtimeFileName
 $msiDestination = Join-Path $packageRoot "OpenDrSaiSetup-P3-current-source.msi"
 Copy-Item -LiteralPath $RuntimePath -Destination $runtimeDestination -Force
 Copy-Item -LiteralPath $MsiPath -Destination $msiDestination -Force
@@ -52,7 +58,8 @@ $descriptor = [ordered]@{
     runId = $runId
     gitCommit = $gitCommit
     gitDirty = [bool](git -C $repoRoot status --porcelain)
-    runtime = [ordered]@{ file = "OpenDrSai-Windows-v1.5.6-x64.zip"; sha256 = (Get-FileHash -Algorithm SHA256 $runtimeDestination).Hash.ToLowerInvariant(); bytes = (Get-Item $runtimeDestination).Length }
+    desktopVersion = $desktopVersion
+    runtime = [ordered]@{ file = $runtimeFileName; sha256 = (Get-FileHash -Algorithm SHA256 $runtimeDestination).Hash.ToLowerInvariant(); bytes = (Get-Item $runtimeDestination).Length }
     msi = [ordered]@{ file = "OpenDrSaiSetup-P3-current-source.msi"; sha256 = (Get-FileHash -Algorithm SHA256 $msiDestination).Hash.ToLowerInvariant(); bytes = (Get-Item $msiDestination).Length }
     source = "feature/desktop current worktree packaged on host"
     developerMode = [bool]$DeveloperMode
@@ -81,5 +88,19 @@ $providerMap
 "@
 $wsbPath = Join-Path $runRoot "$runId.wsb"
 [IO.File]::WriteAllText($wsbPath, $configuration, [Text.UTF8Encoding]::new($false))
-$session = (& $controller -Action Start -ConfigPath $wsbPath -TimeoutSeconds 120 -AsJson) | ConvertFrom-Json
+try {
+    $session = (& $controller -Action Start -ConfigPath $wsbPath -TimeoutSeconds 120 -AsJson) | ConvertFrom-Json
+} catch {
+    if ($DeveloperMode -and (Test-Path -LiteralPath $providerStageDir -PathType Container)) {
+        Remove-Item -LiteralPath $providerStageDir -Recurse -Force
+    }
+    throw
+}
+if ($DeveloperMode) {
+    $cleanupCommand = "& '$($providerCleanup.Replace("'", "''"))' -StageDir '$($providerStageDir.Replace("'", "''"))' -SessionId '$(([string]$session.id).Replace("'", "''"))' -Controller '$($controller.Replace("'", "''"))'"
+    $encodedCleanupCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cleanupCommand))
+    Start-Process -FilePath "powershell.exe" -WindowStyle Hidden -ArgumentList @(
+        "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCleanupCommand
+    ) | Out-Null
+}
 [ordered]@{ runId = $runId; sessionId = [string]$session.id; package = $packageRoot; evidence = $evidenceDir; config = $wsbPath; status = "started" } | ConvertTo-Json -Depth 4

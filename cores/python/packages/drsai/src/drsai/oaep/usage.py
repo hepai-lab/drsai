@@ -199,7 +199,18 @@ class ProtocolUsageTelemetry:
             },
         }
 
-    def deletion_decision(self) -> dict[str, Any]:
+    def deletion_decision(
+        self,
+        *,
+        supported_runtime_count: int = 0,
+        supported_runtime_requires_legacy: bool | None = None,
+    ) -> dict[str, Any]:
+        if supported_runtime_count < 0:
+            raise ValueError("supported_runtime_count_invalid")
+        if supported_runtime_count == 0:
+            supported_runtime_requires_legacy = None
+        elif not isinstance(supported_runtime_requires_legacy, bool):
+            raise ValueError("supported_runtime_compatibility_invalid")
         with self._lock, self._connect() as db:
             usage = db.execute("""SELECT observed_date, protocol, fallback_reason, request_count
                 FROM protocol_usage_daily ORDER BY observed_date""").fetchall()
@@ -234,6 +245,10 @@ class ProtocolUsageTelemetry:
         has_protocol_or_migration_data = total > 0 or migration_total > 0
         if not has_protocol_or_migration_data:
             status = "no_data"
+        elif supported_runtime_count == 0:
+            status = "runtime_compatibility_unknown"
+        elif supported_runtime_requires_legacy:
+            status = "supported_runtime_requires_legacy"
         elif (oaep_ratio >= 0.999 and legacy_ratio < 0.001 and migration_ratio == 1.0
               and fallback_ratio <= 0.001):
             status = "eligible"
@@ -256,10 +271,13 @@ class ProtocolUsageTelemetry:
             "migration_ratio": migration_ratio,
             "fallback_error_ratio": fallback_ratio,
             "gap_days": gap_days,
+            "supported_runtime_count": supported_runtime_count,
+            "supported_runtime_requires_legacy": supported_runtime_requires_legacy,
             "requirements": {
                 "observation_days": 0, "release_cycles": 0, "oaep_ratio": 0.999,
                 "legacy_ratio": 0.001, "migration_ratio": 1.0,
                 "fallback_error_ratio": 0.001,
+                "supported_runtime_requires_legacy": False,
             },
             "eligible": status == "eligible",
         }

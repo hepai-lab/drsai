@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from autogen_core import FunctionCall, Image
 from autogen_core.models import CreateResult, RequestUsage, SystemMessage, UserMessage
 from PIL import Image as PILImage
@@ -9,11 +11,12 @@ from drsai.backend.runtime.desktop_autogen_ports import (
     AutogenDesktopModelPort,
     AutogenDesktopToolPort,
     AgentKernelCheckpointPort,
+    DESKTOP_MODEL_TEXT_BATCH_CHARS,
     autogen_messages_to_kernel_history,
     autogen_tools_to_kernel_schemas,
     kernel_messages_to_autogen,
 )
-from drsai.backend.runtime.desktop_kernel_coordinator import DesktopToolResult
+from drsai.backend.runtime.desktop_kernel_coordinator import DesktopModelDelta, DesktopModelResult, DesktopToolResult
 
 
 class _Client:
@@ -36,6 +39,36 @@ class _FlakyClient:
         if self.attempts == 1:
             raise TimeoutError("retry")
         yield _result("recovered")
+
+
+class _DelayedClient:
+    def __init__(self):
+        self.release_completion = asyncio.Event()
+        self.completed = False
+
+    async def create_stream(self, _messages, **_kwargs):
+        yield "first"
+        await self.release_completion.wait()
+        self.completed = True
+        yield " second"
+        yield _result("first second")
+
+
+class _PartialThenFailClient:
+    def __init__(self):
+        self.attempts = 0
+
+    async def create_stream(self, _messages, **_kwargs):
+        self.attempts += 1
+        yield "visible"
+        raise TimeoutError("disconnect after visible output")
+
+
+class _ManyTinyChunksClient:
+    async def create_stream(self, _messages, **_kwargs):
+        for _ in range(DESKTOP_MODEL_TEXT_BATCH_CHARS * 2 + 44):
+            yield "x"
+        yield _result("x" * (DESKTOP_MODEL_TEXT_BATCH_CHARS * 2 + 44))
 
 
 class _ToolResult:
@@ -112,6 +145,55 @@ async def test_autogen_model_port_normalizes_stream_and_tool_calls_for_kernel() 
 
 
 @pytest.mark.asyncio
+async def test_autogen_model_port_exposes_provider_delta_before_completion() -> None:
+    client = _DelayedClient()
+    port = AutogenDesktopModelPort(client, [], assistant_name="OpenDrSai")
+    stream = port.stream({"messages": [{"role": "user", "content": "hello"}]})
+
+    first = await asyncio.wait_for(anext(stream), timeout=0.25)
+    assert first == DesktopModelDelta("first")
+    assert client.completed is False
+
+    client.release_completion.set()
+    remaining = [item async for item in stream]
+    assert remaining == [
+        DesktopModelDelta(" second"),
+        DesktopModelResult(content="first second", finish_reason="stop"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_autogen_model_port_does_not_retry_after_visible_delta() -> None:
+    client = _PartialThenFailClient()
+    port = AutogenDesktopModelPort(
+        client, [], assistant_name="OpenDrSai", max_retries=2,
+        retryable=lambda error: isinstance(error, TimeoutError),
+    )
+    received = []
+
+    with pytest.raises(TimeoutError, match="disconnect after visible output"):
+        async for item in port.stream({"messages": [{"role": "user", "content": "hello"}]}):
+            received.append(item)
+
+    assert received == [DesktopModelDelta("visible")]
+    assert client.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_autogen_model_port_coalesces_tiny_chunks_without_delaying_first_delta() -> None:
+    port = AutogenDesktopModelPort(_ManyTinyChunksClient(), [], assistant_name="OpenDrSai")
+
+    items = [item async for item in port.stream({
+        "messages": [{"role": "user", "content": "generate"}],
+    })]
+
+    deltas = [item.text for item in items if isinstance(item, DesktopModelDelta)]
+    assert [len(value) for value in deltas] == [1, 128, 128, 43]
+    assert "".join(deltas) == "x" * (DESKTOP_MODEL_TEXT_BATCH_CHARS * 2 + 44)
+    assert isinstance(items[-1], DesktopModelResult)
+
+
+@pytest.mark.asyncio
 async def test_autogen_model_port_forces_a_matching_tool_for_required_capability() -> None:
     client = _Client([_result([
         FunctionCall(id="call-1", name="web_search", arguments='{"query":"HEPiX"}'),
@@ -129,6 +211,61 @@ async def test_autogen_model_port_forces_a_matching_tool_for_required_capability
 
     assert client.requests[0][1]["extra_create_args"] == {}
     assert [tool["name"] for tool in client.requests[0][1]["tools"]] == ["web_search"]
+
+
+@pytest.mark.asyncio
+async def test_autogen_model_port_pins_single_specified_tool_without_vendor_tool_choice() -> None:
+    client = _Client([_result([
+        FunctionCall(id="call-1", name="run_powershell", arguments='{"command":"pytest"}'),
+    ])])
+    tools = [
+        {"name": "run_read", "parameters": {"type": "object", "properties": {}}},
+        {"name": "run_powershell", "parameters": {"type": "object", "properties": {}}},
+    ]
+    port = AutogenDesktopModelPort(client, tools, assistant_name="OpenDrSai")
+
+    await port({
+        "messages": [{"role": "user", "content": "Run the failing test."}],
+        "tool_choice": {
+            "mode": "specified", "specified_tool": "run_powershell",
+            "matching_tools": ["run_powershell"],
+        },
+    })
+
+    assert client.requests[0][1]["extra_create_args"] == {}
+    assert [tool["name"] for tool in client.requests[0][1]["tools"]] == ["run_powershell"]
+
+
+@pytest.mark.asyncio
+async def test_autogen_model_port_honors_request_level_empty_tool_snapshot() -> None:
+    client = _Client([_result("final answer")])
+    tool = {"name": "run_read", "parameters": {"type": "object", "properties": {}}}
+    port = AutogenDesktopModelPort(client, [tool], assistant_name="OpenDrSai")
+
+    result = await port({
+        "messages": [{"role": "system", "content": "Finalize without tools."}],
+        "tools": [],
+    })
+
+    assert result.content == "final answer"
+    assert client.requests[0][1]["tools"] == []
+
+
+@pytest.mark.asyncio
+async def test_autogen_model_port_honors_request_level_tool_subset() -> None:
+    client = _Client([_result("done")])
+    tools = [
+        {"name": "run_read", "parameters": {"type": "object", "properties": {}}},
+        {"name": "run_write", "parameters": {"type": "object", "properties": {}}},
+    ]
+    port = AutogenDesktopModelPort(client, tools, assistant_name="OpenDrSai")
+
+    await port({
+        "messages": [{"role": "user", "content": "read"}],
+        "tools": [{"name": "run_read", "parameters": tools[0]["parameters"]}],
+    })
+
+    assert [tool["name"] for tool in client.requests[0][1]["tools"]] == ["run_read"]
 
 
 @pytest.mark.asyncio

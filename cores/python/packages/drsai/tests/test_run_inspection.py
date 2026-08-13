@@ -424,6 +424,7 @@ def test_approval_terminal_runs_finalize_manifest(
 def test_session_run_pagination_and_status_filter(engine: RuntimeEngine) -> None:
     session = engine.create_session("workspace-one", "Many runs")
     runs = [engine.create_run(session["session_id"], "agent@v1", f"key-{index}", "codex")[0] for index in range(5)]
+    engine.set_run_input(runs[1]["run_id"], "mobile input", attachment_refs=["attachment-safe"])
     engine.transition_run(runs[0]["run_id"], "running")
     engine.transition_run(runs[0]["run_id"], "completed")
 
@@ -431,6 +432,10 @@ def test_session_run_pagination_and_status_filter(engine: RuntimeEngine) -> None
     second = engine.list_session_runs_page(session["session_id"], cursor=first["next_cursor"], limit=2)
     third = engine.list_session_runs_page(session["session_id"], cursor=second["next_cursor"], limit=2)
     assert [row["run_id"] for row in [*first["data"], *second["data"], *third["data"]]] == [row["run_id"] for row in runs]
+    assert first["data"][0]["message"] == ""
+    assert first["data"][0]["attachment_refs"] == []
+    assert first["data"][1]["message"] == "mobile input"
+    assert first["data"][1]["attachment_refs"] == ["attachment-safe"]
     assert third["has_more"] is False
     completed = engine.list_session_runs_page(session["session_id"], status="completed")
     assert [row["run_id"] for row in completed["data"]] == [runs[0]["run_id"]]
@@ -723,6 +728,24 @@ def test_public_inspection_scrubs_embedded_private_paths_and_reasoning_aliases()
     assert "C:\\\\Users" not in serialized
     assert "/home/private-user" not in serialized
     assert serialized.count("REDACTED PRIVATE PATH") == 2
+
+
+def test_public_inspection_preserves_serialized_json_while_scrubbing_windows_paths() -> None:
+    envelope = json.dumps({
+        "result": {
+            "output": 'File "C:\\Users\\private-user\\workspace\\test.py", line 3',
+            "exit_code": 1,
+        },
+        "_inspection": {"kind": "test_execution"},
+    })
+    safe = safe_inspection_item({
+        "id": "command-one", "type": "command_execution", "status": "completed",
+        "content": {"output": envelope}, "event_refs": [],
+    })
+    decoded = json.loads(safe["content"]["output"])
+    assert decoded["result"]["exit_code"] == 1
+    assert decoded["_inspection"]["kind"] == "test_execution"
+    assert decoded["result"]["output"] == 'File "[REDACTED PRIVATE PATH]", line 3'
 
 
 def test_inspection_uses_run_index_and_bounds_a_10k_timeline(

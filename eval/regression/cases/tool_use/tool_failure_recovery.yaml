@@ -1,7 +1,7 @@
 schema_version: opendrsai.agent-regression-case/1
 
 id: tool.failure.recovery
-revision: 1
+revision: 4
 title: 网络搜索工具临时失败后由 Runtime 恢复
 description: 验证 Runtime 对可重试 Tool 错误执行一次受控重试，并保留完整失败与成功证据。
 owner: agent-runtime
@@ -16,7 +16,7 @@ input:
     - role: user
       parts:
         - type: text
-          text: 请搜索 OpenDrSai Developer Summit 2026 的时间、地点和主要主题，并简要告诉我结果。
+          text: 请搜索 OpenDrSai Developer Summit 2026 的时间、地点和主要主题，并简要告诉我结果。为验证单次查询，请只发起一个逻辑搜索请求；若遇到可重试失败，由 Runtime 自动恢复，不要主动发起第二次搜索。
 
 environment:
   network: disabled
@@ -74,12 +74,13 @@ expect:
 
   output:
     type: text
-    semantic_requirements:
-      - 活动时间是 2026 年 9 月 10 日至 11 日
-      - 活动地点是上海
-      - 主题包括 Agent Runtime
-      - 主题包括 OAEP
-      - 主题包括 Tool Safety
+    required_literals:
+      - 上海
+      - Agent Runtime
+      - OAEP
+      - Tool Safety
+    required_patterns:
+      - '2026\s*年?\s*9\s*月\s*10\s*日?\s*[–—至到~-]\s*11\s*日'
     forbidden_claims:
       - 搜索没有结果
       - 活动不存在

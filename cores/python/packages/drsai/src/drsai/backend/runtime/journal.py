@@ -19,9 +19,11 @@ from drsai.backend.runtime.oaep import (
     project_item,
     project_run,
     project_session,
+    sanitize_persisted_item,
 )
 from drsai.backend.runtime.observability import ResourceCorrelation, RuntimeObservability
-from drsai.relay.security import redact_secrets
+from drsai.oaep.digest import canonical_oaep_item
+from drsai.relay.security import redact_credentials
 
 
 SESSION_EVENT_KINDS = {
@@ -73,7 +75,11 @@ def _redact_credentials(value: Any, key: str = "") -> Any:
     if isinstance(value, (list, tuple)):
         return [_redact_credentials(item) for item in value]
     if isinstance(value, str):
-        redacted = redact_secrets(value)
+        # Journal payloads contain diagnostic JSON strings as well as prose.
+        # Credential-only redaction keeps stable protocol fields such as
+        # ``error_code``/``code`` inspectable while the key-aware recursion
+        # above still removes secrets from structured mappings.
+        redacted = redact_credentials(value)
         while "[REDACTED]]" in redacted:
             redacted = redacted.replace("[REDACTED]]", "[REDACTED]")
         return redacted
@@ -129,10 +135,17 @@ class RuntimeConversationJournal:
         database: Path,
         runtime_id: str,
         observability: RuntimeObservability | None = None,
+        *,
+        max_events_per_session: int = 100_000,
+        retained_events_per_session: int = 90_000,
     ):
+        if not 1 <= retained_events_per_session < max_events_per_session:
+            raise ValueError("runtime_journal_capacity_invalid")
         self.database = Path(database)
         self.runtime_id = runtime_id
         self.observability = observability
+        self.max_events_per_session = max_events_per_session
+        self.retained_events_per_session = retained_events_per_session
         self.database.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._changed = threading.Condition(self._lock)
@@ -951,6 +964,7 @@ class RuntimeConversationJournal:
             db.commit()
             if created:
                 self._changed.notify_all()
+        self.enforce_capacity(session_id)
         return event, created
 
     def append_event_in_transaction(
@@ -1037,6 +1051,7 @@ class RuntimeConversationJournal:
 
     def notify_committed(self) -> None:
         """Wake local subscribers after a caller-owned transaction commits."""
+        self.enforce_capacity()
         with self._changed:
             self._changed.notify_all()
 
@@ -1076,7 +1091,55 @@ class RuntimeConversationJournal:
             db.commit()
             if created:
                 self._changed.notify_all()
+        self.enforce_capacity(session_id)
         return item, event, created
+
+    def capacity_policy(self) -> dict[str, Any]:
+        return {
+            "max_events_per_session": self.max_events_per_session,
+            "retained_events_per_session": self.retained_events_per_session,
+            "overflow_strategy": "checkpoint_then_compact",
+            "cursor_gap": "cursor_expired",
+            "recovery": "authoritative_snapshot_then_replay",
+        }
+
+    def enforce_capacity(self, session_id: str | None = None) -> dict[str, int]:
+        """Bound retained append history without deleting the Item projection.
+
+        A checkpoint of the complete authoritative projection is committed
+        before old events are removed.  Slow clients therefore receive
+        ``cursor_expired`` and recover from Snapshot; terminal and Approval
+        Items remain present in ``runtime_conversation_items``/OAEP Items.
+        """
+        with self._connect() as db:
+            if session_id is None:
+                rows = db.execute(
+                    "SELECT session_id,last_sequence,earliest_retained_sequence "
+                    "FROM runtime_session_sequences WHERE "
+                    "last_sequence-earliest_retained_sequence+1>?",
+                    (self.max_events_per_session,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT session_id,last_sequence,earliest_retained_sequence "
+                    "FROM runtime_session_sequences WHERE session_id=?",
+                    (session_id,),
+                ).fetchall()
+        compacted_sessions = removed_events = 0
+        for row in rows:
+            retained = int(row["last_sequence"]) - int(row["earliest_retained_sequence"]) + 1
+            if retained <= self.max_events_per_session:
+                continue
+            selected = str(row["session_id"])
+            through = int(row["last_sequence"]) - self.retained_events_per_session
+            self.checkpoint(selected)
+            result = self.compact(selected, through_sequence=through)
+            compacted_sessions += 1
+            removed_events += int(result["removed_events"])
+        return {
+            "compacted_sessions": compacted_sessions,
+            "removed_events": removed_events,
+        }
 
     def upsert_item_in_transaction(
         self,
@@ -1338,7 +1401,7 @@ class RuntimeConversationJournal:
                 "ORDER BY run_id,run_sequence,item_id",
                 (session_id, through_sequence),
             ).fetchall()
-        return [json.loads(str(row["envelope_json"])) for row in rows]
+        return [sanitize_persisted_item(json.loads(str(row["envelope_json"]))) for row in rows]
 
     def oaep_items_window(
         self,
@@ -1376,10 +1439,21 @@ class RuntimeConversationJournal:
             (int(selected[-1]["latest_sequence"]), str(selected[-1]["item_id"]))
             if len(rows) > bounded and selected else None
         )
-        return (
-            [json.loads(str(row["envelope_json"])) for row in reversed(selected)],
-            continuation,
-        )
+        # ``latest_sequence`` is the stable keyset boundary, but is not the
+        # presentation order: revising an early Item moves its latest journal
+        # sequence past later Items.  OAEP requires each Run's Item sequence to
+        # remain monotonic, so sort the bounded page by canonical Run order
+        # without changing the continuation key selected above.
+        items = [
+            sanitize_persisted_item(json.loads(str(row["envelope_json"])))
+            for row in selected
+        ]
+        items.sort(key=lambda item: (
+            str(item.get("run_id") or ""),
+            int(item.get("sequence") or 0),
+            str(item.get("id") or ""),
+        ))
+        return items, continuation
 
     def snapshot_waterline(self, session_id: str) -> int:
         with self._connect() as db:
@@ -1409,8 +1483,8 @@ class RuntimeConversationJournal:
             for row in rows:
                 if item_count:
                     digest_state.update(b",")
-                item = json.loads(str(row["envelope_json"]))
-                digest_state.update(_canonical_json(item).encode())
+                item = sanitize_persisted_item(json.loads(str(row["envelope_json"])))
+                digest_state.update(canonical_oaep_item(item).encode())
                 item_count += 1
             digest_state.update(b"]")
             digest = digest_state.hexdigest()
@@ -1439,7 +1513,7 @@ class RuntimeConversationJournal:
                 "WHERE run_id=? ORDER BY run_sequence,item_id",
                 (run_id,),
             ).fetchall()
-        return [json.loads(str(row["envelope_json"])) for row in rows]
+        return [sanitize_persisted_item(json.loads(str(row["envelope_json"]))) for row in rows]
 
     def oaep_run_items_page(
         self,
@@ -1478,7 +1552,10 @@ class RuntimeConversationJournal:
                 parameters,
             ).fetchall()
         return (
-            [json.loads(str(row["envelope_json"])) for row in rows[:bounded]],
+            [
+                sanitize_persisted_item(json.loads(str(row["envelope_json"])))
+                for row in rows[:bounded]
+            ],
             len(rows) > bounded,
         )
 
@@ -1531,7 +1608,10 @@ class RuntimeConversationJournal:
                 "output_tokens": output_tokens,
                 "total_tokens": total_tokens,
             },
-            "error_item": json.loads(str(error_row["envelope_json"])) if error_row else None,
+            "error_item": (
+                sanitize_persisted_item(json.loads(str(error_row["envelope_json"])))
+                if error_row else None
+            ),
         }
 
     def oaep_run_item_predecessor(
@@ -1554,7 +1634,9 @@ class RuntimeConversationJournal:
             ).fetchone()
             if target is None:
                 raise KeyError(item_id)
-            target_envelope = json.loads(str(target["envelope_json"]))
+            target_envelope = sanitize_persisted_item(
+                json.loads(str(target["envelope_json"]))
+            )
             if item_type and target_envelope.get("type") != item_type:
                 raise KeyError(item_id)
             if status and target_envelope.get("status") != status:
@@ -1691,6 +1773,66 @@ class RuntimeConversationJournal:
                 )
                 if events:
                     return events
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return []
+                self._changed.wait(remaining)
+
+    def workspace_catalog_watermark(self, workspace_id: str) -> int:
+        """Return an opaque local cursor for content-free Session catalog events."""
+        if not workspace_id:
+            raise ValueError("workspace_id_required")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT COALESCE(MAX(rowid),0) AS watermark FROM runtime_session_journal "
+                "WHERE workspace_id=? AND event_kind IN "
+                "('session.updated','session.archived','session.unarchived','session.removed')",
+                (workspace_id,),
+            ).fetchone()
+        return int(row["watermark"] if row is not None else 0)
+
+    def wait_for_workspace_catalog_events(
+        self,
+        workspace_id: str,
+        *,
+        after_cursor: int,
+        timeout: float = 15.0,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Wait for committed, content-free catalog invalidations in append order."""
+        if not workspace_id:
+            raise ValueError("workspace_id_required")
+        if after_cursor < 0 or limit < 1 or limit > 2_000:
+            raise ValueError("workspace_catalog_cursor_invalid")
+        deadline = time.monotonic() + max(0.0, timeout)
+        kind_map = {
+            "session.updated": "event.session.updated",
+            "session.archived": "event.session.archived",
+            "session.unarchived": "event.session.unarchived",
+            "session.removed": "event.session.deleted",
+        }
+        with self._changed:
+            while True:
+                with self._connect() as db:
+                    rows = db.execute(
+                        "SELECT rowid,event_id,session_id,session_sequence,event_kind "
+                        "FROM runtime_session_journal WHERE workspace_id=? AND rowid>? "
+                        "AND event_kind IN "
+                        "('session.updated','session.archived','session.unarchived','session.removed') "
+                        "ORDER BY rowid LIMIT ?",
+                        (workspace_id, after_cursor, limit),
+                    ).fetchall()
+                if rows:
+                    return [
+                        {
+                            "cursor": int(row["rowid"]),
+                            "event_id": str(row["event_id"]),
+                            "session_id": str(row["session_id"]),
+                            "type": kind_map[str(row["event_kind"])],
+                            "sequence": int(row["session_sequence"]),
+                        }
+                        for row in rows
+                    ]
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return []

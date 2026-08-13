@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { assertAllowedDesktopPath, assertAllowedExternalUrl } from "../../../../shared/main/desktopPathPolicy";
 import { MACOS_PLATFORM_DESCRIPTOR } from "../platform";
 import { MACOS_USER_DATA } from "../platformServices";
+import { MACOS_PLATFORM_SERVICES } from "../platformServices";
+import { resolveRegressionReference } from "../../../../shared/main/regressionReferences";
 import { bootstrapDesktop, getHealth, getInstallStatus, installBundledRuntime } from "../desktopLifecycle";
 import { cancelBundledRuntimeInstall } from "../runtimeInstaller";
 import { cancelUpdate, checkForUpdates, downloadUpdate, installUpdate } from "../updater";
@@ -39,6 +41,11 @@ export function registerMacosPlatformIpc(options: MacosPlatformIpcOptions): void
   ipcMain.handle("desktop:open-external", async (_event, url) => {
     await shell.openExternal(assertAllowedExternalUrl(url));
     return true;
+  });
+  ipcMain.handle("desktop:open-regression-reference", async (_event, uri) => {
+    const path = resolveRegressionReference(MACOS_PLATFORM_SERVICES.paths.layout.home, uri);
+    if (!path) return "Regression reference is unavailable or invalid.";
+    return shell.openPath(path);
   });
   ipcMain.handle("desktop:open-path", async (_event, path) =>
     shell.openPath(assertAllowedDesktopPath(path, await options.allowedDesktopRoots())));

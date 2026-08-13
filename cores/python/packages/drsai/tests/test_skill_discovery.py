@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from drsai.modules.components.skills import resolve_builtin_skills_dir
+from drsai.modules.components.skills import SkillLoader, resolve_builtin_skills_dir
 
 
 def test_auto_discovery_loads_only_skills_skills(tmp_path: Path, monkeypatch) -> None:
@@ -32,3 +32,13 @@ def test_invalid_explicit_catalog_fails_closed_without_loading_siblings(
     monkeypatch.setenv("SYSTEM_SKILLS_DIR", str(missing))
 
     assert resolve_builtin_skills_dir(search_from=(tmp_path,)) is None
+
+
+def test_builtin_catalog_exposes_native_regression_testing_skill() -> None:
+    catalog = resolve_builtin_skills_dir(search_from=(Path(__file__),))
+    assert catalog is not None
+    loader = SkillLoader(skills_dir=str(catalog))
+
+    skill = loader.skills["opendrsai-regression-testing"]
+    assert "有哪些回归测试" in skill["description"]
+    assert "regression_list_cases" in loader.run_skill("opendrsai-regression-testing")

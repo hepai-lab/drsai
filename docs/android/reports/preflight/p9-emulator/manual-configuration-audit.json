@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "audit_id": "android-p9-e-manual-configuration-audit",
+  "audited_at": "2026-08-12",
+  "evidence_tier": "emulator_preflight",
+  "result": "no_immediate_manual_configuration_blocker",
+  "latest_recheck": {
+    "checked_at": "2026-08-12",
+    "emulator_serial": "emulator-5554",
+    "boot_completed": true,
+    "application_installed": true,
+    "android_internet_permission": true,
+    "provider_dns_resolved": true,
+    "provider_tcp_443_connected": true,
+    "provider_preferences_present": true,
+    "available_host_disk_mb": 20559.8,
+    "candidate_app_apk_sha256": "20c2474096a4115cda3d8c108680d23a6c1c91f03e53d2315dea999015a3b3e0",
+    "candidate_test_apk_sha256": "7dd9c3563fb4b1875a6a9c0d0832cabd59dccfb072bb751538904ed0c578cb1d",
+    "api_matrix_passed": true,
+    "conclusion": "The Zhizengzeng key is present only in Android encrypted storage and both real models passed the 180-observation preflight. Candidate change-scope confirmation remains the only blocker for E08-F02 clean packaging."
+  },
+  "immediate_manual_items": [
+    {
+      "id": "zhizengzeng_api_key",
+      "status": "resolved",
+      "scope": "OpenDrSai.Dev emulator application data",
+      "reason": "The authorized local test key was injected once into Android encrypted storage; the transfer file was deleted and the temporary injection test source was removed.",
+      "user_action": "None for Emulator preflight.",
+      "secret_handling": "Reports contain only hasKey=true and never contain the API Key value."
+    }
+  ],
+  "conditional_manual_items": [
+    {
+      "id": "provider_account_state",
+      "status": "only_if_provider_rejects_request",
+      "trigger": "HTTP 401, 402, 403, or persistent 429 after the API Key has been saved",
+      "user_action": "Confirm the Zhizengzeng account, API Key validity, balance, model access, and rate limit."
+    },
+    {
+      "id": "candidate_change_scope",
+      "status": "required_before_clean_candidate_packaging",
+      "reason": "The shared worktree contains unrelated Android, Desktop, Python, documentation, and voice changes.",
+      "user_action": "Confirm which P9 changes belong in the candidate before the clean candidate commit/build is produced."
+    },
+    {
+      "id": "arm64_physical_device",
+      "status": "deferred_until_formal_p9_device_acceptance",
+      "reason": "The formal M04-F06, M09-F06, and M12-F06 evidence must be produced on the same ARM64 physical-device candidate APK.",
+      "user_action": "Reconnect an authorized ARM64 device only after P9-E reaches 40/40."
+    }
+  ],
+  "not_manual_configuration_blockers": [
+    {
+      "id": "stale_android_test_apk",
+      "status": "resolved",
+      "evidence": "The rebuilt Test APK is bound to the current candidate hash and the deterministic suite passes 30 cases x 3 attempts plus the ambiguity negative test.",
+      "note": "No user configuration is required."
+    },
+    {
+      "id": "host_disk_space",
+      "status": "sufficient",
+      "evidence": "The host has 20559.8 MB available on C:. The earlier zero reading came from Get-PSDrive under the restricted execution context."
+    },
+    {
+      "id": "provider_base_network",
+      "status": "reachable_from_emulator",
+      "evidence": "The Emulator resolves api.zhizengzeng.com and establishes TCP port 443 successfully. Authentication and model access remain untestable until the API Key is saved."
+    },
+    {
+      "id": "api36_chaquopy_python311_startup",
+      "status": "resolved_in_engineering",
+      "evidence": "Python 3.11 failed on API 36 and Python 3.13 failed on API 26; the final Python 3.12 candidate passes the same Runtime identity, critical journey, consecutive-message, OAEP-event, and error-body suite on API 26, 30, 35, and 36.",
+      "note": "The Android Runtime default, CI setup, candidate builder, APK identity gate, and preflight runner now require CPython 3.12. This was a runtime compatibility defect, not a missing user setting."
+    }
+  ],
+  "explicitly_not_required_for_p9_e": [
+    "OpenDrSai business login or OIDC login",
+    "Firebase configuration",
+    "release or beta signing keystore",
+    "SAF directory authorization for deterministic fixtures",
+    "physical USB device or vendor USB debugging settings",
+    "physical-device notification permission"
+  ],
+  "observed_emulators": [
+    {
+      "serial": "emulator-5554",
+      "api": 35,
+      "application_id": "ai.drsai.remote.debug",
+      "runtime_python_version": "3.12",
+      "encrypted_model_provider_store_present": true
+    },
+    {
+      "serial": "emulator-5556",
+      "api": 36,
+      "application_id": "ai.drsai.remote.debug",
+      "runtime_python_version": "3.12",
+      "encrypted_model_provider_store_present": false
+    }
+  ]
+}

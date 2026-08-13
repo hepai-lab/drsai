@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import logging
 from typing import Any, Mapping
 
 import aiohttp
@@ -12,6 +14,11 @@ import aiohttp
 from .contracts import ProviderReceipt, WebSearchResponse, WebSearchResult, normalize_max_results, plan_search_query
 from .errors import WebProviderError, classify_http_error
 from .url_safety import UnsafeWebUrl, ensure_public_url, validate_url_shape
+
+
+logger = logging.getLogger(__name__)
+_MAX_REQUEST_ATTEMPTS = 3
+_RETRY_DELAYS_SECONDS = (0.25, 0.75)
 
 
 @dataclass(frozen=True)
@@ -42,11 +49,36 @@ class TavilyClient:
         self.config = config
 
     async def _post(self, endpoint: str, payload: Mapping[str, object]) -> dict[str, Any]:
+        for attempt in range(1, _MAX_REQUEST_ATTEMPTS + 1):
+            try:
+                return await self._post_once(endpoint, payload)
+            except WebProviderError as exc:
+                if not exc.retryable or attempt >= _MAX_REQUEST_ATTEMPTS:
+                    raise
+                # Keep diagnostics useful without logging provider bodies,
+                # request headers, payloads, or credentials.
+                cause = exc.__cause__ or exc.__context__
+                logger.warning(
+                    "Retrying Tavily %s after %s (%s), attempt %d/%d",
+                    endpoint,
+                    exc.code,
+                    type(cause).__name__ if cause is not None else type(exc).__name__,
+                    attempt,
+                    _MAX_REQUEST_ATTEMPTS,
+                )
+                await asyncio.sleep(_RETRY_DELAYS_SECONDS[attempt - 1])
+        raise AssertionError("unreachable")
+
+    async def _post_once(self, endpoint: str, payload: Mapping[str, object]) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {self.config.api_key}", "Content-Type": "application/json"}
         if self.config.project_id: headers["X-Project-ID"] = self.config.project_id
         timeout = aiohttp.ClientTimeout(total=self.config.timeout_seconds)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Edge/Chrome on Windows honor the system proxy/PAC configuration.
+            # ``aiohttp`` does not unless ``trust_env`` is enabled, which made
+            # the Tavily website reachable while the packaged Runtime's API
+            # request incorrectly attempted a blocked direct connection.
+            async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
                 async with session.post(f"{self.config.base_url}/{endpoint}", headers=headers, json=dict(payload)) as response:
                     request_id = response.headers.get("x-request-id", "")
                     if response.status >= 400:
@@ -60,6 +92,12 @@ class TavilyClient:
         except TimeoutError as exc:
             raise WebProviderError("timeout", "Tavily request timed out.", provider="tavily", retryable=True) from exc
         except aiohttp.ClientError as exc:
+            logger.warning(
+                "Tavily %s connection failed (%s; cause=%s)",
+                endpoint,
+                type(exc).__name__,
+                type(exc.__cause__).__name__ if exc.__cause__ is not None else "none",
+            )
             raise WebProviderError("upstream_unavailable", "Tavily is currently unavailable.", provider="tavily", retryable=True) from exc
         if not isinstance(data, dict):
             raise WebProviderError("invalid_response", "Tavily returned an invalid response.", provider="tavily", retryable=True)

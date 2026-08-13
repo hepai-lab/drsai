@@ -17,6 +17,7 @@ assert(builderConfig.includes("asarUnpack:") && builderConfig.includes("resource
 assert(existsSync(manifestPath), "bundled backend source manifest is missing; run npm run prepare:backend-source");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 assert(manifest.archive === "drsai-backend-source.zip", "backend source manifest archive name changed unexpectedly");
+assert(manifest.contents.includes("eval/regression"), "bundled backend source omits canonical regression definitions and engine");
 assert(/^[a-f0-9]{64}$/.test(manifest.sha256 || ""), "backend source manifest sha256 is missing or invalid");
 assert(manifest.version === packageJson.version, "backend source manifest version does not match package.json");
 const archivePath = join(appRoot, "resources", "backend", manifest.archive);
@@ -29,6 +30,10 @@ assert(archive.includes(Buffer.from("cores/python/packages/drsai/src/drsai/backe
 assert(archive.includes(Buffer.from("cores/protocol/owop/owop.schema.json")), "backend source archive omits the OWOP schema required by the Python wheel build");
 assert(archive.includes(Buffer.from("cores/protocol/relay/runtime-relay.schema.json")), "backend source archive omits the Relay contract");
 assert(archive.includes(Buffer.from("skills/skills/playwright-cli/SKILL.md")), "backend source archive omits the built-in Skills catalog");
+assert(archive.includes(Buffer.from("skills/skills/pptx/SKILL.md")), "backend source archive omits the built-in PPTX Skill");
+assert(archive.includes(Buffer.from("skills/skills/pptx/scripts/create_deck.py")), "backend source archive omits the PPTX creation resource");
+assert(archive.includes(Buffer.from("skills/skills/pptx/scripts/validate_deck.py")), "backend source archive omits the PPTX validation resource");
+assert(archive.includes(Buffer.from("skills/skills/pptx/scripts/render_deck.py")), "backend source archive omits the PPTX render resource");
 
 console.log("Bundled backend source verification passed.");
 

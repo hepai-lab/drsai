@@ -8,6 +8,7 @@ if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const root = resolve(desktopRoot, "macos");
 const acceptance = resolve(root, "build/acceptance");
+const snapshot = read("source-snapshot.json");
 const rehearsal = read("signed-update-rollback-rehearsal.json");
 const online = read("online-signed-update.json");
 assert.equal(rehearsal.testId, "signed-update-rollback-rehearsal");
@@ -15,13 +16,15 @@ assert.equal(rehearsal.passed, true);
 assert.equal(rehearsal.rollbackRestoredPrevious, true);
 assert.equal(rehearsal.userDataPreserved, true);
 assert.equal(rehearsal.onlineUpdateInstalled, false);
-assert.equal(online.schemaVersion, 1);
+assert.equal(online.schemaVersion, 2);
 assert.equal(online.testId, "online-signed-update");
 assert.equal(online.platform, "darwin-arm64");
 assert.equal(online.passed, true);
 assert.equal(online.onlineUpdateInstalled, true);
 assert.equal(online.healthConfirmed, true);
 assert.equal(online.userDataPreserved, true);
+assert.equal(online.commit, snapshot.commit);
+assert.equal(online.sourceAggregateSha256, snapshot.aggregateSha256);
 assert.equal(online.fromVersion, rehearsal.previousVersion);
 assert.equal(online.toVersion, rehearsal.currentVersion);
 assert.match(online.feedUrl, /^https:\/\//);
@@ -34,6 +37,8 @@ writeFileSync(resolve(acceptance, "signed-update-rollback.json"), `${JSON.string
   testId: "signed-update-rollback",
   platform: "darwin-arm64",
   passed: true,
+  commit: snapshot.commit,
+  sourceAggregateSha256: snapshot.aggregateSha256,
   featureIds: ["F12.5", "F12.6"],
   fromVersion: online.fromVersion,
   toVersion: online.toVersion,

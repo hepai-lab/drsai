@@ -1,0 +1,7 @@
+interface:
+  display_name: "OpenDrSai 回归测试"
+  short_description: "通过对话查询、执行并自动判断 OpenDrSai 回归测试"
+  default_prompt: "Use $opendrsai-regression-testing to list the available regression tests and explain their current status."
+
+policy:
+  allow_implicit_invocation: true

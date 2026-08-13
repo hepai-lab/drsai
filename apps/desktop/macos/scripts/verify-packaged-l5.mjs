@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,11 +8,22 @@ import { createServer } from "node:net";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Packaged L5 must run on Apple Silicon macOS.");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const executable = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "MacOS", "OpenDrSai");
-const appBundle = join(root, "release", "mac-arm64", "OpenDrSai.app");
+const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+let releaseMount;
+let appBundle = resolve(process.env.OPENDRSAI_MACOS_APP_PATH || join(root, "release", "mac-arm64", "OpenDrSai.app"));
+if (!process.env.OPENDRSAI_MACOS_APP_PATH && !hasRuntimeArchive(appBundle)) {
+  const dmg = join(root, "release", `OpenDrSai-macOS-v${packageJson.version}-arm64.dmg`);
+  assert.ok(existsSync(dmg), `Packaged L5 full Runtime DMG is missing: ${dmg}`);
+  releaseMount = mkdtempSync(join(tmpdir(), "opendrsai-macos-l5-dmg-"));
+  const attached = spawnSync("/usr/bin/hdiutil", ["attach", dmg, "-readonly", "-nobrowse", "-mountpoint", releaseMount], { encoding: "utf8" });
+  assert.equal(attached.status, 0, `Packaged L5 could not mount ${dmg}.\n${attached.stderr}`);
+  appBundle = join(releaseMount, "OpenDrSai.app");
+}
+process.once("exit", cleanupReleaseMount);
+const executable = join(appBundle, "Contents", "MacOS", "OpenDrSai");
 const signature = spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", appBundle], { encoding: "utf8" });
 assert.equal(signature.status, 0, `Packaged L5 requires a valid sealed App bundle. Build unsigned development packages with npm run build:mac:dir:unsigned.\n${signature.stderr}`);
-const runtimeRoot = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "Resources", "runtime");
+const runtimeRoot = join(appBundle, "Contents", "Resources", "runtime");
 const runtimeManifest = JSON.parse(readFileSync(join(runtimeRoot, "runtime-manifest.json"), "utf8"));
 const runtimeArchive = statSync(join(runtimeRoot, runtimeManifest.archive));
 const runtimeGiB = Math.ceil(runtimeArchive.size / (1024 ** 3));
@@ -61,24 +72,50 @@ try {
   suiteGatewayPort = await freePort();
   const gatewayPort = suiteGatewayPort;
   console.log(`L5 starting core scenario on Gateway port ${gatewayPort}...`);
-  const core = await runScenario("core", { workspacePath }, { DRSAI_API_PORT: String(gatewayPort) }, coreTimeoutMs);
-  assert.equal(core.result.ok, true, core.result.error);
-  assert.equal(core.result.persistenceChecks, 2);
-  assert.match(core.result.terminalOutput, /OPENDRSAI_MACOS_PTY_OK/);
-  assert.equal(isAlive(core.result.terminal.pid), false, "core PTY survived graceful App exit");
-  assert.equal(isAlive(core.result.gateway.pid), false, "core Gateway survived graceful App exit");
-  assertNoRuntimeErrors(`${core.stdout}\n${core.stderr}`, "core journeys");
+  const matrixIterations = boundedInteger(process.env.OPENDRSAI_MACOS_L5_MATRIX_ITERATIONS, 20, 1, 20);
+  const coreRuns = [];
+  for (let iteration = 0; iteration < matrixIterations; iteration += 1) {
+    const run = await runScenario("core", { workspacePath }, { DRSAI_API_PORT: String(gatewayPort) }, coreTimeoutMs);
+    assert.equal(run.result.ok, true, `core iteration ${iteration + 1}: ${run.result.error}`);
+    assert.equal(run.result.persistenceChecks, 2);
+    assert.match(run.result.terminalOutput, /OPENDRSAI_MACOS_PTY_OK/);
+    assert.equal(isAlive(run.result.terminal.pid), false, "core PTY survived graceful App exit");
+    assert.equal(isAlive(run.result.gateway.pid), false, "core Gateway survived graceful App exit");
+    assertNoRuntimeErrors(`${run.stdout}\n${run.stderr}`, `core journey iteration ${iteration + 1}`);
+    coreRuns.push(run);
+  }
+  const core = coreRuns[0];
   writeReceipt("packaged-core-journeys", {
     featureIds: ["F04.4", "F06.4", "F07.6", "F10.1"],
     journeys: ["runtime-gateway", "workspace-thread-persistence", "preference-persistence", "zsh-pty-resize-roundtrip"],
     checks: 4,
+    consecutiveIterations: matrixIterations,
+    formalTwentyRoundRequirementSatisfied: matrixIterations === 20,
     gatewayOrphans: 0,
     ptyOrphans: 0,
   });
 
+  const authRuns = [];
+  for (let iteration = 0; iteration < matrixIterations; iteration += 1) {
+    const run = await runScenario("auth-cycle", {}, {}, 30_000);
+    assert.equal(run.result.ok, true, `auth-cycle iteration ${iteration + 1}: ${run.result.error}`);
+    assert.equal(run.result.loggedOutBefore, true);
+    assert.equal(run.result.loggedIn, true);
+    assert.equal(run.result.loggedOutAfter, true);
+    assertNoRuntimeErrors(`${run.stdout}\n${run.stderr}`, `auth-cycle iteration ${iteration + 1}`);
+    authRuns.push(run);
+  }
+  writeReceipt("packaged-auth-cycles", {
+    featureIds: ["F03.1", "F03.5"],
+    loginLogoutIterations: matrixIterations,
+    formalTwentyRoundRequirementSatisfied: matrixIterations === 20,
+    failedIterations: 0,
+    unexpectedSideEffects: 0,
+  });
+
   const product = await runScenario("product-state", { workspacePath, workspaceId: core.result.workspace.id }, {}, 300_000);
   assert.equal(product.result.ok, true, product.result.error);
-  for (const check of ["threadLifecycle", "chatAbortRecoveryLifecycle", "chatNetworkRecoveryLifecycle", "agentCatalogAbortRecoveryLifecycle", "gitApprovalExecution", "workspaceGitReviewLifecycle", "checkpointLifecycle", "worktreeQueueLifecycle", "desktopHandoffLifecycle", "customCommandCrud", "projectMemoryCrud", "projectSkillApprovalInstall", "workflowLifecycle", "reusableAndScheduledLifecycle", "managerPresentationLifecycle", "diagnosticsRoundtrip", "diagnosticSourceAndPackage", "backgroundTaskLifecycle", "resultShareVersionLifecycle", "interactiveDebuggerRoundtrip", "pythonDebuggerRoundtrip", "nativeKeychainLifecycle", "notificationClickLifecycle"]) assert.equal(product.result[check], true, `product-state missing ${check}`);
+  for (const check of ["threadLifecycle", "chatAbortRecoveryLifecycle", "chatNetworkRecoveryLifecycle", "chatSlowNetworkRecoveryLifecycle", "agentCatalogAbortRecoveryLifecycle", "gitApprovalExecution", "workspaceGitReviewLifecycle", "checkpointLifecycle", "worktreeQueueLifecycle", "desktopHandoffLifecycle", "customCommandCrud", "projectMemoryCrud", "projectSkillApprovalInstall", "workflowLifecycle", "reusableAndScheduledLifecycle", "managerPresentationLifecycle", "diagnosticsRoundtrip", "diagnosticSourceAndPackage", "backgroundTaskLifecycle", "resultShareVersionLifecycle", "interactiveDebuggerRoundtrip", "pythonDebuggerRoundtrip", "nativeKeychainLifecycle", "notificationClickLifecycle"]) assert.equal(product.result[check], true, `product-state missing ${check}`);
   assertNoRuntimeErrors(`${product.stdout}\n${product.stderr}`, "product-state journeys");
   const gitLog = spawnSync("/usr/bin/git", ["-C", workspacePath, "log", "-1", "--format=%B"], { encoding: "utf8" });
   assert.equal(gitLog.status, 0, gitLog.stderr);
@@ -91,6 +128,7 @@ try {
     featureIds: ["F06.1", "F06.2", "F06.3", "F06.4", "F06.5", "F07.2", "F07.3", "F07.4", "F07.5", "F08.3", "F08.5", "F10.1", "F10.2", "F10.3", "F10.4", "F10.5", "F10.6"],
     journeys: ["thread-crud-snapshot-search-archive-binding", "chat-start-abort-journal-late-input", "chat-runtime-event-poll-recovery-journal-dedup", "agent-catalog-default-usage-start-abort-recovery", "git-approval-execute-and-replay", "workspace-git-diff-stage-ref-revert-stale-review", "checkpoint-create-preview-approved-restore-accept", "worktree-create-event-queue-dispatch-abort-discard", "ide-context-native-icon-edit-command-pdf-launchservices", "custom-command-crud", "project-memory-crud", "project-skill-draft-approval-install", "workflow-marketplace-strict-completion-history", "reusable-task-fresh-input-and-scheduled-safe-due-restart-recovery", "manager-presentation-pause-resume-cancel-failure-retry", "diagnostic-record-source-encrypted-package", "background-task-idempotency-cancel-retry-complete", "result-share-owner-isolation-version-revoke", "debug-policy-attach-detach", "debugpy-dap-breakpoint-scopes-redaction-evaluate-terminate-abnormal-exit", "native-helper-keychain-crud-idempotent-delete", "completion-notification-native-click"],
     checks: 22,
+    networkConditions: ["normal", "slow", "interrupted-response-recovery"],
     unexpectedSideEffects: 0,
   });
 
@@ -98,14 +136,20 @@ try {
   for (let iteration = 0; iteration < 5; iteration += 1) warmPerformance.push(await runScenario("performance-ready", {}, {}, 120_000));
   for (const run of warmPerformance) assert.equal(run.result.ok, true, run.result.error);
 
-  const managedCrash = await runScenario("managed-process-crash", {}, {}, 60_000);
-  assert.equal(managedCrash.result.ok, true, managedCrash.result.error);
-  assert.equal(managedCrash.result.helperBefore.status, "ready");
-  assert.equal(managedCrash.result.helperAfter.status, "ready");
-  assert.equal(managedCrash.result.helperAfter.pong, true);
-  assert.notEqual(managedCrash.result.helperAfter.pid, managedCrash.result.helperBefore.pid, "Native Helper SIGKILL did not create a new process");
-  assert.notEqual(managedCrash.result.gatewayAfter.pid, managedCrash.result.gateway.pid, "Gateway SIGKILL did not create a new process");
-  assert.equal(managedCrash.result.gatewayAfter.ready, true);
+  const managedCrashRuns = [];
+  for (let iteration = 0; iteration < matrixIterations; iteration += 1) {
+    const run = await runScenario("managed-process-crash", {}, {}, 60_000);
+    assert.equal(run.result.ok, true, `managed-process-crash iteration ${iteration + 1}: ${run.result.error}`);
+    assert.equal(run.result.helperBefore.status, "ready");
+    assert.equal(run.result.helperAfter.status, "ready");
+    assert.equal(run.result.helperAfter.pong, true);
+    assert.notEqual(run.result.helperAfter.pid, run.result.helperBefore.pid, "Native Helper SIGKILL did not create a new process");
+    assert.notEqual(run.result.gatewayAfter.pid, run.result.gateway.pid, "Gateway SIGKILL did not create a new process");
+    assert.equal(run.result.gatewayAfter.ready, true);
+    assertNoRuntimeErrors(`${run.stdout}\n${run.stderr}`, `managed process crash recovery iteration ${iteration + 1}`);
+    managedCrashRuns.push(run);
+  }
+  const managedCrash = managedCrashRuns[0];
 
   const systemEvents = await runScenario("system-events", {}, {}, 90_000);
   assert.equal(systemEvents.result.ok, true, systemEvents.result.error);
@@ -118,15 +162,15 @@ try {
     featureIds: ["F06.4", "F08.5", "F10.3"],
     journeys: ["display-change-window-recovery", "network-offline-online-gateway-recovery"],
     checks: 2,
+    networkConditions: ["offline", "online-recovery"],
     unexpectedSideEffects: 0,
   });
-  assertNoRuntimeErrors(`${managedCrash.stdout}\n${managedCrash.stderr}`, "managed process crash recovery");
-  writeReceipt("managed-process-crash-recovery", { featureIds: ["F06.3"], nativeHelperForcedCrashes: 1, nativeHelperRecovered: true, gatewayForcedCrashes: 1, gatewayRecovered: true, residualProcessCount: managedCrash.resources.residualPids.length });
+  writeReceipt("managed-process-crash-recovery", { featureIds: ["F06.3"], nativeHelperForcedCrashes: matrixIterations, nativeHelperRecovered: true, gatewayForcedCrashes: matrixIterations, gatewayRecovered: true, formalTwentyRoundRequirementSatisfied: matrixIterations === 20, residualProcessCount: managedCrashRuns.reduce((count, run) => count + run.resources.residualPids.length, 0) });
 
   const iterations = boundedInteger(process.env.OPENDRSAI_MACOS_L5_RESTART_ITERATIONS, 100, 1, 100);
   const restartResources = [];
   for (let iteration = 0; iteration < iterations; iteration += 1) {
-    const restart = await runScenario("restart", { threadId: core.result.thread.id, workspacePath: core.result.workspace.path, scheduledTaskId: product.result.scheduledTaskId, scheduledRunId: product.result.scheduledRunId }, {}, 30_000);
+    const restart = await runScenario("restart", { threadId: core.result.thread.id, workspacePath: core.result.workspace.path, scheduledTaskId: product.result.scheduledTaskId, scheduledRunId: product.result.scheduledRunId, resourceSettleMs: 2_000 }, {}, 30_000);
     assert.equal(restart.result.ok, true, `restart iteration ${iteration + 1}: ${restart.result.error ?? "unknown error"}`);
     assert.equal(restart.result.threadRecovered, true);
     assert.equal(restart.result.preferenceRecovered, true);
@@ -168,8 +212,9 @@ try {
   assert.ok(stability.result.heartbeats >= Math.floor(stabilityDurationMs / 30_000));
   stability.resources.idleWindowStartedAtMs = Math.max(0, stability.resources.durationMs - stability.result.durationMs);
   assertNoRuntimeErrors(`${stability.stdout}\n${stability.stderr}`, "stability soak");
-  const resourceSummary = summarizeResources([coldPerformance.resources, core.resources, product.resources, ...warmPerformance.map((run) => run.resources), managedCrash.resources, ...restartResources, crash.resources, recovery.resources, stability.resources]);
+  const resourceSummary = summarizeResources([coldPerformance.resources, ...coreRuns.map((run) => run.resources), ...authRuns.map((run) => run.resources), product.resources, ...warmPerformance.map((run) => run.resources), ...managedCrashRuns.map((run) => run.resources), ...restartResources, crash.resources, recovery.resources, stability.resources]);
   const restartGrowth = summarizeRestartGrowth(restartResources);
+  writeFileSync(join(acceptance, "restart-resource-growth.json"), `${JSON.stringify({ schemaVersion: 2, testId: "restart-resource-growth", platform: "darwin-arm64", passed: restartGrowth.withinBudget, featureIds: ["F03.4", "F03.5", "F06.5"], ...restartGrowth, iterations: restartResources.map((tracker, index) => ({ iteration: index + 1, maxProcessCount: Math.max(0, ...tracker.samples.map((sample) => sample.processCount)), maxRssKiB: Math.max(0, ...tracker.samples.map((sample) => sample.rssKiB)), maxFdCount: Math.max(0, ...tracker.samples.map((sample) => sample.fdCount)), samples: tracker.samples })), generatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
   assert.ok(resourceSummary.sampleCount >= 6, "packaged L5 did not collect enough process resource samples");
   assert.equal(resourceSummary.residualProcessCount, 0, "packaged L5 left an observed App descendant alive");
   if (iterations === 100) assert.equal(restartGrowth.withinBudget, true, `100-restart resource growth exceeded budget: ${JSON.stringify(restartGrowth)}`);
@@ -212,7 +257,28 @@ try {
 } finally {
   if (powerAssertion.exitCode === null && powerAssertion.signalCode === null) powerAssertion.kill("SIGTERM");
   if (!suitePassed && keepTempOnFailure) console.error(`L5 preserved failed fixture at ${temp}`);
-  else rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  else {
+    try { rmSync(temp, { recursive: true, force: true, maxRetries: 30, retryDelay: 500 }); }
+    catch (error) { console.warn(`L5 cleanup could not remove ${temp}: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  cleanupReleaseMount();
+}
+
+function hasRuntimeArchive(candidateApp) {
+  const candidateRuntime = join(candidateApp, "Contents", "Resources", "runtime");
+  const manifestPath = join(candidateRuntime, "runtime-manifest.json");
+  if (!existsSync(manifestPath)) return false;
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    return Boolean(manifest.archive && existsSync(join(candidateRuntime, manifest.archive)));
+  } catch { return false; }
+}
+
+function cleanupReleaseMount() {
+  if (!releaseMount) return;
+  spawnSync("/usr/bin/hdiutil", ["detach", releaseMount, "-force"], { stdio: "ignore" });
+  rmSync(releaseMount, { recursive: true, force: true });
+  releaseMount = undefined;
 }
 
 async function runScenario(scenario, config, extraEnv, timeoutMs, keepRunning = false) {

@@ -110,22 +110,22 @@ def test_real_matrix_preflight_identifies_missing_fields_without_values(tmp_path
     assert "private.example" not in evidence.read_text(encoding="utf-8")
 
 
-def test_release_readiness_rejects_preflight_or_incomplete_real_evidence() -> None:
+def test_release_readiness_accepts_only_complete_hepai_platform_evidence() -> None:
     readiness = _readiness_module()
-    required = ["openai", "anthropic", "deepseek", "ollama", "chat_only", "custom_proxy"]
     valid = {
+        "schemaVersion": 3,
         "passed": True,
-        "kind": "real-opt-in",
-        "requiredServiceTypes": required,
-        "configuredServiceTypes": required,
-        "missingServiceTypes": [],
-        "results": [{"serviceType": item, "passed": True} for item in required],
+        "kind": "hepai-platform",
+        "providerId": "hepai",
+        "authentication": "oidc-safe-storage",
+        "secretMaterialRecorded": False,
+        "results": [{"modelId": "deepseek-v4-flash", "passed": True, "statusCode": 200, "sawData": True, "sawDone": True}],
     }
     assert readiness.valid_real_provider_evidence(valid) is True
     assert readiness.valid_real_provider_evidence({**valid, "kind": "real-environment-preflight"}) is False
-    assert readiness.valid_real_provider_evidence({**valid, "configuredServiceTypes": required[:-1]}) is False
-    failed_results = [*valid["results"][:-1], {"serviceType": required[-1], "passed": False}]
-    assert readiness.valid_real_provider_evidence({**valid, "results": failed_results}) is False
+    assert readiness.valid_real_provider_evidence({**valid, "authentication": "api-key"}) is False
+    assert readiness.valid_real_provider_evidence({**valid, "secretMaterialRecorded": True}) is False
+    assert readiness.valid_real_provider_evidence({**valid, "results": [{**valid["results"][0], "sawDone": False}]}) is False
 
 
 def test_real_matrix_preflight_can_stage_one_service_without_weakening_release_evidence(tmp_path) -> None:

@@ -28,14 +28,40 @@ export function canonicalOaepItems(items: readonly OaepItem[]): string {
     const value: Record<string, unknown> = Object.fromEntries(
       fields.map((field) => [field, item[field]]),
     );
+    const source = { ...(value.source as Record<string, unknown>) };
+    for (const key of Object.keys(source)) {
+      if (key !== "backend" && source[key] === null) delete source[key];
+    }
+    value.source = source;
     const content = { ...(value.content as unknown as Record<string, unknown>) };
     if (item.type === "message" && content.citations === undefined) content.citations = [];
+    // `parts` is an optional compatibility field. Generated Android models
+    // emit an empty array while Runtime/Desktop may omit it; both represent
+    // the same OAEP message and must produce the same transcript digest.
+    if (Array.isArray(content.parts) && content.parts.length === 0) delete content.parts;
+    if (["command_execution", "tool_call"].includes(item.type)
+      && content.replay_policy && typeof content.replay_policy === "object"
+      && !Array.isArray(content.replay_policy) && Object.keys(content.replay_policy as Record<string, unknown>).length === 0) {
+      delete content.replay_policy;
+    }
     if (item.type === "artifact") {
       if (content.previewable === undefined) content.previewable = false;
       if (content.downloadable === undefined) content.downloadable = false;
     }
     if (item.type === "interaction" && content.request_summary === undefined) content.request_summary = {};
     if (item.type === "notice" && content.details === undefined) content.details = {};
+    const optionalNullFields: Partial<Record<OaepItem["type"], readonly string[]>> = {
+      message: ["phase"],
+      command_execution: ["stdout_tail", "stderr_tail", "exit_code", "duration_ms"],
+      tool_call: ["server", "duration_ms"],
+      artifact: ["path", "mime_type", "size", "sha256"],
+      interaction: ["approval_id", "operation", "related_item_id", "response", "deadline_at"],
+      subtask: ["agent_name", "child_run_id", "result"],
+      notice: ["error"],
+    };
+    for (const key of optionalNullFields[item.type] ?? []) {
+      if (content[key] === null) delete content[key];
+    }
     value.content = content;
     return value;
   }));

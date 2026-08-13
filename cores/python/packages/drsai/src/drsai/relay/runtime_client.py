@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from .device_identity import SecretProtector, WindowsDpapiProtector
 
 _RUNTIME_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 _OPTIONAL_EXECUTION_CAPABILITIES = frozenset({"mcp.stdio"})
+LOGGER = logging.getLogger(__name__)
 
 
 def resolve_runtime_version(override: str | None = None) -> str:
@@ -136,6 +138,9 @@ class RuntimeOutboundConnector:
         self._workspace_revision = 0
         self._workspace_published_revision = -1
         self._socket_send_lock = asyncio.Lock()
+        self._last_failure_signature: tuple[str, int | None] | None = None
+        self._connection_state = "idle"
+        self._last_heartbeat_ack_monotonic: float | None = None
         # The three event projections share the same Runtime database and, for
         # compatibility paths, the same loopback Gateway. Serialize provider
         # polling so a reconnect cannot launch three competing catalog scans.
@@ -150,6 +155,7 @@ class RuntimeOutboundConnector:
         self.wire_protocol = wire_protocol
 
     async def run_once(self) -> None:
+        self._connection_state = "connecting"
         if self.wire_protocol == "hai-http":
             headers = {"X-Runtime-Token": self.credential.registration_token}
             parsed = urlparse(self.url)
@@ -166,6 +172,8 @@ class RuntimeOutboundConnector:
             connection_url = self.url
         async with self.session_factory(headers=headers) as session:
             async with session.ws_connect(connection_url, heartbeat=20) as socket:
+                self._last_failure_signature = None
+                self._connection_state = "connected"
                 background_tasks: list[asyncio.Task[Any]] = []
                 if self.wire_protocol == "hai-http":
                     await self._send_json(socket, {
@@ -201,7 +209,9 @@ class RuntimeOutboundConnector:
                     async for message in socket:
                         if message.type == aiohttp.WSMsgType.TEXT:
                             payload = json.loads(message.data)
-                            if payload.get("type") == "ping":
+                            if payload.get("type") == "heartbeat_ack":
+                                self._last_heartbeat_ack_monotonic = time.monotonic()
+                            elif payload.get("type") == "ping":
                                 await self._send_json(
                                     socket,
                                     {"type": "pong", "request_id": payload.get("request_id")},
@@ -235,6 +245,7 @@ class RuntimeOutboundConnector:
                         elif message.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                             break
                 finally:
+                    self._connection_state = "disconnected"
                     for task in background_tasks:
                         task.cancel()
                     if background_tasks:
@@ -550,7 +561,9 @@ class RuntimeOutboundConnector:
         await self._send_json(socket, response)
 
     async def run_forever(self, stop: asyncio.Event, *, maximum_backoff: float = 30.0) -> None:
-        backoff = 1.0
+        if maximum_backoff <= 0:
+            raise ValueError("runtime_connector_maximum_backoff_invalid")
+        backoff = min(1.0, maximum_backoff)
         while not stop.is_set():
             try:
                 await self.run_once()
@@ -563,9 +576,47 @@ class RuntimeOutboundConnector:
                     await asyncio.wait_for(stop.wait(), timeout=backoff)
                 except TimeoutError:
                     pass
-            except (aiohttp.ClientError, TimeoutError):
+            except (aiohttp.ClientError, TimeoutError) as exc:
+                self._connection_state = "retrying"
+                self._record_connector_failure("runtime_relay_connector_transport_failed", exc)
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=backoff)
                 except TimeoutError:
                     pass
                 backoff = min(maximum_backoff, backoff * 2)
+            except Exception as exc:
+                # A malformed peer frame or a transient local provider failure
+                # must not permanently kill the long-lived Gateway bridge. Do
+                # not log the exception message: it may contain a frame body,
+                # command argument, path or other user-controlled content.
+                self._connection_state = "retrying"
+                self._record_connector_failure("runtime_relay_connector_iteration_failed", exc)
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=backoff)
+                except TimeoutError:
+                    pass
+                backoff = min(maximum_backoff, backoff * 2)
+        self._connection_state = "stopped"
+
+    def diagnostic_state(self, *, heartbeat_ttl: float = 45.0) -> dict[str, str]:
+        """Return content-free live transport state for the local Desktop."""
+        if heartbeat_ttl <= 0:
+            raise ValueError("runtime_connector_heartbeat_ttl_invalid")
+        heartbeat = "unknown"
+        if self._last_heartbeat_ack_monotonic is not None:
+            heartbeat = (
+                "ok"
+                if self._connection_state == "connected"
+                and time.monotonic() - self._last_heartbeat_ack_monotonic <= heartbeat_ttl
+                else "stale"
+            )
+        return {"connection": self._connection_state, "heartbeat": heartbeat}
+
+    def _record_connector_failure(self, event: str, exc: Exception) -> None:
+        status_value = getattr(exc, "status", None)
+        status = status_value if isinstance(status_value, int) and not isinstance(status_value, bool) else None
+        signature = (type(exc).__name__, status)
+        if signature == self._last_failure_signature:
+            return
+        self._last_failure_signature = signature
+        LOGGER.warning("%s type=%s status=%s", event, signature[0], status or "none")

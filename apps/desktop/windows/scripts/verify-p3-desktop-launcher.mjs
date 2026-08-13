@@ -6,7 +6,7 @@ const packagedScript = readFileSync(resolve("scripts/run-p3-packaged-desktop-e2e
 const smoke = readFileSync(resolve("src/main/e2eSmoke.ts"), "utf8");
 for (const required of [
   "OPENDRSAI_E2E_P3_DESKTOP", "OPENDRSAI_P3_INPUT", "OPENDRSAI_E2E_RESULT",
-  "OPENDRSAI_E2E_SCREENSHOT", "OPENDRSAI_E2E_P3_VERIFY_MODEL", "VerifyModelConnection", "-WithGateway", "desktop_ui_electron_e2e_result_missing",
+  "OPENDRSAI_E2E_SCREENSHOT", "OPENDRSAI_E2E_P3_VERIFY_MODEL", "VerifyModelConnection", "-HotLoad", "desktop_ui_electron_e2e_result_missing",
 ]) {
   if (!script.includes(required)) throw new Error(`P3 launcher is missing ${required}`);
 }

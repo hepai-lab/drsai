@@ -12,7 +12,7 @@ const server = createServer((request, response) => {
     if (request.url === "/health") response.end(JSON.stringify({ status: "ok" }));
     else if (request.url === "/v1/models") response.end(JSON.stringify({ object: "list", data: [{ id: "available-model", name: "Available Model" }] }));
     else if (request.url === "/v1/config/cli") response.end(JSON.stringify({ path: "/tmp/config.json", config: { user_id: "anonymous", plan_mode: true } }));
-    else if (request.url === "/v1/models/config") response.end(JSON.stringify({ default_alias: "configured", models: [{ alias: "configured", model: "configured-model", token_limit: 1000 }] }));
+    else if (request.url === "/v1/config/runtime-models") response.end(JSON.stringify({ state: "fresh", revision: "fixture-1", models: [{ ref: { provider_id: "fixture", model_id: "configured" }, display_name: "Configured", input_modalities: ["text"], output_modalities: ["text"], operations: ["chat"], reasoning_efforts: [], token_limit: 1000, availability: "available", capability_source: "provider", capability_confidence: "verified" }] }));
     else if (request.method === "PUT" && request.url?.startsWith("/v1/config/cli/")) response.end("{}");
     else { response.statusCode = 404; response.end(JSON.stringify({ detail: "missing" })); }
   });

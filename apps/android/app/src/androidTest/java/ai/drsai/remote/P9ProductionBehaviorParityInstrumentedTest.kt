@@ -66,7 +66,15 @@ class P9ProductionBehaviorParityInstrumentedTest {
                 JSONObject().put("content", fixture.getString("final_text"))))
 
             val expected = fixture.getJSONArray("expected_semantic_events")
-            assertEquals((0 until expected.length()).map(expected::getString), kinds)
+            // Desktop's high-level projection intentionally omits the final-message
+            // detail event. Android retains it for the OAEP event timeline while
+            // preserving the same cross-platform semantic sequence.
+            assertEquals(
+                (0 until expected.length()).map(expected::getString),
+                kinds.filterNot { it == "message.completed" },
+            )
+            assertEquals(1, kinds.count { it == "message.completed" })
+            assertTrue(kinds.indexOf("message.completed") < kinds.indexOf("run.completed"))
             assertTrue(kinds.last() == "run.completed")
         } finally {
             client.close()

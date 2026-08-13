@@ -125,15 +125,41 @@ async function startRuntimeAgentSurface(
   request: AgentRunRequest,
 ): Promise<void> {
   const agentName = await getCurrentAgentName();
+  const active = activeRuns.get(requestId);
+  if (!active || active.controller.signal.aborted) {
+    await upsertThreadFromRun({
+      id: sessionId,
+      kind: "agent_run",
+      title: request.task.replace(/\s+/g, " ").trim().slice(0, 80),
+      workspacePath: request.workspacePath,
+      lastRunId: runId,
+      lastRequestId: requestId,
+      status: "idle",
+    });
+    emit(webContents, { requestId, sessionId, runId, type: "aborted" });
+    activeRuns.delete(requestId);
+    return;
+  }
   const bridge = createOaepAgentRunBridge({ requestId, sessionId, runId });
   const target = {
     send(channel: string, event: unknown): void {
       if (channel !== "desktop:chat-event" || !event || typeof event !== "object") return;
       const mapped = bridge.map(event as ChatEvent);
-      for (const item of mapped) emit(webContents, item);
-      if (mapped.some((item) => item.type === "done" || item.type === "error" || item.type === "aborted")) {
-        activeRuns.delete(requestId);
+      const terminal = mapped.find((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+      if (!terminal) {
+        for (const item of mapped) emit(webContents, item);
+        return;
       }
+      // The Agent surface treats a terminal event as permission to reload the
+      // thread immediately. Persist the matching terminal state first so that
+      // listThreads can never observe a completed/failed Run as still running.
+      void updateThread({
+        id: sessionId,
+        status: terminal.type === "done" || terminal.type === "aborted" ? "idle" : "error",
+      }).catch(() => undefined).then(() => {
+        for (const item of mapped) emit(webContents, item);
+        activeRuns.delete(requestId);
+      });
     },
   };
   startChat(target, {

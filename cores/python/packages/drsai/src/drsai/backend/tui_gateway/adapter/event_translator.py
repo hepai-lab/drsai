@@ -145,6 +145,14 @@ def extract_citation_payloads(metadata: Any, state: TurnState) -> list[dict[str,
     if not isinstance(metadata, dict):
         return []
     candidates: list[Any] = []
+    encoded = metadata.get("citations_json")
+    if isinstance(encoded, str):
+        try:
+            decoded = json.loads(encoded)
+        except json.JSONDecodeError:
+            decoded = None
+        if isinstance(decoded, list):
+            candidates.extend(decoded)
     for key in ("citations", "annotations", "sources"):
         value = metadata.get(key)
         if isinstance(value, list):
@@ -177,6 +185,9 @@ def extract_citation_payloads(metadata: Any, state: TurnState) -> list[dict[str,
             **({"locator": str(locator)} if locator is not None else {}),
             **({"excerpt": str(value["excerpt"])} if value.get("excerpt") else {}),
             **({"artifact_id": str(value["artifact_id"])} if value.get("artifact_id") else {}),
+            **({key: value[key] for key in (
+                "relation", "knowledge_base_id", "revision", "document_path", "corpus_complete",
+            ) if value.get(key) is not None}),
         })
     return payloads
 
@@ -393,6 +404,12 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 "is_error": bool(getattr(r, "is_error", False)),
                 "duration_ms": duration_ms,
             }
+            try:
+                decoded_result = json.loads(result_str)
+            except json.JSONDecodeError:
+                decoded_result = None
+            if isinstance(decoded_result, dict) and isinstance(decoded_result.get("_inspection"), dict):
+                payload["inspection"] = dict(decoded_result["_inspection"])
             if is_sub:
                 payload["source"] = msg_source
                 payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"

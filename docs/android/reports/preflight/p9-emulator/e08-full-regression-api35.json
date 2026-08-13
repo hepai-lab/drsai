@@ -1,0 +1,58 @@
+{
+  "schema_version": "opendrsai.p9-e08-full-regression/1",
+  "evidence_tier": "emulator_preflight",
+  "release_evidence": false,
+  "generated_at": "2026-08-11T21:37:24.0760354Z",
+  "git": {
+    "commit": "c8f9ec6d72145899ab62ac87a5593af296e3fe67",
+    "dirty": true,
+    "dirty_path_count": 296
+  },
+  "candidate": {
+    "application_id": "ai.drsai.remote.debug",
+    "version_name": "1.5.6",
+    "app_apk_sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24",
+    "test_apk_sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5"
+  },
+  "suites": {
+    "python": {
+      "tests": 2578,
+      "passed": 2573,
+      "skipped": 5,
+      "failures": 0,
+      "errors": 0,
+      "pytest_passed": 2492,
+      "pytest_subtests_passed": 81,
+      "report": "docs/android/reports/preflight/p9-emulator/e08-full-python.xml",
+      "report_sha256": "fc7a310e86740b74a7ad0db78401a0c40f5f249683d69f39afba8b9f8b1309ea"
+    },
+    "android_jvm": {
+      "suites": 126,
+      "tests": 580,
+      "passed": 578,
+      "skipped": 2,
+      "failures": 0,
+      "errors": 0,
+      "report_directory": "apps/android/app/build/test-results/testDebugUnitTest"
+    },
+    "android_instrumentation_and_compose_api35": {
+      "tests": 224,
+      "passed": 202,
+      "skipped": 22,
+      "failures": 0,
+      "errors": 0,
+      "conditional_skips_only": true,
+      "report": "apps/android/app/build/outputs/androidTest-results/connected/debug/TEST-OpenDrSai_P9_API35(AVD) - 15-_app-.xml",
+      "report_sha256": "07d2c58b7996e612812196c876923f1e3a9568ff7b04d114dd31b535f8459daf"
+    }
+  },
+  "gates": {
+    "all_executed_tests_green": true,
+    "compose_covered_by_instrumentation": true,
+    "conditional_skips_have_explicit_external_requirements": true,
+    "test_count_not_below_frozen_baseline": true,
+    "new_p0_or_p1": false
+  },
+  "feature_id": "E08-F01",
+  "passed": true
+}

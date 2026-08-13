@@ -1,7 +1,7 @@
 schema_version: opendrsai.agent-regression-case/1
 
 id: knowledge.grounded
-revision: 1
+revision: 2
 title: 根据固定 OpenDrSai Runtime 知识库回答
 description: 验证知识检索、依据约束和可交互知识引用。
 owner: agent-runtime
@@ -34,9 +34,10 @@ environment:
   knowledge_bases:
     - id: regression.opendrsai-runtime
       revision: 1
+      corpus_complete: true
       documents:
         - path: ../../assets/knowledge_bases/opendrsai_runtime_overview_v1.md
-          sha256: 45c54de9e509c6eceb3f50acd590ff2c2418be9c1f15e032328f0897f4d6b553
+          sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
 
 baseline:
   facts:
@@ -60,7 +61,7 @@ expect:
         - knowledge_base_id: regression.opendrsai-runtime
           knowledge_base_revision: 1
           document_path: opendrsai_runtime_overview_v1.md
-          sha256: 45c54de9e509c6eceb3f50acd590ff2c2418be9c1f15e032328f0897f4d6b553
+          sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
     web_search_calls:
       max: 0
     unrelated_tool_calls:
@@ -78,7 +79,7 @@ expect:
       - Session 表示持续的用户会话
       - Run 表示一次具体的智能体执行
       - 一个 Session 可以包含多个 Run
-      - 重放创建新的 Run
+      - 回答明确说明重放或实验必须创建新的 Run
       - 重放不能覆盖原始 Run
     forbidden_claims:
       - 一个 Session 只能包含一个 Run

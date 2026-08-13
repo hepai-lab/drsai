@@ -134,8 +134,8 @@ def test_desktop_production_factory_and_android_probe_share_kernel_prompt_identi
         "capabilities": [
             {"id": value, "version": 1, "required": value == "chat"}
             for value in [
-                "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
-                "web_search", "web_fetch", "network.public_https",
+                    "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+                    "web_search", "web_fetch", "network.public_https", "image_generation", "image_edit",
             ]
         ],
     }, surface="desktop")

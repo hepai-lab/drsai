@@ -105,7 +105,7 @@ class HttpRelayDiscoveryService(
     private val pairingIssuer = "${root.scheme}://${root.host}"
 
     override suspend fun listRuntimes(cursor: String?, query: String?): Page<DiscoveredRuntime> =
-        getPage("v1/runtimes", cursor, query, allowUnassociatedFallback = true) { item ->
+        getPage(listOf("v1", "runtimes"), cursor, query, allowUnassociatedFallback = true) { item ->
             val identity = item.getJSONObject("runtime")
             val runtimeId = RuntimeId(identity.getString("runtime_id"))
             val runtimeVersion = identity.getString("version")
@@ -135,9 +135,9 @@ class HttpRelayDiscoveryService(
     override suspend fun syncWorkspaces(runtimeId: RuntimeId): WorkspaceCatalogSync =
         withContext(Dispatchers.IO) {
             require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
-            val url = root.newBuilder()
-                .addPathSegments("v1/runtimes/${runtimeId.value}/workspaces/sync")
-                .build()
+            val url = root.withRelayPath(
+                listOf("v1", "runtimes", runtimeId.value, "workspaces", "sync"),
+            )
             val requestBody = "{}".toRequestBody("application/json".toMediaType())
             fun execute(token: String) = http.newCall(
                 authorizeRelayRequest(
@@ -176,7 +176,7 @@ class HttpRelayDiscoveryService(
     ): Page<RemoteWorkspaceRef> {
         require(limit in 1..100) { "relay_workspace_limit_invalid" }
         return getPage(
-            "v1/runtimes/${runtimeId.value}/workspaces",
+            listOf("v1", "runtimes", runtimeId.value, "workspaces"),
             cursor,
             query,
             listOf("lifecycle" to "active", "limit" to limit.toString()),
@@ -249,9 +249,7 @@ class HttpRelayDiscoveryService(
     }
     override suspend fun revokeAssociation(runtimeId: RuntimeId): Unit = withContext(Dispatchers.IO) {
         require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
-        val url = root.newBuilder()
-            .addPathSegments("v1/associations/${runtimeId.value}")
-            .build()
+        val url = root.withRelayPath(listOf("v1", "associations", runtimeId.value))
         fun execute(token: String) = http.newCall(
             authorizeRelayRequest(
                 deviceProof,
@@ -279,9 +277,7 @@ class HttpRelayDiscoveryService(
 
     override suspend fun recordPresence(runtimeId: RuntimeId, accessing: Boolean): Unit = withContext(Dispatchers.IO) {
         require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
-        val url = root.newBuilder()
-            .addPathSegments("v1/associations/${runtimeId.value}/presence")
-            .build()
+        val url = root.withRelayPath(listOf("v1", "associations", runtimeId.value, "presence"))
         val encodedBody = JSONObject()
             .put("accessing", accessing)
             .toString()
@@ -315,9 +311,9 @@ class HttpRelayDiscoveryService(
         require(runtimeId.value.isNotBlank()) { "runtime_id_required" }
         val proof = requireNotNull(deviceProof) { "relay_device_proof_required" }
         val rotation = proof.beginKeyRotation()
-        val url = root.newBuilder()
-            .addPathSegments("v1/associations/${runtimeId.value}/device-key/rotate")
-            .build()
+        val url = root.withRelayPath(
+            listOf("v1", "associations", runtimeId.value, "device-key", "rotate"),
+        )
         val encodedBody = JSONObject()
             .put("new_device_public_key", rotation.newDevicePublicKey)
             .toString()
@@ -361,7 +357,7 @@ class HttpRelayDiscoveryService(
     }
 
     private suspend fun <T> getPage(
-        path: String,
+        path: List<String>,
         cursor: String?,
         query: String?,
         extraQueries: List<Pair<String, String>> = emptyList(),
@@ -369,11 +365,12 @@ class HttpRelayDiscoveryService(
         decode: (JSONObject) -> T,
     ): Page<T> =
         withContext(Dispatchers.IO) {
-            val url = root.newBuilder().addPathSegments(path).apply {
-                cursor?.let { addQueryParameter("cursor", it) }
-                query?.takeIf(String::isNotBlank)?.let { addQueryParameter("query", it) }
-                extraQueries.forEach { addQueryParameter(it.first, it.second) }
-            }.build()
+            val queries = buildList {
+                cursor?.let { add("cursor" to it) }
+                query?.takeIf(String::isNotBlank)?.let { add("query" to it) }
+                addAll(extraQueries)
+            }
+            val url = root.withRelayPath(path, queries)
             val initialToken = accessToken()
             fun execute(token: String, includeDeviceProof: Boolean = true) = http.newCall(
                 authorizeRelayRequest(
@@ -469,10 +466,20 @@ internal fun relayHttpException(response: okhttp3.Response): RelayHttpException 
             ?: detail?.optString("correlation_id")?.takeIf(String::isNotBlank),
         body?.optString("code")?.takeIf(String::isNotBlank)
             ?: detail?.optString("code")?.takeIf(String::isNotBlank),
+        when {
+            detail?.has("retryable") == true -> detail.optBoolean("retryable")
+            body?.has("retryable") == true -> body.optBoolean("retryable")
+            else -> response.code == 408 || response.code == 429 || response.code >= 500
+        },
     )
 }
 
-class RelayHttpException(val status: Int, val correlationId: String?, val errorCode: String? = null) :
+class RelayHttpException(
+    val status: Int,
+    val correlationId: String?,
+    val errorCode: String? = null,
+    val retryable: Boolean = status == 408 || status == 429 || status >= 500,
+) :
     IllegalStateException("relay_http_$status${correlationId?.let { " ($it)" }.orEmpty()}")
 
 fun associationErrorMessage(failure: Throwable): String = when {

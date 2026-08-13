@@ -77,7 +77,12 @@ values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
 }));
 assert.equal(loadVoicePreferences().interactionMode, "streaming");
 assert.equal(loadVoicePreferences().confirmBeforeSend, false);
+values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
+  version: VOICE_PREFERENCES_SCHEMA_VERSION,
+  preferences: { interactionMode: "duplex" },
+}));
+assert.equal(loadVoicePreferences().interactionMode, "duplex");
 values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({ version: 999, preferences: { autoReadResponses: true } }));
 assert.deepEqual(loadVoicePreferences(), defaultVoicePreferences);
 
-console.log("Voice preferences verification passed (18 checks, including confirmation-default migration and removed-voice fallback).");
+console.log("Voice preferences verification passed (19 checks, including duplex persistence, confirmation-default migration, and removed-voice fallback).");

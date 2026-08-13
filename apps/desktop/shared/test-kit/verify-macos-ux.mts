@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isTextCompositionEvent, shouldSubmitTextInput } from "../../shared/renderer/src/imeKeyboardPolicy";
+import { stripTrailingSourceList } from "../../shared/renderer/src/sourceListPresentation";
 
 assert.equal(shouldSubmitTextInput({ key: "Enter" }), true);
 assert.equal(shouldSubmitTextInput({ key: "Enter", shiftKey: true }), false);
@@ -11,6 +12,13 @@ assert.equal(shouldSubmitTextInput({ key: "Process", keyCode: 229 }), false);
 assert.equal(isTextCompositionEvent({ isComposing: true }), true);
 assert.equal(isTextCompositionEvent({ keyCode: 229 }), true);
 assert.equal(isTextCompositionEvent({ isComposing: false, keyCode: 13 }), false);
+
+const citedMarkdown = "Answer[^1] and more[^2].\n\n[^1]: https://example.com/one\n[^2]: https://example.com/two";
+assert.equal(stripTrailingSourceList(citedMarkdown), "Answer and more.", "URL-only Markdown footnotes must not duplicate structured source cards");
+const explanatoryFootnote = "Answer[^note].\n\n[^note]: This qualification is not a source URL.";
+assert.equal(stripTrailingSourceList(explanatoryFootnote), explanatoryFootnote, "explanatory footnotes must remain visible");
+const conflictingAppendix = "Answer[^1].\n\n[^1]: https://example.com/one\n\nAdditional text";
+assert.equal(stripTrailingSourceList(conflictingAppendix), conflictingAppendix, "non-trailing source definitions must not remove later content");
 
 const read = (path: string) => readFile(resolve(process.cwd(), path), "utf8");
 const [window, index, integrations, preload, app, chat, shell, css] = await Promise.all([

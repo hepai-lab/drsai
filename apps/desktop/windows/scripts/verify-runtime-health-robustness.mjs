@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { createServer as createTcpServer } from "node:net";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +10,8 @@ import { build } from "esbuild";
 const desktop = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const temp = mkdtempSync(join(tmpdir(), "opendrsai-runtime-health-"));
 const bundle = join(temp, "runtime-health-robustness.mjs");
+const tcpBundle = join(temp, "runtime-health-tcp-occupied.mjs");
+const managedBundle = join(temp, "runtime-health-managed-busy.mjs");
 const home = join(temp, "home");
 mkdirSync(home, { recursive: true });
 
@@ -40,11 +42,27 @@ const unauthorizedServer = createServer((request, response) => {
 });
 const tcpOccupant = createTcpServer((socket) => {
   socket.on("error", () => undefined);
-  socket.end("not an OpenDrSai Gateway\r\n");
+  // Reset HTTP probes while still accepting TCP connections. Sending an
+  // HTTP-like garbage line can be rewritten to a synthetic 403 by Windows
+  // endpoint/network software, which tests authorization rather than a raw
+  // non-HTTP port occupant.
+  socket.destroy();
 });
 let managedDelayMs = 700;
 const managedRequests = { health: 0, models: 0 };
 const managedServer = createServer((request, response) => {
+  if (request.url === "/v1/runtime") {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({
+      runtime_id: "fixture-runtime",
+      instance_id: "fixture-instance",
+      version: "1.5.5",
+      protocol_version: 1,
+      platform: "win32",
+      dev_managed: true,
+    }));
+    return;
+  }
   const endpoint = request.url === "/health" ? "health" : request.url === "/v1/models" ? "models" : null;
   if (!endpoint) {
     response.writeHead(404, { "Content-Type": "application/json" });
@@ -80,6 +98,12 @@ try {
     target: "node22",
     external: ["electron"],
   });
+  // Each fixture changes environment variables consumed by Gateway module
+  // constants. Use distinct module paths so Node cannot reuse the previous
+  // module graph; URL query cache-busting is not reliable for bundled ESM on
+  // every supported Windows/Node combination.
+  copyFileSync(bundle, tcpBundle);
+  copyFileSync(bundle, managedBundle);
 
   await new Promise((resolveListen) => unauthorizedServer.listen(0, "127.0.0.1", resolveListen));
   const unauthorizedAddress = unauthorizedServer.address();
@@ -89,7 +113,7 @@ try {
     OPENDRSAI_GATEWAY_PORT: String(unauthorizedAddress.port),
     OPENDRSAI_GATEWAY_INSTANCE_TOKEN: "fixture-runtime-token-0123456789abcdef",
   });
-  const runtime = await import(`${pathToFileURL(bundle).href}?case=unauthorized`);
+  const runtime = await import(pathToFileURL(bundle).href);
   const status = await runtime.getGatewayStatus();
   assert.equal(status.ready, false, "Unauthorized Gateway unexpectedly reported ready");
   assert.equal(status.externalReady, false, "Unauthorized Gateway should not be an external-ready Runtime");
@@ -125,7 +149,10 @@ try {
   assert.equal(degraded.degraded?.code, "local_runtime_unavailable", "Degraded Worktree event poll did not expose the Runtime reason");
   assert.equal(degraded.degraded?.retryable, true, "Local Runtime unavailable should remain retryable");
 
-  await closeServer(unauthorizedServer);
+  // Keep the HTTP fixture bound while allocating the raw TCP fixture. On
+  // Windows an immediately released ephemeral port can be reused while the
+  // Node HTTP agent still owns a keep-alive socket for that origin, which
+  // makes the next probe observe the previous 401 response.
   await new Promise((resolveListen) => tcpOccupant.listen(0, "127.0.0.1", resolveListen));
   const tcpAddress = tcpOccupant.address();
   assert(tcpAddress && typeof tcpAddress === "object", "TCP fixture did not expose a TCP port");
@@ -134,12 +161,21 @@ try {
     OPENDRSAI_GATEWAY_PORT: String(tcpAddress.port),
     OPENDRSAI_GATEWAY_INSTANCE_TOKEN: "fixture-runtime-token-0123456789abcdef",
   });
-  const tcpRuntime = await import(`${pathToFileURL(bundle).href}?case=tcp-occupied`);
+  const tcpRuntime = await import(pathToFileURL(tcpBundle).href);
   const tcpStatus = await tcpRuntime.getGatewayStatus();
+  assert.equal(
+    tcpStatus.baseUrl,
+    `http://127.0.0.1:${tcpAddress.port}`,
+    "TCP fixture Runtime captured a stale Gateway port",
+  );
   assert.equal(tcpStatus.ready, false, "Non-HTTP port occupant unexpectedly reported ready");
   assert.equal(tcpStatus.portOpen, true, "Non-HTTP port occupant was not detected as an open port");
   assert.equal(tcpStatus.externalConflict, true, "Non-HTTP port occupant should be reported as a conflict");
-  assert.equal(tcpStatus.diagnosticCode, "gateway_port_occupied", "Non-HTTP port occupant was not classified");
+  assert.equal(
+    tcpStatus.diagnosticCode,
+    "gateway_port_occupied",
+    `Non-HTTP port occupant was not classified: ${JSON.stringify({ unauthorizedPort: unauthorizedAddress.port, tcpPort: tcpAddress.port, tcpStatus })}`,
+  );
   await assert.rejects(
     () => tcpRuntime.LocalRuntimeClient.connect(),
     (error) => tcpRuntime.isLocalRuntimeUnavailableError(error)
@@ -161,7 +197,7 @@ try {
     OPENDRSAI_GATEWAY_PROBE_CACHE_MS: "1",
     DRSAI_GATEWAY_DEV_MANAGED: "1",
   });
-  const managedRuntime = await import(`${pathToFileURL(bundle).href}?case=managed-busy`);
+  const managedRuntime = await import(pathToFileURL(managedBundle).href);
   const busyStatus = await managedRuntime.getGatewayStatus();
   assert.equal(busyStatus.ready, false, "Slow managed Gateway unexpectedly reported ready");
   assert.equal(busyStatus.managed, true, "Slow managed Gateway lost its ownership state");

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from drsai.config import ConfigError, SecretValue, load_user_config, resolve_model_config, resolve_model_ref
+from drsai.config.defaults import DEFAULT_OPENAI_BASE_URL
 from drsai.config.loader import parse_user_config
 from drsai.config.model_registry import find_model_capabilities
 
@@ -27,9 +28,9 @@ def test_missing_config_uses_builtin_hepai(tmp_path: Path) -> None:
     config = load_user_config(tmp_path / "missing.toml")
     resolved = resolve_model_config(config, environ={"HEPAI_API_KEY": "secret-hepai"})
 
-    assert resolved.model == "deepseek-v4-pro"
+    assert resolved.model == "deepseek-v4-flash"
     assert resolved.provider.name == "hepai"
-    assert resolved.provider.base_url == "https://aiapi.ihep.ac.cn/apiv2"
+    assert resolved.provider.base_url == DEFAULT_OPENAI_BASE_URL
     assert resolved.provider.api_key is not None
     assert resolved.provider.api_key.reveal() == "secret-hepai"
     assert resolved.known_model is True

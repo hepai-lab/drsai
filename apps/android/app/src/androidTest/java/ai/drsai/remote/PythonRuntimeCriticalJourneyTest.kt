@@ -74,6 +74,25 @@ class PythonRuntimeCriticalJourneyTest {
                     assertKinds(receipt, if (outputType == "command_execution") "command.completed" else "file_change.completed")
                 }
 
+                client.command("tool-failed", PythonRuntimeMessageType.START_RUN, 0, payload("search protected path"))
+                val failedCall = client.command(
+                    "tool-failed", PythonRuntimeMessageType.MODEL_COMPLETED, 1,
+                    toolCalls("failed-1", "workspace.search", JSONObject().put("query", "protected")),
+                )
+                assertKinds(failedCall, "tool.started")
+                val failedReceipt = client.command(
+                    "tool-failed", PythonRuntimeMessageType.TOOL_RESULT, 2,
+                    JSONObject().put("call_id", "failed-1").put("succeeded", false)
+                        .put("content", JSONObject().put("message", "Workspace permission denied"))
+                        .put("error_code", "workspace_permission_denied"),
+                )
+                assertKinds(failedReceipt, "tool.error")
+                val toolError = outbound(failedReceipt).single {
+                    it.optJSONObject("payload")?.optString("kind") == "tool.error"
+                }.getJSONObject("payload")
+                assertEquals("workspace_permission_denied", toolError.getString("code"))
+                assertEquals("workspace.search", toolError.getString("name"))
+
                 client.command("core-tool", PythonRuntimeMessageType.START_RUN, 0, payload("count words"))
                 val coreTool = client.command(
                     "core-tool", PythonRuntimeMessageType.MODEL_COMPLETED, 1,

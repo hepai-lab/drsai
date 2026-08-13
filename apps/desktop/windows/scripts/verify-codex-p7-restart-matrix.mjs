@@ -35,6 +35,7 @@ function run(command, args, cwd, label) {
     encoding: "utf8",
     windowsHide: true,
     maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS: "250" },
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {

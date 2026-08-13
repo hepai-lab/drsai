@@ -35,7 +35,7 @@ for (const root of [...productRoots, docsRoot]) {
 
 assert.deepEqual(violations, [], `Forbidden Agent Core terminology:\n${violations.join("\n")}`);
 const architecture = await readFile(join(docsRoot, "OpenDrSai远程工作区实现方案V1.md"), "utf8");
-for (const term of ["Full Agent Runtime", "Agent Backend", "Codex Agent Backend", "Codex Adapter", "Codex App Server", "OWOP"]) {
+for (const term of ["Full Agent Runtime", "Agent Backend", "Codex Agent Runtime", "Codex Adapter", "Codex App Server", "OWOP"]) {
   assert(architecture.includes(term), `Required architecture term is missing: ${term}`);
 }
 console.log("Codex architecture terminology verification passed.");

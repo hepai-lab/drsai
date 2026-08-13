@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 import urllib.request
 import uuid
@@ -12,6 +13,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Iterator, Protocol
+
+from drsai.platform_upstream import resolve_hepai_model_base_url
 
 
 @dataclass(frozen=True)
@@ -191,8 +194,43 @@ def _is_platform_user_id(value: str) -> bool:
         return False
 
 
+def resolve_gateway_instance_token(*, required: bool = False) -> str | None:
+    """Resolve the local instance token from env or Desktop's bounded file.
+
+    The persisted file is the Desktop/Runtime handoff across source-watcher
+    and process restarts.  A present but malformed file is never treated as
+    "authentication disabled".
+    """
+    configured = os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", "").strip()
+    if configured:
+        return configured
+    root = os.environ.get("DRSAI_HOME", os.path.expanduser("~/.drsai"))
+    token_path = os.path.join(root, "runtime", "instance-token")
+    if not os.path.lexists(token_path):
+        if required:
+            raise RuntimeError("gateway_instance_token_required")
+        return None
+    try:
+        if os.path.islink(token_path) or not os.path.isfile(token_path):
+            raise RuntimeError("gateway_instance_token_file_invalid")
+        if os.path.getsize(token_path) > 256:
+            raise RuntimeError("gateway_instance_token_file_invalid")
+        with open(token_path, encoding="ascii") as handle:
+            token = handle.read().strip()
+    except RuntimeError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise RuntimeError("gateway_instance_token_file_invalid") from exc
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token):
+        raise RuntimeError("gateway_instance_token_file_invalid")
+    return token
+
+
 def verify_gateway_instance(provided: str | None) -> bool:
-    expected = os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", "").strip()
+    try:
+        expected = resolve_gateway_instance_token()
+    except RuntimeError:
+        return False
     if not expected:
         return True
     if os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN_REVOKED") == "1":
@@ -288,12 +326,7 @@ def _model_base_url(issuer: str) -> str:
     if override:
         if not override.startswith("https://") and os.environ.get("DRSAI_ALLOW_INSECURE_MODEL_URL") != "1":
             raise ValueError("invalid_model_base_url")
-        return override
-    if issuer == "https://ai-dev.ihep.ac.cn/api":
-        return "https://ai-dev.ihep.ac.cn/apiv2/v1"
-    if issuer == "https://ai.ihep.ac.cn/api":
-        return "https://ai.ihep.ac.cn/apiv2/v1"
-    raise ValueError("unsupported_issuer")
+    return resolve_hepai_model_base_url(os.environ, issuer=issuer)
 
 
 def _decode_verified_claims(token: str) -> dict[str, object]:

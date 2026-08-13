@@ -38,7 +38,15 @@ class HaiPythonModelHostPort(
         var finishReason: String? = null
         var receivedDelta = false
         suspend fun complete(tools: JSONArray) {
-            val messages = request.messages.toRuntimeMessages()
+            val messages = request.messages.toRuntimeMessages().toMutableList().apply {
+                compatibleRequest.requiredToolName?.let { name ->
+                    add(RuntimeMessage(
+                        role = "system",
+                        content = "This turn requires using the only available tool '$name'. " +
+                            "Do not answer directly before calling it.",
+                    ))
+                }
+            }
             val consume: suspend (ModelDelta) -> Unit = { delta ->
                 if (!delta.content.isNullOrEmpty() || delta.toolCalls.isNotEmpty()) receivedDelta = true
                 delta.content?.takeIf(String::isNotEmpty)?.let {
@@ -99,17 +107,27 @@ class HaiPythonModelHostPort(
 
 }
 
-private data class ProviderCompatibleToolRequest(val tools: JSONArray, val toolChoice: JSONObject)
+private data class ProviderCompatibleToolRequest(
+    val tools: JSONArray,
+    val toolChoice: JSONObject,
+    val requiredToolName: String? = null,
+)
 
 /** Mirrors Desktop Full Runtime's provider-neutral handling of required tool domains. */
 private fun providerCompatibleToolRequest(tools: JSONArray, policy: JSONObject): ProviderCompatibleToolRequest {
-    if (policy.optString("mode") != "required") return ProviderCompatibleToolRequest(tools, policy)
-    val matching = policy.optJSONArray("matching_tools") ?: return ProviderCompatibleToolRequest(
-        tools, ModelToolChoiceProtocolAdapter.automatic(),
-    )
-    val matchingNames = (0 until matching.length()).mapNotNull { index ->
-        matching.optString(index).takeIf(String::isNotBlank)
-    }.toSet()
+    val mode = policy.optString("mode")
+    if (mode !in setOf("required", "specified")) return ProviderCompatibleToolRequest(tools, policy)
+    val matchingNames = if (mode == "specified") {
+        setOf(policy.optString("specified_tool").takeIf(String::isNotBlank)
+            ?: return ProviderCompatibleToolRequest(tools, policy))
+    } else {
+        val matching = policy.optJSONArray("matching_tools") ?: return ProviderCompatibleToolRequest(
+            tools, ModelToolChoiceProtocolAdapter.automatic(),
+        )
+        (0 until matching.length()).mapNotNull { index ->
+            matching.optString(index).takeIf(String::isNotBlank)
+        }.toSet()
+    }
     if (matchingNames.isEmpty()) return ProviderCompatibleToolRequest(
         tools, ModelToolChoiceProtocolAdapter.automatic(),
     )
@@ -119,7 +137,11 @@ private fun providerCompatibleToolRequest(tools: JSONArray, policy: JSONObject):
         }
     }
     check(filtered.length() > 0) { "model_required_tools_unavailable" }
-    return ProviderCompatibleToolRequest(filtered, ModelToolChoiceProtocolAdapter.automatic())
+    return ProviderCompatibleToolRequest(
+        filtered,
+        ModelToolChoiceProtocolAdapter.automatic(),
+        matchingNames.singleOrNull(),
+    )
 }
 
 fun interface PythonToolExecutor {

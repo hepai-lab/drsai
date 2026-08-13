@@ -7,6 +7,7 @@ routes without pretending that those protocols are interchangeable.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Literal, Mapping
 
@@ -123,8 +124,10 @@ def default_operation_routes(ref: ModelRef, operation: ModelOperation) -> ModelO
             ModelOperationRoute("openai_responses", 10),
             ModelOperationRoute("openai_chat_completions", 20),
         )
-    elif operation in {"image_generation", "image_edit"}:
-        routes = (ModelOperationRoute("gemini_generate_content", 10),)
+    elif operation == "image_generation":
+        routes = (ModelOperationRoute("openai_images_generation", 10),)
+    elif operation == "image_edit":
+        routes = (ModelOperationRoute("openai_images_edits", 10),)
     elif operation == "text_to_speech":
         routes = (ModelOperationRoute("openai_audio_speech", 10),)
     elif operation == "speech_to_text":
@@ -178,6 +181,7 @@ def resolve_agent_operation(
             config,
             provider_id=selection.ref.provider_id,
             model_id=selection.ref.model_id,
+            environ=os.environ,
             require_credentials=require_credentials,
         )
     except ValueError as exc:
@@ -190,6 +194,10 @@ def resolve_agent_operation(
             ModelOperationRoute("gemini_generate_content", 30),
         ))
     elif role == "image_understanding_model" and operation == "tool_calling" and is_gemini_family:
+        route_plan = ModelOperationRoutePlan(selection.ref, operation, (
+            ModelOperationRoute("gemini_generate_content", 10),
+        ))
+    elif role == "image_generation_model" and resolved.provider.wire_api == "gemini":
         route_plan = ModelOperationRoutePlan(selection.ref, operation, (
             ModelOperationRoute("gemini_generate_content", 10),
         ))

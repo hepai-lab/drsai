@@ -70,6 +70,18 @@ def test_subagent_cannot_elevate_to_parent_write_or_approval_tools() -> None:
         _delegate(kernel, requested=["workspace.write"])
 
 
+def test_subagent_accepts_provider_encoded_aliases_only_for_safe_parent_tools() -> None:
+    parent = create_agent_kernel(surface="android")
+    delegated = _delegate(parent, requested=["web__dot__search"])
+    started = next(item for item in delegated if item.payload.get("kind") == "subagent.started")
+    request = next(item for item in delegated if item.message_type is MessageType.MODEL_REQUEST)
+    assert started.payload["allowed_tools"] == ["web.search"]
+    assert [tool["name"] for tool in request.payload["tools"]] == ["web.search"]
+
+    with pytest.raises(ValueError, match="subagent_tool_whitelist_denied"):
+        _delegate(create_agent_kernel(surface="android"), requested=["workspace__dot__write"])
+
+
 def test_android_and_desktop_subagent_kernel_digest_match() -> None:
     values = []
     for surface in ("android", "desktop"):

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import bisect
 import hashlib
 import hmac
 import secrets
 import ipaddress
+import json
 from urllib.parse import parse_qsl, urlencode
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -60,7 +62,7 @@ class _Association:
     last_seen_at: datetime | None = None
     accessing_until: datetime | None = None
     revoked_at: datetime | None = None
-    proof_nonces: set[str] = field(default_factory=set)
+    proof_nonces: dict[str, datetime] = field(default_factory=dict)
     push_provider: str | None = None
     push_token_digest: str | None = None
     push_generation: int = 0
@@ -92,7 +94,11 @@ class RelayRegistry:
     """Thread-safe reference registry. No canonical path is accepted or stored."""
 
     def __init__(self, *, code_ttl_seconds: int = 120, offline_after_seconds: int = 45,
-                 supported_push_providers: frozenset[str] = frozenset()) -> None:
+                 supported_push_providers: frozenset[str] = frozenset(),
+                 device_proof_nonce_capacity: int = 4096,
+                 cursor_secret: bytes | None = None) -> None:
+        if not 1 <= device_proof_nonce_capacity <= 65536:
+            raise ValueError("device_proof_nonce_capacity_invalid")
         self._lock = RLock()
         self._runtimes: dict[str, _Runtime] = {}
         self._registration_codes: dict[str, _Code] = {}
@@ -103,6 +109,10 @@ class RelayRegistry:
         self.code_ttl = timedelta(seconds=code_ttl_seconds)
         self.offline_after = timedelta(seconds=offline_after_seconds)
         self.supported_push_providers = frozenset(supported_push_providers)
+        self.device_proof_nonce_capacity = device_proof_nonce_capacity
+        self._cursor_secret = cursor_secret or secrets.token_bytes(32)
+        if not isinstance(self._cursor_secret, bytes) or len(self._cursor_secret) < 32:
+            raise ValueError("cursor_secret_invalid")
 
     @staticmethod
     def _digest(secret: str) -> str:
@@ -115,6 +125,13 @@ class RelayRegistry:
     @classmethod
     def _device_summary(cls, subject: str, device_id: str) -> str:
         return f"dev_{cls._digest(subject + chr(0) + device_id)[:12]}"
+
+    @classmethod
+    def authorization_key(cls, subject: str, device_id: str) -> tuple[str, str]:
+        """Return a content-free identity suitable for live-stream ownership."""
+        if not subject or not device_id:
+            raise RelayRegistryError("device_proof_required", "Device identity is required")
+        return cls._subject_summary(str(subject)), cls._device_summary(str(subject), str(device_id))
 
     def issue_registration_code(self) -> str:
         code = secrets.token_urlsafe(18)
@@ -359,6 +376,8 @@ class RelayRegistry:
             association = runtime.associations.get((str(subject), device_id))
             if association is None or association.revoked_at is not None:
                 raise RelayRegistryError("association_required", "Runtime association is not active")
+            if "read" not in association.permissions:
+                raise RelayRegistryError("permission_forbidden", "Association permission is not granted")
             if provider not in self.supported_push_providers:
                 raise RelayRegistryError("push_provider_unavailable", "Push provider is not configured", retryable=True)
             digest = self._digest(token)
@@ -514,17 +533,31 @@ class RelayRegistry:
             public_keys = {association.device_public_key for _, association in candidates}
             if len(public_keys) != 1:
                 raise RelayRegistryError("device_identity_conflict", "Device identity is inconsistent")
+            now = datetime.now(UTC)
+            cutoff = now - timedelta(seconds=60)
+            for _, association in candidates:
+                association.proof_nonces = {
+                    value: observed_at
+                    for value, observed_at in association.proof_nonces.items()
+                    if observed_at >= cutoff
+                }
             if any(nonce in association.proof_nonces for _, association in candidates):
                 raise RelayRegistryError("device_proof_replay", "Device proof nonce was already used")
+            if any(
+                len(association.proof_nonces) >= self.device_proof_nonce_capacity
+                for _, association in candidates
+            ):
+                raise RelayRegistryError(
+                    "backpressure_overflow",
+                    "Device proof replay window is full",
+                    retryable=True,
+                )
             try:
                 Ed25519PublicKey.from_public_bytes(next(iter(public_keys))).verify(signature_bytes, canonical)
             except Exception as exc:
                 raise RelayRegistryError("device_proof_invalid", "Device proof signature is invalid") from exc
-            now = datetime.now(UTC)
             for _, association in candidates:
-                association.proof_nonces.add(nonce)
-                if len(association.proof_nonces) > 512:
-                    association.proof_nonces = set(sorted(association.proof_nonces)[-256:])
+                association.proof_nonces[nonce] = now
                 association.last_seen_at = now
             return device_id
 
@@ -770,12 +803,37 @@ class RelayRegistry:
         with self._lock:
             return self._require_runtime(runtime_id).version
 
-    def active_device_ids(self, runtime_id: str) -> list[str]:
-        """Return opaque delivery identifiers for active associations only."""
+    def supported_runtime_capability_summary(
+        self, required_capabilities: frozenset[str]
+    ) -> tuple[int, int]:
+        """Return content-free compatibility counts for active enrollments.
+
+        A registered Runtime remains part of the supported fleet while it is
+        offline or paused.  An enrollment that has never advertised the full
+        capability profile therefore fails closed as Legacy-dependent.
+        """
+        if not required_capabilities:
+            raise ValueError("required_runtime_capabilities_empty")
+        with self._lock:
+            supported = [runtime for runtime in self._runtimes.values() if not runtime.revoked]
+            requires_legacy = sum(
+                1 for runtime in supported
+                if not required_capabilities.issubset(runtime.capabilities)
+            )
+            return len(supported), requires_legacy
+
+    def active_device_ids(self, runtime_id: str, workspace_id: str | None = None) -> list[str]:
+        """Return opaque delivery IDs that may read the event Workspace."""
         with self._lock:
             runtime = self._require_runtime(runtime_id)
             return sorted({association.device_id for association in runtime.associations.values()
-                           if association.revoked_at is None})
+                           if association.revoked_at is None
+                           and "read" in association.permissions
+                           and (
+                               workspace_id is None
+                               or association.workspace_scope == "all"
+                               or workspace_id in association.allowed_workspace_ids
+                           )})
 
     def replace_workspace_projection(self, runtime_id: str, workspaces: list[Workspace]) -> None:
         if any(item.runtime_id != runtime_id for item in workspaces):
@@ -800,7 +858,14 @@ class RelayRegistry:
         if query:
             items = [r for r in items if query.casefold() in self._public_display_name(r.display_name).casefold()]
         items.sort(key=lambda r: r.runtime_id)
-        page, next_cursor = self._page(items, cursor, limit)
+        page, next_cursor = self._page(
+            items,
+            cursor,
+            limit,
+            kind="runtimes",
+            context=(str(subject), str(device_id or ""), str(query or "").casefold()),
+            key=lambda runtime: runtime.runtime_id,
+        )
         return [RuntimeSummary(runtime=self._identity(r), display_name=self._public_display_name(r.display_name)) for r in page], next_cursor
 
     @classmethod
@@ -835,7 +900,7 @@ class RelayRegistry:
     ) -> dict[str, str]:
         safe_name = self._validated_display_name(display_name)
         with self._lock:
-            runtime = self._authorized(subject, runtime_id)
+            runtime = self._authorized(subject, runtime_id, "send")
             runtime.display_name = safe_name
             self.audit.append({
                 "action": "runtime.rename",
@@ -856,7 +921,17 @@ class RelayRegistry:
             items = [item for item in items if item.lifecycle == lifecycle]
         if query:
             items = [w for w in items if query.casefold() in w.display_name.casefold()]
-        return self._page(items, cursor, limit)
+        return self._page(
+            items,
+            cursor,
+            limit,
+            kind="workspaces",
+            context=(
+                str(subject), runtime_id, str(query or "").casefold(),
+                lifecycle.value if lifecycle is not None else "all",
+            ),
+            key=lambda workspace: workspace.workspace_id,
+        )
 
     def authorize_workspace(
         self, subject: str, runtime_id: str, workspace_id: str, permission: str = "read"
@@ -874,18 +949,77 @@ class RelayRegistry:
             raise RelayRegistryError("workspace_forbidden", "Workspace is not authorized")
         return workspace
 
-    @staticmethod
-    def _page(items: list, cursor: str | None, limit: int) -> tuple[list, str | None]:
+    def _cursor_context(self, kind: str, context: tuple[str, ...]) -> str:
+        return hmac.new(
+            self._cursor_secret,
+            "\0".join((kind, *context)).encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _encode_page_cursor(self, kind: str, context: tuple[str, ...], after: str) -> str:
+        payload = json.dumps(
+            {"v": 1, "kind": kind, "context": self._cursor_context(kind, context), "after": after},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        signature = hmac.new(self._cursor_secret, payload, hashlib.sha256).digest()
+        return base64.urlsafe_b64encode(payload + signature).rstrip(b"=").decode("ascii")
+
+    def _decode_page_cursor(self, cursor: str, kind: str, context: tuple[str, ...]) -> str:
+        try:
+            if not isinstance(cursor, str) or not 1 <= len(cursor) <= 2048:
+                raise ValueError
+            packed = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+            if len(packed) <= 32:
+                raise ValueError
+            payload, signature = packed[:-32], packed[-32:]
+            expected_signature = hmac.new(self._cursor_secret, payload, hashlib.sha256).digest()
+            if not hmac.compare_digest(signature, expected_signature):
+                raise ValueError
+            value = json.loads(payload.decode("utf-8"))
+            if not isinstance(value, dict) or set(value) != {"v", "kind", "context", "after"}:
+                raise ValueError
+            after = value.get("after")
+            if (
+                value.get("v") != 1
+                or value.get("kind") != kind
+                or value.get("context") != self._cursor_context(kind, context)
+                or not isinstance(after, str)
+                or not 1 <= len(after) <= 500
+            ):
+                raise ValueError
+            return after
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RelayRegistryError("cursor_invalid", "cursor is invalid") from exc
+
+    def _page(
+        self,
+        items: list,
+        cursor: str | None,
+        limit: int,
+        *,
+        kind: str,
+        context: tuple[str, ...],
+        key,
+    ) -> tuple[list, str | None]:
         if not 1 <= limit <= 100:
             raise RelayRegistryError("page_limit_invalid", "limit must be between 1 and 100")
-        try:
-            start = int(cursor or "0")
-        except ValueError as exc:
-            raise RelayRegistryError("cursor_invalid", "cursor is invalid") from exc
-        if start < 0 or start > len(items):
-            raise RelayRegistryError("cursor_invalid", "cursor is invalid")
+        keys = [str(key(item)) for item in items]
+        if keys != sorted(keys) or len(keys) != len(set(keys)):
+            raise RelayRegistryError("catalog_order_invalid", "catalog ordering is invalid")
+        start = 0
+        if cursor is not None:
+            after = self._decode_page_cursor(cursor, kind, context)
+            # Keyset semantics remain stable when the prior page's final item
+            # is deleted or new items are inserted before it.
+            start = bisect.bisect_right(keys, after)
         end = min(start + limit, len(items))
-        return items[start:end], str(end) if end < len(items) else None
+        page = items[start:end]
+        next_cursor = (
+            self._encode_page_cursor(kind, context, str(key(page[-1])))
+            if page and end < len(items) else None
+        )
+        return page, next_cursor
 
     def capabilities(self, subject: str, runtime_id: str) -> RuntimeCapabilities:
         runtime = self._authorized(subject, runtime_id)

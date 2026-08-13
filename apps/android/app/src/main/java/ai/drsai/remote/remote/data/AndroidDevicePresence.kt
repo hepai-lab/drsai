@@ -42,8 +42,8 @@ object AndroidDevicePresence {
     private class PresenceLifecycle(application: Application) : DefaultLifecycleObserver {
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private val container = RemoteWorkspaceContainer.get(application)
-        private val tokenStore = container.tokenStore
-        private val relay = container.relayDiscovery
+        private val tokenStore = container.boundaries.auth.tokens
+        private val relay = container.boundaries.association.service
         private val cache = container.directoryCache
         private val hostSource = object : DevicePresenceHostSource {
             override suspend fun activeRuntimeIds(): List<RuntimeId> =
@@ -65,6 +65,7 @@ object AndroidDevicePresence {
             authenticated = {
                 tokenStore.user() != null && !tokenStore.accessToken.isNullOrBlank()
             },
+            waitFor = container.time::waitFor,
         )
 
         override fun onStart(owner: LifecycleOwner) {

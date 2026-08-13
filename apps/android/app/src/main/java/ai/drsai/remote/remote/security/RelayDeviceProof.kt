@@ -128,10 +128,16 @@ class RelayDeviceProof(
 
 class KeystoreWrappedRelayDeviceSigner(
     context: Context,
+    preferencesName: String = DEFAULT_PREFERENCES_NAME,
 ) : RelayDeviceSigner {
+    init {
+        require(preferencesName.matches(Regex("^[A-Za-z0-9._-]{8,128}$"))) {
+            "relay_device_preferences_name_invalid"
+        }
+    }
     private val prefs = EncryptedSharedPreferences.create(
         context.applicationContext,
-        "opendrsai_relay_device_identity",
+        preferencesName,
         MasterKey.Builder(context.applicationContext)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build(),
@@ -305,6 +311,7 @@ class KeystoreWrappedRelayDeviceSigner(
         }.getOrDefault(false)
 
     companion object {
+        const val DEFAULT_PREFERENCES_NAME = "opendrsai_relay_device_identity"
         private const val PRIVATE_KEY = "private_pkcs8"
         private const val PUBLIC_KEY = "public_x509"
         private const val DEVICE_ID = "stable_device_id"

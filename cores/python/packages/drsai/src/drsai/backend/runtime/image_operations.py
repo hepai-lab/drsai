@@ -6,6 +6,8 @@ import base64
 import binascii
 from io import BytesIO
 from pathlib import Path
+import json
+import hashlib
 from typing import Any, Mapping
 
 import httpx
@@ -57,6 +59,28 @@ class RuntimeImageOperationAdapter:
         prompt = str(arguments.get("prompt") or "").strip()
         if not prompt or len(prompt) > 4_000 or any(char == "\0" for char in prompt):
             raise RuntimeExecutionError("image_prompt_invalid", "Image prompt must contain 1-4000 characters.")
+        applied_constraints: list[str] = []
+        for resource in context.input_resources:
+            if resource.get("kind") != "selection" or resource.get("name") != "OpenDrSai regression control":
+                continue
+            try:
+                control = json.loads(str(resource.get("content") or ""))
+            except json.JSONDecodeError:
+                continue
+            constraints = control.get("image_constraints") if isinstance(control, dict) else None
+            if not isinstance(constraints, dict):
+                continue
+            applied_constraints = [str(value) for value in constraints.get("forbidden") or [] if isinstance(value, str)]
+            if applied_constraints:
+                prompt += (
+                    "\n\nHard negative constraints (must be obeyed literally): "
+                    + "; ".join(applied_constraints)
+                    + ". Represent concepts only with abstract unlabeled shapes or icons. Never render the theme name, "
+                      "capability names, typography, glyphs, letters, digits, logos, or watermarks."
+                )
+            break
+        if len(prompt) > 4_000:
+            raise RuntimeExecutionError("image_prompt_invalid", "Image prompt plus controlled constraints exceeds 4000 characters.")
         size = str(arguments.get("size") or "1024x1024")
         if size not in ALLOWED_SIZES:
             raise RuntimeExecutionError("image_size_unsupported", "The requested image size is unsupported.")
@@ -129,9 +153,35 @@ class RuntimeImageOperationAdapter:
 
         if cancellation_event is not None and cancellation_event.is_set():
             raise RuntimeExecutionError("side_effect_outcome_unknown", "Image operation was cancelled after submission.")
+        requested_name = str(arguments.get("display_name") or "")
+        if requested_name.casefold().endswith(".png") and mime != "image/png":
+            try:
+                with PILImage.open(BytesIO(content)) as image:
+                    normalized = BytesIO()
+                    image.convert("RGBA" if "A" in image.getbands() else "RGB").save(normalized, format="PNG")
+                    content = normalized.getvalue()
+                if len(content) > MAX_IMAGE_RESULT_BYTES:
+                    raise RuntimeExecutionError("image_result_too_large", "Normalized image exceeds the Runtime limit.")
+                mime = "image/png"
+            except RuntimeExecutionError:
+                raise
+            except Exception as exc:
+                raise RuntimeExecutionError("image_provider_invalid_response", "Image output could not be normalized.") from exc
         extension = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}[mime]
-        display_name = str(arguments.get("display_name") or f"opendrsai-{operation}{extension}")[:240]
-        artifact = self.artifact_store.publish_content(context, content, display_name=display_name, mime_type=mime)
+        display_name = Path(str(arguments.get("display_name") or f"opendrsai-{operation}{extension}")).name[:240]
+        if not display_name.lower().endswith(extension):
+            display_name = f"{Path(display_name).stem}{extension}"
+        artifact_dir = context.workspace_path / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        target = artifact_dir / display_name
+        try:
+            target.write_bytes(content)
+            artifact = self.artifact_store.publish(
+                context, {"path": target.relative_to(context.workspace_path).as_posix(), "display_name": display_name, "mime_type": mime},
+            )
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
         self.emit_artifact(context.run_id, "artifact.created", artifact)
         return {
             **artifact,
@@ -139,6 +189,10 @@ class RuntimeImageOperationAdapter:
             "model_ref": {"provider_id": provider_id, "model_id": model_id},
             "upstream_model_id": resolved.model,
             "protocol": "gemini_generate_content" if resolved.provider.wire_api == "gemini" else "openai_images_generation" if operation == "image_generation" else "openai_images_edits",
+            **({
+                "applied_constraint_count": len(applied_constraints),
+                "applied_constraints_sha256": hashlib.sha256("\n".join(applied_constraints).encode("utf-8")).hexdigest(),
+            } if applied_constraints else {}),
             "_replay_policy": {"classification": "external_side_effect", "replay": "approval_required"},
         }
 

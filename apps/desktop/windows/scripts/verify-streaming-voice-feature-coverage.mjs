@@ -37,7 +37,7 @@ const requiredArtifacts = {
   "verify:voice:streaming-live": join(root, "release", "voice-provider-live-evidence", "report.json"),
   "verify:voice:windows-hardware": join(root, "release", "voice-windows-hardware-evidence", "report.json"),
 };
-const livePassed = validReport(requiredArtifacts["verify:voice:streaming-live"]);
+const livePassed = validStreamingReport(requiredArtifacts["verify:voice:streaming-live"]);
 const hardwarePassed = validReport(requiredArtifacts["verify:voice:windows-hardware"]);
 const external = new Map([
   ["M12-F7", { command: "verify:voice:streaming-live", passed: livePassed, reason: "Authorized production ASR/TTS credentials and audio fixture required." }],
@@ -64,7 +64,13 @@ const report = {
     automatedPassed: features.filter(({ acceptance }) => acceptance === "automated_passed" || acceptance === "passed").length,
     externalPending: features.filter(({ acceptance }) => acceptance === "external_pending").length,
   },
-  artifacts: Object.fromEntries(Object.entries(requiredArtifacts).map(([command, path]) => [command, { path, present: existsSync(path), passed: validReport(path) }])),
+  artifacts: Object.fromEntries(Object.entries(requiredArtifacts).map(([command, path]) => [command, {
+    path,
+    present: existsSync(path),
+    passed: command === "verify:packaged-voice" || command === "verify:voice:streaming-live"
+      ? validStreamingReport(path)
+      : validReport(path),
+  }])),
   features,
   complete: features.every(({ acceptance }) => acceptance !== "external_pending"),
 };
@@ -78,4 +84,22 @@ if (!report.complete) process.exitCode = 2;
 function validReport(path) {
   if (!existsSync(path)) return false;
   try { return JSON.parse(readFileSync(path, "utf8")).ok === true || JSON.parse(readFileSync(path, "utf8")).passed === true; } catch { return false; }
+}
+
+function validStreamingReport(path) {
+  if (!existsSync(path)) return false;
+  try {
+    const report = JSON.parse(readFileSync(path, "utf8"));
+    const streaming = report.details?.streaming;
+    const types = Array.isArray(streaming?.terminalTypes) ? streaming.terminalTypes : [];
+    return (report.ok === true || report.passed === true)
+      && streaming?.mode === "streaming"
+      && streaming?.capabilities?.streamingStt === true
+      && streaming?.capabilities?.streamingTts === true
+      && types.includes("partial")
+      && types.includes("final")
+      && types.includes("completed");
+  } catch {
+    return false;
+  }
 }

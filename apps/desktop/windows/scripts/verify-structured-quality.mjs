@@ -35,7 +35,7 @@ assert.ok(sharedSource.includes("serialized.length <= 80_000"));
 assert.ok(debugStoreSource.includes("const MAX_RAW_LENGTH = 256 * 1024"));
 
 assert.ok(adapterSource.includes("pendingStructuredEventsByRequest"));
-assert.ok(adapterSource.includes("window.setTimeout(flushStructuredEventDeltas, 16)"));
+assert.ok(adapterSource.includes("window.requestAnimationFrame(flushStructuredEventDeltas)"));
 assert.ok(workspaceSource.includes("VirtualizedMessage") && workspaceSource.includes("estimateVirtualMessageHeight"));
 assert.equal(styles.includes(".message-list > .message { content-visibility:auto"), false, "Message list scroll height must not be browser-estimated by content-visibility.");
 

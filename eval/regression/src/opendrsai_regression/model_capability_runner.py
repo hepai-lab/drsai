@@ -18,6 +18,11 @@ class ModelCapabilityError(RuntimeError):
     pass
 
 
+def _gateway_opener():
+    """Do not route loopback Gateway evidence traffic through user proxies."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def load_profile(path: Path) -> dict[str, Any]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("schema_version") != "opendrsai.model-capability-profile/1":
@@ -338,7 +343,7 @@ def _audio_product_roundtrip(base_url: str, token: str | None) -> dict[str, Any]
         headers=headers, method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with _gateway_opener().open(request, timeout=120) as response:
             audio = response.read(10 * 1024 * 1024 + 1)
             speech_model = response.headers.get("X-OpenDrSai-Model-Id")
             speech_protocol = response.headers.get("X-OpenDrSai-Model-Protocol")
@@ -360,7 +365,7 @@ def _audio_product_roundtrip(base_url: str, token: str | None) -> dict[str, Any]
         headers=transcription_headers, method="POST",
     )
     try:
-        with urllib.request.urlopen(transcription_request, timeout=120) as response:
+        with _gateway_opener().open(transcription_request, timeout=120) as response:
             transcription = json.loads(response.read().decode())
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise ModelCapabilityError(f"Audio transcription product request failed: {exc}") from exc
@@ -410,27 +415,54 @@ _CASE_CAPABILITY_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "image_generation": (("gemini-3.1-flash-lite-image", "image_generation"),),
     "speech_to_text": (("whisper-1", "speech_to_text"),),
     "text_to_speech": (("tts-1", "text_to_speech"),),
-    "web_search": (("deepseek-v4-flash", "chat"), ("deepseek-v4-flash", "tool_calling")),
-    "knowledge_search": (("deepseek-v4-flash", "chat"), ("deepseek-v4-flash", "tool_calling")),
-    "run_inspect": (("deepseek-v4-flash", "chat"),),
-    "run_manifest_read": (("deepseek-v4-flash", "chat"),),
-    "run_compare": (("deepseek-v4-flash", "reasoning"),),
-    "regression.controlled_write": (("deepseek-v4-flash", "tool_calling"),),
 }
 
 
-def evaluate_case_model_preflight(cases: list[Any], snapshot_path: Path) -> tuple[bool, list[str]]:
+def evaluate_case_model_preflight(
+    cases: list[Any], snapshot_path: Path, *, base_model_id: str = "deepseek-v4-flash",
+    role_models: dict[str, str] | None = None,
+    expected_agent_id: str | None = None,
+    expected_agent_policy_revision: str | None = None,
+) -> tuple[bool, list[str]]:
     """Fail closed only for model-backed capabilities required by selected cases."""
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
     rows = snapshot.get("results") if isinstance(snapshot, dict) else None
     if not isinstance(rows, list):
         raise ModelCapabilityError("Capability snapshot has no results")
+    if expected_agent_id and snapshot.get("agent_id") != expected_agent_id:
+        return False, [
+            f"capability snapshot agent changed: expected {expected_agent_id}, got {snapshot.get('agent_id')}"
+        ]
     indexed = {(row.get("model_id"), row.get("operation")): row for row in rows if isinstance(row, dict)}
     required: set[tuple[str, str]] = set()
+    roles = role_models or {}
     for case in cases:
         environment = case.data.get("environment", {})
+        # Every Case invokes the Agent's authoritative conversational model.
+        required.add((base_model_id, "chat"))
         for capability in environment.get("required_capabilities", []):
-            required.update(_CASE_CAPABILITY_REQUIREMENTS.get(str(capability), ()))
+            capability = str(capability)
+            if capability == "image_input" and roles.get("image_understanding"):
+                required.add((roles["image_understanding"], "chat"))
+            elif capability == "image_generation" and roles.get("image_generation"):
+                required.add((roles["image_generation"], "image_generation"))
+            else:
+                required.update(_CASE_CAPABILITY_REQUIREMENTS.get(capability, ()))
+        needs_tools = any((
+            environment.get("required_capabilities"), environment.get("required_skills"),
+            environment.get("tools"), environment.get("allowed_commands"),
+            environment.get("knowledge_bases"), environment.get("tool_fixtures"),
+            environment.get("run_fixture"),
+        ))
+        if needs_tools:
+            required.add((base_model_id, "tool_calling"))
+        if "run_compare" in environment.get("required_capabilities", []):
+            required.add((base_model_id, "reasoning"))
+        expected = case.data.get("expect") or {}
+        presentation_visual = ((expected.get("presentation") or {}).get("visual") or {})
+        image = expected.get("image") or {}
+        if presentation_visual.get("semantic_requirements") or presentation_visual.get("forbidden_conditions") or image:
+            required.add((roles.get("image_understanding", "gpt-5.6-luna"), "chat"))
     reasons: list[str] = []
     for model_id, operation in sorted(required):
         row = indexed.get((model_id, operation))
@@ -438,6 +470,10 @@ def evaluate_case_model_preflight(cases: list[Any], snapshot_path: Path) -> tupl
             reasons.append(f"missing model prerequisite: {model_id}/{operation}")
         elif row.get("status") != "runtime_verified":
             reasons.append(f"model prerequisite not runtime verified: {model_id}/{operation} status={row.get('status')}")
+        elif expected_agent_policy_revision:
+            revisions = row.get("revisions") if isinstance(row.get("revisions"), dict) else {}
+            if revisions.get("agent_policy") != expected_agent_policy_revision:
+                reasons.append(f"model prerequisite policy revision changed: {model_id}/{operation}")
     return not reasons, reasons
 
 
@@ -450,7 +486,7 @@ def _request(base_url: str, token: str | None, path: str, payload: dict[str, Any
         data=json.dumps(payload).encode(), headers=headers, method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
+        with _gateway_opener().open(request, timeout=180) as response:
             value = json.loads(response.read().decode())
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise ModelCapabilityError(f"Capability probe request failed: {exc}") from exc
@@ -465,7 +501,7 @@ def _get(base_url: str, token: str | None, path: str) -> dict[str, Any]:
         headers["X-OpenDrSai-Gateway-Token"] = token
     request = urllib.request.Request(base_url.rstrip("/") + path, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with _gateway_opener().open(request, timeout=30) as response:
             value = json.loads(response.read().decode())
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise ModelCapabilityError(f"Runtime evidence request failed: {exc}") from exc

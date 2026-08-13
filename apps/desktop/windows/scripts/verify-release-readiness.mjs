@@ -2,12 +2,26 @@ import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 
+ensureLoopbackNoProxy();
+
+function ensureLoopbackNoProxy() {
+  for (const key of ["NO_PROXY", "no_proxy"]) {
+    const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+    for (const host of ["127.0.0.1", "localhost"]) if (!entries.includes(host)) entries.push(host);
+    process.env[key] = entries.join(",");
+  }
+}
+
 const strict = process.env.REQUIRE_RELEASE_READY === "1";
 const requireSigned = process.env.REQUIRE_SIGNED_WINDOWS_ARTIFACTS === "1";
+const requireSandboxEvidence = process.env.REQUIRE_SANDBOX_OIDC_EVIDENCE === "1";
 const skipPublicRelease = process.env.SKIP_PUBLIC_RELEASE_CHECK === "1";
 const testTempBaseline = listTestTempDirectories();
 const steps = [
   ["Project invariants", npmScript("verify"), true, {}],
+  ["Runtime defaults and first-run Agent", npmScript("verify:runtime-defaults"), true, {}],
+  ["Windows Sandbox real OIDC acceptance contract", npmScript("verify:sandbox-oidc-acceptance"), true, {}],
+  ["Windows Sandbox real OIDC acceptance evidence", npmScript("verify:sandbox-oidc-evidence"), requireSandboxEvidence, {}, /Windows Sandbox OIDC evidence is incomplete/i],
   ["Renderer UI invariants", npmScript("verify:ui"), true, {}],
   ["Renderer mojibake guard", npmScript("verify:mojibake"), true, {}],
   ["Renderer thread context menu", npmScript("verify:thread-menu"), true, {}],
@@ -25,7 +39,6 @@ const steps = [
   ["Backend installer check-only", npmScript("verify:install-check"), true, {}],
   ["Runtime direct-update policy", npmScript("verify:update-policy"), true, {}],
   ["Runtime update manifest", npmScript("verify:update-manifest"), true, {}],
-  ["Release summary", npmScript("summary:win"), true, {}],
   ["Release artifacts", npmScript("verify:artifacts"), true, {}],
   ["Remote Workspace acceptance-status regressions", npmScript("verify:remote-workspace-progress-regressions"), true, {}],
   ["Remote PTY lifecycle", npmScript("verify:remote-pty-lifecycle"), true, {}],

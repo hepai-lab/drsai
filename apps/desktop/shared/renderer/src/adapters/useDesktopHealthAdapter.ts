@@ -32,19 +32,7 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
   const zh = language === "zh";
 
   const refreshHealth = useCallback(async (): Promise<void> => {
-    const [snapshot, install, gateway] = await Promise.all([
-      desktopApi.getHealth(),
-      desktopApi.getInstallStatus(),
-      desktopApi.getGatewayStatus(),
-    ]);
-    setHealth({
-      ...snapshot,
-      installed: install.installed,
-      gatewayReady: gateway.ready,
-      version: install.version,
-      install,
-      gateway,
-    });
+    setHealth(await desktopApi.getHealth());
   }, []);
 
   useEffect(() => {

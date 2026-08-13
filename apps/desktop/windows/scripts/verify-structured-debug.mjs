@@ -13,6 +13,8 @@ const clipboardSource = readFileSync(clipboardPath, "utf8");
 const workspaceSource = readFileSync(join(root, "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
 const adapterSource = readFileSync(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
 const desktopApiSource = readFileSync(join(root, "../shared/api/desktopApi.ts"), "utf8");
+const sensitiveDataPath = join(root, "../shared/api/sensitiveData.ts");
+const sensitiveDataSource = readFileSync(sensitiveDataPath, "utf8");
 const mainChatSource = readFileSync(join(root, "../shared/main/chat.ts"), "utf8");
 
 const output = ts.transpileModule(storeSource, {
@@ -23,9 +25,22 @@ const output = ts.transpileModule(storeSource, {
   },
   fileName: storePath,
 }).outputText;
+const sensitiveDataOutput = ts.transpileModule(sensitiveDataSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+    esModuleInterop: true,
+  },
+  fileName: sensitiveDataPath,
+}).outputText;
+const sensitiveDataModule = { exports: {} };
+new Function("exports", "module", "require", sensitiveDataOutput)(sensitiveDataModule.exports, sensitiveDataModule, () => {
+  throw new Error("sensitiveData must not have runtime imports");
+});
 const storeModule = { exports: {} };
-new Function("exports", "module", "require", output)(storeModule.exports, storeModule, () => {
-  throw new Error("debugLogStore must not have runtime imports");
+new Function("exports", "module", "require", output)(storeModule.exports, storeModule, (specifier) => {
+  if (specifier === "../../api/sensitiveData") return sensitiveDataModule.exports;
+  throw new Error(`debugLogStore has an unexpected runtime import: ${specifier}`);
 });
 const store = storeModule.exports;
 
@@ -95,6 +110,15 @@ entries = store.getDebugLogs();
 assert.equal(entries.length, 3, "Consecutive Runtime deltas must coalesce into one display record.");
 assert.equal(entries[2].coalescedCount, 2);
 assert.equal(entries[2].runtime.sequence, 43);
+
+store.appendStructuredActivityLog({
+  ...baseActivity,
+  id: "activity-secret",
+  input: { api_key: "sk-visual-secret-canary", email: "visual@example.org" },
+});
+entries = store.getDebugLogs();
+assert.doesNotMatch(entries.at(-1).raw, /sk-visual-secret-canary|visual@example\.org/);
+assert.match(entries.at(-1).raw, /REDACTED/);
 
 store.clearDebugLogs();
 assert.equal(store.getDebugLogs().length, 0, "Clear must affect only this debug store.");
@@ -223,9 +247,9 @@ assert.ok(adapterSource.includes("restoreActiveStructuredTurns(restoredMessages)
 assert.ok(adapterSource.includes("settleInterruptedStructuredTurn("));
 assert.ok(adapterSource.includes("30_000"), "Interrupted turns need a bounded recovery wait.");
 assert.match(desktopApiSource, /type:\s*"start"[^;]+\|\s*"connection"\s*\|/);
-assert.ok(desktopApiSource.includes('source: "gateway" | "remote-gateway" | "codex-runtime"'));
+assert.ok(desktopApiSource.includes('source: "gateway" | "remote-gateway" | "opendrsai-runtime" | "codex-runtime"'));
 assert.ok(mainChatSource.includes('source === "remote-gateway" ? "remote-runtime"'), "Remote gateway activity must retain its diagnostic component mapping.");
-assert.ok(mainChatSource.includes('source: "codex-runtime"'));
+assert.ok(mainChatSource.includes('"opendrsai-runtime"') && mainChatSource.includes('"codex-runtime"'));
 assert.ok(adapterSource.includes('event.type === "connection" && event.connection'));
 assert.ok(adapterSource.includes('kind: "retry"'));
 assert.ok(adapterSource.includes('!structuredRequests.current.has(event.requestId)'), "Native V2 streams must remain authoritative during reconnects.");

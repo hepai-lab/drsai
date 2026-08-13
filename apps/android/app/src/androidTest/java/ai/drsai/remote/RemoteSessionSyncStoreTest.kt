@@ -5,6 +5,9 @@ import androidx.test.core.app.ApplicationProvider
 import ai.drsai.remote.data.ChatDatabase
 import ai.drsai.remote.remote.data.EventDecision
 import ai.drsai.remote.remote.data.RemoteCacheRepository
+import ai.drsai.remote.remote.data.RemoteDeliveryState
+import ai.drsai.remote.remote.data.RemoteOaepItemEntity
+import ai.drsai.remote.remote.data.OaepProjectionIntegrity
 import ai.drsai.remote.remote.generated.GeneratedConversationSnapshot
 import ai.drsai.remote.remote.generated.GeneratedSessionConversationItem
 import ai.drsai.remote.remote.generated.GeneratedSessionEvent
@@ -159,6 +162,32 @@ class RemoteSessionSyncStoreTest {
     }
 
     @Test
+    fun optimistic_delivery_state_never_regresses_under_out_of_order_callbacks() = runTest {
+        store.saveOptimisticOaepMessage(
+            "user", "", "rt", "ws", "session", "source-1", "hello", 1,
+        )
+        suspend fun mark(state: RemoteDeliveryState, at: Long) = store.markOptimisticOaepDelivery(
+            "user", "", "rt", "session", "source-1", state, at,
+        )
+        suspend fun state() = org.json.JSONObject(
+            store.oaepSessionItems("user", "", "rt", "session").single().contentJson,
+        ).getString("delivery_state")
+
+        mark(RemoteDeliveryState.SENDING, 2)
+        mark(RemoteDeliveryState.ACCEPTED, 3)
+        mark(RemoteDeliveryState.SENDING, 4) // late request-start callback
+        mark(RemoteDeliveryState.UNCERTAIN, 5) // late transport failure
+        assertEquals("accepted", state())
+
+        mark(RemoteDeliveryState.RUNNING, 6)
+        mark(RemoteDeliveryState.ACCEPTED, 7) // late HTTP response
+        assertEquals("running", state())
+        mark(RemoteDeliveryState.COMPLETED, 8)
+        mark(RemoteDeliveryState.FAILED, 9) // stale failure must not replace terminal truth
+        assertEquals("completed", state())
+    }
+
+    @Test
     fun oaep_older_snapshot_window_merges_without_replacing_newer_items_or_cursor() = runTest {
         val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
         val run = OaepRun(
@@ -196,6 +225,124 @@ class RemoteSessionSyncStoreTest {
     }
 
     @Test
+    fun refreshed_leading_window_preserves_loaded_history_but_full_snapshot_replaces_it() = runTest {
+        val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
+        val run = OaepRun(
+            id = "run-1", sessionId = "session", parentRunId = null,
+            status = "running", createdAt = "now", updatedAt = "now", completedAt = null,
+        )
+        fun checkpoint(sequence: Long, count: Long) = OaepSnapshotCheckpoint(
+            sequence, sequence.toString().padStart(64, 'a').takeLast(64), count,
+        )
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run), listOf(oaepMessageItem("running")), 30,
+                checkpoint(30, 2), OaepSnapshotWindow(1, true, "older-page"),
+            ),
+            1,
+        )
+        val older = oaepMessageItem("completed").copy(
+            id = "item-older", sequence = 0, createdAt = "before", updatedAt = "before",
+            source = OaepSource("runtime", runtimeId = "rt"),
+        )
+        store.mergeOaepSnapshotWindow(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run), listOf(older), 30,
+                checkpoint(30, 2), OaepSnapshotWindow(1, false, null),
+            ),
+        )
+
+        val refreshed = oaepMessageItem("completed").copy(updatedAt = "later")
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run.copy(status = "completed")), listOf(refreshed), 31,
+                checkpoint(31, 2), OaepSnapshotWindow(1, true, "older-page-2"),
+            ),
+            2,
+        )
+        assertEquals(
+            setOf("item-1", "item-older"),
+            store.oaepSessionItems("user", "", "rt", "session").map { it.itemId }.toSet(),
+        )
+        assertEquals(31, store.oaepSessionCursor("user", "", "rt", "session")!!.lastSequence)
+
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", session, listOf(run), listOf(refreshed), 32,
+                checkpoint = null, window = null,
+            ),
+            3,
+        )
+        assertEquals(
+            listOf("item-1"),
+            store.oaepSessionItems("user", "", "rt", "session").map { it.itemId },
+        )
+    }
+
+    @Test
+    fun oaep_room_projection_preserves_runtime_checkpoint_hash() = runTest {
+        val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
+        val run = OaepRun("run-1", "session", null, status = "completed",
+            createdAt = "now", updatedAt = "now", completedAt = "now")
+        val item = oaepMessageItem("completed").copy(source = OaepSource(
+            backend = "runtime", backendItemId = "backend-item", client = "android",
+            messageId = "source-message", runtimeId = "rt", adapter = "oaep-adapter",
+            adapterVersion = "1", mappingVersion = "1",
+        ))
+        val digest = OaepProjectionIntegrity.digestItems(listOf(item))
+        val checkpoint = OaepSnapshotCheckpoint(1, digest, 1)
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot("1.0", session, listOf(run), listOf(item), 1, checkpoint,
+                OaepSnapshotWindow(100, false, null)),
+            1,
+        )
+        store.verifyOaepProjectionCheckpoint("user", "", "rt", "session", checkpoint)
+        val stored = store.oaepSessionItems("user", "", "rt", "session").single()
+        assertEquals("backend-item", org.json.JSONObject(stored.sourceJson).getString("backend_item_id"))
+        assertEquals("oaep-adapter", org.json.JSONObject(stored.sourceJson).getString("adapter"))
+    }
+
+    @Test
+    fun capacity_trim_is_rebuilt_from_full_snapshot_and_account_clear_is_complete() = runTest {
+        val session = OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now")
+        val run = OaepRun(
+            id = "run-1", sessionId = "session", parentRunId = null,
+            status = "completed", createdAt = "now", updatedAt = "now", completedAt = "now",
+        )
+        val items = (1L..5L).map { sequence ->
+            oaepMessageItem("completed").copy(
+                id = "item-$sequence", sequence = sequence,
+                source = OaepSource("runtime", runtimeId = "rt"),
+            )
+        }
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot("1.0", session, listOf(run), items, 5, checkpoint = null, window = null),
+            1,
+        )
+        store.maintainAccountIfDue(
+            "user", "", nowMillis = 2_000_000_000_000,
+            intervalMillis = 1, maxEvents = 0, maxTerminalItems = 2,
+        )
+        assertEquals(2, store.oaepSessionItems("user", "", "rt", "session").size)
+
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot("1.0", session, listOf(run), items, 6, checkpoint = null, window = null),
+            2,
+        )
+        assertEquals(5, store.oaepSessionItems("user", "", "rt", "session").size)
+        store.clearAccount("user", "")
+        assertEquals(0, store.oaepSessionItems("user", "", "rt", "session").size)
+        assertEquals(null, store.oaepSessionCursor("user", "", "rt", "session"))
+    }
+
+    @Test
     fun oaep_delta_event_updates_cached_item_before_stream_snapshot_reload() = runTest {
         store.replaceOaepSnapshot(
             "user", "", "rt", "ws",
@@ -229,6 +376,33 @@ class RemoteSessionSyncStoreTest {
     }
 
     @Test
+    fun oaep_delta_before_item_creates_realtime_projection_without_losing_cursor() = runTest {
+        store.replaceOaepSnapshot(
+            "user", "", "rt", "ws",
+            OaepSnapshot(
+                "1.0", OaepSession("session", "ws", "T", "active", "opendrsai", "now", "now"),
+                listOf(OaepRun("run-1", "session", null, status = "running",
+                    createdAt = "now", updatedAt = "now", completedAt = null)),
+                emptyList(), 1,
+            ),
+            1,
+        )
+        val event = OaepEvent(
+            "1.0", "event-2", "session", "run-1", "delta-first", 2,
+            "event.item.delta", "later", "event-2",
+            OaepSource("runtime", runtimeId = "rt"),
+            OaepEventData(delta = OaepDelta("message.text.append", "visible now")),
+        )
+        assertEquals(EventDecision.APPLY, store.applyOaepEvent(
+            "user", "", "rt", "ws", "session", event, 2,
+        ))
+        val item = store.oaepSessionItems("user", "", "rt", "session").single()
+        assertEquals("delta-first", item.itemId)
+        assertEquals("visible now", org.json.JSONObject(item.contentJson).getString("text"))
+        assertEquals(2, store.oaepSessionCursor("user", "", "rt", "session")!!.lastSequence)
+    }
+
+    @Test
     fun oaep_plan_delta_event_updates_cached_plan_text() = runTest {
         store.replaceOaepSnapshot(
             "user", "", "rt", "ws",
@@ -257,6 +431,29 @@ class RemoteSessionSyncStoreTest {
         val item = store.oaepSessionItems("user", "", "rt", "session").single()
         assertEquals(2, item.latestEventSequence)
         assertEquals("first step\nsecond step", org.json.JSONObject(item.contentJson).getString("text"))
+    }
+
+    @Test
+    fun long_session_cold_window_is_bounded_while_offline_search_covers_older_cache() = runTest {
+        val rows = (1..2_500).map { sequence ->
+            RemoteOaepItemEntity(
+                "user", "", "rt", "ws", "session", "run-${sequence / 10}",
+                "item-$sequence", "message", "completed", sequence.toLong(), sequence.toLong(),
+                "runtime", "android", null, "now", "now",
+                org.json.JSONObject().put("role", "assistant").put(
+                    "text", if (sequence == 100) "literal 100%_match" else "message $sequence",
+                ).toString(), false,
+            )
+        }
+        database!!.remoteDao().saveOaepItems(rows)
+
+        val window = store.oaepSessionItemWindow("user", "", "rt", "session", 1_000)
+        assertEquals(1_000, window.size)
+        assertEquals("item-1501", window.first().itemId)
+        assertEquals("item-2500", window.last().itemId)
+
+        val search = store.searchCachedOaepItems("user", "", "rt", "session", "100%_match")
+        assertEquals(listOf("item-100"), search.map { it.itemId })
     }
 
     private fun snapshot(sequence: Long, items: List<GeneratedSessionConversationItem>) =

@@ -32,6 +32,27 @@ def test_agent_policy_get_requires_explicit_primary_model(monkeypatch) -> None:
     assert "no primary model" in result["error"]
 
 
+def test_agent_policy_get_never_rewrites_an_explicit_provider_binding(monkeypatch) -> None:
+    policy = AgentModelPolicy(
+        "my-drsai",
+        primary_model=AgentModelSelection("explicit", ModelRef("provider-b", "same")),
+    )
+    monkeypatch.setattr(
+        gateway, "load_agent_model_policy",
+        lambda _agent_id: SimpleNamespace(policy=policy, revision="sha256:" + "a" * 64),
+    )
+    monkeypatch.setattr(gateway, "load_model_provider_config", config)
+    monkeypatch.setattr(
+        gateway, "commit_agent_model_policy",
+        lambda *_args, **_kwargs: pytest.fail("GET must not mutate an explicit Agent model policy"),
+    )
+
+    result = asyncio.run(gateway.get_agent_model_policy("my-drsai"))
+
+    assert result["primary_model"]["ref"] == {"provider_id": "provider-b", "model_id": "same"}
+    assert result["effective_ref"] == {"provider_id": "provider-b", "model_id": "same"}
+
+
 def test_agent_policy_put_persists_exact_provider_ref(monkeypatch) -> None:
     captured = []
     monkeypatch.setattr(gateway, "load_model_provider_config", config)
@@ -170,6 +191,7 @@ def test_agent_policy_binds_each_capability_by_declared_modalities(monkeypatch) 
                 "vision": {"input_modalities": ["text", "image"], "output_modalities": ["text"], "api_protocol": "openai", "enabled": True, "capabilities": ["chat"]},
                 "image": {"input_modalities": ["text"], "output_modalities": ["image"], "api_protocol": "openai", "enabled": True, "capabilities": ["image_generation"]},
                 "tts": {"input_modalities": ["text"], "output_modalities": ["audio"], "api_protocol": "openai", "enabled": True, "capabilities": ["text_to_speech"]},
+                "gpt-realtime-2": {"input_modalities": ["audio"], "output_modalities": ["audio"], "api_protocol": "openai", "enabled": True, "capabilities": []},
                 "stt": {"input_modalities": ["audio"], "output_modalities": ["text"], "api_protocol": "openai", "enabled": True, "capabilities": ["speech_to_text"]},
             },
         }},
@@ -194,6 +216,7 @@ def test_agent_policy_binds_each_capability_by_declared_modalities(monkeypatch) 
             image_understanding_model=explicit("vision"),
             image_generation_model=explicit("image"),
             text_to_speech_model=explicit("tts"),
+            realtime_voice_model=explicit("gpt-realtime-2"),
             speech_to_text_model=explicit("stt"),
         ),
     ))
@@ -201,6 +224,7 @@ def test_agent_policy_binds_each_capability_by_declared_modalities(monkeypatch) 
     assert captured[0].image_understanding_model.ref.model_id == "vision"
     assert result["effective_image_generation_ref"]["model_id"] == "image"
     assert result["effective_text_to_speech_ref"]["model_id"] == "tts"
+    assert result["effective_realtime_voice_ref"]["model_id"] == "gpt-realtime-2"
     assert result["effective_speech_to_text_ref"]["model_id"] == "stt"
 
 

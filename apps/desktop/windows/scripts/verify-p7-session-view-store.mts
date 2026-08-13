@@ -237,10 +237,10 @@ const subscribeSource = subscriptionSource.slice(subscribeStart);
 assert(subscribeSource.includes("generation: viewStore.generation") && subscribeSource.includes('projection: "oaep/1"'),
   "the initial OAEP view must carry an explicit schema and projection version");
 
-for (const rendererPath of [
-  "../shared/renderer/src/App.tsx",
-  "src/renderer/src/App.tsx",
-]) {
+// Windows and macOS now compose the authoritative shared Renderer. The old
+// windows/src/renderer copy was deliberately removed and must not be revived
+// merely to satisfy a stale verification path.
+for (const rendererPath of ["../shared/renderer/src/App.tsx"]) {
   const rendererSource = await readFile(resolve(process.cwd(), rendererPath), "utf8");
   assert.equal(/localStorage\.setItem\([^)]*threadSnapshot/i.test(rendererSource), false,
     `${rendererPath} must not synchronously persist complete thread history`);

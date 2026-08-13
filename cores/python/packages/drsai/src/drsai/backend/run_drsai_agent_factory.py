@@ -1062,9 +1062,13 @@ def create_agent(
         needs_max_completion = any(
             model_suffix.startswith(prefix) for prefix in _OPENAI_NEW_MODEL_PREFIXES
         )
+        # The model declaration owns the wire protocol. Every configured
+        # OpenAI-compatible text model uses Responses; routing must never vary
+        # by a hard-coded Provider name (which previously left HepAI on Chat
+        # Completions even though the unified route contract prefers Responses).
         use_responses_api = bool(
             active_user_model is not None
-            and active_user_model.provider.name == "zhizengzeng"
+            and active_user_model.provider.wire_api == "openai"
         )
         allow_deferred_oidc = bool(
             active_user_model is None
@@ -1127,7 +1131,7 @@ def create_agent(
     kernel_identity = agent_kernel_identity(surface="desktop")
     desktop_host_capabilities = [
         "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
-        "web_search", "web_fetch", "network.public_https",
+        "web_search", "web_fetch", "network.public_https", "image_generation", "image_edit",
     ]
     kernel_host_port = normalize_kernel_host_port({
         "schema_version": 1,
@@ -1201,7 +1205,7 @@ def create_agent(
             "policy_version": "p9-context-budget-v1",
             "context_window_tokens": int(token_limit),
                 "reserved_output_tokens": max(1, min(int(reserved_output_tokens), int(token_limit) - 1)),
-            "max_messages": 40,
+            "max_messages": 80,
                 "summary_tokens": min(1_024, max(0, (int(token_limit) - int(reserved_output_tokens)) // 8)),
         }
         assistant._production_parity_manifest = parity_manifest

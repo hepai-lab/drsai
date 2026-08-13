@@ -123,6 +123,7 @@ for (const path of sourceFiles(sharedMainRoot)) {
 
 const rendererRoot = join(sharedRoot, "renderer");
 for (const path of sourceFiles(rendererRoot)) {
+  if (/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path)) continue;
   const source = readFileSync(path, "utf8");
   if (/from\s+["'](?:node:|electron["'])|\brequire\(["'](?:node:|electron["'])/.test(source)) {
     fail(path, "shared renderer must not import Node or Electron APIs");

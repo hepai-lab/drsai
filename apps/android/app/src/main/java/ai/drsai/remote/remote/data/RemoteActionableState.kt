@@ -1,7 +1,9 @@
 package ai.drsai.remote.remote.data
 
+import ai.drsai.remote.remote.generated.RelayContractGenerated
+
 enum class RemoteRecoveryAction {
-    NONE, RETRY, SIGN_IN, UPDATE_APP, REASSOCIATE, RESUME_ON_COMPUTER,
+    NONE, RETRY, SIGN_IN, UPDATE_APP, REASSOCIATE, CONTACT_ADMIN, RESUME_ON_COMPUTER,
 }
 
 data class RemoteActionableState(
@@ -55,4 +57,52 @@ fun safeRemoteFailureMessage(failure: OwopResult.Failure): String = when (failur
     "runtime_offline", "runtime_owner_unavailable" -> "远程电脑离线"
     "timeout", "gateway_timeout" -> "连接超时"
     else -> if (failure.retryable) "远程操作暂时不可用" else "远程操作失败"
+}
+
+fun remoteRecoveryAction(code: String?, retryable: Boolean = false, status: Int? = null): RemoteRecoveryAction {
+    val normalizedCode = code ?: when (status) {
+        401 -> "invalid_token"
+        403 -> "association_required"
+        else -> null
+    }
+    val transient = retryable || status == 408 || status == 429 || (status ?: 0) >= 500
+    return when (RelayContractGenerated.errorAction(normalizedCode, transient)) {
+        "retry" -> RemoteRecoveryAction.RETRY
+        "login" -> RemoteRecoveryAction.SIGN_IN
+        "re-pair" -> RemoteRecoveryAction.REASSOCIATE
+        "update" -> RemoteRecoveryAction.UPDATE_APP
+        else -> RemoteRecoveryAction.CONTACT_ADMIN
+    }
+}
+
+/** A single safe CTA derived from the generated cross-client error contract. */
+fun remoteActionableFailure(failure: Throwable): RemoteActionableState {
+    val action = when (failure) {
+        is RelayHttpException -> remoteRecoveryAction(failure.errorCode, failure.retryable, failure.status)
+        is java.io.IOException -> RemoteRecoveryAction.RETRY
+        else -> RemoteRecoveryAction.CONTACT_ADMIN
+    }
+    return remoteActionableFailure(action)
+}
+
+fun remoteActionableFailure(failure: OwopResult.Failure): RemoteActionableState =
+    remoteActionableFailure(remoteRecoveryAction(failure.code, failure.retryable))
+
+private fun remoteActionableFailure(action: RemoteRecoveryAction): RemoteActionableState = when (action) {
+    RemoteRecoveryAction.RETRY -> RemoteActionableState(
+        "暂时无法连接", "请检查网络后重试；已同步的内容仍可查看。", action, "重试",
+    )
+    RemoteRecoveryAction.SIGN_IN -> RemoteActionableState(
+        "登录已过期", "重新登录后可继续使用原有设备授权。", action, "重新登录",
+    )
+    RemoteRecoveryAction.REASSOCIATE -> RemoteActionableState(
+        "需要重新连接电脑", "请在电脑端生成新的二维码。", action, "重新扫码",
+    )
+    RemoteRecoveryAction.UPDATE_APP -> RemoteActionableState(
+        "版本不兼容", "请先更新 OpenDrSai，再重新连接。", action, "检查更新",
+    )
+    RemoteRecoveryAction.CONTACT_ADMIN -> RemoteActionableState(
+        "暂时无法完成操作", "重试仍失败时，请联系管理员并提供关联编号。", action, "联系管理员",
+    )
+    else -> error("remote_error_action_invalid")
 }

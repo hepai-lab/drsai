@@ -81,6 +81,8 @@ class FakeRPC:
         self.read_turns: list[dict[str, Any]] = []
         self.delivery_gate: asyncio.Event | None = None
         self.interrupt_no_active = False
+        self.archive_active_writer_failures = 0
+        self.archive_active_writer_generation: int | None = None
         self.thread_lists: dict[bool, list[dict[str, Any]]] = {False: [], True: []}
         self.connection_failure_handlers: list[Any] = []
         self.account_logged_in = True
@@ -137,7 +139,14 @@ class FakeRPC:
             return {"thread": {"id": identity}}
         if method == "thread/resume":
             return {"thread": {"id": values["threadId"]}}
+        if method == "thread/unsubscribe":
+            return {}
         if method in {"thread/archive", "thread/unarchive"}:
+            if self.archive_active_writer_generation == self.generation:
+                raise RuntimeExecutionError("codex_jsonrpc_error", "thread already has an active writer")
+            if self.archive_active_writer_failures:
+                self.archive_active_writer_failures -= 1
+                raise RuntimeExecutionError("codex_jsonrpc_error", "thread already has an active writer")
             return {}
         if method == "turn/start":
             self.turn_count += 1
@@ -523,7 +532,9 @@ async def test_session_thread_run_turn_mapping_uses_authoritative_workspace_and_
     )
     await client.archive_session(context.session_id, archived=True)
     await client.archive_session(context.session_id, archived=False)
-    assert [method for method, _ in rpc.calls if method in {"thread/archive", "thread/unarchive"}] == ["thread/archive", "thread/unarchive"]
+    assert [method for method, _ in rpc.calls if method in {
+        "thread/unsubscribe", "thread/archive", "thread/unarchive",
+    }] == ["thread/unsubscribe", "thread/archive", "thread/unarchive"]
     assert result["status"] == "completed"
     assert result["backend_metadata"] == {"thread_id": "thread-1", "turn_id": "turn-1"}
     thread_request = next(params for method, params in rpc.calls if method == "thread/start")
@@ -541,6 +552,66 @@ async def test_session_thread_run_turn_mapping_uses_authoritative_workspace_and_
     # RuntimeAgentService owns the single Run lifecycle producer; the Adapter
     # client emits only normalized Item semantics.
     assert [event["type"] for event in state.events] == ["oaep.item.message.delta"]
+
+
+@pytest.mark.anyio
+async def test_archive_waits_for_codex_writer_release_without_fixed_sleep(tmp_path: Path):
+    rpc = FakeRPC()
+    bindings = AgentBackendBindingStore(tmp_path / "archive-writer-release.sqlite3")
+    bindings.bind_session(
+        session_id="session-archive", workspace_id="workspace-archive", backend_id="codex",
+        agent_backend_runtime_id="runtime-archive", workspace_runtime_id="runtime-archive",
+        backend_session_id="thread-archive", backend_version="test",
+    )
+    rpc.archive_active_writer_failures = 2
+    client = CodexAgentBackendClient(rpc, bindings, lifecycle_writer_release_timeout=1.0)
+
+    await client.archive_session("session-archive", archived=True)
+
+    assert [method for method, _ in rpc.calls].count("thread/archive") == 3
+
+
+@pytest.mark.anyio
+async def test_archive_writer_timeout_is_actionable_and_retryable(tmp_path: Path):
+    rpc = FakeRPC()
+    bindings = AgentBackendBindingStore(tmp_path / "archive-writer-timeout.sqlite3")
+    bindings.bind_session(
+        session_id="session-busy", workspace_id="workspace-busy", backend_id="codex",
+        agent_backend_runtime_id="runtime-busy", workspace_runtime_id="runtime-busy",
+        backend_session_id="thread-busy", backend_version="test",
+    )
+    rpc.archive_active_writer_failures = 100
+    client = CodexAgentBackendClient(rpc, bindings, lifecycle_writer_release_timeout=0.05)
+    other_turn = asyncio.get_running_loop().create_future()
+    client._active_turns["other-run"] = other_turn
+
+    try:
+        with pytest.raises(RuntimeExecutionError) as caught:
+            await client.archive_session("session-busy", archived=True)
+    finally:
+        client._active_turns.clear()
+        other_turn.cancel()
+
+    assert caught.value.code == "codex_session_busy"
+    assert caught.value.retryable is True
+
+
+@pytest.mark.anyio
+async def test_archive_rotates_idle_app_server_when_writer_remains_loaded(tmp_path: Path):
+    rpc = FakeRPC()
+    bindings = AgentBackendBindingStore(tmp_path / "archive-generation-rotate.sqlite3")
+    bindings.bind_session(
+        session_id="session-rotate", workspace_id="workspace-rotate", backend_id="codex",
+        agent_backend_runtime_id="runtime-rotate", workspace_runtime_id="runtime-rotate",
+        backend_session_id="thread-rotate", backend_version="test",
+    )
+    rpc.archive_active_writer_generation = rpc.generation
+    client = CodexAgentBackendClient(rpc, bindings, lifecycle_writer_release_timeout=0.05)
+
+    await client.archive_session("session-rotate", archived=True)
+
+    assert rpc.generation == 2
+    assert [method for method, _ in rpc.calls].count("thread/archive") >= 2
 
 
 @pytest.mark.anyio

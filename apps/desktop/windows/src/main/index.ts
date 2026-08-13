@@ -17,6 +17,7 @@ import {
   dialog,
   ipcMain,
   protocol,
+  powerMonitor,
   screen,
   session as electronSession,
   shell,
@@ -49,7 +50,7 @@ import {
 } from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
-import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient } from "./runtimeClient";
+import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import type {
   RunInspectionOpenRequest,
@@ -67,6 +68,7 @@ import type {
   CreateReplayPlanRequest,
   CreateRunExperimentRequest,
   CreateRunComparisonRequest,
+  CreateRunComparisonEvaluationRequest,
   DeleteRunExperimentRequest,
   ExecuteReplayPlanRequest,
   GetReplayBoundariesRequest,
@@ -75,6 +77,7 @@ import type {
   FinalizeRunExperimentCandidateRequest,
   GetRunExperimentRequest,
   GetRunComparisonRequest,
+  ListRunComparisonEvaluationsRequest,
   GetRunRelationsRequest,
   GetWorktreeAdoptionPreviewRequest,
   ApplyWorktreeAdoptionRequest,
@@ -89,6 +92,10 @@ import type {
 import { MobilePairingController } from "../../../shared/main/mobilePairingController";
 import { assertExperimentReleaseEnabled, readExperimentReleaseGate } from "../../../shared/main/experimentReleaseGate";
 import { classifyMobileRemoteDiagnostics } from "../../../shared/main/mobileRemoteDiagnostics";
+import {
+  consumeWorkspaceSessionCatalogStream,
+  WorkspaceSessionCatalogGate,
+} from "../../../shared/main/workspaceSessionCatalog";
 import { RemoteProtocolError } from "../../../shared/api/remoteSshProtocol";
 import { desktopDiagnostics } from "./diagnostics";
 import { productionDiagnostics } from "../../../shared/main/productionDiagnostics";
@@ -98,8 +105,6 @@ import { isTrustedDesktopIpcSender } from "../../../shared/main/secureIpc";
 import { InteractiveDebuggerService } from "./interactiveDebugger";
 import { InteractiveDebugPolicyStore } from "../../../shared/main/interactiveDebugPolicy";
 import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../../../shared/api/diagnostics";
-import type { RegressionAttachRunRequest, RegressionBeginRequest, RegressionTransitionRequest } from "../../../shared/api/regression";
-import { DesktopRegressionControl } from "../../../shared/main/regressionControl";
 
 process.setSourceMapsEnabled?.(true);
 let experimentReleaseGatePromise: ReturnType<typeof readExperimentReleaseGate> | null = null;
@@ -129,10 +134,13 @@ if (configuredE2eDocumentsPath) {
 }
 if (process.env.OPENDRSAI_DESKTOP_DEV === "1") app.setName("OpenDrSai Dev");
 if (process.platform === "win32") {
-  app.setAppUserModelId(is.dev ? "com.hepai.opendrsai.windows.dev" : "com.hepai.opendrsai.windows");
+  app.setAppUserModelId(process.env.OPENDRSAI_DESKTOP_DEV === "1"
+    ? "com.hepai.opendrsai.windows.dev"
+    : "com.hepai.opendrsai.windows");
 }
 import { presentCodexBackendStatus } from "./codexBackendStatus";
 import { DRSAI_HOME, DRSAI_REPO } from "./paths";
+import { resolveRegressionReference } from "../../../shared/main/regressionReferences";
 import { WINDOWS_PLATFORM_DESCRIPTOR } from "./platform";
 import { clearLocalData, previewLocalDataCleanup } from "./dataCleanup";
 import { scanSensitiveText } from "../../../shared/main/shareSensitivity";
@@ -171,13 +179,14 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
+import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
 } from "./executionPolicyGate";
 import {
   createThread,
+  appendDuplexVoiceHistory,
   deleteThread,
   getThreadSnapshot,
   listThreads,
@@ -403,7 +412,7 @@ import {
   cancelVoiceTranscriptionsForSender,
   getVoiceRuntimeStatus,
   cleanupExpiredVoiceTempFiles,
-} from "./voice";
+} from "./voice/serial";
 import {
   attachStreamingVoiceAudioPort,
   cancelStreamingVoiceSessionsForSender,
@@ -411,13 +420,25 @@ import {
   getStreamingVoiceCapabilities,
   startStreamingVoiceTranscription,
   stopStreamingVoiceTranscription,
-} from "./voiceStreaming";
+} from "./voice/streaming";
+import {
+  attachDuplexVoiceAudioPort,
+  cancelDuplexVoiceSession,
+  disposeDuplexVoiceSession,
+  disposeAllDuplexVoiceSessions,
+  getDuplexVoiceCapabilities,
+  interruptDuplexVoiceSession,
+  startDuplexVoiceSession,
+  stopDuplexVoiceSession,
+  submitDuplexVoiceToolResult,
+  updateDuplexVoiceSession,
+} from "./voice/duplex";
 import {
   cancelVoiceSynthesis,
   cancelVoiceSynthesisForSender,
   getVoiceSynthesisRuntimeStatus,
   startVoiceSynthesis,
-} from "./voiceTts";
+} from "./voice/serial";
 import { saveApiKeyAndSync } from "./settings";
 import {
   cancelOidcLogin,
@@ -517,6 +538,10 @@ import type {
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptionRequest,
   DesktopStreamingVoiceStartRequest,
+  DesktopDuplexVoiceSessionStartRequest,
+  DesktopDuplexVoiceInterruptRequest,
+  DesktopDuplexVoiceHistoryAppendRequest,
+  DesktopDuplexVoiceToolResultRequest,
   DesktopVoiceSynthesisRequest,
   DesktopBootstrapBlockerKind,
   WorkspaceCheckpointRestoreRequest,
@@ -574,6 +599,85 @@ const threadSnapshotHydrations = new Map<string, AbortController>();
 const runtimeThreadCatalogTimers = new Map<number, NodeJS.Timeout>();
 const runtimeThreadCatalogBusy = new Set<number>();
 const runtimeThreadCleanupRegistered = new Set<number>();
+const runtimeWorkspaceCatalogSubscriptions = new Map<string, AbortController>();
+
+function runtimeWorkspaceCatalogKey(webContents: WebContents, workspaceId: string): string {
+  return `${webContents.id}:${workspaceId}`;
+}
+
+async function applyRuntimeWorkspaceCatalogEvent(
+  webContents: WebContents,
+  workspaceId: string,
+  sessionId: string,
+): Promise<void> {
+  if (webContents.isDestroyed()) return;
+  const client = await LocalRuntimeClient.connect();
+  const [session, workspaces] = await Promise.all([
+    client.getSession(sessionId),
+    listWorkspaces(),
+  ]);
+  if (session.workspace_id !== workspaceId) throw new Error("session_catalog_workspace_mismatch");
+  const workspace = workspaces.find((item) => item.id === workspaceId);
+  if (!workspace) return;
+  const thread = await upsertThreadFromRun({
+    id: session.session_id,
+    kind: "chat",
+    title: session.title,
+    workspacePath: workspace.path,
+    runtimeSessionId: session.session_id,
+    status: "idle",
+    messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+  });
+  const updated = await updateThread({
+    id: thread.id,
+    archived: session.archived === true || session.lifecycle === "archived" || session.lifecycle === "removed",
+    archiveSource: session.archived === true || session.lifecycle === "archived" ? "opendrsai" : undefined,
+  });
+  if (!webContents.isDestroyed()) webContents.send("desktop:thread-catalog", {
+    thread: updated,
+    source: "runtime-session",
+  });
+}
+
+function startRuntimeWorkspaceCatalogSubscription(
+  webContents: WebContents,
+  workspaceId: string,
+): void {
+  const key = runtimeWorkspaceCatalogKey(webContents, workspaceId);
+  if (runtimeWorkspaceCatalogSubscriptions.has(key)) return;
+  const controller = new AbortController();
+  runtimeWorkspaceCatalogSubscriptions.set(key, controller);
+  const gate = new WorkspaceSessionCatalogGate();
+  void (async () => {
+    let retryMillis = 500;
+    while (!controller.signal.aborted && !webContents.isDestroyed()) {
+      try {
+        const stream = await (await LocalRuntimeClient.connect())
+          .openWorkspaceSessionCatalogStream(workspaceId, controller.signal);
+        retryMillis = 500;
+        await consumeWorkspaceSessionCatalogStream(stream.events, async (event) => {
+          if (gate.accept(event) !== "apply") return;
+          await applyRuntimeWorkspaceCatalogEvent(webContents, workspaceId, event.session_id);
+        });
+      } catch {
+        if (controller.signal.aborted) break;
+        await new Promise((resolve) => setTimeout(resolve, retryMillis));
+        retryMillis = Math.min(retryMillis * 2, 15_000);
+      }
+    }
+  })().finally(() => {
+    if (runtimeWorkspaceCatalogSubscriptions.get(key) === controller) {
+      runtimeWorkspaceCatalogSubscriptions.delete(key);
+    }
+  });
+}
+
+async function ensureRuntimeWorkspaceCatalogSubscriptions(webContents: WebContents): Promise<void> {
+  if (webContents.isDestroyed()) return;
+  const workspaces = await (await LocalRuntimeClient.connect()).listWorkspaces(false);
+  for (const workspace of workspaces) startRuntimeWorkspaceCatalogSubscription(webContents, workspace.workspace_id);
+  ensureRuntimeThreadCleanup(webContents);
+}
 
 function runtimeThreadSubscriptionKey(webContents: WebContents, threadId: string): string {
   return `${webContents.id}:${threadId}`;
@@ -590,7 +694,19 @@ function stopRuntimeThreadSubscriptions(webContentsId?: number): void {
       runtimeThreadSubscriptions.delete(key);
     }
   }
+  if (webContentsId === undefined) {
+    for (const controller of runtimeWorkspaceCatalogSubscriptions.values()) {
+      controller.abort(new DOMException("Workspace catalog subscriber closed.", "AbortError"));
+    }
+    runtimeWorkspaceCatalogSubscriptions.clear();
+  }
   if (webContentsId !== undefined) {
+    for (const [key, controller] of runtimeWorkspaceCatalogSubscriptions) {
+      if (key.startsWith(`${webContentsId}:`)) {
+        controller.abort(new DOMException("Workspace catalog subscriber closed.", "AbortError"));
+        runtimeWorkspaceCatalogSubscriptions.delete(key);
+      }
+    }
     const timer = runtimeThreadCatalogTimers.get(webContentsId);
     if (timer) clearInterval(timer);
     runtimeThreadCatalogTimers.delete(webContentsId);
@@ -3079,6 +3195,7 @@ function registerDeepLinkProtocol(): void {
     if (developmentRuntime) {
       app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [
         app.getAppPath(),
+        ...getSourceProtocolLaunchArguments(),
       ]);
       registerDevelopmentDeepLinkCommand();
       registerDeepLinkDisplayName();
@@ -3087,6 +3204,7 @@ function registerDeepLinkProtocol(): void {
     if (process.defaultApp && process.argv.length >= 2) {
       app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [
         resolve(process.argv[1]),
+        ...getSourceProtocolLaunchArguments(),
       ]);
       registerDeepLinkDisplayName();
       return;
@@ -3101,9 +3219,25 @@ function registerDeepLinkProtocol(): void {
   }
 }
 
+function getSourceProtocolLaunchArguments(): string[] {
+  const launchMode = process.env.OPENDRSAI_DESKTOP_LAUNCH_MODE === "production"
+    ? "production"
+    : "development";
+  const launchHome = process.env.OPENDRSAI_LAUNCH_HOME?.trim()
+    || process.env.DRSAI_HOME?.trim()
+    || app.getPath("userData");
+  return [
+    `--opendrsai-launch-mode=${launchMode}`,
+    `--opendrsai-launch-home=${resolve(launchHome)}`,
+  ];
+}
+
 function registerDevelopmentDeepLinkCommand(): void {
   if (process.platform !== "win32") return;
-  const command = `"${process.execPath}" "${app.getAppPath()}" "%1"`;
+  const sourceArguments = getSourceProtocolLaunchArguments()
+    .map((argument) => `"${argument}"`)
+    .join(" ");
+  const command = `"${process.execPath}" "${app.getAppPath()}" ${sourceArguments} "%1"`;
   execFile("reg.exe", [
     "add",
     `HKCU\\Software\\Classes\\${DEEP_LINK_PROTOCOL}\\shell\\open\\command`,
@@ -3409,7 +3543,7 @@ function mobilePairingRelayBaseUrl(issuer?: string): string {
     }
     issuerOrigin = parsedIssuer.origin;
   }
-  const value = configured || `${issuerOrigin || (is.dev ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn")}/api/runtime-relay`;
+  const value = configured || `${issuerOrigin || (process.env.OPENDRSAI_DESKTOP_DEV === "1" ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn")}/api/runtime-relay`;
   const parsed = new URL(value);
   if (parsed.protocol !== "https:"
     || parsed.port
@@ -3669,6 +3803,10 @@ async function runPhase3LiveAcceptance(nonce: string): Promise<void> {
     if (auth.authMode !== "oidc" || !auth.accessToken) {
       throw new Error("A current OIDC Desktop session is required.");
     }
+    if (!(await startGateway())) {
+      throw new Error("The App-owned Gateway could not be started for Phase 3 live acceptance.");
+    }
+    await syncAuthIdentityToGateway(auth.userId);
     const verifier = resolve(
       DRSAI_REPO,
       "apps/desktop/windows/scripts/verify-run-traceability-phase3-live-model.mjs",
@@ -3754,7 +3892,7 @@ async function diagnoseMobileRemoteAccess() {
     runtimeResult = await (await LocalRuntimeClient.connect()).getMobileRemoteDiagnostics();
   } catch {
     return classifyMobileRemoteDiagnostics({
-      runtime: "failed", relay: "unknown", oidc: "unknown", wss: "unknown", heartbeat: "unknown", protocol: "unknown",
+      runtime: "failed", relay: "unknown", oidc: "unknown", device_proof: "unknown", wss: "unknown", heartbeat: "unknown", protocol: "unknown", push: "unknown",
     });
   }
   let oidc: "ok" | "failed" = "failed";
@@ -3782,6 +3920,17 @@ async function isAllowedOpenPath(rawPath: unknown): Promise<boolean> {
       (!relativePath.startsWith("..") && !isAbsolute(relativePath))
     );
   });
+}
+
+async function resolveLegacyLocalWorkspaceLabel(rawPath: unknown): Promise<string | null> {
+  if (typeof rawPath !== "string" || /[\r\n\0]/.test(rawPath)) return null;
+  const requestedPath = rawPath.trim();
+  if (requestedPath !== "Local workspace" && requestedPath !== "本地工作区") {
+    return requestedPath || null;
+  }
+  const workspaces = await listWorkspaces();
+  return workspaces.find((workspace) =>
+    workspace.location !== "remote" && Boolean(workspace.path) && existsSync(workspace.path))?.path ?? null;
 }
 
 async function openPdfSourcePage(request: PdfPageOpenRequest): Promise<PdfPageOpenResult> {
@@ -4198,7 +4347,6 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
 }
 
 function registerIpc(): void {
-  const regressionControl = new DesktopRegressionControl(DRSAI_REPO, app.getPath("userData"));
   secureHandle("desktop:platform-descriptor", () => WINDOWS_PLATFORM_DESCRIPTOR);
   secureHandle("desktop:system-permissions-get", () => [
     { kind: "microphone", state: "unknown", canRequest: false, canOpenSettings: true, message: "Microphone access is controlled by Windows Settings." },
@@ -4593,9 +4741,18 @@ function registerIpc(): void {
     openPdfSourcePage(request),
   );
 
-  secureHandle("desktop:ide-context", (_event, workspacePath: string) =>
-    getIdeContext(workspacePath),
-  );
+  secureHandle("desktop:ide-context", async (_event, workspacePath: string) => {
+    const resolvedWorkspacePath = await resolveLegacyLocalWorkspaceLabel(workspacePath);
+    if (!resolvedWorkspacePath || !(await isAllowedOpenPath(resolvedWorkspacePath))) {
+      return {
+        available: false,
+        workspacePath: resolvedWorkspacePath ?? "",
+        source: "unknown" as const,
+        message: "No registered local workspace is available for IDE context.",
+      };
+    }
+    return getIdeContext(resolvedWorkspacePath);
+  });
 
   secureHandle("desktop:get-file-icon", async (_event, rawPath: string) => {
     if (!(await isAllowedOpenPath(rawPath))) {
@@ -4659,8 +4816,9 @@ function registerIpc(): void {
       event,
       associationId: string,
       permissions: Array<"read" | "send" | "approve" | "files">,
+      scope: import("../../../shared/api/desktopApi").DesktopMobilePairingScope | undefined,
     ) =>
-      mobilePairingControllerFor(event.sender).shrinkAssociation(associationId, permissions),
+      mobilePairingControllerFor(event.sender).shrinkAssociation(associationId, permissions, scope),
     );
   secureHandle("desktop:mobile-enrollment-revoke", (event) =>
     mobilePairingControllerFor(event.sender).revokeEnrollment(),
@@ -4693,7 +4851,7 @@ function registerIpc(): void {
   secureHandle("desktop:terminal-kill", (event, id: string) =>
     killTerminalSession(event, id),
   );
-  secureHandle("desktop:list-workspaces", () => listWorkspaces());
+  secureHandle("desktop:list-workspaces", () => listWorkspaces(app.getPath("documents")));
   secureHandle("desktop:ssh-hosts", () => listSshHosts());
   secureHandle("desktop:ssh-diagnose", (_event, hostAlias: string) => diagnoseSshHost(hostAlias));
   secureHandle("desktop:ssh-host-keys", (_event, hostAlias: string) => inspectSshHostKeys(hostAlias));
@@ -4740,6 +4898,13 @@ function registerIpc(): void {
       if (error instanceof Error && error.message === "Remote Gateway operation was cancelled.") return null;
       throw error;
     }
+  });
+
+  secureHandle("desktop:open-regression-reference", async (_event, rawUri: string) => {
+    const path = resolveRegressionReference(DRSAI_HOME, rawUri);
+    if (!path) return "Regression reference is unavailable or invalid.";
+    if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN === "1") return "";
+    return shell.openPath(path);
   });
   secureHandle("desktop:remote-gateway-install-approval", (_event, request: RemoteGatewayInstallRequest) =>
     requestRemoteGatewayInstallApproval(request),
@@ -5097,10 +5262,11 @@ function registerIpc(): void {
   );
   secureHandle("desktop:workspace-checkpoints-list", async (_event, workspacePath: string, workspaceId?: string) => {
     if ((await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown") return listRemoteWorkspaceCheckpoints(workspacePath, workspaceId);
-    if (!(await isAllowedOpenPath(workspacePath))) {
+    const resolvedWorkspacePath = await resolveLegacyLocalWorkspaceLabel(workspacePath);
+    if (!resolvedWorkspacePath || !(await isAllowedOpenPath(resolvedWorkspacePath))) {
       throw new Error("Checkpoint workspace is not registered or allowed.");
     }
-    return listWorkspaceCheckpoints(workspacePath);
+    return listWorkspaceCheckpoints(resolvedWorkspacePath);
   });
   secureHandle("desktop:workspace-checkpoint-create", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
@@ -5136,7 +5302,10 @@ function registerIpc(): void {
   secureHandle("desktop:fork-conflict-draft-write", async (_event, request) =>
     requestForkConflictDraftWrite(request),
   );
-  secureHandle("desktop:list-threads", () => listThreads());
+  secureHandle("desktop:list-threads", async (event) => {
+    void ensureRuntimeWorkspaceCatalogSubscriptions(event.sender).catch(() => undefined);
+    return listThreads();
+  });
   secureHandle("desktop:list-agents", (_event, options) => listAgents(
     options && typeof options === "object"
       ? {
@@ -5156,10 +5325,11 @@ function registerIpc(): void {
   secureHandle("desktop:record-agent-usage", (_event, agentId) =>
     recordAgentUsage(typeof agentId === "string" ? agentId : ""));
   secureHandle("desktop:get-my-drsai-config", async (_event, workspacePath?: string) => {
-    if (workspacePath && !(await isAllowedOpenPath(workspacePath))) {
+    const resolvedWorkspacePath = await resolveLegacyLocalWorkspaceLabel(workspacePath);
+    if (resolvedWorkspacePath && !(await isAllowedOpenPath(resolvedWorkspacePath))) {
       return getMyDrSaiConfig();
     }
-    return getMyDrSaiConfig(workspacePath);
+    return getMyDrSaiConfig(resolvedWorkspacePath ?? undefined);
   });
   secureHandle("desktop:update-my-drsai-config", (_event, request: UpdateMyDrSaiConfigRequest) =>
     updateMyDrSaiConfig(request),
@@ -5181,6 +5351,9 @@ function registerIpc(): void {
   );
   secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
     testMyDrSaiModelProvider(provider, model),
+  );
+  secureHandle("desktop:probe-my-drsai-provider-model", (_event, provider: string, request) =>
+    probeMyDrSaiProviderModel(provider, request as { model: string; operation: import("../../../shared/api/desktopApi").ModelCapabilityProbeOperation; protocol?: string }),
   );
   secureHandle("desktop:test-my-drsai-model-draft", (_event, request: UpdateMyDrSaiModelConnectionRequest, mode?: "basic" | "model") => testMyDrSaiModelDraft(request, mode));
   secureHandle("desktop:list-my-drsai-model-provider-presets", () => listMyDrSaiModelProviderPresets());
@@ -5329,6 +5502,7 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),
   );
+  secureHandle("desktop:append-duplex-voice-history", (_event, request: DesktopDuplexVoiceHistoryAppendRequest) => appendDuplexVoiceHistory(request));
   secureHandle("desktop:create-thread-share", (_event, request) =>
     createThreadShare(request),
   );
@@ -5626,37 +5800,34 @@ function registerIpc(): void {
     cancelChatTurn(request),
   );
   secureHandle("desktop:run-list", async (_event, request: SessionRunsReadRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
     const auth = await requireAuthContext();
-    return sanitizeSessionRunList(await resolved.client.listSessionRuns(
-      request.sessionId, request.cursor, request.limit, request.status, auth,
-    ));
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeSessionRunList(await client.listSessionRuns(
+        request.sessionId, request.cursor, request.limit, request.status, auth,
+      )));
   });
   secureHandle("desktop:run-inspection", async (_event, request: RunInspectionOpenRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
     const auth = await requireAuthContext();
-    return sanitizeRunInspection(await resolved.client.getRunInspection(
-      request.runId, request.timelineCursor, request.limit, request.itemType, request.status, auth,
-    ));
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeRunInspection(await client.getRunInspection(
+        request.runId, request.timelineCursor, request.limit, request.itemType, request.status, auth,
+      )));
   });
   secureHandle("desktop:run-item-locator", async (_event, request: RunItemLocatorRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
     const auth = await requireAuthContext();
-    return resolved.client.locateRunItem(
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, ({ client }) => client.locateRunItem(
       request.runId, request.itemId, request.itemType, request.status, auth,
-    );
+    ));
   });
   secureHandle("desktop:run-manifest", async (_event, request: RunManifestReadRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    return sanitizeRunReproductionManifest(
-      await resolved.client.getRunReproductionManifest(request.runId, await requireAuthContext()),
-    );
+    const auth = await requireAuthContext();
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeRunReproductionManifest(await client.getRunReproductionManifest(request.runId, auth)));
   });
   secureHandle("desktop:run-manifest-export", async (_event, request: RunManifestReadRequest): Promise<RunManifestExportResult> => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    const manifest = sanitizeRunReproductionManifest(
-      await resolved.client.exportRunReproductionManifest(request.runId, await requireAuthContext()),
-    );
+    const auth = await requireAuthContext();
+    const manifest = await withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeRunReproductionManifest(await client.exportRunReproductionManifest(request.runId, auth)));
     const suggestedName = `opendrsai-run-${request.runId}-manifest.json`.replace(/[^a-zA-Z0-9._-]/g, "-");
     const options = {
       title: "Export redacted Run manifest",
@@ -5793,6 +5964,16 @@ function registerIpc(): void {
     const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
     return resolved.client.getRunComparison(request.comparisonId, await requireAuthContext());
   });
+  secureHandle("desktop:run-comparison-evaluations-list", async (_event, request: ListRunComparisonEvaluationsRequest) => {
+    await requireExperimentReleaseGate();
+    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+    return resolved.client.listRunComparisonEvaluations(request.comparisonId, await requireAuthContext());
+  });
+  secureHandle("desktop:run-comparison-evaluation-create", async (_event, request: CreateRunComparisonEvaluationRequest) => {
+    await requireExperimentReleaseGate();
+    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+    return resolved.client.createRunComparisonEvaluation(request, await requireAuthContext());
+  });
   secureHandle("desktop:worktree-adoption-preview", async (_event, request: GetWorktreeAdoptionPreviewRequest) => {
     await requireExperimentReleaseGate();
     const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
@@ -5867,6 +6048,14 @@ function registerIpc(): void {
     "desktop:voice-streaming-capabilities",
     () => getStreamingVoiceCapabilities(),
   );
+  secureHandle("desktop:voice-duplex-capabilities", () => getDuplexVoiceCapabilities());
+  secureHandle("desktop:voice-duplex-start", (event, request: DesktopDuplexVoiceSessionStartRequest) => startDuplexVoiceSession(event.sender, request));
+  secureHandle("desktop:voice-duplex-update", (event, request: DesktopDuplexVoiceSessionStartRequest) => updateDuplexVoiceSession(event.sender, request));
+  secureHandle("desktop:voice-duplex-interrupt", (event, request: DesktopDuplexVoiceInterruptRequest) => interruptDuplexVoiceSession(event.sender, request));
+  secureHandle("desktop:voice-duplex-tool-result", (event, request: DesktopDuplexVoiceToolResultRequest) => submitDuplexVoiceToolResult(event.sender, request));
+  secureHandle("desktop:voice-duplex-stop", (event, sessionId: string) => stopDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
+  secureHandle("desktop:voice-duplex-cancel", (event, sessionId: string) => cancelDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
+  secureHandle("desktop:voice-duplex-dispose", (event, sessionId: string) => disposeDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
   secureHandle(
     "desktop:voice-streaming-start",
     (event, request: DesktopStreamingVoiceStartRequest) => startStreamingVoiceTranscription(event.sender, request),
@@ -5896,6 +6085,13 @@ function registerIpc(): void {
     }
     attachStreamingVoiceAudioPort(event.sender, sessionId, port);
   });
+  ipcMain.on("desktop:voice-duplex-audio-port", (event: IpcMainEvent, request: unknown) => {
+    if (!isTrustedSender(event as unknown as IpcMainInvokeEvent)) { event.ports[0]?.close(); return; }
+    const sessionId = getStringProperty(request, "sessionId");
+    const port = event.ports[0];
+    if (!sessionId || !port) { port?.close(); return; }
+    attachDuplexVoiceAudioPort(event.sender, sessionId, port);
+  });
   secureHandle(
     "desktop:voice-synthesis-start",
     (event, request: DesktopVoiceSynthesisRequest) => startVoiceSynthesis(event.sender, request),
@@ -5924,16 +6120,6 @@ function registerIpc(): void {
     }
     return startAgentRun(event.sender, request);
   });
-  secureHandle("desktop:regression-enabled", () => regressionControl.isEnabled());
-  secureHandle("desktop:regression-suites", () => regressionControl.listSuites());
-  secureHandle("desktop:regression-cases", (_event, suiteId: string) => regressionControl.listCases(suiteId));
-  secureHandle("desktop:regression-case", (_event, caseId: string) => regressionControl.getCase(caseId));
-  secureHandle("desktop:regression-begin", (_event, request: RegressionBeginRequest) => regressionControl.begin(request));
-  secureHandle("desktop:regression-transition", (_event, request: RegressionTransitionRequest) => regressionControl.transition(request));
-  secureHandle("desktop:regression-attach-run", (_event, request: RegressionAttachRunRequest) => regressionControl.attachRun(request));
-  secureHandle("desktop:regression-get", (_event, evaluationId: string) => regressionControl.get(evaluationId));
-  secureHandle("desktop:regression-cancel", (_event, evaluationId: string) => regressionControl.cancel(evaluationId));
-  secureHandle("desktop:regression-history", (_event, limit?: number) => regressionControl.history(limit));
   secureHandle("desktop:abort-agent-run", (_event, requestId: string) =>
     abortAgentRun(requestId),
   );
@@ -5943,7 +6129,7 @@ function registerIpc(): void {
   secureHandle("desktop:channel-provider-token-configure", (_event, request: DesktopChannelProviderTokenConfigureRequest) => configureChannelProviderToken(request));
   secureHandle("desktop:recover-agent-run", (event, threadId: string) => recoverAgentRun(threadId, event.sender));
   secureHandle("desktop:save-api-key", (_event, apiKey: string) => {
-    if (!is.dev) {
+    if (process.env.OPENDRSAI_DESKTOP_DEV !== "1") {
       return { ok: false, message: "This build receives service authorization through HepAI OIDC." };
     }
     return saveApiKeyAndSync(apiKey);
@@ -6406,6 +6592,14 @@ app.whenReady().then(async () => {
     });
   });
   registerIpc();
+  const publishLifecycle = (reason: import("../../../shared/api/desktopApi").DesktopLifecycleEvent["reason"]): void => {
+    const event = { reason, recoveredGateway: false, at: new Date().toISOString() };
+    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:lifecycle-event", event);
+  };
+  powerMonitor.on("suspend", () => { disposeAllDuplexVoiceSessions(); publishLifecycle("suspend"); });
+  powerMonitor.on("lock-screen", () => { disposeAllDuplexVoiceSessions(); publishLifecycle("lock-screen"); });
+  powerMonitor.on("resume", () => publishLifecycle("resume"));
+  powerMonitor.on("unlock-screen", () => publishLifecycle("unlock-screen"));
   setRemoteWorkspaceStatusPublisher((status) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-workspace-status-event", status);
     desktopDiagnostics.registerHealth({
@@ -6551,6 +6745,7 @@ async function runHeadlessOidcSmoke(): Promise<void> {
       runId: "e2e-oidc-agent-run",
       task: "oidc agent bearer check",
       model: "drsai",
+      workspacePath: process.cwd(),
       metadata: { source: "e2e-oidc" },
     });
     await waitForHeadlessGatewayTerminal(gatewayEvents, agentRequestId);
@@ -6734,7 +6929,13 @@ app.on("before-quit", (event) => {
     })
     .finally(() => {
       gatewayShutdownComplete = true;
-      app.quit();
+      // The initial quit request has already emitted before-quit and was delayed
+      // only so the Runtime and auxiliary controllers could shut down cleanly.
+      // Re-entering the quit lifecycle from this handler can make Electron 39 report
+      // -1 (0xffffffff on Windows) for an otherwise normal window close. The
+      // cleanup boundary is complete here, so terminate explicitly with the
+      // successful exit code instead of re-entering the quit lifecycle.
+      app.exit(0);
     });
 });
 

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
-from drsai.backend.runtime.experiments import ExperimentError
+from drsai.backend.runtime.experiments import ExperimentConflict, ExperimentError
 
 
 def _pair(tmp_path: Path):
@@ -20,6 +20,9 @@ def _pair(tmp_path: Path):
     baseline, _ = engine.create_run(session["session_id"], "agent@v1", "baseline", "codex")
     engine.set_run_input(baseline["run_id"], "baseline")
     engine.transition_run(baseline["run_id"], "running")
+    engine.append_event(baseline["run_id"], "tool.complete", {
+        "tool_id": "baseline-tool", "name": "search", "result": "ok",
+    })
     engine.append_event(baseline["run_id"], "agent.item.file_change", {
         "item_id": "baseline-file", "phase": "completed", "item": {
             "id": "baseline-file", "type": "file_change",
@@ -41,6 +44,9 @@ def _pair(tmp_path: Path):
     engine.set_run_input(candidate["run_id"], changed["overrides"]["input"]["message"])
     engine.experiments.mark_executed(draft["experiment_id"], candidate["run_id"])
     engine.transition_run(candidate["run_id"], "running")
+    engine.append_event(candidate["run_id"], "tool.failed", {
+        "tool_id": "candidate-tool", "name": "search", "error": "fixture failure",
+    })
     engine.append_event(candidate["run_id"], "agent.item.file_change", {
         "item_id": "candidate-file", "phase": "completed", "item": {
             "id": "candidate-file", "type": "file_change",
@@ -60,8 +66,110 @@ def test_comparison_prioritizes_outcome_files_usage_and_honest_attribution(tmp_p
     assert file_diff["change"] == "modified"
     assert comparison["usage"]["baseline"]["known"] is True
     assert comparison["usage"]["candidate"]["known"] is True
+    assert comparison["metrics"]["baseline"]["duration_ms"] is not None
+    assert comparison["metrics"]["candidate"]["artifacts"] == 0
+    assert comparison["metrics"]["baseline"]["tool_errors"] == 0
+    assert comparison["metrics"]["candidate"]["tool_errors"] == 1
+    assert comparison["metrics"]["delta"]["tool_calls"] == 0
+    assert comparison["metrics"]["delta"]["tool_errors"] == 1
     assert any(item["kind"] == "known_configuration" for item in comparison["attribution"])
     assert all(item["alignment"] in {"provenance", "same_id", "unmatched_baseline", "unmatched_candidate"} for item in comparison["steps"])
+
+
+def test_comparison_metric_deltas_preserve_positive_negative_zero_and_unknown(tmp_path: Path) -> None:
+    engine, _, _ = _pair(tmp_path)
+    baseline = {
+        "run": {"status": "completed"},
+        "summary": {
+            "duration_ms": 100, "counts_by_item_type": {"tool_call": 2, "interaction": 1},
+            "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+            "warning_count": 0,
+        },
+    }
+    candidate = {
+        "run": {"status": "completed"},
+        "summary": {
+            "duration_ms": None, "counts_by_item_type": {"tool_call": 2, "interaction": 0},
+            "usage": {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10},
+            "warning_count": 0,
+        },
+    }
+    metrics = engine.run_comparisons._metrics(
+        baseline, candidate, baseline_tool_errors=0, candidate_tool_errors=1,
+    )
+    assert metrics["delta"]["duration_ms"] is None
+    assert metrics["delta"]["input_tokens"] == -5
+    assert metrics["delta"]["output_tokens"] == 3
+    assert metrics["delta"]["tool_calls"] == 0
+    assert metrics["delta"]["tool_errors"] == 1
+
+
+def _evaluation_scores(baseline: int = 3, candidate: int = 4) -> dict[str, dict[str, int]]:
+    return {
+        criterion: {"baseline": baseline, "candidate": candidate}
+        for criterion in ("outcome_quality", "execution_quality", "safety_reproducibility")
+    }
+
+
+def test_comparison_evaluations_are_append_only_idempotent_and_durable(tmp_path: Path) -> None:
+    engine, baseline, candidate = _pair(tmp_path)
+    comparison = engine.run_comparisons.create(baseline["run_id"], candidate["run_id"])
+    candidate_item_id = engine.inspect_run(candidate["run_id"])["timeline"][0]["id"]
+    assert engine.run_comparison_evaluations.list(comparison["comparison_id"])["latest_revision"] == 0
+    first = engine.run_comparison_evaluations.create(
+        comparison["comparison_id"], expected_latest_revision=0,
+        scores=_evaluation_scores(), verdict="candidate_better",
+        note="Candidate is more complete. Bearer secret-value-must-not-survive",
+        evidence_refs=[{"run_id": candidate["run_id"], "item_id": candidate_item_id}],
+        created_by="user-one", idempotency_key="evaluation-one",
+    )
+    repeated = engine.run_comparison_evaluations.create(
+        comparison["comparison_id"], expected_latest_revision=0,
+        scores=_evaluation_scores(), verdict="candidate_better",
+        note="Candidate is more complete. Bearer secret-value-must-not-survive",
+        evidence_refs=[{"run_id": candidate["run_id"], "item_id": candidate_item_id}],
+        created_by="user-one", idempotency_key="evaluation-one",
+    )
+    assert repeated == first
+    assert first["revision"] == 1
+    assert "secret-value-must-not-survive" not in first["note"]
+    second = engine.run_comparison_evaluations.create(
+        comparison["comparison_id"], expected_latest_revision=1,
+        scores=_evaluation_scores(4, 4), verdict="tie", note="Rechecked.",
+        evidence_refs=[], created_by="user-one", idempotency_key="evaluation-two",
+    )
+    assert second["revision"] == 2
+    reopened = RuntimeEngine(
+        engine.database, RuntimeEngineIdentity("runtime-comparison", "instance-comparison"),
+        lambda workspace_id: workspace_id in {"workspace-one", "workspace-two"},
+    )
+    history = reopened.run_comparison_evaluations.list(comparison["comparison_id"])
+    assert history["latest_revision"] == 2
+    assert [item["revision"] for item in history["evaluations"]] == [1, 2]
+    assert history["evaluations"][0]["verdict"] == "candidate_better"
+
+
+def test_comparison_evaluation_rejects_invalid_or_stale_input(tmp_path: Path) -> None:
+    engine, baseline, candidate = _pair(tmp_path)
+    comparison = engine.run_comparisons.create(baseline["run_id"], candidate["run_id"])
+    create = lambda **changes: engine.run_comparison_evaluations.create(
+        comparison["comparison_id"], expected_latest_revision=changes.pop("expected", 0),
+        scores=changes.pop("scores", _evaluation_scores()),
+        verdict=changes.pop("verdict", "candidate_better"),
+        note=changes.pop("note", ""), evidence_refs=changes.pop("evidence_refs", []),
+        created_by="user-one", idempotency_key=changes.pop("key", "evaluation"),
+    )
+    with pytest.raises(ExperimentError, match="score"):
+        create(scores=_evaluation_scores(candidate=6))
+    with pytest.raises(ExperimentError, match="verdict"):
+        create(verdict="automatic_winner")
+    with pytest.raises(ExperimentError, match="Item was not found"):
+        create(evidence_refs=[{"run_id": baseline["run_id"], "item_id": "candidate-file"}])
+    create()
+    with pytest.raises(ExperimentConflict, match="revision changed"):
+        create(key="stale")
+    with pytest.raises(ExperimentConflict, match="Idempotency-Key"):
+        create(expected=1, key="evaluation", verdict="tie")
 
 
 def test_comparison_digest_is_deterministic_and_corrupt_cache_rebuilds(tmp_path: Path) -> None:

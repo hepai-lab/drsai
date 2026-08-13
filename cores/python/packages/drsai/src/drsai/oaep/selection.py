@@ -41,6 +41,7 @@ def select_conversation_protocol(
         oaep
         and oaep.get("version") == OAEP_VERSION
         and OAEP_PROFILE in profiles
+        and oaep.get("schema_sha256") == OAEP_SCHEMA_SHA256
         and OAEP_REQUIRED.issubset(advertised)
     )
     if oaep_signals and not oaep_complete:

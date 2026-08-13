@@ -45,10 +45,11 @@ loopback 回调。若确需兼容旧环境，可以显式覆盖客户端和回�
 
 ## 构建与测试
 
-要求 JDK 17 和 Android SDK 35：
+要求 JDK 17、Python 3.12 和 Android SDK 35。Android Full Runtime 使用 CPython 3.12，覆盖 API 26 至 Android 16/API 36：
 
 ```powershell
 $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
+$env:OPENDRSAI_ANDROID_BUILD_PYTHON="C:\path\to\Python312\python.exe"
 .\gradlew.bat testDebugUnitTest connectedDebugAndroidTest lintDebug assembleMvp
 ```
 

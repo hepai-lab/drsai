@@ -24,6 +24,8 @@ interface RuntimeManifest {
 }
 
 let activeInstall: AbortController | null = null;
+let installedRuntimeInspectionCache: { version: string | null; archiveSha256: string | null; healthy: boolean } | null = null;
+let installedRuntimeInspectionInFlight: Promise<{ version: string | null; archiveSha256: string | null; healthy: boolean }> | null = null;
 
 export function bundledRuntimeManifestPath(): string { return join(process.resourcesPath, "runtime", "runtime-manifest.json"); }
 export function hasBundledRuntime(): boolean {
@@ -94,6 +96,7 @@ export async function ensureBundledRuntimeInstalled(onProgress: (progress: Insta
       // that absolute root, so seal the venv metadata to its final location.
       await relocateRuntimeVirtualEnvironments(DRSAI_REPO, manifest.pythonVersion);
       await rm(backup, { recursive: true, force: true });
+      installedRuntimeInspectionCache = { version: manifest.version, archiveSha256: manifest.sha256, healthy: true };
       onProgress({ phase: "complete", message: "Runtime installation complete.", log, exitCode: 0 });
       return true;
     } catch (error) {
@@ -112,7 +115,20 @@ export function runtimeExtractionTimeoutMs(archiveSize: number): number {
   return Math.min(MAX_EXTRACTION_TIMEOUT_MS, Math.max(MIN_EXTRACTION_TIMEOUT_MS, Math.ceil(archiveSize / MIN_ARCHIVE_BYTES_PER_SECOND) * 1_000));
 }
 
-export async function inspectInstalledRuntime(): Promise<{ version: string | null; archiveSha256: string | null; healthy: boolean }> {
+export async function inspectInstalledRuntime(force = false): Promise<{ version: string | null; archiveSha256: string | null; healthy: boolean }> {
+  if (!force && installedRuntimeInspectionCache) return installedRuntimeInspectionCache;
+  if (installedRuntimeInspectionInFlight) return installedRuntimeInspectionInFlight;
+  installedRuntimeInspectionInFlight = inspectInstalledRuntimeContents();
+  try {
+    const result = await installedRuntimeInspectionInFlight;
+    installedRuntimeInspectionCache = result;
+    return result;
+  } finally {
+    installedRuntimeInspectionInFlight = null;
+  }
+}
+
+async function inspectInstalledRuntimeContents(): Promise<{ version: string | null; archiveSha256: string | null; healthy: boolean }> {
   const marker = join(DRSAI_REPO, ".opendrsai-runtime.json");
   if (!existsSync(marker) || !existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) return { version: null, archiveSha256: null, healthy: false };
   try {

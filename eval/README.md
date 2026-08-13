@@ -12,6 +12,8 @@
 | `data/gaia/` | GAIA 数据集存放目录（需手动下载） |
 | `results/gaia/` | GAIA 评测结果输出目录 |
 
+未来需要补充、但尚未纳入上述 12 项回归测试的用户需求，统一记录在 [`docs/product/opendrsai-user-requirements-backlog.md`](../docs/product/opendrsai-user-requirements-backlog.md)。
+
 ## 报告涵盖的评测维度
 
 ### 1. 代码能力

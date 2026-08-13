@@ -35,7 +35,7 @@
           "payload": {"content": "hello"}
         }
       ],
-      "expected_events": ["run.started", "message.delta", "tool.decision", "run.completed"]
+      "expected_events": ["run.started", "message.delta", "tool.decision", "message.completed", "run.completed"]
     },
     {
       "id": "pure-core-tool",
@@ -95,7 +95,7 @@
           "payload": {"content": "There are two words."}
         }
       ],
-      "expected_events": ["run.started", "tool.decision", "tool.started", "tool.result", "tool.decision", "run.completed"]
+      "expected_events": ["run.started", "tool.decision", "tool.started", "tool.result", "tool.decision", "message.completed", "run.completed"]
     }
   ]
 }

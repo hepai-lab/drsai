@@ -9,7 +9,6 @@ import {
   // Cloud,
   Copy,
   FileText,
-  Monitor,
   FolderCode,
   FolderPlus,
   GitBranch,
@@ -294,7 +293,6 @@ export function WorkspaceShell({
   onWorkspaceChange,
   onWorkspaceSortModeChange,
 }: WorkspaceShellProps): React.JSX.Element {
-  const [desktopStatusOpen, setDesktopStatusOpen] = useState(false);
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
   const [shortcutDrafts, setShortcutDrafts] = useState<Record<ShortcutId, string>>(() => loadShortcutSettings());
   const [capturingShortcut, setCapturingShortcut] = useState<ShortcutId | null>(null);
@@ -319,18 +317,12 @@ export function WorkspaceShell({
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const worktreeEventCursor = useRef(0);
-  const [workspaceCreateOpen, setWorkspaceCreateOpen] = useState(false);
   const [workspaceDetailsId, setWorkspaceDetailsId] = useState<string | null>(null);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceDescriptionDraft, setWorkspaceDescriptionDraft] = useState("");
   const [workspaceSavePending, setWorkspaceSavePending] = useState(false);
   const [workspaceSaveError, setWorkspaceSaveError] = useState<string | null>(null);
   const [workspaceDeleteConfirm, setWorkspaceDeleteConfirm] = useState(false);
-  const [workspaceCreateSource, setWorkspaceCreateSource] = useState<CreateWorkspaceRequest["source"]>("existing");
-  const [workspaceCreateName, setWorkspaceCreateName] = useState("");
-  const [workspaceCreateParent, setWorkspaceCreateParent] = useState("");
-  const [workspaceCreateRepoUrl, setWorkspaceCreateRepoUrl] = useState("");
-  const [workspaceCreateError, setWorkspaceCreateError] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [commandPaletteSelectedIndex, setCommandPaletteSelectedIndex] = useState(0);
@@ -654,7 +646,7 @@ export function WorkspaceShell({
       if (command) {
         event.preventDefault();
         if (command === "newChat") onNewChat();
-        else if (command === "newWorkspace") setWorkspaceCreateOpen(true);
+        else if (command === "newWorkspace") void onAddWorkspace();
         else if (command === "find" || command === "commandPalette") setCommandPaletteOpen(true);
         else if (command === "back") onGoBack();
         else if (command === "forward") onGoForward();
@@ -670,7 +662,7 @@ export function WorkspaceShell({
         return;
       }
       if (event.key === "Escape") {
-        setDesktopStatusOpen(false);
+        setAboutDialogOpen(false);
         setOpenWorkbenchMenu(null);
         setCommandPaletteOpen(false);
         setThreadMenu(null);
@@ -681,7 +673,7 @@ export function WorkspaceShell({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeRightTab, capturingShortcut, onGoBack, onGoForward, onNavChange, onNewChat, onRightTabChange, onToggleRightPanel, onToggleSidebar, rightPanelCollapsed, shortcutDrafts]);
+  }, [activeRightTab, capturingShortcut, onAddWorkspace, onGoBack, onGoForward, onNavChange, onNewChat, onRightTabChange, onToggleRightPanel, onToggleSidebar, rightPanelCollapsed, shortcutDrafts]);
 
   useEffect(() => {
     if (!rightPanelCollapsed) setRightPanelActivated(true);
@@ -743,12 +735,6 @@ export function WorkspaceShell({
       window.requestAnimationFrame(() => resolve());
     });
     await desktopApi.performEditCommand(command).catch(() => false);
-  }
-
-  async function checkUpdatesFromMenu(): Promise<void> {
-    closeWorkbenchMenu();
-    setDesktopStatusOpen(true);
-    await desktopApi.checkForUpdates().catch(() => undefined);
   }
 
   useEffect(() => {
@@ -865,44 +851,8 @@ export function WorkspaceShell({
     });
   }
 
-  async function handleCreateLocalWorkspace(): Promise<void> {
-    await onAddWorkspace();
-    setWorkspaceCreateOpen(false);
-  }
-
   function openWorkspaceCreate(): void {
-    setWorkspaceCreateSource("existing");
-    setWorkspaceCreateName("");
-    setWorkspaceCreateParent("");
-    setWorkspaceCreateRepoUrl("");
-    setWorkspaceCreateError(null);
-    setWorkspaceCreateOpen(true);
-  }
-
-  async function chooseWorkspaceParent(): Promise<void> {
-    const path = await onPickWorkspaceFolder();
-    if (path) setWorkspaceCreateParent(path);
-  }
-
-  async function submitWorkspaceCreate(): Promise<void> {
-    setWorkspaceCreateError(null);
-    try {
-      if (workspaceCreateSource === "existing") {
-        await handleCreateLocalWorkspace();
-        return;
-      }
-      await onCreateWorkspace({
-        source: workspaceCreateSource,
-        parentPath: workspaceCreateParent,
-        name: workspaceCreateName,
-        repoUrl: workspaceCreateSource === "git" ? workspaceCreateRepoUrl : undefined,
-        description: zh ? "本地工作区" : "Local workspace",
-        trusted: true,
-      });
-      setWorkspaceCreateOpen(false);
-    } catch (error) {
-      setWorkspaceCreateError(userFacingFailureMessage(error, language, "operation"));
-    }
+    void onAddWorkspace();
   }
 
   function openWorkspaceDetails(workspace: WorkspaceProject): void {
@@ -2102,25 +2052,12 @@ export function WorkspaceShell({
           },
         })}
         {renderMenuItem({
-          label: zh ? "查看诊断信息" : "View diagnostics",
-          icon: HelpCircle,
-          onClick: () => {
-            closeWorkbenchMenu();
-            setDesktopStatusOpen(true);
-          },
-        })}
-        {renderMenuItem({
           label: zh ? "打开日志文件夹" : "Open log folder",
           icon: FileText,
           onClick: () => {
             closeWorkbenchMenu();
             void desktopApi.openLogFolder();
           },
-        })}
-        {renderMenuItem({
-          label: zh ? "检查更新" : "Check for updates",
-          icon: RefreshCw,
-          onClick: () => void checkUpdatesFromMenu(),
         })}
         <div className="workbench-menu-separator" role="separator" />
         {renderMenuItem({
@@ -2448,7 +2385,7 @@ export function WorkspaceShell({
             <strong>
               Open<span className="brand-accent">Dr</span>Sai
             </strong>
-            <span>{zh ? "桌面端" : "Desktop"}</span>
+            <span>{zh ? "开源赛博士桌面端" : "Desktop"}</span>
           </div>
         </div>
 
@@ -2556,6 +2493,7 @@ export function WorkspaceShell({
                 </button>
                 <button
                   className="workspace-create-button"
+                  data-testid="workspace-create-button"
                   type="button"
                   aria-label={zh ? "新建工作区" : "Create workspace"}
                   title={zh ? "新建工作区" : "Create workspace"}
@@ -3591,25 +3529,6 @@ export function WorkspaceShell({
           </section>
         </div>
       )}
-      {desktopStatusOpen && (
-        <div className="desktop-status-overlay" role="presentation" onMouseDown={() => setDesktopStatusOpen(false)}>
-          <section
-            className="desktop-status-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={zh ? "诊断信息" : "Diagnostics"}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="desktop-status-modal-header">
-              <h2>{zh ? "诊断信息" : "Diagnostics"}</h2>
-              <button type="button" onClick={() => setDesktopStatusOpen(false)} aria-label={zh ? "关闭" : "Close"}>
-                ×
-              </button>
-            </div>
-            <div className="desktop-status-modal-body">{desktopStatusPanel}</div>
-          </section>
-        </div>
-      )}
       {aboutDialogOpen && (
         <div className="desktop-status-overlay" role="presentation" onMouseDown={() => setAboutDialogOpen(false)}>
           <section
@@ -3633,6 +3552,7 @@ export function WorkspaceShell({
                   <span>{zh ? "面向科研工作的桌面智能体工作台" : "A desktop agent workbench for research workflows"}</span>
                 </div>
               </div>
+              {desktopStatusPanel}
             </div>
           </section>
         </div>
@@ -3650,74 +3570,6 @@ export function WorkspaceShell({
               })}
             </div>
             <footer><button type="button" onClick={() => { const defaults = defaultShortcutSettings(); setShortcutDrafts(defaults); window.localStorage.removeItem(SHORTCUT_STORAGE_KEY); }}>{zh ? "恢复默认" : "Restore defaults"}</button><button type="button" onClick={() => { window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcutDrafts)); setShortcutDialogOpen(false); }}>{zh ? "完成" : "Done"}</button></footer>
-          </section>
-        </div>
-      )}
-      {workspaceCreateOpen && (
-        <div className="workspace-create-overlay" role="presentation" onMouseDown={() => setWorkspaceCreateOpen(false)}>
-          <section
-            className="workspace-create-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={zh ? "创建工作区" : "Create Workspace"}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="workspace-create-header">
-              <h2>{zh ? "创建工作区" : "Create Workspace"}</h2>
-              <button type="button" onClick={() => setWorkspaceCreateOpen(false)} aria-label={zh ? "关闭" : "Close"}>
-                <X size={18} />
-              </button>
-            </div>
-            <div className="workspace-create-content">
-              <strong>{zh ? "工作区类型" : "Workspace type"}</strong>
-              <div className="workspace-type-grid">
-                <WorkspaceTypeButton
-                  active={workspaceCreateSource === "existing"}
-                  icon={FolderCode}
-                  title={zh ? "现有文件夹" : "Existing Folder"}
-                  description={zh ? "把已有目录加入工作区列表" : "Add an existing folder to your workspace list"}
-                  onClick={() => setWorkspaceCreateSource("existing")}
-                />
-                <WorkspaceTypeButton
-                  active={workspaceCreateSource === "empty"}
-                  icon={Monitor}
-                  title={zh ? "空白本地项目" : "Empty Local Project"}
-                  description={zh ? "在你的电脑上创建一个新文件夹" : "Create a new folder on your computer"}
-                  onClick={() => setWorkspaceCreateSource("empty")}
-                />
-              </div>
-
-              {workspaceCreateSource !== "existing" && (
-                <div className="workspace-create-form">
-                  <label>
-                    <span>{zh ? "工作区名称" : "Workspace name"}</span>
-                    <input
-                      value={workspaceCreateName}
-                      onChange={(event) => setWorkspaceCreateName(event.target.value)}
-                      placeholder={workspaceCreateSource === "git" ? "drsai-agent" : (zh ? "我的工作区" : "my-workspace")}
-                    />
-                  </label>
-                  <label>
-                    <span>{zh ? "创建位置" : "Create in"}</span>
-                    <div className="workspace-create-path-row">
-                      <input value={workspaceCreateParent} readOnly placeholder={zh ? "选择父文件夹" : "Choose a parent folder"} />
-                      <button type="button" onClick={chooseWorkspaceParent}>
-                        {zh ? "选择" : "Choose"}
-                      </button>
-                    </div>
-                  </label>
-                </div>
-              )}
-              {workspaceCreateError && <div className="workspace-create-error">{workspaceCreateError}</div>}
-            </div>
-            <div className="workspace-create-actions">
-              <button type="button" onClick={workspaceCreateSource === "existing" ? handleCreateLocalWorkspace : chooseWorkspaceParent}>
-                {zh ? "使用现有文件夹" : "Use existing folder"}
-              </button>
-              <button type="button" onClick={submitWorkspaceCreate}>
-                {zh ? "创建" : "Create"}
-              </button>
-            </div>
           </section>
         </div>
       )}
@@ -3881,31 +3733,6 @@ function SidebarButton({
     >
       <Icon size={16} />
       <span>{label}</span>
-    </button>
-  );
-}
-
-function WorkspaceTypeButton({
-  active,
-  description,
-  icon: Icon,
-  onClick,
-  title,
-}: {
-  active: boolean;
-  description: string;
-  icon: LucideIcon;
-  onClick: () => void;
-  title: string;
-}): React.JSX.Element {
-  return (
-    <button className={`workspace-type-card ${active ? "active" : ""}`} type="button" onClick={onClick}>
-      <Icon size={20} />
-      <span className="workspace-type-check" aria-hidden />
-      <span>
-        <b>{title}</b>
-        <small>{description}</small>
-      </span>
     </button>
   );
 }

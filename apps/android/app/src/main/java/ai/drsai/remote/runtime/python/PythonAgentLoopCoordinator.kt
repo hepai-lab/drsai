@@ -25,6 +25,7 @@ private data class ModelHostOutcome(
     val errorCode: String? = null,
     val errorMessage: String? = null,
     val errorRetryable: Boolean = false,
+    val errorStatus: Int? = null,
 )
 
 enum class PythonSideEffectFaultPoint {
@@ -151,6 +152,7 @@ class PythonAgentLoopCoordinator(
             var errorCode: String? = null
             var errorMessage: String? = null
             var errorRetryable = false
+            var errorStatus: Int? = null
             try {
                 ports.model.stream(request).collect { chunk ->
                     if (chunk.delta.isNotEmpty()) deltas += chunk.delta
@@ -164,15 +166,17 @@ class PythonAgentLoopCoordinator(
                 val name = error::class.simpleName.orEmpty().lowercase()
                 val api = error as? ApiException
                 errorCode = api?.code?.takeIf(String::isNotBlank)
-                    ?: if ("timeout" in name) "model_timeout" else "model_host_failed"
+                    ?: api?.status?.takeIf { it > 0 }?.let { "provider_http_$it" }
+                    ?: if ("timeout" in name) "model_timeout" else "model_transport_failed"
                 errorMessage = SensitiveDataRedactor.redact(
                     error.message?.trim().orEmpty().ifBlank { errorCode.orEmpty() },
                 ).take(1000)
                 errorRetryable = api?.retryable ?: ("timeout" in name)
+                errorStatus = api?.status?.takeIf { it > 0 }
             }
             return ModelHostOutcome(
                 payload.optString("subagent_id").ifBlank { null }, deltas, finishReason, toolCalls,
-                reasoningSummaries, errorCode, errorMessage, errorRetryable,
+                reasoningSummaries, errorCode, errorMessage, errorRetryable, errorStatus,
             )
         }
 
@@ -183,6 +187,7 @@ class PythonAgentLoopCoordinator(
                     JSONObject().put("code", outcome.errorCode)
                         .put("message", outcome.errorMessage ?: outcome.errorCode)
                         .put("retryable", outcome.errorRetryable)
+                        .apply { if (outcome.errorStatus != null) put("status", outcome.errorStatus) }
                         .apply { if (outcome.subagentId != null) put("subagent_id", outcome.subagentId) },
                     "model_failed",
                 ))

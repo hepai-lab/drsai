@@ -146,7 +146,10 @@ from sqlmodel import SQLModel
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Alembic can run inside the long-lived Desktop/Runtime process. Preserve
+    # application, relay and test capture loggers instead of disabling every
+    # logger which is absent from alembic.ini.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 

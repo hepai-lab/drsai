@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,7 @@ class ResultStore:
             source = Path(case.path)
             digest = hashlib.sha256(source.read_bytes()).hexdigest()
             snapshot = {"case_id": case.id, "revision": case.revision, "sha256": digest, "definition": case.data}
-            (snapshot_dir / f"{case.id}-rev{case.revision}-{digest[:12]}.json").write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            (snapshot_dir / f"{case.id}-rev{case.revision}-{digest[:12]}.json").write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, default=_json_default) + "\n", encoding="utf-8")
 
     def append(self, result: dict[str, Any]) -> None:
         errors = sorted(self.validator.iter_errors(result), key=lambda item: list(item.path))
@@ -81,3 +82,9 @@ class ResultStore:
                 continue
             valid.add(case_id)
         return valid
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")

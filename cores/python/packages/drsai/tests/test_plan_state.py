@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from drsai.backend.runtime.agent_kernel_factory import create_agent_kernel
+from drsai.backend.runtime.agent_kernel import build_tool_choice_policy, build_tool_decision_requirement
 from drsai.backend.runtime.mobile_core import MessageType, RuntimeEnvelope
 from drsai.backend.runtime.mobile_core.plan_state import (
     PLAN_SCHEMA_VERSION,
@@ -101,3 +102,18 @@ def test_android_and_desktop_plan_digest_match_for_the_same_update() -> None:
         }]}))
         states.append(kernel.snapshot("run-plan")["plan_state"])
     assert states[0] == states[1]
+
+
+def test_plan_tool_is_forced_only_for_explicit_multi_step_tasks() -> None:
+    simple = build_tool_decision_requirement("Read README.md", ["core.update_plan"])
+    complex_task = build_tool_decision_requirement(
+        "Create a plan for this multi-step migration, implementation, and verification.",
+        ["core.update_plan"],
+    )
+
+    assert simple["required_domains"] == []
+    assert build_tool_choice_policy(simple, ["core.update_plan"])["mode"] == "auto"
+    assert complex_task["required_domains"] == ["plan"]
+    choice = build_tool_choice_policy(complex_task, ["core.update_plan"])
+    assert choice["mode"] == "specified"
+    assert choice["specified_tool"] == "core.update_plan"

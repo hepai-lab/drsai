@@ -1,10 +1,10 @@
 ---
 name: drsai-dev-skill
-description: 当用户需要启动、停止、重启、验证 DrSai 前端或后端开发服务，或排查登录/访问/CORS 等开发环境问题时立即使用。适用场景包括：初次部署、环境更换、服务异常排查、服务状态查询、本地登录排错等。
+description: 当用户需要启动、停止、重启、验证 OpenDrSai 前端或后端开发服务，或排查登录/访问/CORS 等开发环境问题时立即使用。适用场景包括：初次部署、环境更换、服务异常排查、服务状态查询、本地登录排错等。
 allowed-tools: Bash(pm2:*) Bash(curl:*) Bash(yarn:*) Bash(node:*) Bash(drsai-ui:*) Bash(drsai:*) Bash(kill:*) Bash(lsof:*) Bash(ss:*) Bash(ip:*) Bash(bash:*) Bash(./drsai-dev.sh:*)
 ---
 
-# DrSai 开发环境管理指南
+# OpenDrSai 开发环境管理指南
 
 ## 首选入口：`drsai-dev.sh`
 

@@ -101,19 +101,19 @@ def test_orphan_cleanup_never_deletes_current_or_last_good_references(tmp_path) 
     assert resolve_credential(last_good_ref, root=root) == "last-good"
 
 
-def test_macos_keychain_store_sends_secret_via_stdin_not_process_arguments(monkeypatch) -> None:
+def test_macos_keychain_store_uses_native_security_framework(monkeypatch) -> None:
     import drsai.config.credentials as credentials_module
 
     captured = {}
-    def run(args, **kwargs):
-        captured["args"] = args
-        captured["input"] = kwargs.get("input")
-        return type("Result", (), {"returncode": 0, "stdout": ""})()
+    def store(account: str, secret: str) -> bool:
+        captured["account"] = account
+        captured["secret"] = secret
+        return True
 
     monkeypatch.setattr(credentials_module.sys, "platform", "darwin")
-    monkeypatch.setattr(credentials_module.subprocess, "run", run)
+    monkeypatch.setattr(credentials_module, "_macos_store_secret", store)
     secret = "mac-keychain-secret"
     reference = credentials_module.store_credential(secret)
     assert reference.startswith("drsai-credential:")
-    assert secret not in repr(captured["args"])
-    assert captured["input"] == f"{secret}\n"
+    assert captured["account"] == reference.removeprefix("drsai-credential:")
+    assert captured["secret"] == secret

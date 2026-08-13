@@ -16,6 +16,7 @@ import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.data.MIGRATION_11_12
 import ai.drsai.remote.data.MIGRATION_12_13
 import ai.drsai.remote.data.MIGRATION_13_14
+import ai.drsai.remote.data.MIGRATION_14_15
 import ai.drsai.remote.data.ModelProviderRepository
 import ai.drsai.remote.data.ModelProviderStore
 import ai.drsai.remote.data.OidcClient
@@ -107,7 +108,7 @@ class P9NaturalToolSelectionInstrumentedTest {
                 MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                 MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                 MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
-                MIGRATION_13_14,
+                MIGRATION_13_14, MIGRATION_14_15,
             )
             .build()
         val runtime = PythonRuntimeClient(context, idleTimeoutMs = -1)
@@ -167,6 +168,8 @@ class P9NaturalToolSelectionInstrumentedTest {
                     var terminal = "unknown"
                     var errorCode: String? = null
                     var errorDetail: String? = null
+                    var failureCategory: String? = null
+                    var providerError: String? = null
                     val runId = "p9-m04-f06-${UUID.randomUUID()}"
                     val stateStore = InMemoryCheckpointStore()
                     val recordingModel = RecordingModelPort(
@@ -220,9 +223,16 @@ class P9NaturalToolSelectionInstrumentedTest {
                             errorDetail = terminalEvent?.payload?.toString()?.take(240)
                         }
                     } catch (error: Throwable) {
-                        errorCode = when (error) {
-                            is ApiException -> error.code ?: "provider_http_${error.status}"
-                            else -> "runtime_${error.javaClass.simpleName}"
+                        when (error) {
+                            is ApiException -> {
+                                failureCategory = "provider_http"
+                                providerError = error.code ?: "provider_http_${error.status}"
+                                errorCode = providerError
+                            }
+                            else -> {
+                                failureCategory = classifyRuntimeFailure(error)
+                                errorCode = "runtime_${error.javaClass.simpleName}"
+                            }
                         }
                         errorDetail = error.message?.take(240)
                     }
@@ -232,7 +242,9 @@ class P9NaturalToolSelectionInstrumentedTest {
                         .put("selected_tools", JSONArray(selectedTools))
                         .put("selected_tool_calls", selectedToolCalls)
                         .put("terminal", terminal)
-                        .putOpt("provider_error", errorCode)
+                        .putOpt("failure_category", failureCategory)
+                        .putOpt("failure_code", errorCode)
+                        .putOpt("provider_error", providerError)
                         .putOpt("error_detail", errorDetail))
                 }
             }
@@ -307,18 +319,28 @@ class P9NaturalToolSelectionInstrumentedTest {
         private val selectedToolCalls: JSONArray,
         private val onError: (Throwable) -> Unit,
     ) : PythonModelHostPort {
+        private var rootRequirementSha256: String? = null
+
         override fun stream(request: HostModelRequest): Flow<HostModelChunk> = delegate.stream(request)
             .catch { error ->
                 onError(IllegalStateException(
-                    "tool_choice=${request.toolChoice};cause=${error.javaClass.simpleName}:${error.message}",
+                    "cause=${error.javaClass.simpleName}:${error.message};tool_choice=${request.toolChoice}",
                     error,
                 ))
                 throw error
             }
             .onEach { chunk ->
+                val requirementSha256 = request.toolChoice.optString("requirement_sha256")
+                    .takeIf(String::isNotBlank)
+                if (rootRequirementSha256 == null) rootRequirementSha256 = requirementSha256
+                if (requirementSha256 != rootRequirementSha256) return@onEach
+                val specifiedTool = request.toolChoice.optString("specified_tool").takeIf(String::isNotBlank)
                 repeat(chunk.toolCalls.length()) { index ->
                     chunk.toolCalls.optJSONObject(index)?.let { call ->
-                        call.optString("name").takeIf(String::isNotBlank)?.let(selectedTools::add)
+                        val name = call.optString("name").takeIf(String::isNotBlank) ?: return@let
+                        if (specifiedTool != null && name != specifiedTool) return@let
+                        if (specifiedTool != null && name in selectedTools) return@let
+                        selectedTools.add(name)
                         selectedToolCalls.put(JSONObject(call.toString()))
                     }
                 }
@@ -339,17 +361,44 @@ class P9NaturalToolSelectionInstrumentedTest {
             ?.let { HostCheckpoint(it.runId, it.sequence, JSONObject(it.state.toString())) }
     }
 
-    private fun stableToolResult(name: String): JSONObject = when (name) {
+    private fun stableToolResult(name: String): JSONObject {
+        if (name == "search_memory") return JSONObject().put("items", JSONArray().put(JSONObject()
+            .put("id", "p9-memory-1")
+            .put("source_id", "memory:p9-memory-1")
+            .put("content", "User prefers the name Xiaolin and concise Chinese answers.")))
+        return when (name) {
         "get_current_time" -> JSONObject().put("time", "2026-08-05T12:00:00+08:00[Asia/Shanghai]")
         "get_device_info" -> JSONObject().put("sdk", 35).put("locale", "zh-CN")
             .put("time_zone", "Asia/Shanghai").put("network_type", "wifi")
         "save_memory" -> JSONObject().put("saved", true).put("id", 1)
-        "search_memory" -> JSONObject().put("items", JSONArray())
-        "workspace.list" -> JSONObject().put("items", JSONArray())
-        "workspace.read" -> JSONObject().put("text", "fixture content")
-        "workspace.search" -> JSONObject().put("matches", JSONArray())
-        "workspace.write" -> JSONObject().put("written", true)
+        "search_memory" -> JSONObject().put("items", JSONArray().put(JSONObject()
+            .put("id", "p9-memory-1")
+            .put("source_id", "memory:p9-memory-1")
+            .put("content", "用户希望称呼为小林，并偏好简洁的中文回答。")))
+        "workspace.list" -> JSONObject().put("items", JSONArray()
+            .put("README.md").put("docs").put("settings.json").put("config"))
+        "workspace.read" -> JSONObject().put("path", "README.md")
+            .put("text", "OpenDrSai Android Full Runtime\ndefault_environment=debug\nOAEP events enabled")
+        "workspace.search" -> JSONObject().put("matches", JSONArray()
+            .put(JSONObject().put("path", "settings.json"))
+            .put(JSONObject().put("path", "settings.gradle.kts")))
+        "workspace.write" -> JSONObject().put("written", true).put("path", "notes/today.txt")
         else -> JSONObject().put("ok", true)
+        }
+    }
+
+    private fun classifyRuntimeFailure(error: Throwable): String {
+        val message = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(":")
+            .lowercase()
+        return when {
+            listOf("saf_", "workspace_", "approval_", "artifact_", "tool_execution").any(message::contains) ->
+                "host_execution"
+            listOf("oaep_", "event_", "projection_", "terminal_").any(message::contains) ->
+                "oaep_projection"
+            else -> "runtime_policy"
+        }
     }
 
     private fun sha256(bytes: ByteArray): String =

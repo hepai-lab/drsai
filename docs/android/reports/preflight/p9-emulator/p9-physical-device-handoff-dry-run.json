@@ -1,0 +1,61 @@
+{
+  "artifacts": {
+    "app_apk": {
+      "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+      "sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24"
+    },
+    "test_apk": {
+      "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\androidTest\\debug\\app-debug-androidTest.apk",
+      "sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5"
+    }
+  },
+  "device_requirements": {
+    "abi_prefix": "arm64",
+    "kind": "physical_device",
+    "serial": "PHYSICAL_ARM64_SERIAL",
+    "state": "device",
+    "user_actions": [
+      "authorize_adb",
+      "confirm_zhizengzeng_provider_configuration",
+      "run_formal_command"
+    ]
+  },
+  "evidence_tier": "emulator_preflight",
+  "formal_command": [
+    "C:\\Users\\win11\\VSProjects\\drsai\\.venv\\Scripts\\python.exe",
+    "C:\\Users\\win11\\VSProjects\\drsai\\scripts\\accept_android_p9_real_model_statistics.py",
+    "--serial",
+    "PHYSICAL_ARM64_SERIAL",
+    "--adb",
+    "C:\\Users\\win11\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+    "--app-apk",
+    "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+    "--test-apk",
+    "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\androidTest\\debug\\app-debug-androidTest.apk",
+    "--output",
+    "C:\\Users\\win11\\VSProjects\\drsai\\docs\\android\\reports\\evidence\\p9\\m09-f06-real-model-statistics.json",
+    "--m04-output",
+    "C:\\Users\\win11\\VSProjects\\drsai\\docs\\android\\reports\\evidence\\p9\\m04-f06-natural-tool-selection.json"
+  ],
+  "inputs": {
+    "adb": "C:\\Users\\win11\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+    "attempts_per_case": 3,
+    "case_count": 30,
+    "expected_observations": 180,
+    "models": [
+      "deepseek-v4-flash",
+      "deepseek-v4-pro"
+    ],
+    "policy": "cores/protocol/android-runtime/fixtures/p9-real-model-statistical-gate-v1.json",
+    "policy_sha256": "4f0c8fab1c81299dffe4376e0a96229ab42a4c5f038146e538b61a82097a0d81",
+    "suite": "cores/protocol/android-runtime/fixtures/p9-natural-tool-selection-v1.json",
+    "suite_sha256": "8293ff518aa234790593dec25e835bfe323cceec2a35c955da1483b62e94aebe"
+  },
+  "outputs": {
+    "m04": "C:\\Users\\win11\\VSProjects\\drsai\\docs\\android\\reports\\evidence\\p9\\m04-f06-natural-tool-selection.json",
+    "m09": "C:\\Users\\win11\\VSProjects\\drsai\\docs\\android\\reports\\evidence\\p9\\m09-f06-real-model-statistics.json"
+  },
+  "passed": true,
+  "release_evidence": false,
+  "schema_version": "opendrsai.p9-physical-device-handoff-dry-run/1"
+}

@@ -12,8 +12,8 @@ assert.notEqual(voiceButtonStart, -1, "voice button must exist in the composer")
 const voiceButtonMarkup = chatWorkspace.slice(voiceButtonStart, voiceButtonStart + 900);
 assert.match(
   voiceButtonMarkup,
-  /disabled=\{voiceState === "requesting_permission" \|\| voiceState === "processing"\}/,
-  "voice capture must only be disabled while another voice input transition is active",
+  /disabled=\{voiceState === "requesting_permission" \|\| voiceState === "processing"(?: \|\| duplexVoiceInput\.phase === "starting" \|\| duplexVoiceInput\.phase === "stopping")?\}/,
+  "voice capture must be disabled only during an active serial or Duplex input transition",
 );
 assert.doesNotMatch(
   voiceButtonMarkup,

@@ -50,6 +50,7 @@ def test_relay_exposes_only_aggregate_protocol_usage() -> None:
         release_id="1.5.6",
     )
     app.state.protocol_usage.record("oaep", "2.0.0")
+    app.state.registry.supported_runtime_capability_summary = lambda required: (1, 0)
     with TestClient(app) as client:
         payload = client.get("/v1/metrics/protocol-usage").json()
         decision = client.get("/v1/metrics/protocol-usage/deletion-decision").json()
@@ -85,6 +86,8 @@ def test_deletion_decision_model_and_openapi_hash_fail_closed() -> None:
         "migration_ratio": 1.0,
         "fallback_error_ratio": 0.0,
         "gap_days": 0,
+        "supported_runtime_count": 1,
+        "supported_runtime_requires_legacy": False,
         "requirements": {
             "observation_days": 0,
             "release_cycles": 0,
@@ -92,6 +95,7 @@ def test_deletion_decision_model_and_openapi_hash_fail_closed() -> None:
             "legacy_ratio": 0.001,
             "migration_ratio": 1.0,
             "fallback_error_ratio": 0.001,
+            "supported_runtime_requires_legacy": False,
         },
         "eligible": True,
     }
@@ -108,15 +112,19 @@ def test_threshold_and_migration_evidence_can_become_eligible_without_time_windo
     for offset in range(14):
         observed = start + timedelta(days=offset)
         usage.record("oaep", "2.0.0", observed_at=observed)
-    decision = usage.deletion_decision()
+    decision = usage.deletion_decision(
+        supported_runtime_count=1, supported_runtime_requires_legacy=False,
+    )
     assert decision == {
         "schema_version": "p5-protocol-deletion-decision/1", "status": "eligible",
         "data_start": "2026-07-01", "data_end": "2026-07-14", "observation_days": 14,
         "release_cycles": 2, "oaep_ratio": 1.0, "legacy_ratio": 0.0,
         "migration_ratio": 1.0, "fallback_error_ratio": 0.0, "gap_days": 0,
+        "supported_runtime_count": 1, "supported_runtime_requires_legacy": False,
         "requirements": {"observation_days": 0, "release_cycles": 0, "oaep_ratio": 0.999,
                          "legacy_ratio": 0.001, "migration_ratio": 1.0,
-                         "fallback_error_ratio": 0.001},
+                         "fallback_error_ratio": 0.001,
+                         "supported_runtime_requires_legacy": False},
         "eligible": True,
     }
     contract = json.loads((Path(__file__).parents[4] / "protocol/relay/p5-platform-adapter.contract.json")
@@ -133,7 +141,9 @@ def test_deletion_decision_distinguishes_no_data_and_threshold_failure(tmp_path:
     start = date(2026, 7, 1)
     usage.record("oaep", "2.0.0", observed_at=start)
     usage.record("oaep", "2.0.0", observed_at=start + timedelta(days=2))
-    assert usage.deletion_decision()["status"] == "eligible"
+    assert usage.deletion_decision(
+        supported_runtime_count=1, supported_runtime_requires_legacy=False,
+    )["status"] == "eligible"
     assert usage.deletion_decision()["gap_days"] == 1
 
 
@@ -158,7 +168,9 @@ def test_explicit_zero_flow_days_are_observed_without_inventing_protocol_usage(t
     for offset in range(14):
         observed = start + timedelta(days=offset)
         complete.record("legacy" if offset == 0 else "oaep", "2.0.0", observed_at=observed)
-    decision = complete.deletion_decision()
+    decision = complete.deletion_decision(
+        supported_runtime_count=1, supported_runtime_requires_legacy=False,
+    )
     assert decision["status"] == "threshold_failed"
     assert decision["eligible"] is False
 
@@ -176,6 +188,24 @@ def test_daily_evidence_survives_restart_and_requires_timezone_for_datetime(tmp_
     assert decision["observation_days"] == 1
     assert decision["release_cycles"] == 1
     assert decision["migration_ratio"] == 1.0
+
+
+def test_supported_runtime_compatibility_is_a_fail_closed_deletion_gate(tmp_path: Path) -> None:
+    usage = ProtocolUsageTelemetry(tmp_path / "usage.sqlite3")
+    usage.record("oaep", "2.0.0", observed_at=date(2026, 7, 1))
+    unknown = usage.deletion_decision()
+    assert unknown["status"] == "runtime_compatibility_unknown"
+    assert unknown["supported_runtime_requires_legacy"] is None
+    assert unknown["eligible"] is False
+    blocked = usage.deletion_decision(
+        supported_runtime_count=2, supported_runtime_requires_legacy=True,
+    )
+    assert blocked["status"] == "supported_runtime_requires_legacy"
+    assert blocked["eligible"] is False
+    with pytest.raises(ValueError, match="supported_runtime_compatibility_invalid"):
+        usage.deletion_decision(
+            supported_runtime_count=1, supported_runtime_requires_legacy=None,
+        )
 
 
 def test_usage_dimensions_and_daily_history_are_bounded(tmp_path: Path) -> None:

@@ -28,4 +28,33 @@ class RemoteDeltaFrameBufferTest {
         buffer.offer("run-b", "b")
         assertEquals(listOf("run-a", "run-b"), buffer.drain().map { it.streamId })
     }
+
+    @Test fun `delta arriving during projection render schedules a following frame`() {
+        val mailbox = LatestFrameMailbox<String>()
+        assertTrue(mailbox.offer("first"))
+        assertEquals("first", mailbox.take())
+
+        // The worker is still rendering the first Room projection. A newer
+        // delta must keep that worker alive instead of being cleared by it.
+        assertTrue(!mailbox.offer("during-render"))
+        assertTrue(!mailbox.finishCycle())
+        assertEquals("during-render", mailbox.take())
+        assertTrue(mailbox.finishCycle())
+
+        // Once the worker has atomically transitioned to idle, the next event
+        // owns a new worker.
+        assertTrue(mailbox.offer("after-idle"))
+        assertEquals("after-idle", mailbox.take())
+        assertTrue(mailbox.finishCycle())
+    }
+
+    @Test fun `cancel drops pending render and permits a clean restart`() {
+        val mailbox = LatestFrameMailbox<String>()
+        assertTrue(mailbox.offer("stale"))
+        mailbox.cancel()
+        assertTrue(!mailbox.hasPending())
+        assertTrue(mailbox.offer("fresh"))
+        assertEquals("fresh", mailbox.take())
+        assertTrue(mailbox.finishCycle())
+    }
 }

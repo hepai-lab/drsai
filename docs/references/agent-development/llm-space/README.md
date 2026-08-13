@@ -45,6 +45,12 @@ OpenDrSai 已拥有自己的 BAMS 架构、AutoGen runtime、OAEP/relay 协议�
 - [v4.6.3 源码审阅](./source-review.md)
 - [OpenDrSai 集成实施方案](./implementation-plan.md)
 
+## OpenDrSai 当前集成状态（2026-08-12）
+
+LLM Space 没有作为依赖进入产品。OpenDrSai 已用自身 Runtime/OAEP 完成只读运行检查、不可变实验重放、比较和选择性采纳；第四阶段正在补齐 Comparison 人工评价、自动指标、证据回跳和中断恢复。正式范围与逐项验收见 [P4 开发方案](../../../desktop/agent-runtime-traceability-reproducibility-phase4-development-plan.md)。
+
+仍然不采用的部分包括：可变 Thread restore、只记录成功运行、客户端 Thread 文件作为权威评价存储、直接重放未知副作用 Tool，以及独立 Rubric Studio/自动调参平台。
+
 ## 来源
 
 - [项目 README](https://github.com/deer-flow/llm-space/blob/v4.6.3/README.md)

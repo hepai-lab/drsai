@@ -1,4 +1,5 @@
-import type { IpcMain } from "electron";
+import { shell, type IpcMain } from "electron";
+import { assertThreadSharePath, createThreadShare } from "../../../../shared/main/threadShares";
 import {
   addShareComment,
   completeShareCommentTask,
@@ -23,6 +24,9 @@ import {
 
 /** Registers the collaboration/share domain without retaining composition-root state. */
 export function registerMacosSharingIpc(ipcMain: Pick<IpcMain, "handle">): void {
+  ipcMain.handle("desktop:create-thread-share", (_event, request) => createThreadShare(request));
+  ipcMain.handle("desktop:open-thread-share", async (_event, path) => { const error = await shell.openPath(assertThreadSharePath(path)); if (error) throw new Error(error); return true; });
+  ipcMain.handle("desktop:reveal-thread-share", (_event, path) => { shell.showItemInFolder(assertThreadSharePath(path)); return true; });
   ipcMain.handle("desktop:share-create", (_event, request) => createShare(request));
   ipcMain.handle("desktop:share-inspect", (_event, request) => inspectShare(request));
   ipcMain.handle("desktop:share-permission-update", (_event, request) => updateSharePermission(request));

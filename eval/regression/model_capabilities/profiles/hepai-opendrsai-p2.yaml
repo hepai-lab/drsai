@@ -1,0 +1,45 @@
+schema_version: opendrsai.model-capability-profile/1
+id: hepai.opendrsai.p2
+agent_id: opendrsai
+provider_id: hepai
+models:
+  - role: primary_model
+    model_id: deepseek-v4-flash
+    required_operations: [chat, reasoning, tool_calling]
+    runtime_required_operations: [chat, reasoning, tool_calling]
+    routes:
+      chat: [openai_responses, openai_chat_completions]
+      reasoning: [openai_responses, openai_chat_completions]
+      tool_calling: [openai_responses, openai_chat_completions]
+  - role: image_understanding_model
+    model_id: gpt-5.6-luna
+    required_operations: [chat, tool_calling]
+    runtime_required_operations: [chat]
+    required_input_modalities: [text, image]
+    routes:
+      chat: [openai_responses, openai_chat_completions]
+      tool_calling: [openai_responses, openai_chat_completions]
+  - role: image_generation_model
+    model_id: gemini-3.1-flash-lite-image
+    required_operations: [image_generation]
+    runtime_required_operations: [image_generation]
+    required_output_modalities: [text, image]
+    routes:
+      image_generation: [openai_images_generation]
+  - role: text_to_speech_model
+    model_id: tts-1
+    required_operations: [text_to_speech]
+    runtime_required_operations: [text_to_speech]
+    routes:
+      text_to_speech: [openai_audio_speech]
+  - role: speech_to_text_model
+    model_id: whisper-1
+    required_operations: [speech_to_text]
+    runtime_required_operations: [speech_to_text]
+    routes:
+      speech_to_text: [openai_audio_transcriptions]
+gate:
+  require_real_provider: true
+  require_runtime_verification: true
+  reject_statuses: [unsupported, unavailable, inconclusive, stale, error]
+  max_snapshot_age_hours: 24

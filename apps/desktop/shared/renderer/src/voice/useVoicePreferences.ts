@@ -63,7 +63,7 @@ export function loadVoicePreferences(): VoicePreferences {
         : defaultVoicePreferences.confirmBeforeSend,
       inputDeviceId: typeof value.inputDeviceId === "string" ? value.inputDeviceId : "",
       inputLanguage,
-      interactionMode: value.interactionMode === "streaming" ? "streaming" : "serial",
+      interactionMode: value.interactionMode === "streaming" || value.interactionMode === "duplex" ? value.interactionMode : "serial",
       playbackRate,
       remoteSttConsent: value.remoteSttConsent === true,
       remoteTtsConsent: value.remoteTtsConsent === true,

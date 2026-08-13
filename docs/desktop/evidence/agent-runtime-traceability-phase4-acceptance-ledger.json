@@ -1,0 +1,36 @@
+{
+  "schema_version": "opendrsai.agent-runtime-phase4-acceptance-ledger/1",
+  "plan": "docs/desktop/agent-runtime-traceability-reproducibility-phase4-development-plan.md",
+  "generated_at": "2026-08-11T17:26:00.000Z",
+  "total": 20,
+  "accepted": 19,
+  "progress_percent": 95,
+  "release_ready": false,
+  "features": [
+    { "id": "M40-01", "status": "passed", "evidence": ["pytest:test_runtime_experiments.py"] },
+    { "id": "M40-02", "status": "passed", "evidence": ["node:verify-run-inspector-ui.mjs", "gui:phase4-windows-e2e"] },
+    { "id": "M40-03", "status": "passed", "evidence": ["tsc:node", "tsc:web", "pytest:test_experiment_overrides.py"] },
+    { "id": "M40-04", "status": "passed", "evidence": ["docs:references/agent-development/llm-space"] },
+    { "id": "M41-01", "status": "passed", "evidence": ["pytest:test_run_comparison.py::append_only_idempotent_and_durable"] },
+    { "id": "M41-02", "status": "passed", "evidence": ["pytest:test_run_comparison.py::rejects_invalid_or_stale_input"] },
+    { "id": "M41-03", "status": "passed", "evidence": ["pytest:test_run_inspection_gateway.py"] },
+    { "id": "M41-04", "status": "passed", "evidence": ["gui:phase4-windows-e2e"] },
+    { "id": "M42-01", "status": "passed", "evidence": ["pytest:test_run_comparison.py", "gui:phase4-windows-e2e"] },
+    { "id": "M42-02", "status": "passed", "evidence": ["pytest:test_run_comparison.py::honest_attribution"] },
+    { "id": "M42-03", "status": "passed", "evidence": ["node:verify-run-inspector-ui.mjs", "gui:phase4-windows-e2e"] },
+    { "id": "M42-04", "status": "passed", "evidence": ["pytest:test_run_comparison.py::rejects_invalid_or_stale_input", "gui:phase4-windows-e2e"] },
+    { "id": "M43-01", "status": "passed", "evidence": ["gui:phase4-windows-e2e:executed_and_draft_recovery"] },
+    { "id": "M43-02", "status": "passed", "evidence": ["gui:phase4-windows-e2e:comparison_recovery"] },
+    { "id": "M43-03", "status": "passed", "evidence": ["gui:phase4-windows-e2e:nonterminal_candidate"] },
+    { "id": "M43-04", "status": "passed", "evidence": ["gui:phase4-windows-e2e:edit_guard_and_discard"] },
+    { "id": "M44-01", "status": "passed", "evidence": ["pytest:24_passed", "python:py_compile"] },
+    { "id": "M44-02", "status": "passed", "evidence": ["tsc:node", "tsc:web", "node:verify-run-inspector-ui.mjs"] },
+    { "id": "M44-03", "status": "passed", "evidence": ["docs/desktop/evidence/agent-runtime-traceability-phase4-windows-e2e-result.json"] },
+    {
+      "id": "M44-04",
+      "status": "external_pending",
+      "evidence": ["node:verify-run-traceability-phase3-live-model.mjs --self-test", "docs/desktop/evidence/agent-runtime-traceability-phase3-live-model-result.json"],
+      "reason": "OIDC delegation, on-demand App-owned Gateway startup, identity synchronization, and Runtime source identity passed; every account-visible verified vision transport returned HTTP 503 on both text and image probes."
+    }
+  ]
+}

@@ -44,7 +44,7 @@ assert(api.includes("startVoiceTranscription("), "desktop API omits async voice 
 assert(api.includes("cancelVoiceTranscription("), "desktop API omits voice cancellation");
 assert(api.includes("onVoiceTranscriptionEvent("), "desktop API omits voice events");
 assert(api.includes("DesktopVoiceErrorCode"), "desktop API omits normalized errors");
-assert(api.includes('DesktopVoiceInteractionMode = "serial" | "streaming"'), "shared API omits dual voice modes");
+assert(api.includes('DesktopVoiceInteractionMode = "serial" | "streaming" | "duplex"'), "shared API omits serial, streaming, and duplex voice modes");
 assert(api.includes("DesktopStreamingVoiceCapabilities"), "shared API omits streaming runtime capabilities");
 assert(api.includes("DesktopStreamingVoiceAudioChunk"), "shared API omits streaming PCM chunks");
 assert(api.includes("DesktopStreamingVoiceAudioAck"), "shared API omits streaming audio acknowledgements");

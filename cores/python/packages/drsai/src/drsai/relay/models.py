@@ -172,6 +172,16 @@ class PushRegistrationResult(StrictModel):
     updated_at: datetime
 
 
+class PushProviderReadiness(StrictModel):
+    fcm: bool
+
+
+class PushReadinessResult(StrictModel):
+    ready: bool
+    providers: PushProviderReadiness
+    worker_running: bool
+
+
 class AssociationDeviceKeyRotationRequest(StrictModel):
     new_device_public_key: str = Field(
         min_length=43,

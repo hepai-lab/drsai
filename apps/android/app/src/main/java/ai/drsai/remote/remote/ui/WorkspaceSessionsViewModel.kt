@@ -2,6 +2,9 @@ package ai.drsai.remote.remote.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -13,13 +16,17 @@ import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.AndroidDevicePresence
 import ai.drsai.remote.remote.data.safeRemoteFailureMessage
+import ai.drsai.remote.remote.data.WorkspaceSessionCatalogDecision
+import ai.drsai.remote.remote.data.WorkspaceSessionCatalogGate
+import ai.drsai.remote.remote.data.WorkspaceSessionCatalogProjection
+import ai.drsai.remote.remote.data.RemoteRetryPolicy
+import ai.drsai.remote.remote.data.RemoteStreamRetryState
 import ai.drsai.remote.runtime.context.PromptFragment
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,14 +47,17 @@ class WorkspaceSessionsViewModel(
     workspaceName: String,
 ) : AndroidViewModel(app) {
     private val container = RemoteWorkspaceContainer.get(app)
-    private val tokenStore = container.tokenStore
-    private val repository = container.repository
+    private val time = container.time
+    private val tokenStore = container.boundaries.auth.tokens
+    private val sessions = container.boundaries.session.client
+    private val approvals = container.boundaries.approval.client
     private val instructionLoader = RemoteProjectInstructionLoader(
-        container.workspace(runtimeId),
+        container.boundaries.file.client(runtimeId),
     )
     private val instructionVersionStore = WorkspaceInstructionVersionStore(app)
     private val directoryCache = container.directoryCache
     private val activity = container.activity
+    private val connectivity = container.connectivity
     private val mutableState = MutableStateFlow(
         WorkspaceSessionsUiState(runtimeName = runtimeName, workspaceName = workspaceName, loading = true),
     )
@@ -55,32 +65,54 @@ class WorkspaceSessionsViewModel(
     private val generation = AtomicLong(0)
     private var searchJob: Job? = null
     private var catalogJob: Job? = null
+    @Volatile private var foreground = true
+    private val lifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onStart(owner: LifecycleOwner) {
+            foreground = true
+            observeCatalog()
+        }
+
+        override fun onStop(owner: LifecycleOwner) {
+            foreground = false
+            catalogJob?.cancel()
+        }
+    }
+    private val catalogGate = WorkspaceSessionCatalogGate()
     private var acceptedInstructionVersions: Map<String, String>? = tokenStore.user()?.id?.let { subject ->
         instructionVersionStore.accepted(subject, runtimeId, workspaceId)
     }
 
     init {
         AndroidDevicePresence.markAccessing(runtimeId)
+        ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
         refresh()
         observeCatalog()
+        viewModelScope.launch {
+            connectivity.state.collect { network ->
+                if (foreground && network.online) observeCatalog() else catalogJob?.cancel()
+            }
+        }
     }
 
     private fun observeCatalog() {
         catalogJob?.cancel()
+        if (!foreground || !connectivity.online.value) return
         catalogJob = viewModelScope.launch(Dispatchers.IO) {
-            var retryMillis = 500L
-            while (isActive) {
-                runCatching {
-                    container.stream.workspaceSessionCatalogStream(runtimeId, workspaceId) {
+            val retry = RemoteStreamRetryState(RemoteRetryPolicy())
+            while (isActive && foreground && connectivity.online.value) {
+                try {
+                    container.boundaries.catalog.sessionEvents.workspaceSessionCatalogStream(runtimeId, workspaceId) {
                         refresh()
-                    }.collect {
-                        retryMillis = 500L
-                        refresh()
+                    }.collect { event ->
+                        retry.reset()
+                        if (catalogGate.accept(event) == WorkspaceSessionCatalogDecision.APPLY) refresh()
                     }
-                }
-                if (isActive) {
-                    delay(retryMillis)
-                    retryMillis = (retryMillis * 2).coerceAtMost(15_000L)
+                    throw java.io.EOFException("relay_workspace_catalog_sse_eof")
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    val retryMillis = retry.nextDelay(failure, time.monotonicNanos()) ?: break
+                    time.waitFor(retryMillis)
                 }
             }
         }
@@ -93,10 +125,10 @@ class WorkspaceSessionsViewModel(
         runCatching {
             container.singleFlight.run("workspace:${runtimeId.value}:${workspaceId.value}:${normalizedQuery.orEmpty()}") {
                 coroutineScope {
-                    val definitions = async { repository.agentDefinitions(runtimeId) }
-                    val sessions = async {
+                    val definitions = async { sessions.agentDefinitions(runtimeId) }
+                    val sessionPage = async {
                         collectAllPages { cursor ->
-                            repository.sessions(
+                            sessions.sessions(
                                 runtimeId, workspaceId, cursor, normalizedQuery,
                                 if (mutableState.value.showArchived) {
                                     ai.drsai.remote.remote.model.RemoteResourceLifecycle.ARCHIVED
@@ -104,17 +136,19 @@ class WorkspaceSessionsViewModel(
                             )
                         }
                     }
-                    val approvals = async { repository.approvals(runtimeId, workspaceId) }
+                    val approvalPage = async { approvals.approvals(runtimeId, workspaceId) }
                     val instructions = async { runCatching { instructionLoader.load(workspaceId) } }
-                    RefreshPayload(definitions.await(), sessions.await(), approvals.await(), instructions.await())
+                    RefreshPayload(definitions.await(), sessionPage.await(), approvalPage.await(), instructions.await())
                 }
             }
         }.onSuccess { payload ->
             if (requestGeneration == generation.get()) {
-                val sessionItems = payload.sessions.map { summary ->
-                    require(summary.reference.runtimeId == runtimeId && summary.reference.workspaceId == workspaceId) {
-                        "remote_session_scope_mismatch"
-                    }
+                val lifecycle = if (mutableState.value.showArchived) {
+                    ai.drsai.remote.remote.model.RemoteResourceLifecycle.ARCHIVED
+                } else ai.drsai.remote.remote.model.RemoteResourceLifecycle.ACTIVE
+                val sessionItems = WorkspaceSessionCatalogProjection.project(
+                    payload.sessions, runtimeId, workspaceId, lifecycle,
+                ).map { summary ->
                     RemoteSessionUi(
                         reference = summary.reference,
                         lastRunStatus = summary.lastRunStatus,
@@ -218,7 +252,7 @@ class WorkspaceSessionsViewModel(
         mutableState.update { it.copy(query = query) }
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            delay(250)
+            time.waitFor(250)
             refresh(query)
         }
     }
@@ -228,7 +262,7 @@ class WorkspaceSessionsViewModel(
         require(!mutableState.value.instructionRefreshRequired) { "project_instruction_refresh_required" }
         mutableState.update { it.copy(creating = true, error = null) }
         runCatching {
-            repository.createSession(
+            sessions.createSession(
                 runtimeId = runtimeId,
                 workspaceId = workspaceId,
                 title = "新会话",
@@ -242,6 +276,7 @@ class WorkspaceSessionsViewModel(
     }
 
     override fun onCleared() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
         catalogJob?.cancel()
         super.onCleared()
     }
@@ -264,7 +299,7 @@ class WorkspaceSessionsViewModel(
         title: String? = null,
         lifecycle: ai.drsai.remote.remote.model.RemoteResourceLifecycle? = null,
     ) = viewModelScope.launch(Dispatchers.IO) {
-        runCatching { repository.updateSession(reference, title, lifecycle) }
+        runCatching { sessions.updateSession(reference, title, lifecycle) }
             .onSuccess { refresh() }
             .onFailure { failure -> mutableState.update { it.copy(error = safeRemoteFailureMessage(failure)) } }
     }

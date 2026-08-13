@@ -1,0 +1,92 @@
+{
+  "schema_version": "opendrsai.p9-e05-workspace-plan-subagent-checkpoint/1",
+  "evidence_tier": "emulator_preflight",
+  "release_evidence": false,
+  "generated_at": "2026-08-11T19:14:30Z",
+  "candidate": {
+    "application_id": "ai.drsai.remote.debug",
+    "app_apk_sha256": "72187207d7de4ce0c6e6cad6fb5c3fbb706eb4a304239dd59c51e6ff139ef83d",
+    "test_apk_sha256": "cf6a27cb63b3bd4f9dfbdae49c8295554139f8e7fab3e05e486415c03eb294d6"
+  },
+  "shared_python": {
+    "tests": 71,
+    "failures": 0,
+    "errors": 0,
+    "path": "docs/android/reports/preflight/p9-emulator/e05-workspace-plan-subagent.xml",
+    "sha256": "223b3daa47d370bf0b4436de593305839ed93f08f4acc86784dd7933ee66eb1a"
+  },
+  "android_jvm": {
+    "tests": 53,
+    "failures": 0,
+    "errors": 0,
+    "suites": {
+      "WorkspaceMutationPlannerTest": "8de5fbfffc1347dc40bd631c9e3107f94bdba32ba4b1af85d364c2dbee11fdff",
+      "PythonAgentLoopCoordinatorTest": "81ec0435e3fea5af4f578d9810305bb44172bb33fa0a15d84b23f06f70e7fc4f",
+      "PythonRuntimeEventMapperTest": "8421f8671a23fb00ac7670f301efcf9c1f294f08dfedd0a34983e8a31142dfa8",
+      "P9OaepCapabilityMappingTest": "6efb71d1f263a2b80dbc5b57736686a0967db21afdded97e939c069ff6932e8a"
+    },
+    "isolated_from_unrelated_gate": "verifyAndroidRelayBindings",
+    "build_warning": "Chaquopy pyc precompile skipped because the system py launcher lacks Python 3.12; source packaging and JVM tests succeeded"
+  },
+  "device_suite": {
+    "api": 35,
+    "tests": 11,
+    "failures": 0,
+    "errors": 0,
+    "path": "docs/android/reports/preflight/p9-emulator/p9-device-functional-api35.xml",
+    "sha256": "04fd64e5c3890be1d06d7ac190ef969b5d6ae6bea8ea76b0ad046bafd89356fb"
+  },
+  "features": {
+    "E05-F01": {
+      "gates": {
+        "deterministic_tool_policy": true,
+        "android_host_schema_and_semantics": true,
+        "natural_task_device_sequence": true
+      },
+      "passed": true
+    },
+    "E05-F02": {
+      "gates": {
+        "tool_result_reenters_model_context": true,
+        "active_chain_budget_safe": true,
+        "natural_read_device_fixture": true
+      },
+      "passed": true
+    },
+    "E05-F03": {
+      "gates": {
+        "preview_diff_digest_and_token": true,
+        "approval_and_at_most_once_journal": true,
+        "natural_write_edit_device_sequence": true
+      },
+      "passed": true
+    },
+    "E05-F04": {
+      "gates": {
+        "simple_task_plan_mode_auto": true,
+        "explicit_multistep_plan_forced": true,
+        "single_versioned_plan_state": true,
+        "duplicate_and_multiple_in_progress_rejected": true,
+        "android_desktop_plan_digest_parity": true
+      },
+      "passed": true
+    },
+    "E05-F05": {
+      "gates": {
+        "legal_parallel_delegation": true,
+        "safe_parent_allowlist_and_provider_alias": true,
+        "write_escalation_fail_closed": true,
+        "child_and_parent_cancellation": true,
+        "constrained_lifecycle_serializes_children": true
+      },
+      "passed": true
+    }
+  },
+  "passed_features": [
+    "E05-F01",
+    "E05-F02",
+    "E05-F03",
+    "E05-F04",
+    "E05-F05"
+  ]
+}

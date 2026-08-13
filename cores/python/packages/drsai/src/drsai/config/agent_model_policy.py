@@ -274,6 +274,7 @@ def _decode_policy(agent_name: str, raw: dict[str, object]) -> AgentModelPolicy:
         image_understanding_model=_decode_optional_role(models.get("image_understanding")),
         image_generation_model=_decode_optional_role(models.get("image_generation")),
         text_to_speech_model=_decode_optional_role(models.get("text_to_speech")),
+        realtime_voice_model=_decode_optional_role(models.get("realtime_voice")),
         speech_to_text_model=_decode_optional_role(models.get("speech_to_text")),
         reasoning_effort=_decode_reasoning_effort(models.get("reasoning_effort")),
     )
@@ -289,6 +290,7 @@ def _decode_legacy_policy(agent_name: str, raw: object) -> AgentModelPolicy:
         image_understanding_model=_decode_legacy_optional(raw.get("image_understanding_model")),
         image_generation_model=_decode_legacy_optional(legacy_image),
         text_to_speech_model=_decode_legacy_optional(raw.get("text_to_speech_model")),
+        realtime_voice_model=_decode_legacy_optional(raw.get("realtime_voice_model")),
         speech_to_text_model=_decode_legacy_optional(raw.get("speech_to_text_model")),
         reasoning_effort=_decode_reasoning_effort(raw.get("reasoning_effort")),
     )
@@ -344,6 +346,7 @@ def _encode_policy(
         ("image_understanding", policy.image_understanding_model),
         ("image_generation", policy.image_generation_model or policy.image_model),
         ("text_to_speech", policy.text_to_speech_model),
+        ("realtime_voice", policy.realtime_voice_model),
         ("speech_to_text", policy.speech_to_text_model),
     ):
         if selection is not None:
@@ -470,7 +473,7 @@ def _render_toml(document: dict[str, object]) -> str:
     assert isinstance(models, dict)
     if "reasoning_effort" in models:
         lines.extend(["\n[models]\n", f"reasoning_effort = {json.dumps(models['reasoning_effort'])}\n"])
-    for role in ("primary", "image_understanding", "image_generation", "text_to_speech", "speech_to_text"):
+    for role in ("primary", "image_understanding", "image_generation", "text_to_speech", "realtime_voice", "speech_to_text"):
         selection = models.get(role)
         if not isinstance(selection, dict):
             continue

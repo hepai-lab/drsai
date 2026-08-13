@@ -21,6 +21,8 @@
 python scripts/remote_workspace.py accept push-preflight android
 ```
 
+`release` 与 `mvp` 变体的 `preBuild` 会再次执行等价的一致性门禁：API key、application ID、project ID、sender ID 任一缺失、格式错误，或 application ID 内的 sender 与独立 sender ID 不一致，构建均以固定错误码失败。`debug` 与 `acceptance` 可保留空配置，用于验证“推送未配置”的产品提示，但不能作为 M04-F01/F02 的发布验收包。
+
 ### 2.1 Android 四项配置从哪里来
 
 它们来自同一个 Firebase Android App，而不是 OpenDrSai 自行生成：
@@ -87,6 +89,8 @@ python scripts/remote_workspace.py accept push-preflight public --relay-url http
 ```
 
 任一字段为 false、响应结构漂移、HTTP 降级或请求失败均阻断发布。诊断时可加 `--allow-not-ready` 采集无敏感字段的未就绪状态，但该结果不能作为验收通过证据。
+
+readiness 响应执行严格字段白名单：顶层只允许 `ready/providers/worker_running`，`providers` 只允许 `fcm`。增加路径、凭据类型、项目标识或任何诊断细节都视为合同失败，防止运维信息通过公开端点扩散。
 
 ## 5. 真机验收
 

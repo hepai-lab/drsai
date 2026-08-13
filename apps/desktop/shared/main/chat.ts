@@ -3,7 +3,7 @@ import { appendFileSync, createReadStream, createWriteStream, mkdirSync } from "
 import { readFile, stat, mkdir, writeFile, readdir, rm, rename, statfs, open } from "fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { pipeline } from "stream/promises";
-import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, ChatTurnCancelResult, ChatTurnIdentity, MaterialRoleItem, OaepInputResource } from "../api/desktopApi";
+import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, ChatTurnCancelResult, ChatTurnIdentity, MaterialRoleItem, OaepInputResource, RuntimeModelRef } from "../api/desktopApi";
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import { normalizeRuntimeErrorEnvelope } from "../api/errorEnvelope";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
@@ -32,9 +32,11 @@ import { recordAgentTelemetry } from "./agentTelemetry";
 import { analyzeMaterialRoles } from "./workspaceContext";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
+import { startGateway } from "./gateway";
 import { resolveGatewayPort } from "./gatewayEnvironment";
-import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, type OaepEvent, type OaepItem, type RuntimeClient, type RuntimeGoal } from "./runtimeClient";
+import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, type OaepEvent, type OaepItem, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal } from "./runtimeClient";
 import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
+import { isUncertainRunCreateFailure, recoverRunCreation } from "./messageDelivery";
 import {
   RecoverableStreamError,
   appendResumedContent,
@@ -50,6 +52,7 @@ import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal"
 import { codexContinuationAction } from "./codexSessionResumePolicy";
 import { selectCurrentUserInput } from "./chatInput";
 import { materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
+import { selectRuntimeConversationProtocolResult } from "./runtimeProtocolSelection";
 import { decideRuntimeRestartRecovery } from "../api/runtimeRestartRecovery";
 import {
   createOaepPresentationProjection,
@@ -125,6 +128,7 @@ interface RuntimeChatTarget extends RuntimeProjectionTarget {
   runId: string;
   goalConfirmation?: { version: number; goal: RuntimeGoal["goal"]; settle: (approved: boolean) => void };
   goalClarification?: { settle: (answer: string | null) => void };
+  capabilityConfiguration?: { settle: (action: "resume" | "without_network") => void };
 }
 
 interface ChatTurnRecord {
@@ -135,6 +139,7 @@ interface ChatTurnRecord {
   cancelRequested: boolean;
   controller: AbortController;
   eventTarget: ChatEventTarget;
+  request?: ChatRequest;
   runtime?: RuntimeChatTarget;
   platform?: { agentId: string; threadId: string; mode: string };
   subscription?: { stop(): void };
@@ -170,6 +175,7 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
     cancelRequested: false,
     controller,
     eventTarget: webContents,
+    request: runRequest,
   });
   chatEventSequences.set(requestId, 0);
   chatDiagnosticOperations.set(requestId, desktopDiagnostics.start({
@@ -253,6 +259,21 @@ export async function cancelChatTurn(rawIdentity: unknown): Promise<ChatTurnCanc
   if (runtimeTarget) void runtimeTarget.client.cancelAgentRun(runtimeTarget.runId).catch(() => undefined);
   turn.controller.abort("user");
   if (!runtimeTarget) {
+    const pendingRequest = turn.request;
+    if (!pendingRequest) return { accepted: true, state: "cancelled" };
+    // A fast cancel can win before runChat reaches its first Thread write.
+    // Persist the provisional run key before journaling `aborted` so restart
+    // recovery can locate the terminal event without inventing a Runtime Run.
+    await upsertThreadFromRun({
+      id: turn.sessionId,
+      kind: "chat",
+      title: deriveThreadTitle(pendingRequest.messages),
+      workspacePath: pendingRequest.workspacePath,
+      lastRunId: turn.runId,
+      lastRequestId: requestId,
+      status: "idle",
+      messageCount: pendingRequest.messages.length,
+    });
     structuredTerminalRequests.add(requestId);
     emit(turn.eventTarget, {
       requestId,
@@ -293,12 +314,37 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   const sessionId = request.sessionId;
   const existingTurn = chatTurns.get(requestId);
   if (eventTarget && existingTurn) existingTurn.eventTarget = eventTarget;
-  const thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
-  if (!thread?.lastRunId) return [];
+  let thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
+  if (!thread) return [];
+  // Electron may stop after Runtime committed Run creation but before the
+  // POST response and Run ID reached the thread projection. Recover that
+  // acknowledgement by the durable outbox key; never issue the POST again.
+  if (!thread.lastRunId && thread.runtimeSessionId && thread.workspacePath) {
+    const outbox = (await sessionSyncState.get(thread.runtimeSessionId)).outbox;
+    if (outbox) {
+      const resolved = await connectRuntimeClientForWorkspace(
+        thread.workspacePath, thread.execution?.workspaceId,
+      );
+      const recoveredRun = await recoverRunCreation(
+        () => (resolved.client as RuntimeClient).getAgentRunByIdempotency(
+          thread!.runtimeSessionId!, outbox.idempotencyKey,
+        ),
+      );
+      if (recoveredRun) {
+        await sessionSyncState.attachRun(
+          thread.runtimeSessionId, outbox.sourceMessageId, recoveredRun.run_id,
+        );
+        await updateThread({ id: thread.id, lastRunId: recoveredRun.run_id, status: "running" });
+        thread = { ...thread, lastRunId: recoveredRun.run_id, status: "running" };
+      }
+    }
+  }
+  if (!thread.lastRunId) return [];
   if (!thread.runtimeSessionId || !thread.workspacePath) {
     const journal = await listRecordedChatRunEvents(thread.lastRunId);
     const recovered = journal.map((event, index) => ({ ...event, requestId, sessionId, seq: index + 1 }));
-    if (thread.status === "running" && !chatTurns.has(thread.lastRequestId ?? requestId)) {
+    const journalHasTerminal = journal.some((event) => event.type === "done" || event.type === "error" || event.type === "aborted");
+    if (!journalHasTerminal && thread.status === "running" && !chatTurns.has(thread.lastRequestId ?? requestId)) {
       recovered.push({ requestId, sessionId, runId: thread.lastRunId, seq: recovered.length + 1, type: "error", error: "Chat run was interrupted by an application restart. Recovered output is preserved." });
       await updateThread({ id: thread.id, status: "error" });
     }
@@ -306,6 +352,16 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   }
   const resolved = await connectRuntimeClientForWorkspace(thread.workspacePath, thread.execution?.workspaceId);
   const client = resolved.client as RuntimeClient;
+  const completeRecoveredOutbox = async () => {
+    const outbox = (await sessionSyncState.get(thread!.runtimeSessionId!)).outbox;
+    if (!outbox) return;
+    await sessionSyncState.markOutboxDelivery(
+      thread!.runtimeSessionId!, outbox.sourceMessageId, "terminal",
+    ).catch(() => undefined);
+    await sessionSyncState.completeOutbox(
+      thread!.runtimeSessionId!, outbox.sourceMessageId,
+    ).catch(() => undefined);
+  };
   const [authoritativeRun, runtimeIdentity] = await Promise.all([
     client.getAgentRun(thread.lastRunId),
     client.getRuntime(),
@@ -350,6 +406,7 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
       recoveredSubscription?.stop();
       chatTurns.delete(requestId);
       chatEventSequences.delete(requestId);
+      await completeRecoveredOutbox();
       await updateThread({ id: thread.id, status: event.type === "event.run.completed" ? "idle" : "error" });
     }
   };
@@ -421,9 +478,11 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
         redacted_details: { previous_status: recoveryDecision.status },
       },
     });
+    await completeRecoveredOutbox();
     await updateThread({ id: thread.id, status: "error" });
   } else if (hasOaepTerminal) {
     recoveredSubscription?.stop();
+    await completeRecoveredOutbox();
     await updateThread({
       id: thread.id,
       status: authoritativeRun.status === "completed" ? "idle" : "error",
@@ -436,6 +495,47 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
       runId: thread.lastRunId,
       projection: target.projection,
     };
+    const waitingForCapability = [...replayItems.values()].some((item) =>
+      item.type === "interaction"
+      && String(item.content.interaction_type || "") === "capability_configuration"
+      && item.status !== "completed" && item.status !== "cancelled",
+    );
+    if (waitingForCapability && authoritativeRun.input_message) {
+      const waitForChoice = () => new Promise<"resume" | "without_network">((resolve, reject) => {
+        runtime.capabilityConfiguration = { settle: resolve };
+        controller.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("Recovered capability configuration was cancelled.", "AbortError")),
+          { once: true },
+        );
+      });
+      void (async () => {
+        let action = await waitForChoice();
+        for (;;) {
+          const response = await client.executeAgentRun(
+            thread.lastRunId!, authoritativeRun.input_message!, controller.signal,
+            {
+              sourceClient: "windows",
+              sourceMessageId: thread.lastRequestId || requestId,
+              metadata: {
+                ...(thread.boundAgentId ? { agent_name: thread.boundAgentId } : {}),
+                capability_configuration_resolution: action,
+                ...(action === "without_network" ? { web_search_declined: true } : {}),
+              },
+            },
+          );
+          if ((response.result as { status?: unknown } | null)?.status !== "awaiting_capability_configuration") break;
+          action = await waitForChoice();
+        }
+      })().catch((error) => {
+        emit(eventTarget, {
+          requestId, sessionId, runId: thread.lastRunId,
+          type: "error",
+          error: error instanceof Error ? error.message : String(error),
+          errorEnvelope: normalizeRuntimeErrorEnvelope(error),
+        });
+      });
+    }
     chatTurns.set(requestId, {
       requestId,
       sessionId,
@@ -478,6 +578,22 @@ export async function respondChatInput(
     return respondToPlatformChatInput(target.agentId, target.threadId, response);
   }
   const runtime = chatTurns.get(requestId)?.runtime;
+  if (runtime?.capabilityConfiguration) {
+    const action = typeof response === "string"
+      ? response
+      : String(response.capabilityAction ?? response.action ?? response.decision ?? "");
+    const withoutNetwork = /without_network|answer_without_network|decline/i.test(action);
+    if (!runtime.approvalId) return false;
+    // Both choices resume the same Run. The second choice is carried as local
+    // execution metadata so the backend can skip the web preflight without
+    // pretending that network access was approved.
+    await runtime.client.respondAgentApproval(runtime.runId, runtime.approvalId, "accept");
+    runtime.approvalId = undefined;
+    const pending = runtime.capabilityConfiguration;
+    runtime.capabilityConfiguration = undefined;
+    pending.settle(withoutNetwork ? "without_network" : "resume");
+    return true;
+  }
   if (runtime?.goalClarification) {
     const answer = typeof response === "string"
       ? response.trim()
@@ -727,15 +843,36 @@ async function runChat(
   const sessionId = request.threadId || request.sessionId || requestId;
   const runId = request.runId || requestId;
   const isCodexBackend = request.agentId === "my-codex";
-  const configuredAgents = await listConfiguredAgents().catch(() => ({ current_agent: "", agents: [] }));
+  const selectedPlatformDescriptor = request.agentId && !isCodexBackend
+    ? getPlatformAgentExecutionDescriptor(request.agentId)
+    : null;
+  let configuredAgents: Awaited<ReturnType<typeof listConfiguredAgents>> = { current_agent: "", agents: [] };
+  if (!selectedPlatformDescriptor) {
+    try {
+      if (!await startGateway()) throw new Error("Gateway is not ready.");
+      configuredAgents = await listConfiguredAgents();
+    } catch (error) {
+      const gatewayUnavailable = error instanceof Error
+        && /OpenDrSai is not running|Gateway is not ready|local Runtime is unavailable/i.test(error.message);
+      throw chatReadinessError(
+        gatewayUnavailable ? "GATEWAY_NOT_READY" : "AGENT_CONFIG_UNAVAILABLE",
+        gatewayUnavailable
+          ? "The local OpenDrSai Runtime is not ready. Start or repair the Runtime, then retry."
+          : "OpenDrSai could not read the local Agent configuration. Repair the Runtime and retry.",
+        true,
+        error,
+      );
+    }
+  }
   const requestedAgentName = request.agentId === LEGACY_MY_DRSAI_AGENT_ID
     ? configuredAgents.current_agent
     : request.agentId;
   const localAgent = configuredAgents.agents.find((agent) => agent.agent_name === requestedAgentName)
     ?? configuredAgents.agents.find((agent) => agent.current);
-  const platformDescriptor = requestedAgentName && !localAgent && !isCodexBackend
-    ? getPlatformAgentExecutionDescriptor(requestedAgentName)
-    : null;
+  const platformDescriptor = selectedPlatformDescriptor
+    ?? (requestedAgentName && !localAgent && !isCodexBackend
+      ? getPlatformAgentExecutionDescriptor(requestedAgentName)
+      : null);
   if (requestedAgentName && !localAgent && !isCodexBackend && !platformDescriptor) {
     throw new Error("The selected platform agent is unavailable. Refresh the agent square and try again.");
   }
@@ -744,10 +881,16 @@ async function runChat(
   }
   if (platformDescriptor && request.agentId) assertAgentCircuitAvailable(request.agentId);
   const boundAgentId = isCodexBackend ? "my-codex" : requestedAgentName || localAgent?.agent_name || configuredAgents.current_agent;
-  if (!boundAgentId) throw new Error("No current Agent is configured.");
+  if (!boundAgentId) {
+    throw chatReadinessError(
+      "AGENT_NOT_CONFIGURED",
+      "The local OpenDrSai Agent is not configured. Repair the Runtime and retry.",
+      false,
+    );
+  }
   const boundAgentName = isCodexBackend ? "Codex" : platformDescriptor?.name || localAgent?.display_name || LOCAL_OPENDRSAI_AGENT_NAME;
   const executionStartedAt = Date.now();
-  recordAgentTelemetry({ event: "execution_started", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local" });
+  recordAgentTelemetry({ event: "execution_started", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local", requestId, runId });
   if (platformDescriptor && request.agentId) {
     const turn = chatTurns.get(requestId);
     if (turn) turn.platform = {
@@ -812,7 +955,7 @@ async function runChat(
         isCodexBackend ? "codex@1" : "opendrsai@1",
         auth,
       );
-      recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt });
+      recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt, requestId, runId: chatTurns.get(requestId)?.runtime?.runId ?? runId });
       await upsertThreadFromRun({ id: sessionId, kind: "chat", title: deriveThreadTitle(request.messages),
         workspacePath: request.workspacePath, boundAgentId, boundAgentName, lastRunId: chatTurns.get(requestId)?.runtime?.runId ?? runId,
         lastRequestId: requestId, status: "idle", messageCount: request.messages.length });
@@ -951,7 +1094,7 @@ async function runChat(
       throw new Error("Chat request was aborted.");
     }
     if (platformDescriptor && request.agentId) recordAgentCircuitSuccess(request.agentId);
-    recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local", durationMs: Date.now() - executionStartedAt });
+    recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local", durationMs: Date.now() - executionStartedAt, requestId, runId });
     await upsertThreadFromRun({
       id: sessionId,
       kind: "chat",
@@ -975,13 +1118,17 @@ async function runChat(
       mode: platformDescriptor?.mode || "local",
       source: platformDescriptor ? "platform" : "local",
       durationMs: Date.now() - executionStartedAt,
-      errorCode: error instanceof ChatSseError
+      errorCode: typeof (error as { code?: unknown })?.code === "string"
+        ? String((error as { code: string }).code)
+        : error instanceof ChatSseError
         ? error.code || "sse_error"
         : controller.signal.reason === "timeout"
           ? "timeout"
           : controller.signal.aborted
             ? "user_cancelled"
             : "execution_error",
+      requestId,
+      runId: chatTurns.get(requestId)?.runtime?.runId ?? runId,
     });
     const authoritativeRuntimeRunId = chatTurns.get(requestId)?.runtime?.runId;
     await upsertThreadFromRun({
@@ -1439,6 +1586,24 @@ async function runRuntimeBackendChat(
     }
   }
   await preflightAttachments(request.attachments, request.workspacePath, controller.signal);
+  const runtimeProtocol = selectRuntimeConversationProtocolResult(await client.getCapabilities(), {
+    forceLegacy: process.env.OPENDRSAI_DESKTOP_PROTOCOL_ROLLBACK === "conversation/1",
+  });
+  // Capability discovery is asynchronous. A renderer can cancel while it is
+  // in flight, so stop before creating a Session, outbox entry, subscription,
+  // or Run. `start` is intentionally not emitted for this pre-binding case:
+  // only a persisted authoritative Runtime Run may publish it.
+  controller.signal.throwIfAborted();
+  if (runtimeProtocol.selected !== "oaep") {
+    throw Object.assign(new Error(
+      runtimeProtocol.fallbackReason === "operator_rollback"
+        ? "OAEP Chat is disabled by the operator rollback setting. Disable rollback before starting this task."
+        : "This Runtime does not provide the required OAEP conversation protocol. Upgrade or repair the Runtime.",
+    ), {
+      code: "oaep_runtime_required",
+      protocol: runtimeProtocol,
+    });
+  }
   const existingThread = (await listThreads()).find((thread) => thread.id === displaySessionId);
   let runtimeSessionId = existingThread?.runtimeSessionId;
   if (!runtimeSessionId && existingThread?.lastRunId) {
@@ -1466,8 +1631,10 @@ async function runRuntimeBackendChat(
     }
   }
   if (!runtimeSessionId) {
+    controller.signal.throwIfAborted();
     runtimeSessionId = (await client.createSession(resolved.workspaceId, deriveThreadTitle(request.messages))).session_id;
   }
+  controller.signal.throwIfAborted();
   bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
   const sourceMessageId = `desktop:${requestId}`;
   const idempotencyKey = `desktop-runtime-${requestId}`;
@@ -1485,6 +1652,7 @@ async function runRuntimeBackendChat(
   let activeRuntimeRunId: string | undefined;
   let sourceMessageObserved = false;
   let runtimeTerminalStatus: "completed" | "failed" | "cancelled" | undefined;
+  let runtimeTerminalFailure: Error | undefined;
   let resolveRuntimeTerminal!: () => void;
   const runtimeTerminal = new Promise<void>((resolve) => { resolveRuntimeTerminal = resolve; });
   const liveProjectionTarget: RuntimeProjectionTarget = {
@@ -1493,6 +1661,7 @@ async function runRuntimeBackendChat(
       request.workspaceName || basename(request.workspacePath),
     ),
   };
+  controller.signal.throwIfAborted();
   const liveSubscription = await subscribeOaepSession(client as RuntimeClient, runtimeSessionId, {
     onEvent(event, state) {
       if (event.data.item && typeof event.data.item === "object" && "source" in event.data.item) {
@@ -1510,6 +1679,13 @@ async function runRuntimeBackendChat(
       }
       if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {
         runtimeTerminalStatus = event.type.slice("event.run.".length) as typeof runtimeTerminalStatus;
+        if (event.type === "event.run.failed") {
+          const runtimeError = event.data.error;
+          runtimeTerminalFailure = new Error(
+            runtimeError?.message || String(event.data.reason || "Runtime Agent Run failed."),
+          );
+          if (runtimeError?.code) Object.assign(runtimeTerminalFailure, { code: runtimeError.code });
+        }
         structuredTerminalRequests.add(requestId);
         resolveRuntimeTerminal();
       }
@@ -1525,15 +1701,28 @@ async function runRuntimeBackendChat(
     },
   });
   let run;
+  await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "sending");
   try {
+    controller.signal.throwIfAborted();
     run = await client.createAgentRun(
       runtimeSessionId,
       agentDefinition,
       idempotencyKey,
     );
   } catch (error) {
-    liveSubscription.stop();
-    throw error;
+    if (!isUncertainRunCreateFailure(error)) {
+      await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "failed").catch(() => undefined);
+      liveSubscription.stop();
+      throw error;
+    }
+    await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "uncertain").catch(() => undefined);
+    run = await recoverRunCreation(
+      () => client.getAgentRunByIdempotency(runtimeSessionId, idempotencyKey),
+    );
+    if (!run) {
+      liveSubscription.stop();
+      throw error;
+    }
   }
   const awaitWithSubscriptionCleanup = async <T>(operation: Promise<T>): Promise<T> => {
     try {
@@ -1591,6 +1780,17 @@ async function runRuntimeBackendChat(
   turn.runId = run.run_id;
   turn.runtime = target;
   turn.subscription = liveSubscription;
+  // The outer chat timeout aborts the desktop request controller. Runtime
+  // execution may already have returned its HTTP acknowledgement at that
+  // point, while the authoritative Run is still active on the event stream.
+  // Propagate every late abort to Runtime so it can persist and publish the
+  // terminal Run event; otherwise the UI remains stuck in `running` until the
+  // separate OAEP-terminal watchdog expires.
+  controller.signal.addEventListener(
+    "abort",
+    () => { void target.client.cancelAgentRun(target.runId).catch(() => undefined); },
+    { once: true },
+  );
   if (turn.cancelRequested || controller.signal.aborted) {
     await target.client.cancelAgentRun(target.runId).catch(() => undefined);
     throw new DOMException("Chat turn was cancelled before execution.", "AbortError");
@@ -1668,11 +1868,15 @@ async function runRuntimeBackendChat(
         return policy.effective_ref;
       })
     : undefined;
-  const execution = client.executeAgentRun(
-    run.run_id,
-    prompt,
-    controller.signal,
-    {
+  const executionProvenance: {
+    sourceClient: "windows";
+    sourceMessageId: string;
+    attachmentRefs: string[];
+    inputResources: OaepInputResource[];
+    model?: string;
+    modelSelection?: RuntimeModelRef;
+    metadata: Record<string, unknown>;
+  } = {
       sourceClient: "windows",
       sourceMessageId,
       attachmentRefs: staged.refs,
@@ -1684,30 +1888,58 @@ async function runRuntimeBackendChat(
         desktop_request_id: requestId,
         ...(goalConfirmationRequired ? { goal_required: true } : {}),
       },
-    },
-    isPlatformBearerAuth(auth)
+    };
+  const executionAuth: RuntimeExecutionAuth | undefined = isPlatformBearerAuth(auth)
       ? { authMode: "oidc", accessToken: auth.accessToken, userId: auth.userId }
       : auth.authMode === "offline"
         ? { authMode: "offline", userId: auth.userId }
-        : undefined,
-  )
+        : undefined;
+  await awaitWithSubscriptionCleanup(
+    sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "running"),
+  );
+  const execution = (async () => {
+    let provenance = executionProvenance;
+    for (;;) {
+      const response = await client.executeAgentRun(
+        run.run_id, prompt, controller.signal, provenance, executionAuth,
+      );
+      const result = response.result as { status?: unknown } | null;
+      if (result?.status !== "awaiting_capability_configuration") return response;
+      const action = await new Promise<"resume" | "without_network">((resolve, reject) => {
+        target.capabilityConfiguration = { settle: resolve };
+        controller.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("Capability configuration was cancelled.", "AbortError")),
+          { once: true },
+        );
+      });
+      provenance = {
+        ...executionProvenance,
+        metadata: {
+          ...executionProvenance.metadata,
+          capability_configuration_resolution: action,
+          ...(action === "without_network" ? { web_search_declined: true } : {}),
+        },
+      };
+    }
+  })()
     .catch((error) => { failure = error; });
   await awaitWithSubscriptionCleanup(desktopDiagnostics.record({
     traceId: requestId,
     parentSpanId: diagnosticOperation?.spanId,
     module: "runtime",
     component: agentDefinition === "codex@1" ? "codex-adapter" : "opendrsai-backend",
-    operation: "agent.waiting-model",
-    message: `Waiting for ${agentDefinition === "codex@1" ? "Codex" : LOCAL_OPENDRSAI_AGENT_NAME} backend model response`,
+    operation: "agent.waiting-backend",
+    message: `Waiting for ${agentDefinition === "codex@1" ? "Codex" : LOCAL_OPENDRSAI_AGENT_NAME} backend progress`,
     status: "waiting",
     level: "warn",
     domain: "agent",
-    agentPhase: "waiting_model",
+    agentPhase: "preparing",
     visibility: "milestone",
     sessionId: runtimeSessionId,
     runId: run.run_id,
     backendId: agentDefinition === "codex@1" ? "codex" : "opendrsai",
-    attributes: { model: request.model || "default", waitingFor: "first_backend_event" },
+    attributes: { model: request.model || "default", waitingFor: "backend_progress" },
   }));
   await Promise.race([
     execution,
@@ -1715,24 +1947,40 @@ async function runRuntimeBackendChat(
       if (liveSubscription.terminalError) throw liveSubscription.terminalError;
     }),
   ]).catch((error) => { if (!failure) failure = error; });
-  const terminalRecoveryTimeoutMs = failure && isRecoverableNetworkError(failure)
-    ? NETWORK_RECOVERY_WINDOW_MS + 10_000
-    : 10_000;
+  const subscriptionCannotRecover = liveSubscription.phase === "degraded" || liveSubscription.phase === "fatal";
+  const terminalRecoveryTimeoutMs = subscriptionCannotRecover
+    ? 250
+    : failure && isRecoverableNetworkError(failure)
+      ? NETWORK_RECOVERY_WINDOW_MS + 10_000
+      : 10_000;
   await Promise.race([
     runtimeTerminal,
+    liveSubscription.done.then(() => {
+      if (liveSubscription.terminalError) throw liveSubscription.terminalError;
+      throw new Error("oaep_run_terminal_missing: Runtime event subscription ended before the Run terminal");
+    }),
     new Promise<void>((_resolve, reject) => setTimeout(
       () => reject(new Error("oaep_run_terminal_missing: Runtime execution ended without an OAEP Run terminal")),
       terminalRecoveryTimeoutMs,
     )),
   ]).catch((error) => { if (!failure) failure = error; });
+  if (!failure && runtimeTerminalStatus === "failed") {
+    failure = runtimeTerminalFailure ?? new Error("Runtime Agent Run failed.");
+  }
   // The execute HTTP response is transport acknowledgement, not the Run's
   // source of truth. If that connection failed ambiguously but OAEP later
   // proves the same Run completed, do not turn a successful task into an
   // error and never re-execute it to obtain another acknowledgement.
   if (failure && runtimeTerminalStatus === "completed" && isRecoverableNetworkError(failure)) failure = undefined;
+  // Also clear outbox on Runtime terminal (failed/cancelled): the Run is
+  // resolved, the next user message is a new semantic entry, not a retry.
+  const runtimeReachedTerminal = runtimeTerminalStatus !== undefined;
   try {
-    if (!failure && sourceMessageObserved) {
-      await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId);
+    if ((!failure && sourceMessageObserved) || runtimeReachedTerminal) {
+      if (runtimeReachedTerminal) {
+        await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "terminal").catch(() => undefined);
+      }
+      await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
     }
   } finally {
     liveSubscription.stop();
@@ -1764,7 +2012,10 @@ function mapRuntimeOaepEvent(
   event: OaepEvent, target: RuntimeProjectionTarget, currentItem?: OaepItem,
 ): Array<Omit<ChatEvent, "seq">> {
   const item = isOaepItem(event.data.item) ? event.data.item : currentItem;
-  if (item?.type === "interaction" && item.status === "waiting") {
+  if (
+    item?.type === "interaction"
+    && ["pending", "running", "waiting"].includes(item.status)
+  ) {
     target.approvalId = String(item.content.approval_id ?? "");
   }
   return [{
@@ -1780,6 +2031,27 @@ function mapRuntimeOaepEvent(
     type: "structured" as const,
     structuredEvent,
   }))];
+}
+
+function chatReadinessError(
+  code: string,
+  message: string,
+  retryable: boolean,
+  cause?: unknown,
+): Error & { code: string; category: "runtime"; retryable: boolean; recovery_actions: string[] } {
+  const error = new Error(message, cause === undefined ? undefined : { cause }) as Error & {
+    code: string;
+    category: "runtime";
+    retryable: boolean;
+    recovery_actions: string[];
+  };
+  error.code = code;
+  error.category = "runtime";
+  error.retryable = retryable;
+  error.recovery_actions = retryable
+    ? ["retry", "repair", "diagnostics"]
+    : ["repair", "diagnostics"];
+  return error;
 }
 
 function isOaepItem(value: unknown): value is OaepItem {

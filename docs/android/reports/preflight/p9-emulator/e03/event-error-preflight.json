@@ -1,0 +1,100 @@
+{
+  "schema_version": "opendrsai.p9-emulator-event-error-preflight/1",
+  "evidence_tier": "emulator_preflight",
+  "release_evidence": false,
+  "generated_at": "2026-08-11T19:14:30Z",
+  "candidate": {
+    "application_id": "ai.drsai.remote.debug",
+    "version_name": "1.5.6",
+    "app_apk_sha256": "72187207d7de4ce0c6e6cad6fb5c3fbb706eb4a304239dd59c51e6ff139ef83d",
+    "test_apk_sha256": "cf6a27cb63b3bd4f9dfbdae49c8295554139f8e7fab3e05e486415c03eb294d6"
+  },
+  "jvm_suites": {
+    "HaiModelClientTest": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "sha256": "f0216a76b589bbbce4367cda28d22ad36c2a8651c548df8b75ab0ebcd0b30d10"
+    },
+    "PythonAgentLoopCoordinatorTest": {
+      "tests": 24,
+      "failures": 0,
+      "errors": 0,
+      "sha256": "5a04362f49621b042d036e2802243cbba8846de263474d29222a4d20ab2d9311"
+    },
+    "PythonRuntimeEventMapperTest": {
+      "tests": 22,
+      "failures": 0,
+      "errors": 0,
+      "sha256": "6d2497b07e90efaf0b6be7102e47fcb618c7d302f40491cb0f8e46a3c8eb8cd1"
+    }
+  },
+  "shared_python_suite": {
+    "tests": 7,
+    "failures": 0,
+    "errors": 0,
+    "path": "docs/android/reports/preflight/p9-emulator/e03/shared-tool-recovery.xml",
+    "sha256": "14d408b4f13fa58e3d6f7c4cffee17356b60e1c23e2e9bc0d3135a8560d5d8aa"
+  },
+  "device_suite": {
+    "api": 35,
+    "tests": 11,
+    "failures": 0,
+    "errors": 0,
+    "path": "docs/android/reports/preflight/p9-emulator/p9-device-functional-api35.xml",
+    "sha256": "04fd64e5c3890be1d06d7ac190ef969b5d6ae6bea8ea76b0ad046bafd89356fb",
+    "screenshot": {
+      "path": "docs/android/reports/preflight/p9-emulator/p9-e03-tool-source-visibility-api35.png",
+      "sha256": "2516a9333fbae4967c574c0cf7ed3ea5445f44c054455d16c06db81ef8c5e0f5"
+    }
+  },
+  "features": {
+    "E03-F01": {
+      "gates": {
+        "success_empty_and_interrupted_model_fixtures": true,
+        "empty_and_interrupted_are_explicit_retryable_failures": true,
+        "full_runtime_instrumentation_current_candidate": true
+      },
+      "passed": true
+    },
+    "E03-F02": {
+      "gates": {
+        "shared_tool_success_failure_and_recovery": true,
+        "android_tool_error_item_current_candidate": true
+      },
+      "passed": true
+    },
+    "E03-F03": {
+      "gates": {
+        "http_400_401_403_408_429_500_status_preserved": true,
+        "stable_provider_http_code_preserved": true,
+        "retryability_matrix_correct": true,
+        "provider_body_redacted_and_non_blank": true,
+        "oaep_error_status_detail_preserved": true
+      },
+      "passed": true
+    },
+    "E03-F04": {
+      "gates": {
+        "runtime_codes_not_collapsed_to_provider": true,
+        "full_runtime_category_instrumentation_current_candidate": true
+      },
+      "passed": true
+    },
+    "E03-F05": {
+      "gates": {
+        "compose_event_error_ui_compiles": true,
+        "compose_device_test_current_candidate": true,
+        "current_screenshot_collected": true
+      },
+      "passed": true
+    }
+  },
+  "passed_features": [
+    "E03-F01",
+    "E03-F02",
+    "E03-F03"
+    ,"E03-F04",
+    "E03-F05"
+  ]
+}

@@ -6,16 +6,34 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 PACKAGE_ROOT="$REPO_ROOT/cores/python/packages/drsai"
 DESKTOP_ROOT="$REPO_ROOT/apps/desktop"
-DRSAI_HOME="${DRSAI_HOME:-$HOME/.drsai}"
+DRSAI_HOME="${DRSAI_HOME:-$HOME/.drsai-dev}"
 RUNTIME_ROOT="$DRSAI_HOME/drsai-agent"
 VENV_ROOT="$RUNTIME_ROOT/venv"
 PYTHON="$VENV_ROOT/bin/python"
 DRSAI_CLI="$RUNTIME_ROOT/drsai"
 
+resolve_node_22() {
+  local current candidate
+  current="$(command -v node 2>/dev/null || true)"
+  if [[ -n "$current" ]] && "$current" -e 'process.exit(Number(process.versions.node.split(".")[0]) === 22 ? 0 : 1)' >/dev/null 2>&1; then
+    return
+  fi
+  for candidate in "$HOME"/.nvm/versions/node/v22*/bin/node "$HOME/.volta/bin/node" /opt/homebrew/bin/node; do
+    if [[ -x "$candidate" ]] && "$candidate" -e 'process.exit(Number(process.versions.node.split(".")[0]) === 22 ? 0 : 1)' >/dev/null 2>&1; then
+      export PATH="$(dirname "$candidate"):$PATH"
+      return
+    fi
+  done
+  echo "Node.js 22 is required. Run 'nvm install 22 && nvm use 22'." >&2
+  exit 1
+}
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "setup-dev.sh supports macOS only." >&2
   exit 1
 fi
+
+resolve_node_22
 
 SYSTEM_PYTHON="${OPENDRSAI_DEV_PYTHON:-$(command -v python3 || true)}"
 if [[ -z "$SYSTEM_PYTHON" ]]; then

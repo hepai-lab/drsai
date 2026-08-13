@@ -12,7 +12,7 @@ from drsai.backend.runtime.sqlite_connection import ClosingConnection
 from drsai.backend.runtime.experiments import ExperimentError, ExperimentNotFound, RuntimeExperimentStore
 
 
-COMPARISON_SCHEMA_VERSION = "opendrsai.run-comparison/1"
+COMPARISON_SCHEMA_VERSION = "opendrsai.run-comparison/2"
 TERMINAL = {"completed", "failed", "cancelled"}
 
 
@@ -133,6 +133,8 @@ class RunComparisonStore:
         candidate_file_items, candidate_files_incomplete = self._collect_type(str(candidate["run_id"]), "file_change")
         baseline_artifact_items, baseline_artifacts_incomplete = self._collect_type(str(baseline["run_id"]), "artifact")
         candidate_artifact_items, candidate_artifacts_incomplete = self._collect_type(str(candidate["run_id"]), "artifact")
+        baseline_tool_items, baseline_tools_incomplete = self._collect_type(str(baseline["run_id"]), "tool_call")
+        candidate_tool_items, candidate_tools_incomplete = self._collect_type(str(candidate["run_id"]), "tool_call")
         baseline_files = self._facts(baseline_file_items, "file_change")
         candidate_files = self._facts(candidate_file_items, "file_change")
         baseline_artifacts = self._facts(baseline_artifact_items, "artifact")
@@ -160,14 +162,62 @@ class RunComparisonStore:
             "files": self._diff_facts(baseline_files, candidate_files),
             "artifacts": self._diff_facts(baseline_artifacts, candidate_artifacts),
             "usage": {"baseline": baseline_usage, "candidate": candidate_usage},
+            "metrics": self._metrics(
+                left,
+                right,
+                baseline_tool_errors=sum(item.get("status") == "failed" for item in baseline_tool_items),
+                candidate_tool_errors=sum(item.get("status") == "failed" for item in candidate_tool_items),
+            ),
             "candidate_snapshot": dict(candidate_snapshot) if candidate_snapshot else None,
             "attribution": attribution,
             "incomplete": bool(
                 left["page"]["has_more"] or right["page"]["has_more"]
                 or baseline_files_incomplete or candidate_files_incomplete
                 or baseline_artifacts_incomplete or candidate_artifacts_incomplete
+                or baseline_tools_incomplete or candidate_tools_incomplete
             ),
         }
+
+    @staticmethod
+    def _metrics(
+        left: Mapping[str, Any],
+        right: Mapping[str, Any],
+        *,
+        baseline_tool_errors: int,
+        candidate_tool_errors: int,
+    ) -> dict[str, Any]:
+        def side(value: Mapping[str, Any], *, tool_errors: int) -> dict[str, int | str | None]:
+            summary = value.get("summary") if isinstance(value.get("summary"), Mapping) else {}
+            counts = summary.get("counts_by_item_type") if isinstance(summary.get("counts_by_item_type"), Mapping) else {}
+            usage = summary.get("usage") if isinstance(summary.get("usage"), Mapping) else {}
+            run = value.get("run") if isinstance(value.get("run"), Mapping) else {}
+            return {
+                "status": str(run.get("status") or "unknown"),
+                "duration_ms": int(summary["duration_ms"]) if isinstance(summary.get("duration_ms"), (int, float)) else None,
+                "input_tokens": int(usage.get("input_tokens") or 0),
+                "output_tokens": int(usage.get("output_tokens") or 0),
+                "total_tokens": int(usage.get("total_tokens") or 0),
+                "tool_calls": int(counts.get("tool_call") or 0),
+                "tool_errors": tool_errors,
+                "approvals": int(counts.get("interaction") or 0),
+                "artifacts": int(counts.get("artifact") or 0),
+                "warnings": int(summary.get("warning_count") or 0),
+            }
+
+        baseline = side(left, tool_errors=baseline_tool_errors)
+        candidate = side(right, tool_errors=candidate_tool_errors)
+        numeric = (
+            "duration_ms", "input_tokens", "output_tokens", "total_tokens", "tool_calls",
+            "tool_errors", "approvals", "artifacts", "warnings",
+        )
+        delta = {
+            key: (
+                int(candidate[key]) - int(baseline[key])
+                if baseline[key] is not None and candidate[key] is not None else None
+            )
+            for key in numeric
+        }
+        return {"baseline": baseline, "candidate": candidate, "delta": delta}
 
     def _candidate_snapshot(self, run_id: str) -> dict[str, Any] | None:
         with self._connect() as db:

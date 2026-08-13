@@ -15,6 +15,16 @@ data class PushRegistrationCheckpoint(
     val generation: Long,
 )
 
+data class RemotePushReadiness(
+    val ready: Boolean,
+    val fcm: Boolean,
+    val workerRunning: Boolean,
+)
+
+interface PushReadinessClient {
+    suspend fun pushReadiness(): RemotePushReadiness
+}
+
 interface PushRegistrationClient {
     suspend fun upsertPushRegistration(
         runtimeId: RuntimeId,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 import tracemalloc
@@ -10,6 +9,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+from drsai.oaep.digest import oaep_items_digest
 
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -97,14 +97,9 @@ def test_snapshot_window_is_checkpoint_bound_complete_and_tamper_proof(tmp_path:
         for item in engine.oaep_snapshot(session["session_id"])["items"]
         if item["id"] != "new-after-checkpoint"
     }
-    canonical_items = sorted(
-        [item for page in pages for item in page["items"]],
-        key=lambda item: (str(item["run_id"]), int(item["sequence"]), str(item["id"])),
-    )
-    canonical = json.dumps(
-        canonical_items, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
-    )
-    assert hashlib.sha256(canonical.encode()).hexdigest() == first["checkpoint"]["snapshot_hash"]
+    assert oaep_items_digest(
+        [item for page in pages for item in page["items"]]
+    ) == first["checkpoint"]["snapshot_hash"]
 
     token = str(first["window"]["next_cursor"])
     replacement = "A" if token[-1] != "A" else "B"
@@ -113,6 +108,85 @@ def test_snapshot_window_is_checkpoint_bound_complete_and_tamper_proof(tmp_path:
     other = engine.create_session("workspace-one", "Other Session")
     with pytest.raises(ValueError, match="Invalid OAEP Snapshot cursor"):
         engine.oaep_snapshot(other["session_id"], cursor=token, limit=7)
+
+
+def test_snapshot_window_repairs_invalid_historical_optional_operation_ref(
+    tmp_path: Path,
+) -> None:
+    engine, session, run = _runtime(tmp_path)
+    engine.record_conversation_item(
+        session["session_id"],
+        item_id="historical-tool",
+        kind="tool",
+        role="tool",
+        revision=1,
+        source_client="runtime",
+        payload={
+            "tool_name": "legacy tool",
+            "call_id": "legacy-call",
+            "arguments": {},
+            "result": {"ok": True},
+            "status": "completed",
+            "operation_ref": {
+                "protocol": "owop/1",
+                "operation_id": "legacy-operation",
+                "workspace_id": "workspace-one",
+                "operation": "process.start",
+                "correlation_id": "legacy-correlation",
+            },
+        },
+        run_id=run["run_id"],
+    )
+    with sqlite3.connect(engine.database) as db:
+        raw = db.execute(
+            "SELECT envelope_json FROM runtime_oaep_items WHERE item_id=?",
+            ("historical-tool",),
+        ).fetchone()
+        assert raw is not None
+        item = json.loads(str(raw[0]))
+        item["content"]["operation_ref"]["operation"] = "legacy free form tool"
+        db.execute(
+            "UPDATE runtime_oaep_items SET envelope_json=? WHERE item_id=?",
+            (json.dumps(item, ensure_ascii=False, separators=(",", ":")), "historical-tool"),
+        )
+        db.commit()
+
+    snapshot = engine.oaep_snapshot(session["session_id"])
+    historical = next(item for item in snapshot["items"] if item["id"] == "historical-tool")
+    assert "operation_ref" not in historical["content"]
+    Draft202012Validator(json.loads(OAEP_SCHEMA.read_text(encoding="utf-8"))).validate(snapshot)
+
+
+def test_snapshot_window_keeps_run_sequence_after_early_item_revision(tmp_path: Path) -> None:
+    engine, session, run = _runtime(tmp_path)
+    for index, status in enumerate(("pending", "completed", "completed")):
+        engine.record_conversation_item(
+            session["session_id"],
+            item_id=f"window-item-{index:06d}",
+            kind="message",
+            role="user",
+            revision=1,
+            source_client="windows",
+            source_message_id=f"window-source-{index:06d}",
+            payload={"text": f"message {index}", "status": status},
+            run_id=run["run_id"],
+        )
+    engine.record_conversation_item(
+        session["session_id"],
+        item_id="window-item-000000",
+        kind="message",
+        role="user",
+        revision=2,
+        source_client="windows",
+        source_message_id="window-source-000000",
+        payload={"text": "revised", "status": "running"},
+        run_id=run["run_id"],
+    )
+
+    snapshot = engine.oaep_snapshot(session["session_id"], limit=100)
+    sequences = [item["sequence"] for item in snapshot["items"]]
+    assert sequences == sorted(sequences)
+    Draft202012Validator(json.loads(OAEP_SCHEMA.read_text(encoding="utf-8"))).validate(snapshot)
 
 
 def test_100k_item_cold_start_is_bounded_and_streams_checkpoint_hash(tmp_path: Path) -> None:

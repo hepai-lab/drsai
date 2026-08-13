@@ -270,6 +270,9 @@ class AgentBackend(Protocol):
     async def account_logout(self) -> None: ...
 
 
+_AGENT_BACKEND_HEALTH_TIMEOUT_SECONDS = 5.0
+
+
 class AgentBackendRouter:
     """Exact Backend routing and process-lifetime ownership; never falls back."""
 
@@ -295,7 +298,34 @@ class AgentBackendRouter:
         return backend
 
     async def health(self) -> dict[str, Mapping[str, Any]]:
-        return {backend_id: await backend.health() for backend_id, backend in self._backends.items()}
+        async def bounded(backend_id: str, backend: AgentBackend) -> tuple[str, Mapping[str, Any]]:
+            try:
+                value = await asyncio.wait_for(
+                    backend.health(),
+                    timeout=_AGENT_BACKEND_HEALTH_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                value = {
+                    "backend_id": backend_id,
+                    "available": False,
+                    "reason": "health_timeout",
+                }
+            except Exception:
+                # Health is a catalog/diagnostic projection. One optional
+                # backend must not take the Runtime directory down with it,
+                # and exception text can contain local paths or credentials.
+                value = {
+                    "backend_id": backend_id,
+                    "available": False,
+                    "reason": "health_check_failed",
+                }
+            return backend_id, value
+
+        rows = await asyncio.gather(*(
+            bounded(backend_id, backend)
+            for backend_id, backend in self._backends.items()
+        ))
+        return dict(rows)
 
     async def close(self) -> None:
         if self._closed:

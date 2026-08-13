@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 import struct
 import zipfile
 from pathlib import Path
@@ -27,14 +29,45 @@ def inspect_artifact(path: str | Path) -> dict[str, Any]:
 def inspect_pptx(path: Path) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(path) as archive:
-            slides = sorted(name for name in archive.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml"))
+            names = set(archive.namelist())
+            if "[Content_Types].xml" not in names or "ppt/presentation.xml" not in names:
+                raise ValueError("PPTX package is missing required Office parts")
+            slides = sorted(
+                (name for name in names if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)),
+                key=lambda name: int(re.search(r"\d+", name).group()),
+            )
             texts: list[list[str]] = []
             for name in slides:
                 root = ET.fromstring(archive.read(name))
                 texts.append([node.text or "" for node in root.iter() if node.tag.endswith("}t")])
+            presentation = ET.fromstring(archive.read("ppt/presentation.xml"))
+            size = next((node for node in presentation.iter() if node.tag.endswith("}sldSz")), None)
+            if size is None:
+                raise ValueError("PPTX presentation has no slide size")
+            width_emu, height_emu = int(size.attrib["cx"]), int(size.attrib["cy"])
     except (zipfile.BadZipFile, KeyError, ET.ParseError) as exc:
         raise ValueError(f"Invalid PPTX artifact: {path}: {exc}") from exc
-    return {"format": "pptx", "slide_count": len(slides), "slide_text": texts, "editable": any(any(row) for row in texts), "editable_text": any(any(row) for row in texts)}
+    divisor = math.gcd(width_emu, height_emu)
+    ratio_width, ratio_height = width_emu // divisor, height_emu // divisor
+    page_numbers = [
+        any(value.strip() in {str(index), f"{index:02d}"} for value in row)
+        for index, row in enumerate(texts, 1)
+    ]
+    editable = any(any(value.strip() for value in row) for row in texts)
+    return {
+        "format": "pptx", "slide_count": len(slides), "slide_text": texts,
+        "slides": [{"index": index, "text": row} for index, row in enumerate(texts, 1)],
+        "editable": editable, "editable_text": editable,
+        "aspect_ratio": {
+            "width": ratio_width, "height": ratio_height,
+            "value": width_emu / height_emu,
+        },
+        "page_numbers": {
+            "required_on_all_slides": bool(page_numbers) and all(page_numbers),
+            "slides": page_numbers,
+        },
+        "office_package_valid": True,
+    }
 
 
 def inspect_png(path: Path) -> tuple[int, int, str]:

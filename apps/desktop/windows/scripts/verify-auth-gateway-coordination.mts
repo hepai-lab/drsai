@@ -14,7 +14,9 @@ assert.match(auth, /registerAuthContextProvider\(requireAuthContext\)/);
 assert.match(auth, /const propagated = await syncCoordinatedGatewayIdentity\(trimmed\)/);
 assert.match(auth, /if \(propagated\) lastPropagatedAuthUserId = trimmed/);
 assert.match(gateway, /registerGatewayIdentitySynchronizer\(syncAuthIdentityToGateway\)/);
-assert.equal((gateway.match(/requireCoordinatedAuthContext\(\)/g) ?? []).length, 2);
+assert.match(gateway, /if \(identityChanged\) await putGatewayJson\("\/v1\/config\/user-name"/, "unchanged identity must not be PUT on every health cycle");
+assert.match(gateway, /if \(!probe\.ready\) lastSyncedGatewayUserId = null/, "a replaced Gateway must receive identity on recovery");
+assert.equal((gateway.match(/requireCoordinatedAuthContext\(\)/g) ?? []).length, 3);
 assert.match(bridge, /if \(!authContextProvider\) throw new Error/);
 assert.match(bridge, /if \(!gatewayIdentitySynchronizer\) return null/);
 

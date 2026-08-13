@@ -8,13 +8,18 @@ import { createServer } from "node:net";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Packaged macOS smoke must run on Apple Silicon macOS.");
 const root = resolve(new URL("..", import.meta.url).pathname);
-const executable = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "MacOS", "OpenDrSai");
+const appPath = resolve(process.env.OPENDRSAI_MACOS_APP_PATH || join(root, "release", "mac-arm64", "OpenDrSai.app"));
+const executable = join(appPath, "Contents", "MacOS", "OpenDrSai");
 assert.ok(existsSync(executable), `packaged executable missing: ${executable}`);
-const runtimeRoot = join(root, "release", "mac-arm64", "OpenDrSai.app", "Contents", "Resources", "runtime");
+const runtimeRoot = join(appPath, "Contents", "Resources", "runtime");
 const runtimeManifest = JSON.parse(await readFile(join(runtimeRoot, "runtime-manifest.json"), "utf8"));
 const runtimeArchive = await stat(join(runtimeRoot, runtimeManifest.archive));
 const runtimeGiB = Math.ceil(runtimeArchive.size / (1024 ** 3));
-const timeoutMs = Math.min(360_000, 45_000 + runtimeGiB * 45_000);
+// First launch extracts and hashes every Runtime file, relocates both Python
+// virtual environments, and probes the installed interpreter. Keep this
+// correctness gate bounded without conflating it with the separate L5
+// performance gate; the current Runtime contains roughly 27,000 files.
+const timeoutMs = Math.min(900_000, 300_000 + runtimeGiB * 600_000);
 const temp = await mkdtemp(join(tmpdir(), "opendrsai-macos-packaged-"));
 const resultPath = join(temp, "result.json");
 const gatewayPort = await freePort();

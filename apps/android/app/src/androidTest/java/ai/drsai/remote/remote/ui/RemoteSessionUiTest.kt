@@ -8,6 +8,8 @@ import ai.drsai.remote.remote.model.*
 import ai.drsai.remote.remote.data.RemoteAgentDefinition
 import ai.drsai.remote.remote.data.RemoteAuditEntry
 import ai.drsai.remote.remote.data.RemoteFileNode
+import ai.drsai.remote.remote.data.RemoteLifecycleState
+import ai.drsai.remote.remote.data.RemoteSessionUiAuthorityState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -74,7 +76,8 @@ class RemoteSessionUiTest {
             "执行命令", "workspace", "12:00", "corr-1")
         val decisions = mutableListOf<String>(); var audits = 0
         rule.setContent { MaterialTheme { RemoteChatScreen(RemoteChatUiState("开发机", "项目", "会话",
-            listOf(RemoteMessageUi("m", "assistant", "正在处理", "读取文件")), approval, running = true, online = true,
+            listOf(RemoteMessageUi("m", "assistant", "正在处理", "读取文件")), approval,
+            authority = RemoteSessionUiAuthorityState(runStatus = RemoteRunStatus.RUNNING),
             correlationId = "corr-1"), {}, {}, {}, { _, decision -> decisions += decision }, { audits++ }) } }
         rule.onNodeWithText("开发机 · 项目").assertIsDisplayed()
         rule.onNodeWithText("需要你的确认").assertIsDisplayed()
@@ -88,7 +91,11 @@ class RemoteSessionUiTest {
         val identity = RemoteRunIdentity(RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), RunId("run"), "codex")
         val approval = RemoteApprovalCard(ApprovalId("approval"), identity, "PC", "WS", "Agent", "shell.execute", "x", "ws", "later", "c")
         rule.setContent { MaterialTheme { RemoteChatScreen(RemoteChatUiState("PC", "WS", "Session", approval = approval,
-            running = true, online = false), {}, {}, {}, { _, _ -> error("offline decision") }, {}) } }
+            authority = RemoteSessionUiAuthorityState(
+                connectionState = RemoteConnectionState.OFFLINE,
+                lifecycleState = RemoteLifecycleState.OFFLINE,
+                runStatus = RemoteRunStatus.RUNNING,
+            )), {}, {}, {}, { _, _ -> error("offline decision") }, {}) } }
         rule.onNodeWithText("连接已中断，任务可能仍在运行").assertIsDisplayed()
         rule.onNodeWithText("同意").assertIsNotEnabled()
         rule.onNodeWithText("停止").assertIsNotEnabled()
@@ -107,7 +114,7 @@ class RemoteSessionUiTest {
         rule.runOnIdle { assertEquals("artifact-1", opened) }
     }
 
-    @Test fun auditScreenShowsSafeSummaryAndCorrelationWithoutWriteControls() {
+    @Test fun auditScreenShowsSafeSummaryWithoutInternalCorrelationOrWriteControls() {
         val entry = RemoteAuditEntry("audit", RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), RunId("r"),
             "approval.approved", "alice", "2026-01-01T00:00:00Z", "corr-123", ApprovalId("a"))
         rule.setContent { MaterialTheme { RemoteAuditScreen(
@@ -115,7 +122,9 @@ class RemoteSessionUiTest {
             error = null, onBack = {}, onRefresh = {},
         ) } }
         rule.onNodeWithText(remoteAuditActionLabel(entry.action)).assertIsDisplayed()
-        rule.onNodeWithText("关联 ID：corr-123").assertIsDisplayed()
+        rule.onNodeWithText("操作方：alice").assertIsDisplayed()
+        rule.onNodeWithText("工作区：项目").assertIsDisplayed()
+        rule.onAllNodesWithText("corr-123", substring = true).assertCountEquals(0)
         rule.onAllNodesWithText("修改").assertCountEquals(0)
         rule.onAllNodesWithText("删除").assertCountEquals(0)
     }

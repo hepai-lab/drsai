@@ -11,12 +11,67 @@ export interface StreamingVoiceDiagnosticMetrics {
   playedSegmentCount?: number;
   latencyMs?: number;
   paused?: boolean;
+  firstAudioAckMs?: number;
+  firstPartialMs?: number;
+  finalMs?: number;
+  firstTtsMs?: number;
+  firstPlaybackMs?: number;
+  repairRate?: number;
+  endpointErrorRate?: number;
+  underrunRate?: number;
+  recoveryRate?: number;
+  audioUsageMs?: number;
+  ttsCharacters?: number;
+  connectionCount?: number;
 }
 
 const ALLOWED_METRICS = new Set<keyof StreamingVoiceDiagnosticMetrics>([
   "sequence", "bufferedAudioMs", "partialCount", "finalCount", "segmentCount",
   "playedSegmentCount", "latencyMs", "paused",
+  "firstAudioAckMs", "firstPartialMs", "finalMs", "firstTtsMs", "firstPlaybackMs",
+  "repairRate", "endpointErrorRate", "underrunRate", "recoveryRate",
+  "audioUsageMs", "ttsCharacters", "connectionCount",
 ]);
+
+export class StreamingVoiceSloTracker {
+  readonly startedAt: number;
+  readonly now: () => number;
+  #marks = new Map<string, number>();
+  constructor(now: () => number = () => performance.now()) { this.now = now; this.startedAt = now(); }
+  mark(stage: "audio_ack" | "partial" | "final" | "tts" | "playback"): void {
+    if (!this.#marks.has(stage)) this.#marks.set(stage, Math.max(this.startedAt, this.now()));
+  }
+  metrics(): StreamingVoiceDiagnosticMetrics {
+    return {
+      firstAudioAckMs: this.#elapsed("audio_ack"), firstPartialMs: this.#elapsed("partial"),
+      finalMs: this.#elapsed("final"), firstTtsMs: this.#elapsed("tts"), firstPlaybackMs: this.#elapsed("playback"),
+    };
+  }
+  #elapsed(stage: string): number | undefined { const value = this.#marks.get(stage); return value === undefined ? undefined : value - this.startedAt; }
+}
+
+export function streamingVoiceQualityMetrics(input: { turns: number; repaired: number; endpointErrors: number; underruns: number; recoveries: number }): StreamingVoiceDiagnosticMetrics {
+  const denominator = Math.max(1, input.turns);
+  return { repairRate: input.repaired / denominator, endpointErrorRate: input.endpointErrors / denominator, underrunRate: input.underruns / denominator, recoveryRate: input.recoveries / Math.max(1, input.underruns) };
+}
+
+export class StreamingVoiceCostBudget {
+  readonly limits: { audioUsageMs: number; ttsCharacters: number; connectionCount: number };
+  readonly usage = { audioUsageMs: 0, ttsCharacters: 0, connectionCount: 0 };
+  constructor(limits: Partial<StreamingVoiceCostBudget["limits"]> = {}) { this.limits = { audioUsageMs: 120_000, ttsCharacters: 12_000, connectionCount: 4, ...limits }; }
+  consume(delta: Partial<typeof this.usage>): boolean {
+    const next = { audioUsageMs: this.usage.audioUsageMs + (delta.audioUsageMs ?? 0), ttsCharacters: this.usage.ttsCharacters + (delta.ttsCharacters ?? 0), connectionCount: this.usage.connectionCount + (delta.connectionCount ?? 0) };
+    if (Object.keys(next).some((key) => next[key as keyof typeof next] < 0) || next.audioUsageMs > this.limits.audioUsageMs || next.ttsCharacters > this.limits.ttsCharacters || next.connectionCount > this.limits.connectionCount) return false;
+    Object.assign(this.usage, next); return true;
+  }
+  metrics(): StreamingVoiceDiagnosticMetrics { return { ...this.usage }; }
+}
+
+export function streamingVoiceRecoveryAdvice(stage: StreamingVoiceDiagnosticStage, errorCode: string, retryable: boolean): { retry: boolean; fallbackMode: "serial" | null; messageKey: string } {
+  if (retryable) return { retry: true, fallbackMode: null, messageKey: `voice.streaming.${stage}.retry` };
+  const serial = stage === "asr" || stage === "transport";
+  return { retry: false, fallbackMode: serial ? "serial" : null, messageKey: `voice.streaming.${stage}.${sanitizeErrorCode(errorCode) ?? "error"}` };
+}
 
 export function createStreamingVoiceDiagnostic(input: {
   traceId: string;

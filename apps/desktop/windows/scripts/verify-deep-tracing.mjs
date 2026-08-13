@@ -23,9 +23,26 @@ try {
     if (specifier === "../api/diagnostics") return shared;
     return require(specifier);
   });
+  const classifier = loadTypeScript(join(root, "../shared/main/diagnosticClassifier.ts"), (specifier) => {
+    if (specifier === "../api/diagnostics") return shared;
+    return require(specifier);
+  });
+  const agentProjector = loadTypeScript(join(root, "../shared/main/agentDiagnosticProjector.ts"), (specifier) => {
+    if (specifier === "../api/diagnostics") return shared;
+    return require(specifier);
+  });
+  const incidentProjector = loadTypeScript(join(root, "../shared/main/diagnosticIncidentProjector.ts"), (specifier) => {
+    if (specifier === "../api/diagnostics") return shared;
+    return require(specifier);
+  });
+  const sensitiveData = loadTypeScript(join(root, "../shared/api/sensitiveData.ts"), require);
   const diagnosticsModule = loadTypeScript(join(root, "../shared/main/diagnostics.ts"), (specifier) => {
     if (specifier === "../api/diagnostics") return shared;
+    if (specifier === "../api/sensitiveData") return sensitiveData;
     if (specifier === "./rootCauseAnalysis") return rootCause;
+    if (specifier === "./diagnosticClassifier") return classifier;
+    if (specifier === "./agentDiagnosticProjector") return agentProjector;
+    if (specifier === "./diagnosticIncidentProjector") return incidentProjector;
     if (specifier === "./paths") return { DRSAI_HOME: tempRoot };
     return require(specifier);
   });

@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from drsai.relay.notifications import NotificationDeliveryQueue, NotificationFanoutSink, NotificationOutbox, notification_intent
+import pytest
+
+from drsai.relay.notifications import (
+    NotificationDeliveryQueue,
+    NotificationFanoutSink,
+    NotificationOutbox,
+    NotificationQueueCapacityError,
+    PushDeliveryError,
+    notification_intent,
+)
 
 
 def test_notification_payload_is_opaque_and_content_free() -> None:
@@ -64,15 +73,114 @@ def test_delivery_retries_without_duplicate_success(tmp_path: Path) -> None:
                 raise RuntimeError("temporary")
 
     provider = Provider()
-    assert queue.dispatch_once(provider, now=10) == {"claimed": 1, "delivered": 0, "retrying": 1}
+    assert queue.dispatch_once(provider, now=10) == {"claimed": 1, "delivered": 0, "retrying": 1, "dead": 0}
     assert queue.dispatch_once(provider, now=11)["claimed"] == 0
-    assert queue.dispatch_once(provider, now=12) == {"claimed": 1, "delivered": 1, "retrying": 0}
+    assert queue.dispatch_once(provider, now=12) == {"claimed": 1, "delivered": 1, "retrying": 0, "dead": 0}
     assert queue.dispatch_once(provider, now=20)["claimed"] == 0
     assert queue.status_counts() == {"delivered": 1}
 
 
+def test_delivery_permanent_provider_error_goes_directly_to_dead_letter(tmp_path: Path) -> None:
+    queue = NotificationDeliveryQueue(tmp_path / "push.sqlite3", max_attempts=8)
+    intent = notification_intent("runtime", "workspace", "session", {
+        "event_id": "event", "type": "event.run.failed",
+    })
+    assert intent is not None
+    queue.enqueue(intent, ["device-a"])
+
+    class Provider:
+        def send(self, _device_id, _payload):
+            raise PushDeliveryError("provider_token_invalid", retryable=False)
+
+    assert queue.dispatch_once(Provider(), now=10) == {
+        "claimed": 1, "delivered": 0, "retrying": 0, "dead": 1,
+    }
+    assert queue.status_counts() == {"dead": 1}
+    assert queue.dispatch_once(Provider(), now=20)["claimed"] == 0
+
+
+def test_delivery_retryable_provider_error_remains_bounded(tmp_path: Path) -> None:
+    queue = NotificationDeliveryQueue(tmp_path / "push.sqlite3", max_attempts=2)
+    intent = notification_intent("runtime", "workspace", "session", {
+        "event_id": "event", "type": "event.run.completed",
+    })
+    assert intent is not None
+    queue.enqueue(intent, ["device-a"])
+
+    class Provider:
+        def send(self, _device_id, _payload):
+            raise PushDeliveryError("provider_rate_limited", retryable=True)
+
+    assert queue.dispatch_once(Provider(), now=10)["retrying"] == 1
+    assert queue.dispatch_once(Provider(), now=12)["retrying"] == 1
+    assert queue.status_counts() == {"dead": 1}
+
+
 def test_fanout_resolves_only_opaque_device_ids_at_accept_time(tmp_path: Path) -> None:
     queue = NotificationDeliveryQueue(tmp_path / "push.sqlite3")
-    sink = NotificationFanoutSink(queue, lambda runtime_id: ["device-a", "device-b"])
+    sink = NotificationFanoutSink(
+        queue,
+        lambda runtime_id, workspace_id: ["device-a", "device-b"],
+    )
     sink.accept("runtime", "workspace", "session", {"event_id": "event", "type": "event.run.completed"})
     assert {row["device_id"] for row in queue.claim(now=1)} == {"device-a", "device-b"}
+
+
+def test_delivery_capacity_never_evicts_active_terminal_or_approval(tmp_path: Path) -> None:
+    queue = NotificationDeliveryQueue(
+        tmp_path / "push.sqlite3", capacity=2, retention_seconds=60,
+    )
+    terminal = notification_intent("runtime", "workspace", "session", {
+        "event_id": "terminal", "type": "event.run.completed",
+    })
+    approval = notification_intent("runtime", "workspace", "session", {
+        "event_id": "approval", "type": "event.run.waiting",
+    })
+    overflow = notification_intent("runtime", "workspace", "session", {
+        "event_id": "overflow", "type": "event.run.failed",
+    })
+    assert terminal and approval and overflow
+    assert queue.enqueue(terminal, ["device-a"], now=1) == 1
+    assert queue.enqueue(approval, ["device-a"], now=1) == 1
+    with pytest.raises(NotificationQueueCapacityError):
+        queue.enqueue(overflow, ["device-a"], now=2)
+    assert queue.status_counts() == {"pending": 2}
+    report = queue.capacity_report()
+    assert report["capacity_rejections"] == 1
+    assert report["overflow_strategy"] == "reject_without_active_eviction"
+
+
+def test_delivery_capacity_prunes_only_settled_rows_and_retention_is_explicit(tmp_path: Path) -> None:
+    queue = NotificationDeliveryQueue(
+        tmp_path / "push.sqlite3", capacity=1, retention_seconds=10,
+    )
+    first = notification_intent("runtime", "workspace", "session", {
+        "event_id": "first", "type": "event.run.completed",
+    })
+    second = notification_intent("runtime", "workspace", "session", {
+        "event_id": "second", "type": "event.run.waiting",
+    })
+    assert first and second
+    queue.enqueue(first, ["device-a"], now=1)
+    row = queue.claim(now=1)[0]
+    queue.settle(row["delivery_id"], delivered=True, now=2)
+    assert queue.enqueue(second, ["device-a"], now=3) == 1
+    assert queue.status_counts() == {"pending": 1}
+    report = queue.capacity_report()
+    assert report["retention_seconds"] == 10
+    assert report["pruned_rows"] == 1
+
+
+def test_fanout_capacity_does_not_fail_authoritative_terminal_acceptance(tmp_path: Path) -> None:
+    queue = NotificationDeliveryQueue(tmp_path / "push.sqlite3", capacity=1)
+    sink = NotificationFanoutSink(queue, lambda *_args: ["device-a"])
+    sink.accept("runtime", "workspace", "session", {
+        "event_id": "approval", "type": "event.run.waiting",
+    })
+    # The second terminal remains recoverable from OAEP/Snapshot even while the
+    # optional push hint queue is saturated; the sink never enters retry spin.
+    sink.accept("runtime", "workspace", "session", {
+        "event_id": "terminal", "type": "event.run.completed",
+    })
+    assert queue.status_counts() == {"pending": 1}
+    assert sink.capacity_report()["fanout_capacity_rejections"] == 1

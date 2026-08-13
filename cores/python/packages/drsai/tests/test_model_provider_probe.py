@@ -11,7 +11,8 @@ from drsai.platform_auth import PlatformAuthContext, platform_auth_scope
 def test_draft_probe_is_explicitly_non_persistent(monkeypatch) -> None:
     captured = {}
 
-    async def fake_probe(resolved, *, timeout, mode):
+    async def fake_probe(resolved, *, timeout, mode, record_history):
+        assert record_history is False
         captured["secret"] = resolved.provider.api_key.reveal()
         captured["mode"] = mode
         return {"ok": True, "provider": resolved.provider.name, "wire_api": resolved.provider.wire_api, "mode": mode}
@@ -38,7 +39,8 @@ def test_draft_probe_is_explicitly_non_persistent(monkeypatch) -> None:
 def test_draft_probe_resolves_saved_credential_reference(monkeypatch) -> None:
     captured = {}
 
-    async def fake_probe(resolved, *, timeout, mode):
+    async def fake_probe(resolved, *, timeout, mode, record_history):
+        assert record_history is False
         captured["secret"] = resolved.provider.api_key.reveal()
         captured["source"] = resolved.provider.api_key_source
         return {"ok": True, "provider": resolved.provider.name, "mode": mode}
@@ -61,7 +63,8 @@ def test_draft_probe_resolves_saved_credential_reference(monkeypatch) -> None:
 
 
 def test_model_probe_marks_possible_cost(monkeypatch) -> None:
-    async def fake_probe(resolved, *, timeout, mode):
+    async def fake_probe(resolved, *, timeout, mode, record_history):
+        assert record_history is False
         return {"ok": True, "provider": resolved.provider.name, "wire_api": resolved.provider.wire_api, "mode": mode}
 
     monkeypatch.setattr(probe_module, "test_provider_connection", fake_probe)
@@ -82,7 +85,8 @@ def test_model_probe_marks_possible_cost(monkeypatch) -> None:
 def test_hepai_draft_probe_uses_request_scoped_oidc_credentials(monkeypatch) -> None:
     captured = {}
 
-    async def fake_probe(resolved, *, timeout, mode):
+    async def fake_probe(resolved, *, timeout, mode, record_history):
+        assert record_history is False
         captured["base_url"] = resolved.provider.base_url
         captured["secret"] = resolved.provider.api_key.reveal()
         return {"ok": True, "provider": resolved.provider.name, "mode": mode}

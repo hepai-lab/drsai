@@ -22,7 +22,7 @@ import type {
   DesktopVoiceRuntimeStatus,
   DesktopVoiceError,
 } from "../api/desktopApi";
-import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
+import { getAuthenticatedGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
 import { getVoiceProviderReadiness } from "./voiceProviderReadiness";
 import {
@@ -69,7 +69,7 @@ const activeVoiceTasks = new Map<string, ActiveVoiceTask>();
 async function getGatewayVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus> {
   const status = await getGatewayStatus();
   const readiness = status.ready
-    ? await getVoiceProviderReadiness(status.baseUrl, getGatewayRequestHeaders(), "speech_to_text").catch(() => ({ state: "unconfigured" as const }))
+    ? await getVoiceProviderReadiness(status.baseUrl, await getAuthenticatedGatewayRequestHeaders(), "speech_to_text").catch(() => ({ state: "unconfigured" as const }))
     : { state: "unconfigured" as const };
   const state = !status.ready
     ? "unavailable"
@@ -262,7 +262,7 @@ async function transcribeThroughGateway(
   try {
     response = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
       method: "POST",
-      headers: getGatewayRequestHeaders(),
+      headers: await getAuthenticatedGatewayRequestHeaders(),
       body: form,
       signal,
     });

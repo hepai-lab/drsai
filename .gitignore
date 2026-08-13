@@ -1,6 +1,7 @@
 ########################
 # Cursor IDE（个人配置，不提交）
 ########################
+.tmp-p4-test-home/
 .opendrsai/
 .cursor/
 .uv-cache-browser/
@@ -303,6 +304,7 @@ notebooks/test.db
 # Android / Gradle
 ########################
 .gradle/
+.kotlin/
 **/local.properties
 **/.cxx/
 **/.externalNativeBuild/
@@ -315,6 +317,8 @@ notebooks/test.db
 
 # Locally downloaded, checksum-verified toolchains used to reproduce macOS artifacts.
 .runtime-tools/
+.tooling/
+.worktrees/
 apps/desktop/macos/native/OpenDrSaiNativeHelper/.build/
 apps/desktop/macos/release-unsigned-update/
 
@@ -342,6 +346,10 @@ docs/android/reports/evidence/**/*.xml
 docs/android/reports/evidence/p9/pending/
 docs/android/reports/evidence/round*.*
 docs/android/reports/evidence/samsung-model-provider-*/
+docs/android/reports/preflight/**/*.png
+docs/android/reports/preflight/**/*.xml
+docs/android/reports/preflight/**/*.txt
+docs/android/reports/preflight/**/round*/
 docs/desktop/evidence/**/*.png
 docs/desktop/evidence/**/accessibility-tree.json
 docs/desktop/evidence/round*/

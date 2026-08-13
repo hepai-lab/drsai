@@ -113,7 +113,7 @@ def test_stable_arithmetic_common_knowledge_and_opinion_are_not_forced_to_use_to
     }))
     completed = core.handle(_command(MessageType.MODEL_COMPLETED, 1, {"content": "direct"}))
 
-    assert _kinds(completed) == ["tool.decision", "run.completed"]
+    assert _kinds(completed) == ["tool.decision", "message.completed", "run.completed"]
     decision = next(item.payload for item in completed if item.payload.get("kind") == "tool.decision")
     assert decision["category"] == "direct_answer"
 
@@ -121,7 +121,7 @@ def test_stable_arithmetic_common_knowledge_and_opinion_are_not_forced_to_use_to
 def test_satisfied_required_retrieval_allows_later_multistep_tools() -> None:
     core = create_mobile_agent_core()
     core.handle(_command(MessageType.START_RUN, 0, {
-        "input": "检索 HEPiX 2026，再读取本地方案并生成比较报告",
+        "input": "搜索 HEPiX 2026，再读取本地方案并生成比较报告",
         "model_id": "model",
         "tools": [_tool("web.search"), _tool("workspace.read")],
     }))
@@ -141,7 +141,7 @@ def test_satisfied_required_retrieval_allows_later_multistep_tools() -> None:
     assert _kinds(continued)[:2] == ["tool.decision", "tool.started"]
     decision = next(item.payload for item in continued if item.payload.get("kind") == "tool.decision")
     assert decision["category"] == "required_tool_satisfied"
-    assert decision["reason"] == "prior_tool_result_available"
+    assert decision["reason"] == "prior_matching_tool_result_available"
 
 
 def test_second_required_tool_omission_fails_closed_and_retry_count_survives_checkpoint() -> None:

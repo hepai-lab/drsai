@@ -11,6 +11,10 @@ def test_presentation_baseline_is_openable_and_structural() -> None:
     assert evidence["slide_count"] == 4
     assert evidence["editable"] is True
     assert "OpenDrSai Runtime" in " ".join(evidence["slide_text"][0])
+    assert evidence["aspect_ratio"]["width"] == 16
+    assert evidence["aspect_ratio"]["height"] == 9
+    assert evidence["page_numbers"]["required_on_all_slides"] is True
+    assert [slide["index"] for slide in evidence["slides"]] == [1, 2, 3, 4]
 
 
 def test_input_png_metadata_is_deterministic() -> None:

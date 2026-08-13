@@ -14,7 +14,9 @@ if (buildChannel === "development") {
 const acceptanceOutput = process.env.OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE?.trim();
 if (acceptanceOutput) {
   app.setPath("userData", join(dirname(acceptanceOutput), "electron-user-data"));
-  app.commandLine.appendSwitch("use-mock-keychain");
+  if (process.env.OPENDRSAI_MACOS_PACKAGED_SCENARIO !== "hepai-provider") {
+    app.commandLine.appendSwitch("use-mock-keychain");
+  }
 }
 
 const reportFailure = (stage: string, error: unknown): void => {

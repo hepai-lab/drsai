@@ -20,7 +20,7 @@ Android 系统不预装 Python，也不提供可依赖的 `python` 命令。应�
 ```text
 OpenDrSai APK
 ├─ Kotlin / Compose / Room / OkHttp
-├─ libpython3.11.so
+├─ libpython3.12.so
 ├─ Python 标准库与编译后的 Python 模块
 ├─ drsai-core
 └─ arm64-v8a Android Wheels

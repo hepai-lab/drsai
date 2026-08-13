@@ -99,6 +99,7 @@ class CodexAgentBackendClient:
         approval_bridge: CodexApprovalBridge | None = None,
         turn_terminal_timeout: float = 60 * 60,
         turn_coordinator: SessionTurnCoordinator | None = None,
+        lifecycle_writer_release_timeout: float = 1.0,
     ):
         self.rpc = rpc
         self.bindings = bindings
@@ -111,6 +112,7 @@ class CodexAgentBackendClient:
         self.approval_bridge = approval_bridge
         self.turn_terminal_timeout = max(0.01, float(turn_terminal_timeout))
         self.turn_coordinator = turn_coordinator or SessionTurnCoordinator()
+        self.lifecycle_writer_release_timeout = max(0.05, float(lifecycle_writer_release_timeout))
         self._cancelled_runs: set[str] = set()
         self._entity_locks = EntityLockRegistry()
         self._resumed_generation: OrderedDict[str, int] = OrderedDict()
@@ -512,7 +514,52 @@ class CodexAgentBackendClient:
         """Mirror an OpenDrSai session archive transition to its Codex Thread."""
         await self.rpc.connect()
         session = self.bindings.get_session(session_id)
-        await self.rpc.request("thread/archive" if archived else "thread/unarchive", {"threadId": session.backend_session_id})
+        method = "thread/archive" if archived else "thread/unarchive"
+        deadline = asyncio.get_running_loop().time() + self.lifecycle_writer_release_timeout
+        delay = 0.05
+        generation_rotated = False
+        async with self._entity_locks.hold(f"session:{session_id}"):
+            if archived and self._resumed_generation.get(session_id) == self.rpc.generation:
+                # Current Codex versions retain an exclusive writer while a
+                # Thread is loaded by this App Server connection. Release that
+                # writer explicitly before archive, then force the next Turn
+                # to resume the same authoritative Thread binding.
+                await self.rpc.request("thread/unsubscribe", {"threadId": session.backend_session_id})
+                self._resumed_generation.pop(session_id, None)
+            while True:
+                try:
+                    await self.rpc.request(method, {"threadId": session.backend_session_id})
+                    return
+                except RuntimeExecutionError as exc:
+                    active_writer = (
+                        exc.code == "codex_jsonrpc_error"
+                        and "active writer" in str(exc).lower()
+                    )
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if not active_writer:
+                        raise
+                    if remaining <= 0:
+                        if archived and not generation_rotated and not self._active_turns:
+                            # App Server has no per-Thread unload operation.
+                            # When an idle process retains the rollout writer
+                            # after unsubscribe, rotate the process generation
+                            # so archive can safely move the transcript. Never
+                            # do this while another Session has an active Turn.
+                            await self.rpc.reconnect()
+                            self._resumed_generation.clear()
+                            generation_rotated = True
+                            deadline = (asyncio.get_running_loop().time()
+                                        + self.lifecycle_writer_release_timeout)
+                            delay = 0.05
+                            continue
+                        raise RuntimeExecutionError(
+                            "codex_session_busy",
+                            "This task is still finishing its current response. Wait a moment, then try again.",
+                            retryable=True,
+                            detail={"operation": method, "thread_id": session.backend_session_id},
+                        ) from exc
+                    await asyncio.sleep(min(delay, remaining))
+                    delay = min(0.5, delay * 2)
 
     async def respond_approval(self, run_id: str, approval_id: str, decision: str) -> None:
         if self.approval_bridge is None:

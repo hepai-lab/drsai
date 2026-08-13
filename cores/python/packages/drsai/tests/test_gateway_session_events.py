@@ -91,6 +91,29 @@ def test_expired_cursor_is_structured_before_stream_headers(
     assert captured.value.detail["details"]["reason"] == "history_truncated"
 
 
+def test_run_create_response_can_be_recovered_by_read_only_idempotency_lookup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gateway, engine, session = _gateway_runtime(tmp_path, monkeypatch)
+    run, created = engine.create_run(
+        session["session_id"], "opendrsai@1", "desktop-response-loss", "opendrsai",
+    )
+    assert created is True
+    recovered = asyncio.run(gateway.runtime_run_idempotency_result(
+        session["session_id"], "desktop-response-loss",
+    ))
+    assert recovered["run_id"] == run["run_id"]
+    assert len(engine.list_session_runs(session["session_id"])) == 1
+
+    other = engine.create_session(session["workspace_id"], "Other")
+    with pytest.raises(HTTPException) as missing:
+        asyncio.run(gateway.runtime_run_idempotency_result(
+            other["session_id"], "desktop-response-loss",
+        ))
+    assert missing.value.status_code == 404
+    assert missing.value.detail["code"] == "idempotency_result_not_found"
+
+
 def test_oaep_snapshot_replay_and_sse_share_one_session_waterline(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -34,6 +34,21 @@ def test_oaep_digest_rejects_nonfinite_or_incomplete_values() -> None:
         canonical_oaep_items(items)
 
 
+def test_optional_null_and_absent_are_same_but_required_null_is_preserved() -> None:
+    tool = next(item for item in fixture_items() if item["type"] == "tool_call")
+    absent = json.loads(json.dumps(tool))
+    absent["content"].pop("server", None)
+    explicit_null = json.loads(json.dumps(absent))
+    explicit_null["content"]["server"] = None
+    assert oaep_items_digest([absent]) == oaep_items_digest([explicit_null])
+
+    required_null = json.loads(json.dumps(absent))
+    required_null["content"]["result"] = None
+    required_absent = json.loads(json.dumps(required_null))
+    required_absent["content"].pop("result")
+    assert oaep_items_digest([required_null]) != oaep_items_digest([required_absent])
+
+
 def test_python_and_desktop_oaep_digests_match() -> None:
     items = fixture_items()
     completed = subprocess.run(

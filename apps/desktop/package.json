@@ -2,12 +2,16 @@
   "name": "opendrsai-desktop",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "workspaces": [
     "shared/renderer",
     "windows",
     "macos"
   ],
   "scripts": {
+    "verify:node": "node shared/test-kit/verify-node-toolchain.mjs",
     "typecheck": "npm run typecheck:windows && npm run typecheck --workspace opendrsai-macos-desktop",
     "typecheck:windows": "npm run typecheck --workspace opendrsai-windows-desktop",
     "verify:windows": "npm run verify --workspace opendrsai-windows-desktop",

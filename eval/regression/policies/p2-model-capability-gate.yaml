@@ -1,5 +1,5 @@
 schema_version: opendrsai.model-capability-gate-policy/1
-profile: model_capabilities/profiles/zhizengzeng-my-drsai-p2.yaml
+profile: model_capabilities/profiles/hepai-opendrsai-p2.yaml
 requirements:
   real_provider: true
   runtime_verified: true

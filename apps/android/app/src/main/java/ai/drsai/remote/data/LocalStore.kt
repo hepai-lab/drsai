@@ -264,7 +264,7 @@ interface ChatDao {
         WorkbenchAuditEntity::class, AndroidOaepSessionEntity::class, AndroidOaepRunEntity::class,
         AndroidOaepItemEntity::class, AndroidOaepEventEntity::class, AndroidOaepMigrationEntity::class,
         ModelProviderEntity::class, ProviderModelEntity::class],
-    version = 14,
+    version = 15,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -273,6 +273,12 @@ abstract class ChatDatabase : RoomDatabase() {
     abstract fun workbenchDao(): WorkbenchDao
     abstract fun androidOaepDao(): AndroidOaepDao
     abstract fun modelProviderDao(): ModelProviderDao
+}
+
+val MIGRATION_14_15 = object : Migration(14, 15) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE remote_oaep_items ADD COLUMN sourceJson TEXT NOT NULL DEFAULT '{}'")
+    }
 }
 
 val MIGRATION_13_14 = object : Migration(13, 14) {

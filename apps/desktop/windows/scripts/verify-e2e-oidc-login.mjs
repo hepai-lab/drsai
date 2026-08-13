@@ -6,6 +6,12 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+for (const key of ["NO_PROXY", "no_proxy"]) {
+  const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+  for (const host of ["127.0.0.1", "localhost"]) if (!entries.includes(host)) entries.push(host);
+  process.env[key] = entries.join(",");
+}
+
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const currentBackendSource = resolve(root, "..", "..", "..", "cores", "python", "packages", "drsai", "src");
 const currentBackendVersionFile = resolve(currentBackendSource, "drsai", "version.py");
@@ -69,6 +75,7 @@ try {
     throw new Error(`E2E OIDC login failed:\n${JSON.stringify(result, null, 2)}`);
   }
   assertOidcDiagnostics(result);
+  assertModelCatalogStatusArtifact();
   if (!useExternalIssuer) {
     assertIssuerHits();
   }
@@ -108,6 +115,7 @@ function startFakeGateway() {
   globalThis.__opendrsaiOidcGatewayHits = hits;
   const runtimeStreams = new Map();
   const runtimeSessions = new Map();
+  let runtimeSessionSequence = 0;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${gatewayPort}`);
     if (url.pathname === "/health") {
@@ -121,6 +129,31 @@ function startFakeGateway() {
         authMode: req.headers["x-opendrsai-auth-mode"] || "",
       });
       writeJson(res, 200, { object: "list", data: [{ id: "drsai", object: "model" }] });
+      return;
+    }
+    if (url.pathname === "/v1/config/agents" && req.method === "GET") {
+      writeJson(res, 200, {
+        current_agent: "opendrsai",
+        agents: [{
+          agent_name: "opendrsai",
+          display_name: "OpenDrSai",
+          current: true,
+          schema_version: 2,
+          config_file: "configs/agents/agent_opendrsai.toml",
+        }],
+      });
+      return;
+    }
+    if (url.pathname === "/v1/config/agents/opendrsai/models" && req.method === "GET") {
+      const ref = { provider_id: "hepai", model_id: "deepseek-v4-pro" };
+      writeJson(res, 200, {
+        agent_id: "opendrsai",
+        valid: true,
+        error: null,
+        primary_model: { mode: "explicit", ref },
+        effective_ref: ref,
+        revision: "sha256:e2e-oidc-agent-model-policy",
+      });
       return;
     }
     if (url.pathname === "/v1/runtime" && req.method === "GET") {
@@ -140,7 +173,8 @@ function startFakeGateway() {
     }
     if (url.pathname === "/v1/sessions" && req.method === "POST") {
       const body = JSON.parse(await readBody(req));
-      const sessionId = "oidc-runtime-session";
+      runtimeSessionSequence += 1;
+      const sessionId = `oidc-runtime-session-${runtimeSessionSequence}`;
       runtimeSessions.set(sessionId, body.workspace_id);
       writeJson(res, 201, { session_id: sessionId, workspace_id: body.workspace_id, title: body.title || "OIDC chat" });
       return;
@@ -193,19 +227,20 @@ function startFakeGateway() {
         writeJson(res, 502, { error: "fake_model_rejected_runtime" });
         return;
       }
-      const sessionId = "oidc-runtime-session";
+      const sessionId = [...runtimeStreams.keys()].at(-1) || "oidc-runtime-session-1";
       const stream = runtimeStreams.get(sessionId);
+      const responseContent = String(requestId).includes("agent") ? "oidc agent bearer ok" : "oidc chat bearer ok";
       if (stream) {
         const now = new Date().toISOString();
         const source = { backend: "opendrsai", client: "runtime" };
         const events = [
-          { version: "1.0", event_id: "oidc-oaep-1", dedupe_key: "oidc-oaep-1", session_id: sessionId, run_id: runId, item_id: "oidc-message", sequence: 1, timestamp: now, type: "event.item.delta", source, data: { delta: { kind: "message.text.append", text: "oidc chat bearer ok" } } },
+          { version: "1.0", event_id: "oidc-oaep-1", dedupe_key: "oidc-oaep-1", session_id: sessionId, run_id: runId, item_id: "oidc-message", sequence: 1, timestamp: now, type: "event.item.delta", source, data: { delta: { kind: "message.text.append", text: responseContent } } },
           { version: "1.0", event_id: "oidc-oaep-2", dedupe_key: "oidc-oaep-2", session_id: sessionId, run_id: runId, sequence: 2, timestamp: now, type: "event.run.completed", source, data: { run: { id: runId, status: "completed", created_at: now, completed_at: now } } },
         ];
         for (const event of events) stream.write(`data: ${JSON.stringify(event)}\n\n`);
         stream.end();
       }
-      writeJson(res, 200, { run: { run_id: runId, session_id: sessionId, status: "completed" }, result: { content: "oidc chat bearer ok" } });
+      writeJson(res, 200, { run: { run_id: runId, session_id: sessionId, status: "completed" }, result: { content: responseContent } });
       return;
     }
     if (url.pathname === "/v1/chat/completions" && req.method === "POST") {
@@ -572,6 +607,19 @@ function assertOidcDiagnostics(result) {
   }
 }
 
+function assertModelCatalogStatusArtifact() {
+  const statusPath = join(drsaiHome, "logs", "model-catalog-status.json");
+  if (!existsSync(statusPath)) {
+    throw new Error(`OIDC smoke did not write the model-catalog status artifact: ${statusPath}`);
+  }
+  const status = JSON.parse(readFileSync(statusPath, "utf8"));
+  const keys = Object.keys(status).sort();
+  const containsSensitiveKey = keys.some((key) => /token|secret|password|cookie|authorization|api.?key|credential/i.test(key));
+  if (status.authMode !== "oidc" || status.state !== "ready" || Number(status.modelCount) <= 0 || containsSensitiveKey) {
+    throw new Error(`OIDC smoke wrote an invalid model-catalog status artifact:\n${JSON.stringify({ keys, status }, null, 2)}`);
+  }
+}
+
 function assertIssuerHits() {
   const hits = globalThis.__opendrsaiFakeOidcHits;
   if (
@@ -598,19 +646,19 @@ function assertGatewayHits() {
   const hits = globalThis.__opendrsaiOidcGatewayHits;
   const modelAuth = hits?.models?.find((hit) => hit.hasBearer);
   const modelHits = globalThis.__opendrsaiOidcModelHits;
+  const chatHit = hits?.chat?.find((hit) => hit.requestId === "e2e-oidc-chat-0001");
+  const agentHit = hits?.chat?.find((hit) => hit.requestId === "e2e-oidc-agent-0001")
+    || hits?.agent?.find((hit) => hit.requestId === "e2e-oidc-agent-0001");
   if (
     !hits ||
     hits.health < 1 ||
     hits.models.length < 1 ||
-    hits.chat.length !== 1 ||
-    hits.agent.length !== 1 ||
-    !hits.chat[0].hasBearer ||
-    !hits.agent[0].hasBearer ||
+    !chatHit?.hasBearer ||
+    !agentHit?.hasBearer ||
     !modelAuth ||
     modelAuth.authMode !== "oidc" ||
-    hits.chat[0].authMode !== "oidc" ||
-    hits.chat[0].model !== "deepseek-v4-pro" ||
-    hits.agent[0].authMode !== "oidc" ||
+    chatHit.authMode !== "oidc" ||
+    agentHit.authMode !== "oidc" ||
     !Array.isArray(modelHits) ||
     modelHits.length !== 2 ||
     !modelHits.every((hit) => hit.hasBearer)

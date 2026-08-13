@@ -16,7 +16,7 @@ from typing import Any
 
 from drsai.backend.runtime.engine import RuntimeEngine
 from drsai.backend.runtime.security import redact_sensitive
-from drsai.relay.security import redact_secrets
+from drsai.relay.security import redact_credentials
 
 
 _TERMINAL = {"completed", "cancelled", "failed"}
@@ -24,12 +24,15 @@ _TERMINAL = {"completed", "cancelled", "failed"}
 
 def _safe(value: Any) -> Any:
     if isinstance(value, str):
-        return redact_sensitive(redact_secrets(value))
+        # Tool results are frequently JSON-encoded strings.  Preserve
+        # diagnostic fields such as ``error_code`` while still removing real
+        # credential material before it enters the durable OAEP journal.
+        return redact_sensitive(redact_credentials(value), "", "content")
     if isinstance(value, dict):
         return {str(key): _safe(child) for key, child in list(value.items())[:100]}
     if isinstance(value, (list, tuple)):
         return [_safe(child) for child in list(value)[:100]]
-    return redact_sensitive(value)
+    return redact_sensitive(value, "", "content")
 
 
 def _digest(value: Any) -> str:

@@ -160,9 +160,22 @@ try {
     assert(retainedStatus.ready && retainedStatus.pid === null, "Retained Runtime was incorrectly treated as Desktop child");
     assert((await retainedDesktop.stopGateway()) === false, "Desktop attempted to stop externally retained Runtime");
     assert(externalProcess.exitCode === null, "Retain policy stopped external Runtime");
+
+    delete process.env.OPENDRSAI_GATEWAY_STARTUP;
+    Object.assign(process.env, {
+      DRSAI_GATEWAY_DEV_MANAGED: "1",
+      DRSAI_GATEWAY_HOT_RELOAD: "1",
+    });
+    const devManagedDesktop = await import(`${pathToFileURL(bundle).href}?desktop=dev-managed`);
+    const devManagedClient = await devManagedDesktop.LocalRuntimeClient.connect();
+    assert((await devManagedClient.getRuntime()).runtime_id, "Desktop did not adopt dev-managed Runtime");
+    assert((await devManagedDesktop.stopGateway()) === false, "Desktop attempted to stop dev-managed Runtime");
+    assert(externalProcess.exitCode === null, "Desktop stopped the dev watcher-owned Runtime");
   } finally {
     if (externalProcess.exitCode === null) killProcessTree(externalProcess.pid);
     delete process.env.OPENDRSAI_GATEWAY_STARTUP;
+    delete process.env.DRSAI_GATEWAY_DEV_MANAGED;
+    delete process.env.DRSAI_GATEWAY_HOT_RELOAD;
   }
 
   console.log(`Windows Local Runtime lifecycle verification passed (${crashRounds}/${crashRounds} crash rounds).`);

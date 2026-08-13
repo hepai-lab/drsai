@@ -1,5 +1,5 @@
 // Generated from cores/protocol/oaep/oaep.schema.json; do not edit.
-export const OAEP_SCHEMA_SHA256 = "f586a6171063f0a1d1019097558b0fd8175692437fc0f685ac914710a7f15640" as const;
+export const OAEP_SCHEMA_SHA256 = "1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09" as const;
 export const OAEP_VERSION = "1.0" as const;
 export const OAEP_PROFILE = "oaep.session-stream/1" as const;
 export type OaepItemType = "message" | "reasoning" | "plan" | "command_execution" | "file_change" | "tool_call" | "artifact" | "interaction" | "subtask" | "notice";

@@ -2,6 +2,8 @@ package ai.drsai.remote
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import ai.drsai.remote.remote.security.androidRelayDeviceProof
+import ai.drsai.remote.remote.security.KeystoreWrappedRelayDeviceSigner
+import ai.drsai.remote.remote.security.RelayDeviceProof
 import ai.drsai.remote.remote.security.relayDeviceCanonicalQuery
 import ai.drsai.remote.remote.security.relayDeviceCanonicalString
 import ai.drsai.remote.remote.security.sha256Hex
@@ -15,6 +17,7 @@ import org.bouncycastle.crypto.signers.Ed25519Signer
 import java.util.Base64
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
+import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class RelayDeviceProofInstrumentedTest {
@@ -89,6 +92,37 @@ class RelayDeviceProofInstrumentedTest {
             assertEquals(32, results.map { it.second }.toSet().size)
         } finally {
             pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun isolatedRotationPromotesAtomicallyAndDiscardKeepsOldKey() {
+        val context = androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation().targetContext
+        val preferencesName = "proof_rotation_${UUID.randomUUID()}"
+        context.deleteSharedPreferences(preferencesName)
+        try {
+            val initial = RelayDeviceProof(
+                KeystoreWrappedRelayDeviceSigner(context, preferencesName),
+            )
+            val deviceId = initial.associationDevice.deviceId
+            val oldPublicKey = initial.associationDevice.devicePublicKey
+
+            initial.beginKeyRotation().discard()
+            val afterDiscard = RelayDeviceProof(
+                KeystoreWrappedRelayDeviceSigner(context, preferencesName),
+            )
+            assertEquals(deviceId, afterDiscard.associationDevice.deviceId)
+            assertEquals(oldPublicKey, afterDiscard.associationDevice.devicePublicKey)
+
+            afterDiscard.beginKeyRotation().commit()
+            val afterCommit = RelayDeviceProof(
+                KeystoreWrappedRelayDeviceSigner(context, preferencesName),
+            )
+            assertEquals(deviceId, afterCommit.associationDevice.deviceId)
+            assertTrue(oldPublicKey != afterCommit.associationDevice.devicePublicKey)
+        } finally {
+            context.deleteSharedPreferences(preferencesName)
         }
     }
 }

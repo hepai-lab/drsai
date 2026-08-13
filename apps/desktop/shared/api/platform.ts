@@ -31,6 +31,7 @@ export interface DesktopFeatureCapabilities {
   terminal: boolean;
   serialVoice: boolean;
   streamingVoice: boolean;
+  duplexVoice: boolean;
   approvals: boolean;
   browser: boolean;
   debugger: boolean;
@@ -48,7 +49,7 @@ export interface DesktopFeatureCapabilities {
 
 export const DESKTOP_FEATURE_CAPABILITY_KEYS = [
   "auth", "runtime", "chat", "agents", "threads", "workspaceFiles", "git", "terminal",
-  "serialVoice", "streamingVoice", "approvals", "browser", "debugger", "mcp",
+  "serialVoice", "streamingVoice", "duplexVoice", "approvals", "browser", "debugger", "mcp",
   "remoteWorkspace", "portForwarding", "checkpoints", "worktrees", "automation",
   "collaboration", "channels", "diagnostics", "codexBackend",
 ] as const satisfies readonly (keyof DesktopFeatureCapabilities)[];

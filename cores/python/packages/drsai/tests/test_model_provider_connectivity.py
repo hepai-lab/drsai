@@ -8,6 +8,7 @@ from drsai.config import connectivity
 from drsai.config.loader import parse_user_config
 from drsai.config.resolver import resolve_model_config
 from drsai.config.probe_history import clear_probe_history, latest_probe_result, probe_fingerprint, reload_probe_history
+from drsai.platform_auth import PlatformAuthContext, platform_auth_scope
 
 
 @pytest.fixture(autouse=True)
@@ -95,6 +96,36 @@ def test_openai_model_probe_returns_bounded_output_without_leaking_secret(monkey
     assert latest["mode"] == "model"
     assert "output" not in latest
     assert "probe-secret" not in repr(latest)
+
+
+def test_hepai_model_probe_uses_request_scoped_oidc_for_responses(monkeypatch) -> None:
+    config = parse_user_config({
+        "model": "deepseek-v4-flash",
+        "model_provider": "hepai",
+        "model_providers": {"hepai": {
+            "base_url": "https://legacy.example/apiv2/v1",
+            "wire_api": "openai",
+            "requires_api_key": False,
+        }},
+    })
+    resolved = resolve_model_config(config, require_credentials=False)
+    auth = PlatformAuthContext(
+        access_token="oidc-request-token",
+        subject="user-1",
+        issuer="https://issuer.example",
+        expires_at=4_102_444_800,
+        model_base_url="https://ai-dev.example/apiv2/v1",
+    )
+    _Client.response = _Response(200, {"output_text": "pong"})
+    monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
+
+    with platform_auth_scope(auth):
+        result = asyncio.run(connectivity.test_provider_connection(resolved))
+
+    assert result["ok"] is True
+    assert _Client.request[0:2] == ("POST", "https://ai-dev.example/apiv2/v1/responses")
+    assert _Client.request[2]["Authorization"] == "Bearer oidc-request-token"
+    assert "oidc-request-token" not in repr(result)
 
 
 def test_gemini_native_model_probe_uses_generate_content(monkeypatch) -> None:

@@ -32,7 +32,10 @@ RELAY_VARIABLES = (
 )
 READINESS_PATH = "v2/push/readiness"
 PROJECT_ID = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
-APPLICATION_ID = re.compile(r"^\d+:\d+:android:[0-9a-fA-F]+$")
+APPLICATION_ID = re.compile(r"^\d+:(?P<sender_id>\d+):android:[0-9a-fA-F]+$")
+FIREBASE_API_KEY = re.compile(r"^AIza[0-9A-Za-z_-]{35}$")
+KEY_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+MAX_CREDENTIAL_BYTES = 64 * 1024
 
 
 class PreflightError(RuntimeError):
@@ -58,20 +61,27 @@ def _result(scope: str, names: tuple[str, ...], **extra: object) -> dict:
 
 def check_android(environment: Mapping[str, str]) -> dict:
     values = {name: _require_nonempty(environment, name) for name in ANDROID_VARIABLES}
-    if not APPLICATION_ID.fullmatch(values["OPENDRSAI_ANDROID_FIREBASE_APPLICATION_ID"]):
+    if not FIREBASE_API_KEY.fullmatch(values["OPENDRSAI_ANDROID_FIREBASE_API_KEY"]):
+        raise PreflightError("push_preflight_invalid:firebase_api_key")
+    application = APPLICATION_ID.fullmatch(values["OPENDRSAI_ANDROID_FIREBASE_APPLICATION_ID"])
+    if application is None:
         raise PreflightError("push_preflight_invalid:firebase_application_id")
     if not PROJECT_ID.fullmatch(values["OPENDRSAI_ANDROID_FIREBASE_PROJECT_ID"]):
         raise PreflightError("push_preflight_invalid:firebase_project_id")
     if not values["OPENDRSAI_ANDROID_FIREBASE_SENDER_ID"].isdigit():
         raise PreflightError("push_preflight_invalid:firebase_sender_id")
+    if application.group("sender_id") != values["OPENDRSAI_ANDROID_FIREBASE_SENDER_ID"]:
+        raise PreflightError("push_preflight_invalid:firebase_sender_mismatch")
     return _result("android", ANDROID_VARIABLES)
 
 
 def _decode_key(value: str) -> bytes:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+={0,2}", value):
+        raise PreflightError("push_preflight_invalid:push_token_key")
     padding = "=" * (-len(value) % 4)
     try:
-        return base64.urlsafe_b64decode(value + padding)
-    except (ValueError, TypeError) as exc:
+        return base64.b64decode(value.rstrip("=") + padding, altchars=b"-_", validate=True)
+    except (ValueError, TypeError, base64.binascii.Error) as exc:
         raise PreflightError("push_preflight_invalid:push_token_key") from exc
 
 
@@ -80,7 +90,12 @@ def check_relay(environment: Mapping[str, str]) -> dict:
     if not PROJECT_ID.fullmatch(values["HAI_RUNTIME_RELAY_FCM_PROJECT_ID"]):
         raise PreflightError("push_preflight_invalid:fcm_project_id")
     credential_path = Path(values["GOOGLE_APPLICATION_CREDENTIALS"])
-    if not credential_path.is_file():
+    try:
+        credential_stat = credential_path.lstat()
+    except OSError as exc:
+        raise PreflightError("push_preflight_invalid:application_credentials") from exc
+    if credential_path.is_symlink() or not credential_path.is_file() \
+            or not 1 <= credential_stat.st_size <= MAX_CREDENTIAL_BYTES:
         raise PreflightError("push_preflight_invalid:application_credentials")
     try:
         credentials = json.loads(credential_path.read_text(encoding="utf-8"))
@@ -91,7 +106,9 @@ def check_relay(environment: Mapping[str, str]) -> dict:
             or credentials.get("project_id") != values["HAI_RUNTIME_RELAY_FCM_PROJECT_ID"] \
             or not isinstance(credentials.get("client_email"), str) \
             or not isinstance(credentials.get("private_key_id"), str) \
-            or not isinstance(credentials.get("private_key"), str):
+            or not isinstance(credentials.get("private_key"), str) \
+            or "-----BEGIN PRIVATE KEY-----" not in credentials["private_key"] \
+            or "-----END PRIVATE KEY-----" not in credentials["private_key"]:
         raise PreflightError("push_preflight_invalid:application_credentials")
     try:
         keyring = json.loads(values["HAI_RUNTIME_RELAY_PUSH_TOKEN_KEYS"])
@@ -99,10 +116,11 @@ def check_relay(environment: Mapping[str, str]) -> dict:
         raise PreflightError("push_preflight_invalid:push_token_keyring") from exc
     if not isinstance(keyring, dict) or not keyring:
         raise PreflightError("push_preflight_invalid:push_token_keyring")
-    if any(not isinstance(key_id, str) or not key_id or not isinstance(key, str)
+    if any(not isinstance(key_id, str) or KEY_ID.fullmatch(key_id) is None or not isinstance(key, str)
            or len(_decode_key(key)) != 32 for key_id, key in keyring.items()):
         raise PreflightError("push_preflight_invalid:push_token_keyring")
-    if values["HAI_RUNTIME_RELAY_PUSH_TOKEN_ACTIVE_KEY_ID"] not in keyring:
+    active_key_id = values["HAI_RUNTIME_RELAY_PUSH_TOKEN_ACTIVE_KEY_ID"]
+    if KEY_ID.fullmatch(active_key_id) is None or active_key_id not in keyring:
         raise PreflightError("push_preflight_invalid:push_token_active_key")
     return _result("relay", RELAY_VARIABLES, key_count=len(keyring))
 
@@ -123,9 +141,11 @@ def check_public(relay_url: str, *, require_ready: bool = True, timeout: float =
         payload = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PreflightError("push_preflight_readiness_invalid") from exc
-    if not isinstance(payload, dict) or not isinstance(payload.get("ready"), bool) \
+    if not isinstance(payload, dict) or set(payload) != {"ready", "providers", "worker_running"} \
+            or not isinstance(payload.get("ready"), bool) \
             or not isinstance(payload.get("worker_running"), bool) \
             or not isinstance(payload.get("providers"), dict) \
+            or set(payload["providers"]) != {"fcm"} \
             or not isinstance(payload["providers"].get("fcm"), bool):
         raise PreflightError("push_preflight_readiness_invalid")
     ready = bool(payload["ready"] and payload["providers"]["fcm"] and payload["worker_running"])

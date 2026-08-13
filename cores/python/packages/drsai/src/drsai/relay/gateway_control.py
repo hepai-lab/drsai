@@ -8,13 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 import asyncio
 from typing import Any, Protocol
-from urllib.parse import quote
 from uuid import uuid4
 
 import aiohttp
 
 from drsai.backend.runtime.agent import AgentDefinitionStore, RuntimeExecutionError
 from drsai.relay.security import redact_secrets
+from drsai.relay.url_path import encoded_path
 
 
 _OAEP_RELAY_BATCH_EVENTS = max(
@@ -747,7 +747,7 @@ class GatewayRuntimeControlHandler:
             return existing
         snapshot = await self.transport.request(
             "GET",
-            f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot",
+            encoded_path("v1", "sessions", session_id, "conversation-snapshot"),
         )
         sequence = int(snapshot.get("snapshot_sequence") or 0)
         self._store_session_event_cursor(session_id, sequence)
@@ -759,7 +759,7 @@ class GatewayRuntimeControlHandler:
             return existing
         snapshot = await self.transport.request(
             "GET",
-            f"/v1/sessions/{quote(session_id, safe='')}/oaep-snapshot",
+            encoded_path("v1", "sessions", session_id, "oaep-snapshot"),
         )
         sequence = int(snapshot.get("snapshot_sequence") or 0)
         self._store_oaep_event_cursor(session_id, sequence)
@@ -934,15 +934,15 @@ class GatewayRuntimeControlHandler:
                     except sqlite3.Error:
                         events = await self.transport.request(
                             "GET",
-                            f"/v1/runs/{quote(run_id, safe='')}/events"
-                            f"?after_sequence={after}&limit=2000",
+                            encoded_path("v1", "runs", run_id, "events",
+                                         query=(("after_sequence", after), ("limit", 2000))),
                         )
                         event_items = list(events.get("data", []))
                 else:
                     events = await self.transport.request(
                         "GET",
-                        f"/v1/runs/{quote(run_id, safe='')}/events"
-                        f"?after_sequence={after}&limit=2000",
+                        encoded_path("v1", "runs", run_id, "events",
+                                     query=(("after_sequence", after), ("limit", 2000))),
                     )
                     event_items = list(events.get("data", []))
                 item = {
@@ -1004,8 +1004,8 @@ class GatewayRuntimeControlHandler:
                     continue
                 events = await self.transport.request(
                     "GET",
-                    f"/v1/runs/{quote(run_id, safe='')}/events"
-                    f"?after_sequence={after}&limit=2000",
+                    encoded_path("v1", "runs", run_id, "events",
+                                 query=(("after_sequence", after), ("limit", 2000))),
                 )
                 item = {
                     "run_id": run_id,
@@ -1037,13 +1037,13 @@ class GatewayRuntimeControlHandler:
             workspace_id = str(workspace["workspace_id"])
             sessions = await self.transport.request(
                 "GET",
-                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
+                encoded_path("v1", "sessions", query=(("workspace_id", workspace_id), ("offset", 0), ("limit", 200))),
             )
             for session in sessions.get("data", []):
                 session_id = str(session["session_id"])
                 runs = await self.transport.request(
                     "GET",
-                    f"/v1/sessions/{quote(session_id, safe='')}/runs?offset=0&limit=200",
+                    encoded_path("v1", "sessions", session_id, "runs", query=(("offset", 0), ("limit", 200))),
                 )
                 for run in runs.get("data", []):
                     run_id = str(run["run_id"])
@@ -1052,7 +1052,7 @@ class GatewayRuntimeControlHandler:
                     after = self._relay_event_cursors.get(run_id, 0)
                     events = await self.transport.request(
                         "GET",
-                        f"/v1/runs/{quote(run_id, safe='')}/events?after_sequence={after}&limit=2000",
+                        encoded_path("v1", "runs", run_id, "events", query=(("after_sequence", after), ("limit", 2000))),
                     )
                     binding = self._run_binding_optional(run_id, run)
                     projected = [
@@ -1105,14 +1105,14 @@ class GatewayRuntimeControlHandler:
                         except sqlite3.Error:
                             page = await self.transport.request(
                                 "GET",
-                                f"/v1/sessions/{quote(session_id, safe='')}/events"
-                                f"?after_sequence={after}&limit=2000",
+                                encoded_path("v1", "sessions", session_id, "events",
+                                             query=(("after_sequence", after), ("limit", 2000))),
                             )
                     else:
                         page = await self.transport.request(
                             "GET",
-                            f"/v1/sessions/{quote(session_id, safe='')}/events"
-                            f"?after_sequence={after}&limit=2000",
+                            encoded_path("v1", "sessions", session_id, "events",
+                                         query=(("after_sequence", after), ("limit", 2000))),
                         )
                 except GatewayControlError as exc:
                     if exc.code != "cursor_expired":
@@ -1124,7 +1124,7 @@ class GatewayRuntimeControlHandler:
                     else:
                         snapshot = await self.transport.request(
                             "GET",
-                            f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot",
+                            encoded_path("v1", "sessions", session_id, "conversation-snapshot"),
                         )
                         snapshot_sequence = int(snapshot["snapshot_sequence"])
                     self._store_session_event_cursor(
@@ -1178,7 +1178,7 @@ class GatewayRuntimeControlHandler:
             workspace_id = str(workspace["workspace_id"])
             sessions = await self.transport.request(
                 "GET",
-                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
+                encoded_path("v1", "sessions", query=(("workspace_id", workspace_id), ("offset", 0), ("limit", 200))),
             )
             session_items = list(sessions.get("data", []))
             unknown = [
@@ -1266,15 +1266,21 @@ class GatewayRuntimeControlHandler:
                         except sqlite3.Error:
                             page = await self.transport.request(
                                 "GET",
-                                f"/v1/sessions/{quote(session_id, safe='')}/oaep-events"
-                                f"?after_sequence={after}&limit={_OAEP_RELAY_BATCH_EVENTS}",
+                                encoded_path(
+                                    "v1", "sessions", session_id, "oaep-events",
+                                    query=(("after_sequence", after),
+                                           ("limit", _OAEP_RELAY_BATCH_EVENTS)),
+                                ),
                             )
                             events = page.get("data", [])
                     else:
                         page = await self.transport.request(
                             "GET",
-                            f"/v1/sessions/{quote(session_id, safe='')}/oaep-events"
-                            f"?after_sequence={after}&limit={_OAEP_RELAY_BATCH_EVENTS}",
+                            encoded_path(
+                                "v1", "sessions", session_id, "oaep-events",
+                                query=(("after_sequence", after),
+                                       ("limit", _OAEP_RELAY_BATCH_EVENTS)),
+                            ),
                         )
                         events = page.get("data", [])
                 except GatewayControlError as exc:
@@ -1287,7 +1293,7 @@ class GatewayRuntimeControlHandler:
                     else:
                         snapshot = await self.transport.request(
                             "GET",
-                            f"/v1/sessions/{quote(session_id, safe='')}/oaep-snapshot",
+                            encoded_path("v1", "sessions", session_id, "oaep-snapshot"),
                         )
                         snapshot_sequence = int(snapshot["snapshot_sequence"])
                     self._store_oaep_event_cursor(
@@ -1339,7 +1345,7 @@ class GatewayRuntimeControlHandler:
         for workspace_id in active:
             sessions = await self.transport.request(
                 "GET",
-                f"/v1/sessions?workspace_id={quote(workspace_id, safe='')}&offset=0&limit=200",
+                encoded_path("v1", "sessions", query=(("workspace_id", workspace_id), ("offset", 0), ("limit", 200))),
             )
             session_items = list(sessions.get("data", []))
             unknown = [
@@ -1412,13 +1418,13 @@ class GatewayRuntimeControlHandler:
         return self._session(item, self._binding(str(item["session_id"])))
 
     async def get_session(self, workspace_id: str, session_id: str) -> dict[str, Any]:
-        item = await self.transport.request("GET", f"/v1/sessions/{session_id}")
+        item = await self.transport.request("GET", encoded_path("v1", "sessions", session_id))
         if str(item["workspace_id"]) != workspace_id:
             raise GatewayControlError("session_not_found", "Session was not found in this Workspace")
         return self._session(item, self._binding_optional(session_id))
 
     async def authorize_session(self, subject: str, workspace_id: str, session_id: str) -> None:
-        item = await self.transport.request("GET", f"/v1/sessions/{session_id}")
+        item = await self.transport.request("GET", encoded_path("v1", "sessions", session_id))
         if str(item["workspace_id"]) != workspace_id or bool(item.get("archived")):
             raise GatewayControlError("session_forbidden", "Session is not authorized")
 
@@ -1438,7 +1444,9 @@ class GatewayRuntimeControlHandler:
             body["lifecycle"] = wanted
         if not body:
             raise GatewayControlError("session_update_empty", "Session update requires title or lifecycle")
-        updated = await self.transport.request("PATCH", f"/v1/sessions/{quote(session_id, safe='')}", body=body)
+        updated = await self.transport.request(
+            "PATCH", encoded_path("v1", "sessions", session_id), body=body
+        )
         if str(updated.get("workspace_id")) != workspace_id:
             raise GatewayControlError("session_not_found", "Session was not found in this Workspace")
         return self._session(updated, self._binding_optional(session_id))
@@ -1455,7 +1463,14 @@ class GatewayRuntimeControlHandler:
         offset = max(0, int(cursor or 0))
         wanted = getattr(lifecycle, "value", lifecycle)
         archived = "true" if wanted == "archived" else "false"
-        page = await self.transport.request("GET", f"/v1/sessions?workspace_id={workspace_id}&offset={offset}&limit={limit}&archived={archived}")
+        page = await self.transport.request(
+            "GET",
+            encoded_path(
+                "v1", "sessions",
+                query=(("workspace_id", workspace_id), ("offset", offset),
+                       ("limit", limit), ("archived", archived)),
+            ),
+        )
         mapped = []
         for item in page.get("data", []):
             if not query or query.casefold() in str(item.get("title", "")).casefold():
@@ -1474,12 +1489,12 @@ class GatewayRuntimeControlHandler:
         existing = self._binding_by_idempotency("relay_runs", subject, idempotency_key)
         if existing:
             return await self.get_run(str(existing["run_id"]))
-        session = await self.transport.request("GET", f"/v1/sessions/{session_id}")
+        session = await self.transport.request("GET", encoded_path("v1", "sessions", session_id))
         binding = await self._ensure_session_binding(subject, session)
         if binding.workspace_id != workspace_id:
             raise GatewayControlError("session_not_found", "Session was not found in this Workspace")
         reference = f"{binding.definition_id}@{binding.definition_version}"
-        item = await self.transport.request("POST", f"/v1/sessions/{session_id}/runs",
+        item = await self.transport.request("POST", encoded_path("v1", "sessions", session_id, "runs"),
                                             body={"agent_definition": reference},
                                             headers={"Idempotency-Key": idempotency_key})
         with self._connect() as db:
@@ -1506,7 +1521,7 @@ class GatewayRuntimeControlHandler:
             headers = {"X-Correlation-ID": correlation_id}
             if authorization and authorization.startswith("Bearer "):
                 headers.update({"Authorization": authorization, "X-OpenDrSai-Auth-Mode": "oidc"})
-            await self.transport.request("POST", f"/v1/runs/{run_id}/execute",
+            await self.transport.request("POST", encoded_path("v1", "runs", run_id, "execute"),
                                          body={
                                              "prompt": message,
                                              "user_id": subject,
@@ -1529,7 +1544,7 @@ class GatewayRuntimeControlHandler:
             return
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
-        item = await self.transport.request("GET", f"/v1/runs/{run_id}")
+        item = await self.transport.request("GET", encoded_path("v1", "runs", run_id))
         return self._run(item, self._run_binding_optional(run_id, item))
 
     async def list_runs(self, workspace_id: str, session_id: str, *, cursor: str | None = None, limit: int = 20):
@@ -1546,14 +1561,15 @@ class GatewayRuntimeControlHandler:
         await self.authorize_session(subject, workspace_id, session_id)
         offset = max(0, int(cursor or 0))
         page = await self.transport.request(
-            "GET", f"/v1/sessions/{session_id}/runs?offset={offset}&limit={limit}")
+            "GET", encoded_path("v1", "sessions", session_id, "runs",
+                                query=(("offset", offset), ("limit", limit))))
         rows = [self._run(item, self._run_binding_optional(str(item["run_id"]), item))
                 for item in page.get("data", [])]
         consumed = offset + len(rows)
         return [rows, str(consumed) if consumed < int(page.get("total", consumed)) else None]
 
     async def authorize_run(self, subject: str, run_id: str) -> None:
-        item = await self.transport.request("GET", f"/v1/runs/{run_id}")
+        item = await self.transport.request("GET", encoded_path("v1", "runs", run_id))
         await self.authorize_session(subject, str(item["workspace_id"]), str(item["session_id"]))
 
     async def conversation_for_subject(
@@ -1566,12 +1582,12 @@ class GatewayRuntimeControlHandler:
         limit: int = 100,
     ):
         await self.authorize_session(subject, workspace_id, session_id)
-        query = f"?limit={limit}"
+        query: list[tuple[str, str | int]] = [("limit", limit)]
         if cursor:
-            query += f"&cursor={quote(cursor, safe='')}"
+            query.append(("cursor", cursor))
         page = await self.transport.request(
             "GET",
-            f"/v1/sessions/{session_id}/conversation{query}",
+            encoded_path("v1", "sessions", session_id, "conversation", query=query),
         )
         items: list[dict[str, Any]] = []
         for raw in page.get("data", []):
@@ -1602,8 +1618,10 @@ class GatewayRuntimeControlHandler:
         await self.authorize_session(subject, workspace_id, session_id)
         return await self.transport.request(
             "GET",
-            f"/v1/sessions/{quote(session_id, safe='')}/conversation-snapshot"
-            f"?limit={max(1, min(2000, int(limit)))}",
+            encoded_path(
+                "v1", "sessions", session_id, "conversation-snapshot",
+                query=(("limit", max(1, min(2000, int(limit)))),),
+            ),
         )
 
     async def session_events_for_subject(
@@ -1618,9 +1636,11 @@ class GatewayRuntimeControlHandler:
         await self.authorize_session(subject, workspace_id, session_id)
         return await self.transport.request(
             "GET",
-            f"/v1/sessions/{quote(session_id, safe='')}/events"
-            f"?after_sequence={max(0, int(after_sequence))}"
-            f"&limit={max(1, min(2000, int(limit)))}",
+            encoded_path(
+                "v1", "sessions", session_id, "events",
+                query=(("after_sequence", max(0, int(after_sequence))),
+                       ("limit", max(1, min(2000, int(limit))))),
+            ),
         )
 
     async def oaep_snapshot_for_subject(
@@ -1633,16 +1653,15 @@ class GatewayRuntimeControlHandler:
         limit: int = 100,
     ) -> dict[str, Any]:
         await self.authorize_session(subject, workspace_id, session_id)
-        query: list[str] = []
+        query: list[tuple[str, str | int]] = []
         bounded_limit = max(1, min(500, int(limit)))
         if bounded_limit != 100:
-            query.append(f"limit={bounded_limit}")
+            query.append(("limit", bounded_limit))
         if cursor:
-            query.append(f"cursor={quote(cursor, safe='')}")
+            query.append(("cursor", cursor))
         return await self.transport.request(
             "GET",
-            f"/v1/sessions/{quote(session_id, safe='')}/oaep-snapshot"
-            + (f"?{'&'.join(query)}" if query else ""),
+            encoded_path("v1", "sessions", session_id, "oaep-snapshot", query=query),
         )
 
     async def oaep_events_for_subject(
@@ -1657,12 +1676,26 @@ class GatewayRuntimeControlHandler:
         await self.authorize_session(subject, workspace_id, session_id)
         return await self.transport.request(
             "GET",
-            f"/v1/sessions/{quote(session_id, safe='')}/oaep-events"
-            f"?after_sequence={max(0, int(after_sequence))}"
-            f"&limit={max(1, min(2000, int(limit)))}",
+            encoded_path(
+                "v1", "sessions", session_id, "oaep-events",
+                query=(("after_sequence", max(0, int(after_sequence))),
+                       ("limit", max(1, min(2000, int(limit))))),
+            ),
         )
 
     async def idempotency_result(self, subject: str, operation: str, idempotency_key: str) -> dict[str, Any]:
+        if operation == "approval.decide":
+            with self._connect() as db:
+                row = db.execute(
+                    "SELECT result_json FROM relay_approval_decisions "
+                    "WHERE subject=? AND idempotency_key=?",
+                    (subject, idempotency_key),
+                ).fetchone()
+            if row is None:
+                raise GatewayControlError(
+                    "idempotency_result_not_found", "Idempotency result was not found"
+                )
+            return json.loads(str(row["result_json"]))
         table = {"session.create": "relay_sessions", "run.create": "relay_runs"}.get(operation)
         if table is None:
             raise GatewayControlError("idempotency_operation_invalid", "Idempotency operation is invalid")
@@ -1673,9 +1706,11 @@ class GatewayRuntimeControlHandler:
                       else self.get_session(str(row["workspace_id"]), str(row["session_id"])))
 
     async def list_events(self, run_id: str, *, after_sequence: int = 0, limit: int = 500):
-        item = await self.transport.request("GET", f"/v1/runs/{run_id}")
+        item = await self.transport.request("GET", encoded_path("v1", "runs", run_id))
         run = self._run_binding_optional(run_id, item)
-        page = await self.transport.request("GET", f"/v1/runs/{run_id}/events?after_sequence={after_sequence}&limit={limit}")
+        page = await self.transport.request(
+            "GET", encoded_path("v1", "runs", run_id, "events",
+                                query=(("after_sequence", after_sequence), ("limit", limit))))
         items = [self._event_projection(item, run, run_id) for item in page.get("data", [])]
         return [items, str(items[-1]["sequence"]) if len(items) == limit else None]
 
@@ -1697,7 +1732,7 @@ class GatewayRuntimeControlHandler:
         binding = self._run_binding(run_id)
         if binding["workspace_id"] != workspace_id:
             raise GatewayControlError("run_scope_mismatch", "Run belongs to another Workspace")
-        await self.transport.request("POST", f"/v1/runs/{run_id}/cancel", body={})
+        await self.transport.request("POST", encoded_path("v1", "runs", run_id, "cancel"), body={})
         return await self.get_run(run_id)
 
     async def pending_approvals(self, workspace_id: str) -> list[dict[str, Any]]:
@@ -1732,7 +1767,9 @@ class GatewayRuntimeControlHandler:
             candidate = next((item for item in candidates if str(item.get("approval_id")) == approval_id), None)
             if candidate is None:
                 try:
-                    candidate = await self.transport.request("GET", f"/v1/approvals/{approval_id}")
+                    candidate = await self.transport.request(
+                        "GET", encoded_path("v1", "approvals", approval_id)
+                    )
                 except GatewayControlError as exc:
                     if exc.code == "runtime_http_404":
                         raise GatewayControlError("approval_not_found", "Approval is no longer pending") from exc
@@ -1741,18 +1778,19 @@ class GatewayRuntimeControlHandler:
             detail = {"subject": subject, "idempotency_key": stable_key}
             try:
                 await self.transport.request(
-                    "POST", f"/v1/runs/{candidate['run_id']}/approvals/{approval_id}/decision",
+                    "POST", encoded_path("v1", "runs", str(candidate["run_id"]),
+                                         "approvals", approval_id, "decision"),
                     body={"decision": mapped, "detail": detail},
                 )
             except GatewayControlError as exc:
                 if exc.code not in {"approval_not_found", "approval_not_supported"}:
                     raise
                 item = await self.transport.request(
-                    "POST", f"/v1/approvals/{approval_id}/decision",
+                    "POST", encoded_path("v1", "approvals", approval_id, "decision"),
                     body={"decision": mapped, "detail": detail},
                 )
             else:
-                item = await self.transport.request("GET", f"/v1/approvals/{approval_id}")
+                item = await self.transport.request("GET", encoded_path("v1", "approvals", approval_id))
             result = self._approval(item)
             with self._connect() as db:
                 db.execute(

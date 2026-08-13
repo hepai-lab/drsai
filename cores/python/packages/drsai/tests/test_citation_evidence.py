@@ -19,6 +19,14 @@ def tool() -> dict:
     }
 
 
+def memory_tool() -> dict:
+    return {
+        "name": "search_memory", "version": 1, "source": "android-host", "classification": "local-equivalent",
+        "description": "search memory", "parameters": {"type": "object", "properties": {}},
+        "required_capabilities": [], "risk": "read_only", "requires_approval": False,
+    }
+
+
 def command(kind: MessageType, sequence: int, payload: dict, key: str | None = None) -> RuntimeEnvelope:
     return RuntimeEnvelope(kind, f"request-{sequence}", "run-cite", "session-cite", sequence, key or f"key-{sequence}", payload)
 
@@ -54,6 +62,34 @@ def proactively_searched_core():
     core.handle(command(MessageType.TOOL_RESULT, 2, {
         "call_id": "search-1", "succeeded": True,
         "content": {"status": "ok", "results": [{"title": "HEPiX 2026", "url": SOURCE}]},
+        "artifact_ids": [], "artifacts": [],
+    }))
+    return core
+
+
+def knowledge_searched_core():
+    core = create_mobile_agent_core()
+    knowledge_tool = {
+        "name": "knowledge_search", "version": 1, "source": "desktop-host", "classification": "local-equivalent",
+        "description": "knowledge", "parameters": {"type": "object", "properties": {}},
+        "required_capabilities": [], "risk": "read_only", "requires_approval": False,
+    }
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "仅根据知识库回答并引用", "model_id": "model", "tools": [knowledge_tool],
+    }))
+    core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "kb-1", "name": "knowledge_search", "arguments": {"query": "default port"}},
+    ]}))
+    core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "kb-1", "succeeded": True,
+        "content": {
+            "require_citations": True,
+            "evidence": [{
+                "knowledge_id": "kb", "document_id": "doc", "chunk_id": "doc:0",
+                "source": "opendrsai://knowledge/kb/doc", "score": 1.0,
+                "content_sha256": "a" * 64,
+            }],
+        },
         "artifact_ids": [], "artifacts": [],
     }))
     return core
@@ -108,6 +144,69 @@ def test_https_root_url_trailing_slash_is_citation_equivalent() -> None:
     assert evidence["fabricated_url_sha256"] == []
 
 
+def test_memory_results_require_exact_returned_source_marker_and_reject_fabrication() -> None:
+    messages = [{
+        "role": "tool", "tool_call_id": "memory-lookup-1", "name": "search_memory", "succeeded": True,
+        "content": {"items": [
+            {"id": 7, "source_id": "memory:7", "content": "Use concise answers"},
+            {"id": 8, "source_id": "memory:8", "content": "Use detailed answers"},
+        ]},
+    }]
+    missing = build_citation_evidence(messages, "The saved preferences conflict.", retrieval_required=False)
+    cited = build_citation_evidence(
+        messages, "The saved preferences conflict: concise [memory:7], detailed [memory:8].",
+        retrieval_required=False,
+    )
+    fabricated = build_citation_evidence(messages, "Use concise answers [memory:999].", retrieval_required=False)
+
+    assert missing["missing"] is True
+    assert cited["valid"] is True
+    assert len(cited["memory_source_sha256"]) == 2
+    assert len(cited["memory_cited_sha256"]) == 2
+    assert "Use concise answers" not in str(cited)
+    assert fabricated["valid"] is False
+    assert fabricated["memory_fabricated_sha256"]
+    assert normalize_citation_evidence(cited) == cited
+
+
+def test_empty_memory_result_does_not_require_a_source_marker() -> None:
+    evidence = build_citation_evidence([{
+        "role": "tool", "tool_call_id": "memory-empty", "name": "search_memory", "succeeded": True,
+        "content": {"items": [], "result_count": 0},
+    }], "I found no matching saved preference.", retrieval_required=False)
+
+    assert evidence["required"] is False
+    assert evidence["valid"] is True
+
+
+def test_conflicting_memory_answer_is_retried_until_every_returned_source_is_marked() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "What are my saved answer preferences?", "model_id": "model", "tools": [memory_tool()],
+        "memory_enabled": True,
+    }))
+    core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "memory-1", "name": "search_memory", "arguments": {"query": "answer preference"}},
+    ]}))
+    core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "memory-1", "succeeded": True,
+        "content": {"items": [
+            {"id": 7, "source_id": "memory:7", "content": "Use concise answers"},
+            {"id": 8, "source_id": "memory:8", "content": "Use detailed answers"},
+        ]},
+        "artifact_ids": [], "artifacts": [],
+    }))
+
+    retry = core.handle(command(MessageType.MODEL_COMPLETED, 3, {
+        "content": "Your saved preference is concise [memory:7].",
+    }))
+    assert kinds(retry) == ["tool.decision", "citation.required"]
+    completed = core.handle(command(MessageType.MODEL_COMPLETED, 4, {
+        "content": "Two saved preferences conflict: concise [memory:7] and detailed [memory:8].",
+    }))
+    assert kinds(completed) == ["tool.decision", "citation.verified", "message.completed", "run.completed"]
+
+
 def test_missing_citation_is_buffered_and_retried_then_exact_source_completes() -> None:
     core = searched_core()
     retry = core.handle(command(MessageType.MODEL_COMPLETED, 3, {"content": "HEPiX 2026 is a conference."}))
@@ -160,6 +259,23 @@ def test_second_missing_citation_is_repaired_from_trusted_tool_result() -> None:
     message = next(item.payload for item in completed if item.payload.get("kind") == "message.completed")
     assert SOURCE in message["text"]
     assert core.snapshot("run-cite")["phase"] == "completed"
+
+
+def test_second_missing_knowledge_citation_attaches_trusted_internal_source() -> None:
+    core = knowledge_searched_core()
+    first = core.handle(command(MessageType.MODEL_COMPLETED, 3, {
+        "content": "The supplied knowledge does not state a default port.",
+    }))
+    assert kinds(first) == ["tool.decision", "citation.required"]
+
+    completed = core.handle(command(MessageType.MODEL_COMPLETED, 4, {
+        "content": "The supplied knowledge does not state a default port.",
+    }, "still-missing-kb"))
+
+    assert kinds(completed) == ["tool.decision", "citation.verified", "message.completed", "run.completed"]
+    message = next(item.payload for item in completed if item.payload.get("kind") == "message.completed")
+    assert "opendrsai://knowledge/kb/doc" in message["text"]
+    assert "Web information" not in message["text"]
 
 
 def test_second_missing_citation_decodes_tavily_string_wrappers() -> None:

@@ -56,6 +56,7 @@ import type {
   DesktopVoiceInteractionMode,
   DesktopVoiceRuntimeStatus,
   DesktopStreamingVoiceCapabilities,
+  DesktopDuplexVoiceCapabilities,
   DesktopThreadHistoryState,
   DesktopVoiceTranscriptionResult,
   ChatToolTimelineEvent,
@@ -95,9 +96,11 @@ import { ChatMessageContent } from "./ChatMessageContent";
 import { ThreadActivityBubble } from "./ThreadActivityBubble";
 import { StructuredMessageParts, type InteractionResponse } from "./StructuredMessageParts";
 import { getReasoningChatText, getVisibleChatText } from "../chatOutputModel";
+import { createSmoothFollowOutputController } from "../smoothFollowOutput";
 import { VoiceCaptureBar } from "./voice/VoiceCaptureBar";
 import { VoiceReviewBar } from "./voice/VoiceReviewBar";
-import { StreamingVoiceCaptureBar } from "./voice/StreamingVoiceCaptureBar";
+import { StreamingComposerProjectionEditor } from "./voice/StreamingComposerProjectionEditor";
+import { TranscriptRepairDiff } from "./voice/TranscriptRepairDiff";
 import { StreamingVoiceOutputBar } from "./voice/StreamingVoiceOutputBar";
 import {
   useSystemVoicePlayback,
@@ -111,9 +114,27 @@ import {
 } from "../voice/voiceAudio";
 import { useVoiceCapture } from "../voice/useVoiceCapture";
 import { useStreamingVoiceInput } from "../voice/streaming/useStreamingVoiceInput";
+import { useDuplexVoiceInput } from "../voice/duplex/useDuplexVoiceInput";
+import { canSubmitStreamingVoiceTurn } from "../voice/streaming/streamingVoiceTurnReducer";
 import { useAssistantSpeechSegments } from "../voice/streaming/assistantSpeechStream";
 import { useStreamingVoiceOutput } from "../voice/streaming/useStreamingVoiceOutput";
 import { createStreamingVoiceDiagnostic } from "../voice/streaming/streamingVoiceDiagnostics";
+import {
+  createStreamingComposerProjection,
+  rebaseStreamingComposerUserText,
+  setStreamingComposerComposition,
+  updateStreamingComposerTranscript,
+  type StreamingComposerProjectionState,
+} from "../voice/streaming/streamingComposerProjection";
+import {
+  acceptTranscriptRepair,
+  buildContextualTranscriptRepair,
+  createTranscriptRepairState,
+  proposeTranscriptRepair,
+  rejectTranscriptRepair,
+  undoTranscriptRepair,
+  type TranscriptRepairState,
+} from "../voice/streaming/contextualTranscriptRepair";
 import { useVoiceTranscription } from "../voice/useVoiceTranscription";
 import { getAssistantSpeechText } from "../voice/voiceMessageText";
 import {
@@ -265,6 +286,7 @@ interface ChatWorkspaceProps {
   cancellingRequestId?: string | null;
   canChat: boolean;
   chatUnavailableReason?: string;
+  composerFocusRequest?: number;
   conversationId: string;
   conversationTitle?: string;
   conversationSource?: "opendrsai" | "codex";
@@ -331,6 +353,7 @@ function ChatWorkspaceImpl({
   cancellingRequestId = null,
   canChat,
   chatUnavailableReason,
+  composerFocusRequest = 0,
   conversationId,
   conversationTitle,
   conversationSource = "opendrsai",
@@ -449,9 +472,14 @@ function ChatWorkspaceImpl({
   const [voiceReviewSource, setVoiceReviewSource] = useState<"serial" | "streaming" | null>(null);
   const [streamingVoiceReadyToSend, setStreamingVoiceReadyToSend] = useState(false);
   const [streamingVoiceResponseArmed, setStreamingVoiceResponseArmed] = useState(false);
+  const [streamingComposerProjection, setStreamingComposerProjection] = useState<StreamingComposerProjectionState | null>(null);
+  const [streamingTranscriptRepair, setStreamingTranscriptRepair] = useState<TranscriptRepairState | null>(null);
   const [voiceRuntimeDisclosure, setVoiceRuntimeDisclosure] = useState<string | null>(null);
   const [voiceRuntimeStatus, setVoiceRuntimeStatus] = useState<DesktopVoiceRuntimeStatus | null>(null);
   const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
+  const [duplexVoiceCapabilities, setDuplexVoiceCapabilities] = useState<DesktopDuplexVoiceCapabilities | null>(null);
+  const [duplexPrivacyDisclosure, setDuplexPrivacyDisclosure] = useState("Realtime voice sends microphone audio to the configured remote Provider.");
+  const [duplexPrivacyConfirmed, setDuplexPrivacyConfirmed] = useState(false);
   const [voiceConsentRequired, setVoiceConsentRequired] = useState(false);
   const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
   const [voiceTurnState, dispatchVoiceTurnBase] = useReducer(reduceVoiceTurn, initialVoiceTurnState);
@@ -489,8 +517,11 @@ function ChatWorkspaceImpl({
     serialTts: "speechSynthesis" in window,
     streamingTts: false,
     streamingCapabilities: streamingVoiceCapabilities,
+    duplexCapabilities: duplexVoiceCapabilities,
+    duplexEnabled: Boolean(duplexVoiceCapabilities),
   });
   const streamingVoiceAvailability = getVoiceModeAvailability("streaming", voiceModeCapabilities);
+  const duplexVoiceAvailability = getVoiceModeAvailability("duplex", voiceModeCapabilities);
   const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
   const voicePlayback = useSystemVoicePlayback();
@@ -530,11 +561,60 @@ function ChatWorkspaceImpl({
     deviceId: voiceDeviceId,
     languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
     onReview: (transcript) => {
+      setStreamingComposerProjection(null);
+      const repairBase = createTranscriptRepairState(transcript);
+      const candidate = buildContextualTranscriptRepair({
+        transcript,
+        revision: 1,
+        glossary: [
+          { canonical: "OpenDrSai", aliases: ["open dr sai", "open doctor sai"], source: { type: "user_dictionary", label: "Product name" } },
+          { canonical: "流式语音", aliases: ["留是语音", "流逝语音"], source: { type: "workspace_term", label: "Voice architecture" } },
+        ],
+      });
+      const repair = candidate ? proposeTranscriptRepair(repairBase, candidate) : repairBase;
+      setStreamingTranscriptRepair(candidate ? repair : null);
       setVoiceReviewSource("streaming");
-      setVoiceReviewText(transcript);
+      setVoiceReviewText(repair.acceptedText);
       setVoiceRuntimeDisclosure(voiceRuntimeStatus?.providerDisclosure ?? "Live transcription completed.");
     },
   });
+  const duplexVoiceInput = useDuplexVoiceInput({
+    threadId: conversationId,
+    deviceId: voiceDeviceId,
+    languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
+    voice: voicePreferences.voiceName,
+    instructions: "Respond naturally and concisely in a realtime voice conversation.",
+    enableToolCalling: true,
+    toolExecutor: {
+      execute: async ({ name, arguments: args }) => {
+        if (name === "search_thread_messages") {
+          const query = typeof args.query === "string" ? args.query : "";
+          const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
+          return { output: await desktopApi.searchThreadMessages({ query, threadIds: [conversationId], limit }) };
+        }
+        if (name === "get_voice_runtime_status") return { output: await desktopApi.getVoiceRuntimeStatus() };
+        throw new Error(`Realtime tool is not registered: ${name}`);
+      },
+    },
+  });
+  useEffect(() => {
+    if (!streamingTranscriptRepair?.candidate || streamingVoiceInput.turnState.phase !== "review") return;
+    streamingVoiceInput.beginRepair();
+    streamingVoiceInput.completeRepair(!streamingTranscriptRepair.candidate.policy.autoAccept);
+  }, [streamingTranscriptRepair?.candidate?.id, streamingVoiceInput.turnState.phase]);
+  useEffect(() => {
+    setStreamingComposerProjection((current) => current
+      ? updateStreamingComposerTranscript(current, {
+          stableVoiceText: streamingVoiceInput.transcript.committedText,
+          provisionalVoiceText: streamingVoiceInput.transcript.unstableText,
+          revision: streamingVoiceInput.transcript.revision,
+        })
+      : current);
+  }, [
+    streamingVoiceInput.transcript.committedText,
+    streamingVoiceInput.transcript.revision,
+    streamingVoiceInput.transcript.unstableText,
+  ]);
   const streamingDiagnosticKeysRef = useRef(new Set<string>());
   const assistantSpeechSegments = useAssistantSpeechSegments(voicePreferences.interactionMode === "streaming");
   const streamingVoiceOutput = useStreamingVoiceOutput({
@@ -611,6 +691,7 @@ function ChatWorkspaceImpl({
     transcribe: transcribeVoiceBlob,
   } = useVoiceTranscription(setVoiceProgressMessage);
   const [respondedInputRequests, setRespondedInputRequests] = useState<Set<string>>(() => new Set());
+  const [configuredCapabilityRequests, setConfiguredCapabilityRequests] = useState<Set<string>>(() => new Set());
   const [activeTurnRailId, setActiveTurnRailId] = useState<string | null>(null);
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -618,6 +699,14 @@ function ChatWorkspaceImpl({
   const turnRailNavigationTargetRef = useRef<string | null>(null);
   const turnRailNavigationTimerRef = useRef<number | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
+
+  useEffect(() => {
+    if (composerFocusRequest <= 0 || conversationHistoryPending) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      textareaRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [composerFocusRequest, conversationHistoryPending]);
   const composerDropRef = useCallback((form: HTMLFormElement | null) => {
     composerRef.current = form;
     if (!form) return;
@@ -738,6 +827,9 @@ function ChatWorkspaceImpl({
       if (!accepted) return;
       if (typeof response === "object" && response.decision === "revise") return;
       setRespondedInputRequests((current) => new Set(current).add(part.requestId));
+      if (response.capabilityAction === "configured") {
+        setConfiguredCapabilityRequests((current) => new Set(current).add(part.requestId));
+      }
     });
   });
 
@@ -759,6 +851,14 @@ function ChatWorkspaceImpl({
     setInteractionDraft("");
   }
   const shouldFollowOutputRef = useRef(true);
+  const finalScrollSettleTimerRef = useRef<number | null>(null);
+  const [smoothFollowOutput] = useState(() => createSmoothFollowOutputController({
+    scrollToBottom: (behavior) => {
+      const list = messageListRef.current;
+      if (list) list.scrollTo({ top: Math.max(0, list.scrollHeight - list.clientHeight), behavior });
+    },
+    stopScrolling: (scrollTop) => messageListRef.current?.scrollTo({ top: scrollTop, behavior: "auto" }),
+  }));
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const voiceRetryBlobRef = useRef<Blob | null>(null);
   const voiceRetryDurationRef = useRef(0);
@@ -803,7 +903,18 @@ function ChatWorkspaceImpl({
     () => messages.filter((message) => message.id !== "welcome"),
     [messages],
   );
-  const visibleMessages = conversationMessages;
+  const duplexHistoryMessages = useMemo<UiMessage[]>(() => duplexVoiceInput.history.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    statusContent: message.interrupted
+      ? (zh ? `已听到：${message.heardContent || "（未完整播放）"}` : `Heard: ${message.heardContent || "(not fully played)"}`)
+      : undefined,
+  })), [duplexVoiceInput.history, zh]);
+  const visibleMessages = useMemo(() => {
+    const existing = new Set(conversationMessages.map((message) => message.id));
+    return [...conversationMessages, ...duplexHistoryMessages.filter((message) => !existing.has(message.id))];
+  }, [conversationMessages, duplexHistoryMessages]);
   const turnRailMarkers = useMemo(
     () => visibleMessages
       .filter((message) => message.role === "user")
@@ -957,10 +1068,11 @@ function ChatWorkspaceImpl({
     voiceState === "requesting_permission" ||
     voiceState === "recording";
   const showStreamingVoiceCaptureBar = ["starting", "streaming", "stopping", "cancelling"].includes(streamingVoiceInput.phase);
-  const showAnyVoiceCaptureBar = showVoiceCaptureBar || voiceState === "processing" || showStreamingVoiceCaptureBar;
-  const displayedVoicePhase = voicePreferences.interactionMode === "streaming"
-    ? streamingVoiceInput.phase
-    : voiceTurnState.phase;
+  const showDuplexVoiceCaptureBar = ["starting", "active", "stopping", "recovering"].includes(duplexVoiceInput.phase);
+  const showAnyVoiceCaptureBar = showVoiceCaptureBar || voiceState === "processing" || showStreamingVoiceCaptureBar || showDuplexVoiceCaptureBar;
+  const displayedVoicePhase = voicePreferences.interactionMode === "duplex"
+    ? duplexVoiceInput.phase
+    : voicePreferences.interactionMode === "streaming" ? streamingVoiceInput.phase : voiceTurnState.phase;
   const latestCompletedAssistantMessage = [...messages]
     .reverse()
     .find((message) => message.role === "assistant" && !message.streaming && !message.error && getAssistantDisplayContent(message));
@@ -972,6 +1084,7 @@ function ChatWorkspaceImpl({
     voicePlayback.stop();
     stopVoiceCapture("discard");
     void streamingVoiceInput.cancel();
+    void duplexVoiceInput.cancel();
     streamingVoiceInput.reset();
     cancelVoiceTranscriptionTask();
     setVoiceReviewText(null);
@@ -997,6 +1110,7 @@ function ChatWorkspaceImpl({
       voicePlayback.stop();
       stopVoiceCapture("discard");
       void streamingVoiceInput.cancel();
+      void duplexVoiceInput.cancel();
       streamingVoiceOutput.stop();
       if (streamingVoiceResponseArmed && (activeRequestId || hasStreamingMessage)) onAbort();
       cancelVoiceTranscriptionTask();
@@ -1395,10 +1509,10 @@ function ChatWorkspaceImpl({
   }, [onInputChange]);
 
   useEffect(() => {
-    if (!messages.some((message) => message.streaming)) return;
+    if (!hasStreamingMessage) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [messages]);
+  }, [hasStreamingMessage]);
 
   function getMessageListMaxScrollTop(list: HTMLDivElement): number {
     return Math.max(0, list.scrollHeight - list.clientHeight);
@@ -1409,19 +1523,39 @@ function ChatWorkspaceImpl({
     if (!list) return;
     const target = getMessageListMaxScrollTop(list);
     list.scrollTo({ top: target, behavior });
-    window.requestAnimationFrame(() => {
-      if (!shouldFollowOutputRef.current) return;
-      const nextTarget = getMessageListMaxScrollTop(list);
-      if (Math.abs(list.scrollTop - nextTarget) > 2) {
-        list.scrollTop = nextTarget;
-      }
-    });
   }
 
   useEffect(() => {
     if (!messageListRef.current || !shouldFollowOutputRef.current) return;
-    scrollMessageListToLatest(messages.some((message) => message.streaming) ? "auto" : "smooth");
-  }, [messages]);
+    if (!hasStreamingMessage) {
+      scrollMessageListToLatest("smooth");
+      if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
+      finalScrollSettleTimerRef.current = window.setTimeout(() => {
+        finalScrollSettleTimerRef.current = null;
+        if (shouldFollowOutputRef.current && smoothFollowOutput.isFollowing()) scrollMessageListToLatest("auto");
+      }, 360);
+      return;
+    }
+    smoothFollowOutput.handleHeightChange(messageListRef.current.scrollHeight);
+  }, [hasStreamingMessage, messages, smoothFollowOutput]);
+
+  useEffect(() => () => smoothFollowOutput.dispose(), [smoothFollowOutput]);
+
+  useEffect(() => {
+    const list = messageListRef.current;
+    const lastMessage = list?.lastElementChild;
+    if (!list || !lastMessage) return undefined;
+    const observer = new ResizeObserver(() => {
+      if (shouldFollowOutputRef.current) smoothFollowOutput.handleHeightChange(list.scrollHeight);
+    });
+    observer.observe(lastMessage);
+    smoothFollowOutput.handleHeightChange(list.scrollHeight);
+    return () => observer.disconnect();
+  }, [visibleMessages.at(-1)?.id, smoothFollowOutput]);
+
+  useEffect(() => () => {
+    if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const list = messageListRef.current;
@@ -1459,6 +1593,7 @@ function ChatWorkspaceImpl({
     );
     if (!list || !message) return;
     shouldFollowOutputRef.current = false;
+    smoothFollowOutput.pause();
     turnRailNavigationTargetRef.current = messageId;
     if (turnRailNavigationTimerRef.current !== null) {
       window.clearTimeout(turnRailNavigationTimerRef.current);
@@ -1499,12 +1634,42 @@ function ChatWorkspaceImpl({
   function handleMessageListScroll(): void {
     const list = messageListRef.current;
     if (!list) return;
-    shouldFollowOutputRef.current = getMessageListMaxScrollTop(list) - list.scrollTop < 80;
+    smoothFollowOutput.handleScroll(list.scrollTop, getMessageListMaxScrollTop(list));
+    shouldFollowOutputRef.current = smoothFollowOutput.isFollowing();
     setAwayFromLatest((current) => current === !shouldFollowOutputRef.current ? current : !shouldFollowOutputRef.current);
+  }
+
+  function handleMessageListWheel(event: React.WheelEvent<HTMLDivElement>): void {
+    if (event.deltaY >= 0) return;
+    const list = messageListRef.current;
+    if (!list) return;
+    smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
+    shouldFollowOutputRef.current = false;
+    setAwayFromLatest(true);
+  }
+
+  function pauseMessageListFollowForUserIntent(): void {
+    const list = messageListRef.current;
+    if (!list) return;
+    smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
+    shouldFollowOutputRef.current = false;
+    setAwayFromLatest(true);
+  }
+
+  function handleMessageListPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
+    const list = messageListRef.current;
+    if (!list) return;
+    const nearScrollbar = event.clientX >= list.getBoundingClientRect().right - 18;
+    if (event.pointerType === "touch" || nearScrollbar) pauseMessageListFollowForUserIntent();
+  }
+
+  function handleMessageListKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (["ArrowUp", "PageUp", "Home"].includes(event.key)) pauseMessageListFollowForUserIntent();
   }
 
   function scrollToLatest(): void {
     shouldFollowOutputRef.current = true;
+    smoothFollowOutput.resume();
     setAwayFromLatest(false);
     scrollMessageListToLatest("smooth");
   }
@@ -1532,10 +1697,25 @@ function ChatWorkspaceImpl({
     void desktopApi.getStreamingVoiceCapabilities()
       .then(setStreamingVoiceCapabilities)
       .catch(() => setStreamingVoiceCapabilities(null));
+    void desktopApi.getDuplexVoiceCapabilities()
+      .then(setDuplexVoiceCapabilities)
+      .catch(() => setDuplexVoiceCapabilities(null));
+    void desktopApi.getMyDrSaiAgentModelPolicy().then((policy) => {
+      const ref = policy.effective_realtime_voice_ref ?? policy.realtime_voice_model?.ref;
+      setDuplexPrivacyDisclosure(ref
+        ? `Realtime voice sends microphone audio to remote Provider ${ref.provider_id}, model ${ref.model_id}. Audio is streamed only while the Session is active; stable transcripts are saved to this Thread.`
+        : "Realtime voice requires an explicitly configured remote Provider and model before microphone audio can be sent.");
+    }).catch(() => undefined);
   }, []);
+
+  useEffect(() => { setDuplexPrivacyConfirmed(false); }, [duplexPrivacyDisclosure, conversationId]);
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault();
+    if (["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
+      setVoiceError(zh ? "实时语音会话期间暂不发送文字；草稿已保留，请先结束会话。" : "Text sending is paused during a Realtime voice session. Your draft is preserved; end the session first.");
+      return;
+    }
     void submitWithAttachments();
   }
 
@@ -1560,6 +1740,14 @@ function ChatWorkspaceImpl({
   }
 
   async function submitWithAttachments(): Promise<void> {
+    if (["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
+      setVoiceError(zh ? "实时语音会话期间暂不发送文字；草稿已保留，请先结束会话。" : "Text sending is paused during a Realtime voice session. Your draft is preserved; end the session first.");
+      return;
+    }
+    if (showStreamingVoiceCaptureBar || streamingVoiceInput.turnState.phase === "repairing") {
+      setVoiceError("Finish live transcription and review the stable text before sending.");
+      return;
+    }
     const isVoiceSubmission = voiceTurnState.phase === "ready_to_send";
     const isStreamingVoiceSubmission = streamingVoiceReadyToSend;
     if (isVoiceSubmission) {
@@ -1660,9 +1848,18 @@ function ChatWorkspaceImpl({
         interactionMode: voicePreferences.interactionMode,
         serialCaptureState: voiceState,
         streamingCapturePhase: streamingVoiceInput.phase,
+        duplexCapturePhase: duplexVoiceInput.phase,
         voiceApiAvailable,
       },
     });
+    if (voicePreferences.interactionMode === "duplex") {
+      if (duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering") {
+        await duplexVoiceInput.stop();
+        return;
+      }
+      await startDuplexVoiceRecording(false);
+      return;
+    }
     if (voicePreferences.interactionMode === "streaming") {
       if (streamingVoiceInput.phase === "streaming") {
         await streamingVoiceInput.stop();
@@ -1678,6 +1875,12 @@ function ChatWorkspaceImpl({
     await startVoiceRecording();
   }
 
+  async function startDuplexVoiceRecording(privacyAlreadyConfirmed: boolean): Promise<void> {
+    if (!duplexVoiceAvailability.available) { setVoiceError(duplexVoiceAvailability.reason ?? "Realtime voice is unavailable."); return; }
+    if (!privacyAlreadyConfirmed && !duplexPrivacyConfirmed) { setVoiceError(duplexPrivacyDisclosure); return; }
+    voicePlayback.stop(); streamingVoiceOutput.stop(); setVoiceError(null); await duplexVoiceInput.start();
+  }
+
   async function startStreamingVoiceRecording(): Promise<void> {
     if (!streamingVoiceAvailability.available) {
       setVoiceError(streamingVoiceAvailability.reason ?? "Live transcription is unavailable.");
@@ -1691,7 +1894,9 @@ function ChatWorkspaceImpl({
     voiceSelectionRef.current = textareaRef.current
       ? { start: textareaRef.current.selectionStart, end: textareaRef.current.selectionEnd }
       : { start: input.length, end: input.length };
-    await streamingVoiceInput.start();
+    setStreamingComposerProjection(createStreamingComposerProjection(input, voiceSelectionRef.current));
+    const started = await streamingVoiceInput.start();
+    if (!started) setStreamingComposerProjection(null);
   }
 
   async function startVoiceRecording(): Promise<void> {
@@ -2020,6 +2225,10 @@ function ChatWorkspaceImpl({
   function acceptVoiceReview(): void {
     const text = voiceReviewText?.trim();
     const streamingReview = voiceReviewSource === "streaming";
+    if (streamingReview && !canSubmitStreamingVoiceTurn(streamingVoiceInput.turnState)) {
+      setVoiceError("Live transcript repair is still running. Review the result before inserting it.");
+      return;
+    }
     let cursor: number | null = null;
     if (text) {
       const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
@@ -2055,12 +2264,14 @@ function ChatWorkspaceImpl({
       streamingVoiceInput.reset();
     }
     clearVoiceReview();
+    setStreamingComposerProjection(null);
     restoreComposerFocus(null);
   }
 
   function clearVoiceReview(): void {
     setVoiceReviewText(null);
     setVoiceReviewSource(null);
+    setStreamingTranscriptRepair(null);
     setStreamingVoiceReadyToSend(false);
     setVoiceRuntimeDisclosure(null);
     setVoiceError(null);
@@ -2363,6 +2574,10 @@ function ChatWorkspaceImpl({
     } catch {
       return;
     }
+    if (protocol === 'opendrsai:' && href.startsWith('opendrsai://regression/evaluations/')) {
+      void desktopApi.openRegressionReference(href);
+      return;
+    }
     if (!['http:', 'https:', 'mailto:'].includes(protocol)) return;
     if (isPreviewBrowserUrl(href)) {
       openPreviewBrowser(href);
@@ -2538,6 +2753,9 @@ function ChatWorkspaceImpl({
         className="message-list"
         ref={messageListRef}
         onScroll={handleMessageListScroll}
+        onWheel={handleMessageListWheel}
+        onPointerDown={handleMessageListPointerDown}
+        onKeyDown={handleMessageListKeyDown}
       >
         {visibleMessages.filter((message) => !isEmptyAssistantShell(message)).map((message, messageIndex) => {
           const assistantContent = message.role === "assistant"
@@ -2584,6 +2802,7 @@ function ChatWorkspaceImpl({
                     runId={message.runtimeRunId}
                     language={language}
                     respondedRequestIds={respondedInputRequests}
+                    configuredCapabilityRequestIds={configuredCapabilityRequests}
                     onOpenLink={handleMarkdownLink}
                     onOpenArtifact={openStructuredArtifact}
                     onOpenCitation={openStructuredCitation}
@@ -3295,22 +3514,63 @@ function ChatWorkspaceImpl({
                   )}
                 </section>
               ) : voiceReviewText !== null ? (
-                <VoiceReviewBar
-                  value={voiceReviewText}
-                  disclosure={voiceRuntimeDisclosure}
-                  onChange={setVoiceReviewText}
-                  onAccept={acceptVoiceReview}
-                  onRetry={() => void retryVoiceReview()}
-                  onDiscard={discardVoiceReview}
-                />
-              ) : showStreamingVoiceCaptureBar ? (
-                <StreamingVoiceCaptureBar
-                  committedText={streamingVoiceInput.transcript.committedText}
+                <div className="composer-streaming-review-stack">
+                  <VoiceReviewBar
+                    value={voiceReviewText}
+                    disclosure={voiceRuntimeDisclosure}
+                    onChange={setVoiceReviewText}
+                    onAccept={acceptVoiceReview}
+                    onRetry={() => void retryVoiceReview()}
+                    onDiscard={discardVoiceReview}
+                  />
+                  {streamingTranscriptRepair?.candidate ? (
+                    <TranscriptRepairDiff
+                      candidate={streamingTranscriptRepair.candidate}
+                      accepted={streamingTranscriptRepair.status === "accepted"}
+                      onAccept={() => setStreamingTranscriptRepair((current) => {
+                        if (!current) return current;
+                        const next = acceptTranscriptRepair(current);
+                        setVoiceReviewText(next.acceptedText);
+                        return next;
+                      })}
+                      onReject={() => setStreamingTranscriptRepair((current) => {
+                        if (!current) return current;
+                        const next = rejectTranscriptRepair(current);
+                        setVoiceReviewText(next.acceptedText);
+                        return next;
+                      })}
+                      onUndo={() => setStreamingTranscriptRepair((current) => {
+                        if (!current) return current;
+                        const next = undoTranscriptRepair(current);
+                        setVoiceReviewText(next.acceptedText);
+                        return next;
+                      })}
+                    />
+                  ) : null}
+                </div>
+              ) : showDuplexVoiceCaptureBar ? (
+                <div className="composer-voice-status" data-testid="duplex-voice-status" aria-live="polite">
+                  <span>{zh ? "实时语音" : "Realtime voice"}: {duplexVoiceInput.turn.phase}</span>
+                  {duplexVoiceInput.inputTranscript ? <small>{duplexVoiceInput.inputTranscript}</small> : null}
+                  {duplexVoiceInput.outputTranscript ? <small>{duplexVoiceInput.outputTranscript}</small> : null}
+                  {duplexVoiceInput.flowControl.paused ? <small>{zh ? "音频上行暂缓" : "Audio uplink paused"}</small> : null}
+                  {duplexVoiceInput.usageWarning ? <small>{duplexVoiceInput.usageWarning}</small> : null}
+                  {Object.values(duplexVoiceInput.toolStatuses).slice(-1).map((tool, index) => <small key={`${tool.status}-${index}`}>{tool.detail ?? tool.status}</small>)}
+                  <button type="button" onClick={() => void duplexVoiceInput.stop()}>{zh ? "结束" : "Stop"}</button>
+                </div>
+              ) : showStreamingVoiceCaptureBar && streamingComposerProjection ? (
+                <StreamingComposerProjectionEditor
                   elapsedSeconds={streamingVoiceInput.elapsedSeconds}
                   levels={streamingVoiceInput.levels}
                   phase={streamingVoiceInput.phase}
+                  projection={streamingComposerProjection}
+                  textareaRef={textareaRef}
                   transportMessage={streamingVoiceInput.flowControl.paused ? (zh ? "连接较慢，正在控制音频发送速度…" : "Connection is slow; audio flow is being limited…") : undefined}
-                  unstableText={streamingVoiceInput.transcript.unstableText}
+                  onCompositionChange={(composing) => setStreamingComposerProjection((current) => current ? setStreamingComposerComposition(current, composing) : current)}
+                  onUserTextChange={(value) => {
+                    onInputChange(value);
+                    setStreamingComposerProjection((current) => current ? rebaseStreamingComposerUserText(current, value) : current);
+                  }}
                   onStop={() => void streamingVoiceInput.stop()}
                 />
               ) : showVoiceCaptureBar ? (
@@ -3359,15 +3619,15 @@ function ChatWorkspaceImpl({
 
             </div>
 
-            {voiceError || streamingVoiceInput.error ? (
+            {voiceError || streamingVoiceInput.error || duplexVoiceInput.error ? (
               <div
-                className={`composer-voice-status ${voiceState === "failed" || streamingVoiceInput.phase === "failed" ? "error" : ""}`}
+                className={`composer-voice-status ${voiceState === "failed" || streamingVoiceInput.phase === "failed" || duplexVoiceInput.phase === "failed" ? "error" : ""}`}
                 aria-live="polite"
               >
                 <span>
                   {getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
                 </span>
-                {voiceError || streamingVoiceInput.error ? <small>{voiceError ?? streamingVoiceInput.error}</small> : null}
+                {voiceError || streamingVoiceInput.error || duplexVoiceInput.error ? <small>{voiceError ?? streamingVoiceInput.error ?? duplexVoiceInput.error}</small> : null}
                 {voiceConsentRequired ? (
                   <span className="composer-voice-error-actions">
                     <button
@@ -3394,6 +3654,12 @@ function ChatWorkspaceImpl({
                     >
                       {zh ? "暂不使用" : "Not now"}
                     </button>
+                  </span>
+                ) : null}
+                {voicePreferences.interactionMode === "duplex" && !duplexPrivacyConfirmed && voiceError === duplexPrivacyDisclosure ? (
+                  <span className="composer-voice-error-actions" aria-label="Realtime voice privacy confirmation">
+                    <button type="button" onClick={() => { setDuplexPrivacyConfirmed(true); void startDuplexVoiceRecording(true); }}>{zh ? "了解并开始实时语音" : "I understand—start Realtime voice"}</button>
+                    <button type="button" onClick={() => setVoiceError(null)}>{zh ? "暂不使用" : "Not now"}</button>
                   </span>
                 ) : null}
                 {voiceError && voiceRetryBlobRef.current && !voiceConsentRequired ? (
@@ -3558,14 +3824,15 @@ function ChatWorkspaceImpl({
                   data-testid="composer-voice-mode"
                   value={voicePreferences.interactionMode}
                   onChange={(event) => updateVoicePreferences({ interactionMode: event.target.value as DesktopVoiceInteractionMode })}
-                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showStreamingVoiceCaptureBar || streamingVoiceInput.phase === "reviewing" || streamingVoiceReadyToSend || streamingVoiceResponseArmed}
+                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showStreamingVoiceCaptureBar || showDuplexVoiceCaptureBar || streamingVoiceInput.phase === "reviewing" || streamingVoiceReadyToSend || streamingVoiceResponseArmed}
                   aria-label={zh ? "语音交互模式" : "Voice interaction mode"}
                   title={streamingVoiceAvailability.reason ?? voiceRuntimeDisclosure ?? voiceRuntimeLabel}
                 >
                   <option value="serial">{zh ? "串行" : "Serial"}</option>
                   <option value="streaming" disabled={!streamingVoiceAvailability.available}>{zh ? "流式" : "Streaming"}</option>
+                  <option value="duplex" disabled={!duplexVoiceAvailability.available}>{zh ? "实时" : "Realtime"}</option>
                 </select>
-                {voiceDevices.length > 1 ? (
+                {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).length > 1 ? (
                   <select
                     className="composer-voice-device"
                     value={voiceDeviceId}
@@ -3575,7 +3842,7 @@ function ChatWorkspaceImpl({
                     title="Microphone device"
                   >
                     <option value="">Default mic</option>
-                    {voiceDevices.map((device, index) => (
+                    {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).map((device, index) => (
                       <option key={device.deviceId} value={device.deviceId}>
                         {device.label || `Microphone ${index + 1}`}
                       </option>
@@ -3607,20 +3874,20 @@ function ChatWorkspaceImpl({
                 ) : null}
                 <button
                   type="button"
-                  className={`composer-icon-button composer-voice-button ${voiceState === "recording" ? "recording" : ""}`}
-                  disabled={voiceState === "requesting_permission" || voiceState === "processing"}
-                  aria-pressed={voiceState === "recording"}
+                  className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
+                  disabled={voiceState === "requesting_permission" || voiceState === "processing" || duplexVoiceInput.phase === "starting" || duplexVoiceInput.phase === "stopping"}
+                  aria-pressed={voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active"}
                   aria-label={
                     voiceState === "processing"
                       ? "Transcribing voice input"
-                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming"
+                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
                       ? "Stop voice recording"
                       : "Start voice recording"
                   }
                   title={
                     voiceState === "processing"
                       ? "Transcribing voice input"
-                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming"
+                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
                       ? "Stop voice recording"
                       : "Start voice recording"
                   }
@@ -3630,7 +3897,7 @@ function ChatWorkspaceImpl({
                 >
                   {voiceState === "processing" ? (
                     <ThreadActivityBubble state={{ kind: "running" }} language={zh ? "zh" : "en"} />
-                  ) : voiceState === "recording" || streamingVoiceInput.phase === "streaming" ? <MicOff size={16} /> : <Mic size={16} />}
+                  ) : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering" ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
                 {showStop ? (
                   <>
@@ -3784,7 +4051,7 @@ function VirtualizedMessage({
       className={`${className} ${renderContent ? "virtual-message-rendered" : "virtual-message-placeholder"}`}
       data-message-id={message.id}
       data-structured-turn-id={message.structuredTurn?.turnId}
-      data-run-id={message.structuredTurn?.turnId ?? (message.role === "assistant" ? message.id : undefined)}
+      data-run-id={message.runtimeRunId ?? message.structuredTurn?.turnId ?? (message.role === "assistant" ? message.id : undefined)}
       style={renderContent ? undefined : { height: placeholderHeight }}
       aria-hidden={renderContent ? undefined : true}
     >
@@ -4036,8 +4303,8 @@ function StreamingStatus({
       <span className="streaming-dot" aria-hidden />
       <span>{detail}</span>
       <time>{zh ? `已执行 ${elapsedSeconds} 秒` : `Running ${elapsedSeconds}s`}</time>
-      {message.firstFeedbackAt && message.startedAt ? <small>{zh ? "首个状态" : "First status"} {message.firstFeedbackAt - message.startedAt}ms</small> : null}
-      {message.firstDeltaAt && message.startedAt ? <small>{zh ? "首个模型片段" : "First model delta"} {message.firstDeltaAt - message.startedAt}ms</small> : null}
+      {message.firstFeedbackAt && message.startedAt ? <small>{zh ? "首个状态" : "First status"} {Math.max(0, message.firstFeedbackAt - message.startedAt)}ms</small> : null}
+      {message.firstDeltaAt && message.startedAt ? <small>{zh ? "首个模型片段" : "First model delta"} {Math.max(0, message.firstDeltaAt - message.startedAt)}ms</small> : null}
     </div>
   );
 }

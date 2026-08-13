@@ -155,20 +155,17 @@ def external_release_evidence() -> dict[str, bool]:
 
 
 def valid_real_provider_evidence(payload: object) -> bool:
-    if not isinstance(payload, dict) or payload.get("passed") is not True or payload.get("kind") != "real-opt-in":
+    if not isinstance(payload, dict) or payload.get("passed") is not True or payload.get("kind") != "hepai-platform":
         return False
-    required = set(SERVICE_TYPES_FOR_EVIDENCE)
-    if set(payload.get("requiredServiceTypes", [])) != required:
+    if payload.get("schemaVersion") != 3 or payload.get("providerId") != "hepai":
         return False
-    if set(payload.get("configuredServiceTypes", [])) != required or payload.get("missingServiceTypes") != []:
+    if payload.get("authentication") != "oidc-safe-storage" or payload.get("secretMaterialRecorded") is not False:
         return False
     results = payload.get("results")
     return isinstance(results, list) and bool(results) and all(
-        isinstance(row, dict) and row.get("passed") is True for row in results
-    ) and {row.get("serviceType") for row in results if isinstance(row, dict)} == required
-
-
-SERVICE_TYPES_FOR_EVIDENCE = ("openai", "anthropic", "deepseek", "ollama", "chat_only", "custom_proxy")
+        isinstance(row, dict) and row.get("passed") is True and row.get("statusCode") == 200
+        and row.get("sawData") is True and row.get("sawDone") is True for row in results
+    )
 
 
 def git(*args: str) -> str:

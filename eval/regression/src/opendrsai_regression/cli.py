@@ -51,6 +51,8 @@ def parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--execution-id")
     run_cmd.add_argument("--resume", action="store_true")
     run_cmd.add_argument("--concurrency", type=int, default=None)
+    run_cmd.add_argument("--stop-on-failure", action="store_true")
+    run_cmd.add_argument("--scope-confirmed", action="store_true", help="Confirm the selected cases' declared external side-effect scope")
     run_cmd.add_argument("--semantic-evaluator-url", default=os.getenv("OPENDRSAI_REGRESSION_EVALUATOR_URL"))
     run_cmd.add_argument("--model-capability-snapshot", type=Path, default=os.getenv("OPENDRSAI_MODEL_CAPABILITY_SNAPSHOT"))
     gate_cmd = commands.add_parser("gate", help="Evaluate a result JSONL against a policy")
@@ -125,11 +127,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "model-probe":
             if not args.gateway_url:
                 raise ValueError("model-probe requires --gateway-url (or OPENDRSAI_REGRESSION_GATEWAY_URL)")
-            profile = args.profile or catalog.root / "model_capabilities" / "profiles" / "zhizengzeng-my-drsai-p2.yaml"
+            profile = args.profile or catalog.root / "model_capabilities" / "profiles" / "hepai-opendrsai-p2.yaml"
             print(run_profile(profile, gateway_url=args.gateway_url, gateway_token=args.gateway_token, output_root=args.output))
             return 0
         if args.command == "model-gate":
-            profile = args.profile or catalog.root / "model_capabilities" / "profiles" / "zhizengzeng-my-drsai-p2.yaml"
+            profile = args.profile or catalog.root / "model_capabilities" / "profiles" / "hepai-opendrsai-p2.yaml"
             passed, reasons = evaluate_model_capability_gate(profile, args.snapshot)
             print("PASS" if passed else "FAIL")
             for reason in reasons:
@@ -151,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "model-runtime-verify":
             if not args.gateway_url:
                 raise ValueError("model-runtime-verify requires --gateway-url (or OPENDRSAI_REGRESSION_GATEWAY_URL)")
-            profile = args.profile or catalog.root / "model_capabilities" / "profiles" / "zhizengzeng-my-drsai-p2.yaml"
+            profile = args.profile or catalog.root / "model_capabilities" / "profiles" / "hepai-opendrsai-p2.yaml"
             row = bind_runtime_run_evidence(
                 profile, args.snapshot, model_id=args.model_id, operation=args.operation,
                 run_id=args.run_id, gateway_url=args.gateway_url, gateway_token=args.gateway_token,
@@ -161,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "model-audio-runtime-verify":
             if not args.gateway_url:
                 raise ValueError("model-audio-runtime-verify requires --gateway-url (or OPENDRSAI_REGRESSION_GATEWAY_URL)")
-            profile = args.profile or catalog.root / "model_capabilities" / "profiles" / "zhizengzeng-my-drsai-p2.yaml"
+            profile = args.profile or catalog.root / "model_capabilities" / "profiles" / "hepai-opendrsai-p2.yaml"
             speech, transcription = verify_audio_product_runtime(
                 profile, args.snapshot, gateway_url=args.gateway_url, gateway_token=args.gateway_token,
             )
@@ -196,19 +198,36 @@ def _run(args: argparse.Namespace, catalog: CaseCatalog) -> int:
     case_versions = {case.id: (case.revision, hashlib.sha256(Path(case.path).read_bytes()).hexdigest()) for case in cases}
     completed = store.resumable_case_ids(case_versions) if args.resume else set()
     adapter = (FixtureRuntimeAdapter(args.fixture_dir) if args.adapter == "fixture" else
-               GatewayRuntimeAdapter(RuntimeConfig(args.gateway_url, args.workspace_id, args.gateway_token, args.access_token, args.user_id)))
-    provisioner = EnvironmentProvisioner(catalog.root)
-    semantic_evaluator = SemanticEvaluator(args.semantic_evaluator_url) if args.semantic_evaluator_url else None
+               GatewayRuntimeAdapter(RuntimeConfig(
+                   args.gateway_url, args.workspace_id, args.gateway_token, args.access_token, args.user_id,
+                   scope_confirmed=args.scope_confirmed,
+               )))
+    temp_root = os.getenv("OPENDRSAI_REGRESSION_TEMP_ROOT")
+    if temp_root:
+        Path(temp_root).mkdir(parents=True, exist_ok=True)
+    provisioner = EnvironmentProvisioner(catalog.root, temp_parent=temp_root)
+    semantic_evaluator = (
+        SemanticEvaluator(args.semantic_evaluator_url) if args.semantic_evaluator_url else
+        SemanticEvaluator("gateway-runtime", adapter.semantic_judge) if isinstance(adapter, GatewayRuntimeAdapter) else None
+    )
     selected = [case for case in cases if case.id not in completed]
     suite_defaults = catalog.load_suite(args.suite).defaults if args.suite else {}
     concurrency = args.concurrency or int(suite_defaults.get("concurrency") or 1)
     if concurrency < 1 or concurrency > 32:
         raise ValueError("--concurrency must be between 1 and 32")
-    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="opendrsai-regression") as executor:
-        futures = {executor.submit(_execute_attempts, execution_id, case, adapter, provisioner, semantic_evaluator): case.id for case in selected}
-        for future in as_completed(futures):
-            for result in future.result():
+    if args.stop_on_failure:
+        for case in selected:
+            attempts = _execute_attempts(execution_id, case, adapter, provisioner, semantic_evaluator)
+            for result in attempts:
                 store.append(result)
+            if not attempts or attempts[-1]["status"] != "passed":
+                break
+    else:
+        with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="opendrsai-regression") as executor:
+            futures = {executor.submit(_execute_attempts, execution_id, case, adapter, provisioner, semantic_evaluator): case.id for case in selected}
+            for future in as_completed(futures):
+                for result in future.result():
+                    store.append(result)
     results = store.load()
     write_reports(args.output, execution_id, results)
     print(store.root)
@@ -295,18 +314,31 @@ def _execute_case(execution_id: str, case: RegressionCase, adapter: GatewayRunti
     try:
         with provisioner.prepare(case, attempt) as environment:
             evidence = adapter.execute(case, environment)
-        if semantic_evaluator is not None:
-            semantic = semantic_evaluator.evaluate(case, evidence)
-            evidence["semantic_evaluation"] = semantic.to_dict()
-            if semantic.status != "inconclusive":
-                evidence["semantic_judgments"] = semantic.judgments
+            if semantic_evaluator is not None:
+                semantic = semantic_evaluator.evaluate(case, evidence)
+                evidence["semantic_evaluation"] = semantic.to_dict()
+                if semantic.status != "inconclusive":
+                    evidence["semantic_judgments"] = semantic.judgments
+                if semantic.status == "passed":
+                    for activation in evidence.get("skill_activations") or []:
+                        if isinstance(activation, dict) and activation.get("skill_id") == "pptx":
+                            activation["required_steps"] = sorted(set(activation.get("required_steps") or []) | {"visual_check_completed"})
+            # Local paths exist only long enough to feed the independent
+            # visual Judge. They must never enter persisted Evidence/Result.
+            evidence.pop("_semantic_media", None)
         assertions = evaluate(case, evidence)
         status = verdict(assertions, semantic_pending=semantic_pending(case, evidence))
         result = CaseResult(execution_id, case.id, case.revision, attempt=attempt, status=status, run_id=evidence.get("run_id"), session_id=evidence.get("session_id"), output=evidence.get("output"), evidence=evidence, assertions=[item.to_dict() for item in assertions])
     except EnvironmentError as exc:
         result = CaseResult(execution_id, case.id, case.revision, attempt=attempt, status="error", error_category="environment_failed", error=str(exc))
     except TimeoutError as exc:
-        result = CaseResult(execution_id, case.id, case.revision, attempt=attempt, status="error", error_category="timeout", error=str(exc))
+        evidence = dict(getattr(exc, "evidence", {}) or {})
+        evidence.pop("_semantic_media", None)
+        result = CaseResult(
+            execution_id, case.id, case.revision, attempt=attempt, status="error",
+            run_id=evidence.get("run_id"), session_id=evidence.get("session_id"),
+            error_category="timeout", error=str(exc), evidence=evidence,
+        )
     except RuntimeAdapterError as exc:
         result = CaseResult(execution_id, case.id, case.revision, attempt=attempt, status="error", error_category="runtime_failed", error=str(exc))
     except Exception as exc:

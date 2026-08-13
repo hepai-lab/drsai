@@ -16,6 +16,7 @@ import ai.drsai.remote.runtime.device.EXTRA_INTERACTION_ID
 import ai.drsai.remote.runtime.device.ACTION_OPEN_OAEP_RUN
 import ai.drsai.remote.runtime.reliability.ACTION_OPEN_RECOVERABLE_RUN
 import ai.drsai.remote.remote.data.AndroidDevicePresence
+import ai.drsai.remote.remote.device.AndroidRemoteBackgroundSync
 
 class MainActivity : ComponentActivity() {
     private val appViewModel: AppViewModel by viewModels()
@@ -24,6 +25,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         installAndroidUpdateLifecycle(application)
         AndroidDevicePresence.install(application)
+        AndroidRemoteBackgroundSync.install(application)
         setContent { OpenDrSaiApp(appViewModel) }
         handleViewIntent(intent)
         handleRunAction(intent)

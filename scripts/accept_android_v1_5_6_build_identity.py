@@ -101,8 +101,8 @@ def main() -> int:
         "runtime_service_private": 'android:name="ai.drsai.remote.runtime.python.PythonRuntimeService"' in manifest
         and 'android:exported="false"' in manifest
         and 'android:process=":runtime"' in manifest,
-        "arm64_python": "lib/arm64-v8a/libpython3.11.so" in entries,
-        "x86_64_python": "lib/x86_64/libpython3.11.so" in entries,
+        "arm64_python": "lib/arm64-v8a/libpython3.12.so" in entries,
+        "x86_64_python": "lib/x86_64/libpython3.12.so" in entries,
         "shared_python_agent_core": len(mobile_core_entries) >= 8 and "mobile_core/engine.pyc" in mobile_core_entries,
         "baseline_apk_frozen": sha256(baseline) == "d52b7df0cee4fab11fa817e0ba25be4db7e67a2ca3e3a4596c205e1a641321a6",
         "baseline_db_schema_captured": baseline_db_match is not None and baseline_db_match.group(1) == "11",
@@ -135,9 +135,9 @@ def main() -> int:
              "licenses": [{"license": {"id": "Apache-2.0"}}]},
             {"type": "framework", "name": "Chaquopy", "version": "17.0.0",
              "licenses": [{"license": {"id": "MIT"}}]},
-            {"type": "library", "name": "CPython", "version": "3.11", "hashes": [
+            {"type": "library", "name": "CPython", "version": "3.12", "hashes": [
                 {"alg": "SHA-256", "content": item["sha256"]}
-                for item in runtime_hashes if item["path"].endswith("/libpython3.11.so")
+                for item in runtime_hashes if item["path"].endswith("/libpython3.12.so")
             ], "licenses": [{"license": {"id": "PSF-2.0"}}]},
             {"type": "library", "name": "Bouncy Castle Provider", "version": "1.84",
              "purl": "pkg:maven/org.bouncycastle/bcprov-jdk18on@1.84",

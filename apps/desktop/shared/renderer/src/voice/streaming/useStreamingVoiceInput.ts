@@ -38,6 +38,8 @@ export interface StreamingVoiceInputHook {
   cancel: () => Promise<boolean>;
   reset: () => void;
   acceptReview: () => void;
+  beginRepair: () => void;
+  completeRepair: (requiresReview: boolean) => void;
   markAssistantTextStarted: () => void;
   markAssistantTextCompleted: () => void;
   markTtsStarted: () => void;
@@ -144,7 +146,7 @@ export function useStreamingVoiceInput(options: UseStreamingVoiceInputOptions): 
     setError(null);
     setElapsedSeconds(0);
     setFlowControl({ paused: false, bufferedAudioMs: 0 });
-    vadRef.current.reset();
+    vadRef.current = new LocalVoiceActivityDetector({ languageHint: optionsRef.current.languageHint });
     const initial = { ...initialStreamingTranscriptState };
     transcriptRef.current = initial;
     setTranscript(initial);
@@ -154,6 +156,7 @@ export function useStreamingVoiceInput(options: UseStreamingVoiceInputOptions): 
     dispatchTurn({ type: "begin", turnId });
     try {
       const result = await desktopApi.startStreamingVoiceTranscription({
+        protocolVersion: 2,
         turnId,
         languageHint: optionsRef.current.languageHint,
         encoding: "pcm_s16le",
@@ -259,6 +262,8 @@ export function useStreamingVoiceInput(options: UseStreamingVoiceInputOptions): 
   }, [dispatchTurn, setCurrentPhase]);
 
   const acceptReview = useCallback((): void => { dispatchTurn({ type: "review_accepted" }); setCurrentPhase("idle"); }, [dispatchTurn, setCurrentPhase]);
+  const beginRepair = useCallback((): void => dispatchTurn({ type: "repair_started" }), [dispatchTurn]);
+  const completeRepair = useCallback((requiresReview: boolean): void => dispatchTurn({ type: "repair_completed", requiresReview }), [dispatchTurn]);
   const markAssistantTextStarted = useCallback((): void => dispatchTurn({ type: "llm_started" }), [dispatchTurn]);
   const markAssistantTextCompleted = useCallback((): void => dispatchTurn({ type: "llm_completed" }), [dispatchTurn]);
   const markTtsStarted = useCallback((): void => dispatchTurn({ type: "tts_started" }), [dispatchTurn]);
@@ -289,6 +294,8 @@ export function useStreamingVoiceInput(options: UseStreamingVoiceInputOptions): 
     cancel,
     reset,
     acceptReview,
+    beginRepair,
+    completeRepair,
     markAssistantTextStarted,
     markAssistantTextCompleted,
     markTtsStarted,

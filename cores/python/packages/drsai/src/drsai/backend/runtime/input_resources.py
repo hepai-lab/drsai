@@ -165,6 +165,13 @@ def autogen_input_task(
     content: list[Any] = [prompt]
     for resource in normalized:
         kind = str(resource["kind"])
+        # Regression controls are trusted Runtime policy, never model input.
+        # Exposing fault schedules or successful fixtures would leak expected
+        # answers and allow a model to pass without the controlled Tool path.
+        if kind == "selection" and resource.get("name") in {
+            "OpenDrSai regression control", "OpenDrSai trusted evidence",
+        }:
+            continue
         if kind in {"file", "folder"}:
             reference = str(resource["reference"])
             target = _resolve_workspace_resource(root, reference, kind=kind, resource=resource)

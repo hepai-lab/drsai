@@ -27,7 +27,7 @@ model_provider = "hepai"
 
 [platforms.production]
 portal_url = "https://ai.ihep.ac.cn"
-base_url = "https://aiapi.ihep.ac.cn/apiv2"
+base_url = "https://ai.ihep.ac.cn/apiv2/v1"
 
 [model_providers.hepai]
 base_url = "https://aiapi.ihep.ac.cn/apiv2"
@@ -36,7 +36,24 @@ requires_api_key = true
 `, "utf8");
   const production = getActivePlatformConfig();
   assert.equal(production.name, "production");
-  assert.equal(production.baseUrl, "https://aiapi.ihep.ac.cn/apiv2");
+  assert.equal(production.portalUrl, "https://ai-dev.ihep.ac.cn");
+  assert.equal(production.baseUrl, "https://ai-dev.ihep.ac.cn/apiv2/v1");
+  assert.equal(production.oidcIssuer, "https://ai-dev.ihep.ac.cn/api");
+
+  process.env.OPENDRSAI_ACTIVE_PLATFORM = "production";
+  process.env.OPENDRSAI_PLATFORM_BASE_URL = "https://hai.example.test";
+  process.env.OPENDRSAI_PLATFORM_API_BASE_URL = "https://hai-api.example.test/apiv2";
+  process.env.OPENDRSAI_OIDC_ISSUER = "https://hai.example.test/api";
+  writeFileSync(getPlatformConfigPath(), 'active_platform = "development"\n', "utf8");
+  const environmentSelected = getActivePlatformConfig();
+  assert.equal(environmentSelected.name, "production");
+  assert.equal(environmentSelected.portalUrl, "https://hai.example.test");
+  assert.equal(environmentSelected.baseUrl, "https://hai-api.example.test/apiv2");
+  assert.equal(environmentSelected.oidcIssuer, "https://hai.example.test/api");
+  delete process.env.OPENDRSAI_ACTIVE_PLATFORM;
+  delete process.env.OPENDRSAI_PLATFORM_BASE_URL;
+  delete process.env.OPENDRSAI_PLATFORM_API_BASE_URL;
+  delete process.env.OPENDRSAI_OIDC_ISSUER;
 
   writeFileSync(getPlatformConfigPath(), 'active_platform = 2\n', "utf8");
   assert.equal(getActivePlatformConfig().name, "development");

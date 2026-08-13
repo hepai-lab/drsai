@@ -37,7 +37,7 @@ def test_operator_rollback_is_explicit_and_actionable() -> None:
     ]
     selected = select_conversation_protocol(
         capabilities,
-        {"oaep": {"version": "1.0", "profiles": ["oaep.session-stream/1"]}},
+        {"oaep": {"version": "1.0", "profiles": ["oaep.session-stream/1"], "schema_sha256": OAEP_SCHEMA_SHA256}},
         force_legacy=True,
     )
     assert selected.selected == "legacy"

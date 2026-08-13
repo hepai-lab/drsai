@@ -89,6 +89,49 @@ assert.deepEqual(deriveThreadActivity({
   thread: thread({ status: "error" }),
   backgroundTask: task("completed"),
 }), { kind: "idle" });
+assert.deepEqual(deriveThreadActivity({
+  thread: thread(),
+  snapshot: snapshot({
+    id: "m-terminal-interaction",
+    role: "assistant",
+    content: "Completed answer",
+    streaming: true,
+    structuredTurn: {
+      version: 2,
+      turnId: "turn-terminal-interaction",
+      status: "completed",
+      parts: [{
+        id: "capability-a",
+        kind: "interaction",
+        status: "pending",
+        requestId: "approval-a",
+        interactionType: "capability_configuration",
+        prompt: "Configure web search",
+      }],
+    },
+  }),
+}), { kind: "idle" });
+assert.deepEqual(deriveThreadActivity({
+  thread: thread(),
+  snapshot: snapshot({
+    id: "m-active-interaction",
+    role: "assistant",
+    content: "",
+    structuredTurn: {
+      version: 2,
+      turnId: "turn-active-interaction",
+      status: "pending",
+      parts: [{
+        id: "capability-b",
+        kind: "interaction",
+        status: "pending",
+        requestId: "approval-b",
+        interactionType: "capability_configuration",
+        prompt: "Configure web search",
+      }],
+    },
+  }),
+}), { kind: "attention", reason: "interaction" });
 
 const threads = [
   thread({ id: "thread-a", lastRequestId: "request-a", lastRunId: "run-a" }),
@@ -113,4 +156,4 @@ const indexed = indexBackgroundTasksByThread(threads, [newerRunning, waiting, di
 assert.equal(indexed.get("thread-a"), waiting);
 assert.equal(indexed.has("thread-b"), false);
 
-process.stdout.write("Thread activity verification passed (12 checks).\n");
+process.stdout.write("Thread activity verification passed (14 checks).\n");

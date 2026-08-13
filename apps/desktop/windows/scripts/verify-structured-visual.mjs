@@ -82,6 +82,7 @@ try {
   assert.match(await resultLayer.innerText(), /Final answer|最终回答/, "The final answer must remain visible outside process details.");
   await process.locator("summary").click();
   assert.equal(await process.evaluate((node) => node.hasAttribute("open")), true, "The completed process must be expandable.");
+  await process.locator(".structured-process-content").waitFor({ state: "visible" });
   const processText = await process.innerText();
   assert.match(processText, /Analysis summary|分析摘要/, "Reasoning must be labeled as an analysis summary.");
   assert.match(processText, /Result ready/, "Completed progress commentary must remain available in history.");

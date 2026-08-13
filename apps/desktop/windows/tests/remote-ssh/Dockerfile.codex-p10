@@ -12,7 +12,9 @@ COPY cores/python/packages/drsai /opt/drsai
 COPY cores/protocol /cores/protocol
 RUN python3 -m pip install --no-cache-dir /opt/drsai
 COPY apps/desktop/windows/tests/remote-ssh/fake_codex_app_server.py /usr/local/bin/codex-p10-fixture
-RUN chmod 755 /usr/local/bin/codex-p10-fixture
+RUN sed -i 's/\r$//' /usr/local/bin/codex-p10-fixture \
+    && chmod 755 /usr/local/bin/codex-p10-fixture \
+    && /usr/local/bin/codex-p10-fixture </dev/null
 
 ARG OPENDRSAI_TEMPORARY_AUTHORIZED_KEY
 RUN printf '%s\n' "$OPENDRSAI_TEMPORARY_AUTHORIZED_KEY" > /home/vscode/.ssh/authorized_keys \

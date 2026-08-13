@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+from collections import deque
 import json
 import os
 from urllib.parse import quote
 import zipfile
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Iterable
 
@@ -30,6 +31,19 @@ V3_REQUIRED_SOURCES = {
     "relay_postgres",
     "diagnostics",
 }
+P6_REQUIRED_SOURCES = {
+    "android_apk",
+    "android_logs",
+    "android_room",
+    "android_backup",
+    "windows_database",
+    "windows_dpapi",
+    "windows_logs",
+    "windows_dump",
+    "relay_postgres",
+    "relay_redis",
+    "relay_logs",
+}
 
 
 @dataclass(frozen=True)
@@ -42,15 +56,50 @@ class ArtifactResult:
     leak_locations: tuple[str, ...]
 
 
+class _StreamingMultiPatternMatcher:
+    """Aho-Corasick matcher with state preserved across fixed-size chunks."""
+
+    def __init__(self, patterns: tuple[bytes, ...]) -> None:
+        unique = tuple(dict.fromkeys(patterns))
+        if not unique or any(not pattern for pattern in unique):
+            raise ValueError("secret canary patterns must be non-empty")
+        self._next: list[dict[int, int]] = [{}]
+        self._fail = [0]
+        self._match = [False]
+        for pattern in unique:
+            state = 0
+            for value in pattern:
+                state = self._next[state].setdefault(value, len(self._next))
+                if state == len(self._next):
+                    self._next.append({})
+                    self._fail.append(0)
+                    self._match.append(False)
+            self._match[state] = True
+        pending: deque[int] = deque(self._next[0].values())
+        while pending:
+            state = pending.popleft()
+            for value, target in self._next[state].items():
+                pending.append(target)
+                fallback = self._fail[state]
+                while fallback and value not in self._next[fallback]:
+                    fallback = self._fail[fallback]
+                self._fail[target] = self._next[fallback].get(value, 0)
+                self._match[target] = self._match[target] or self._match[self._fail[target]]
+
+    def contains(self, stream: BinaryIO) -> bool:
+        state = 0
+        while chunk := stream.read(CHUNK_SIZE):
+            for value in chunk:
+                while state and value not in self._next[state]:
+                    state = self._fail[state]
+                state = self._next[state].get(value, 0)
+                if self._match[state]:
+                    return True
+        return False
+
+
 def _contains_canary(stream: BinaryIO, canaries: tuple[bytes, ...]) -> bool:
-    overlap = max(map(len, canaries), default=1) - 1
-    tail = b""
-    while chunk := stream.read(CHUNK_SIZE):
-        window = tail + chunk
-        if any(canary in window for canary in canaries):
-            return True
-        tail = window[-overlap:] if overlap else b""
-    return False
+    return _StreamingMultiPatternMatcher(canaries).contains(stream)
 
 
 def _files(path: Path) -> Iterable[Path]:
@@ -150,6 +199,16 @@ def run(manifest: Path, environment_name: str) -> dict:
             raise ValueError(
                 "mobile V3 secret sources missing: " + ",".join(sorted(missing))
             )
+    if definition.get("profile") == "mobile-remote-workspace-p6":
+        missing = P6_REQUIRED_SOURCES - set(labels)
+        extra = set(labels) - P6_REQUIRED_SOURCES
+        if missing or extra:
+            raise ValueError(
+                "mobile P6 secret source set invalid: missing="
+                + ",".join(sorted(missing))
+                + ";extra="
+                + ",".join(sorted(extra))
+            )
     results = [
         scan_artifact(str(item["label"]), Path(item["path"]).expanduser(), canaries)
         for item in artifacts
@@ -171,7 +230,6 @@ def run(manifest: Path, environment_name: str) -> dict:
             }
             for item in results
         ],
-        "results": [asdict(item) for item in results],
     }
 
 

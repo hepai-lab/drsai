@@ -97,6 +97,7 @@ export class StreamingCaptureController {
       batch.durationMs,
     );
     const accepted = this.options.onChunk({
+      protocolVersion: 2,
       sessionId: this.options.sessionId,
       turnId: this.options.turnId,
       sequence: batch.sequence,

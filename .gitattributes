@@ -1,0 +1,2 @@
+# Regression fixture digests must be identical on Windows and Unix checkouts.
+eval/regression/assets/workspaces/readonly_diagnosis_v1/**/*.py text eol=lf

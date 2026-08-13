@@ -1,0 +1,69 @@
+{
+  "application": {
+    "application_id": "ai.drsai.remote.debug",
+    "version_name": "1.5.6"
+  },
+  "artifacts": {
+    "app_apk": {
+      "name": "OpenDrSai-Android-v1.5.6.apk",
+      "sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24"
+    },
+    "test_apk": {
+      "name": "app-debug-androidTest.apk",
+      "sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5"
+    }
+  },
+  "environment": {
+    "abi": "x86_64",
+    "api": 30,
+    "avd": "OpenDrSai_P9_API30",
+    "device_id_sha256": "5bc97c0053cf072599505a1c2553c05b300d5f20d1502fee86dacab730a2e238",
+    "kind": "emulator",
+    "manufacturer": "Google",
+    "model": "sdk_gphone_x86_64",
+    "serial": "emulator-5554"
+  },
+  "evidence_tier": "emulator_preflight",
+  "feature_ids": [],
+  "generated_at": "2026-08-11T20:26:31.582875+00:00",
+  "lifecycle": null,
+  "observations": {},
+  "release_evidence": false,
+  "requested": {
+    "attempts": 3,
+    "case": null,
+    "models": [
+      "deepseek-v4-flash",
+      "deepseek-v4-pro"
+    ]
+  },
+  "runtime": {
+    "abis": {
+      "arm64-v8a": "3.12",
+      "x86_64": "3.12"
+    },
+    "python_version": "3.12"
+  },
+  "schema_version": "opendrsai.p9-emulator-preflight-manifest/1",
+  "smoke_tests": {
+    "ai.drsai.remote.P9AgentEventVisibilityInstrumentedTest": {
+      "passed": true,
+      "path": "docs/android/reports/preflight/p9-emulator/api30/instrumentation-ai.drsai.remote.P9AgentEventVisibilityInstrumentedTest.txt",
+      "sha256": "088c00c306437c91880a9257cc9d61f355e2234c4fbbc271d9c6b93633860195",
+      "tests": 3
+    },
+    "ai.drsai.remote.PythonRuntimeCriticalJourneyTest": {
+      "passed": true,
+      "path": "docs/android/reports/preflight/p9-emulator/api30/instrumentation-ai.drsai.remote.PythonRuntimeCriticalJourneyTest.txt",
+      "sha256": "c088b250bb02a2b5f550462b55ef502e228a75ed06c36f251993c6c4cf16c546",
+      "tests": 1
+    },
+    "ai.drsai.remote.PythonRuntimeServiceTest#runtimeProcessExecutesBundledPythonCoreAndReturnsIdentity": {
+      "passed": true,
+      "path": "docs/android/reports/preflight/p9-emulator/api30/instrumentation-ai.drsai.remote.PythonRuntimeServiceTest#runtimeProcessExecutesBundledPythonCoreAndReturnsIdentity.txt",
+      "sha256": "0356e325c1ff5fae4f3423506304b38686f0e2ab079230e0c450f78304f5d925",
+      "tests": 1
+    }
+  },
+  "started_at": "2026-08-11T20:26:16.421079+00:00"
+}

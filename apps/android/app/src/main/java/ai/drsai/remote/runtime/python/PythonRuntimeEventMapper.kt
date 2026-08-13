@@ -550,5 +550,8 @@ object PythonRuntimeEventMapper {
             }
         },
         retryable = payload.optBoolean("retryable", true),
+        details = buildMap {
+            if (payload.has("status") && !payload.isNull("status")) put("status", payload.getInt("status"))
+        },
     )
 }

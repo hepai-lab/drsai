@@ -123,6 +123,16 @@ def test_opendrsai_autogen_encoding_reuses_oaep_resources_and_preserves_images(t
     assert "P3-TRACE-42" in task.content[3]
 
 
+def test_opendrsai_autogen_encoding_hides_trusted_regression_control_from_model(tmp_path: Path) -> None:
+    task = autogen_input_task("run case", [resource(
+        "regression-control", "selection",
+        name="OpenDrSai regression control",
+        content='{"schema_version":"opendrsai.regression-control/1","successful_result":"SECRET"}',
+    )], workspace_path=tmp_path)
+    assert isinstance(task, MultiModalMessage)
+    assert task.content == ["run case"]
+
+
 def test_opendrsai_autogen_encoding_rechecks_staged_file_identity(tmp_path: Path) -> None:
     target = tmp_path / "note.txt"
     target.write_text("changed", encoding="utf-8")

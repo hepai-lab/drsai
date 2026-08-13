@@ -9,6 +9,7 @@ const read = (path) => readFileSync(resolve(repositoryRoot, path), "utf8");
 
 const installer = read("scripts/install.ps1");
 const launcherEntry = read("apps/desktop/windows-desktop-dev.cmd");
+const productionLauncherEntry = read("apps/desktop/windows-desktop-prod.cmd");
 const launcher = read("apps/desktop/windows/scripts/dev.ps1");
 const paths = read("apps/desktop/shared/main/desktopPaths.ts");
 const app = read("apps/desktop/shared/renderer/src/App.tsx");
@@ -30,16 +31,30 @@ assert.ok(!installer.includes("-ItemType SymbolicLink"));
 assert.ok(!installer.includes("mklink /J"));
 assert.ok(installer.includes('$PackageDir = Join-Path $RepositorySource'));
 
-assert.ok(!launcherEntry.includes("-WithGateway"));
+assert.ok(!launcherEntry.includes("-HotLoad"));
 assert.ok(launcherEntry.includes("%*"));
+assert.equal(
+  launcherEntry.replace(/\r\n/g, "\n").replace("Development", "MODE"),
+  productionLauncherEntry.replace(/\r\n/g, "\n").replace("Production", "MODE"),
+);
+assert.ok(launcherEntry.includes("-LaunchMode Development"));
+assert.ok(productionLauncherEntry.includes("-LaunchMode Production"));
 
 assert.ok(launcher.includes('$env:DRSAI_REPO = $RepoRoot'));
 assert.ok(launcher.includes('$env:OPENDRSAI_RUNTIME_ROOT = $InstallDir'));
-assert.ok(launcher.includes('Join-Path $env:USERPROFILE ".drsai-dev"'));
-assert.ok(launcher.includes('[int]$GatewayPort = 28642'));
+assert.ok(launcher.includes('".drsai-prod" } else { ".drsai-dev"'));
+assert.ok(launcher.includes('[int]$GatewayPort = 0'));
 assert.ok(launcher.includes('$env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData'));
 assert.ok(launcher.includes('$env:OPENDRSAI_DEV_HOME = $DrsaiHome'));
 assert.ok(launcher.includes('$env:OPENDRSAI_DEV_GATEWAY_PORT = [string]$GatewayPort'));
+assert.ok(launcher.includes('$GatewayEnabled = -not $NoGateway'));
+assert.ok(launcher.includes('$GatewayHotReload = $GatewayEnabled -and $HotLoad'));
+assert.ok(launcher.includes('$env:OPENDRSAI_RUNTIME_PERSIST = "0"'));
+assert.ok(launcher.includes('$env:OPENDRSAI_DESKTOP_LAUNCH_MODE = $LaunchModeName'));
+assert.ok(launcher.includes('$env:OPENDRSAI_ACTIVE_PLATFORM = if ($IsProductionLaunch)'));
+assert.ok(launcher.includes('OPENDRSAI_PLATFORM_API_BASE_URL'));
+assert.ok(launcher.includes('$env:OPENDRSAI_MODEL_BASE_URL = $PlatformModelBaseUrl'));
+assert.ok(launcher.includes('"https://ai.ihep.ac.cn/apiv2/v1"'));
 assert.ok(launcher.includes('[string]$PipIndexUrl = "https://pypi.tuna.tsinghua.edu.cn/simple"'));
 assert.ok(launcher.includes('$env:PIP_INDEX_URL'));
 assert.ok(launcher.includes('$env:OPENDRSAI_DEV_PIP_INDEX_URL'));
@@ -91,10 +106,20 @@ assert.ok(windowsMain.includes("[DRSAI_HOME, DRSAI_REPO]"));
 assert.ok(windowsMain.includes('app.setPath("userData", resolve(configuredElectronUserData))'));
 assert.ok(windowsMain.startsWith('import "./developmentLaunchEnvironment";'));
 assert.ok(developmentLaunchEnvironment.includes('process.defaultApp === true'));
-assert.ok(developmentLaunchEnvironment.includes('join(input.userHome, ".drsai-dev")'));
+assert.ok(developmentLaunchEnvironment.includes('production ? ".drsai-prod" : ".drsai-dev"'));
 assert.ok(developmentLaunchEnvironment.includes('OPENDRSAI_GATEWAY_PORT: port'));
-assert.ok(developmentLaunchEnvironment.includes('OPENDRSAI_DEEP_LINK_PROTOCOL: "opendrsai-dev"'));
+assert.ok(developmentLaunchEnvironment.includes('production ? "opendrsai" : "opendrsai-dev"'));
+assert.ok(developmentLaunchEnvironment.includes('"--opendrsai-launch-mode="'));
+assert.ok(developmentLaunchEnvironment.includes('"--opendrsai-launch-home="'));
 assert.ok(windowsMain.includes('? "opendrsai-dev"'));
+assert.ok(windowsMain.includes("getSourceProtocolLaunchArguments()"));
+assert.ok(windowsMain.includes('`--opendrsai-launch-mode=${launchMode}`'));
+assert.ok(windowsMain.includes('`--opendrsai-launch-home=${resolve(launchHome)}`'));
 assert.ok(windowsMain.includes("isLocalRuntimeUnavailableError(error)"));
+assert.ok(windowsMain.includes("resolveLegacyLocalWorkspaceLabel"));
+assert.ok(windowsMain.includes('requestedPath !== "Local workspace"'));
+assert.ok(windowsMain.includes("getIdeContext(resolvedWorkspacePath)"));
+assert.ok(windowsMain.includes("listWorkspaceCheckpoints(resolvedWorkspacePath)"));
+assert.ok(windowsMain.includes("getMyDrSaiConfig(resolvedWorkspacePath ?? undefined)"));
 
 console.log("Developer install and default-workspace startup verification passed.");

@@ -24,9 +24,15 @@ do not lower it to make an older, unsafe updater attempt a runtime update.
 
 ## Build and local gates
 
+The Runtime and MSI must follow the
+[Windows trusted build chain](trusted-build-chain.zh-CN.md). A versioned Runtime
+ZIP is not a completed build unless its matching `.receipt.json` passes final
+archive verification.
+
 ```powershell
 npm ci
 npm run build:runtime
+npm run verify:final-runtime
 npm run verify:update-helper
 npm run verify:e2e-update
 npm run manifest:win

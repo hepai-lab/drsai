@@ -22,17 +22,18 @@ def test_v4_public_smoke_requires_all_native_oaep_endpoints() -> None:
 
 def test_v4_public_smoke_requires_native_oaep_schemas() -> None:
     assert MODULE.OAEP_SCHEMA_NAMES == {"OaepSnapshot", "OaepEventPage", "OaepEvent"}
-    assert len(MODULE.OAEP_SCHEMA_SHA256) == 64
+    assert len(MODULE.authoritative_schema_hash()) == 64
 
 
 def test_v4_public_smoke_requires_authoritative_schema_hash_on_all_routes() -> None:
+    schema_hash = MODULE.authoritative_schema_hash()
     openapi = {
         "paths": {
-            path: {"get": {"x-oaep-schema-sha256": MODULE.OAEP_SCHEMA_SHA256}}
+            path: {"get": {"x-oaep-schema-sha256": schema_hash}}
             for path in MODULE.OAEP_PATHS
         }
     }
-    assert MODULE.validate_schema_hash(openapi) == MODULE.OAEP_SCHEMA_SHA256
+    assert MODULE.validate_schema_hash(openapi) == schema_hash
     first = next(iter(MODULE.OAEP_PATHS))
     openapi["paths"][first]["get"]["x-oaep-schema-sha256"] = "0" * 64
     try:

@@ -57,6 +57,20 @@ class PythonRuntimeEventMapperTest {
     }
 
     @Test
+    fun `provider http status remains typed OAEP error detail`() {
+        val normalized = PythonRuntimeEventMapper.decode(event(
+            "run.failed",
+            JSONObject().put("code", "provider_http_429").put("message", "retry later")
+                .put("retryable", true).put("status", 429),
+        )) as NormalizedAgentEvent.RunFailed
+
+        assertEquals("provider_http_429", normalized.error.code)
+        assertEquals("retry later", normalized.error.message)
+        assertTrue(normalized.error.retryable)
+        assertEquals(429, normalized.error.details["status"])
+    }
+
+    @Test
     fun `run start exposes frozen capability categories as OAEP diagnostic notice`() {
         val diagnostic = JSONObject()
             .put("available", JSONArray().put("model.chat"))

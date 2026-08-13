@@ -13,6 +13,11 @@ _FIELDS = ("id", "session_id", "run_id", "type", "status", "sequence", "source",
 
 def _semantic_item(item: Mapping[str, Any]) -> dict[str, Any]:
     value = {field: item[field] for field in _FIELDS}
+    source = dict(value["source"])
+    for key in tuple(source):
+        if key != "backend" and source[key] is None:
+            source.pop(key)
+    value["source"] = source
     content = dict(value["content"])
     defaults: dict[str, dict[str, Any]] = {
         "message": {"citations": []},
@@ -27,6 +32,22 @@ def _semantic_item(item: Mapping[str, Any]) -> dict[str, Any]:
     # are the same OAEP semantic value (matching Android canonicalization).
     if content.get("parts") == []:
         content.pop("parts")
+    if value["type"] in {"command_execution", "tool_call"} and content.get("replay_policy") == {}:
+        content.pop("replay_policy")
+    optional_null_fields: dict[str, set[str]] = {
+        "message": {"phase"},
+        "command_execution": {"stdout_tail", "stderr_tail", "exit_code", "duration_ms"},
+        "tool_call": {"server", "duration_ms"},
+        "artifact": {"path", "mime_type", "size", "sha256"},
+        "interaction": {
+            "approval_id", "operation", "related_item_id", "response", "deadline_at",
+        },
+        "subtask": {"agent_name", "child_run_id", "result"},
+        "notice": {"error"},
+    }
+    for key in optional_null_fields.get(str(value["type"]), set()):
+        if content.get(key) is None:
+            content.pop(key, None)
     value["content"] = content
     return value
 
@@ -58,6 +79,19 @@ def canonical_oaep_items(items: Sequence[Mapping[str, Any]]) -> str:
             raise ValueError("oaep_digest_item_invalid:" + ",".join(missing))
         rows.append(_normalize(_semantic_item(item)))
     return json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_oaep_item(item: Mapping[str, Any]) -> str:
+    """Canonicalize one already ordered Item for bounded-memory checkpoints."""
+    missing = [field for field in _FIELDS if field not in item]
+    if missing:
+        raise ValueError("oaep_digest_item_invalid:" + ",".join(missing))
+    return json.dumps(
+        _normalize(_semantic_item(item)),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def oaep_items_digest(items: Sequence[Mapping[str, Any]]) -> str:
