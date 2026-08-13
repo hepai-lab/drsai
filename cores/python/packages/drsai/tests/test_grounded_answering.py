@@ -96,6 +96,35 @@ def test_grounded_withholds_tools_that_reach_outside_the_material() -> None:
     assert "run_read" in allowed
 
 
+def test_agent_config_carries_grounded_without_changing_the_default_prompt() -> None:
+    from drsai.backend.runtime.agent_kernel import AgentRunConfig
+
+    plain = AgentRunConfig.from_mapping({"schema_version": 1, "system_prompt": "s", "tool_policy": "t"})
+    grounded = AgentRunConfig.from_mapping({
+        "schema_version": 1, "system_prompt": "s", "tool_policy": "t", "grounded": True,
+    })
+
+    # A surface that does not send the flag must produce a byte-identical
+    # prompt, which is what keeps the other surfaces unaffected.
+    assert plain.grounded is False
+    assert plain.authoritative_prompt() == AgentRunConfig(system_prompt="s", tool_policy="t").authoritative_prompt()
+    assert plain.prompt_layer_diagnostics() == AgentRunConfig(
+        system_prompt="s", tool_policy="t",
+    ).prompt_layer_diagnostics()
+
+    # Setting it through the config alone is enough; no call site has to
+    # forward a keyword down the assembly path.
+    assert "grounded_answering" in {layer["id"] for layer in grounded.prompt_layers()}
+    assert grounded.authoritative_prompt() != plain.authoritative_prompt()
+
+
+def test_agent_config_rejects_a_non_boolean_grounded_flag() -> None:
+    from drsai.backend.runtime.agent_kernel import AgentRunConfig
+
+    with pytest.raises(ValueError):
+        AgentRunConfig.from_mapping({"schema_version": 1, "grounded": "yes"})
+
+
 def test_grounded_follows_the_kernel_classification_not_a_local_list() -> None:
     # Run history is material outside the supplied corpus: an answer copied
     # from a previous Run is the same failure as one copied from the web.

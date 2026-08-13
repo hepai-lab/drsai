@@ -31,6 +31,7 @@ from ...config.knowledge_registry import (
     put_knowledge_resource,
     search_local_knowledge_scope,
 )
+from .grounded import detect_grounded_request, partition_grounded_tools
 from .desktop_autogen_ports import (
     AgentKernelCheckpointPort,
     AutogenDesktopModelPort,
@@ -1534,6 +1535,24 @@ async def run_agent_through_kernel(
     if not isinstance(host_capabilities, Sequence) or isinstance(host_capabilities, (str, bytes)):
         raise RuntimeError("desktop_kernel_host_capabilities_missing")
     run_id = f"desktop-{uuid.uuid4()}"
+    # Only an explicit request switches this on, so an ordinary question keeps
+    # every tool and the usual prompt. Withholding the tools is the part the
+    # model cannot ignore: told not to search the web it may still do so, and
+    # a refusal that should have been "the material does not say" silently
+    # becomes an answer from somewhere else.
+    grounded_decision = detect_grounded_request(normalized_task.input_text)
+    grounded = bool(grounded_decision["grounded"])
+    if grounded:
+        allowed_tool_names, withheld_tool_names = partition_grounded_tools(
+            [str(schema["name"]) for schema in schemas if isinstance(schema, Mapping) and schema.get("name")]
+        )
+        allowed = set(allowed_tool_names)
+        schemas = [
+            schema for schema in schemas
+            if not isinstance(schema, Mapping) or str(schema.get("name", "")) in allowed
+        ]
+    else:
+        withheld_tool_names = ()
     start = build_desktop_start_envelope(
         run_id=run_id,
         session_id=current_session_id,
@@ -1562,8 +1581,15 @@ async def run_agent_through_kernel(
                 "be opened and bound to the claim it supports."
             ),
             "agent_profile": _desktop_default_subagent_profile(agent),
+            "grounded": grounded,
         },
     )
+    # A missed trigger shows up as an answer with no citations rather than as
+    # an error, so the decision is recorded on the Agent for the Run journal
+    # instead of being left implicit.
+    setattr(agent, "_grounded_decision", {
+        **grounded_decision, "withheld_tools": list(withheld_tool_names),
+    })
     async for event in DesktopKernelRunStream(
         coordinator, assistant_name=str(getattr(agent, "name", "OpenDrSai")),
     ).execute(start):

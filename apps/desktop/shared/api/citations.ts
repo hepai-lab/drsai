@@ -10,7 +10,12 @@ import type { CitationPart, StructuredPartStatus } from "./structuredConversatio
 export interface OaepCitationPayload {
   citation_id?: string;
   knowledge_base_id?: string;
-  knowledge_base_revision?: string | number;
+  /**
+   * Wire field is `revision`. The evidence row it is built from calls this
+   * `knowledge_base_revision`, and declaring that name here would read
+   * undefined forever without anything failing.
+   */
+  revision?: string | number;
   document_id?: string;
   document_path?: string;
   document_sha256?: string;

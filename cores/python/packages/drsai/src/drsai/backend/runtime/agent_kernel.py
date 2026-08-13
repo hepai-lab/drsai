@@ -1615,6 +1615,12 @@ class AgentRunConfig:
     agent_profile: str = ""
     project_instructions: str = ""
     memory_summary: str = ""
+    # Set by a surface that has decided this turn must answer only from
+    # supplied material. Appended last and defaulting to False so a surface
+    # that does not set it produces a byte-identical prompt, and deliberately
+    # not part of the schema version: raising that would stop every surface
+    # still sending the current one.
+    grounded: bool = False
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "AgentRunConfig":
@@ -1631,6 +1637,9 @@ class AgentRunConfig:
         agent_profile = raw.get("agent_profile", "")
         project_instructions = raw.get("project_instructions", "")
         memory_summary = raw.get("memory_summary", "")
+        grounded = raw.get("grounded", False)
+        if not isinstance(grounded, bool):
+            raise ValueError("agent_grounded_invalid")
         if not isinstance(prompt_version, str) or not prompt_version.strip() or len(prompt_version) > 100:
             raise ValueError("agent_prompt_version_invalid")
         if not isinstance(system_prompt, str) or not system_prompt.strip() or len(system_prompt) > MAX_SYSTEM_PROMPT_CHARS:
@@ -1652,6 +1661,7 @@ class AgentRunConfig:
             agent_profile=agent_profile.strip(),
             project_instructions=project_instructions.strip(),
             memory_summary=memory_summary.strip(),
+            grounded=grounded,
         )
 
     def prompt_layers(
@@ -1666,9 +1676,12 @@ class AgentRunConfig:
                 f"[TOOL_POLICY]\n{self.tool_policy}"
             )},
         ]
-        if grounded:
+        if grounded or self.grounded:
             # Placed above the Agent Profile so a profile, Skill or Project
             # instruction cannot loosen "answer only from the material".
+            # Reading the flag off the config is what lets a surface turn this
+            # on through the Agent config it already sends, without every call
+            # site down the assembly path having to forward a keyword.
             layers.append(grounded_prompt_layer())
         if self.agent_profile:
             layers.append({"id": "agent_profile", "source": "agent", "content": f"[AGENT_PROFILE]\n{self.agent_profile}"})

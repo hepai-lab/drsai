@@ -7,12 +7,12 @@
 
 > **Current implementation baseline**
 > - Last full audit: 2026-08-13
-> - Audited commit: `2069d9d4c50ad3c01515de479a6a3b3d93ef54c4`
-> - Audit mode: Full baseline
+> - Last incremental audit: 2026-08-13 (55 commits `2069d9d4..381d3f0f`)
+> - Audited commit: `381d3f0fe5b90450ce6ec38461797bb3894d95da`
+> - Audit mode: Incremental (grounded-answering / duplex voice / OIDC login / mobile pairing / installer)
 > - Audit scope: `apps/desktop/` Windows Electron mainline + `shared/`
-> - Working-tree state at audit: **commit + uncommitted refinements** to grounded-answering / attachment-coverage / citation-projection pipeline (`shared/main/chat.ts`, `shared/main/threadRuntimeProjection.ts`, `shared/renderer/src/adapters/useDesktopChatAdapter.ts`, `shared/api/citations.ts`). Reviewed; no Catalog state change — all touched features were already ≥🟨 before these edits.
-> - Status totals: 🟩 313 · 🟨 118 · 🟥 73 · ➖ 3 · ⬜ 5 (total 512)
-> - Next incremental audit baseline: `2069d9d4c50ad3c01515de479a6a3b3d93ef54c4`
+> - Status totals: 🟩 317 · 🟨 117 · 🟥 73 · ➖ 3 · ⬜ 5 (total 515)
+> - Next incremental audit baseline: `381d3f0fe5b90450ce6ec38461797bb3894d95da`
 
 ---
 
@@ -321,6 +321,7 @@ Desktop Agent Capability Catalog
 - 🟩 `DESK-INP-027` 图片拖入输入区
 - 🟩 `DESK-INP-028` Voice Input
 - 🟥 `DESK-INP-029` 屏幕内容选择 / Capture — 无 screen selection/capture 入口
+- 🟩 `DESK-INP-030` Voice — Duplex — barge-in / continuous 全双工语音，与序列/流式语音输入并存
 
 ---
 
@@ -637,7 +638,7 @@ Desktop Agent Capability Catalog
 
 ## 14.1 Identity
 
-- 🟨 `DESK-ID-001` 登录 — OIDC/WeChat 后端就绪，LoginScreen 未见 WeChat 入口
+- 🟨 `DESK-ID-001` 登录 — OIDC 支持 device-code 流程；WeChat/IHEP ticket 入口已移除
 - 🟩 `DESK-ID-002` 登出
 - 🟩 `DESK-ID-003` 当前用户展示
 - 🟨 `DESK-ID-004` Token 失效提示 — 隐式 refresh，无独立提示
@@ -655,6 +656,8 @@ Desktop Agent Capability Catalog
 - 🟥 `DESK-ID-013` Account Switch — 需登出重登
 - 🟥 `DESK-ID-014` Role 展示 — 无角色 UI
 - 🟩 `DESK-ID-015` Workspace 切换后的状态刷新
+- 🟩 `DESK-ID-016` Mobile Pairing — QR 授权、workspace/permission scope 缩减、有效期与吊销
+- 🟩 `DESK-ID-017` Mobile Remote Diagnostics — 配对向导使用的移动端诊断/健康面
 
 ---
 
@@ -848,7 +851,7 @@ Desktop Agent Capability Catalog
 - 🟩 `DESK-PKG-001` 首次安装
 - 🟩 `DESK-PKG-002` 自定义安装目录
 - 🟩 `DESK-PKG-003` Shortcut 创建
-- 🟨 `DESK-PKG-004` 安装失败处理 — 有失败日志，无自动回滚
+- 🟩 `DESK-PKG-004` 安装失败处理
 - 🟩 `DESK-PKG-005` 重装
 - 🟩 `DESK-PKG-006` Silent Install
 - 🟩 `DESK-PKG-007` Offline Installer

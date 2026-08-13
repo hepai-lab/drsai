@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import ast
 import hashlib
+import re
 import json
 from typing import Any
 
@@ -60,6 +61,9 @@ def _web_citation_candidates(value: Any) -> list[dict[str, str]]:
     return list(unique.values())
 
 
+_CITATION_MARKER = re.compile(r"\[E(\d{1,3})\]")
+
+
 @dataclass(slots=True)
 class DesktopKernelTurnState:
     assistant_name: str
@@ -67,13 +71,37 @@ class DesktopKernelTurnState:
     terminal_kind: str | None = None
     terminal_payload: dict[str, Any] = field(default_factory=dict)
     citation_candidates: list[dict[str, Any]] = field(default_factory=list)
+    # Set by the run stream when this turn must answer only from supplied
+    # material; it is what lets a refusal still cite the scope it searched.
+    grounded: bool = False
 
     @property
     def final_text(self) -> str:
         return "".join(self.text_parts)
 
     def message_metadata(self, text: str) -> dict[str, str]:
-        citations = [item for item in self.citation_candidates if str(item.get("url") or "") in text]
+        """Select the citations this answer actually stands on.
+
+        A source is cited when the answer names its URL, which is how web
+        answers work. Grounded answers instead carry ``[E1]`` markers, because
+        no model reproduces an internal ``opendrsai://`` identifier verbatim
+        and matching on it would silently yield an answer with no citations at
+        all. Both are honoured, so non-grounded turns behave exactly as before.
+        """
+
+        markers = {int(value) for value in _CITATION_MARKER.findall(text)}
+        citations = [
+            item for item in self.citation_candidates
+            if str(item.get("url") or "") in text or item.get("marker") in markers
+        ]
+        if not citations and self.grounded:
+            # A refusal cites the scope it searched. Emitting nothing here
+            # would make "I checked these documents and they do not say"
+            # indistinguishable from an answer that consulted nothing.
+            citations = [
+                item for item in self.citation_candidates
+                if item.get("relation") == "searched_scope"
+            ]
         return {
             "internal": "no",
             **({"citations_json": json.dumps(citations, ensure_ascii=False, separators=(",", ":"), sort_keys=True)} if citations else {}),
@@ -137,6 +165,13 @@ def translate_kernel_event(
                     "revision": item.get("knowledge_base_revision") or document.get("knowledge_base_revision"),
                     "document_path": document_path,
                     "corpus_complete": document.get("corpus_complete") is True,
+                    # Carried so a citation can be opened at the place it came
+                    # from. Naming the file alone leaves the reader to search
+                    # it, which is not a checkable citation.
+                    "locator": item.get("locator") if isinstance(item.get("locator"), dict) else {},
+                    "locator_label": str(item.get("locator_label") or ""),
+                    "document_sha256": str(item.get("document_sha256") or document.get("sha256") or ""),
+                    "marker": len(state.citation_candidates) + 1,
                 })
         if kind == "tool.result" and payload.get("name") in {"web_search", "web_fetch"}:
             existing = {str(item.get("url") or "") for item in state.citation_candidates}
