@@ -48,6 +48,34 @@ const haiTest = existsSync(haiTestPath) ? readHai("backend/webui/test/apps/webui
 
 const checks = [
   [
+    "obsolete desktop-auth ticket bridge is removed from production and tests",
+    !auth.includes("/api/desktop-auth/start") &&
+      !auth.includes("/api/desktop-auth/wechat/start") &&
+      !auth.includes("/api/desktop-auth/poll/") &&
+      !auth.includes("/api/desktop-auth/cancel/") &&
+      !auth.includes("startDesktopSsoLogin") &&
+      !auth.includes("startWechatDesktopLogin") &&
+      !auth.includes("pollDesktopSsoLogin") &&
+      !auth.includes("cancelDesktopSsoLogin"),
+  ],
+  [
+    "main process implements RFC 8628 device authorization with safe fallback",
+    auth.includes("device_authorization_endpoint") &&
+      auth.includes("urn:ietf:params:oauth:grant-type:device_code") &&
+      auth.includes('error.code === "authorization_pending"') &&
+      auth.includes('error.code === "slow_down"') &&
+      auth.includes("intervalMs += 5000") &&
+      auth.includes('error.code === "access_denied"') &&
+      auth.includes('error.code === "expired_token"') &&
+      auth.includes("pendingOidcDeviceLogin.abort()") &&
+      auth.includes("createOidcSession(token, rememberMe)") &&
+      login.includes('data-testid="oidc-device-code"') &&
+      login.includes("Copy code") &&
+      e2eOidc.includes("device_authorization_endpoint") &&
+      e2eOidc.includes("devicePending") &&
+      e2eOidc.includes("deviceToken"),
+  ],
+  [
     "shared/preload/main expose browser OIDC IPC",
     api.includes('authMode: "password" | "api_key" | "sso" | "oidc" | "offline" | null') &&
       api.includes('"hai"') &&

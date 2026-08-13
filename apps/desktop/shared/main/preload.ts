@@ -235,8 +235,6 @@ import type {
   DesktopWorkflowRunStepDispatchResult,
   DesktopWorkflowRunStartRequest,
   DesktopWorkflowRunStartResult,
-  DesktopSsoPollResult,
-  DesktopSsoStartResult,
   GatewayStatus,
   InstallStatus,
   InstallProgress,
@@ -385,14 +383,6 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:start-oidc-login", request),
   cancelOidcLogin: (): Promise<boolean> =>
     ipcRenderer.invoke("desktop:cancel-oidc-login"),
-  startDesktopSsoLogin: (): Promise<DesktopSsoStartResult> =>
-    ipcRenderer.invoke("desktop:start-desktop-sso-login"),
-  startWechatDesktopLogin: (): Promise<DesktopSsoStartResult> =>
-    ipcRenderer.invoke("desktop:start-wechat-desktop-login"),
-  pollDesktopSsoLogin: (deviceCode: string): Promise<DesktopSsoPollResult> =>
-    ipcRenderer.invoke("desktop:poll-desktop-sso-login", deviceCode),
-  cancelDesktopSsoLogin: (deviceCode: string): Promise<boolean> =>
-    ipcRenderer.invoke("desktop:cancel-desktop-sso-login", deviceCode),
   logout: (
     options?: LogoutOptions,
   ): Promise<{ ok: boolean; message: string }> =>

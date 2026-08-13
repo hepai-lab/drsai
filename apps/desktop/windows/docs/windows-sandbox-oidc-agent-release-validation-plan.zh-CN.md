@@ -52,7 +52,7 @@
 - Sandbox 内不得预装 Node.js、Python、Git 或开发版 OpenDrSai。
 - 不注入开发机的 `%USERPROFILE%\.drsai`。
 - 不注入 API Key，不设置旧 API Key 兜底环境变量。
-- OIDC 登录必须在 Sandbox 内由人工完成。
+- Sandbox 内由应用申请设备码并轮询；用户只在宿主机可信浏览器中登录并明确批准，不复制密码、Cookie 或 Token。
 - 网络使用 Sandbox 自身网络；`localhost` 指向 Sandbox，不指向宿主机代理。
 - 输入目录只读映射，证据目录可写映射。
 - 每次验收使用独立 `runId`，例如 `20260810-153000-v157-online`。
@@ -80,7 +80,7 @@ artifacts/sandbox/<runId>/
 ### 4.2 运行中
 
 - 不关闭 Sandbox，直到证据清单和 `acceptance-result.json` 已复制到宿主机。
-- 人工只负责 OIDC 浏览器登录、必要的同意按钮，以及确认界面现象。
+- 人工只负责在宿主机浏览器完成 OIDC 登录和设备授权同意，以及确认必要界面现象。
 - 其余下载、哈希、安装、状态采集和日志导出由脚本完成。
 
 ### 4.3 关闭
@@ -164,7 +164,7 @@ artifacts/sandbox/<runId>/
 
 ### 阶段 4：真实 OIDC 登录
 
-人工在 Sandbox 内完成 HepAI 登录。自动化程序不得把 access token、refresh token、授权码或 Cookie 写入证据目录。
+Sandbox 内 OpenDrSai 发起 Device Authorization Grant，宿主机只接收经校验的 HTTPS 验证地址并打开可信浏览器；用户在宿主机完成 HepAI 登录和明确批准。自动化程序不得把 access token、refresh token、device code、user code、授权码或 Cookie 写入证据目录。
 
 登录后只记录：
 
@@ -449,7 +449,7 @@ Runtime ZIP 验证器必须解包检查并在下列情况失败：
 
 完成后，每次 Windows 发布都应产生一份可审计的 Sandbox 验收包。发布负责人可以明确回答：用户实际下载了哪个文件、首次启动生成了什么配置、OIDC token 是否进入正确链路、Gateway 和智能体选择了哪个 Provider/模型、聊天请求在哪一层失败，以及修复候选版是否在干净 Windows 11 环境真正可用。
 
-人工参与被压缩为一次 Sandbox 内 OIDC 登录和界面确认；复现、采证、判定、脱敏与发布阻断均由脚本完成。
+人工参与被压缩为一次宿主机浏览器 OIDC 设备授权确认和必要界面确认；复现、采证、判定、脱敏与发布阻断均由脚本完成。
 
 ## 13. 已固化的发布与恢复流程
 
@@ -462,3 +462,10 @@ Runtime ZIP 验证器必须解包检查并在下列情况失败：
 5. `windows-release-promote.yml` 下载并重新验证密封证据后，才允许把 Draft 转为正式 Release。
 
 Sandbox 统一由 `windows-sandbox-session.ps1` 管理。若完整候选配置和最小空配置都无法建会，且 AppX 已注册、`vmcompute`/HNS 正常，则执行 `RepairRegistration`；执行别名仍未恢复时，注销或重启 Windows 后再试。启动超时只清理由控制器本次创建的 launcher PID，不结束 `WindowsSandboxServer.exe`、`vmcompute` 或 HNS。
+
+## 14. 沙盒交互约束
+
+- 验收人员只操作 OpenDrSai 界面和宿主机 OIDC 授权页面，不点击沙盒中的 `.cmd`、PowerShell 或终端窗口。
+- `watch-windows-sandbox-acceptance.ps1` 在后台自动验证登录、重启前后聊天、Tavily、注销，并调用最终验收器。
+- 成功自动生成 PASS 证据；超时或失败自动收集脱敏诊断。不得用人工点击脚本补齐缺失证据。
+- 升级验收根据基线版本的成功聊天遥测自动进入候选版本，不再使用“继续”CMD。

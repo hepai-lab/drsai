@@ -9,6 +9,7 @@ import { remoteWorkspaceController } from "../../../../shared/main/remoteWorkspa
 import type { ScheduledTaskWorker } from "../../../../shared/main/scheduledTasks";
 import { managedProcessRegistry } from "../../../../shared/main/managedProcessRegistry";
 import { cleanupAllVoiceTempFiles } from "../../../../shared/main/voice";
+import { disposeAllDuplexVoiceSessions } from "../../../../shared/main/voice/duplex/controller";
 import { getGatewayStatus, stopGateway } from "../gateway";
 import type { InterruptionReason, MacosLifecycleRecoveryCoordinator } from "../lifecycleRecovery";
 import { MACOS_PLATFORM_SERVICES } from "../platformServices";
@@ -44,13 +45,13 @@ export function installMacosAppIntegrations(dependencies: MacosAppIntegrationDep
     { role: "help", submenu: [{ label: "OpenDrSai Documentation", click: () => { void shell.openExternal("https://github.com/hepai-lab/drsai"); } }] },
   ]));
   app.dock?.setMenu(Menu.buildFromTemplate([{ label: "Show OpenDrSai", click: dependencies.focusApp }, { label: "Settings…", click: dependencies.openSettings }]));
-  const recordInterruption = () => { recovery.observeInterruption(async () => (await getGatewayStatus()).ready); void portForwardRegistry.suspendAll(); };
+  const recordInterruption = () => { disposeAllDuplexVoiceSessions(); recovery.observeInterruption(async () => (await getGatewayStatus()).ready); void portForwardRegistry.suspendAll(); };
   const recoverInterruption = (reason: "resume" | "unlock") => { dependencies.recover(reason); void portForwardRegistry.resumeAll(); void dependencies.getScheduledTaskWorker()?.runOnce(); };
   powerMonitor.on("suspend", recordInterruption);
   powerMonitor.on("lock-screen", recordInterruption);
   powerMonitor.on("resume", () => recoverInterruption("resume"));
   powerMonitor.on("unlock-screen", () => recoverInterruption("unlock"));
-  powerMonitor.on("shutdown", () => { recovery.beginShutdown(); managedProcessRegistry.beginShutdown(); killAllTerminalSessions(); cleanupAllVoiceTempFiles(); void managedProcessRegistry.shutdownAll(); void stopGateway().catch(() => undefined); });
+  powerMonitor.on("shutdown", () => { recovery.beginShutdown(); managedProcessRegistry.beginShutdown(); killAllTerminalSessions(); disposeAllDuplexVoiceSessions(); cleanupAllVoiceTempFiles(); void managedProcessRegistry.shutdownAll(); void stopGateway().catch(() => undefined); });
   const handleDisplayChange = () => { dependencies.ensureWindowOnScreen(); dependencies.recover("display-change"); };
   screen.on("display-added", handleDisplayChange); screen.on("display-removed", handleDisplayChange); screen.on("display-metrics-changed", handleDisplayChange);
   let networkOnline = networkIsOnline(); recovery.setNetworkOnline(networkOnline);

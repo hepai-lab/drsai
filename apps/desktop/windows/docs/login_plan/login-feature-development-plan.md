@@ -8,9 +8,16 @@
 -> OpenDrSai 使用 HAI access token 调用后续 API -> 用户可刷新会话或退出登录
 ```
 
+该流程是正式桌面产品的默认方式，标准名称为 **OIDC Authorization Code Flow with PKCE**。设备码不是替代默认流程，而是用于 Windows Sandbox、无桌面/远程受限环境以及用户明确选择“在其他设备上登录”的补充方式。设备码协议、实现和验收矩阵见：
+
+- `docs/desktop/device-code-login-implementation-plan.zh-CN.md`
+
+两种方式最终必须复用相同的 Token 校验、安全存储、刷新、撤销、注销和 Runtime Bearer 链路。不得因为 discovery 声明设备授权端点，就把普通桌面登录静默改为设备码。
+
 参考设计文档：
 
 - `apps/desktop/windows/docs/login_plan/oidc-login-plan.md`
+- `docs/desktop/device-code-login-implementation-plan.zh-CN.md`
 
 涉及仓库：
 

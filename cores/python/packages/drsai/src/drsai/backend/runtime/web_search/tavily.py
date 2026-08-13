@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import logging
+import ssl
+import sys
 from typing import Any, Mapping
 
 import aiohttp
@@ -19,6 +21,18 @@ from .url_safety import UnsafeWebUrl, ensure_public_url, validate_url_shape
 logger = logging.getLogger(__name__)
 _MAX_REQUEST_ATTEMPTS = 3
 _RETRY_DELAYS_SECONDS = (0.25, 0.75)
+
+
+def _windows_system_trust_context() -> ssl.SSLContext | None:
+    """Return a TLS context backed by Windows CryptoAPI when available."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import truststore
+    except ImportError:
+        logger.warning("Windows system trust support is unavailable; using the Python default CA store")
+        return None
+    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 
 @dataclass(frozen=True)
@@ -78,7 +92,11 @@ class TavilyClient:
             # ``aiohttp`` does not unless ``trust_env`` is enabled, which made
             # the Tavily website reachable while the packaged Runtime's API
             # request incorrectly attempted a blocked direct connection.
-            async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
+            session_options: dict[str, Any] = {"timeout": timeout, "trust_env": True}
+            ssl_context = _windows_system_trust_context()
+            if ssl_context is not None:
+                session_options["connector"] = aiohttp.TCPConnector(ssl=ssl_context)
+            async with aiohttp.ClientSession(**session_options) as session:
                 async with session.post(f"{self.config.base_url}/{endpoint}", headers=headers, json=dict(payload)) as response:
                     request_id = response.headers.get("x-request-id", "")
                     if response.status >= 400:

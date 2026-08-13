@@ -1,7 +1,7 @@
 # OpenDrSai macOS v1.5.7 完整补齐、全自动验收与发布方案
 
-> 状态：执行基线草案
-> 基线日期：2026-08-12
+> 状态：已完成并发布
+> 基线日期：2026-08-12；完成日期：2026-08-13
 > 目标版本：macOS Desktop v1.5.7（Apple Silicon arm64）
 > 对照版本：Windows Desktop tag `v1.5.7`（commit `85b25aad`）
 > 发布目标：阿里云 OSS、macOS 稳定更新通道及 `opendrsai-dev.ihep.ac.cn` 线上验证
@@ -19,7 +19,7 @@
 5. OSS、更新元数据、网站下载入口和实际文件摘要一致；
 6. 所有证据绑定同一 clean commit、版本和产物哈希。
 
-当前 374/374 IPC parity 只能证明 preload、Windows main、macOS main 的通道数量一致，不能单独作为产品完成或发布结论。
+IPC parity 只能证明 preload、Windows main、macOS main 的通道数量一致，不能单独作为产品完成或发布结论。本次最终结论同时读取 72 项功能账本、50 项 P2 账本、L0～L6、真机、升级回滚、制品安全和公网发布证据。
 
 ## 2. Windows v1.5.7 产品基线
 
@@ -50,18 +50,18 @@
 - `apps/desktop/shared/main/preload.ts`
 - `apps/desktop/shared/renderer`
 
-历史台账曾使用 88、93 和 Phase 3 子集等不同统计口径。执行前必须生成唯一的 `macos-v1.5.7-feature-ledger.json`，每项包含 `featureId`、Windows source、macOS entry、IPC/service、test、evidence、status 和 platform exception；后续完成率只读取该账本。
+历史台账曾使用 88、93 和 Phase 3 子集等不同统计口径。最终唯一产品口径为 `apps/desktop/macos/build/acceptance/macos-feature-acceptance.json` 的 72 项 `featureId`；每项绑定需求、owner/capability、测试入口及源码摘要、L0～L6 证据、状态、缺失证据和 P0/P1。Windows 基线与 macOS 入口分别由本节事实来源、IPC inventory、suite entry 和 source snapshot 交叉绑定；P2 的 50 项工程交付单独统计，不与产品 72 项混算。
 
 ## 3. 当前事实基线
 
-截至 2026-08-12 的只读检查结果：
+截至 2026-08-13 的最终检查结果：
 
 | 项目 | 当前结果 | 判定 |
 | --- | --- | --- |
 | macOS package version | `1.5.7` | 满足目标版本 |
 | 架构/系统 | Apple Silicon arm64，macOS 26.5.2 | 可做真机验收 |
-| IPC inventory | preload 374 / Windows 374 / macOS 374 | 静态 parity 通过 |
-| main composition | 374 IPC | 组合静态检查通过 |
+| IPC inventory | preload 385 / Windows 385 / macOS 385 | 静态 parity 通过 |
+| main composition | 385 IPC | 组合静态检查通过 |
 | v1.5.7 parity 聚合门禁 | Node 22.23.2 下完整通过 | 通过 |
 | unsigned update-feed 门禁 | Node 22.23.2 下通过 | 通过 |
 | Node | `.nvmrc`、package engines、dev/setup/preflight 入口均固定 Node 22 | 通过；当前为 v22.23.2 / npm 10.9.8 |
@@ -69,14 +69,14 @@
 | Developer ID | `~/.keys/mac_developer` 的 P12/证书/私钥匹配；一次性 Keychain 真实签名和 strict verify 通过 | 通过；本地发布凭据 loader 已接入 |
 | 公证凭据 | Key ID、Issuer、P8 格式正确；`notarytool history` 认证通过 | 通过；本地发布凭据 loader 已接入 |
 | `ossutil` | `~/.local/bin/ossutil` v1.7.19 | 满足工具版本 |
-| OSS 配置 | `~/.keys/aliyun_oss/AccessKey.csv` 为 0600；stable stat 和 validation 前缀隔离写/读/删探针通过 | 发布权限就绪；stable 晋级仍受 L6 门禁保护 |
-| GitHub Device OAuth client ID | 未注入 | GitHub Channel 真实验收阻塞 |
+| OSS 配置 | `~/.keys/aliyun_oss/AccessKey.csv` 为 0600；隔离写/读/删探针及正式发布通过 | v1.5.7 stable 已晋级且旧 metadata 已归档用于回滚 |
+| GitHub | 未配置 | 可选备份渠道，本次 OSS-only 发布不依赖、不阻塞 |
 | 真实 Provider 平台会话 | 本机已有 `ai-dev.ihep.ac.cn` HepAI OIDC 会话与启用模型目录 | 统一平台真实模型矩阵可执行；不再要求六套外部 Provider 账号 |
 | macOS Keychain `ai.drsai.desktop` | 真实 put/get/replace/delete 原生测试通过 | 就绪；不保留验收秘密 |
 | OSS 发布事务静态测试 | 通过；stable metadata 最后更新且唯一可覆盖 | 设计满足 |
-| 线上发布入口 | `opendrsai-dev.ihep.ac.cn` HTTPS 200；macOS stable OSS/CDN 元数据 HTTPS 200 且支持 Range | 线上读取链可用；发布只需写 OSS，域名用于发布后验收 |
-| 上一稳定版本 | 线上 stable 为 macOS v1.5.3、Runtime v1.5.3；已从 OSS/CDN 下载并验证 size/SHA-512/严格签名 | v1.5.3 → v1.5.7 升级基线就绪 |
-| 工作树 | 存在大量任务开始前的未提交修改 | 不能签发 release attestation |
+| 线上发布入口 | `opendrsai-dev.ihep.ac.cn` HTTPS 200；stable 元数据、ZIP、DMG 的 HEAD/Range/长度/摘要通过 | 公网发布验收通过 |
+| 上一稳定版本 | v1.5.3 已完成真实 HTTPS 在线升级至 v1.5.7、健康检查、数据保持及失败回滚 | 通过 |
+| 发布源 | clean commit `2f85374be7bb952ec76277563b6a3a8b81d604bd` | release decision 为 `releasable`，blockers 为空 |
 
 本地 `~/.drsai` 和 `~/.drsai-dev` 存在认证、Runtime、Agent 和模型配置；敏感主配置、认证、Runtime token 和诊断 key 主要使用 0600。字段名审计未发现直接的 `api_key/token/secret/password` 配置项，但这不能替代 Keychain put/get/replace/delete 和真实 Provider 探针。
 
@@ -182,17 +182,17 @@ npm run verify:v1.5.7:all
 
 ## 6. 凭据与 Runner 准备
 
-生产环境必须通过 GitHub Environment `macos-production-release` 或等价的受控 secret store 注入，不把秘密写入仓库、命令行参数或日志。
+生产凭据由本机受控 secret store/0600 文件和临时 Keychain 注入，不把秘密写入仓库、命令行参数、日志或 receipt。GitHub Environment 仅在未来启用 GitHub 备份渠道时需要。
 
 | 能力 | 所需配置 | 当前状态 |
 | --- | --- | --- |
-| Developer ID | `MACOS_CSC_LINK`、`MACOS_CSC_KEY_PASSWORD` | 缺失 |
-| Apple 公证 | `APPLE_API_KEY`、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER` | 缺失 |
-| OSS | 固定版本 `ossutil`、0600 config、最小权限 RAM/STS | v1.7.19 和读取已通过；CSV 为 0644，写权限未验证 |
+| Developer ID | `~/.keys/mac_developer` 的 P12/证书/私钥，经 loader 注入临时 Keychain | 真实签名和 strict verify 通过 |
+| Apple 公证 | 同目录 API key/ID/Issuer，经 loader 注入 | notarization、staple、Gatekeeper 通过 |
+| OSS | 固定版本 `ossutil`、0600 config、最小权限 RAM/STS | 隔离探针和正式事务发布通过 |
 | GitHub Release | 可选备份渠道，不作为本次 OSS 发布硬门槛 | 本次可不配置 |
-| GitHub Channel | `OPENDRSAI_GITHUB_CLIENT_ID` | 缺失 |
+| GitHub Channel | 可选 `OPENDRSAI_GITHUB_CLIENT_ID` | 未启用，不是硬门槛 |
 | Provider 矩阵 | HepAI OIDC 会话、`https://ai-dev.ihep.ac.cn/apiv2/v1` 与发布启用模型；其他 Provider 类型使用无外部凭据的确定性协议矩阵 | 本机 HepAI 会话与模型配置已存在 |
-| 本地 App 凭据 | Keychain service `ai.drsai.desktop` | 未找到可确认条目 |
+| 本地 App 凭据 | Keychain service `ai.drsai.desktop` | 原生 put/get/replace/delete、锁定失败关闭及解锁恢复通过 |
 
 自动 readiness 脚本必须检查：变量存在但不输出值、证书有效期和唯一性、API key 文件 0600、Keychain put/get/delete、OSS stat、Provider 最小探针、Runner 标签、可用磁盘和网络。若启用 GitHub 备份发布，再检查 GitHub API 权限。真实写入或发布前仍需受控发布审批。
 
@@ -224,11 +224,11 @@ channels/stable/macos/arm64/latest-mac.yml
 
 GitHub Release 仅作为可选备份渠道，不是本次发布的硬性依赖。生产 workflow、晋级策略和发布后校验已实施 OSS-only；`prepare-previous-release.mjs` 已从 stable OSS/CDN metadata 解析、分段下载、摘要校验和展开上一签名 App。v1.5.3 的真实基线下载与严格验签已通过。
 
-`publish-update-to-oss.mjs` 的静态事务测试、`ossutil 1.7.19`、真实 stable 读取以及 validation 前缀隔离写/读/删探针均已通过。stable 晋级仍必须等待签名候选的 L4～L6 全绿后才允许执行。
+`publish-update-to-oss.mjs` 的静态事务测试、`ossutil 1.7.19`、真实 stable 读取以及 validation 前缀隔离写/读/删探针均已通过。L4～L6 全绿后已按上述顺序执行正式发布；旧 v1.5.3 metadata 已保存到 rollback key，v1.5.7 metadata 最后晋级。
 
 ## 8. `opendrsai-dev.ihep.ac.cn` 发布验证
 
-仓库当前更新源是 `https://download-opendrsai.ihep.ac.cn/`。本次不单独部署 `opendrsai-dev.ihep.ac.cn`：发布动作只写阿里云 OSS，`opendrsai-dev.ihep.ac.cn` 仅作为发布后的线上入口验收。2026-08-12 实测该域名 HTTPS 返回 200，stable macOS 元数据经 OSS/CDN 返回 200 并支持 Range。
+仓库当前更新源是 `https://download-opendrsai.ihep.ac.cn/`。本次未单独部署 `opendrsai-dev.ihep.ac.cn`：发布动作只写阿里云 OSS，该域名作为发布后的线上入口验收。2026-08-13 最终验收确认站点 HTTPS 200，stable 元数据为 v1.5.7，OSS/CDN ZIP/DMG 与本地候选逐字节一致并支持 Range。
 
 无论部署方式为何，最终自动验收至少包括：
 
@@ -270,18 +270,21 @@ npm run verify:website-release -- \
 - `opendrsai-dev.ihep.ac.cn` 页面和最终下载验收通过；
 - 所有 receipt 绑定同一 commit、version 和产物哈希。
 
-当前结论：**No-Go（已进入签名候选阶段）**。Node 22/PATH、Developer ID 真实签名、Apple 公证认证、OSS AccessKey 0600、OSS 隔离读/写/删权限、OSS-only 工作流和上一稳定版基线均已通过。剩余阻塞是 clean release commit、签名/公证最终产物的 L4～L6、从 v1.5.3 真实在线升级与回滚证据，以及最终 OSS stable 晋级和线上验证。
+最终结论：**Go / 已发布**。发布源 commit 为 `2f85374be7bb952ec76277563b6a3a8b81d604bd`，release decision 为 `releasable` 且 blockers 为空。72/72 产品功能和 50/50 P2 工程项 accepted，L0～L6、三种 HepAI 真实模型、Keychain/TCC、20/20 真机睡眠唤醒、v1.5.3 在线升级/回滚、签名/公证/staple/Gatekeeper、OSS/CDN 及网站验证全部通过。GitHub 未启用但不属于本次 OSS-only 发布范围。
 
-## 10. 实施进度（2026-08-12）
+## 10. 最终实施结果（2026-08-13）
 
 - 工具链：固定 Node `22.23.2`，npm `10.9.8`，增加 `.nvmrc`、package engines 和入口 fail-fast 校验。
-- L0～L3：功能账本与 IPC parity 为 `374/374/374`；67/67 套件全通过；共享业务行覆盖率 `88.93%`，核心状态机分支 `90.4%`，adapter `59.37%`；开放 P0/P1 为 0。
+- L0～L3：功能账本 72/72 accepted，P2 50/50 accepted，IPC parity 为 `385/385/385`；67/67 套件全通过；共享业务行覆盖率 `88.93%`，核心状态机分支 `90.4%`，adapter `59.37%`；开放 P0/P1 为 0。
 - 签名准备：P12 证书与私钥匹配，证书有效期到 2027-02-01；临时 Keychain 导入、hardened runtime 签名、严格验签与 `notarytool history` 均通过；预检状态为 `ready-to-build-signed-rc`。
-- OSS 准备：`ossutil 1.7.19`，AccessKey CSV 已收紧到 `0600`；stable 读取和 validation 前缀隔离创建/读取/删除探针通过，不触碰 stable 或版本化资产。
+- OSS 发布：版本化 DMG/ZIP、stable ZIP、history metadata 已上传；旧 stable metadata 已归档到 `channels/rollback/macos/arm64/before-v1.5.7/latest-mac.yml`，新 metadata 最后晋级。
 - OSS-only：生产 workflow、晋级策略、发布后校验和上一版准备均已移除 GitHub Release 硬依赖。
-- 上一版基线：已从 OSS/CDN 真实下载 v1.5.3 ZIP，验证 metadata size/SHA-512、解包和 `codesign --verify --strict`。
+- 在线升级：从 OSS/CDN 真实下载 v1.5.3，完成 v1.5.3 → v1.5.7 在线升级、启动健康、用户数据摘要保持和上一版本恢复。
 - 自动验收入口：已实现 `verify:v1.5.7:{source,electron,device,packaged,update,release,all}`，逐命令生成 JSON/JUnit，并绑定 commit、source fingerprint 和 App executable SHA-256；任一 required/gated/stale 项失败即停止。
 - 稳定性矩阵：正式 L5 已扩展为核心黄金任务、登录/退出、Runtime 与 Native Helper 强杀恢复各 20 轮，继续强制 100 次 App 重启和两小时浸泡；正常、慢速、中断、离线/在线恢复均形成结构化证据。
 - 真机矩阵：睡眠/唤醒默认执行 20 轮，可由 `pmset` 定时自动唤醒，逐轮验证事件顺序、Gateway 恢复、零残留进程和用户数据 SHA-256；隔离 Keychain 锁定/解锁/删除生命周期已动态通过且不记录秘密。
 - L6 防伪：新增 `stability-matrix.json` 聚合门禁；L6 强制纳入 HepAI 统一平台真实目录与发布模型流式探针、Keychain、20 轮睡眠/唤醒和自动化 TCC Notification `show` 事件，不再接受人工点击确认或旧收据。六类 Provider 形态继续由 15 项确定性 loopback 探针覆盖，不虚构六套生产部署。
-- 当前剩余：提交并重建上述自动化对应的最终签名/公证候选，重跑 L4～L6、v1.5.3 在线升级/回滚、OSS 晋级及线上验证。真实 Provider 门禁改为使用本机安全存储中的 HepAI OIDC 会话，对 `ai-dev.ihep.ac.cn/apiv2/v1` 的 `deepseek-v4-flash`、`deepseek-v4-pro`、`gpt-5.6-luna` 执行目录与流式响应验证；GitHub 不是硬门槛。
+- 真实 Provider：使用本机安全存储中的 HepAI 会话，对 `deepseek-v4-flash`、`deepseek-v4-pro`、`gpt-5.6-luna` 完成目录与真实响应验证；确定性协议矩阵覆盖其他配置形态。
+- 真机：Keychain 非交互锁定/解锁生命周期、TCC 麦克风/Automation/原生通知、20/20 睡眠唤醒事件顺序、Gateway 恢复、零残留进程和用户数据 SHA-256 不变均通过。
+- 公网发布：CDN 刷新任务 `33118239916` 生效后，stable metadata SHA-256 为 `ced6248c12ca50ad490c8c1861ba01667af97323bda96b5fbe8575eb4d398715`；最终 `website-release.json` 验证 HTTPS、可信重定向、site 200、metadata、HEAD、Range、远端/本地字节一致、签名、公证票据、Gatekeeper 和 bundle version 全通过。
+- 最终产物：DMG SHA-256 `a1407a5c45b4c9115ce4a73e882be2bd89f03d667ff8ddd8fe3628e9127d2564`；ZIP SHA-256 `14814d71d5892a5636dd00c988f00917b5bf5a22abd0f450dac27baa290ecce6`；Runtime SHA-256 `8ac3ea830589b42288c8d455034c362805e90d2c41ee421695f98d5c0210b2dd`。

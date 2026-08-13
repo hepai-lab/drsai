@@ -229,4 +229,22 @@ $desktopTarget = Read-SingleValue $database "SELECT ``Target`` FROM ``Shortcut``
 Assert-Equal $startMenuTarget "[INSTALLFOLDER]app\OpenDrSai.exe" "Start menu shortcut target"
 Assert-Equal $desktopTarget "[INSTALLFOLDER]app\OpenDrSai.exe" "Desktop shortcut target"
 
+$installerScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\installer\install-opendrsai.ps1") -Raw
+if ($installerScript -notmatch '\[IO\.FileShare\]::ReadWrite\s+-bor\s+\[IO\.FileShare\]::Delete') {
+    throw "Runtime stage progress writers must coexist with MSI progress readers."
+}
+if ($installerScript -notmatch 'Progress reporting is best-effort') {
+    throw "Runtime stage progress failures must not abort installation."
+}
+if ($installerScript -notmatch 'if \(\$MachineInstall\) \{\s*Join-Path \$machineDataRoot "staging"') {
+    throw "Elevated MSI Runtime staging must use the short ProgramData path instead of a deferred user's TEMP value."
+}
+if ($installerScript -notmatch '\[Environment\]::ExpandEnvironmentVariables\(\$env:TEMP\)') {
+    throw "Non-machine Runtime staging must expand environment-variable references in TEMP."
+}
+$customActionSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\installer\OpenDrSaiInstallerActions.cs") -Raw
+if ($customActionSource -notmatch 'FileShare\.ReadWrite\s*\|\s*FileShare\.Delete') {
+    throw "MSI progress readers must allow the Runtime stage writer to replace its progress file."
+}
+
 Write-Host "Windows MSI contract verified for elevated per-machine Program Files installation and ARP uninstall." -ForegroundColor Green

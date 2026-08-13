@@ -30,6 +30,7 @@ const externalIssuer = process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER?.replace(/
 const issuer = externalIssuer || `http://127.0.0.1:${port}/backend`;
 const useExternalIssuer = Boolean(externalIssuer);
 const interactiveExternalLogin = useExternalIssuer && process.env.OPENDRSAI_E2E_OIDC_INTERACTIVE === "1";
+const expectedLoginError = process.env.OPENDRSAI_E2E_OIDC_EXPECT_LOGIN_ERROR?.trim() || "";
 const signingKid = "e2e-oidc-rs256-1";
 const signingKey = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const publicJwk = {
@@ -54,10 +55,11 @@ if (!existsSync(exePath) && !existsSync(electronCmd)) {
 
 const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-e2e-oidc-"));
 const drsaiHome = join(tempDir, "drsai-home");
-const runtimeRepo = join(tempDir, "runtime", "drsai-agent");
+const runtimeRepo = join(drsaiHome, "drsai-agent");
 const userDataDir = join(tempDir, "electron-user-data");
 const resultPath = join(tempDir, "result.json");
 const sessionPath = join(drsaiHome, "auth", "auth.json");
+const deviceHandoffPath = join(tempDir, "device-login-handoff.json");
 mkdirSync(drsaiHome, { recursive: true });
 mkdirSync(userDataDir, { recursive: true });
 createRuntimeFixture(runtimeRepo);
@@ -74,17 +76,24 @@ try {
   if (!result.ok) {
     throw new Error(`E2E OIDC login failed:\n${JSON.stringify(result, null, 2)}`);
   }
-  assertOidcDiagnostics(result);
-  assertModelCatalogStatusArtifact();
-  if (!useExternalIssuer) {
-    assertIssuerHits();
+  if (expectedLoginError) {
+    if (existsSync(sessionPath)) throw new Error("Rejected device login left a session file behind.");
+  } else {
+    assertOidcDiagnostics(result);
+    assertModelCatalogStatusArtifact();
+    if (!useExternalIssuer) assertIssuerHits();
+    assertGatewayHits();
+    assertSessionClearedByLogout();
   }
-  assertGatewayHits();
-  assertSessionClearedByLogout();
+  if (!globalThis.__opendrsaiDeviceHandoffObserved || existsSync(deviceHandoffPath)) {
+    throw new Error("Device-login handoff was not observed or was not cleared after login.");
+  }
   console.log(
     useExternalIssuer
       ? `E2E OIDC login passed with Electron main process + external OIDC issuer ${issuer}.`
-      : "E2E OIDC login passed with Electron main process + fake OIDC issuer.",
+      : expectedLoginError
+        ? `E2E OIDC ${expectedLoginError} rejection passed.`
+        : "E2E OIDC login passed with Electron main process + fake OIDC issuer.",
   );
   if (fakeIssuer) {
     await new Promise((resolve) => fakeIssuer.close(resolve));
@@ -121,6 +130,15 @@ function startFakeGateway() {
     if (url.pathname === "/health") {
       hits.health += 1;
       writeJson(res, 200, { status: "ok" });
+      return;
+    }
+    if (url.pathname === "/v1/capabilities" && req.method === "GET") {
+      writeJson(res, 200, {
+        protocol_version: 1,
+        capabilities: ["chat", "tools", "goals", "approvals", "oaep.v1", "oaep.session.snapshot", "oaep.session.events", "oaep.session.events.stream", "event.cursor_expired"],
+        capability_versions: { chat: 1, tools: 1, goals: 1, approvals: 1 },
+        protocols: { oaep: { version: "1.0", profiles: ["oaep.session-stream/1"], schema_sha256: "1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09" } },
+      });
       return;
     }
     if (url.pathname === "/v1/models") {
@@ -308,6 +326,7 @@ function startFakeModelService() {
 
 function startFakeOidcIssuer() {
   const codes = new Map();
+  const devices = new Map();
   let refreshCount = 0;
   const hits = {
     discovery: 0,
@@ -316,6 +335,10 @@ function startFakeOidcIssuer() {
     token: 0,
     refresh: 0,
     revoke: 0,
+    deviceAuthorization: 0,
+    devicePending: 0,
+    deviceSlowDown: 0,
+    deviceToken: 0,
   };
   globalThis.__opendrsaiFakeOidcHits = hits;
   const server = createServer(async (req, res) => {
@@ -366,6 +389,41 @@ function startFakeOidcIssuer() {
         writeJson(res, 200, tokenResponse(null, "refresh-e2e-1", refreshCount));
         return;
       }
+      if (grantType === "urn:ietf:params:oauth:grant-type:device_code") {
+        const deviceCode = body.get("device_code") || "";
+        const row = devices.get(deviceCode);
+        if (!row || body.get("client_id") !== "opendrsai-desktop") {
+          writeJson(res, 400, { error: "invalid_grant" });
+          return;
+        }
+        row.polls += 1;
+        if (expectedLoginError === "denied") {
+          writeJson(res, 400, { error: "access_denied" });
+          return;
+        }
+        if (expectedLoginError === "expired") {
+          writeJson(res, 400, { error: "expired_token" });
+          return;
+        }
+        if (expectedLoginError === "invalid_grant") {
+          writeJson(res, 400, { error: "invalid_grant" });
+          return;
+        }
+        if (row.polls === 1) {
+          hits.deviceSlowDown += 1;
+          writeJson(res, 400, { error: "slow_down" });
+          return;
+        }
+        if (row.polls === 2) {
+          hits.devicePending += 1;
+          writeJson(res, 400, { error: "authorization_pending" });
+          return;
+        }
+        devices.delete(deviceCode);
+        hits.deviceToken += 1;
+        writeJson(res, 200, tokenResponse(null, "refresh-e2e-1"));
+        return;
+      }
       writeJson(res, 400, { error: "unsupported_grant_type" });
       return;
     }
@@ -378,7 +436,32 @@ function startFakeOidcIssuer() {
         token_endpoint: `${issuer}/oauth2/token`,
         jwks_uri: `${issuer}/.well-known/jwks.json`,
         revocation_endpoint: `${issuer}/oauth2/revoke`,
+        device_authorization_endpoint: `${issuer}/oauth2/device_authorization`,
       });
+      return;
+    }
+    if (url.pathname === "/backend/oauth2/device_authorization" && req.method === "POST") {
+      const body = new URLSearchParams(await readBody(req));
+      if (body.get("client_id") !== "opendrsai-desktop" || !String(body.get("scope") || "").includes("openid")) {
+        writeJson(res, 400, { error: "invalid_client" });
+        return;
+      }
+      hits.deviceAuthorization += 1;
+      const deviceCode = `device-${hits.deviceAuthorization}`;
+      devices.set(deviceCode, { polls: 0 });
+      writeJson(res, 200, {
+        device_code: deviceCode,
+        user_code: "E2E1-CODE",
+        verification_uri: `${issuer}/device`,
+        verification_uri_complete: `${issuer}/device?user_code=E2E1-CODE`,
+        expires_in: 30,
+        interval: 1,
+      });
+      return;
+    }
+
+    if (url.pathname === "/backend/device") {
+      writeJson(res, 200, { status: "approved" });
       return;
     }
 
@@ -494,11 +577,16 @@ function runPackagedApp() {
         PATH: systemPath,
         PYTHONPATH: [currentBackendSource, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
         DRSAI_HOME: drsaiHome,
+        OPENDRSAI_DEV_HOME: drsaiHome,
         DRSAI_REPO: runtimeRepo,
         DRSAI_GATEWAY_DEV_MANAGED: "1",
         OPENDRSAI_GATEWAY_PORT: String(gatewayPort),
+        OPENDRSAI_DEV_GATEWAY_PORT: String(gatewayPort),
         OPENDRSAI_OIDC_ISSUER: issuer,
         OPENDRSAI_E2E_OIDC: "1",
+        OPENDRSAI_ACCEPTANCE_AUTO_DEVICE_LOGIN: "1",
+        OPENDRSAI_OIDC_DEVICE_HANDOFF_PATH: deviceHandoffPath,
+        ...(expectedLoginError ? { OPENDRSAI_E2E_OIDC_EXPECT_LOGIN_ERROR: expectedLoginError } : {}),
         ...(!interactiveExternalLogin
           ? { OPENDRSAI_E2E_OIDC_AUTO_CALLBACK: "1" }
           : {}),
@@ -517,9 +605,19 @@ function runPackagedApp() {
     });
     let stdout = "";
     let stderr = "";
+    const handoffMonitor = setInterval(() => {
+      if (!existsSync(deviceHandoffPath)) return;
+      try {
+        const handoff = JSON.parse(readFileSync(deviceHandoffPath, "utf8"));
+        if (handoff.schemaVersion === 1 && handoff.userCode === "E2E1-CODE" && handoff.verificationUri === `${issuer}/device`) {
+          globalThis.__opendrsaiDeviceHandoffObserved = true;
+        }
+      } catch { /* The writer uses atomic rename; a transient read is harmless. */ }
+    }, 25);
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      clearInterval(handoffMonitor);
       killProcessTree(child.pid);
       reject(new Error(`E2E OIDC login timed out.\n${stdout}\n${stderr}`));
     }, interactiveExternalLogin ? 620_000 : 60_000);
@@ -533,12 +631,14 @@ function runPackagedApp() {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(handoffMonitor);
       reject(error);
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(handoffMonitor);
       if (code === 0) {
         resolvePromise();
         return;
@@ -626,7 +726,11 @@ function assertIssuerHits() {
     !hits ||
     hits.discovery < 1 ||
     hits.jwks < 1 ||
-    hits.authorize !== 1 ||
+    hits.authorize !== 0 ||
+    hits.deviceAuthorization !== 1 ||
+    hits.deviceSlowDown !== 1 ||
+    hits.devicePending !== 1 ||
+    hits.deviceToken !== 1 ||
     hits.token < 2 ||
     hits.refresh < 1 ||
     hits.revoke !== 1

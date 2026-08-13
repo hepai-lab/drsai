@@ -1,11 +1,31 @@
 import assert from "node:assert/strict";
 import {
+  acquireRuntimeClientLease,
   configureRuntimeWorkspaceRouting,
   getRuntimeClientRegistryDiagnostics,
   invalidateRuntimeClientRegistry,
   retainRuntimeClient,
   withRuntimeClientForWorkspace,
 } from "../../shared/main/runtimeClient";
+
+let leaseResolveAttempts = 0;
+const recoveredLease = await acquireRuntimeClientLease(async () => {
+  leaseResolveAttempts += 1;
+  if (leaseResolveAttempts === 1) {
+    throw new (await import("../../shared/main/runtimeClient")).RuntimeClientGenerationInvalidatedError();
+  }
+  return {
+    client: {
+      location: "local",
+      streamIdentity: "runtime:lease-recovery",
+      lifecycleState: "active",
+    } as never,
+    workspaceId: "workspace-lease-recovery",
+  };
+});
+assert.equal(leaseResolveAttempts, 2, "pre-mutation generation invalidation must reconnect");
+assert.equal(recoveredLease.workspaceId, "workspace-lease-recovery");
+recoveredLease.release();
 
 const originalFetch = globalThis.fetch;
 let manifestSignal: AbortSignal | undefined;

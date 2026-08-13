@@ -37,7 +37,7 @@ await mkdir(directory, { recursive: true });
 // bundle lives outside the workspace, so expose the reviewed desktop
 // dependency tree without copying or downloading packages.
 const desktopNodeModules = resolve(import.meta.dirname, "../../node_modules");
-await symlink(desktopNodeModules, join(directory, "node_modules"), "dir").catch((error) => {
+await symlink(desktopNodeModules, join(directory, "node_modules"), process.platform === "win32" ? "junction" : "dir").catch((error) => {
   if (error?.code !== "EEXIST") throw error;
 });
 const output = join(directory, "test.mjs");

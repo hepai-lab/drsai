@@ -10,7 +10,9 @@ const root = mkdtempSync(join(tmpdir(), "opendrsai-sandbox-evidence-"));
 const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 const checkNames = [
   "Manual OIDC, chat and restart acceptance", "Windows Sandbox identity", "Default Agent bound",
-  "HepAI Provider selected", "API Key not required", "OIDC session persisted", "Gateway ready",
+  "HepAI Provider selected", "API Key not required", "Encrypted OIDC session before logout",
+  "Restart persistence verified", "Two acceptance chats completed", "Post-restart chat verified",
+  "Tavily search available", "OIDC logout cleared local session", "Gateway ready",
   "Runtime model catalog non-empty", "Real OpenDrSai execution completed", "Chat evidence correlated",
   "Diagnostic evidence redaction", "Run manifest generated",
 ];
@@ -44,6 +46,7 @@ function createRun(mode) {
   for (const folder of ["app", "agent", "gateway", "installer", "network", "windows-events", "screenshots"]) mkdirSync(join(dir, folder), { recursive: true });
   writeJson(join(dir, "resolved-input.json"), { runId, mode, createdAt: new Date().toISOString(), expectedVersion: mode === "online" ? "1.4.9" : version, baselineVersion: mode === "upgrade" ? "1.4.9" : undefined });
   writeJson(join(dir, "acceptance-result.json"), { schemaVersion: 1, runId, generatedAt: new Date().toISOString(), passed: true, expectedVersion: mode === "online" ? "1.4.9" : version, failedCount: 0, checks: checkNames.map((name) => ({ name, status: "PASS", checkedAt: new Date().toISOString(), detail: "fixture", evidence: "fixture", diagnosticCode: "" })) });
+  writeJson(join(dir, "pre-logout-validation.json"), { schemaVersion: 1, runId, passed: true, checks: { encryptedOidcSession: true, restartPersistence: true, twoAcceptanceChats: true, postRestartChat: true, gatewayReady: true, defaultAgentResolved: true, hepaiModelResolved: true, tavilySearchAvailable: true }, completedChatCount: 2, tavilyResultCount: 3 });
   writeJson(join(dir, "collection-result.json"), { passed: true, secretFindingCount: 0 });
   writeJson(join(dir, "run-manifest.json"), { runId, installedVersion: mode === "online" ? "1.4.9" : version, sandboxIdentity: true });
   writeFileSync(join(dir, "summary.md"), "# PASS\n");

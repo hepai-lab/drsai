@@ -463,16 +463,13 @@ export function useDesktopChatAdapter({
         // Fall through to the normal chat route when local material inspection is unavailable.
       }
     }
-    if (materialPaths.length > 0 && isNaturalMaterialQueryIntent(text)) {
-      try {
-        const result = await desktopApi.queryMaterials({ paths: materialPaths, question: text });
-        publishLocalAssistantResult(text, formatMaterialQueryAnswer(result, languageRef.current), attachments);
-        setInput("");
-        return true;
-      } catch {
-        // Fall through to the normal chat route when local material querying is unavailable.
-      }
-    }
+    // Questions about attached materials go to the Agent, not to a local
+    // keyword matcher. The previous shortcut triggered on any sentence
+    // containing a question mark and answered from `queryMaterials`, so the
+    // Agent never saw the turn: no retrieval call, no interactive citations,
+    // and a "not found" reply that meant "no keyword matched" rather than
+    // "the material does not say so". `desktopApi.queryMaterials` itself is
+    // unchanged and still available to callers that want it.
 
     const memorySafety = analyzeMemorySafetyIntent(text);
     const explicitPreferences = memorySafety.temporary ? [] : parseExplicitUserPreferenceIntent(text);
@@ -1913,31 +1910,6 @@ export function useDesktopChatAdapter({
 function isMaterialInventoryIntent(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return /(?:(?:我|系统)(?:目前|现在)?)?(?:有|拥有|导入|上传)(?:了|的)?哪些材料|材料(?:清单|列表|角色|分别是什么)|what (?:files|materials|sources) (?:do i|are)|list (?:my )?(?:files|materials|sources)/i.test(normalized);
-}
-
-function isNaturalMaterialQueryIntent(text: string): boolean {
-  const normalized = text.trim();
-  return /[?？]/.test(normalized)
-    || /(?:标题|题目|样本量|均值|容量|带宽|数字|数值|比例|百分比).*(?:是什么|是多少|有多少)/.test(normalized)
-    || /(?:什么|哪种|哪些).*(?:方法|实验设计|研究设计|差异|不同|区别|冲突|不一致)/.test(normalized)
-    || /(?:比较|对比).*(?:差异|不同|区别|冲突|不一致)/.test(normalized)
-    || /\b(?:what|how many|where|which|compare|difference|title|bandwidth|sample size|method|protocol|conflict)\b/i.test(normalized);
-}
-
-function formatMaterialQueryAnswer(
-  result: Awaited<ReturnType<typeof desktopApi.queryMaterials>>,
-  language: "en" | "zh",
-): string {
-  if (result.status === "not_found") {
-    return language === "zh"
-      ? `${result.answer}\n\n已检索 ${result.filesSearched} 份材料；没有找到可引用的原文位置。`
-      : `I could not find a reliable answer in the ${result.filesSearched} imported materials. I will not invent a source or location.`;
-  }
-  const sourceHeading = language === "zh" ? "来源" : "Sources";
-  const sources = result.citations.map((citation) =>
-    `- **${citation.name} · ${citation.locator}**：${citation.excerpt}`,
-  ).join("\n");
-  return `${result.answer}\n\n### ${sourceHeading}\n\n${sources}`;
 }
 
 function formatMaterialInventoryAnswer(

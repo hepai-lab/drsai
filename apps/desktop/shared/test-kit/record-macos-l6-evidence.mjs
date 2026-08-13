@@ -21,7 +21,7 @@ const testIds = ["codesign-strict", "gatekeeper", "notarization-staple", "clean-
 const receipts = testIds.map((testId) => {
   const path = resolve(acceptance, `${testId}.json`);
   const receipt = JSON.parse(readFileSync(path, "utf8"));
-  assert.equal(receipt.schemaVersion, 2);
+  assert.equal(receipt.schemaVersion, testId === "model-provider-real-opt-in" ? 3 : 2);
   assert.equal(receipt.testId, testId);
   assert.equal(receipt.platform, "darwin-arm64");
   assert.equal(receipt.passed, true);
@@ -43,6 +43,7 @@ assert.ok(["granted", "denied"].includes(tcc.automationState));
 assert.equal(tcc.notificationShowEventObserved, true);
 assert.equal(tcc.filesSettingsOpened, true);
 const keychain = receipts.find(({ receipt }) => receipt.testId === "keychain-lock-cycle").receipt;
+assert.equal(keychain.authenticationUiDisabled, true);
 assert.equal(keychain.lockedSecretRefused, true);
 assert.equal(keychain.unlockedSecretRecovered, true);
 assert.equal(keychain.deletedSecretRefused, true);

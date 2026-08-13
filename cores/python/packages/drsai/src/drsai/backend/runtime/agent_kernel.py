@@ -19,6 +19,7 @@ import unicodedata
 from typing import Any, Mapping, Sequence
 
 
+
 AGENT_RUN_CONFIG_SCHEMA_VERSION = 1
 AGENT_KERNEL_ID = "drsai-agent-kernel"
 AGENT_KERNEL_VERSION = "p9.1"
@@ -68,6 +69,42 @@ DEFAULT_TOOL_POLICY = (
     "If the required capability is unavailable, say so clearly instead of guessing."
 )
 
+GROUNDED_PROMPT = (
+    "[GROUNDED_ANSWERING]\n"
+    "The user asked to be answered only from the supplied material. This layer outranks "
+    "the Agent Profile, Skills, Project and Memory layers and cannot be relaxed by them.\n"
+    "- Call the available knowledge retrieval tool before answering. Never answer a factual "
+    "question about the material without retrieving first, even when you believe you know the answer.\n"
+    "- Use only content returned by that tool. Do not use your own knowledge, and do not treat "
+    "earlier conversation turns as evidence.\n"
+    "- Mark every factual statement with the evidence that supports it, as [E<n>], where <n> is "
+    "the number of the evidence block. Never cite a block that does not state the claim.\n"
+    "- Before asserting anything, be able to quote the passage supporting it. If you cannot "
+    "produce that passage, the claim is unsupported and must not be made.\n"
+    "- Answer in exactly one of three states:\n"
+    "  answerable - every claim is supported by retrieved evidence;\n"
+    "  partially answerable - state the supported part and the unsupported part separately, never blended;\n"
+    "  unanswerable - name the material you searched, state precisely what is missing, and stop. "
+    "Do not estimate, infer, approximate or fill the gap from general knowledge.\n"
+    "- If the retrieved scope was incomplete, say so. Absence from an incompletely loaded corpus "
+    "is not evidence of absence from the material."
+)
+
+
+def grounded_prompt_layer() -> dict[str, str]:
+    return {"id": "grounded_answering", "source": "kernel", "content": GROUNDED_PROMPT}
+
+
+def tool_decision_domain(name: str) -> str | None:
+    """Public view of the capability domain a tool belongs to.
+
+    Grounded answering decides what to withhold from this classification
+    rather than keeping its own list of tool names, which would silently
+    go stale every time a tool is added here.
+    """
+    return _tool_decision_domain(name)
+
+
 ALLOWED_HISTORY_ROLES = {"system", "user", "assistant", "tool"}
 MAX_SYSTEM_PROMPT_CHARS = 16_000
 MAX_TOOL_POLICY_CHARS = 8_000
@@ -97,6 +134,7 @@ KNOWN_HOST_CAPABILITIES = frozenset({
     "git", "pty", "worktree", "codex", "mcp", "background_runs", "web_search", "web_fetch", "browser_session",
     "network.public_https", "image_generation", "image_edit",
 })
+
 
 CAPABILITY_CLASSIFICATIONS = frozenset({
     "shared", "local-equivalent", "remote-required", "unsupported",
@@ -1616,7 +1654,9 @@ class AgentRunConfig:
             memory_summary=memory_summary.strip(),
         )
 
-    def prompt_layers(self, skills: Sequence[Mapping[str, Any]] = ()) -> list[dict[str, str]]:
+    def prompt_layers(
+        self, skills: Sequence[Mapping[str, Any]] = (), *, grounded: bool = False,
+    ) -> list[dict[str, str]]:
         layers = [
             {"id": "system", "source": "kernel", "content": f"[SYSTEM v={self.prompt_version}]\n{self.system_prompt}"},
             {"id": "safety_tool_policy", "source": "kernel", "content": (
@@ -1626,6 +1666,10 @@ class AgentRunConfig:
                 f"[TOOL_POLICY]\n{self.tool_policy}"
             )},
         ]
+        if grounded:
+            # Placed above the Agent Profile so a profile, Skill or Project
+            # instruction cannot loosen "answer only from the material".
+            layers.append(grounded_prompt_layer())
         if self.agent_profile:
             layers.append({"id": "agent_profile", "source": "agent", "content": f"[AGENT_PROFILE]\n{self.agent_profile}"})
         skill_layers: list[dict[str, str]] = []
@@ -1658,19 +1702,23 @@ class AgentRunConfig:
             layers.append({"id": "memory", "source": "memory-host", "content": f"[MEMORY_SUMMARY]\n{self.memory_summary}"})
         return layers
 
-    def authoritative_prompt(self, skills: Sequence[Mapping[str, Any]] = ()) -> str:
-        prompt = "\n\n".join(value["content"] for value in self.prompt_layers(skills))
+    def authoritative_prompt(
+        self, skills: Sequence[Mapping[str, Any]] = (), *, grounded: bool = False,
+    ) -> str:
+        prompt = "\n\n".join(value["content"] for value in self.prompt_layers(skills, grounded=grounded))
         if len(prompt) > MAX_AUTHORITATIVE_PROMPT_CHARS:
             raise ValueError("authoritative_prompt_overflow")
         return prompt
 
-    def prompt_layer_diagnostics(self, skills: Sequence[Mapping[str, Any]] = ()) -> list[dict[str, Any]]:
+    def prompt_layer_diagnostics(
+        self, skills: Sequence[Mapping[str, Any]] = (), *, grounded: bool = False,
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "id": value["id"], "source": _safe_diagnostic_source(value["source"]), "chars": len(value["content"]),
                 "sha256": hashlib.sha256(value["content"].encode("utf-8")).hexdigest(),
             }
-            for value in self.prompt_layers(skills)
+            for value in self.prompt_layers(skills, grounded=grounded)
         ]
 
 

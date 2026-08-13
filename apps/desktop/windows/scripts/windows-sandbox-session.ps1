@@ -50,7 +50,7 @@ function Quote-CmdArgument([string]$Value) {
 
 function Invoke-PackagedWsbCli([string[]]$Arguments) {
     $direct = Get-Command wsb.exe -ErrorAction SilentlyContinue
-    if ($direct) {
+    if ($direct -and $env:OPENDRSAI_SANDBOX_FORCE_PACKAGED_CLI -ne "1") {
         $output = & $direct.Source @Arguments 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw "wsb $($Arguments -join ' ') failed with exit code $LASTEXITCODE`: $($output -join [Environment]::NewLine)"
@@ -90,9 +90,17 @@ echo %errorlevel% > "$exitPath"
 Invoke-CommandInDesktopPackage -PackageFamilyName '$escapedFamily' -AppId '$escapedAppId' -Command 'cmd.exe' -Args '/d /c `"$escapedPath`"' -PreventBreakaway
 "@
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($helperScript))
-        $helper = Start-Process -FilePath "powershell.exe" `
-            -ArgumentList @("-NoProfile", "-NonInteractive", "-EncodedCommand", $encoded) `
-            -WindowStyle Hidden -PassThru
+        # ProcessStartInfo with shell execution inherits the native environment
+        # without rebuilding it as a case-insensitive dictionary. This matters
+        # on developer hosts where launchers may expose both PATH/Path or
+        # WS_PROXY/ws_proxy; Start-Process rejects those otherwise valid native
+        # environment blocks before the helper can start.
+        $helperInfo = New-Object Diagnostics.ProcessStartInfo
+        $helperInfo.FileName = "powershell.exe"
+        $helperInfo.Arguments = "-NoProfile -NonInteractive -EncodedCommand $encoded"
+        $helperInfo.UseShellExecute = $true
+        $helperInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+        $helper = [Diagnostics.Process]::Start($helperInfo)
         if (-not $helper.WaitForExit(30000)) {
             Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue
             throw "Timed out starting the packaged wsb CLI. The Sandbox AppX command host may be stale; use StopAll -Force to close client sessions, then retry."

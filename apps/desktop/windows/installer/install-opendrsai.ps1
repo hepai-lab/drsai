@@ -48,10 +48,18 @@ if (-not $RuntimeUrl) {
 
 $CacheDir = Join-Path $InstallRoot "cache"
 $AgentDir = Join-Path $InstallRoot "drsai-agent"
-$tempRoot = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
-$safeSessionId = $InstallSessionId -replace '[^A-Za-z0-9._-]', '_'
-$StagingRoot = Join-Path $tempRoot "OpenDrSaiStaging\$safeSessionId"
 $machineDataRoot = Join-Path $env:ProgramData "OpenDrSai\Installer"
+$tempRoot = if ($MachineInstall) {
+    Join-Path $machineDataRoot "staging"
+} else {
+    $expandedTemp = if ($env:TEMP) { [Environment]::ExpandEnvironmentVariables($env:TEMP) } else { "" }
+    if (-not $expandedTemp -or -not [IO.Path]::IsPathRooted($expandedTemp) -or $expandedTemp.Contains('%')) {
+        $expandedTemp = [System.IO.Path]::GetTempPath()
+    }
+    $expandedTemp
+}
+$safeSessionId = $InstallSessionId -replace '[^A-Za-z0-9._-]', '_'
+$StagingRoot = Join-Path $tempRoot $safeSessionId
 $LogDir = if ($MachineInstall) { Join-Path $machineDataRoot "logs" } else { Join-Path $DrsaiHome "logs\bootstrapper" }
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $LogFile = if ($LogFileOverride) { $LogFileOverride } else { Join-Path $LogDir "install-$BootstrapperVersion.log" }
@@ -75,10 +83,25 @@ function Write-StageProgress([int]$Percent, [string]$Detail) {
     if (-not $ProgressFile) { return }
     $boundedPercent = [Math]::Max(0, [Math]::Min(100, $Percent))
     $payload = "$boundedPercent`t$($Detail -replace '[\r\n]+', ' ')"
-    New-Directory (Split-Path -Parent $ProgressFile)
-    $temporaryProgressFile = "$ProgressFile.$PID.tmp"
-    [IO.File]::WriteAllText($temporaryProgressFile, $payload, (New-Object Text.UTF8Encoding($false)))
-    Move-Item -LiteralPath $temporaryProgressFile -Destination $ProgressFile -Force
+    $stream = $null
+    try {
+        New-Directory (Split-Path -Parent $ProgressFile)
+        $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($payload)
+        $stream = New-Object IO.FileStream(
+            $ProgressFile,
+            [IO.FileMode]::Create,
+            [IO.FileAccess]::Write,
+            ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        )
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush()
+    } catch {
+        # Progress reporting is best-effort. A short-lived UI reader, antivirus
+        # scanner, or indexer must never turn a healthy Runtime install into MSI
+        # error 1603.
+    } finally {
+        if ($stream) { $stream.Dispose() }
+    }
 }
 
 function Stop-InstalledProcessTrees {
@@ -263,18 +286,23 @@ function Expand-ZipClean([string]$Archive, [string]$Destination) {
                 continue
             }
             New-Directory (Split-Path -Parent $targetPath)
-            $source = $entry.Open()
-            $target = [IO.File]::Open($targetPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            $source = $null
+            $target = $null
             try {
+                $source = $entry.Open()
+                $target = [IO.File]::Open($targetPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
                 while (($read = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
                     $target.Write($buffer, 0, $read)
                     $expandedBytes += $read
                     $percent = if ($totalBytes -gt 0) { [int](100 * $expandedBytes / $totalBytes) } else { 100 }
                     Write-StageProgress $percent ("{0}%   {1:N1} / {2:N1} MB extracted" -f $percent, ($expandedBytes / 1MB), ($totalBytes / 1MB))
                 }
+            } catch {
+                $exception = $_.Exception
+                throw ("Failed to extract Runtime entry '{0}' to '{1}': {2} (type={3}, hresult=0x{4:X8})" -f $entry.FullName, $targetPath, $exception.Message, $exception.GetType().FullName, $exception.HResult)
             } finally {
-                $target.Dispose()
-                $source.Dispose()
+                if ($target) { $target.Dispose() }
+                if ($source) { $source.Dispose() }
             }
         }
         Write-StageProgress 100 ("100%   {0:N1} MB extracted" -f ($totalBytes / 1MB))
@@ -627,6 +655,7 @@ try {
     exit 0
 } catch {
     Write-Log "ERROR: $($_.Exception.Message)"
+    Write-Log "ERROR DETAILS: $($_.Exception.ToString())"
     if (-not $Quiet) {
         Write-Host ""
         Write-Host "OpenDrSai Runtime installation failed. Log: $LogFile" -ForegroundColor Red

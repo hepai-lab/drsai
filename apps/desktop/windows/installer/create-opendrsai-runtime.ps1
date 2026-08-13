@@ -357,10 +357,20 @@ $resolvedCompressionLevel = [System.Enum]::Parse(
     $resolvedCompressionLevel,
     $false
 )
+$archiveForMetrics = [System.IO.Compression.ZipFile]::OpenRead($runtimeZip)
+try {
+    $archiveFiles = @($archiveForMetrics.Entries | Where-Object { -not $_.FullName.EndsWith("/") -and -not $_.FullName.EndsWith("\") })
+    [Int64]$expandedSizeBytes = 0
+    foreach ($entry in $archiveFiles) { $expandedSizeBytes += [Int64]$entry.Length }
+    [Int64]$archiveFileCount = $archiveFiles.Count
+} finally {
+    $archiveForMetrics.Dispose()
+}
 
 $receiptPath = "$runtimeZip.receipt.json"
 Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
-& node $trustScript record-archive --payload $payloadRoot --archive $runtimeZip --receipt $receiptPath
+& node $trustScript record-archive --payload $payloadRoot --archive $runtimeZip --receipt $receiptPath `
+    --file-count $archiveFileCount --expanded-size-bytes $expandedSizeBytes
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
     Remove-Item -LiteralPath $runtimeZip -Force -ErrorAction SilentlyContinue
     throw "Runtime archive completion receipt was not created; the incomplete artifact was removed."
