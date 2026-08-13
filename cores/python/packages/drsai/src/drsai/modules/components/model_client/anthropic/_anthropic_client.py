@@ -67,7 +67,12 @@ from autogen_ext.models.anthropic._anthropic_client import (
     normalize_stop_reason,
     _add_usage
     )
-from drsai.platform_auth import OidcModelCredentialProvider, get_model_credential_provider, static_model_credentials_allowed
+from drsai.platform_auth import (
+    DelegatedModelCredentialProvider,
+    OidcModelCredentialProvider,
+    get_model_credential_provider,
+    static_model_credentials_allowed,
+)
 
 class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
 
@@ -85,7 +90,11 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         if credential:
             kwargs["api_key"] = credential.access_token
             kwargs["base_url"] = credential.anthropic_base_url
-            self._uses_platform_auth = isinstance(credential, OidcModelCredentialProvider)
+            self._uses_platform_auth = isinstance(
+                credential, (OidcModelCredentialProvider, DelegatedModelCredentialProvider)
+            )
+            if credential.delegation_headers:
+                kwargs["default_headers"] = credential.delegation_headers
         elif not kwargs.get("api_key"):
             kwargs["api_key"] = "opendrsai-oidc-pending"
             self._oidc_credential_pending = True
@@ -102,6 +111,8 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             return
         self._client.api_key = credential.access_token
         self._client.base_url = credential.anthropic_base_url
+        if credential.delegation_headers:
+            self._client._custom_headers = credential.delegation_headers
         self._oidc_credential_pending = False
 
     async def create(self, *args: Any, **kwargs: Any):
