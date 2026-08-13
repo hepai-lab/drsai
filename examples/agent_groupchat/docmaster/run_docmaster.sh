@@ -1,2 +1,3 @@
+#!/usr/bin/env bash
 
-python run_docmaster.py
+exec python run_docmaster.py

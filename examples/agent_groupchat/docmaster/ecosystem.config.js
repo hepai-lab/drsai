@@ -4,23 +4,20 @@ module.exports = {
     script: './run_docmaster.sh',
     interpreter: 'bash',
     cwd: __dirname,
+    env: {
+      // Remote OIDC requests must use a request-scoped delegated credential;
+      // never fall back to a static/frontend model key.
+      OPENDRSAI_OIDC_ONLY: '1',
+      // This host has two interfaces. The 10.42 address is container-internal;
+      // ai-dev must use the externally reachable net1 address.
+      WORKER_IP: '10.5.8.136',
+    },
     instances: 1,
     autorestart: true,
 
-    // Development mode: restart when source/configuration files change.
-    watch: ['.'],
-    watch_delay: 1000,
-    ignore_watch: [
-      '.git',
-      '.agents',
-      '.codex',
-      '**/__pycache__',
-      '**/*.pyc',
-      'workspace',
-      'logs',
-      'test_ppt',
-      'node_modules',
-    ],
+    // The agent writes runtime state below this tree. Watching the project causes
+    // PM2 to restart the worker mid-request and briefly invalidates registration.
+    watch: false,
 
     max_memory_restart: '1G',
     kill_timeout: 5000,

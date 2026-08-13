@@ -23,6 +23,8 @@ from autogen_agentchat.messages import (
 )
 from autogen_agentchat.base import Response
 from autogen_core import CancellationToken
+from autogen_core.model_context import ChatCompletionContext
+from autogen_core.models import AssistantMessage, UserMessage
 
 
 def _log_event_type(event: object, turn_idx: int) -> None:
@@ -126,6 +128,32 @@ class DocMasterAgent(DrSaiAssistant):
     # - configs/ contains system config files (AGENTS.md, TOOLS.md, USER.md etc.)
     # These are internal DrSai files, not user documents
     EXCLUDED_DIRS = {'skills', 'configs', 'document_skills', 'scripts', '__pycache__', '.git'}
+
+    @staticmethod
+    async def _add_messages_to_context(
+        model_context: ChatCompletionContext,
+        messages: Sequence[BaseChatMessage],
+    ) -> None:
+        """Add Desktop/WebUI history without collapsing assistant roles.
+
+        AutoGen's ``TextMessage.to_model_message`` represents an incoming chat
+        message as a UserMessage regardless of its ``source``.  That is correct
+        for ordinary agent-to-agent input, but an OpenAI/OAEP history contains
+        explicit ``user`` and ``assistant`` roles.  Preserve those roles here so
+        Desktop history does not become a run of consecutive user messages.
+        """
+        for message in messages:
+            model_message = message.to_model_message()
+            if (
+                isinstance(message, TextMessage)
+                and message.source == "assistant"
+                and isinstance(model_message, UserMessage)
+            ):
+                model_message = AssistantMessage(
+                    content=model_message.content,
+                    source="assistant",
+                )
+            await model_context.add_message(model_message)
 
     # Signals that an argument is about template/DOCX lookup. Keep these
     # narrow on purpose — we do NOT want to break legitimate run_bash /

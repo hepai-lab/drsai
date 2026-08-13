@@ -24,6 +24,15 @@ _SCHEMA_FIELDS_OF_INTEREST = {
     "anyOf", "oneOf", "allOf", "items", "additionalProperties", "default", "$ref", "$defs"
 }
 
+# Temporary development routing: ai-dev accepts the JWT forwarded by the
+# remote-agent entrypoints, while the production aiapi deployment does not yet
+# support that authentication flow. Keep an environment override so deployment
+# can switch back without another source change.
+MODEL_BASE_URL = os.environ.get(
+    "DOCMASTER_MODEL_BASE_URL",
+    "https://ai-dev.ihep.ac.cn/apiv2/v1",
+).rstrip("/")
+
 
 class _TokenEstimatorSchemaWarningFilter(logging.Filter):
     """Hide misleading warnings emitted only by AutoGen's token estimator.
@@ -134,7 +143,7 @@ def _build_client(llm_model: str, model_name: str, api_key: str | None):
         # minimax models use Anthropic API
         return HepAIAnthropicChatCompletionClient(
             model=llm_model,
-            base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
+            base_url=f"{MODEL_BASE_URL.removesuffix('/v1')}/anthropic",
             api_key=api_key or os.environ.get("HEPAI_API_KEY"),
             model_info=_MODEL_INFO.get("claude-sonnet-4-5", _MODEL_INFO["claude-sonnet-4-5"]),
             max_tokens=32000,
@@ -147,7 +156,7 @@ def _build_client(llm_model: str, model_name: str, api_key: str | None):
         return DiagnosticHepAIChatCompletionClient(
             model=llm_model,
             api_key=api_key or os.environ.get("HEPAI_API_KEY"),
-            base_url="https://aiapi.ihep.ac.cn/apiv2",
+            base_url=MODEL_BASE_URL,
             model_info={
                 "vision": False,
                 "function_calling": True,
@@ -176,7 +185,7 @@ def _build_fallback_client(api_key: str | None):
     return DiagnosticHepAIChatCompletionClient(
         model="deepseek-v4-flash",
         api_key=api_key or os.environ.get("HEPAI_API_KEY"),
-        base_url="https://aiapi.ihep.ac.cn/apiv2",
+        base_url=MODEL_BASE_URL,
         model_info={
             "vision": False,
             "function_calling": True,

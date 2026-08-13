@@ -1,5 +1,5 @@
-
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false, reportMissingModuleSource=false
 """
 Word文档编辑智能体 - 主启动脚本
 
@@ -7,12 +7,27 @@ Word文档编辑智能体 - 主启动脚本
 """
 
 import asyncio
+import functools
 import json
 import os
 import sys
 from pathlib import Path
-from loguru import logger
+from typing import Any, Callable
+
 from dotenv import load_dotenv
+
+load_dotenv()
+
+# Install before importing DrSai/HepAI. Both dependencies print configuration
+# and generated credentials during initialization; authentication retains the
+# original values while all process console/log output is sanitized.
+from secret_redaction import install_secret_redaction
+
+install_secret_redaction()
+
+# Import Loguru only after stderr is wrapped; its default sink captures the
+# stream object at import time.
+from loguru import logger
 
 # Resolve imports before importing anything from ``drsai``.  This repository
 # can coexist with other DrSai checkouts/installations, and importing drsai
@@ -44,8 +59,6 @@ from docmaster.tools import get_all_tools
 from docmaster.system_prompt import SYSTEM_PROMPT
 from docmaster.utils.deps import ensure_python_deps
 from docmaster.utils.ocr import warmup_rapidocr_at_boot
-
-load_dotenv()
 
 # ── Auto-install missing Python dependencies ──────────────────────────────
 def _ensure_python_deps():
@@ -147,17 +160,80 @@ def _install_stable_worker_id():
     worker_config before the base worker reads it."""
     from hepai.components.haiddf.worker.worker_app import HWorkerAPP
 
-    _original_init = HWorkerAPP.__init__
+    # HWorkerConfig is a dataclass, but HepAI intentionally builds the
+    # CommonWorker configuration from its ``__dict__`` and reads the optional
+    # ``worker_id`` key from there. The field is not declared on HWorkerConfig,
+    # so this boundary must remain dynamic.
+    if getattr(HWorkerAPP, "_docmaster_stable_id_patch", False):
+        return
 
-    def _patched_init(self, models, worker_config=None, *args, **kwargs):
+    original_init: Callable[..., None] = HWorkerAPP.__init__
+
+    @functools.wraps(original_init)
+    def _patched_init(
+        self: Any,
+        models: Any,
+        worker_config: Any | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         if worker_config is not None and not getattr(worker_config, "worker_id", None):
             setattr(worker_config, "worker_id", _DOCMASTER_WORKER_ID)
-        return _original_init(self, models, worker_config=worker_config, *args, **kwargs)
+        original_init(self, models, worker_config=worker_config, *args, **kwargs)
 
-    HWorkerAPP.__init__ = _patched_init
+    # setattr is deliberate: assigning to HWorkerAPP.__init__ directly makes
+    # static checkers compare this compatibility wrapper against HepAI's
+    # incomplete third-party annotation.
+    setattr(HWorkerAPP, "__init__", _patched_init)
+    setattr(HWorkerAPP, "_docmaster_stable_id_patch", True)
 
 
 _install_stable_worker_id()
+
+
+def _install_desktop_session_mapping() -> None:
+    """Map Desktop/OAEP session identity to DrSai's legacy ``chat_id``.
+
+    The OpenAI-compatible Desktop request uses ``thread_id`` (the OAEP Runtime
+    session id), while DrSai historically looked only at OpenWebUI's
+    ``chat_id``.  Normalize the aliases before UserInput persistence so both
+    clients share the same downstream conversation isolation behavior.
+    """
+    from drsai.dr_sai import DrSai
+
+    if getattr(DrSai, "_docmaster_session_mapping_patch", False):
+        return
+
+    original_handle_input_info = DrSai.handle_input_info
+
+    @functools.wraps(original_handle_input_info)
+    async def _mapped_handle_input_info(self: Any, **kwargs: Any):
+        if not kwargs.get("chat_id"):
+            metadata = kwargs.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            extra_body = kwargs.get("extra_body")
+            extra_body = extra_body if isinstance(extra_body, dict) else {}
+            extra_metadata = extra_body.get("metadata")
+            extra_metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
+            session_id = (
+                kwargs.get("thread_id")
+                or kwargs.get("session_id")
+                or metadata.get("session_id")
+                or metadata.get("thread_id")
+                or extra_body.get("thread_id")
+                or extra_body.get("session_id")
+                or extra_metadata.get("session_id")
+                or extra_metadata.get("thread_id")
+            )
+            if session_id:
+                kwargs["chat_id"] = str(session_id)
+        return await original_handle_input_info(self, **kwargs)
+
+    setattr(DrSai, "handle_input_info", _mapped_handle_input_info)
+    setattr(DrSai, "_docmaster_session_mapping_patch", True)
+
+
+_install_desktop_session_mapping()
 
 
 WORKSPACE = HERE / "workspace"
@@ -364,9 +440,29 @@ def main():
                     '{"en":"V1.0: A professional Word document processing tool, supporting the uploading, analyzing, editing, and formatting of Word documents, as well as the addition and deletion of annotations and comments","zh":"V1.0: 专业的Word文档处理大师，支持上传、分析、编辑、格式化Word文档，支持添加和删除批注和评论"}',
                 "version": "0.1.0",
                 "author": "juzy@ihep.ac.cn",
-                "logo": "https://note.ihep.ac.cn/uploads/8d373a0f-0248-4b43-9747-73f15de3445b.png",
+                # A local, version-controlled asset is uploaded through DrSai's
+                # platform file flow before the worker registers.
+                "logo": str(HERE / "docmaster_logo.png"),
+                "capabilities": [
+                    "chat",
+                    "streaming",
+                    "file-input",
+                    "document-analysis",
+                    "document-editing",
+                    "document-formatting",
+                    "docx",
+                    "pptx",
+                ],
                 "examples": [
-                    {"en": "DocMaster, please help me analyze the main content of this document", "zh": "DocMaster，请帮我分析这份文档的主要内容"},
+                    {
+                        "en": "Create a DOCX file with a short poem on any topic, using SimSun as the font.",
+                        "zh": "创建一个docx文件，内容为一首短诗，题材不限，使用宋体字体。"
+                    },
+                    {
+                        "en": "Create a 5-slide PPT introducing IHEP.",
+                        "zh": "制作一份5页的PPT，介绍高能所。"
+                    },
+                    {"en": "please help me analyze the main content of this document", "zh": "请帮我分析这份文档的主要内容"},
                     {"en": "First read the content of this DOCX, then help me polish the introduction", "zh": "先读取这份 DOCX 的内容，再帮我润色引言部分"},
                     {"en": "Replace technical terms in the document with more accessible expressions", "zh": "把文档中的技术术语替换为更通俗的表达"},
                     {"en": "Add a summary paragraph at the end of this DOCX", "zh": "在这份 DOCX 末尾新增一个总结段落"},
@@ -397,9 +493,18 @@ def main():
             # drsai_dir=DATASET,
             enable_openwebui_pipeline=False,
             history_mode="backend",
-            # use_api_key_mode = "backend",
+            use_api_key_mode = "frontend",
             # join_topics = ["drsai-agent"],
-            # metadata={"others": "drsai-agent"},
+            metadata={
+                "delegated_model_auth": {
+                    "version": 1,
+                    "supported": True,
+                    "accepted_audience": "hai-model-gateway",
+                    "request_scope_only": True,
+                    "allowed_models": ["deepseek-v4-flash"],
+                    "allowed_operations": ["chat.completions"],
+                },
+            },
             link_wechat=False,
         )
     )
