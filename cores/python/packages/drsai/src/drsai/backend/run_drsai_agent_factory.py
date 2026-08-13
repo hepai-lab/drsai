@@ -1148,9 +1148,14 @@ def create_agent(
     )
     exporter = getattr(assistant, "export_production_parity_manifest", None)
     parity_manifest = exporter() if callable(exporter) else desktop_production_parity_manifest(assistant)
+    # TUI 走 legacy 路径,屏蔽 desktop 内核的 fail-closed 策略
+    # (memory 门禁 / verification / citation / context budget / artifact 强制)。
+    # 工具循环控制与能力快照校验由 legacy 层保留。
+    tui_legacy_path = kernel_surface == "tui"
+    effective_shared_kernel = None if tui_legacy_path else shared_agent_kernel
     if isinstance(assistant, dict):
         assistant["_production_parity_manifest"] = parity_manifest
-        assistant["_shared_agent_kernel"] = shared_agent_kernel
+        assistant["_shared_agent_kernel"] = effective_shared_kernel
     else:
         assistant._kernel_host_port = kernel_host_port
         assistant._p9_context_budget = {
@@ -1161,5 +1166,5 @@ def create_agent(
                 "summary_tokens": min(1_024, max(0, (int(token_limit) - int(reserved_output_tokens)) // 8)),
         }
         assistant._production_parity_manifest = parity_manifest
-        assistant._shared_agent_kernel = shared_agent_kernel
+        assistant._shared_agent_kernel = effective_shared_kernel
     return assistant

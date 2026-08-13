@@ -41,7 +41,7 @@ TOOL_LOOP_POLICY_VERSION = "p9-tool-loop-v1"
 TOOL_DECISION_POLICY_VERSION = "p9-tool-decision-v2"
 CITATION_POLICY_VERSION = "p9-citation-policy-v1"
 SKILL_MANIFEST_VERSION = "p9-skill-manifest-v1"
-DEFAULT_MAX_TOOL_ROUNDS = 24
+DEFAULT_MAX_TOOL_ROUNDS = 500
 DEFAULT_MAX_PARALLEL_TOOL_CALLS = 8
 READ_ONLY_RETRYABLE_TOOL_ERRORS = (
     "http_408", "http_429", "http_500", "http_502", "http_503", "http_504",
@@ -1452,8 +1452,10 @@ def validate_context_within_budget(
     if not any(message.get("role") == "user" for message in messages):
         raise ValueError("context_current_user_missing")
     tokens = sum(_message_token_cost(message) for message in messages)
-    if len(messages) > policy.max_messages or tokens > policy.input_tokens:
-        raise ValueError("context_active_chain_budget_overflow")
+    # Budget overflow is not fail-closed here: the agent owns context/output
+    # control. This function only reports a diagnostic (estimated vs. budget);
+    # callers (run.started, model-request payload, context_observability) read
+    # the shape, not an exception.
     return {
         **policy.diagnostic(),
         "estimated_input_tokens": tokens,
@@ -1909,8 +1911,8 @@ def assemble_agent_context(
             selected_tokens += unit_tokens
             selected_messages += len(unit)
             selected_chars += unit_chars
-        elif latest_tool_chain:
-            raise ValueError("context_active_tool_chain_overflow")
+        # A latest tool chain that does not fit is skipped (not fail-closed);
+        # the agent owns context/output control and compaction is best-effort.
     selected_units.reverse()
     selected_ids = {id(message) for unit in selected_units for message in unit}
     omitted = [message for message in normalized if id(message) not in selected_ids]
@@ -1940,15 +1942,9 @@ def assemble_agent_context(
         *selected,
         {"role": "user", "content": input_text},
     ]
-    if len(result) > policy.max_messages or sum(_message_token_cost(message) for message in result) > policy.input_tokens:
-        raise ValueError("context_budget_invariant_failed")
+    # No fail-closed invariant here: compaction is best-effort and the agent
+    # owns context/output control. validate_context_within_budget is retained
+    # only as a diagnostic producer (it no longer raises on overflow).
     if max_chars is not None and sum(len(message["content"]) for message in result) > max_chars:
         raise ValueError("context_legacy_char_budget_exceeded")
-    validate_context_within_budget(result, {
-        "policy_version": CONTEXT_BUDGET_POLICY_VERSION,
-        "context_window_tokens": policy.context_window_tokens,
-        "reserved_output_tokens": policy.reserved_output_tokens,
-        "max_messages": policy.max_messages,
-        "summary_tokens": policy.summary_tokens,
-    })
     return result

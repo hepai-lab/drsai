@@ -264,14 +264,12 @@ def cmd_model_global(ctx: SlashContext) -> dict:
     try:
         if not ctx.session.switch_model(args):
             return {"output": f"Warning: model switch to {args} failed; global configuration was not changed"}
-        if compact_active:
-            commit_update(ConfigUpdateRequest(
-                model=args,
-                model_provider=compact.model_provider or "hepai",
-            ))
-        else:
-            cfg["defult_config_name"] = args
-            save_global_config(cfg)
+        # TUI bypasses the retired global model-selection guard by always
+        # saving the global default through the YAML config path
+        # (defult_config_name), never through commit_update's removed
+        # model/model_provider fields.
+        cfg["defult_config_name"] = args
+        save_global_config(cfg)
         ctx.refresh_info()
         return {"output": f"Model switched to {args} (session + global default, saved to disk)"}
     except Exception as e:
@@ -1955,12 +1953,16 @@ def _model_provider_config_save(rid, params: dict) -> dict:
             }
             raw_key = values.pop("api_key", None)
             provider_secret = raw_key if isinstance(raw_key, str) else None
+        # TUI bypasses the retired global model-selection guard in
+        # _build_candidate by not passing model/model_provider.  Provider
+        # configuration is persisted via commit_update; the active model is
+        # switched at the session level through switch_model() below.
         committed = commit_update(ConfigUpdateRequest(
             provider_name=provider if values is not None else None,
             provider_values=values,
             provider_secret=provider_secret,
-            model=model,
-            model_provider=provider,
+            model=None,
+            model_provider=None,
         ), expected_revision=str(params.get("expected_revision") or "").strip() or None)
         session_id = str(params.get("session_id") or "").strip()
         runtime_applied = True
@@ -1991,12 +1993,15 @@ def _model_provider_config_delete(rid, params: dict) -> dict:
         return _err(rid, 4002, "provider is required")
     try:
         compact = load_user_config()
-        active = (compact.model_provider or "hepai") == provider
+        # TUI bypasses the retired global model-selection guard by not
+        # passing model/model_provider.  Only the provider entry is deleted;
+        # if the active provider is removed the session keeps its current
+        # model client until the user explicitly switches.
         commit_update(ConfigUpdateRequest(
             delete_provider_name=provider,
             delete_provider_credential=bool(params.get("delete_credential", True)),
-            model=compact.model or "deepseek-v4-pro" if active else None,
-            model_provider="hepai" if active else None,
+            model=None,
+            model_provider=None,
         ), expected_revision=str(params.get("expected_revision") or "").strip() or None)
         return _ok(rid, {"ok": True, "active": "hepai"})
     except ModelProviderConfigError as exc:

@@ -535,35 +535,12 @@ class DrSaiAgentKernel:
                 self._event(state, "run.completed", {"status": "completed_with_limitation"}),
                 self._checkpoint(state, "terminal"),
             )
-        if decision["category"] in {"required_tool_omitted", "wrong_tool_selected"}:
-            if state.verification_retry_count >= 1:
-                state.phase = RunPhase.FAILED
-                self._active_run_by_session.pop(state.session_id, None)
-                return (*reasoning_events, decision_event,
-                    self._event(state, "run.failed", {
-                        "code": "verification_required_tool_omitted", "retryable": True,
-                    }),
-                    self._checkpoint(state, "terminal"),
-                )
-            state.verification_retry_count += 1
-            state.messages.append({
-                "role": "system",
-                "content": "Verification is required for this task. Use an available matching retrieval or Host tool "
-                           "before answering. If it cannot be used, state the capability limitation explicitly.",
-            })
-            state.phase = RunPhase.WAITING_MODEL
-            return (*reasoning_events, decision_event,
-                self._event(state, "verification.required", {
-                    "code": decision["category"], "reason": decision["reason"],
-                    "requirement_sha256": decision["requirement_sha256"],
-                    "retry_count": state.verification_retry_count,
-                }),
-                self._checkpoint(state, "before_verification_retry"),
-                self._request(state, MessageType.MODEL_REQUEST, {
-                    "model_id": state.model_id, "messages": state.messages, "tools": state.tools, "skills": state.skills,
-                    "capability_snapshot_sha256": state.capability_snapshot["sha256"],
-                }, "verification_retry"),
-            )
+        # Verification fail-closed (required_tool_omitted / wrong_tool_selected
+        # → reprompt → run.failed) is intentionally removed: the agent owns
+        # tool-selection correctness, and the keyword-based requirement was too
+        # eager for TUI. tool.decision is still emitted above as a diagnostic;
+        # required_tool_unavailable above still surfaces a friendly limitation.
+        # A model that omits/miss-picks a tool now proceeds to normal completion.
         if tool_calls:
             if state.tool_round_count >= state.tool_loop_policy["max_tool_rounds"]:
                 state.phase = RunPhase.FAILED

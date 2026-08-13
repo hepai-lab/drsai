@@ -1708,8 +1708,9 @@ class DrSaiAssistant(DrSaiAgent):
                             content="\n\n(●'◡'●)抱歉，已达最大的任务循环次数，触发了保护措施，请重新调整您的询问方式或者更具体的告诉您的助手应该怎么做。",
                             source=agent_name,
                             metadata={"internal": "no"},
+                        ),
                         inner_messages=inner_messages,
-                    ))
+                    )
                     return
 
         except asyncio.CancelledError:
