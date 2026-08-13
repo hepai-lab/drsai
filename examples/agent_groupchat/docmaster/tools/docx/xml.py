@@ -122,7 +122,7 @@ def unpack_docx_tool(file_path: str, output_dir: str, merge_runs: bool = True, s
         _sys.path[:] = _saved
 
 
-def pack_docx_tool(input_dir: str, output_file: str, original_file: str = None, validate: bool = True):
+def pack_docx_tool(input_dir: str, output_file: str, original_file: str = None, run_validation: bool = True):
     """
     Pack an unpacked directory back into a DOCX file.
 
@@ -138,7 +138,7 @@ def pack_docx_tool(input_dir: str, output_file: str, original_file: str = None, 
         input_dir: Path to the unpacked directory (from unpack_docx_tool).
         output_file: Path for the output DOCX file.
         original_file: (Optional) Path to the original DOCX for validation comparison.
-        validate: Run schema validation with auto-repair (default True).
+        run_validation: Run schema validation with auto-repair (default True).
     """
     import sys as _sys
 
@@ -152,7 +152,7 @@ def pack_docx_tool(input_dir: str, output_file: str, original_file: str = None, 
     _sys.path.insert(0, str(_OFFICE_SCRIPTS_DIR))
     try:
         from pack import pack
-        _, message = pack(input_dir, output_file, original_file=original_file, validate=validate)
+        _, message = pack(input_dir, output_file, original_file=original_file, validate=run_validation)
         success = "Error" not in message
         if success:
             fe_data = _build_files_event_data(output_file, f"Packed DOCX: {Path(output_file).name}")
