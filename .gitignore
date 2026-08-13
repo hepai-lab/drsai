@@ -358,3 +358,10 @@ reasonix.toml
 # E2E 测试（个人使用，不提交）
 ########################
 apps/webui/e2e/
+examples/agent_groupchat/docmaster/test_ppt/交科赛_论文_v1_介绍页.pptx
+examples/agent_groupchat/docmaster/test_ppt/交科赛_论文_v1.docx
+examples/agent_groupchat/docmaster/test_ppt/figures/architecture.png
+examples/agent_groupchat/docmaster/docs/architecture.md
+examples/agent_groupchat/docmaster/docs/ppt-outline.md
+examples/agent_groupchat/docmaster/test_ppt/make_arch_figure.py
+examples/agent_groupchat/docmaster/test_ppt/make_paper_slide.py
