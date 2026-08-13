@@ -36,6 +36,7 @@ const packagedL5 = read("scripts/verify-packaged-l5.mjs");
 const sleepWakeDevice = read("scripts/verify-sleep-wake-real-device.mjs");
 const keychainLockDevice = read("scripts/verify-keychain-lock-cycle.mjs");
 const keychainProbe = read("scripts/helpers/keychain-noninteractive-probe.swift");
+const l6EvidenceRecorder = read("../shared/test-kit/record-macos-l6-evidence.mjs");
 const releaseL6 = read("scripts/verify-release-l6.mjs");
 const dmgNotarizer = read("scripts/notarize-dmg.mjs");
 const tccL6 = read("scripts/verify-tcc-real-device.mjs");
@@ -198,6 +199,7 @@ for (const contract of ["/private/tmp/opendrsai-keychain-cycle-", "authenticatio
 for (const contract of ["SecKeychainSetUserInteractionAllowed(false)", "authenticationContext.interactionNotAllowed = true", "SecKeychainCreate", "SecKeychainLock", "SecKeychainUnlock", "SecKeychainDelete", "locked.status != errSecSuccess", "deleted.status == errSecItemNotFound"]) {
   assert.ok(keychainProbe.includes(contract), `macOS Keychain lock-cycle probe omits headless lifecycle contract ${contract}`);
 }
+assert.ok(l6EvidenceRecorder.includes('testId === "model-provider-real-opt-in" ? 3 : 2'), "L6 evidence recorder must accept the secret-safe HepAI Provider schema v3 while keeping other receipts at v2");
 for (const contract of ["verify:v1.5.7:source", "verify:v1.5.7:electron", "verify:v1.5.7:device", "verify:v1.5.7:packaged", "verify:v1.5.7:update", "verify:v1.5.7:release", "verify:v1.5.7:all", "record:stability-matrix"]) {
   assert.ok(packageJson.scripts[contract], `macOS package scripts omit ${contract}`);
 }
