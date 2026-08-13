@@ -50,8 +50,10 @@ assert(agents.includes('capabilities.has("chat")') && agents.includes('capabilit
 assert(threads.includes("boundAgentId") && threads.includes("boundAgentName"), "D2 thread agent binding is missing");
 assert(app.includes("changesBoundAgent") && app.includes("requestAppDecision") && app.includes("Start a new conversation"), "D5 switch protection is missing");
 assert(
-  app.includes("persistInBackground: true") && app.includes("Keep navigation responsive"),
-  "starting an agent chat still blocks navigation on thread persistence",
+  app.includes("forceNewConversation?: boolean")
+    && app.includes("if (options.forceNewConversation)")
+    && /selectChatAgent\(agent\.id,\s*\{\s*agent,\s*forceNewConversation:\s*true,\s*\}\)\.then/.test(app),
+  "Agent Square must always create a newly bound conversation before entering chat",
 );
 assert(
   workspace.includes('data-testid="composer-input"')

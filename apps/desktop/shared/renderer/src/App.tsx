@@ -1940,7 +1940,7 @@ function AuthenticatedApp({
 
   async function selectChatAgent(
     agentId: string,
-    options: { persistInBackground?: boolean; agent?: DesktopAgent } = {},
+    options: { persistInBackground?: boolean; agent?: DesktopAgent; forceNewConversation?: boolean } = {},
   ): Promise<boolean> {
     const agent = options.agent ?? availableChatAgents.find((item) => item.id === agentId);
     if (!agent) return false;
@@ -1949,6 +1949,19 @@ function AuthenticatedApp({
         agent,
         ...current.filter((item) => item.id !== agent.id),
       ]);
+    }
+    if (options.forceNewConversation) {
+      applyChatAgent(agent);
+      const thread = await desktopApi.createThread({
+        kind: "chat",
+        title: language === "zh" ? `与 ${agent.name} 的新会话` : `New chat with ${agent.name}`,
+        workspacePath: effectiveWorkspacePath,
+        boundAgentId: agent.id,
+        boundAgentName: agent.name,
+      });
+      setActiveThreadId(thread.id);
+      setThreads((current) => sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]));
+      return true;
     }
     const activeThread = threads.find((thread) => thread.id === activeThreadId);
     const snapshotCount = activeThreadSnapshot?.messageCount ?? 0;
@@ -2689,11 +2702,12 @@ function AuthenticatedApp({
           selectedAgentId={selectedChatAgentId}
           onStartChat={(agent) => {
             void selectChatAgent(agent.id, {
-              persistInBackground: true,
               agent,
+              forceNewConversation: true,
             }).then((selected) => {
               if (!selected) return;
               setRightPanelCollapsed(true);
+              setComposerFocusRequest((current) => current + 1);
               navigateTo(MENU_IDS.currentSession);
             });
           }}

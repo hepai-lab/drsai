@@ -821,7 +821,7 @@ function AgentDetailDialog({
         </header>
         <p>{getAgentDescription(agent, zh)}</p>
         <dl>
-          <div><dt>{zh ? "可用状态" : "Availability"}</dt><dd>{available ? (zh ? "可用" : "Available") : (zh ? "当前不可用" : "Currently unavailable")}</dd></div>
+          <div><dt>{zh ? "可用状态" : "Availability"}</dt><dd>{available ? (zh ? "在线可用" : "Online & available") : (zh ? "当前不可用" : "Currently unavailable")}</dd></div>
           <div><dt>{zh ? "来源" : "Source"}</dt><dd>{getGroupLabel(agent.catalogGroup ?? (agent.source === "local" ? "local" : "official"), zh)}</dd></div>
         </dl>
         {(agent.capabilities ?? []).length > 0 && <div className="agent-detail-section"><strong>{zh ? "能力" : "Capabilities"}</strong><div className="agent-card-tags">{agent.capabilities?.map((item) => <span key={item}>{getCapabilityLabel(item, zh)}</span>)}</div></div>}
@@ -837,7 +837,7 @@ function getStatusLabel(agent: DesktopAgent, zh: boolean): string {
   if (agent.source === "local") return zh ? "本机" : "Local";
   if (agent.catalogState === "cached") return zh ? "缓存结果" : "Cached";
   return isAgentUsable(agent)
-    ? (zh ? "可用" : "Available")
+    ? (zh ? "在线可用" : "Online & available")
     : (zh ? "不可用" : "Unavailable");
 }
 
