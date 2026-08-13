@@ -41,6 +41,8 @@ interface LatestRelease {
   platform: ReleasePlatform;
   version: string;
   channel: string;
+  buildLabel?: string | null;
+  releaseLabel?: string | null;
   publishedAt?: string;
   download: ReleaseAsset;
   program?: ReleaseAsset;
@@ -697,6 +699,13 @@ const formatBytes = (sizeBytes: number) => {
   return `${Math.round(sizeBytes / 1024)} KB`;
 };
 
+const fallbackReleaseLabel = (version: string, channel: string) => {
+  if (version.slice(1).includes("-")) return undefined;
+  if (channel === "beta") return "Beta";
+  if (channel === "stable") return "Stable";
+  return channel || undefined;
+};
+
 const ClientDetails = ({
   active,
   isZh,
@@ -814,6 +823,10 @@ const ClientDetails = ({
         ...fallbackRelease,
         version: `v${latestRelease.version}`,
         channel: latestRelease.channel,
+        releaseLabel:
+          latestRelease.releaseLabel ??
+          latestRelease.buildLabel ??
+          fallbackReleaseLabel(`v${latestRelease.version}`, latestRelease.channel),
         file: latestRelease.download.file,
         sizeBytes: latestRelease.download.sizeBytes,
         sha256:
@@ -844,7 +857,12 @@ const ClientDetails = ({
               <h2 className="font-extrabold">{release.title}</h2>
               <p className="mt-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
                 {isZh ? "最新版本" : "Latest release"} · {release.version}
-                {` · ${release.channel === "beta" ? "Beta" : release.channel === "stable" ? "Stable" : release.channel}`}
+                {(() => {
+                  const label =
+                    ("releaseLabel" in release && release.releaseLabel) ||
+                    fallbackReleaseLabel(release.version, release.channel);
+                  return label ? ` · ${label}` : "";
+                })()}
               </p>
               {loadingRelease && (
                 <p className="mt-1 text-[11px] font-medium text-slate-400">

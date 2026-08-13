@@ -3,7 +3,10 @@ import json
 import httpx
 import pytest
 
-from drsai_ui.ui_backend.backend.web.routes.releases import fetch_latest_release
+from drsai_ui.ui_backend.backend.web.routes.releases import (
+    _release_labels,
+    fetch_latest_release,
+)
 
 
 @pytest.mark.asyncio
@@ -16,6 +19,7 @@ async def test_fetch_latest_windows_release_normalizes_manifest() -> None:
             json={
                 "version": "1.5.3",
                 "channel": "beta",
+                "buildLabel": " Beta 3 ",
                 "publishedAt": "2026-07-26T13:52:01.350Z",
                 "runtime": {
                     "url": "https://download-opendrsai.ihep.ac.cn/releases/v1.5.3/windows/OpenDrSai-Windows-v1.5.3-x64.zip",
@@ -29,6 +33,8 @@ async def test_fetch_latest_windows_release_normalizes_manifest() -> None:
         release = await fetch_latest_release("windows", client)
 
     assert release["version"] == "1.5.3"
+    assert release["buildLabel"] == "Beta 3"
+    assert release["releaseLabel"] == "Beta 3"
     assert release["download"]["file"] == "OpenDrSai-Windows-Installer-x64.msi"
     assert release["download"]["sizeBytes"] == 647168
     assert release["program"]["file"] == "OpenDrSai-Windows-v1.5.3-x64.zip"
@@ -57,6 +63,8 @@ async def test_fetch_latest_android_release_normalizes_manifest() -> None:
     assert release["download"]["file"] == "OpenDrSai-Android-v1.5.3.apk"
     assert release["download"]["sizeBytes"] == 3076779
     assert release["download"]["sha256"].startswith("74fcb63c")
+    assert release["buildLabel"] is None
+    assert release["releaseLabel"] == "Beta"
 
 
 @pytest.mark.asyncio
@@ -85,3 +93,22 @@ opendrsaiRuntimeSha256: 4f814613e02cadcf6c1c4687ad5f4908f0eb703e3dde9f592cd3336c
     assert release["program"]["file"] == "OpenDrSai-macOS-v1.5.1-arm64.zip"
     assert release["program"]["sizeBytes"] == 117994862
     assert release["program"]["sha256"].startswith("4f814613")
+
+
+@pytest.mark.parametrize(
+    ("version", "channel", "build_label", "expected"),
+    [
+        ("1.5.8", "beta", "Beta 3", ("Beta 3", "Beta 3")),
+        ("1.5.8", "beta", None, (None, "Beta")),
+        ("1.5.8", "beta", "Beta 4", ("Beta 4", "Beta 4")),
+        ("1.5.8-beta.3", "beta", None, (None, None)),
+        ("1.5.8-rc.1", "beta", "", (None, None)),
+    ],
+)
+def test_release_labels_support_current_and_legacy_manifests(
+    version: str,
+    channel: str,
+    build_label: str | None,
+    expected: tuple[str | None, str | None],
+) -> None:
+    assert _release_labels(version, channel, build_label) == expected

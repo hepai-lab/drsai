@@ -51,6 +51,25 @@ def _validated_sha256(value: Any) -> str:
     return sha256
 
 
+def _release_labels(
+    version: str, channel: str, build_label: Any
+) -> tuple[str | None, str | None]:
+    normalized_build_label = str(build_label or "").strip() or None
+    if normalized_build_label:
+        return normalized_build_label, normalized_build_label
+    # Older manifests sometimes encoded the prerelease label in the version.
+    # In that case the version already communicates the channel and must not
+    # be followed by another generic "Beta" label.
+    if "-" in version:
+        return None, None
+    normalized_channel = channel.strip().lower()
+    if normalized_channel == "beta":
+        return None, "Beta"
+    if normalized_channel == "stable":
+        return None, "Stable"
+    return None, channel.strip() or None
+
+
 async def _fetch_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     response = await client.get(url)
     response.raise_for_status()
@@ -96,10 +115,16 @@ async def _windows_release(
     except (httpx.HTTPError, ValueError):
         pass
 
+    channel = str(manifest.get("channel") or RELEASE_CHANNEL)
+    build_label, release_label = _release_labels(
+        version, channel, manifest.get("buildLabel")
+    )
     return {
         "platform": "windows",
         "version": version,
-        "channel": str(manifest.get("channel") or RELEASE_CHANNEL),
+        "channel": channel,
+        "buildLabel": build_label,
+        "releaseLabel": release_label,
         "publishedAt": manifest.get("publishedAt"),
         "download": {
             "url": installer_url,
@@ -125,10 +150,16 @@ def _android_release(manifest: dict[str, Any]) -> dict[str, Any]:
     apk_size = int(apk.get("sizeBytes"))
     if apk_size < 1:
         raise ValueError("Android APK size must be positive")
+    channel = str(manifest.get("channel") or RELEASE_CHANNEL)
+    build_label, release_label = _release_labels(
+        version, channel, manifest.get("buildLabel")
+    )
     return {
         "platform": "android",
         "version": version,
-        "channel": str(manifest.get("channel") or RELEASE_CHANNEL),
+        "channel": channel,
+        "buildLabel": build_label,
+        "releaseLabel": release_label,
         "publishedAt": manifest.get("publishedAt"),
         "download": {
             "url": apk_url,
@@ -163,10 +194,15 @@ async def _macos_release(
         raise ValueError("macOS installer size must be positive")
 
     application_url = f"{CDN_ORIGIN}/releases/v{version}/macos/{application_name}"
+    build_label, release_label = _release_labels(
+        version, MACOS_RELEASE_CHANNEL, manifest.get("buildLabel")
+    )
     return {
         "platform": "macos",
         "version": version,
         "channel": MACOS_RELEASE_CHANNEL,
+        "buildLabel": build_label,
+        "releaseLabel": release_label,
         "publishedAt": manifest.get("releaseDate"),
         "download": {
             "url": installer_url,
