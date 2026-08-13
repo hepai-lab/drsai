@@ -1,19 +1,24 @@
 # macOS v1.5.7 补齐实施进度
 
-> 更新时间：2026-08-11
+> 更新时间：2026-08-13
+> 状态：v1.5.7 已完成、已发布、最终公网验收通过
 
 ## 总览
 
 | 指标 | 起点 | 当前 |
 |---|---:|---:|
-| preload / Windows IPC | 374 / 374 | 374 / 374 |
-| macOS IPC | 304 | 374 |
+| preload / Windows IPC | 374 / 374 | 385 / 385 |
+| macOS IPC | 304 | 385 |
 | macOS IPC 覆盖率 | 81.28% | 100% |
 | 缺失 IPC | 70 | 0 |
 | feature suites | 旧证据 67 | 67/67 通过 |
-| shared business line coverage | 旧证据 92.68% | 90.44% 通过 |
-| core state-machine branch coverage | 旧证据 92.34% | 92.25% 通过 |
+| product feature acceptance | 未签发 | 72/72 accepted |
+| P2 engineering acceptance | 未签发 | 50/50 accepted |
+| shared business line coverage | 旧证据 92.68% | 88.93% 通过现行 80% 门槛 |
+| core state-machine branch coverage | 旧证据 92.34% | 90.4% 通过现行 90% 门槛 |
 | integration adapter line coverage | 旧证据 59.37% | 59.37% 通过现行 55% 门槛 |
+
+以下 R1～R8 保留为早期补齐过程记录；最终发布事实以文末“发布级证据”及完整发布方案为准。
 
 ## R1：基线与 Run 主干
 
@@ -73,8 +78,8 @@
 - 修复：同一 Gateway 实例的同一身份不再重复 PUT；Gateway 探测离线时清空同步缓存，保证新实例恢复后重新同步；后端仅在身份值真实变化时记录 INFO；
 - 验证：双平台 typecheck、Auth/Gateway coordination contract、连续两次相同身份仅记录一次的真实 Loguru 行为探针及 `git diff --check` 通过。
 
-## 尚未签发的发布级证据
+## 已签发的发布级证据
 
-代码和可自动执行的功能门禁已通过，但 L4/L5/L6 release attestation 尚不能重新签发：当前仓库含任务开始前即存在的用户未提交修改，source snapshot 为 `clean=false`；既有 L4/L5/L6 receipt 绑定旧提交 `5d400030`。按照仓库防伪规则，不得把旧签名、公证、安装、在线升级证据改写为当前提交通过。
+发布源 clean commit 为 `2f85374be7bb952ec76277563b6a3a8b81d604bd`。L4/L5/L6、release decision、72 项产品功能、50 项 P2 工程项、缺陷登记、覆盖率和 source binding 已重新签发；release decision 为 `releasable`，blockers 为空。
 
-发布前还需在 clean release commit 上重新执行 packaged smoke、Runtime reproducibility、codesign/notarization/staple、Gatekeeper、clean install、签名在线升级/回滚和 TCC 真机验收，再运行 `record:l4-evidence`、`record:l5-evidence`、`record:l6-evidence` 与 `decide:release`。
+最终签名、公证、staple、Gatekeeper、clean install、v1.5.3 → v1.5.7 在线升级/回滚、Keychain、TCC、三种 HepAI 模型和 20/20 真机睡眠唤醒均通过。正式制品已发布到阿里云 OSS；`opendrsai-dev.ihep.ac.cn`、stable metadata、ZIP 和 DMG 的公网验收通过，详见 `apps/desktop/macos/build/acceptance/website-release.json`。

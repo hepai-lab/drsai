@@ -29,7 +29,7 @@ assert.equal(effectiveMetadataUrl.host, downloadOrigin.host, "stable metadata re
 
 const publishedVersion = capture(metadataText, /^version:\s*([^\s]+)\s*$/m, "version");
 const zipName = capture(metadataText, /^path:\s*(.+?)\s*$/m, "path");
-const zipSize = Number(capture(metadataText, /^size:\s*(\d+)\s*$/m, "size"));
+const zipSize = Number(capture(metadataText, /^\s+size:\s*(\d+)\s*$/m, "files[0].size"));
 const zipSha512 = capture(metadataText, /^sha512:\s*(\S+)\s*$/m, "sha512");
 const runtimeVersion = capture(metadataText, /^opendrsaiRuntimeVersion:\s*(\S+)\s*$/m, "opendrsaiRuntimeVersion");
 const runtimeSha256 = capture(metadataText, /^opendrsaiRuntimeSha256:\s*([a-f0-9]{64})\s*$/m, "opendrsaiRuntimeSha256");
