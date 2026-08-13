@@ -312,6 +312,7 @@
     "verify:codex-p10-ledger": "node scripts/verify-codex-p10-ledger.mjs",
     "verify:opendrsai-attachments": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-opendrsai-attachments.mts",
     "verify:attachment-context-coverage": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-attachment-context-coverage.mts",
+    "verify:citation-projection": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-citation-projection.mts",
     "verify:opendrsai-model-run-snapshot": "node scripts/verify-opendrsai-model-run-snapshot.mjs",
     "verify:opendrsai-model-commit-activation": "node scripts/verify-opendrsai-model-commit-activation.mjs",
     "verify:opendrsai-model-preview-packaged": "node scripts/verify-opendrsai-model-preview-packaged.mjs",
