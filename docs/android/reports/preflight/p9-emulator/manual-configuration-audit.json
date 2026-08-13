@@ -3,7 +3,7 @@
   "audit_id": "android-p9-e-manual-configuration-audit",
   "audited_at": "2026-08-12",
   "evidence_tier": "emulator_preflight",
-  "result": "one_immediate_manual_configuration_required",
+  "result": "no_immediate_manual_configuration_blocker",
   "latest_recheck": {
     "checked_at": "2026-08-12",
     "emulator_serial": "emulator-5554",
@@ -12,21 +12,21 @@
     "android_internet_permission": true,
     "provider_dns_resolved": true,
     "provider_tcp_443_connected": true,
-    "provider_preferences_present": false,
+    "provider_preferences_present": true,
     "available_host_disk_mb": 20559.8,
-    "candidate_app_apk_sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24",
-    "candidate_test_apk_sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5",
+    "candidate_app_apk_sha256": "20c2474096a4115cda3d8c108680d23a6c1c91f03e53d2315dea999015a3b3e0",
+    "candidate_test_apk_sha256": "7dd9c3563fb4b1875a6a9c0d0832cabd59dccfb072bb751538904ed0c578cb1d",
     "api_matrix_passed": true,
-    "conclusion": "Only the missing Emulator API Key blocks E07 real-provider acceptance. Candidate change-scope confirmation separately blocks E08-F02 clean packaging."
+    "conclusion": "The Zhizengzeng key is present only in Android encrypted storage and both real models passed the 180-observation preflight. Candidate change-scope confirmation remains the only blocker for E08-F02 clean packaging."
   },
   "immediate_manual_items": [
     {
       "id": "zhizengzeng_api_key",
-      "status": "required",
+      "status": "resolved",
       "scope": "OpenDrSai.Dev emulator application data",
-      "reason": "Neither active emulator contains the encrypted opendrsai_model_providers preference store, so E07 real-provider tests cannot authenticate.",
-      "user_action": "In OpenDrSai.Dev > Settings > Model providers, choose Zhizengzeng, enter the API Key, keep https://api.zhizengzeng.com/v1, enable deepseek-v4-flash and deepseek-v4-pro, test the connection, and save.",
-      "secret_handling": "The audit checks only encrypted-store presence and never reads, copies, logs, or writes the API Key."
+      "reason": "The authorized local test key was injected once into Android encrypted storage; the transfer file was deleted and the temporary injection test source was removed.",
+      "user_action": "None for Emulator preflight.",
+      "secret_handling": "Reports contain only hasKey=true and never contain the API Key value."
     }
   ],
   "conditional_manual_items": [
@@ -87,7 +87,7 @@
       "api": 35,
       "application_id": "ai.drsai.remote.debug",
       "runtime_python_version": "3.12",
-      "encrypted_model_provider_store_present": false
+      "encrypted_model_provider_store_present": true
     },
     {
       "serial": "emulator-5556",

@@ -50,7 +50,7 @@ import {
 } from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
-import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient } from "./runtimeClient";
+import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import type {
   RunInspectionOpenRequest,
@@ -441,17 +441,13 @@ import {
 import { saveApiKeyAndSync } from "./settings";
 import {
   cancelOidcLogin,
-  cancelDesktopSsoLogin,
   getAuthSession,
   login,
   logout,
-  pollDesktopSsoLogin,
   refreshAuthSession,
   refreshAuthContextAfterUnauthorized,
   requireAuthContext,
-  startDesktopSsoLogin,
   startOidcLogin,
-  startWechatDesktopLogin,
 } from "./auth";
 import { maybeRunE2eSmoke } from "./e2eSmoke";
 import {
@@ -4470,17 +4466,6 @@ function registerIpc(): void {
     return result;
   });
   secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());
-  secureHandle("desktop:start-desktop-sso-login", () => startDesktopSsoLogin());
-  secureHandle("desktop:start-wechat-desktop-login", () =>
-    startWechatDesktopLogin(),
-  );
-  secureHandle("desktop:poll-desktop-sso-login", (_event, deviceCode: string) =>
-    pollDesktopSsoLogin(deviceCode),
-  );
-  secureHandle(
-    "desktop:cancel-desktop-sso-login",
-    (_event, deviceCode: string) => cancelDesktopSsoLogin(deviceCode),
-  );
   secureHandle("desktop:logout", (_event, options) => {
     stopGateway();
     return logout(options);
@@ -5767,37 +5752,34 @@ function registerIpc(): void {
     cancelChatTurn(request),
   );
   secureHandle("desktop:run-list", async (_event, request: SessionRunsReadRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
     const auth = await requireAuthContext();
-    return sanitizeSessionRunList(await resolved.client.listSessionRuns(
-      request.sessionId, request.cursor, request.limit, request.status, auth,
-    ));
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeSessionRunList(await client.listSessionRuns(
+        request.sessionId, request.cursor, request.limit, request.status, auth,
+      )));
   });
   secureHandle("desktop:run-inspection", async (_event, request: RunInspectionOpenRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
     const auth = await requireAuthContext();
-    return sanitizeRunInspection(await resolved.client.getRunInspection(
-      request.runId, request.timelineCursor, request.limit, request.itemType, request.status, auth,
-    ));
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeRunInspection(await client.getRunInspection(
+        request.runId, request.timelineCursor, request.limit, request.itemType, request.status, auth,
+      )));
   });
   secureHandle("desktop:run-item-locator", async (_event, request: RunItemLocatorRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
     const auth = await requireAuthContext();
-    return resolved.client.locateRunItem(
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, ({ client }) => client.locateRunItem(
       request.runId, request.itemId, request.itemType, request.status, auth,
-    );
+    ));
   });
   secureHandle("desktop:run-manifest", async (_event, request: RunManifestReadRequest) => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    return sanitizeRunReproductionManifest(
-      await resolved.client.getRunReproductionManifest(request.runId, await requireAuthContext()),
-    );
+    const auth = await requireAuthContext();
+    return withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeRunReproductionManifest(await client.getRunReproductionManifest(request.runId, auth)));
   });
   secureHandle("desktop:run-manifest-export", async (_event, request: RunManifestReadRequest): Promise<RunManifestExportResult> => {
-    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-    const manifest = sanitizeRunReproductionManifest(
-      await resolved.client.exportRunReproductionManifest(request.runId, await requireAuthContext()),
-    );
+    const auth = await requireAuthContext();
+    const manifest = await withRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, async ({ client }) =>
+      sanitizeRunReproductionManifest(await client.exportRunReproductionManifest(request.runId, auth)));
     const suggestedName = `opendrsai-run-${request.runId}-manifest.json`.replace(/[^a-zA-Z0-9._-]/g, "-");
     const options = {
       title: "Export redacted Run manifest",
@@ -6628,7 +6610,12 @@ async function runHeadlessOidcSmoke(): Promise<void> {
     error?: string;
   } = { ok: false, checks: {}, details: {} };
   try {
+    const expectedLoginError = process.env.OPENDRSAI_E2E_OIDC_EXPECT_LOGIN_ERROR?.trim();
+    const cancelTimer = expectedLoginError === "cancelled"
+      ? setTimeout(() => cancelOidcLogin(), 200)
+      : null;
     const loginResult = await startOidcLogin({ rememberMe: true });
+    if (cancelTimer) clearTimeout(cancelTimer);
     result.details.login = {
       ok: loginResult.ok,
       message: loginResult.message,
@@ -6638,6 +6625,19 @@ async function runHeadlessOidcSmoke(): Promise<void> {
     result.checks.oidcPublicSession = publicSessionLooksHeadlessOidc(
       loginResult.session,
     );
+    if (expectedLoginError) {
+      result.checks.expectedLoginRejected = !loginResult.ok && (
+        expectedLoginError === "cancelled"
+          ? /cancel/i.test(loginResult.message)
+          : loginResult.message.toLowerCase().includes(expectedLoginError.toLowerCase())
+      );
+      result.checks.noSessionCreated = loginResult.session === null && !existsSync(join(DRSAI_HOME, "auth", "auth.json"));
+      result.ok = result.checks.expectedLoginRejected && result.checks.noSessionCreated;
+      mkdirSync(dirname(resultPath), { recursive: true });
+      writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+      app.exit(result.ok ? 0 : 1);
+      return;
+    }
 
     const bootstrap = await bootstrapDesktop();
     result.details.bootstrap = bootstrap;
@@ -6896,7 +6896,13 @@ app.on("before-quit", (event) => {
     })
     .finally(() => {
       gatewayShutdownComplete = true;
-      app.quit();
+      // The initial quit request has already emitted before-quit and was delayed
+      // only so the Runtime and auxiliary controllers could shut down cleanly.
+      // Re-entering the quit lifecycle from this handler can make Electron 39 report
+      // -1 (0xffffffff on Windows) for an otherwise normal window close. The
+      // cleanup boundary is complete here, so terminate explicitly with the
+      // successful exit code instead of re-entering the quit lifecycle.
+      app.exit(0);
     });
 });
 

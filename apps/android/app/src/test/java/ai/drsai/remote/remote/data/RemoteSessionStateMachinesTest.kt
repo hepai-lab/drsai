@@ -26,6 +26,21 @@ class RemoteSessionStateMachinesTest {
         }
     }
 
+    @Test fun network_and_lifecycle_changes_never_clear_auth_or_revocation() {
+        listOf(SessionSyncEvent.AuthenticationRequired, SessionSyncEvent.Revoked).forEach { terminal ->
+            val machine = SessionSyncStateMachine()
+            machine.accept(terminal)
+            machine.accept(SessionSyncEvent.Background)
+            machine.accept(SessionSyncEvent.Network(false))
+            machine.accept(SessionSyncEvent.Network(true))
+            machine.accept(SessionSyncEvent.Foreground)
+            assertFalse(machine.state.shouldSubscribe)
+            assertTrue(machine.state.phase in setOf(
+                SessionSyncPhase.AUTH_REQUIRED, SessionSyncPhase.REVOKED,
+            ))
+        }
+    }
+
     @Test fun projection_is_monotonic_and_gap_does_not_advance() {
         val machine = SessionProjectionStateMachine()
         repeat(10_000) { index ->

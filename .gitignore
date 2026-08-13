@@ -318,6 +318,9 @@ notebooks/test.db
 # Locally downloaded, checksum-verified toolchains used to reproduce macOS artifacts.
 .runtime-tools/
 .tooling/
+.worktrees/
+# Locally downloaded release utilities (for example, ossutil).
+.tools/
 apps/desktop/macos/native/OpenDrSaiNativeHelper/.build/
 apps/desktop/macos/release-unsigned-update/
 
@@ -348,6 +351,7 @@ docs/android/reports/evidence/samsung-model-provider-*/
 docs/android/reports/preflight/**/*.png
 docs/android/reports/preflight/**/*.xml
 docs/android/reports/preflight/**/*.txt
+docs/android/reports/preflight/**/round*/
 docs/desktop/evidence/**/*.png
 docs/desktop/evidence/**/accessibility-tree.json
 docs/desktop/evidence/round*/

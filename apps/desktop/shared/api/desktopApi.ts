@@ -382,6 +382,10 @@ export interface DesktopA5ServiceGuidanceScenario {
 
 export type OidcLoginDebugStage =
   | "started"
+  | "device-code-request"
+  | "device-code-ready"
+  | "device-code-polling"
+  | "device-code-slow-down"
   | "callback-listening"
   | "discovery"
   | "authorize-url"
@@ -400,22 +404,8 @@ export interface OidcLoginDebugEvent {
   message: string;
   at: string;
   url?: string;
-}
-
-export interface DesktopSsoStartResult {
-  ok: boolean;
-  message: string;
-  deviceCode?: string;
-  loginUrl?: string;
+  userCode?: string;
   expiresAt?: string;
-  intervalSeconds?: number;
-}
-
-export interface DesktopSsoPollResult {
-  ok: boolean;
-  state: "pending" | "authorized" | "expired" | "cancelled" | "error";
-  message: string;
-  session?: AuthSession | null;
 }
 
 export type DesktopVoiceRuntimeId =
@@ -5362,10 +5352,6 @@ export interface DesktopApi {
   login(request: LoginRequest): Promise<LoginResult>;
   startOidcLogin(request?: { rememberMe?: boolean }): Promise<LoginResult>;
   cancelOidcLogin(): Promise<boolean>;
-  startDesktopSsoLogin(): Promise<DesktopSsoStartResult>;
-  startWechatDesktopLogin(): Promise<DesktopSsoStartResult>;
-  pollDesktopSsoLogin(deviceCode: string): Promise<DesktopSsoPollResult>;
-  cancelDesktopSsoLogin(deviceCode: string): Promise<boolean>;
   logout(options?: LogoutOptions): Promise<{ ok: boolean; message: string }>;
   restartApplication(): Promise<boolean>;
   previewLocalDataCleanup(scope: DesktopDataCleanupScope): Promise<DesktopDataCleanupPreview>;

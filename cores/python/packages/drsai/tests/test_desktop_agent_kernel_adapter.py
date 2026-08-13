@@ -503,6 +503,27 @@ async def test_production_shaped_agent_pilot_is_actually_driven_by_shared_kernel
 
 
 @pytest.mark.asyncio
+async def test_kernel_checkpoint_history_is_bound_to_its_session() -> None:
+    agent = _Agent()
+    agent._agent_kernel_checkpoint = {
+        "reason": "terminal",
+        "state": {
+            "session_id": "session-other",
+            "messages": [{"role": "user", "content": "must-not-leak"}],
+        },
+    }
+
+    output = [value async for value in run_agent_through_kernel(
+        agent, task="hello", cancellation_token=__import__("autogen_core").CancellationToken(),
+        policy_resolver=_policy,
+    )]
+
+    assert output[-1].stop_reason == "run.completed"
+    messages = agent._agent_kernel_checkpoint["state"]["messages"]
+    assert all(value.get("content") != "must-not-leak" for value in messages)
+
+
+@pytest.mark.asyncio
 async def test_ordinary_desktop_kernel_exposes_native_regression_tools() -> None:
     agent = _Agent()
     client = _VisibleRegressionToolsClient()
@@ -510,7 +531,7 @@ async def test_ordinary_desktop_kernel_exposes_native_regression_tools() -> None
     agent._regression_tools = get_regression_read_tools()
 
     output = [value async for value in run_agent_through_kernel(
-        agent, task="有哪些回归测试？", cancellation_token=__import__("autogen_core").CancellationToken(),
+        agent, task="hello", cancellation_token=__import__("autogen_core").CancellationToken(),
         policy_resolver=_policy,
     )]
 

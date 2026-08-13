@@ -2,6 +2,9 @@ package ai.drsai.remote.remote.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -16,6 +19,8 @@ import ai.drsai.remote.remote.data.safeRemoteFailureMessage
 import ai.drsai.remote.remote.data.WorkspaceSessionCatalogDecision
 import ai.drsai.remote.remote.data.WorkspaceSessionCatalogGate
 import ai.drsai.remote.remote.data.WorkspaceSessionCatalogProjection
+import ai.drsai.remote.remote.data.RemoteRetryPolicy
+import ai.drsai.remote.remote.data.RemoteStreamRetryState
 import ai.drsai.remote.runtime.context.PromptFragment
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
@@ -52,6 +57,7 @@ class WorkspaceSessionsViewModel(
     private val instructionVersionStore = WorkspaceInstructionVersionStore(app)
     private val directoryCache = container.directoryCache
     private val activity = container.activity
+    private val connectivity = container.connectivity
     private val mutableState = MutableStateFlow(
         WorkspaceSessionsUiState(runtimeName = runtimeName, workspaceName = workspaceName, loading = true),
     )
@@ -59,6 +65,18 @@ class WorkspaceSessionsViewModel(
     private val generation = AtomicLong(0)
     private var searchJob: Job? = null
     private var catalogJob: Job? = null
+    @Volatile private var foreground = true
+    private val lifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onStart(owner: LifecycleOwner) {
+            foreground = true
+            observeCatalog()
+        }
+
+        override fun onStop(owner: LifecycleOwner) {
+            foreground = false
+            catalogJob?.cancel()
+        }
+    }
     private val catalogGate = WorkspaceSessionCatalogGate()
     private var acceptedInstructionVersions: Map<String, String>? = tokenStore.user()?.id?.let { subject ->
         instructionVersionStore.accepted(subject, runtimeId, workspaceId)
@@ -66,26 +84,35 @@ class WorkspaceSessionsViewModel(
 
     init {
         AndroidDevicePresence.markAccessing(runtimeId)
+        ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
         refresh()
         observeCatalog()
+        viewModelScope.launch {
+            connectivity.state.collect { network ->
+                if (foreground && network.online) observeCatalog() else catalogJob?.cancel()
+            }
+        }
     }
 
     private fun observeCatalog() {
         catalogJob?.cancel()
+        if (!foreground || !connectivity.online.value) return
         catalogJob = viewModelScope.launch(Dispatchers.IO) {
-            var retryMillis = 500L
-            while (isActive) {
-                runCatching {
+            val retry = RemoteStreamRetryState(RemoteRetryPolicy())
+            while (isActive && foreground && connectivity.online.value) {
+                try {
                     container.boundaries.catalog.sessionEvents.workspaceSessionCatalogStream(runtimeId, workspaceId) {
                         refresh()
                     }.collect { event ->
-                        retryMillis = 500L
+                        retry.reset()
                         if (catalogGate.accept(event) == WorkspaceSessionCatalogDecision.APPLY) refresh()
                     }
-                }
-                if (isActive) {
+                    throw java.io.EOFException("relay_workspace_catalog_sse_eof")
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    val retryMillis = retry.nextDelay(failure, time.monotonicNanos()) ?: break
                     time.waitFor(retryMillis)
-                    retryMillis = (retryMillis * 2).coerceAtMost(15_000L)
                 }
             }
         }
@@ -249,6 +276,7 @@ class WorkspaceSessionsViewModel(
     }
 
     override fun onCleared() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
         catalogJob?.cancel()
         super.onCleared()
     }

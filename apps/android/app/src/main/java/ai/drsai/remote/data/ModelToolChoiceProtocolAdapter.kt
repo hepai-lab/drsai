@@ -1,5 +1,6 @@
 package ai.drsai.remote.data
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 internal object ModelToolChoiceProtocolAdapter {
@@ -8,11 +9,37 @@ internal object ModelToolChoiceProtocolAdapter {
     fun automatic() = JSONObject().put("policy_version", VERSION).put("mode", "auto")
     fun none() = JSONObject().put("policy_version", VERSION).put("mode", "none")
 
-    fun openAi(policy: JSONObject): Any = when (val mode = validate(policy)) {
-        "auto", "required", "none" -> mode
-        "specified" -> JSONObject().put("type", "function").put("function", JSONObject()
-            .put("name", toHaiToolName(policy.getString("specified_tool"))))
+    fun openAi(policy: JSONObject): Any? = when (val mode = validate(policy)) {
+        "auto", "none" -> mode
+        // Some OpenAI-compatible reasoning models reject required/named
+        // tool_choice. The Kernel still enforces tool use; constrain the
+        // request-visible tool surface instead and omit the vendor field.
+        "required", "specified" -> null
         else -> error("unreachable_tool_choice:$mode")
+    }
+
+    fun constrainOpenAiTools(policy: JSONObject, tools: JSONArray): JSONArray {
+        val mode = validate(policy)
+        if (mode !in setOf("required", "specified")) return JSONArray(tools.toString())
+        val canonicalNames = if (mode == "specified") {
+            listOf(policy.getString("specified_tool"))
+        } else {
+            val matching = policy.optJSONArray("matching_tools")
+                ?: throw policyError("matching_tools_missing")
+            (0 until matching.length()).map { index -> matching.optString(index).trim() }
+                .filter(String::isNotBlank)
+                .distinct()
+                .ifEmpty { throw policyError("matching_tools_missing") }
+        }
+        val wireNames = canonicalNames.map(::toHaiToolName).toSet()
+        val constrained = JSONArray()
+        repeat(tools.length()) { index ->
+            val tool = tools.optJSONObject(index) ?: throw policyError("tool_not_object")
+            val name = tool.optJSONObject("function")?.optString("name").orEmpty()
+            if (name in wireNames) constrained.put(JSONObject(tool.toString()))
+        }
+        if (constrained.length() != wireNames.size) throw policyError("matching_tool_unavailable")
+        return constrained
     }
 
     fun anthropic(policy: JSONObject): JSONObject? = when (val mode = validate(policy)) {

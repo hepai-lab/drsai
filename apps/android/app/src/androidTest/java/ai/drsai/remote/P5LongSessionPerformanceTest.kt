@@ -13,6 +13,7 @@ import ai.drsai.remote.data.ChatDatabase
 import ai.drsai.remote.remote.data.LatestFrameMailbox
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteDeltaFrameBuffer
+import ai.drsai.remote.remote.data.reduceRemoteTimelineUpdate
 import ai.drsai.remote.remote.generated.OaepItem
 import ai.drsai.remote.remote.generated.OaepMessageContent
 import ai.drsai.remote.remote.generated.OaepRun
@@ -84,6 +85,29 @@ class P5LongSessionPerformanceTest {
             assertEquals(expectedHistoryHash, actualHistoryHash)
             assertTrue("full history took ${historyElapsedMs}ms", historyElapsedMs <= HISTORY_MAX_MS)
 
+            // Search is intentionally evaluated against the on-device Room cache. The marker
+            // contains SQL LIKE metacharacters so this also proves they remain literal offline.
+            val offlineSearch = store.searchCachedOaepItems(
+                SUBJECT, "", RUNTIME, SESSION, OFFLINE_SEARCH_QUERY,
+            )
+            assertEquals(listOf("item-$OFFLINE_SEARCH_SEQUENCE"), offlineSearch.map { it.itemId })
+
+            // A reader viewing older content, loading history, or searching must never be
+            // pulled to the latest item when a live delta arrives.
+            val reading = reduceRemoteTimelineUpdate(TOTAL_ITEMS, TOTAL_ITEMS + 1, false, null)
+            val searching = reduceRemoteTimelineUpdate(
+                TOTAL_ITEMS, TOTAL_ITEMS + 1, true, null, searchActive = true,
+            )
+            val restoring = reduceRemoteTimelineUpdate(
+                TOTAL_ITEMS, TOTAL_ITEMS + 1, true, TOTAL_ITEMS - 1, historyRestored = true,
+            )
+            assertEquals(TOTAL_ITEMS, reading.unreadStart)
+            assertTrue(!reading.scrollToLatest)
+            assertEquals(TOTAL_ITEMS, searching.unreadStart)
+            assertTrue(!searching.scrollToLatest)
+            assertEquals(TOTAL_ITEMS - 1, restoring.unreadStart)
+            assertTrue(!restoring.scrollToLatest)
+
             val delta = runDeltaGate()
             val report = JSONObject()
                 .put("schema_version", SCHEMA_VERSION)
@@ -96,7 +120,12 @@ class P5LongSessionPerformanceTest {
                     .put("cold_pss_delta_kb", coldPssDeltaKb)
                     .put("full_history_items", allRows.size)
                     .put("full_history_ms", historyElapsedMs)
-                    .put("history_hash", actualHistoryHash))
+                    .put("history_hash", actualHistoryHash)
+                    .put("offline_search_matches", offlineSearch.size)
+                    .put("offline_search_literal_metacharacters", true)
+                    .put("reading_anchor_stable", true)
+                    .put("search_anchor_stable", true)
+                    .put("history_restore_anchor_stable", true))
                 .put("delta", delta)
                 .put("budgets", JSONObject()
                     .put("cold_start_max_ms", COLD_START_MAX_MS)
@@ -104,6 +133,7 @@ class P5LongSessionPerformanceTest {
                     .put("history_max_ms", HISTORY_MAX_MS)
                     .put("delta_count", DELTA_COUNT)
                     .put("delta_duration_max_ms", DELTA_DURATION_MAX_MS)
+                    .put("delta_min_throughput_per_second", DELTA_MIN_THROUGHPUT_PER_SECOND)
                     .put("minimum_main_ticks", MINIMUM_MAIN_TICKS))
             val encodedReport = report.toString().toByteArray(Charsets.UTF_8)
             File(context.filesDir, DEVICE_REPORT).writeBytes(encodedReport)
@@ -151,11 +181,15 @@ class P5LongSessionPerformanceTest {
         handler.removeCallbacks(ticker)
         require(!producer.isAlive) { "p5_delta_gate_timeout" }
         val elapsed = elapsedMs(started)
+        val throughputPerSecond = DELTA_COUNT * 1_000L / elapsed.coerceAtLeast(1L)
         val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
         val expectedHash = sha256("x".repeat(DELTA_COUNT).toByteArray())
         require(actualHash == expectedHash) { "p5_delta_content_hash_mismatch" }
         require(buffer.sizeChars() == 0) { "p5_delta_buffer_not_drained" }
         require(elapsed <= DELTA_DURATION_MAX_MS) { "p5_delta_duration_budget_exceeded" }
+        require(throughputPerSecond >= DELTA_MIN_THROUGHPUT_PER_SECOND) {
+            "p6_delta_throughput_budget_exceeded"
+        }
         require(mainTicks.get() >= MINIMUM_MAIN_TICKS) { "p5_delta_main_responsiveness_failed" }
         // The producer intentionally yields once per 100 ms batch; rendering
         // must remain frame-bounded instead of creating one worker per delta.
@@ -163,6 +197,7 @@ class P5LongSessionPerformanceTest {
         return JSONObject()
             .put("delta_count", DELTA_COUNT)
             .put("duration_ms", elapsed)
+            .put("throughput_per_second", throughputPerSecond)
             .put("main_ticks", mainTicks.get())
             .put("worker_starts", workerStarts)
             .put("render_cycles", renderCycles)
@@ -183,7 +218,10 @@ class P5LongSessionPerformanceTest {
         OaepItem(
             "item-$sequence", SESSION, RUN, "message", "completed", sequence,
             "now", "now", OaepSource("runtime", runtimeId = RUNTIME),
-            OaepMessageContent("assistant", "x"),
+            OaepMessageContent(
+                "assistant",
+                if (sequence == OFFLINE_SEARCH_SEQUENCE) OFFLINE_SEARCH_QUERY else "x",
+            ),
         )
     }
 
@@ -224,8 +262,13 @@ class P5LongSessionPerformanceTest {
         private const val HISTORY_MAX_MS = 180_000L
         private const val DELTA_COUNT = 10_000
         private const val DELTA_BATCHES = 10
-        private const val DELTA_BATCH_INTERVAL_MS = 100L
+        // Ten 1,000-delta batches in an 800ms injection window leave enough
+        // scheduling margin while proving at least 10k lossless deltas/second.
+        private const val DELTA_BATCH_INTERVAL_MS = 80L
         private const val DELTA_DURATION_MAX_MS = 5_000L
+        private const val DELTA_MIN_THROUGHPUT_PER_SECOND = 10_000L
         private const val MINIMUM_MAIN_TICKS = 20
+        private const val OFFLINE_SEARCH_SEQUENCE = 100L
+        private const val OFFLINE_SEARCH_QUERY = "physical 100%_offline"
     }
 }

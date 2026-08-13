@@ -897,6 +897,18 @@ class DrSaiAgentKernel:
         tool_calls = command.payload.get("tool_calls", [])
         if not isinstance(tool_calls, list):
             raise ValueError("tool_calls_invalid")
+        preferred_tools = state.tool_decision_requirement.get("preferred_tools", [])
+        if isinstance(preferred_tools, list) and len(preferred_tools) == 1:
+            preferred_name = preferred_tools[0]
+            matching_calls = [
+                value for value in tool_calls
+                if isinstance(value, Mapping) and value.get("name") == preferred_name
+            ]
+            # A specified P9 task executes at most one matching call per
+            # model turn. Reasoning providers sometimes emit duplicate calls
+            # with alternate queries even when only one Tool is visible.
+            if matching_calls:
+                tool_calls = matching_calls[:1]
         if state.web_search_exhausted and any(
             isinstance(value, Mapping) and value.get("name") == "web_search" for value in tool_calls
         ):
@@ -1533,6 +1545,13 @@ class DrSaiAgentKernel:
                 and tool.get("name") not in {"delegate", "core.update_plan"}
             )]
             safe_names = {str(tool["name"]) for tool in safe_tools}
+            # A general child is a bounded reasoning worker. The mobile
+            # coordinator currently accepts one child model completion and
+            # does not execute a nested child Tool loop. Only an explicit
+            # allowlist opts an explore child into a Tool surface.
+            if requested_tools is None:
+                safe_tools = []
+                safe_names = set()
             if requested_tools is not None:
                 # OpenAI-compatible providers may encode punctuation in nested
                 # string arguments using the same reversible spelling used for
@@ -1663,7 +1682,10 @@ class DrSaiAgentKernel:
                 "name": call["name"], "call_id": call["call_id"], "tool_kind": "core",
                 "arguments": dict(call["arguments"]),
             }))
-            state.messages.append({"role": "tool", "tool_call_id": call["call_id"], "content": json.dumps(result, sort_keys=True)})
+            state.messages.append({
+                "role": "tool", "tool_call_id": call["call_id"], "name": call["name"],
+                "succeeded": True, "content": json.dumps(result, sort_keys=True),
+            })
             replies.append(self._event(state, "tool.result", {
                 "name": call["name"], "call_id": call["call_id"], "tool_kind": "core",
                 "arguments": dict(call["arguments"]), "result": result,
@@ -1720,7 +1742,7 @@ class DrSaiAgentKernel:
         ordered = "\n".join(f"[{key}] completed: {value}" for key, value in state.subagent_results.items())
         completed_delegate_call_id = state.delegate_call_id
         state.messages.append({
-            "role": "tool", "tool_call_id": state.delegate_call_id,
+            "role": "tool", "tool_call_id": state.delegate_call_id, "name": "delegate", "succeeded": True,
             "content": ordered,
         })
         if completed_delegate_call_id is not None:
@@ -1791,7 +1813,10 @@ class DrSaiAgentKernel:
         lines = [f"[{key}] completed: {value}" for key, value in state.subagent_results.items()]
         lines.extend(f"[{key}] failed: {value['code']}" for key, value in state.subagent_failures.items())
         delegate_call_id = state.delegate_call_id
-        state.messages.append({"role": "tool", "tool_call_id": delegate_call_id, "content": "\n".join(lines)})
+        state.messages.append({
+            "role": "tool", "tool_call_id": delegate_call_id, "name": "delegate", "succeeded": True,
+            "content": "\n".join(lines),
+        })
         if delegate_call_id is not None:
             state.completed_side_effects.add(delegate_call_id)
         state.delegate_call_id = None
@@ -1837,7 +1862,10 @@ class DrSaiAgentKernel:
             if state.pending_subagents:
                 return (cancelled, self._checkpoint(state, "after_subagent_cancel"))
             ordered = "\n".join(f"[{key}] completed: {value}" for key, value in state.subagent_results.items())
-            state.messages.append({"role": "tool", "tool_call_id": state.delegate_call_id, "content": ordered})
+            state.messages.append({
+                "role": "tool", "tool_call_id": state.delegate_call_id, "name": "delegate", "succeeded": True,
+                "content": ordered,
+            })
             if state.delegate_call_id is not None:
                 state.completed_side_effects.add(state.delegate_call_id)
             state.delegate_call_id = None
@@ -1870,7 +1898,7 @@ class DrSaiAgentKernel:
                 f"[{subagent_id}] cancelled: parent_cancelled" for subagent_id in state.pending_subagents
             )
             state.messages.append({
-                "role": "tool", "tool_call_id": state.delegate_call_id,
+                "role": "tool", "tool_call_id": state.delegate_call_id, "name": "delegate", "succeeded": False,
                 "content": cancelled_summary or "cancelled: parent_cancelled",
             })
             state.completed_side_effects.add(state.delegate_call_id)

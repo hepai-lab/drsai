@@ -53,6 +53,8 @@ for (const marker of [
 
 for (const marker of [
   "auth: AuthContext",
+  "acquireRuntimeClientLease(() =>",
+  "resolved.release();",
   "function isPlatformBearerAuth",
   "auth.authMode === \"oidc\" || auth.authMode === \"sso\"",
   "accessToken: auth.accessToken",
@@ -60,7 +62,7 @@ for (const marker of [
 ]) assert(chatSource.includes(marker), `Runtime Agent chat auth caller lacks ${marker}`);
 
 for (const marker of [
-  "function mapCodexOaepEvent",
+  "function mapRuntimeOaepEvent",
   "projectOaepEventForPresentation(event, target.projection, currentItem)",
   "type: \"structured\"",
   "structuredEvent",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from autogen_agentchat.base import Response
 from autogen_agentchat.messages import TextMessage
 from autogen_core import CancellationToken
+from pathlib import Path
 import pytest
 
 from drsai.backend.runtime.desktop_manager_ports import DesktopAgentManagerPorts
@@ -91,3 +92,18 @@ async def test_regression_manager_port_dispatches_visible_native_tool() -> None:
 
     assert result.succeeded is True
     assert '"qa.greeting.hello"' in result.content["content"]
+
+
+@pytest.mark.asyncio
+async def test_regression_manager_port_binds_current_runtime_workspace(tmp_path: Path) -> None:
+    agent = _Agent()
+    agent._regression_manager = _Regression()
+    agent._runtime_workspace_path = tmp_path
+    ports = DesktopAgentManagerPorts(agent, CancellationToken()).ports({"regression_list_cases"})
+
+    result = await ports["regression_list_cases"](_payload(
+        "regression_list_cases", {"suite_id": "p3-desktop"},
+    ))
+
+    assert result.succeeded is True
+    assert agent._regression_manager.workspace_path == tmp_path.resolve()

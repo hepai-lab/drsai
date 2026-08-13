@@ -133,12 +133,16 @@ def test_oaep_metrics_expose_drift_backpressure_and_recovery_without_payloads() 
         assert metrics["protocol"] == "oaep/1"
         assert len(metrics["schema_hash"]) == 64
         assert metrics["counters"]["accepted"] == 3
-        assert metrics["counters"]["subscriber_overflow"] == 2
+        assert metrics["counters"]["subscriber_overflow"] == 1
+        assert metrics["counters"]["replay_required"] == 1
         assert metrics["counters"]["replay_evicted"] == 1
         assert metrics["counters"]["unknown_event_type"] == 1
         assert metrics["counters"]["cursor_expired"] == 1
         assert "event" not in metrics and "payload" not in metrics
-        assert queue.qsize() == 1
+        assert await queue.get() == {
+            "_control": "replay_required",
+            "reason": "subscriber_overflow",
+        }
 
     asyncio.run(scenario())
 
@@ -172,9 +176,72 @@ def test_workspace_catalog_slow_consumer_is_bounded_and_unsubscribes_cleanly() -
             frame = _frame(sequence)
             frame["event"]["type"] = "event.session.updated"
             assert await hub.accept("runtime-one", "generation-one", frame)
-        assert queue.qsize() == 1
+        assert await queue.get() == {
+            "_control": "replay_required",
+            "reason": "subscriber_overflow",
+        }
         assert hub.metrics()["counters"]["workspace_subscriber_overflow"] == 1
         await hub.unsubscribe_workspace("runtime-one", "workspace-one", queue)
         assert hub.metrics()["workspace_subscribers"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_slow_session_consumer_recovers_terminal_approval_from_replay() -> None:
+    async def scenario() -> None:
+        hub = OAEPReplayHub(max_events_per_session=8)
+        await hub.attach("runtime-one", "generation-one")
+        session_id = _event(1)["session_id"]
+        queue = await hub.subscribe("runtime-one", session_id, queue_size=1)
+
+        assert await hub.accept("runtime-one", "generation-one", _frame(1))
+        terminal = _frame(2)
+        terminal["event"]["type"] = "event.run.waiting"
+        assert await hub.accept("runtime-one", "generation-one", terminal)
+
+        # Overflow never masquerades as a healthy stream.  The client closes
+        # and reconnects from its last committed sequence (zero here).
+        assert await queue.get() == {
+            "_control": "replay_required",
+            "reason": "subscriber_overflow",
+        }
+        replay = await hub.page(
+            "runtime-one", "workspace-one", session_id,
+            after_sequence=0, limit=8,
+        )
+        assert [row["sequence"] for row in replay["data"]] == [1, 2]
+        assert replay["data"][-1]["type"] == "event.run.waiting"
+        assert hub.metrics()["counters"] == {
+            "accepted": 2,
+            "replay_required": 1,
+            "subscriber_overflow": 1,
+        }
+
+    asyncio.run(scenario())
+
+
+def test_authorization_invalidation_is_device_scoped() -> None:
+    async def scenario() -> None:
+        hub = OAEPReplayHub()
+        alice = await hub.subscribe(
+            "runtime-one", "session-one", authorization_key=("sub_alice", "dev_alice")
+        )
+        bob = await hub.subscribe(
+            "runtime-one", "session-one", authorization_key=("sub_bob", "dev_bob")
+        )
+        alice_workspace = await hub.subscribe_workspace(
+            "runtime-one", "workspace-one", authorization_key=("sub_alice", "dev_alice")
+        )
+        bob_workspace = await hub.subscribe_workspace(
+            "runtime-one", "workspace-one", authorization_key=("sub_bob", "dev_bob")
+        )
+
+        assert await hub.invalidate_authorization(
+            "runtime-one", ("sub_alice", "dev_alice")
+        ) == 2
+        assert await alice.get() == {"_control": "authorization_changed"}
+        assert await alice_workspace.get() == {"_control": "authorization_changed"}
+        assert bob.empty()
+        assert bob_workspace.empty()
 
     asyncio.run(scenario())

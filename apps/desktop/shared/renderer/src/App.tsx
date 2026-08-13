@@ -132,7 +132,10 @@ import { BackgroundTaskQueue } from "./components/SkillSquareView";
 // import { GfsView } from "./components/GfsView";
 import { TaskCenterView } from "./components/TaskCenterView";
 import { MobilePairingDialog, mobilePairingErrorText } from "./components/MobilePairingDialog";
-import { mobileAssociationScopeEditorState } from "./components/mobileAssociationScopeEditor";
+import {
+  mobileAssociationScopeEditorState,
+  type MobileAssociationScopeEditorState,
+} from "./components/mobileAssociationScopeEditor";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { RunInspectorPanel } from "./components/RunInspectorPanel";
@@ -487,6 +490,7 @@ function AuthenticatedApp({
   }, [experimentReleaseGate.enabled]);
   const [sessionScope, setSessionScope] = useState<"workspace" | "all">(() => loadSessionScope());
   const [availableChatAgents, setAvailableChatAgents] = useState<DesktopAgent[]>([]);
+  const [agentCatalogLoaded, setAgentCatalogLoaded] = useState(false);
   const [availableChatModels, setAvailableChatModels] = useState<MyDrSaiModelConfig[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(() => loadOptionalSetting(DEFAULT_AGENT_STORAGE_KEY));
   const [selectedChatAgentName, setSelectedChatAgentName] = useState("OpenDrSai");
@@ -1186,6 +1190,7 @@ function AuthenticatedApp({
     const applyCatalog = (agents: DesktopAgent[]): void => {
       if (cancelled) return;
       setAvailableChatAgents(agents);
+      setAgentCatalogLoaded(true);
       if (agents.length === 0) return;
       setSelectedChatAgentId((current) => {
         const preferredAgent = agents.find((agent) => agent.id === current)
@@ -1273,6 +1278,7 @@ function AuthenticatedApp({
         }));
         if (agentModelPolicy.reasoning_effort) setDefaultThinkingEffort(agentModelPolicy.reasoning_effort);
         setAvailableChatAgents(agents);
+        setAgentCatalogLoaded(true);
         if (myDrSaiConfig.ready || !myDrSaiConfigRef.current) {
           setAvailableChatModels(myDrSaiConfig.models ?? []);
           myDrSaiConfigRef.current = myDrSaiConfig;
@@ -2412,11 +2418,17 @@ function AuthenticatedApp({
         : auth.serviceBusy || !health
           ? "preparing"
           : "unknown",
-    model: !myDrSaiConfigLoaded
+    agent: !agentCatalogLoaded
       ? "unknown"
-      : !operationalSelectedModelRef
-        ? "unconfigured"
-        : "ready",
+      : !selectedChatAgent || selectedChatAgent.available === false
+        ? "unavailable"
+        : selectedChatAgent.source === "local" && selectedChatAgent.id !== "my-codex"
+          ? !myDrSaiConfigLoaded
+            ? "unknown"
+            : !operationalSelectedModelRef
+              ? "unconfigured"
+              : "ready"
+          : "ready",
     workspace: !workspacesLoaded || !selectedSetupWorkspace
       ? "none"
       : selectedSetupWorkspace.trusted
@@ -3169,7 +3181,7 @@ function AuthenticatedApp({
     if (!desktopApi.isOperationalStateE2eEnabled()) return;
     const handleOperationalState = (event: Event): void => {
       const facts = (event as CustomEvent<OperationalStateFacts>).detail;
-      document.documentElement.dataset.operationalE2eState = `${facts.identity}:${facts.runtime}:${facts.model}:${facts.workspace}`;
+      document.documentElement.dataset.operationalE2eState = `${facts.identity}:${facts.runtime}:${facts.agent}:${facts.workspace}`;
       setOperationalE2eFacts(facts);
     };
     window.addEventListener("drsai:e2e-operational-state", handleOperationalState);
@@ -3210,8 +3222,13 @@ function AuthenticatedApp({
           await auth.retryBootstrap();
           await desktop.refreshHealth();
           break;
-        case "model":
+        case "agent":
           {
+            if (operationalDecision.state === "unavailable") {
+              setRequestedSettingsPane("agent-defaults");
+              navigateTo(MENU_IDS.profile);
+              return;
+            }
             const selectedRef = myDrSaiAgentModelPolicy?.effective_ref;
             if (!selectedRef) {
               setRequestedSettingsPane("agent-defaults");
@@ -7238,12 +7255,9 @@ function SettingsPanel({
   const [mobileAssociationsState, setMobileAssociationsState] = useState<AndroidDeviceLoadState>("idle");
   const [mobileEnrollmentBusy, setMobileEnrollmentBusy] = useState(false);
   const [mobileEnrollmentError, setMobileEnrollmentError] = useState<string | null>(null);
-  const [mobileScopeEditor, setMobileScopeEditor] = useState<{
-    association: DesktopMobileAssociation;
-    workspaces: WorkspaceProject[];
-    selectedIds: Set<string>;
-    canSave: boolean;
-  } | null>(null);
+  const [mobileScopeEditor, setMobileScopeEditor] = useState<(
+    MobileAssociationScopeEditorState & { association: DesktopMobileAssociation }
+  ) | null>(null);
   const [agentConfigSaving, setAgentConfigSaving] = useState(false);
   const [agentConfigMessage, setAgentConfigMessage] = useState<string | null>(null);
   const [modelCapabilityStatus, setModelCapabilityStatus] = useState<AgentModelCapabilityStatus | null>(null);
@@ -8042,7 +8056,7 @@ function SettingsPanel({
     try {
       const updated = await desktopApi.shrinkMobileAssociation(
         mobileScopeEditor.association.association_id,
-        mobileScopeEditor.association.permissions,
+        [...mobileScopeEditor.selectedPermissions],
         {
           workspace_scope: "selected",
           workspace_ids: [...mobileScopeEditor.selectedIds].sort(),
@@ -9085,6 +9099,30 @@ function SettingsPanel({
                         <button type="button" className="danger" disabled={mobileEnrollmentBusy} data-testid="android-device-revoke" onClick={() => void revokeAndroidDevice(association)}>{zh ? "撤销" : "Revoke"}</button>
                         {mobileScopeEditor?.association.association_id === association.association_id ? (
                           <div className="android-device-scope-editor" data-testid="android-device-scope-editor">
+                            <strong>{zh ? "允许的操作" : "Allowed actions"}</strong>
+                            {mobileScopeEditor.association.permissions.map((permission) => (
+                              <label key={permission}>
+                                <input
+                                  type="checkbox"
+                                  checked={mobileScopeEditor.selectedPermissions.has(permission)}
+                                  onChange={(event) => setMobileScopeEditor((current) => {
+                                    if (!current) return current;
+                                    const selectedPermissions = new Set(current.selectedPermissions);
+                                    if (event.target.checked) selectedPermissions.add(permission); else selectedPermissions.delete(permission);
+                                    return {
+                                      ...current,
+                                      ...mobileAssociationScopeEditorState(
+                                        current.association,
+                                        current.workspaces,
+                                        current.selectedIds,
+                                        selectedPermissions,
+                                      ),
+                                    };
+                                  })}
+                                />
+                                <span>{androidPermissionText[permission]}</span>
+                              </label>
+                            ))}
                             <strong>{zh ? "仅允许以下工作区" : "Allow only these workspaces"}</strong>
                             <small>{zh ? "保存后只能继续缩小；扩大范围需要重新连接设备。" : "After saving, this can only be narrowed further. Re-pair the device to expand access."}</small>
                             {mobileScopeEditor.workspaces.map((workspace) => (
@@ -9100,6 +9138,7 @@ function SettingsPanel({
                                       ...current,
                                       ...mobileAssociationScopeEditorState(
                                         current.association, current.workspaces, selectedIds,
+                                        current.selectedPermissions,
                                       ),
                                     };
                                   })}

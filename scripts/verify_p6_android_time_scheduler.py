@@ -19,13 +19,14 @@ REPOSITORY = DATA / "RelayRemoteRepository.kt"
 SSE = DATA / "RelaySseClient.kt"
 PRESENCE = DATA / "DevicePresenceController.kt"
 ANDROID_PRESENCE = DATA / "AndroidDevicePresence.kt"
+RELIABILITY = DATA / "RemoteReliability.kt"
 TEST = ROOT / "apps/android/app/src/test/java/ai/drsai/remote/RemoteTimeSchedulerTest.kt"
 
 
 def verify() -> dict[str, object]:
     values = {path: path.read_text(encoding="utf-8") for path in (
         SCHEDULER, CONTAINER, SESSION, HOME, CATALOG, REPOSITORY,
-        SSE, PRESENCE, ANDROID_PRESENCE, TEST,
+        SSE, PRESENCE, ANDROID_PRESENCE, RELIABILITY, TEST,
     )}
     scheduler = values[SCHEDULER]
     for marker in (
@@ -44,7 +45,6 @@ def verify() -> dict[str, object]:
             raise ValueError(f"p6_real_delay_remaining:{path.name}")
     for marker, path in (
         ("time.monotonicNanos()", SESSION),
-        ("time.monotonicElapsedMillis", SESSION),
         ("time.wallClockMillis()", SESSION),
         ("time.waitFor", REPOSITORY),
         ("time.monotonicNanos()", SSE),
@@ -52,6 +52,8 @@ def verify() -> dict[str, object]:
     ):
         if marker not in values[path]:
             raise ValueError(f"p6_time_injection_missing:{path.name}:{marker}")
+    if "nowNanos - windowStartedNanos" not in values[RELIABILITY]:
+        raise ValueError("p6_retry_elapsed_not_derived_from_injected_monotonic_clock")
     tests = values[TEST]
     for marker in (
         "clock rollback", "process reconstruction and cross day",

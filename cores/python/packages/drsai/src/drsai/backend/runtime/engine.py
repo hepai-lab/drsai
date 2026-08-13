@@ -3945,6 +3945,12 @@ class RuntimeEngine:
     @staticmethod
     def _run(row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
+        # The public Runtime/Relay Run projection names the user input
+        # ``message``.  Keep the durable column name for internal recovery,
+        # but always expose the required alias (including an empty historical
+        # value) so old Runs remain listable from mobile clients.
+        if "input_message" in row.keys():
+            result["message"] = str(row["input_message"] or "")
         if "attachment_refs_json" in row.keys():
             result["attachment_refs"] = json.loads(str(row["attachment_refs_json"] or "[]"))
         if "input_resources_json" in row.keys():

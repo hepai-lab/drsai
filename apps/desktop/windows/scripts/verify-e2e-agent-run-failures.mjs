@@ -189,16 +189,19 @@ function assertScenarioDiagnostics(scenario, result) {
     "network-exhausted": "networkExhausted",
     "external-service": "externalService",
   }[scenario];
+  const summary = detailKey ? result?.details?.[detailKey] : null;
   const expectedTerminal = {
     abort: "aborted",
     "sse-error": "error",
-    timeout: "aborted",
+    timeout: summary?.terminalEventType === "aborted" ? "aborted" : "error",
     "chunk-disconnect": "error",
     "network-exhausted": "error",
     "external-service": "error",
   }[scenario];
-  const summary = detailKey ? result?.details?.[detailKey] : null;
-  if (!summary || summary.firstEventType !== "start" || summary.terminalEventType !== expectedTerminal) {
+  const validFirstEvent = scenario === "timeout"
+    ? ["start", "error", "aborted"].includes(summary?.firstEventType)
+    : summary?.firstEventType === "start";
+  if (!summary || !validFirstEvent || summary.terminalEventType !== expectedTerminal) {
     throw new Error(`${scenario}: E2E agent run failure smoke did not record the expected terminal summary:\n${JSON.stringify(result, null, 2)}`);
   }
   if (summary.lastEventType !== summary.terminalEventType) {

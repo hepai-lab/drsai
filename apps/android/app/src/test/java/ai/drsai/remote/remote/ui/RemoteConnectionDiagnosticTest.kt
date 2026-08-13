@@ -46,4 +46,12 @@ class RemoteConnectionDiagnosticTest {
         val unknown = ok.copy(computer = RemoteDiagnosticCheck.UNKNOWN, notifications = RemoteDiagnosticCheck.UNKNOWN)
         assertEquals(RemoteDiagnosticAction.NONE, diagnoseRemoteConnection(unknown).action)
     }
+
+    @Test fun englishDiagnosticsPreservePriorityAndExposeOneAction() {
+        val input = ok.copy(account = RemoteDiagnosticCheck.FAILED, notifications = RemoteDiagnosticCheck.FAILED)
+        val result = diagnoseRemoteConnection(input, RemoteUiLanguage.EN)
+        assertEquals(RemoteDiagnosticAction.SIGN_IN, result.action)
+        assertEquals("Sign in", result.actionLabel)
+        assertEquals("Sign-in required", result.title)
+    }
 }

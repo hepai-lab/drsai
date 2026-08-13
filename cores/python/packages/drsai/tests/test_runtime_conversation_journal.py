@@ -1683,3 +1683,59 @@ def test_oaep_stage2_openai_chat_completion_projection_is_text_only(
         {"choices": [{"finish_reason": "stop", "delta": {}}]},
     ]
     assert "shell" not in json.dumps(chunks)
+
+
+def test_runtime_journal_capacity_checkpoints_before_compaction_and_preserves_approval(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "bounded-runtime.sqlite3"
+    engine = RuntimeEngine(
+        database,
+        RuntimeEngineIdentity("runtime-bounded", "instance-one"),
+        lambda workspace_id: workspace_id == "workspace-one",
+    )
+    session, run = _session_and_run(engine)
+    journal = RuntimeConversationJournal(
+        database,
+        "runtime-bounded",
+        max_events_per_session=5,
+        retained_events_per_session=3,
+    )
+    approval_item, _, created = journal.upsert_item(
+        session["session_id"],
+        item_id="approval-capacity",
+        kind="approval",
+        role="system",
+        revision=1,
+        source_client="runtime",
+        payload={"status": "pending"},
+        run_id=run["run_id"],
+    )
+    assert created and approval_item["kind"] == "approval"
+    for index in range(8):
+        journal.append_event(
+            session["session_id"],
+            "tool.state.changed",
+            {"state": "completed", "ordinal": index},
+            run_id=run["run_id"],
+            dedupe_key=f"bounded-{index}",
+        )
+
+    policy = journal.capacity_policy()
+    assert policy == {
+        "max_events_per_session": 5,
+        "retained_events_per_session": 3,
+        "overflow_strategy": "checkpoint_then_compact",
+        "cursor_gap": "cursor_expired",
+        "recovery": "authoritative_snapshot_then_replay",
+    }
+    snapshot = journal.snapshot(session["session_id"])
+    assert any(item["item_id"] == "approval-capacity" for item in snapshot["items"])
+    with pytest.raises(SessionCursorExpired) as expired:
+        journal.replay(session["session_id"], after_sequence=0)
+    assert expired.value.details["reason"] == "history_truncated"
+    replay = journal.replay(
+        session["session_id"],
+        after_sequence=expired.value.details["earliest_sequence"] - 1,
+    )
+    assert 1 <= len(replay) <= 5

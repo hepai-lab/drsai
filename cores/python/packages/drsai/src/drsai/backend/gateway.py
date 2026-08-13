@@ -1429,6 +1429,7 @@ class AgentManager:
         reasoning_effort: str | None = None,
 
         work_dir: str | None = None,
+        workspace_id: str | None = None,
         agent_name: str | None = None,
 
         cancellation_token: CancellationToken | None = None,
@@ -1511,6 +1512,8 @@ class AgentManager:
             agent._trusted_evidence_domains = tuple(trusted_evidence_domains)
             had_runtime_workspace_path = hasattr(agent, "_runtime_workspace_path")
             previous_runtime_workspace_path = getattr(agent, "_runtime_workspace_path", None)
+            had_runtime_workspace_id = hasattr(agent, "_runtime_workspace_id")
+            previous_runtime_workspace_id = getattr(agent, "_runtime_workspace_id", None)
             regression_manager = getattr(agent, "_regression_manager", None)
             previous_regression_workspace_path = (
                 getattr(regression_manager, "workspace_path", None)
@@ -1525,6 +1528,7 @@ class AgentManager:
                 # into a later Run.
                 if regression_manager is not None:
                     regression_manager.workspace_path = Path(work_dir).resolve()
+            agent._runtime_workspace_id = workspace_id
 
             previous_reasoning_effort = getattr(agent, "_reasoning_effort", None)
             if reasoning_effort is not None:
@@ -1557,6 +1561,10 @@ class AgentManager:
                     agent._runtime_workspace_path = previous_runtime_workspace_path
                 elif hasattr(agent, "_runtime_workspace_path"):
                     delattr(agent, "_runtime_workspace_path")
+                if had_runtime_workspace_id:
+                    agent._runtime_workspace_id = previous_runtime_workspace_id
+                elif hasattr(agent, "_runtime_workspace_id"):
+                    delattr(agent, "_runtime_workspace_id")
                 if regression_manager is not None:
                     regression_manager.workspace_path = previous_regression_workspace_path
 
@@ -2626,6 +2634,7 @@ class GatewayOpenDrSaiAgentBackend:
                 config_revision_binding=definition.model_config_revision,
                 model_catalog_revision=definition.model_catalog_revision,
                 work_dir=str(context.workspace_path),
+                workspace_id=context.workspace_id,
                 agent_name=definition.asset_id,
                 cancellation_token=cancellation,
             )

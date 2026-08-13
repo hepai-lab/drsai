@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -60,6 +61,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -145,6 +149,7 @@ fun RemoteHomeScreen(
     onDiagnosticAction: (RemoteDiagnosticAction) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val uiLanguage = currentRemoteUiLanguage()
     Box(modifier.fillMaxSize()) {
         when {
             state.loading && state.computers.isEmpty() -> RemoteLoadingState(Modifier.align(Alignment.Center))
@@ -199,10 +204,16 @@ fun RemoteHomeScreen(
             if (state.computers.isNotEmpty() && state.notificationState != RemoteNotificationReadiness.READY) {
                 RemoteNotificationReadinessCard(state.notificationState, onEnableNotifications)
             }
-            state.diagnostic?.let { diagnostic ->
+            state.diagnostic?.let { rawDiagnostic ->
+                val diagnostic = diagnoseRemoteConnection(rawDiagnostic.checks, uiLanguage)
                 Surface(
                     modifier = Modifier.fillMaxWidth().semantics {
-                        contentDescription = "连接检查：${diagnostic.title}。${diagnostic.reason}"
+                        liveRegion = LiveRegionMode.Polite
+                        contentDescription = if (uiLanguage == RemoteUiLanguage.ZH) {
+                            "连接检查：${diagnostic.title}。${diagnostic.reason}"
+                        } else {
+                            "Connection check: ${diagnostic.title}. ${diagnostic.reason}"
+                        }
                     },
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
@@ -224,6 +235,7 @@ fun RemoteHomeScreen(
             state.error?.let {
                 RemoteActionableStateCard(
                     state.actionableError ?: remoteActionableState(state.lifecycleState) ?: return@let,
+                    language = uiLanguage,
                     onAction = { action -> when (action) {
                         RemoteRecoveryAction.REASSOCIATE -> onAssociate()
                         RemoteRecoveryAction.SIGN_IN -> onSignIn()
@@ -242,9 +254,13 @@ private fun RemoteNotificationReadinessCard(
     state: RemoteNotificationReadiness,
     onEnableNotifications: () -> Unit,
 ) {
-    val presentation = remoteNotificationPresentation(state) ?: return
+    val language = currentRemoteUiLanguage()
+    val presentation = remoteNotificationPresentation(state, language) ?: return
     Surface(
-        modifier = Modifier.semantics { contentDescription = presentation.accessibilityDescription },
+        modifier = Modifier.semantics {
+            liveRegion = LiveRegionMode.Polite
+            contentDescription = presentation.accessibilityDescription
+        },
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
@@ -257,7 +273,9 @@ private fun RemoteNotificationReadinessCard(
                 Text(presentation.reason, style = MaterialTheme.typography.bodySmall)
             }
             if (state == RemoteNotificationReadiness.PERMISSION_REQUIRED) {
-                TextButton(onClick = onEnableNotifications) { Text("启用通知") }
+                TextButton(onClick = onEnableNotifications) {
+                    Text(requireNotNull(presentation.actionLabel))
+                }
             }
         }
     }
@@ -268,19 +286,25 @@ fun RemoteActionableStateCard(
     state: RemoteActionableState,
     onAction: (RemoteRecoveryAction) -> Unit,
     modifier: Modifier = Modifier,
+    language: RemoteUiLanguage? = null,
 ) {
+    val resolvedLanguage = language ?: currentRemoteUiLanguage()
+    val presentation = localizedRemoteActionableState(state, resolvedLanguage)
     Surface(modifier.fillMaxWidth().semantics {
-        contentDescription = "电脑状态：${state.title}。${state.reason.trimEnd('。')}" +
-            (state.actionLabel?.let { "。可执行：$it" } ?: "")
+        liveRegion = LiveRegionMode.Polite
+        contentDescription = RemoteHostStatusPresentation(
+            presentation.title, presentation.reason, presentation.action,
+            presentation.actionLabel, resolvedLanguage,
+        ).accessibilityDescription
     }, shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.errorContainer) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(state.title, fontWeight = FontWeight.SemiBold)
-                Text(state.reason, style = MaterialTheme.typography.bodySmall)
+                Text(presentation.title, fontWeight = FontWeight.SemiBold)
+                Text(presentation.reason, style = MaterialTheme.typography.bodySmall)
             }
-            state.actionLabel?.let { label ->
-                TextButton(onClick = { onAction(state.action) }) { Text(label) }
+            presentation.actionLabel?.let { label ->
+                TextButton(onClick = { onAction(presentation.action) }) { Text(label) }
             }
         }
     }
@@ -299,7 +323,7 @@ fun FloatingPageHeader(
     var menuOpen by remember { mutableStateOf(false) }
     val controlColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.60f)
         .compositeOver(MaterialTheme.colorScheme.background)
-    Box(modifier.fillMaxWidth().height(52.dp)) {
+    Box(modifier.fillMaxWidth().heightIn(min = 52.dp)) {
         HeaderControl(Modifier.align(Alignment.CenterStart)) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
@@ -314,8 +338,14 @@ fun FloatingPageHeader(
             shadowElevation = 5.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            Box(Modifier.height(52.dp).padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
-                Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Box(Modifier.heightIn(min = 52.dp).padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    title,
+                    Modifier.semantics { heading() },
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         Box(Modifier.align(Alignment.CenterEnd)) {
@@ -456,7 +486,9 @@ private fun RemoteComputerCard(
     onHostAction: (RemoteRecoveryAction, RuntimeId) -> Unit,
     refreshingWorkspaces: Boolean,
 ) {
-    val status = remoteHostStatusPresentation(computer.state, computer.lastSeenLabel)
+    val status = remoteHostStatusPresentation(
+        computer.state, computer.lastSeenLabel, currentRemoteUiLanguage(),
+    )
     var expanded by remember(computer.runtimeId) { mutableStateOf(true) }
     var menuOpen by remember(computer.runtimeId) { mutableStateOf(false) }
     var confirmRevoke by remember(computer.runtimeId) { mutableStateOf(false) }
@@ -664,6 +696,7 @@ private fun RemoteConnectionIndicator(
 @Composable
 private fun RemoteStatusBanner(message: String, error: Boolean = false) {
     Surface(
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         shape = RoundedCornerShape(14.dp),
         color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant,
     ) {

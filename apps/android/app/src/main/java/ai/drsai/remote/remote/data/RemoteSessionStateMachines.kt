@@ -32,10 +32,18 @@ class SessionSyncStateMachine(initial: SessionSyncState = SessionSyncState()) {
         val current = state
         state = when (event) {
             SessionSyncEvent.Foreground -> current.copy(foreground = true, generation = current.generation + 1)
-            SessionSyncEvent.Background -> current.copy(foreground = false, phase = SessionSyncPhase.STOPPED)
+            SessionSyncEvent.Background -> current.copy(
+                foreground = false,
+                phase = if (current.phase in setOf(
+                        SessionSyncPhase.AUTH_REQUIRED, SessionSyncPhase.REVOKED,
+                    )) current.phase else SessionSyncPhase.STOPPED,
+            )
             is SessionSyncEvent.Network -> current.copy(
                 online = event.online,
-                phase = if (event.online) SessionSyncPhase.CONNECTING else SessionSyncPhase.OFFLINE,
+                phase = when (current.phase) {
+                    SessionSyncPhase.AUTH_REQUIRED, SessionSyncPhase.REVOKED -> current.phase
+                    else -> if (event.online) SessionSyncPhase.CONNECTING else SessionSyncPhase.OFFLINE
+                },
                 generation = current.generation + 1,
             )
             SessionSyncEvent.Connecting -> {

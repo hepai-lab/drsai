@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import base64
+import bisect
+import hashlib
+import hmac
+import json
+import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -112,7 +118,8 @@ class Approval:
 class RuntimeAuthority:
     """Reference Full Runtime authority used by Relay contract/E2E tests."""
 
-    def __init__(self, runtime_id: str, owop_handler: Callable[[str, str, dict[str, Any]], dict[str, Any]] | None = None) -> None:
+    def __init__(self, runtime_id: str, owop_handler: Callable[[str, str, dict[str, Any]], dict[str, Any]] | None = None,
+                 *, cursor_secret: bytes | None = None) -> None:
         self.runtime_id = runtime_id
         self._lock = RLock()
         self.agent_definitions: dict[tuple[str, str], AgentDefinition] = {}
@@ -126,6 +133,75 @@ class RuntimeAuthority:
         self.events = RelayEventStore()
         self.audit: tuple[AuditEntry, ...] = ()
         self.owop_handler = owop_handler
+        self._cursor_secret = cursor_secret or secrets.token_bytes(32)
+        if not isinstance(self._cursor_secret, bytes) or len(self._cursor_secret) < 32:
+            raise ValueError("cursor_secret_invalid")
+
+    def _encode_cursor(self, kind: str, context: tuple[str, ...], after: tuple[str, ...]) -> str:
+        context_digest = hmac.new(
+            self._cursor_secret, "\0".join((kind, *context)).encode(), hashlib.sha256
+        ).hexdigest()
+        payload = json.dumps(
+            {"v": 1, "kind": kind, "context": context_digest, "after": list(after)},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()
+        signature = hmac.new(self._cursor_secret, payload, hashlib.sha256).digest()
+        return base64.urlsafe_b64encode(payload + signature).rstrip(b"=").decode()
+
+    def _decode_cursor(
+        self, cursor: str, kind: str, context: tuple[str, ...], arity: int
+    ) -> tuple[str, ...]:
+        try:
+            if not isinstance(cursor, str) or not 1 <= len(cursor) <= 2048:
+                raise ValueError
+            packed = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+            if len(packed) <= 32:
+                raise ValueError
+            payload, signature = packed[:-32], packed[-32:]
+            if not hmac.compare_digest(
+                signature, hmac.new(self._cursor_secret, payload, hashlib.sha256).digest()
+            ):
+                raise ValueError
+            value = json.loads(payload.decode())
+            expected_context = hmac.new(
+                self._cursor_secret, "\0".join((kind, *context)).encode(), hashlib.sha256
+            ).hexdigest()
+            after = value.get("after") if isinstance(value, dict) else None
+            if (
+                not isinstance(value, dict)
+                or set(value) != {"v", "kind", "context", "after"}
+                or value.get("v") != 1
+                or value.get("kind") != kind
+                or value.get("context") != expected_context
+                or not isinstance(after, list)
+                or len(after) != arity
+                or any(not isinstance(item, str) or not 1 <= len(item) <= 500 for item in after)
+            ):
+                raise ValueError
+            return tuple(after)
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RelayRegistryError("cursor_invalid", "cursor is invalid") from exc
+
+    def _keyset_page(
+        self, rows: list[Any], cursor: str | None, limit: int, *, kind: str,
+        context: tuple[str, ...], key: Callable[[Any], tuple[str, ...]],
+    ) -> tuple[list[Any], str | None]:
+        if limit < 1 or limit > 100_000:
+            raise RelayRegistryError("page_limit_invalid", "page limit is invalid")
+        keys = [key(row) for row in rows]
+        if keys != sorted(keys) or len(keys) != len(set(keys)):
+            raise RelayRegistryError("catalog_order_invalid", "catalog ordering is invalid")
+        start = 0
+        if cursor is not None:
+            start = bisect.bisect_right(
+                keys, self._decode_cursor(cursor, kind, context, len(keys[0]) if keys else 2)
+            )
+        end = min(start + limit, len(rows))
+        page = rows[start:end]
+        return page, (
+            self._encode_cursor(kind, context, key(page[-1]))
+            if page and end < len(rows) else None
+        )
 
     def add_agent_definition(self, definition: AgentDefinition) -> None:
         if definition.version == "latest":
@@ -160,10 +236,15 @@ class RuntimeAuthority:
                 if item.workspace_id == workspace_id and item.lifecycle == lifecycle]
         if query:
             rows = [item for item in rows if query.casefold() in item.title.casefold()]
-        rows.sort(key=lambda item: item.updated_at, reverse=True)
-        start = int(cursor or 0)
-        end = min(start + limit, len(rows))
-        return rows[start:end], str(end) if end < len(rows) else None
+        rows.sort(key=lambda item: (f"{99999999999999999999 - int(item.updated_at.timestamp() * 1_000_000):020d}", item.session_id))
+        return self._keyset_page(
+            rows, cursor, limit, kind="sessions",
+            context=(workspace_id, str(query or "").casefold(), lifecycle.value),
+            key=lambda item: (
+                f"{99999999999999999999 - int(item.updated_at.timestamp() * 1_000_000):020d}",
+                item.session_id,
+            ),
+        )
 
     def list_sessions_for_subject(self, subject: str, workspace_id: str, *, cursor: str | None = None,
                                   limit: int = 20, query: str | None = None,
@@ -241,19 +322,18 @@ class RuntimeAuthority:
         self._session(workspace_id, session_id)
         rows = [item for item in self.runs.values()
                 if item.workspace_id == workspace_id and item.session_id == session_id]
-        rows.sort(key=lambda item: item.created_at)
-        start = int(cursor or 0)
-        end = min(start + limit, len(rows))
-        return rows[start:end], str(end) if end < len(rows) else None
+        rows.sort(key=lambda item: (item.created_at.isoformat(), item.run_id))
+        return self._keyset_page(
+            rows, cursor, limit, kind="runs", context=(workspace_id, session_id),
+            key=lambda item: (item.created_at.isoformat(), item.run_id),
+        )
 
     def list_runs_for_subject(self, subject: str, workspace_id: str, session_id: str, *,
                               cursor: str | None = None, limit: int = 20):
         self.authorize_session(subject, workspace_id, session_id)
-        rows = [item for item in self.runs.values() if item.workspace_id == workspace_id
-                and item.session_id == session_id]
-        rows.sort(key=lambda item: item.created_at)
-        start, end = int(cursor or 0), min(int(cursor or 0) + limit, len(rows))
-        return rows[start:end], str(end) if end < len(rows) else None
+        return self.list_runs(
+            workspace_id, session_id, cursor=cursor, limit=limit
+        )
 
     def conversation_for_subject(
         self,

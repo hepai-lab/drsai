@@ -80,22 +80,37 @@ function recordArchive() {
   const identity = readJson(join(payload, "build-identity.json"));
   const manifestPath = join(payload, "runtime-files.sha256.json");
   const receiptPath = args.receipt ? resolve(args.receipt) : `${archive}.receipt.json`;
+  // Production packaging supplies metrics from the ZIP central directory,
+  // which is the authoritative installer payload. The directory fallback keeps
+  // the standalone trust CLI useful for fixtures and older callers.
+  const payloadFiles = collectArtifactFiles(payload);
+  const fileCount = optionalPositiveInteger("file-count") ?? payloadFiles.length;
+  const expandedSizeBytes = optionalPositiveInteger("expanded-size-bytes") ??
+    payloadFiles.reduce((total, path) => total + statSync(path).size, 0);
   writeJson(receiptPath, {
-    schemaVersion: 1,
-    status: "complete",
+    schemaVersion: 2,
+    status: "staged",
     buildId: identity.buildId,
     version: identity.version,
     channel: identity.channel,
-    completedAt: new Date().toISOString(),
+    stagedAt: new Date().toISOString(),
     artifact: {
       file: basename(archive),
       size: statSync(archive).size,
       sha256: sha256File(archive),
     },
+    payload: {
+      fileCount,
+      expandedSizeBytes,
+    },
     runtimeManifestSha256: sha256File(manifestPath),
     sourceTreeSha256: identity.sourceTreeSha256,
+    verification: {
+      status: "pending",
+      mode: "full-extraction",
+    },
   });
-  console.log(`Recorded completed artifact receipt: ${receiptPath}`);
+  console.log(`Recorded staged artifact receipt: ${receiptPath}`);
 }
 
 function createBuildIdentity(version, channel, payload) {
@@ -163,6 +178,18 @@ function collectFiles(root) {
   return files;
 }
 
+function collectArtifactFiles(root) {
+  const files = [];
+  walkArtifact(root, files);
+  return files;
+}
+
+function walkArtifact(path, files) {
+  const stats = statSync(path);
+  if (stats.isFile()) { files.push(path); return; }
+  for (const entry of readdirSync(path).sort()) walkArtifact(join(path, entry), files);
+}
+
 function walk(path, files) {
   const stats = statSync(path);
   if (stats.isFile()) { files.push(path); return; }
@@ -189,5 +216,11 @@ function writeJson(path, value) { mkdirSync(dirname(path), { recursive: true });
 function required(name) { assert(args[name], `Missing --${name}`); return args[name]; }
 function requiredFile(name) { const path = resolve(required(name)); assert(existsSync(path) && statSync(path).isFile(), `File not found: ${path}`); return path; }
 function requiredDirectory(name) { const path = resolve(required(name)); assert(existsSync(path) && statSync(path).isDirectory(), `Directory not found: ${path}`); return path; }
+function optionalPositiveInteger(name) {
+  if (args[name] === undefined) return undefined;
+  const value = Number(args[name]);
+  assert(Number.isSafeInteger(value) && value > 0, `--${name} must be a positive integer`);
+  return value;
+}
 function parseArgs(values) { const result = {}; for (let i = 0; i < values.length; i += 1) { const key = values[i]; assert(key.startsWith("--"), `Unexpected argument: ${key}`); const next = values[i + 1]; if (!next || next.startsWith("--")) result[key.slice(2)] = true; else { result[key.slice(2)] = next; i += 1; } } return result; }
 function assert(condition, message) { if (!condition) throw new Error(message); }

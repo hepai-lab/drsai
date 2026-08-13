@@ -7,7 +7,7 @@ import org.json.JSONObject
 object RelayContractGenerated {
     const val SCHEMA_VERSION: String = "2.0.0"
     const val PROTOCOL_VERSION: String = "owop/1"
-    const val SOURCE_SCHEMA_SHA256: String = "0beb2426257d1c3e130450bfcdabe0020bce21a60a5fd146f03a297da18debfe"
+    const val SOURCE_SCHEMA_SHA256: String = "147fa8d0fbe173f492ce95257863265ec9c6f99d9e82b9b34d9e638d2b2ccf64"
     val ENDPOINTS: Map<String, String> = mapOf(
         "access_grant_create" to "POST /v1/runtimes/{runtime_id}/access-grants",
         "access_grant_read" to "GET /v1/runtimes/{runtime_id}/access-grants/{grant_id}",
@@ -52,6 +52,10 @@ object RelayContractGenerated {
         "session_list" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
         "session_read" to "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
         "session_update" to "PATCH /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
+        "user_slo_first_screen_record" to "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/first-screen/{sample_id}",
+        "user_slo_metrics" to "GET /v1/metrics/user-slo",
+        "user_slo_operation_confirmation_record" to "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/operation-confirmation/{sample_id}",
+        "user_slo_reconnect_record" to "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/reconnect/{sample_id}",
         "workspace_list" to "GET /v1/runtimes/{runtime_id}/workspaces",
         "workspace_sync" to "POST /v1/runtimes/{runtime_id}/workspaces/sync"
     )
@@ -143,6 +147,7 @@ object RelayContractGenerated {
         "backend_unavailable" to "retry",
         "backpressure_overflow" to "retry",
         "capability_unknown" to "update",
+        "catalog_order_invalid" to "contact-admin",
         "catalog_sync_timeout" to "retry",
         "client_update_required" to "update",
         "cursor_expired" to "retry",
@@ -476,6 +481,75 @@ data class GeneratedLatencyObservationRequest(
     }
 }
 
+data class GeneratedFirstScreenObservationRequest(
+    val cacheLoadAtMs: Long,
+    val authorityRefreshAtMs: Long,
+    val firstRenderAtMs: Long,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("cache_load_at_ms", cacheLoadAtMs)
+        put("authority_refresh_at_ms", authorityRefreshAtMs)
+        put("first_render_at_ms", firstRenderAtMs)
+    }
+
+    companion object {
+        fun fromJson(value: JSONObject): GeneratedFirstScreenObservationRequest {
+            value.generatedRequireKeys(setOf("cache_load_at_ms", "authority_refresh_at_ms", "first_render_at_ms"), setOf())
+            return GeneratedFirstScreenObservationRequest(
+                cacheLoadAtMs = value.generatedLong("cache_load_at_ms"),
+                authorityRefreshAtMs = value.generatedLong("authority_refresh_at_ms"),
+                firstRenderAtMs = value.generatedLong("first_render_at_ms"),
+            )
+        }
+    }
+}
+
+data class GeneratedOperationConfirmationObservationRequest(
+    val requestDispatchAtMs: Long,
+    val runtimeCommitAtMs: Long,
+    val confirmationRenderAtMs: Long,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("request_dispatch_at_ms", requestDispatchAtMs)
+        put("runtime_commit_at_ms", runtimeCommitAtMs)
+        put("confirmation_render_at_ms", confirmationRenderAtMs)
+    }
+
+    companion object {
+        fun fromJson(value: JSONObject): GeneratedOperationConfirmationObservationRequest {
+            value.generatedRequireKeys(setOf("request_dispatch_at_ms", "runtime_commit_at_ms", "confirmation_render_at_ms"), setOf())
+            return GeneratedOperationConfirmationObservationRequest(
+                requestDispatchAtMs = value.generatedLong("request_dispatch_at_ms"),
+                runtimeCommitAtMs = value.generatedLong("runtime_commit_at_ms"),
+                confirmationRenderAtMs = value.generatedLong("confirmation_render_at_ms"),
+            )
+        }
+    }
+}
+
+data class GeneratedReconnectObservationRequest(
+    val disconnectDetectAtMs: Long,
+    val transportRestoreAtMs: Long,
+    val replayCatchupAtMs: Long,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("disconnect_detect_at_ms", disconnectDetectAtMs)
+        put("transport_restore_at_ms", transportRestoreAtMs)
+        put("replay_catchup_at_ms", replayCatchupAtMs)
+    }
+
+    companion object {
+        fun fromJson(value: JSONObject): GeneratedReconnectObservationRequest {
+            value.generatedRequireKeys(setOf("disconnect_detect_at_ms", "transport_restore_at_ms", "replay_catchup_at_ms"), setOf())
+            return GeneratedReconnectObservationRequest(
+                disconnectDetectAtMs = value.generatedLong("disconnect_detect_at_ms"),
+                transportRestoreAtMs = value.generatedLong("transport_restore_at_ms"),
+                replayCatchupAtMs = value.generatedLong("replay_catchup_at_ms"),
+            )
+        }
+    }
+}
+
 data class GeneratedSessionProjection(
     val runtimeId: String,
     val workspaceId: String,
@@ -670,6 +744,29 @@ data class GeneratedLatencyObservationResponse(
         fun fromJson(value: JSONObject): GeneratedLatencyObservationResponse {
             value.generatedRequireKeys(setOf("ready", "stages_present", "latencies_ms"), setOf())
             return GeneratedLatencyObservationResponse(
+                ready = value.generatedBoolean("ready"),
+                stagesPresent = value.generatedStringList("stages_present"),
+                latenciesMs = value.generatedNullableLongMap("latencies_ms"),
+            )
+        }
+    }
+}
+
+data class GeneratedUserSloObservationResponse(
+    val ready: Boolean,
+    val stagesPresent: List<String>,
+    val latenciesMs: Map<String, Long>?,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("ready", ready)
+        put("stages_present", JSONArray(stagesPresent))
+        put("latencies_ms", latenciesMs?.let(::JSONObject) ?: JSONObject.NULL)
+    }
+
+    companion object {
+        fun fromJson(value: JSONObject): GeneratedUserSloObservationResponse {
+            value.generatedRequireKeys(setOf("ready", "stages_present", "latencies_ms"), setOf())
+            return GeneratedUserSloObservationResponse(
                 ready = value.generatedBoolean("ready"),
                 stagesPresent = value.generatedStringList("stages_present"),
                 latenciesMs = value.generatedNullableLongMap("latencies_ms"),

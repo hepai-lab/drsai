@@ -149,9 +149,13 @@ try {
     gatewayWatcher.includes("[string]$InstanceTokenPath")
       && gatewayWatcher.includes("Set-GatewayChildToken")
       && gatewayWatcher.includes("$env:OPENDRSAI_GATEWAY_INSTANCE_TOKEN = $token")
+      && gatewayWatcher.includes('Join-Path $RepoRoot "cores\\python\\packages\\drsai\\src"')
+      && gatewayWatcher.includes("$env:PYTHONPATH")
+      && gatewayWatcher.includes("EnvironmentVariables.Clear()")
+      && gatewayWatcher.includes("ToUpperInvariant()")
       && gatewayWatcher.includes("^[A-Za-z0-9_-]{32,128}$")
       && !gatewayWatcher.includes("[string]$InstanceToken,"),
-    "The source watcher must reload the bounded token file for every child without exposing the token on its command line",
+    "The source watcher must reload the bounded token, normalize inherited environment keys, and keep the token off its command line",
   );
   const desktopDevEntry = await readFile(join(root, "../windows-desktop-dev.cmd"), "utf8");
   assert(

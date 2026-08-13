@@ -108,7 +108,8 @@
       "migration_ratio=1",
       "supported_runtime_requires_legacy=false",
       "rollback_artifact_verified=true",
-      "transcript_hash_preserved=true"
+      "transcript_hash_preserved=true",
+      "database_migration_verified=true"
     ],
     "long_observation_window_required": false
   },

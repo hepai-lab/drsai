@@ -34,7 +34,7 @@ import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCirc
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
 import { startGateway } from "./gateway";
 import { resolveGatewayPort } from "./gatewayEnvironment";
-import { bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, retainRuntimeClient, type OaepEvent, type OaepItem, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal } from "./runtimeClient";
+import { acquireRuntimeClientLease, bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, retainRuntimeClient, type OaepEvent, type OaepItem, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal } from "./runtimeClient";
 import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import { isUncertainRunCreateFailure, recoverRunCreation } from "./messageDelivery";
 import {
@@ -1590,8 +1590,10 @@ async function runRuntimeBackendChat(
   auth: AuthContext,
 ): Promise<void> {
   if (!request.workspacePath) throw new Error("Runtime Agent requires an open Workspace.");
-  const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, request.workspaceName);
+  const resolved = await acquireRuntimeClientLease(() =>
+    connectRuntimeClientForWorkspace(request.workspacePath!, request.workspaceId, request.workspaceName));
   const client = resolved.client;
+  try {
   if (agentDefinition === "codex@1") {
     const [catalog, account] = await Promise.all([
       client.getBackendModels("codex"),
@@ -2019,6 +2021,9 @@ async function runRuntimeBackendChat(
     const diagnosticOperation = await diagnosticPromise?.catch(() => undefined);
     await ingestRuntimeDiagnostics(requestId, diagnosticOperation?.spanId, client, run.run_id);
     throw failure;
+  }
+  } finally {
+    resolved.release();
   }
 }
 

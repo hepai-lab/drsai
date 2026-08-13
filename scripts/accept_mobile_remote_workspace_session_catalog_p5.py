@@ -20,7 +20,7 @@ import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +38,7 @@ MONITOR_PREFIXES = (
     "P5_SESSION_CATALOG_REPORT=",
 )
 EXPECTED_TRANSITIONS = ["rename", "archive", "unarchive", "rollback"]
+MONITOR_DURATION_MS = 120_000
 DEFAULT_OUTPUT = (
     ROOT / "release/product-evidence/mobile-remote-workspace-p5"
     / "m03-session-catalog-physical.json"
@@ -45,17 +46,22 @@ DEFAULT_OUTPUT = (
 
 
 def run(command: list[str], *, timeout: int = 180, include_output: bool = False) -> str:
-    completed = subprocess.run(
-        command,
-        cwd=ROOT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired stringifies the full argv, which contains protected
+        # Runtime/Workspace/Session identifiers for instrumentation commands.
+        raise RuntimeError("p5_session_catalog_command_timeout") from None
     if completed.returncode:
         suffix = completed.stdout[-2000:] if include_output else ""
         raise RuntimeError(f"p5_session_catalog_command_failed:{completed.returncode}{suffix}")
@@ -150,6 +156,11 @@ class GatewayClient:
             raise ValueError("p5_session_catalog_gateway_token_invalid")
         self.root = root.rstrip("/")
         self.token = token
+        # The URL is restricted to 127.0.0.1 above.  Do not let inherited
+        # HTTP(S)_PROXY settings redirect the privileged loopback request to a
+        # corporate proxy, which can turn a valid gateway token into a remote
+        # 403 and needlessly expose it outside the machine.
+        self.opener = build_opener(ProxyHandler({}))
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         encoded = None if body is None else json.dumps(body, separators=(",", ":")).encode()
@@ -161,7 +172,7 @@ class GatewayClient:
             },
         )
         try:
-            with urlopen(request, timeout=20) as response:  # noqa: S310 - loopback is validated
+            with self.opener.open(request, timeout=20) as response:  # noqa: S310 - loopback is validated
                 value = json.loads(response.read().decode())
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise RuntimeError("p5_session_catalog_gateway_request_failed") from exc
@@ -206,6 +217,35 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def write_failure_report(
+    output: Path,
+    environment: dict[str, Any],
+    code: str,
+    *,
+    runtime_authority_restored: bool | None = None,
+) -> Path:
+    """Persist a content-free failure without overwriting another attempt."""
+    generated = datetime.now(UTC)
+    target = output.resolve().with_name(
+        f"{output.stem}-failed-{generated.strftime('%Y%m%dT%H%M%S%fZ')}{output.suffix}"
+    )
+    report: dict[str, Any] = {
+        "schema_version": "p5-session-catalog-acceptance/1",
+        "feature_id": "P5-M03-F04",
+        "generated_at": generated.isoformat(),
+        "passed": False,
+        "environment": environment,
+        "protocol": "oaep/1+owop/1",
+        "failure": {"code": code},
+    }
+    if runtime_authority_restored is not None:
+        report["transaction"] = {
+            "runtime_authority_restored": runtime_authority_restored,
+        }
+    atomic_json(target, report)
+    return target
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sdk = Path(os.environ.get("ANDROID_HOME", Path.home() / "AppData/Local/Android/Sdk"))
@@ -230,12 +270,16 @@ def main(argv: list[str] | None = None) -> int:
     if status.get("state") != "ready" or not isinstance(runtime_id, str) or not runtime_id:
         raise RuntimeError("p5_session_catalog_runtime_not_ready")
 
-    target_output = adb(
-        options.adb, options.serial, "shell", "am", "instrument", "-w", "-r",
-        "-e", "phase", "target-proof", "-e", "runtimeId", runtime_id,
-        "-e", "relayBaseUrl", options.relay_base_url,
-        "-e", "class", TARGET_TEST, RUNNER, timeout=120,
-    )
+    try:
+        target_output = adb(
+            options.adb, options.serial, "shell", "am", "instrument", "-w", "-r",
+            "-e", "phase", "target-proof", "-e", "runtimeId", runtime_id,
+            "-e", "relayBaseUrl", options.relay_base_url,
+            "-e", "class", TARGET_TEST, RUNNER, timeout=120,
+        )
+    except RuntimeError:
+        write_failure_report(options.output, environment, "target_proof_failed")
+        raise RuntimeError("p5_session_catalog_target_instrumentation_failed") from None
     if "OK (1 test)" not in target_output or "FAILURES!!!" in target_output:
         raise RuntimeError("p5_session_catalog_target_instrumentation_failed")
     target = validate_target(extract_single_json(
@@ -251,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
         "-e", "workspaceId", target["workspace_id"],
         "-e", "sessionId", target["session_id"],
         "-e", "temporaryTitle", temporary_title,
-        "-e", "monitorDurationMs", "120000",
+        "-e", "monitorDurationMs", str(MONITOR_DURATION_MS),
         "-e", "relayBaseUrl", options.relay_base_url,
         "-e", "class", MONITOR_TEST, RUNNER,
     ]
@@ -303,19 +347,40 @@ def main(argv: list[str] | None = None) -> int:
         except subprocess.TimeoutExpired:
             monitor.kill()
             monitor.communicate(timeout=10)
-        raise transaction_error
+        write_failure_report(
+            options.output, environment, "runtime_transaction_failed",
+            runtime_authority_restored=restored,
+        )
+        raise RuntimeError("p5_session_catalog_runtime_transaction_failed") from None
     try:
-        monitor_output, _ = monitor.communicate(timeout=45)
-    except subprocess.TimeoutExpired as exc:
+        # The transaction normally completes quickly, but the process owns a
+        # 120-second fail-closed observation window.  Never terminate it at an
+        # unrelated shorter driver timeout before it can emit its verdict.
+        monitor_output, _ = monitor.communicate(timeout=(MONITOR_DURATION_MS / 1000) + 15)
+    except subprocess.TimeoutExpired:
         monitor.terminate()
         monitor.communicate(timeout=10)
-        raise RuntimeError("p5_session_catalog_monitor_timeout") from exc
+        # TimeoutExpired includes the full instrumentation argv (resource IDs
+        # and the one-run title).  Suppress it at the operator boundary.
+        write_failure_report(
+            options.output, environment, "monitor_driver_timeout",
+            runtime_authority_restored=restored,
+        )
+        raise RuntimeError("p5_session_catalog_monitor_timeout") from None
     if monitor.returncode or "OK (1 test)" not in monitor_output or "FAILURES!!!" in monitor_output:
+        write_failure_report(
+            options.output, environment, "monitor_observation_failed",
+            runtime_authority_restored=restored,
+        )
         raise RuntimeError("p5_session_catalog_monitor_failed")
     monitor_report = validate_monitor_report(extract_single_json(
         monitor_output, MONITOR_PREFIXES, "p5_session_catalog_monitor_report"
     ))
     if not restored:
+        write_failure_report(
+            options.output, environment, "runtime_rollback_failed",
+            runtime_authority_restored=False,
+        )
         raise RuntimeError("p5_session_catalog_runtime_rollback_failed")
 
     report = {

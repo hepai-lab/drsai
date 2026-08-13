@@ -495,4 +495,59 @@ class RelayRemoteRepositoryTest {
         }.exceptionOrNull()
         assertTrue(invalidOrder is IllegalArgumentException)
     }
+
+    @Test fun `user slo journeys use strict production timestamp routes`() = runTest {
+        repeat(3) {
+            server.enqueue(MockResponse().setResponseCode(200).setBody(
+                """{"ready":true,"stages_present":["one","two","three"],"latencies_ms":{"total":30}}"""
+            ))
+        }
+        val runtime = RuntimeId("rt")
+        val workspace = WorkspaceId("ws")
+        val session = SessionId("s")
+
+        assertTrue(repository.recordFirstScreenSlo(
+            runtime, workspace, session, "sample-first-0001", 10, 20, 40,
+        ).ready)
+        assertTrue(repository.recordOperationConfirmationSlo(
+            runtime, workspace, session, "sample-operation-0001", 100, 110, 130,
+        ).ready)
+        assertTrue(repository.recordReconnectSlo(
+            runtime, workspace, session, "sample-reconnect-0001", 200, 210, 230,
+        ).ready)
+
+        val expected = listOf(
+            "/v1/runtimes/rt/workspaces/ws/sessions/s/slo/first-screen/sample-first-0001" to
+                setOf("cache_load_at_ms", "authority_refresh_at_ms", "first_render_at_ms"),
+            "/v1/runtimes/rt/workspaces/ws/sessions/s/slo/operation-confirmation/sample-operation-0001" to
+                setOf("request_dispatch_at_ms", "runtime_commit_at_ms", "confirmation_render_at_ms"),
+            "/v1/runtimes/rt/workspaces/ws/sessions/s/slo/reconnect/sample-reconnect-0001" to
+                setOf("disconnect_detect_at_ms", "transport_restore_at_ms", "replay_catchup_at_ms"),
+        )
+        expected.forEach { (path, keys) ->
+            server.takeRequest().apply {
+                assertEquals("POST", method)
+                assertEquals(path, this.path)
+                assertEquals(keys, JSONObject(body.readUtf8()).keySet())
+            }
+        }
+    }
+
+    @Test fun `user slo observations reject identity and timestamp drift before network`() = runTest {
+        val runtime = RuntimeId("rt")
+        val workspace = WorkspaceId("ws")
+        val session = SessionId("s")
+        assertTrue(runCatching {
+            repository.recordFirstScreenSlo(
+                runtime, workspace, session, "contains/path", 1, 2, 3,
+            )
+        }.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(runCatching {
+            repository.recordReconnectSlo(
+                runtime, workspace, session, "sample-reconnect-0001", 3, 2, 4,
+            )
+        }.exceptionOrNull() is IllegalArgumentException)
+        assertEquals(0, server.requestCount)
+    }
+
 }

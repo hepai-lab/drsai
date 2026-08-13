@@ -6,6 +6,7 @@ import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OaepDigestTest {
@@ -36,5 +37,25 @@ class OaepDigestTest {
         )
         val changed = listOf(OaepJsonCodec.item(changedJson)) + items.drop(1)
         assertNotEquals(oaepItemsDigest(items), oaepItemsDigest(changed))
+    }
+
+    @Test fun pending_tool_null_result_survives_canonical_round_trip() {
+        val root = File("../../cores/protocol/oaep/examples.json")
+            .takeIf { it.isFile } ?: File("../../../cores/protocol/oaep/examples.json")
+        val fixture = JSONObject(root.readText())
+        val source = fixture.getJSONArray("items").let { values ->
+            (0 until values.length()).map(values::getJSONObject)
+                .first { it.getString("type") == "tool_call" }
+        }
+        val pending = JSONObject(source.toString())
+            .put("status", "pending")
+            .also { it.getJSONObject("content").put("result", JSONObject.NULL) }
+        val decoded = OaepJsonCodec.item(pending)
+
+        assertTrue(OaepJsonCodec.itemJson(decoded).getJSONObject("content").isNull("result"))
+        assertEquals(
+            "595570630b017370a4511868437d91a76c4637fbcae9f94c7a0ec8866168fc5e",
+            oaepItemsDigest(listOf(decoded)),
+        )
     }
 }

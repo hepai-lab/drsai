@@ -709,7 +709,6 @@ def main() -> int:
                     {
                         "label": item.label,
                         "leaked": item.leaked,
-                        "leak_locations": item.leak_locations,
                         "matched_classes": [
                             name
                             for name, value in canary_classes.items()

@@ -1,9 +1,9 @@
-export type OperationalLayer = "identity" | "runtime" | "model" | "workspace";
+export type OperationalLayer = "identity" | "runtime" | "agent" | "workspace";
 
 export interface OperationalStateFacts {
   identity: "loading" | "anonymous" | "authenticated";
   runtime: "unknown" | "preparing" | "ready" | "blocked";
-  model: "unknown" | "unconfigured" | "untested" | "ready";
+  agent: "unknown" | "unavailable" | "unconfigured" | "untested" | "ready";
   workspace: "none" | "untrusted" | "trusted";
 }
 
@@ -21,22 +21,22 @@ export interface OperationalStateDecision {
   layers: OperationalLayerState[];
 }
 
-const ORDER: OperationalLayer[] = ["identity", "runtime", "model", "workspace"];
+const ORDER: OperationalLayer[] = ["identity", "runtime", "agent", "workspace"];
 
 export function deriveOperationalState(facts: OperationalStateFacts): OperationalStateDecision {
   const blocker = facts.identity !== "authenticated"
     ? "identity"
     : facts.runtime !== "ready"
       ? "runtime"
-      : facts.model === "unconfigured" || facts.model === "unknown"
-        ? "model"
+      : facts.agent === "unconfigured" || facts.agent === "unavailable" || facts.agent === "unknown"
+        ? "agent"
         : facts.workspace !== "trusted"
           ? "workspace"
           : null;
   // A configured model that has not been explicitly tested is advisory. It
   // must not block the workspace or trigger a paid probe before the user has
   // asked the model to do useful work.
-  const currentLayer = blocker ?? (facts.model === "untested" ? "model" : "workspace");
+  const currentLayer = blocker ?? (facts.agent === "untested" ? "agent" : "workspace");
   const state = facts[currentLayer];
   const blockingLayer = blocker;
   const currentIndex = ORDER.indexOf(currentLayer);
@@ -55,5 +55,5 @@ export function deriveOperationalState(facts: OperationalStateFacts): Operationa
 
 export function shouldShowOperationalStateBar(decision: OperationalStateDecision): boolean {
   if (decision.blockingLayer !== null) return true;
-  return decision.currentLayer === "model" && decision.state === "untested";
+  return decision.currentLayer === "agent" && decision.state === "untested";
 }

@@ -3,27 +3,25 @@
 > 阶段编号：Android P9-E（P9 Emulator Continuation，P9 执行子阶段）  
 > 所属总阶段：Android P9——Desktop Full Agent Runtime 能力对等  
 > 产品基线：Android v1.5.6 Debug（`OpenDrSai.Dev` / `ai.drsai.remote.debug` / versionCode 10506）  
-> 文档版本：V1.1  
+> 文档版本：V1.2  
 > 制定日期：2026-08-12  
 > 当前 P9 总账本：69/72（95.83%）  
-> 当前 P9-E 预验收：33/40（82.5%）  
+> 当前 P9-E 预验收：39/40（97.5%）  
 > 当前待验收：M04-F06、M09-F06、M12-F06  
 > 文档状态：执行中（Emulator 主开发阶段）  
 
-## 0. 当前执行快照（V1.1）
+## 0. 当前执行快照（V1.2）
 
-截至 2026-08-12，P9-E 已完成 33/40 个预验收功能点。当前候选已完成 API 26、30、35、36 Emulator 的同候选冒烟矩阵，Android JVM、instrumentation/Compose 与 P5 架构门禁已有全绿证据；正式 P9 总账本仍保持 69/72，不因模拟器结果提前接受真机门禁。
+截至 2026-08-12，P9-E 已完成 39/40 个预验收功能点。智增增 `deepseek-v4-flash` 与 `deepseek-v4-pro` 已完成 180 条真实模型预跑：工具选择率 100%、参数正确率 98.3%、最终成功率 93.9%、Provider 错误率 0%。当前候选也已完成 API 26、30、35、36 Emulator 的同候选冒烟矩阵，Android JVM、instrumentation/Compose 与全量 Python 回归已有全绿证据；正式 P9 总账本仍保持 69/72，不因模拟器结果提前接受真机门禁。
 
 当前剩余工作按以下顺序推进：
 
-1. 在 Emulator 的 `OpenDrSai.Dev` 内保存智增增 API Key，完成 `deepseek-v4-flash` 与 `deepseek-v4-pro` 的真实模型预跑和统计验收；
-2. 完成全量 Python 回归的稳定复跑，并确保报告绑定当前 APK/Test APK、Kernel、Prompt、Tool 与 fixture digest；
-3. 用户确认 P9 候选改动范围后，从干净 checkout 构建唯一候选，完成 E08-F02 与证据一致性检查；
-4. P9-E 达到 40/40 后冻结候选与真机运行清单；待 ARM64 真机恢复，仅执行正式 180 次统计和 M04-F06、M09-F06、M12-F06，不在真机现场继续改代码。
+1. 用户确认 P9 候选改动范围后，从干净 checkout 构建唯一候选，完成唯一剩余的 E08-F02；
+2. E08-F05 作为 40/40 后的 Go-to-device 决策输出，不重复计作第 41 个功能点；
+3. P9-E 达到 40/40 后冻结候选与真机运行清单；待 ARM64 真机恢复，仅执行正式 180 次统计和 M04-F06、M09-F06、M12-F06，不在真机现场继续改代码。
 
-当前人工前置条件只有两项：
+当前人工前置条件只有一项：
 
-- 真实模型预跑前：用户需在 Emulator 应用内录入 API Key；密钥不得通过聊天、脚本参数、日志或报告传递；
 - 干净候选构建前：用户需确认 P9 改动范围，避免把共享工作区中的 Desktop、Python、文档或语音等无关改动混入候选。
 
 ARM64 真机不是当前 P9-E 开发阻塞项，只是 P9 正式发布验收的延后门禁。

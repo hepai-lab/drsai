@@ -31,6 +31,10 @@ State the resolved cases and reported risks in the confirmation. Use the returne
 
 1. Call `regression_preflight` with the resolved suite and case IDs.
 2. Stop and explain exact missing requirements when preflight is blocked.
+   When blocked, do not inspect repository files, invoke shell or workspace
+   tools, run `run_regression.py`, switch to the fixture adapter, or construct
+   a result by any alternate path. Only a later successful
+   `regression_preflight` may permit `regression_start`.
 3. Call `regression_start` with the current catalog revision and case references. Preserve the returned evaluation ID.
    Pass `options.failure_policy` as `stop` only when the user asks to stop after the first failure; otherwise use `continue` or omit options.
 4. Read `regression_events` using its cursor and report only meaningful stage changes, case boundaries, approvals, artifacts, failures, and terminal results.

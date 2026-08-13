@@ -177,6 +177,7 @@ function p10SourceEntries() { return [
   ...["userFacingErrors.ts", "threadPatchFrameBatcher.ts", "threadSnapshotPatch.ts", "threadSnapshotStore.ts", "threadSyncMetrics.ts", "adapters/useDesktopChatAdapter.ts", "components/ChatWorkspace.tsx", "components/StructuredMessageParts.tsx"].map((name) => `apps/desktop/shared/renderer/src/${name}`),
   "scripts/verify-codex-runtime-online.py",
   "scripts/verify-codex-p10-ssh-bridge.py", "apps/desktop/windows/tests/remote-ssh/Dockerfile.codex-p10",
+  "apps/desktop/windows/tests/remote-ssh/Dockerfile.codex-p10.dockerignore",
   "apps/desktop/windows/tests/remote-ssh/fake_codex_app_server.py",
   ...["verify-codex-adapter.mjs", "generate-codex-p10-ledger.mjs", "verify-codex-p10-ledger.mjs", "verify-p10-error-contract.mts",
     "verify-p10-snapshot-waterline.mts", "verify-p10-resource-governance.mts", "verify-p10-architecture-boundary.mjs",

@@ -1,5 +1,5 @@
 {
-  "contractVersion": 5,
+  "contractVersion": 6,
   "experimentalApi": false,
   "generatedBaseline": {
     "codexVersion": "0.147.0-alpha.6.6",
@@ -44,6 +44,7 @@
     "thread/resume": ["approvalPolicy", "approvalsReviewer", "baseInstructions", "config", "cwd", "developerInstructions", "personality", "threadId", "sandbox", "model", "modelProvider", "serviceTier"],
     "thread/archive": ["threadId"],
     "thread/unarchive": ["threadId"],
+    "thread/unsubscribe": ["threadId"],
     "turn/start": ["personality", "approvalPolicy", "approvalsReviewer", "clientUserMessageId", "threadId", "cwd", "effort", "sandboxPolicy", "input", "model", "serviceTier", "outputSchema", "summary"],
     "turn/interrupt": ["threadId", "turnId"],
     "account/read": ["refreshToken"],
@@ -61,6 +62,7 @@
     "thread/resume": ["threadId"],
     "thread/archive": ["threadId"],
     "thread/unarchive": ["threadId"],
+    "thread/unsubscribe": ["threadId"],
     "turn/start": ["input", "threadId"],
     "turn/interrupt": ["threadId", "turnId"],
     "account/read": [],

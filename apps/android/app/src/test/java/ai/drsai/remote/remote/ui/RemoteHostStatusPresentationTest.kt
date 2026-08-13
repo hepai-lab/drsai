@@ -55,4 +55,33 @@ class RemoteHostStatusPresentationTest {
             assertTrue(presentation.reason.contains("打开 App 后会自动同步"))
         }
     }
+
+    @Test fun englishHostAndNotificationStatesAreCompleteAndAccessible() {
+        val offline = remoteHostStatusPresentation(
+            RemoteConnectionState.OFFLINE, language = RemoteUiLanguage.EN,
+        )
+        assertEquals("Offline", offline.title)
+        assertEquals("Retry", offline.actionLabel)
+        assertTrue(offline.accessibilityDescription.startsWith("Computer status: Offline."))
+        val notification = requireNotNull(remoteNotificationPresentation(
+            RemoteNotificationReadiness.PROVIDER_NOT_CONFIGURED, RemoteUiLanguage.EN,
+        ))
+        assertTrue(notification.reason.contains("Opening the app syncs"))
+        assertFalse(notification.reason.contains("后台"))
+    }
+
+    @Test fun localeSelectionFailsSafeToEnglishOutsideChinese() {
+        assertEquals(RemoteUiLanguage.ZH, remoteUiLanguage("zh-CN"))
+        assertEquals(RemoteUiLanguage.EN, remoteUiLanguage("en-US"))
+        assertEquals(RemoteUiLanguage.EN, remoteUiLanguage(null))
+    }
+
+    @Test fun actionableStatesUseStableActionInsteadOfTranslatingRawErrorText() {
+        val source = requireNotNull(remoteActionableState(RemoteLifecycleState.REVOKED))
+        val localized = localizedRemoteActionableState(source, RemoteUiLanguage.EN)
+        assertEquals(RemoteRecoveryAction.REASSOCIATE, localized.action)
+        assertEquals("Reconnect this computer", localized.title)
+        assertEquals("Scan again", localized.actionLabel)
+        assertFalse(localized.reason.contains(source.reason))
+    }
 }

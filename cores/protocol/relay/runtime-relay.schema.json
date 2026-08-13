@@ -5,6 +5,56 @@
   "version": "2.0.0",
   "protocol_version": "owop/1",
   "x-oaep-schema-sha256": "1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09",
+  "x-relay-latency-observability": {
+    "schema_version": "p6-relay-latency/1",
+    "stages": [
+      "runtime_receive",
+      "runtime_commit",
+      "relay_fanout",
+      "android_receive",
+      "android_render"
+    ],
+    "correlation_key": "sha256(runtime_id\u0000workspace_id\u0000session_id\u0000event_id)",
+    "retention_days": 30,
+    "sample_limit": 100000,
+    "minimum_complete_correlations": 20,
+    "minimum_worker_count": 2,
+    "multi_worker_ready_requires": ["complete_correlations", "worker_count"],
+    "failure_modes": ["missing_stage", "single_worker", "duplicate_conflict", "out_of_order"],
+    "worker_identity": "internal_sha256_only",
+    "public_worker_dimension": "worker_count",
+    "persistent_layers": ["redis", "postgresql"],
+    "authorization_precedes_body_and_storage": true,
+    "content_free": true
+  },
+  "x-user-slo": {
+    "schema_version": "p6-user-slo/1",
+    "minimum_complete_samples": 20,
+    "journeys": {
+      "first_screen": {
+        "stages": ["cache_load", "authority_refresh", "first_render"],
+        "threshold_ms": 2000
+      },
+      "event_to_render": {
+        "stages": ["runtime_receive", "runtime_commit", "relay_fanout", "android_receive", "android_render"],
+        "threshold_ms": 1000
+      },
+      "operation_confirmation": {
+        "stages": ["request_dispatch", "runtime_commit", "confirmation_render"],
+        "threshold_ms": 2000
+      },
+      "reconnect": {
+        "stages": ["disconnect_detect", "transport_restore", "replay_catchup"],
+        "threshold_ms": 30000
+      }
+    },
+    "readiness": "each_journey_complete_samples_gte_20",
+    "bottleneck": "highest_stage_p95_ms",
+    "scope_hash": "sha256",
+    "identity_dimensions": [],
+    "authorization_precedes_body_and_storage": true,
+    "content_free": true
+  },
   "x-relay-bindings": [
     "https",
     "wss"
@@ -91,6 +141,7 @@
       "association_permissions_invalid",
       "attachment_reference_invalid",
       "authorization_expansion_forbidden",
+      "catalog_order_invalid",
       "device_name_invalid",
       "event_id_conflict",
       "file_forbidden",
@@ -286,6 +337,10 @@
     "conversation_latency_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/{event_id}/latency-observation",
     "conversation_latency_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/{event_id}/latency-observation",
     "conversation_latency_metrics": "GET /v1/metrics/relay-latency",
+    "user_slo_first_screen_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/first-screen/{sample_id}",
+    "user_slo_operation_confirmation_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/operation-confirmation/{sample_id}",
+    "user_slo_reconnect_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/reconnect/{sample_id}",
+    "user_slo_metrics": "GET /v1/metrics/user-slo",
     "workspace_list": "GET /v1/runtimes/{runtime_id}/workspaces",
     "workspace_sync": "POST /v1/runtimes/{runtime_id}/workspaces/sync",
     "session_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
@@ -316,11 +371,15 @@
     "GeneratedRunCreateRequest": "run_create_request",
     "GeneratedApprovalDecisionRequest": "approval_decision_request",
     "GeneratedLatencyObservationRequest": "latency_observation_request",
+    "GeneratedFirstScreenObservationRequest": "first_screen_observation_request",
+    "GeneratedOperationConfirmationObservationRequest": "operation_confirmation_observation_request",
+    "GeneratedReconnectObservationRequest": "reconnect_observation_request",
     "GeneratedSessionProjection": "session",
     "GeneratedRunProjection": "run",
     "GeneratedApprovalProjection": "approval",
     "GeneratedApprovalDecisionProjection": "approval_decision_projection",
     "GeneratedLatencyObservationResponse": "latency_observation_response",
+    "GeneratedUserSloObservationResponse": "user_slo_observation_response",
     "GeneratedSessionCreateRecoveryResponse": "session_create_recovery_response",
     "GeneratedRunCreateRecoveryResponse": "run_create_recovery_response",
     "GeneratedApprovalDecisionRecoveryResponse": "approval_decision_recovery_response"
@@ -800,6 +859,48 @@
       },
       "additionalProperties": false
     },
+    "first_screen_observation_request": {
+      "type": "object",
+      "required": [
+        "cache_load_at_ms",
+        "authority_refresh_at_ms",
+        "first_render_at_ms"
+      ],
+      "properties": {
+        "cache_load_at_ms": { "type": "integer", "minimum": 0 },
+        "authority_refresh_at_ms": { "type": "integer", "minimum": 0 },
+        "first_render_at_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "operation_confirmation_observation_request": {
+      "type": "object",
+      "required": [
+        "request_dispatch_at_ms",
+        "runtime_commit_at_ms",
+        "confirmation_render_at_ms"
+      ],
+      "properties": {
+        "request_dispatch_at_ms": { "type": "integer", "minimum": 0 },
+        "runtime_commit_at_ms": { "type": "integer", "minimum": 0 },
+        "confirmation_render_at_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "reconnect_observation_request": {
+      "type": "object",
+      "required": [
+        "disconnect_detect_at_ms",
+        "transport_restore_at_ms",
+        "replay_catchup_at_ms"
+      ],
+      "properties": {
+        "disconnect_detect_at_ms": { "type": "integer", "minimum": 0 },
+        "transport_restore_at_ms": { "type": "integer", "minimum": 0 },
+        "replay_catchup_at_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "run": {
       "type": "object",
       "required": [
@@ -1006,6 +1107,31 @@
             {
               "type": "null"
             }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "user_slo_observation_response": {
+      "type": "object",
+      "required": [
+        "ready",
+        "stages_present",
+        "latencies_ms"
+      ],
+      "properties": {
+        "ready": { "type": "boolean" },
+        "stages_present": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "latencies_ms": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": { "type": "integer", "minimum": 0 }
+            },
+            { "type": "null" }
           ]
         }
       },

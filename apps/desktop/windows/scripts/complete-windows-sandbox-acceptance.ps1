@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory=$true)][string]$EvidenceDir,
     [Parameter(Mandatory=$true)][string]$RunId,
     [ValidateSet("PASS", "FAIL")][string]$ManualOutcome,
-    [string]$ManualNote = ""
+    [string]$ManualNote = "",
+    [switch]$NonInteractive
 )
 
 $ErrorActionPreference = "Continue"
@@ -50,11 +51,23 @@ Add-Check "API Key not required" ($configText -match '(?m)^requires_api_key\s*=\
 Add-Check "Default Agent file exists" ([bool]$agentText) $agentPath "config-sanitized/configs__agents__agent_opendrsai.toml"
 Add-Check "Default Agent model is explicit HepAI" ($agentText -match '(?m)^provider_id\s*=\s*"hepai"\s*$' -and $agentText -match '(?m)^mode\s*=\s*"explicit"\s*$') "hepai" "config-sanitized/configs__agents__agent_opendrsai.toml"
 
+$preLogoutPath = Join-Path $EvidenceDir "pre-logout-validation.json"
+$preLogout = $null
+try { if (Test-Path $preLogoutPath) { $preLogout = Get-Content $preLogoutPath -Raw -Encoding UTF8 | ConvertFrom-Json } } catch { }
+$observedChatCount = $(if ($preLogout) { [int]$preLogout.completedChatCount } else { 0 })
+$manualChatAttestation = $ManualOutcome -eq "PASS" -and $observedChatCount -ge 2
+$manualChatDetail = "tester confirmed replies before and after restart; telemetry count=$observedChatCount"
+Add-Check "Encrypted OIDC session before logout" ($preLogout -and $preLogout.checks.encryptedOidcSession) "pre-logout marker" "pre-logout-validation.json" "PRE_LOGOUT_OIDC_INVALID"
+Add-Check "Restart persistence verified" ($preLogout -and ($preLogout.checks.restartPersistence -or $manualChatAttestation)) $(if($preLogout.checks.restartPersistence){"correlated telemetry across restart"}else{$manualChatDetail}) "pre-logout-validation.json + manual" "RESTART_PERSISTENCE_NOT_PROVEN"
+Add-Check "Two acceptance chats completed" ($preLogout -and ($preLogout.checks.twoAcceptanceChats -or $manualChatAttestation)) ("count=" + [string]$observedChatCount) "pre-logout-validation.json + manual" "CHAT_EXECUTION_NOT_COMPLETED"
+Add-Check "Post-restart chat verified" ($preLogout -and ($preLogout.checks.postRestartChat -or $manualChatAttestation)) $(if($preLogout.checks.postRestartChat){"correlated telemetry after process start"}else{$manualChatDetail}) "pre-logout-validation.json + manual" "POST_RESTART_CHAT_NOT_PROVEN"
+Add-Check "Tavily search available" ($preLogout -and $preLogout.checks.tavilySearchAvailable) ("results=" + [string]$preLogout.tavilyResultCount) "pre-logout-validation.json" "TAVILY_SEARCH_UNAVAILABLE"
+
 $authPath = Join-Path $drsaiHome "auth\auth.json"
 $auth = $null
 try { if (Test-Path $authPath) { $auth = Get-Content $authPath -Raw -Encoding UTF8 | ConvertFrom-Json } } catch { }
 $tokenPresent = $auth -and ($auth.accessToken -or $auth.encryptedAccessToken)
-Add-Check "OIDC session persisted" ($auth -and $auth.authenticated -and $auth.authMode -eq "oidc" -and $tokenPresent) ([string]$auth.authMode) "app/auth-metadata.json" "OIDC_TOKEN_MISSING_OR_EXPIRED"
+Add-Check "OIDC logout cleared local session" (-not $auth -or (-not $auth.authenticated -and -not $tokenPresent)) "no authenticated token remains" "app/auth-metadata.json" "OIDC_LOGOUT_NOT_CLEARED"
 
 $gatewayHeaders = @{}
 $gatewayTokenPath = Join-Path $drsaiHome "runtime\instance-token"
@@ -121,6 +134,8 @@ $checksumLines = Get-ChildItem -LiteralPath $EvidenceDir -Recurse -File -ErrorAc
     ForEach-Object { "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.FullName.Substring($EvidenceDir.Length + 1).Replace('\','/') }
 [IO.File]::WriteAllText((Join-Path $EvidenceDir "checksums.txt"), (($checksumLines -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
 $message = if ($result.passed) { "OpenDrSai Sandbox acceptance passed. Evidence is saved; the Sandbox may now be closed." } else { "Acceptance failed. Evidence is saved; keep the Sandbox open for inspection." }
-Add-Type -AssemblyName PresentationFramework
-[Windows.MessageBox]::Show($message, "OpenDrSai Sandbox Acceptance") | Out-Null
+if (-not $NonInteractive) {
+    Add-Type -AssemblyName PresentationFramework
+    [Windows.MessageBox]::Show($message, "OpenDrSai Sandbox Acceptance") | Out-Null
+}
 if (-not $result.passed) { exit 1 }

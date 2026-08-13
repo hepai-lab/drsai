@@ -1754,6 +1754,54 @@ export async function connectRuntimeClientForWorkspace(
   return resolveLocalRuntimeWorkspace(client, workspacePath, workspaceId, persisted?.name ?? workspaceName, Boolean(persisted));
 }
 
+export interface RuntimeClientLease<T extends RuntimeClient = RuntimeClient> {
+  client: T;
+  workspaceId: string;
+  release: () => void;
+}
+
+/**
+ * Acquire a finite-operation lease without exposing the connect/retain race.
+ * A previous OAEP owner can release the last reference immediately after a
+ * caller resolves the shared client. Retrying here is safe because no Session
+ * or Run mutation has happened yet.
+ */
+export async function acquireRuntimeClientLease<T extends RuntimeClient>(
+  resolve: () => Promise<{ client: T; workspaceId: string }>,
+): Promise<RuntimeClientLease<T>> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const resolved = await resolve();
+      return { ...resolved, release: retainRuntimeClient(resolved.client) };
+    } catch (error) {
+      if (attempt < 2 && error instanceof RuntimeClientGenerationInvalidatedError) continue;
+      throw error;
+    }
+  }
+  throw new RuntimeClientGenerationInvalidatedError();
+}
+
+/**
+ * Borrows the current workspace Runtime client for the complete duration of a
+ * finite operation. A connected client is shared with OAEP streams, so callers
+ * must hold a reference while awaiting an IPC request; otherwise the final
+ * stream subscriber can release and close the client underneath that request.
+ */
+export async function withRuntimeClientForWorkspace<T>(
+  workspacePath: string,
+  workspaceId: string | undefined,
+  operation: (resolved: { client: RuntimeClient; workspaceId: string }) => Promise<T>,
+  workspaceName?: string,
+): Promise<T> {
+  const lease = await acquireRuntimeClientLease(() =>
+    connectRuntimeClientForWorkspace(workspacePath, workspaceId, workspaceName));
+  try {
+    return await operation(lease);
+  } finally {
+    lease.release();
+  }
+}
+
 /** Resolve an already-running Runtime for read-only restoration work without
  * spawning the local Gateway. Callers can fall back to persisted Desktop data
  * when this returns null. */

@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,16 +39,42 @@ try {
   { encoding: "utf8", windowsHide: true });
   assert(zip.status === 0, `could not create archive fixture: ${output(zip)}`);
   run(["record-archive", "--payload", payload, "--archive", archive]);
+  const stagedReceipt = JSON.parse(readFileSync(`${archive}.receipt.json`, "utf8"));
+  assert(stagedReceipt.schemaVersion === 2 && stagedReceipt.status === "staged", "new archive receipt was not staged as schema v2");
+  assert(stagedReceipt.payload.fileCount > 0 && stagedReceipt.payload.expandedSizeBytes > 0, "archive payload metrics are missing");
   const verifier = join(root, "scripts", "verify-final-runtime-artifact.ps1");
+  const prematureFastVerify = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", verifier,
+    "-ArchivePath", archive, "-SkipPythonImport", "-Fast"], { encoding: "utf8", windowsHide: true });
+  assert(prematureFastVerify.status !== 0 && output(prematureFastVerify).includes("not complete"), "staged receipt was accepted by fast verification");
   const validArchive = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", verifier,
-    "-ArchivePath", archive, "-SkipPythonImport"], { encoding: "utf8", windowsHide: true });
+    "-ArchivePath", archive, "-SkipPythonImport", "-CompleteReceipt"], { encoding: "utf8", windowsHide: true });
   assert(validArchive.status === 0, `completed archive was rejected: ${output(validArchive)}`);
+  const completedReceipt = JSON.parse(readFileSync(`${archive}.receipt.json`, "utf8"));
+  assert(completedReceipt.status === "complete" && completedReceipt.verification.status === "passed", "full verification did not complete the receipt");
+  const fastVerify = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", verifier,
+    "-ArchivePath", archive, "-SkipPythonImport", "-Fast"], { encoding: "utf8", windowsHide: true });
+  assert(fastVerify.status === 0 && output(fastVerify).includes("Fast-verified"), `completed receipt failed fast verification: ${output(fastVerify)}`);
+  const msiOutput = join(temp, "msi");
+  const msiPath = join(msiOutput, "OpenDrSai-Windows-Installer-x64.msi");
+  const msiBuild = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+    join(root, "installer", "build-msi.ps1"), "-OutDir", msiOutput, "-RuntimePath", archive,
+    "-BootstrapperVersion", "0.0.0-test", "-RequireTrustedRuntime"], { encoding: "utf8", windowsHide: true });
+  assert(msiBuild.status === 0 && existsSync(msiPath), `MSI fast-path fixture build failed: ${output(msiBuild)}`);
+  assert(output(msiBuild).includes("Fast-verified"), "MSI build did not use completed receipt fast verification");
+  const legacyReceiptPath = join(temp, "legacy.receipt.json");
+  const legacyReceipt = { ...completedReceipt, schemaVersion: 1, status: "complete" };
+  delete legacyReceipt.payload;
+  delete legacyReceipt.verification;
+  writeFileSync(legacyReceiptPath, `${JSON.stringify(legacyReceipt, null, 2)}\n`);
+  const legacyFullVerify = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", verifier,
+    "-ArchivePath", archive, "-ReceiptPath", legacyReceiptPath, "-SkipPythonImport"], { encoding: "utf8", windowsHide: true });
+  assert(legacyFullVerify.status === 0, `legacy schema v1 receipt lost full-verification compatibility: ${output(legacyFullVerify)}`);
   appendFileSync(archive, "post-receipt-tamper");
   const tamperedArchive = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", verifier,
-    "-ArchivePath", archive, "-SkipPythonImport"], { encoding: "utf8", windowsHide: true });
+    "-ArchivePath", archive, "-SkipPythonImport", "-Fast"], { encoding: "utf8", windowsHide: true });
   assert(tamperedArchive.status !== 0 && output(tamperedArchive).includes("SHA-256 differs"), "archive modified after receipt was accepted");
 
-  console.log("Runtime build trust regressions passed: identity binding, changed/stale-file rejection, completed archive binding.");
+  console.log("Runtime build trust regressions passed: identity binding, changed/stale-file rejection, staged/full/fast receipt binding, MSI fast path.");
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }

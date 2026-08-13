@@ -21,6 +21,31 @@ $venvDir = Join-Path $AgentDir "venv"
 $venvPython = Join-Path $venvDir "Scripts\python.exe"
 $scriptsDir = Join-Path $venvDir "Scripts"
 $packageDir = Join-Path $repoRoot "cores\python\packages\drsai"
+$fingerprintPath = Join-Path $AgentDir ".opendrsai-python-agent-fingerprint.json"
+
+function Get-DependencyFingerprint {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $pythonIdentity = (& $Python -c "import sys; print(sys.executable); print(sys.version)" 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Could not inspect the source Python interpreter." }
+        $inputs = @(
+            (Join-Path $packageDir "pyproject.toml"),
+            (Join-Path $packageDir "build_hook.py")
+        )
+        $builder = New-Object System.Text.StringBuilder
+        $null = $builder.AppendLine("python=$pythonIdentity")
+        $null = $builder.AppendLine("index=$($PipIndexUrl.TrimEnd('/'))")
+        foreach ($path in $inputs) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Dependency fingerprint input is missing: $path" }
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $null = $builder.AppendLine("$([IO.Path]::GetFileName($path))=$hash")
+        }
+        $bytes = [Text.Encoding]::UTF8.GetBytes($builder.ToString())
+        return ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+}
 
 if ($Recreate -and (Test-Path -LiteralPath $venvDir)) {
     $resolvedAgent = [IO.Path]::GetFullPath($AgentDir)
@@ -44,10 +69,41 @@ if ($PipIndexUrl -notmatch '^https://[^\s/]+(?:/.*)?$') {
 }
 $env:PIP_INDEX_URL = $PipIndexUrl.TrimEnd('/')
 Write-Host "Using Python package index: $($env:PIP_INDEX_URL)"
-& $venvPython -m pip install --disable-pip-version-check --no-input --index-url $env:PIP_INDEX_URL --upgrade pip setuptools wheel
-if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed with exit code $LASTEXITCODE." }
-& $venvPython -m pip install --disable-pip-version-check --no-input --index-url $env:PIP_INDEX_URL -e $packageDir
-if ($LASTEXITCODE -ne 0) { throw "DrSai dependency installation failed with exit code $LASTEXITCODE." }
+$dependencyFingerprint = Get-DependencyFingerprint
+$cachedFingerprint = ""
+if (Test-Path -LiteralPath $fingerprintPath -PathType Leaf) {
+    try {
+        $cachedFingerprint = [string](Get-Content -LiteralPath $fingerprintPath -Raw -Encoding UTF8 | ConvertFrom-Json).fingerprint
+    } catch {
+        $cachedFingerprint = ""
+    }
+}
+$canReuse = -not $Recreate -and $cachedFingerprint -eq $dependencyFingerprint
+if ($canReuse) {
+    & $venvPython -I -c "import drsai" *> $null
+    $canReuse = $LASTEXITCODE -eq 0
+}
+if ($canReuse) {
+    Write-Host "Reusing cached trusted Python agent dependencies: $dependencyFingerprint" -ForegroundColor DarkGray
+} else {
+    & $venvPython -m pip install --disable-pip-version-check --no-input --index-url $env:PIP_INDEX_URL --upgrade pip setuptools wheel
+    if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed with exit code $LASTEXITCODE." }
+    & $venvPython -m pip install --disable-pip-version-check --no-input --index-url $env:PIP_INDEX_URL -e $packageDir
+    if ($LASTEXITCODE -ne 0) { throw "DrSai dependency installation failed with exit code $LASTEXITCODE." }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $fingerprintRecord = [ordered]@{
+        schemaVersion = 1
+        fingerprint = $dependencyFingerprint
+        preparedAt = [DateTime]::UtcNow.ToString("o")
+        python = $Python
+        pipIndexUrl = $env:PIP_INDEX_URL
+    }
+    [System.IO.File]::WriteAllText(
+        $fingerprintPath,
+        (($fingerprintRecord | ConvertTo-Json -Depth 4) + [Environment]::NewLine),
+        $utf8NoBom
+    )
+}
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText(

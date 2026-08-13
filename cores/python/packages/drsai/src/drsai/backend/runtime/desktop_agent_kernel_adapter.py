@@ -1345,8 +1345,14 @@ async def run_agent_through_kernel(
 
     persisted = getattr(agent, "_agent_kernel_checkpoint", None)
     history = []
-    if isinstance(persisted, Mapping) and isinstance(persisted.get("state"), Mapping):
-        raw_messages = persisted["state"].get("messages", [])
+    current_session_id = str(getattr(agent, "_thread_id", "desktop-session"))
+    persisted_state = persisted.get("state") if isinstance(persisted, Mapping) else None
+    persisted_matches_session = (
+        isinstance(persisted_state, Mapping)
+        and str(persisted_state.get("session_id") or "") == current_session_id
+    )
+    if persisted_matches_session:
+        raw_messages = persisted_state.get("messages", [])
         if isinstance(raw_messages, list):
             for value in raw_messages:
                 if not isinstance(value, Mapping) or value.get("role") == "system":
@@ -1471,7 +1477,7 @@ async def run_agent_through_kernel(
     run_id = f"desktop-{uuid.uuid4()}"
     start = build_desktop_start_envelope(
         run_id=run_id,
-        session_id=str(getattr(agent, "_thread_id", "desktop-session")),
+        session_id=current_session_id,
         input_text=normalized_task.input_text,
         model_id=model_id,
         tools=schemas,

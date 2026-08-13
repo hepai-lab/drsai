@@ -9,6 +9,25 @@ from drsai.oaep.compatibility import LegacyRemovalMetrics, legacy_removal_decisi
 from p5_legacy_rollback import RollbackArtifactError, validate_rollback_artifact
 
 
+def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("oaep_legacy_removal_duplicate_json_key")
+        value[key] = item
+    return value
+
+
+def _load_json(path: Path, code: str) -> dict[str, object]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_strict_object)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as failure:
+        raise SystemExit(code) from failure
+    if not isinstance(value, dict):
+        raise SystemExit(code)
+    return value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("report", type=Path)
@@ -21,8 +40,8 @@ def main() -> int:
         raise SystemExit("oaep_legacy_rollback_artifact_missing")
     if not args.migration_evidence.is_file() or not args.migration_evidence.read_bytes():
         raise SystemExit("oaep_legacy_migration_evidence_missing")
-    report = json.loads(args.report.read_text(encoding="utf-8"))
-    evidence = json.loads(args.migration_evidence.read_text(encoding="utf-8"))
+    report = _load_json(args.report, "oaep_legacy_removal_report_invalid")
+    evidence = _load_json(args.migration_evidence, "p5_legacy_migration_evidence_invalid")
     try:
         validate_rollback_artifact(args.rollback_artifact)
     except RollbackArtifactError as exc:

@@ -92,7 +92,7 @@ def generate() -> dict[str, object]:
                 "oaep_client_ratio>=0.999", "legacy_request_ratio<0.001",
                 "fallback_error_rate<=0.001", "migration_ratio=1",
                 "supported_runtime_requires_legacy=false", "rollback_artifact_verified=true",
-                "transcript_hash_preserved=true",
+                "transcript_hash_preserved=true", "database_migration_verified=true",
             ],
         },
         "items": rows,

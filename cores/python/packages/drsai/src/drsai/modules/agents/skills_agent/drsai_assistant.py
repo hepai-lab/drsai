@@ -454,6 +454,11 @@ class DrSaiAssistant(DrSaiAgent):
             self._work_dir = Path(work_dir) / self._user_id
         if not self._work_dir.exists():
             self._work_dir.mkdir(parents=True)
+        # Keep the user-visible Workspace distinct from the Agent's private
+        # profile/storage directory. Desktop Host tools and the Regression
+        # Skill both resolve their execution scope from this stable binding.
+        if work_dir:
+            self._runtime_workspace_path = Path(work_dir).resolve()
 
         # === initial UserProfileManager ===
         self._user_profile_manager = UserProfileManager(
@@ -608,7 +613,13 @@ class DrSaiAssistant(DrSaiAgent):
         self._todo_tools = [get_todo_manager_tool()]
         self._regression_tools = get_regression_read_tools()
         from .managers.regression_manager import RegressionManager
-        self._regression_manager = RegressionManager(self._work_dir)
+        self._regression_manager = RegressionManager(
+            self._work_dir,
+            workspace_resolver=lambda: (
+                getattr(self, "_runtime_workspace_path", None) or work_dir
+            ),
+            workspace_id_resolver=lambda: getattr(self, "_runtime_workspace_id", None),
+        )
 
         # === scheduled task manager ===
         # 注意: task_manager 实例会在 run.py 中创建并注入到 app._task_manager

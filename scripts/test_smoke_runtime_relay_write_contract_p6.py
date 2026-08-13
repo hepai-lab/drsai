@@ -9,11 +9,16 @@ import pytest
 from smoke_runtime_relay_write_contract_p6 import (
     APPROVAL_DECISION,
     APPROVAL_RECOVERY,
+    MESSAGE_DELIVERY_RECOVERY,
+    RUN_RECOVERY,
+    RUN_APPROVAL_RACE_CONSISTENCY,
     RUN_COLLECTION,
     SESSION_COLLECTION,
     SESSION_ITEM,
     SmokeFailure,
     validate_contract,
+    validate_message_delivery_recovery,
+    validate_run_approval_race_consistency,
 )
 
 
@@ -82,6 +87,50 @@ def fixture() -> dict:
 def test_public_write_contract_validator_accepts_generated_schema_shape() -> None:
     refs = validate_contract(fixture())
     assert refs["approval_recovery_resource"] == "GeneratedApprovalDecisionProjection"
+
+
+def test_message_delivery_recovery_accepts_exact_content_free_contract() -> None:
+    validate_message_delivery_recovery({
+        "x-message-delivery-recovery": copy.deepcopy(MESSAGE_DELIVERY_RECOVERY),
+        "paths": {RUN_RECOVERY: {"get": {}}},
+    })
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda value: value["delivery_states"].remove("accepted"),
+    lambda value: value.update(runtime_lookup_before_retry=False),
+    lambda value: value["scope_binding"].remove("session_id"),
+    lambda value: value.update(result_at_rest="plaintext"),
+])
+def test_message_delivery_recovery_drift_fails_closed(mutation) -> None:
+    contract = copy.deepcopy(MESSAGE_DELIVERY_RECOVERY)
+    mutation(contract)
+    with pytest.raises(SmokeFailure, match="message delivery recovery"):
+        validate_message_delivery_recovery({
+            "x-message-delivery-recovery": contract,
+            "paths": {RUN_RECOVERY: {"get": {}}},
+        })
+
+
+def test_run_approval_race_accepts_exact_content_free_contract() -> None:
+    validate_run_approval_race_consistency({
+        "x-run-approval-race-consistency": copy.deepcopy(RUN_APPROVAL_RACE_CONSISTENCY)
+    })
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda value: value["decisions"].remove("cancel"),
+    lambda value: value.update(single_terminal=False),
+    lambda value: value.update(mutual_exclusion="relay_best_effort"),
+    lambda value: value["scope_binding"].remove("run_id"),
+])
+def test_run_approval_race_drift_fails_closed(mutation) -> None:
+    contract = copy.deepcopy(RUN_APPROVAL_RACE_CONSISTENCY)
+    mutation(contract)
+    with pytest.raises(SmokeFailure, match="run approval race consistency"):
+        validate_run_approval_race_consistency({
+            "x-run-approval-race-consistency": contract
+        })
 
 
 def test_public_write_contract_validator_accepts_created_success_status() -> None:

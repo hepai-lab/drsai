@@ -9,6 +9,31 @@ import kotlin.random.Random
 enum class RemoteFailureSource { RELAY, RUNTIME, BUSINESS }
 data class RemoteFailure(val source: RemoteFailureSource, val code: String, val retryable: Boolean)
 
+data class RemoteNetworkState(
+    val online: Boolean,
+    val metered: Boolean,
+    /** Increments whenever the default transport or its usability changes. */
+    val generation: Long,
+)
+
+class RemoteNetworkGenerationTracker(
+    initialIdentity: String?,
+    initialOnline: Boolean,
+    initialMetered: Boolean,
+) {
+    private var identity = initialIdentity
+    var state = RemoteNetworkState(initialOnline, initialMetered, 0L)
+        private set
+
+    @Synchronized
+    fun observe(identity: String?, online: Boolean, metered: Boolean): RemoteNetworkState {
+        val changed = identity != this.identity || online != state.online || metered != state.metered
+        this.identity = identity
+        state = RemoteNetworkState(online, metered, state.generation + if (changed) 1L else 0L)
+        return state
+    }
+}
+
 enum class RemoteLifecycleState {
     IDLE, LOADING, ONLINE, STALE, OFFLINE, AUTH_REQUIRED, REVOKED, INCOMPATIBLE,
 }
@@ -117,6 +142,36 @@ class RemoteRetryPolicy(private val baseMs: Long = 500, private val maxDelayMs: 
         val exponential = min(maxDelayMs.toDouble(), baseMs * 2.0.pow(attempt.coerceAtMost(20))).toLong()
         return (exponential * (0.75 + random.nextDouble() * 0.5)).toLong().coerceAtMost(maxDelayMs)
     }
+}
+
+/** Shared bounded retry state for every foreground remote SSE consumer. */
+class RemoteStreamRetryState(
+    private val policy: RemoteRetryPolicy = RemoteRetryPolicy(),
+) {
+    private var attempt = 0
+    private var windowStartedNanos = 0L
+
+    fun reset() {
+        attempt = 0
+        windowStartedNanos = 0L
+    }
+
+    fun nextDelay(failure: Throwable, nowNanos: Long): Long? {
+        val normalized = remoteStreamFailure(failure) ?: return null
+        if (windowStartedNanos == 0L) windowStartedNanos = nowNanos
+        val elapsedMillis = ((nowNanos - windowStartedNanos).coerceAtLeast(0L) / 1_000_000L)
+        return policy.delay(attempt++, elapsedMillis, normalized)
+    }
+}
+
+fun remoteStreamFailure(failure: Throwable): RemoteFailure? = when (failure) {
+    is RelayHttpException -> RemoteFailure(
+        RemoteFailureSource.RELAY,
+        failure.errorCode ?: "http_${failure.status}",
+        failure.retryable || failure.status == 408 || failure.status == 429 || failure.status >= 500,
+    )
+    is java.io.IOException -> RemoteFailure(RemoteFailureSource.RELAY, "network_unavailable", true)
+    else -> null
 }
 
 class BoundedRemoteEventBuffer<T>(private val capacity: Int = 512) {

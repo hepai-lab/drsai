@@ -1,22 +1,19 @@
 # OpenDrSai Codex Adapter OAEP P10：语义完整性与用户可信交互收敛开发方案
 
-状态：重新验收中（实现已完成；当前源码快照尚未形成新的 60/60 发布证据）  
+状态：已完成（60/60，发布级全量验收通过）
 制定日期：2026-08-05  
 阶段：Codex Adapter 第 10 阶段（P10）  
 上游基线：`OpenDrSaiCodexAdapter_OAEP_P9真实增量与恢复闭环开发方案.md`（48/48 已完成）
 
 > 2026-08-12 复核说明：Codex App Server 已升级到 `0.147.0-alpha.6.6`，Stable Contract
-> 已在规范化 Schema 差异审计后升级为 v5；新版本仅新增 4 个当前未调用的 Section 管理方法，
-> 已审核的 15 个 Client 方法、70 个通知、10 个 Server Request 及其 OAEP 语义未发生破坏性变化。P10
-> 源码闭包发生变化。2026-08-05 生成的 60/60 结果及源码摘要仅作为历史证据，不能证明
-> 当前工作区可发布。必须在源码停止变化后重新完整执行
-> `npm run verify:codex-adapter:release`，由生成器更新台账后才能恢复“已完成”状态。
+> 已在规范化 Schema 差异审计后升级为 Stable Contract v6；已审核 16 个 Client 方法、
+> 70 个通知、10 个 Server Request 及 23 个语义处置。`thread/unsubscribe` 被纳入契约，
+> 用于归档前释放订阅；App Server 仍占用 active writer 时，Adapter 仅在无活动 Turn 时旋转连接代际并有界重试。
 
-当前重新验收进展（2026-08-12）：Contract v5 的 47 项协议测试和真实 Codex 30 轮连续
-会话验收已通过；Contract、输入/Session、错误、Snapshot、审批、历史、资源压力、Bridge
-单元测试、架构边界及 Electron 套件已生成当前源码证据。最终 SSH→Linux loopback Bridge
-等价验收因本机 Docker Desktop Linux Engine 未启动而失败关闭；在 Engine 启动并完成整套
-release runner 前，历史 60/60 台账不得作为当前发布结论。
+2026-08-12 当前源码快照已完整执行 `npm run verify:codex-adapter:release`：13 个发布套件全部通过，
+60/60 功能台账与 13/13 用户旅程已由生成器重建；真实 Codex 30 轮连续会话、Electron 链路、
+Windows SSH Local Port Forward→Linux loopback Bridge 语义等价均通过。当前源码摘要为
+`03fb366f789b92ace75f9730421d14349ad31d2b3c2974617c04ecf6ca9db71d`。
 
 ## 1. 阶段结论
 
@@ -356,6 +353,6 @@ Local Windows Codex App Server       Remote Linux Codex App Server
 | P10.4 | M09—M10 | 12 | 已完成 |
 | 总计 | 10 个模块 | 60 | 已完成（60/60，100%） |
 
-最终验收命令：`npm run verify:codex-adapter:release`。2026-08-05 在同一稳定源码快照上完整通过，耗时 601.3 秒，源码摘要为 `5fef5d90023802d8bbc4dfbf498360699faa1f815f28ab5f19354d0696caa711`。验收覆盖 Contract、Unit/Property、TypeScript、Electron Main→Preload→Renderer、真实 Codex 30 轮连续会话、五类输入资源、流式增量、审批、取消、归档/恢复、Runtime 重启、Windows SSH Local Port Forward→Linux loopback Bridge、20 MB/5,000 Tool/10,000 History 压力和架构边界。
+最终验收命令：`npm run verify:codex-adapter:release`。2026-08-12 在同一稳定源码快照上完整通过，源码摘要为 `03fb366f789b92ace75f9730421d14349ad31d2b3c2974617c04ecf6ca9db71d`，Codex 版本为 `0.147.0-alpha.6.6`。验收覆盖 Contract v6、Unit/Property、TypeScript、Electron Main→Preload→Renderer、真实 Codex 30 轮连续会话、五类输入资源、流式增量、审批、取消、归档/恢复、Runtime 重启、Windows SSH Local Port Forward→Linux loopback Bridge、20 MB/5,000 Tool/10,000 History 压力和架构边界。
 
 机器可重算状态见 `codex-adapter-p10-feature-ledger.json`，60 个功能点均为 `passed`；发布摘要见 `.artifacts/codex-p10/manifest.json`；13 项普通用户旅程证据见 `.artifacts/codex-p10/user-journey.json`；20 张视觉截图与可访问性结果见 `apps/desktop/windows/out/verification/structured-visual/report.json`。`CodexAdapter_P10用户旅程验收清单.md` 保留为发布人员和产品人员的可读索引，不再以人工勾选替代自动验收。

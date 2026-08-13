@@ -753,3 +753,27 @@ P4 完成必须同时满足：
 - 案例 8 的固定约 230 KB Desktop 截图外发授权已满足，不再是阻塞。当前剩余人工配置只有：轮换此前暴露的智增增/Tavily 凭据并在 Desktop 重新录入；P3 最终纯净环境验收时由用户在新 Windows Sandbox 内完成一次性 HepAI/OIDC 登录。后者不阻止先完成案例 10–12。
 
 下一轮在安全凭据可用后重建 P2 能力快照，依次完成案例 10、11、12 的真实 Runtime 验收，以及普通 Desktop 对话中的 Skill 自然语言触发、过程可见性和证据点击终验；随后用本轮 current-source Runtime/MSI 启动全新 Windows Sandbox 完成 P3 全量验收和 P1–P4 逐项完成审计。
+
+### 第 56–59 轮：12/12 真实验收、原生 Skill 全流程与 1.5.8 发布产物（2026-08-12）
+
+- 正式代表性案例已达到 12/12：案例 10 `workspace.readonly.diagnose`、案例 11 `safety.write_approval`、案例 12 `run.inspect_compare` 分别由真实 Runtime Run 完成并通过；权威 Run 为 `run-f45ef8e9-c7a2-48cb-8161-d42571f97f1c`、`run-e5c57525-2288-4042-a984-6012132aef81`、`run-eebf1008-5271-4ae3-848b-9b8064551d3a`。案例 11 的测试范围由确认 token 绑定，审批 Harness 只批准精确的受控写操作；案例 12 的 Run、Manifest 和 Comparison 引用已持久化为 Evaluation Evidence 资源。
+- 普通 Agent 对话已证明动态目录和详情查询：`run-d33e58ef-5359-48ae-a2d5-ad403b3966a4` 自动调用 Suite/Case 目录工具并返回 12 个稳定 ID；`run-20fac3fb-7d7b-4e79-8a4b-c74a4e4ab655` 调用 `regression_get_case` 返回当前定义。
+- 修复 Agent 私有存储目录被误当成当前 Workspace、Workspace ID 未传入回归服务，以及同步 Manager 在 Gateway 事件循环中执行造成回环 preflight 超时的问题。Manager 工具现在在线程中执行，Workspace 路径和 ID 都按当前 Run 绑定并在 turn 结束恢复。
+- 修复普通 Desktop Kernel 的回归工具能力选择。`regression_*` 被识别为独立本地能力域；Result/Evidence 引用不再触发公共 Web 检索；Kernel checkpoint 历史只可在相同 Session 内恢复，防止旧会话的工具决策或消息污染新会话。
+- 普通聊天完整原生流程已通过：`run-df1cc875-d127-4a0e-acfd-c86e8cc40c4b` 依次调用 `regression_preflight`、`regression_start`、`regression_events` 和 `regression_get`，创建 Evaluation `eval-78153865-9ef0-442d-a1c3-3ed81163b10a` 与被测 Run `run-5ee036d6-fa36-45dc-89d0-ac30f19615d5`，权威终态为 `passed`，12 项断言全部通过。
+- 最终引用复验 `run-f3d4c242-1dec-467c-8003-a99757278809` 只调用 `regression_get`，工具决策终态为 `required_tool_satisfied`，最终回答逐字给出 `opendrsai://regression/evaluations/eval-78153865-9ef0-442d-a1c3-3ed81163b10a/summary` 与 `/evidence`。Manager 对终态结果新增 `agent_reporting.required`，要求最终回复包含全部返回 URI。
+- Skill 按 Skill Creator 规范完成终检：目录只包含 `SKILL.md`、`agents/openai.yaml` 与一层 `references/result-interpretation.md`；`quick_validate.py` 通过，Skill Discovery 为 `4 passed`。Skill 仍动态读取 Catalog，没有硬编码 12 个案例。
+- 开发 Gateway watcher 每次子进程启动都会重新绑定源码 `PYTHONPATH`，并将继承的环境变量键规范为大写后构造唯一环境块，避免 Windows 同时存在 `WS_PROXY/ws_proxy` 等键时启动失败或静默加载已安装 Backend。PowerShell 语法、Desktop 集成、双端 TypeScript typecheck 与架构边界门禁通过。
+- 当前组合门禁结果：完整回归框架 `127 passed`；Gateway/Kernel/Manager 策略 `77 passed`；P4 Agent Service/Catalog/Runtime/Product Surface `43 passed`；新增策略和会话绑定定向门禁 `44 passed`；18 个案例和 4 个 Suite 重新通过 Schema 验证。
+- 从当前源码重建 Desktop Runtime `1.5.8+4c42a2648049b092`，包含 17,508 个文件。发布 ZIP 为 336,061,171 字节，SHA-256 `e19fc01e6c98f80038b26b2df1e41b2bcf5ac130ffafadf4e07b8af95e7175e5`；构建内验证和独立 `verify:final-runtime` 均通过。P3 current-source MSI 为 643,072 字节，SHA-256 `a9d584c5e2bcb3cc6f3c1084647dcc6a970562d02ae2ce4c0ed243ed120e1462`；MSI 合同、Runtime trust regression 和 P3 Sandbox launcher 合同通过。
+- Computer Use 按插件规范初始化、等待后重试并重置会话，均在读取 Codex 安装目录时收到 Windows `EPERM`。因此目前不能把真实 GUI 点击 Result/Evidence 链接计为已完成；后端 URI、引用解析器与最终聊天文本均已通过。P3 全新 Windows Sandbox 仍需要用户在隔离环境完成一次 HepAI/OIDC 登录，随后才能生成当前 1.5.8 的纯净安装验收证据。
+
+当前完成度约 99.4%。剩余发布阻塞仅为两项真实界面证据：恢复 Computer Use 权限后在 OpenDrSai Desktop 点击 Result/Evidence 引用并验证资源打开；使用 1.5.8 current-source MSI 在全新 Windows Sandbox 完成一次性登录和 P3 全量验收。除此之外，P4 原生 Skill、12/12 真实案例、自动门禁与当前源码发布产物均已完成。
+
+### 第 60 轮：1.5.8 全新 Windows Sandbox 已到登录边界（2026-08-12）
+
+- 使用当前 `OpenDrSai-Windows-v1.5.8-x64.zip` 和 `OpenDrSaiSetup-P3-current-source.msi` 启动全新 Sandbox Run `p3-current-source-20260812-122332`，Sandbox Session 为 `36dc5521-702f-4467-ad8e-736df53a11d9`。
+- 宿主 `host-build.json` 已记录 Runtime ZIP 的 SHA-256 `e19fc01e6c98f80038b26b2df1e41b2bcf5ac130ffafadf4e07b8af95e7175e5` 与 MSI 的 SHA-256 `a9d584c5e2bcb3cc6f3c1084647dcc6a970562d02ae2ce4c0ed243ed120e1462`；package 映射为只读。
+- Guest 已完成 current-source MSI 安装并启动隔离 Desktop，状态从 `installing` 进入 `ready_for_login`。证据确认 Sandbox 用户为 `WDAGUtilityAccount`、Profile 为 `C:\P3\profile`、`hostSessionReused=false`。
+- 下一步必须由用户只在该 Sandbox 窗口完成一次 HepAI/OIDC 登录。登录后自动化套件会继续生成 P3 纯净安装、聊天、Runtime 和回归证据；不得将宿主登录信息或凭据复制到 Sandbox 之外。
+- Computer Use 本轮重置后再次初始化，仍在读取 Codex 安装目录时返回相同 Windows `EPERM`，所以宿主 Desktop 的 Result/Evidence 实际点击验收仍未完成。当前完成度约 99.5%。

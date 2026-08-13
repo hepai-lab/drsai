@@ -378,7 +378,12 @@ object OaepJsonCodec {
                 .put("replay_policy", JSONObject(value.replayPolicy))
             is OaepToolCallContent -> JSONObject().put("tool_kind", value.toolKind)
                 .put("tool_name", value.toolName).put("call_id", value.callId)
-                .put("arguments", JSONObject(value.arguments)).put("result", jsonWireValue(value.result))
+                .put("arguments", JSONObject(value.arguments))
+                // OAEP Tool Call ``result`` is required and may explicitly be
+                // JSON null while the tool is pending. JSONObject.put(key,
+                // null) removes the key, changing the canonical digest after
+                // an otherwise lossless Android decode/encode round trip.
+                .put("result", value.result?.let(::jsonWireValue) ?: JSONObject.NULL)
                 .putOpt("server", value.server).putOpt("duration_ms", value.durationMs)
                 .put("replay_policy", JSONObject(value.replayPolicy))
             is OaepFileChangeContent -> JSONObject().put("changes", JSONArray(value.changes))

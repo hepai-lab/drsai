@@ -90,7 +90,7 @@ function catalogDependencyStubs() {
       export function invalidateAuthSession(){}
     `],
     ["./gateway", `
-      export async function getGatewayStatus(){ return {ready:false,managed:false,externalReady:false,externalConflict:false,baseUrl:"http://127.0.0.1:14514",pid:null,lastLog:"",portOpen:false}; }
+      export function getGatewaySnapshot(){ return {ready:false,managed:false,externalReady:false,externalConflict:false,baseUrl:"http://127.0.0.1:14514",pid:null,lastLog:"",portOpen:false}; }
     `],
     ["./paths", `export const DRSAI_HOME=globalThis.__agentCatalogHome; export const DRSAI_CONFIG_FILE=globalThis.__agentCatalogConfigFile;`],
     ["./platformConfig", `export function getActivePlatformConfig(){ return {name:"test",portalUrl:"https://portal.ihep.ac.cn",baseUrl:"https://aiapi.ihep.ac.cn/apiv2"}; }`],

@@ -52,6 +52,8 @@ def test_tavily_search_maps_content_to_snippet_not_full_content(monkeypatch) -> 
 
 def test_tavily_uses_windows_system_proxy_configuration(monkeypatch) -> None:
     captured: dict[str, object] = {}
+    native_context = object()
+    native_connector = object()
 
     class FakeResponse:
         status = 200
@@ -79,6 +81,12 @@ def test_tavily_uses_windows_system_proxy_configuration(monkeypatch) -> None:
         def post(self, *_args, **_kwargs):
             return FakeResponse()
 
+    def fake_connector(**kwargs):
+        assert kwargs["ssl"] is native_context
+        return native_connector
+
+    monkeypatch.setattr("drsai.backend.runtime.web_search.tavily._windows_system_trust_context", lambda: native_context)
+    monkeypatch.setattr("drsai.backend.runtime.web_search.tavily.aiohttp.TCPConnector", fake_connector)
     monkeypatch.setattr("drsai.backend.runtime.web_search.tavily.aiohttp.ClientSession", FakeSession)
 
     result = asyncio.run(TavilyClient(TavilyConfig("tvly-test"))._post_once(
@@ -87,6 +95,7 @@ def test_tavily_uses_windows_system_proxy_configuration(monkeypatch) -> None:
 
     assert result == {"results": []}
     assert captured["trust_env"] is True
+    assert captured["connector"] is native_connector
 
 
 def test_tavily_extract_is_bounded_and_hashed(monkeypatch) -> None:

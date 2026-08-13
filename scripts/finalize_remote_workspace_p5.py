@@ -478,6 +478,10 @@ def _validate_legacy_removal(errors: list[str], row: dict[str, object],
         and _less_than(decision.get("legacy_ratio"), 0.001)
         and decision.get("migration_ratio") == 1.0
         and _at_most(decision.get("fallback_error_ratio"), 0.001)
+        and isinstance(decision.get("supported_runtime_count"), int)
+        and not isinstance(decision.get("supported_runtime_count"), bool)
+        and decision.get("supported_runtime_count", 0) >= 1
+        and decision.get("supported_runtime_requires_legacy") is False
     ):
         errors.append("p5_legacy_deletion_not_eligible")
 

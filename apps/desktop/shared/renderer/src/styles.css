@@ -7565,6 +7565,40 @@ button.structured-activity-detail:hover {
   font-weight: 500 !important;
 }
 
+.login-device-code {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 14px;
+  background: var(--app-card-bg);
+  color: var(--app-text-secondary);
+}
+
+.login-device-code > strong {
+  color: var(--app-text-primary);
+  font: 750 clamp(24px, 4vw, 34px)/1.1 ui-monospace, "Cascadia Mono", monospace;
+  letter-spacing: 0.12em;
+  user-select: all;
+}
+
+.login-device-code-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.login-device-code-actions button {
+  padding: 7px 12px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 999px;
+  color: var(--app-text-primary);
+  background: transparent;
+  cursor: pointer;
+}
+
 .login-submit {
   display: inline-flex;
   align-items: center;
@@ -20903,7 +20937,7 @@ button.structured-activity-compact:hover > span {
 .mobile-pairing-dialog header p,
 .mobile-pairing-privacy { margin-top: 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .mobile-pairing-heading-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); }
-.mobile-pairing-icon-button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--text-secondary); }
+.mobile-pairing-icon-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--text-secondary); }
 .mobile-pairing-icon-button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .mobile-pairing-device { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 10px 0; padding: 8px 12px; border-radius: 10px; background: var(--surface-muted); font-size: 12px; }
 .mobile-pairing-device > span { color: var(--text-secondary); }
@@ -20914,7 +20948,7 @@ button.structured-activity-compact:hover > span {
 .mobile-pairing-steps li[data-state="current"] > span { border-color: var(--app-accent); background: var(--app-accent); color: #fff; }
 .mobile-pairing-steps li[data-state="complete"] > span { border-color: var(--success, #27864a); color: var(--success, #27864a); }
 .mobile-pairing-scope { display: grid; gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 10px; }
-.mobile-pairing-scope > label, .mobile-pairing-workspaces label { display: flex; align-items: center; gap: 8px; }
+.mobile-pairing-scope > label, .mobile-pairing-workspaces label { display: flex; align-items: center; min-height: 44px; gap: 8px; }
 .mobile-pairing-workspaces { display: grid; gap: 6px; max-height: 132px; overflow: auto; padding-inline-start: 24px; }
 .mobile-pairing-qr { display: grid; place-items: center; width: fit-content; margin: 8px auto; padding: 8px; border: 1px solid #dedede; border-radius: 14px; background: #fff; }
 .mobile-pairing-qr img { display: block; width: min(240px, 62vw); height: auto; image-rendering: pixelated; }
@@ -20932,7 +20966,7 @@ button.structured-activity-compact:hover > span {
 .mobile-pairing-privacy { margin: 9px 0 !important; }
 .mobile-pairing-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; }
 .mobile-pairing-dialog button:not(.mobile-pairing-icon-button) {
-  min-height: 34px;
+  min-height: 44px;
   padding: 0 13px;
   border: 1px solid var(--app-panel-border);
   border-radius: 8px;
@@ -20948,9 +20982,11 @@ button.structured-activity-compact:hover > span {
 .mobile-pairing-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .mobile-pairing-dialog .spin { animation: mobile-pairing-spin .9s linear infinite; }
 @keyframes mobile-pairing-spin { to { transform: rotate(360deg); } }
-@media (max-width: 520px) {
+@media (max-width: 700px) {
   .mobile-pairing-backdrop { padding: 10px; }
   .mobile-pairing-dialog { max-height: calc(100vh - 20px); padding: 16px; border-radius: 14px; }
+  .mobile-pairing-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mobile-pairing-dialog > footer { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { .mobile-pairing-dialog .spin { animation: none; } }
 

@@ -6,6 +6,10 @@ import ai.drsai.remote.remote.generated.GeneratedApprovalDecisionRecoveryRespons
 import ai.drsai.remote.remote.generated.GeneratedApprovalDecisionRequest
 import ai.drsai.remote.remote.generated.GeneratedApprovalProjection
 import ai.drsai.remote.remote.generated.GeneratedLatencyObservationRequest
+import ai.drsai.remote.remote.generated.GeneratedFirstScreenObservationRequest
+import ai.drsai.remote.remote.generated.GeneratedOperationConfirmationObservationRequest
+import ai.drsai.remote.remote.generated.GeneratedReconnectObservationRequest
+import ai.drsai.remote.remote.generated.GeneratedUserSloObservationResponse
 import ai.drsai.remote.remote.generated.GeneratedRunCreateRecoveryResponse
 import ai.drsai.remote.remote.generated.GeneratedRunCreateRequest
 import ai.drsai.remote.remote.generated.GeneratedRunProjection
@@ -381,6 +385,78 @@ class RelayRemoteRepository(
             ),
             body,
         )
+    }
+
+    suspend fun recordFirstScreenSlo(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        sampleId: String,
+        cacheLoadAtMs: Long,
+        authorityRefreshAtMs: Long,
+        firstRenderAtMs: Long,
+    ): GeneratedUserSloObservationResponse {
+        validateSloObservation(sampleId, cacheLoadAtMs, authorityRefreshAtMs, firstRenderAtMs)
+        return GeneratedUserSloObservationResponse.fromJson(post(
+            sloPath(runtimeId, workspaceId, sessionId, "first-screen", sampleId),
+            GeneratedFirstScreenObservationRequest(
+                cacheLoadAtMs, authorityRefreshAtMs, firstRenderAtMs,
+            ).toJson(),
+        ))
+    }
+
+    suspend fun recordOperationConfirmationSlo(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        sampleId: String,
+        requestDispatchAtMs: Long,
+        runtimeCommitAtMs: Long,
+        confirmationRenderAtMs: Long,
+    ): GeneratedUserSloObservationResponse {
+        validateSloObservation(sampleId, requestDispatchAtMs, runtimeCommitAtMs, confirmationRenderAtMs)
+        return GeneratedUserSloObservationResponse.fromJson(post(
+            sloPath(runtimeId, workspaceId, sessionId, "operation-confirmation", sampleId),
+            GeneratedOperationConfirmationObservationRequest(
+                requestDispatchAtMs, runtimeCommitAtMs, confirmationRenderAtMs,
+            ).toJson(),
+        ))
+    }
+
+    suspend fun recordReconnectSlo(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        sampleId: String,
+        disconnectDetectAtMs: Long,
+        transportRestoreAtMs: Long,
+        replayCatchupAtMs: Long,
+    ): GeneratedUserSloObservationResponse {
+        validateSloObservation(sampleId, disconnectDetectAtMs, transportRestoreAtMs, replayCatchupAtMs)
+        return GeneratedUserSloObservationResponse.fromJson(post(
+            sloPath(runtimeId, workspaceId, sessionId, "reconnect", sampleId),
+            GeneratedReconnectObservationRequest(
+                disconnectDetectAtMs, transportRestoreAtMs, replayCatchupAtMs,
+            ).toJson(),
+        ))
+    }
+
+    private fun sloPath(
+        runtimeId: RuntimeId,
+        workspaceId: WorkspaceId,
+        sessionId: SessionId,
+        journey: String,
+        sampleId: String,
+    ): List<String> = segments(
+        "v1", "runtimes", runtimeId.value, "workspaces", workspaceId.value,
+        "sessions", sessionId.value, "slo", journey, sampleId,
+    )
+
+    private fun validateSloObservation(sampleId: String, first: Long, second: Long, third: Long) {
+        require(sampleId.matches(Regex("^[A-Za-z0-9._:-]{8,500}$"))) { "slo_sample_id_invalid" }
+        require(first >= 0 && first <= second && second <= third && third - first <= 300_000) {
+            "slo_timestamps_invalid"
+        }
     }
 
     suspend fun sessionEvents(
