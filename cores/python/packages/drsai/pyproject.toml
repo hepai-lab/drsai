@@ -36,8 +36,13 @@ dependencies = [
     # ── data model & validation ──────────────────────────────────────────
     "pydantic",
     "pydantic-settings",
+    # Document parsing for Knowledge Base indexing. Each format needs its own
+    # reader to keep positions (page, slide, heading, sheet); without them a
+    # citation can name a file but not the place inside it.
     "pypdf==6.10.0",
     "python-pptx>=1.0,<2",
+    "python-docx>=1.1,<2",
+    "openpyxl>=3.1,<4",
 
     # ── database ──────────────────────────────────────────────────────────
     "sqlmodel",

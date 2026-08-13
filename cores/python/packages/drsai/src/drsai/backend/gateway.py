@@ -266,6 +266,7 @@ from drsai.config import (
     list_knowledge_resources,
     put_knowledge_resource,
     search_local_knowledge,
+    search_local_knowledge_scope,
     resolve_credential,
     store_credential,
     delete_credential,
@@ -873,19 +874,27 @@ def _build_agent_knowledge_tool(
         if not isinstance(query, str) or not query.strip():
             return json.dumps({"error": "query_required", "evidence": []})
         evidence_rows: list[dict[str, object]] = []
+        documents: list[dict[str, object]] = []
+        failures: list[dict[str, object]] = []
+        corpus_complete = True
+        supporting_match = False
         for resource in resources:
             try:
                 if resource.type == "local-files":
-                    rows = await asyncio.to_thread(
-                        search_local_knowledge, config_dir, resource, query,
+                    scope = await asyncio.to_thread(
+                        search_local_knowledge_scope, config_dir, resource, query,
                         top_k=policy.top_k, score_threshold=policy.score_threshold,
                     )
-                    evidence_rows.extend(_knowledge_evidence_payload(row) for row in rows)
+                    evidence_rows.extend(scope["evidence"])
+                    documents.extend(scope["documents"])
+                    corpus_complete = corpus_complete and bool(scope["corpus_complete"])
+                    supporting_match = supporting_match or bool(scope["supporting_match"])
                 else:
                     config = dict(resource.config or {})
                     token = resolve_credential(str(config.get("credential_ref") or ""))
                     if not token:
-                        evidence_rows.append({"knowledge_id": resource.knowledge_id, "error": "credential_required"})
+                        failures.append({"knowledge_id": resource.knowledge_id, "error": "credential_required"})
+                        corpus_complete = False
                         continue
                     from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
                     raw = await RAGFlowMemoryManager(str(config["base_url"]), token).retrieve_chunks_by_content(
@@ -898,20 +907,50 @@ def _build_agent_knowledge_tool(
                         if not isinstance(chunk, dict): continue
                         content = str(chunk.get("content_with_weight") or chunk.get("content") or "")
                         document_id = str(chunk.get("document_id") or chunk.get("doc_id") or "unknown")
+                        score = float(chunk.get("similarity") or chunk.get("score") or 0)
+                        # RAGFlow already applies a similarity threshold, so a
+                        # returned chunk is treated as supporting. Local files
+                        # go through a stricter check because term overlap
+                        # alone says nothing about whether a passage answers.
+                        supporting_match = supporting_match or score > 0
                         evidence_rows.append({
                             "knowledge_id": resource.knowledge_id, "document_id": document_id,
+                            "document_path": str(chunk.get("document_name") or document_id),
                             "title": str(chunk.get("document_keyword") or chunk.get("document_name") or document_id),
                             "source": str(chunk.get("document_name") or document_id),
                             "chunk_id": str(chunk.get("id") or f"{document_id}:{index}"),
-                            "score": float(chunk.get("similarity") or chunk.get("score") or 0),
+                            "locator": {}, "locator_label": "",
+                            "score": score,
                             "content": content, "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+                            "document_sha256": "",
+                            "supporting_match": score > 0,
+                            "relation": "supports_claim" if score > 0 else "searched_scope",
                         })
             except Exception as exc:
-                evidence_rows.append({"knowledge_id": resource.knowledge_id, "error": type(exc).__name__})
-        evidence_rows.sort(key=lambda row: -float(row.get("score") or 0))
+                # A source that could not be searched leaves the corpus
+                # unproven; claiming completeness here would let a refusal
+                # assert absence over material nobody actually read.
+                failures.append({"knowledge_id": resource.knowledge_id, "error": type(exc).__name__})
+                corpus_complete = False
+        # Scope rows carry no content and exist to name what was searched, so
+        # they must survive the top_k cut that ranks actual passages.
+        passages = sorted(
+            (row for row in evidence_rows if row.get("content")),
+            key=lambda row: -float(row.get("score") or 0),
+        )[:policy.top_k]
+        scope_only = [row for row in evidence_rows if not row.get("content")]
+        ranked = [*passages, *scope_only]
         return json.dumps({
-            "query": query, "require_citations": policy.require_citations,
-            "evidence": evidence_rows[:policy.top_k],
+            "query": query,
+            "require_citations": policy.require_citations,
+            "status": "completed",
+            "completed": True,
+            "corpus_complete": corpus_complete,
+            "supporting_match": supporting_match,
+            "supporting_matches": [row for row in ranked if row.get("supporting_match")],
+            "evidence": ranked,
+            "documents": documents,
+            **({"errors": failures} if failures else {}),
         }, ensure_ascii=False)
 
     return knowledge_search
