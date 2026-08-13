@@ -4,6 +4,15 @@
 目标智能体：`drsai_v3_test`
 开发平台：`https://ai-dev.ihep.ac.cn/apiv2`
 
+## TODO：跨入口工具审批通道
+
+`DrSaiAssistant` 同时由 Desktop、TUI、WebUI 和 DDF 直连 Worker 等入口消费。目前只有部分 Runtime 路径会注入 `_tool_approval_handler`，并完整投影审批请求和审批结果。在所有受支持入口实现统一、可恢复的审批合同以前，无处理器按兼容模式默认放行；一旦入口安装了处理器，其决定仍然具有权威性，明确拒绝必须阻断执行。
+
+- 定义与传输无关的审批端口，稳定绑定 run、tool call 和 approval 身份，并明确超时、取消和断线重连语义。
+- 为 Desktop OAEP、TUI、WebUI 和 DDF 远程 Worker 补齐请求/决定双向投影及逐入口一致性测试。
+- 外部写操作获批恢复执行前，补齐持久化副作用账本、幂等与重放保护。
+- 所有入口都能声明并通过审批能力测试后，在各入口集成边界恢复“缺失审批能力即拒绝”，不要在共享 Agent 内核中假定某一种 UI。
+
 ## 当前结论
 
 - F01–F20：20/20 已完成。

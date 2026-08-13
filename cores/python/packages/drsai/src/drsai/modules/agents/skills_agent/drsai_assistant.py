@@ -2416,15 +2416,13 @@ class DrSaiAssistant(DrSaiAgent):
                     ))
                     continue
                 approval_handler = self._tool_approval_handler
-                if approval_handler is None:
-                    exec_results.append(FunctionExecutionResult(
-                        content="Tool approval channel is unavailable; execution was blocked.",
-                        name=tool_name,
-                        call_id=call_id,
-                        is_error=True,
-                    ))
-                    continue
-                if not await approval_handler(registry_record, {
+                # DrSaiAssistant is shared by Desktop, TUI, WebUI and direct
+                # worker transports. Not every consumer currently exposes an
+                # interactive approval channel, so a missing handler is the
+                # compatibility mode and must not make required tools unusable.
+                # An installed handler remains authoritative: an explicit
+                # denial still blocks execution.
+                if approval_handler is not None and not await approval_handler(registry_record, {
                     **dict(arguments), "_runtime_call_id": call_id,
                 }):
                     exec_results.append(FunctionExecutionResult(
