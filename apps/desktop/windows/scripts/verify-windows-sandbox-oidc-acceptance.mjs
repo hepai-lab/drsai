@@ -35,6 +35,8 @@ assert(host.includes("releaseBaseUrl = $ReleaseBaseUrl.TrimEnd('/')"), "host lau
 assert(host.includes("watch-windows-sandbox-acceptance.ps1") && host.includes("$watcher"), "host launcher does not package the automatic acceptance observer");
 
 const guest = read("scripts/guest/Invoke-OpenDrSaiAcceptance.ps1");
+assert(!/\$input\b/i.test(guest), "guest shadows PowerShell's automatic $input variable with acceptance configuration");
+assert(guest.includes("function Set-AcceptanceInputField") && guest.includes("Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force"), "guest cannot safely enrich immutable JSON input objects");
 assert(guest.includes("OPENDRSAI_ACCEPTANCE_AUTO_DEVICE_LOGIN") && guest.includes("OPENDRSAI_OIDC_DEVICE_HANDOFF_PATH"), "guest does not enable the bounded device-login handoff");
 for (const expected of [
   "Get-AuthenticodeSignature", "msi-install.log",
@@ -47,6 +49,7 @@ for (const expected of ["Configure Tavily", "Log out in OpenDrSai", "collected a
 assert(!/Write-OutcomeShortcuts|Write-FailShortcut|Acceptance-PASS\.cmd|FAIL-Collect\.cmd|Capture-Before-Logout\.cmd/.test(guest), "guest acceptance still requires CMD shortcut interaction");
 assert(guest.includes("$args += '/qn'"), "guest acceptance does not implement unattended MSI installation");
 assert(guest.includes('$Role-manifest.json'), "online acceptance does not retain role-specific channel manifests");
+assert(guest.includes('"${releaseBaseUrl}/v${version}/windows/OpenDrSai-Windows-Installer-x64.msi"'), "online acceptance does not delimit variables while composing the MSI URL");
 for (const expected of ["msi-baseline-install.log", "msi-candidate-upgrade.log", "Wait-ForCompletedChat"]) {
   assert(guest.includes(expected), `upgrade acceptance omits ${expected}`);
 }
@@ -70,6 +73,9 @@ const watcher = read("scripts/watch-windows-sandbox-acceptance.ps1");
 for (const expected of ["Get-CompletedChats", "Test-Tavily", "InitialProcessId", "preRestartChats", "postRestartChats", "complete-windows-sandbox-acceptance.ps1", "automatic-timeout"]) {
   assert(watcher.includes(expected), `automatic Sandbox observer omits ${expected}`);
 }
+for (const expected of ["logoutGraceSeconds", "$deadline = (Get-Date).AddSeconds($logoutGraceSeconds)", "stableTokenPresent"]) {
+  assert(watcher.includes(expected), `automatic Sandbox observer omits stable logout handling: ${expected}`);
+}
 assert(guest.includes("WindowStyle Hidden"), "automatic Sandbox observer is not started hidden");
 for (const expected of ["encryptedOidcSession", "restartPersistence", "twoAcceptanceChats", "postRestartChat", "tavilySearchAvailable", "/v1/config/perceptors", "perceptor_id", "capability=search", "Local Gateway request failed:"]) {
   assert(preLogout.includes(expected), `pre-logout validator omits gate: ${expected}`);
@@ -85,6 +91,7 @@ for (const code of [
   "Installer support files colocated", "Start menu shortcut", "Bundled Runtime Python",
 ]) assert(finalizer.includes(code), `acceptance finalizer omits gate: ${code}`);
 assert(finalizer.includes("manualChatAttestation") && finalizer.includes("observedChatCount -ge 2") && finalizer.includes("pre-logout-validation.json + manual"), "acceptance finalizer cannot record a bounded tester attestation backed by successful chat telemetry");
+assert(finalizer.includes("$attempt -lt 10") && finalizer.includes("Start-Sleep -Milliseconds 500"), "acceptance finalizer does not wait for a stable single Gateway listener");
 for (const field of ["checkedAt", "diagnosticCode", "summary.md", "run-manifest.json"]) {
   assert(finalizer.includes(field), `acceptance finalizer omits required evidence field/artifact: ${field}`);
 }
@@ -100,7 +107,7 @@ for (const hashedField of ["issuerHash", "clientIdHash", "subjectHash"]) {
 }
 assert(!/Copy-(?:Item|Redacted)[^\r\n]*auth\\auth\.json/i.test(collector), "diagnostic collector exports raw auth.json");
 assert(collector.includes("secretFindingCount") && collector.includes("[REDACTED]"), "diagnostic collector lacks a fail-closed secret scan");
-assert(guest.includes('Collect-Diagnostics $(if ($input.mode -eq "upgrade") { "baseline-pre-oidc" } else { "pre-oidc" })'), "guest acceptance omits the pre-OIDC snapshot");
+assert(guest.includes('Collect-Diagnostics $(if ($acceptanceInput.mode -eq "upgrade") { "baseline-pre-oidc" } else { "pre-oidc" })'), "guest acceptance omits the pre-OIDC snapshot");
 
 const telemetry = read("../shared/main/agentTelemetry.ts");
 assert(telemetry.includes("OPENDRSAI_ACCEPTANCE_RUN_ID") && telemetry.includes("acceptanceRunId"), "Agent telemetry cannot correlate a real Sandbox acceptance run");
