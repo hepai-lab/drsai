@@ -304,10 +304,20 @@ try {
   for (const name of runtimeArtifacts) {
     if (typeof name !== "string" || basename(name) !== name) throw new Error(`Runtime manifest contains an unsafe artifact name: ${name}`);
   }
-  const packagedRuntimeFiles = guestShell(
+  const packagedRuntimeFiles = guest(
     vmName,
-    `/usr/bin/find ${shellQuote(runtimeRoot)} -maxdepth 1 -type f \( -name 'opendrsai-runtime-macos-arm64-*.tar.gz' -o -name 'runtime-sbom-*.json' -o -name 'runtime-provenance-*.json' \) -exec /usr/bin/basename {} \; | /usr/bin/sort`,
-  ).stdout.split("\n").filter(Boolean);
+    "/usr/bin/find",
+    [runtimeRoot, "-maxdepth", "1", "-type", "f", "-print"],
+  ).stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((path) => basename(path))
+    .filter((name) =>
+      /^opendrsai-runtime-macos-arm64-.*\.tar\.gz$/.test(name)
+      || /^runtime-sbom-.*\.json$/.test(name)
+      || /^runtime-provenance-.*\.json$/.test(name),
+    )
+    .sort();
   const expectedRuntimeFiles = [...runtimeArtifacts].sort();
   if (JSON.stringify(packagedRuntimeFiles) !== JSON.stringify(expectedRuntimeFiles)) {
     throw new Error(`Packaged Runtime contains stale or missing artifacts: ${packagedRuntimeFiles.join(", ")}`);
