@@ -1060,6 +1060,11 @@ class DrSaiAgentKernel:
                 state.execution_tool_registry,
                 tool_calls,
                 max_parallel_tool_calls=state.tool_loop_policy["max_parallel_tool_calls"],
+                # Two calls to the same tool carry one approval decision, so a
+                # homogeneous batch is still a single thing to approve. The
+                # Assistant path already allows this; keeping the Kernel path
+                # stricter only meant the same model behaviour failed here.
+                allow_homogeneous_approval_batch=True,
             )
             for raw_call in tool_calls:
                 call_id = self._required_string(raw_call, "call_id")

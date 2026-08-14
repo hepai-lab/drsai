@@ -671,7 +671,11 @@ def validate_tool_call_batch(
     if len(calls) > 1 and any(record["approval_mode"] == "required" for record in records):
         homogeneous = len({(record["name"], record["executor_id"], record["approval_mode"]) for record in records}) == 1
         if not allow_homogeneous_approval_batch or not homogeneous:
-            raise ValueError("approval_tool_must_be_single")
+            # Naming the batch turns "the run failed" into "the model asked for
+            # these two together"; without it the only way to learn what the
+            # model wanted is to reproduce the turn.
+            requested = ",".join(sorted({str(record["name"]) for record in records}))
+            raise ValueError(f"approval_tool_must_be_single:{requested}")
     return tuple(records)
 
 

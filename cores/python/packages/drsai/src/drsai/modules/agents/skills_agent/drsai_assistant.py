@@ -116,6 +116,10 @@ _DESKTOP_READ_ONLY_TOOLS = {
     "run_read", "run_grep", "run_glob", "get_bash_task", "list_bash_tasks",
     "get_powershell_task", "list_powershell_tasks", "Skill",
     "retrieve_from_memory", "read_session_memory_by_index", "web_search", "web_fetch",
+    # Reads a local index and returns evidence. Omitting it sent the tool to the
+    # unknown-tool fallback below, which classifies for external side effects and
+    # demands approval — so a second parallel lookup failed the whole Run.
+    "knowledge_search",
     "regression_list_suites", "regression_list_cases", "regression_get_case",
     "regression_preflight", "regression_history", "regression_get", "regression_events",
 }
@@ -651,6 +655,9 @@ class DrSaiAssistant(DrSaiAgent):
         # === LLM retry configuration ===
         self._llm_max_retries = llm_max_retries
         self._llm_retry_base_delay = llm_retry_base_delay
+        # Bounded so a model that keeps re-issuing the same batch ends the turn
+        # instead of looping. Reset at the start of every task.
+        self._approval_batch_retry = 0
 
     def _create_context(
         self,
@@ -1562,6 +1569,7 @@ class DrSaiAssistant(DrSaiAgent):
 
             turn_count = 0
             llm_retry_count = 0  # Track retries across the current turn
+            self._approval_batch_retry = 0
             while turn_count < self._max_turn_count:
 
                 # Sanitize messages to handle orphaned tool results / missing stubs
@@ -2250,12 +2258,27 @@ class DrSaiAssistant(DrSaiAgent):
         """
         verify_model_tool_calls(self._active_model_tool_snapshot or {}, model_result.content)
         tool_loop_policy = getattr(self, "_tool_loop_policy", normalize_tool_loop_policy())
-        execution_records = list(validate_tool_call_batch(
-            self._active_execution_tool_registry or {},
-            model_result.content,
-            max_parallel_tool_calls=tool_loop_policy["max_parallel_tool_calls"],
-            allow_homogeneous_approval_batch=True,
-        ))
+        try:
+            execution_records = list(validate_tool_call_batch(
+                self._active_execution_tool_registry or {},
+                model_result.content,
+                max_parallel_tool_calls=tool_loop_policy["max_parallel_tool_calls"],
+                allow_homogeneous_approval_batch=True,
+            ))
+        except ValueError as exc:
+            # Only a badly organized batch is recoverable. A duplicate call id or
+            # an unregistered tool means something is actually wrong and must
+            # still fail. Nothing has executed yet at this point, so retrying
+            # cannot repeat a side effect.
+            if not str(exc).startswith("approval_tool_must_be_single") or self._approval_batch_retry >= 1:
+                raise
+            self._approval_batch_retry += 1
+            await model_context.add_message(SystemMessage(content=(
+                "A tool that requires approval must be requested on its own. "
+                "Re-issue this turn with exactly one tool call, or with only tools that need no approval. "
+                "Do not repeat the previous combination."
+            )))
+            return
         registry_metadata = {
             "execution_registry_sha256": str((self._active_execution_tool_registry or {}).get("sha256", "")),
             "tool_loop_policy_sha256": tool_loop_policy["sha256"],

@@ -34,6 +34,17 @@ def test_desktop_memory_retrieval_tools_are_read_only_without_approval() -> None
         assert metadata["approval_mode"] == "none"
 
 
+def test_knowledge_search_is_read_only_without_approval() -> None:
+    # It reads a local index. Falling through to the unknown-tool default
+    # classified it for external side effects and demanded approval, so a
+    # second parallel lookup tripped "approval tool must be single" and failed
+    # the whole Run — with retrieval itself working perfectly.
+    metadata = _desktop_execution_metadata("knowledge_search", "workbench:knowledge_search")
+
+    assert metadata["risk"] == "read_only"
+    assert metadata["approval_mode"] == "none"
+
+
 def test_explicit_local_memory_tool_satisfies_source_attribution_request() -> None:
     requirement = build_tool_decision_requirement(
         "Call retrieve_from_memory exactly once and cite source marker P3-KB-42.",

@@ -442,3 +442,11 @@ def test_tool_call_batch_rejects_duplicate_limit_and_mixed_approval_before_execu
         validate_tool_call_batch(registry, [
             {"call_id": "read", "name": "clock"}, {"call_id": "write", "name": "publish"},
         ], allow_homogeneous_approval_batch=True)
+
+    # The batch the model asked for has to be recoverable from the error alone.
+    # Without the names, the only way to learn what it wanted is to reproduce
+    # the turn, which is what made this failure expensive to diagnose.
+    with pytest.raises(ValueError, match=r"approval_tool_must_be_single:clock,publish"):
+        validate_tool_call_batch(registry, [
+            {"call_id": "read", "name": "clock"}, {"call_id": "write", "name": "publish"},
+        ], allow_homogeneous_approval_batch=True)
