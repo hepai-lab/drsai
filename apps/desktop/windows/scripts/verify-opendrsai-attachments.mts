@@ -72,6 +72,23 @@ try {
   assert.equal(unsupportedModel.actions.some((action) => action.id === "select_model"), true);
   checks.nonvisionRecoveryPreservesInputAndSelectsModel = true;
 
+  const missingVisionRole = describeUserFacingError({
+    code: "image_understanding_model_unavailable", category: "model", retryable: false,
+    recovery_actions: ["select_model"], diagnostic_reference: "diag-vision",
+  }, "zh");
+  assert.match(missingVisionRole.title, /未配置图像理解模型/);
+  assert.match(missingVisionRole.action, /绑定图像理解模型/);
+  assert.equal(missingVisionRole.actions.some((action) => action.id === "select_model"), true);
+  checks.imageUnderstandingUnavailableRecovery = true;
+
+  const visionFailed = describeUserFacingError({
+    code: "image_understanding_failed", category: "model", retryable: true,
+    recovery_actions: ["select_model", "retry"], diagnostic_reference: "diag-vision-failed",
+  }, "en");
+  assert.match(visionFailed.title, /Image understanding failed/);
+  assert.match(visionFailed.action, /image-understanding model/);
+  checks.imageUnderstandingFailedRecovery = true;
+
   await assert.rejects(preflightAttachments([{ kind: "file", path: join(external, "missing.txt"), name: "missing.txt" }], workspace), /not a regular file/);
   checks.missingFileRejected = true;
 
@@ -152,8 +169,11 @@ try {
   const runtimeFlow = chatSource.slice(chatSource.indexOf("async function runRuntimeBackendChat("), chatSource.indexOf("function emitRuntimeOaepEvent("));
   assert.ok(runtimeFlow.indexOf("preflightAttachments(") < runtimeFlow.indexOf("client.createAgentRun("));
   assert.match(runtimeFlow, /stageAttachments[\s\S]{0,700}cancelAgentRun/);
+  assert.match(chatSource, /effective_image_understanding_ref/);
+  assert.match(chatSource, /image_understanding_model_unavailable/);
   checks.preflightPrecedesRunCreation = true;
   checks.postRunStageFailureCancelsRun = true;
+  checks.imageAttachmentPreflightsUnderstandingRole = true;
 
   assert.equal(Object.values(checks).every(Boolean), true, JSON.stringify(checks, null, 2));
   writeEvidence(checks);

@@ -66,6 +66,8 @@ def test_attachment_is_copied_and_verified(tmp_path: Path) -> None:
         copied = environment.workspace / next(iter(environment.attachment_refs.values()))
         assert copied.is_file()
         assert copied.parent.name == "regression"
+        assert copied.name == "attachment-01.png"
+        assert "opendrsai-runtime-model-unauthorized" not in copied.name
 
 
 def test_safe_join_rejects_escape(tmp_path: Path) -> None:

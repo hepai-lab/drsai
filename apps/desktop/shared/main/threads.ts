@@ -367,10 +367,28 @@ async function readThreadsWithMigration(): Promise<{ threads: DesktopThread[]; m
       if (next !== thread) migrated = true;
       return next;
     });
-    return { threads, migrated };
+    const deduped = dedupeRuntimeSessionCatalogDuplicates(threads);
+    return { threads: deduped.threads, migrated: migrated || deduped.migrated };
   } catch {
     return { threads: [], migrated: false };
   }
+}
+
+/** Drop orphan catalog rows keyed by Runtime session_id when a Desktop thread-* already owns that Session. */
+export function dedupeRuntimeSessionCatalogDuplicates(threads: DesktopThread[]): {
+  threads: DesktopThread[];
+  migrated: boolean;
+} {
+  const ownedSessionIds = new Set(
+    threads
+      .filter((thread) => thread.runtimeSessionId && thread.id !== thread.runtimeSessionId)
+      .map((thread) => thread.runtimeSessionId as string),
+  );
+  if (ownedSessionIds.size === 0) return { threads, migrated: false };
+  // Drop any row whose id is a Runtime session_id already owned by a Desktop
+  // thread-* — including catalog orphans that never set runtimeSessionId.
+  const next = threads.filter((thread) => !ownedSessionIds.has(thread.id));
+  return { threads: next, migrated: next.length !== threads.length };
 }
 
 export function migrateLocalAgentDisplayName(thread: DesktopThread): DesktopThread {
@@ -659,6 +677,8 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
   };
 }
 
+const MAX_SNAPSHOT_SCREENSHOT_DATA_URL_CHARS = 2_000_000;
+
 function sanitizeSnapshotAttachments(raw: unknown): ChatAttachment[] | undefined {
   if (!Array.isArray(raw) || !raw.length) return undefined;
   const attachments = raw.slice(0, 40).flatMap((item): ChatAttachment[] => {
@@ -676,6 +696,10 @@ function sanitizeSnapshotAttachments(raw: unknown): ChatAttachment[] | undefined
     }
     if (typeof attachment.path !== "string" || !attachment.path.trim()) return [];
     if (typeof attachment.name !== "string" || !attachment.name.trim()) return [];
+    const screenshotDataUrl = typeof attachment.screenshotDataUrl === "string"
+      && attachment.screenshotDataUrl.startsWith("data:image/")
+      ? attachment.screenshotDataUrl.slice(0, MAX_SNAPSHOT_SCREENSHOT_DATA_URL_CHARS)
+      : undefined;
     return [{
       kind,
       path: attachment.path.trim().slice(0, 2048),
@@ -683,6 +707,7 @@ function sanitizeSnapshotAttachments(raw: unknown): ChatAttachment[] | undefined
       ...(typeof attachment.url === "string" ? { url: attachment.url.slice(0, 2048) } : {}),
       ...(typeof attachment.title === "string" ? { title: attachment.title.slice(0, 300) } : {}),
       ...(typeof attachment.note === "string" ? { note: attachment.note.slice(0, 1000) } : {}),
+      ...(screenshotDataUrl ? { screenshotDataUrl } : {}),
     }];
   });
   return attachments.length ? attachments : undefined;

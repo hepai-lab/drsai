@@ -8,7 +8,7 @@ import {
   realpathSync,
   writeFileSync,
 } from "fs";
-import { copyFile, mkdir, open as openFile, rename, stat as statFile, unlink, writeFile } from "fs/promises";
+import { copyFile, mkdir, open as openFile, readFile, rename, stat as statFile, unlink, writeFile } from "fs/promises";
 import { createHash } from "crypto";
 import {
   app,
@@ -608,21 +608,36 @@ async function applyRuntimeWorkspaceCatalogEvent(
 ): Promise<void> {
   if (webContents.isDestroyed()) return;
   const client = await LocalRuntimeClient.connect();
-  const [session, workspaces] = await Promise.all([
+  const [session, workspaces, existingThreads] = await Promise.all([
     client.getSession(sessionId),
     listWorkspaces(),
+    listThreads(),
   ]);
   if (session.workspace_id !== workspaceId) throw new Error("session_catalog_workspace_mismatch");
   const workspace = workspaces.find((item) => item.id === workspaceId);
   if (!workspace) return;
+  // Desktop chat already owns a thread-* row bound to this Runtime Session.
+  // Never materialize a second sidebar entry keyed by session_id, and never
+  // overwrite execution status/messageCount from catalog events — those belong
+  // to the chat/run pipeline. A late session.updated must not resurrect
+  // "running" after the Run has already settled to idle.
+  const boundDesktop = existingThreads.find((thread) =>
+    thread.runtimeSessionId === session.session_id && thread.id !== session.session_id);
+  const catalogId = boundDesktop?.id ?? session.session_id;
   const thread = await upsertThreadFromRun({
-    id: session.session_id,
-    kind: "chat",
-    title: session.title,
+    id: catalogId,
+    kind: boundDesktop?.kind ?? "chat",
+    title: session.title || boundDesktop?.title,
     workspacePath: workspace.path,
+    boundAgentId: boundDesktop?.boundAgentId,
+    boundAgentName: boundDesktop?.boundAgentName,
     runtimeSessionId: session.session_id,
-    status: "idle",
-    messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+    ...(boundDesktop
+      ? {}
+      : {
+          status: "idle" as const,
+          messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+        }),
   });
   const updated = await updateThread({
     id: thread.id,
@@ -4326,6 +4341,18 @@ async function inspectPickedFileWithTimeout(path: string, category: PickedFileDe
   }
 }
 
+const PICKED_IMAGE_PREVIEW_MAX_BYTES = 1_500_000;
+
+function pickedImageMime(extension: string): string | null {
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".gif") return "image/gif";
+  if (extension === ".bmp") return "image/bmp";
+  if (extension === ".svg") return "image/svg+xml";
+  return null;
+}
+
 async function describePickedFiles(paths: string[], canceled: boolean): Promise<{ canceled: boolean; paths: string[]; files: PickedFileDescriptor[] }> {
   const files = await Promise.all(paths.map(async (path): Promise<PickedFileDescriptor> => {
     const extension = extname(path).toLowerCase();
@@ -4334,7 +4361,21 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
     try {
       const info = await statFile(path);
       if (!info.isFile()) return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "所选项目不是文件。", recoveryAction: "请选择一个可读取的本地文件。" };
-      return { ...base, sizeBytes: info.size, ...(await inspectPickedFileWithTimeout(path, category, extension)) };
+      const inspected = { ...base, sizeBytes: info.size, ...(await inspectPickedFileWithTimeout(path, category, extension)) };
+      if (inspected.status !== "ready" || category !== "image" || info.size > PICKED_IMAGE_PREVIEW_MAX_BYTES) {
+        return inspected;
+      }
+      const mime = pickedImageMime(extension);
+      if (!mime) return inspected;
+      try {
+        const buffer = await readFile(path);
+        return {
+          ...inspected,
+          previewDataUrl: `data:${mime};base64,${buffer.toString("base64")}`,
+        };
+      } catch {
+        return inspected;
+      }
     } catch {
       return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "文件无法读取或已经被移动；其他已选文件仍可使用。", recoveryAction: "请检查文件权限和位置，或复制到本地后重新导入。" };
     }

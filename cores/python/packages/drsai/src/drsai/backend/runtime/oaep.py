@@ -347,7 +347,7 @@ def project_item(item: dict[str, Any]) -> dict[str, Any]:
             if part_type not in {"text", "image", "audio", "file", "resource_ref"}:
                 continue
             part = {"type": part_type}
-            for key in ("text", "url", "name", "mime_type"):
+            for key in ("text", "url", "name", "mime_type", "resource_id", "sha256", "reference"):
                 if isinstance(raw_part.get(key), str) and raw_part.get(key):
                     part[key] = _safe_text(raw_part[key], limit=16384 if key == "url" else 8000)
             resource_ref = _safe_resource_refs([raw_part.get("resource_ref")])
@@ -558,8 +558,11 @@ def _delta_kind(item_type: str) -> str:
 
 
 def _event_type(kind: str, payload: dict[str, Any]) -> str:
+    # Audit/mirror journal rows for Item mutations often omit Item identity.
+    # Those must never become event.run.resumed (protocol: resume only after
+    # waiting) — the paired canonical Item event carries the mutation.
     if kind.startswith("conversation.item.") and not payload.get("item_id"):
-        return "event.run.resumed"
+        return "event.session.updated"
     if kind == "session.archived":
         return "event.session.archived"
     if kind == "session.removed":
@@ -578,7 +581,7 @@ def _event_type(kind: str, payload: dict[str, Any]) -> str:
             "completed": "event.run.completed",
             "failed": "event.run.failed",
             "cancelled": "event.run.cancelled",
-        }.get(status, "event.run.resumed")
+        }.get(status, "event.session.updated")
     if kind == "conversation.item.delta":
         return "event.item.delta"
     if kind == "conversation.item.created":
