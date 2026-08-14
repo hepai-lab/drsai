@@ -130,6 +130,7 @@ _LONG_HANDLERS = frozenset({
     "remote.connect",
     "remote.test",
     "remote.exec",
+    "remote.browse_dirs",
 })
 
 try:

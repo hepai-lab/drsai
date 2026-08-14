@@ -226,8 +226,6 @@ export interface SSHConfigEntry {
   username: string
   password?: string        // masked as '***' when listed
   private_key_path?: string
-  remote_python?: string
-  remote_python_src_root?: string
   remote_gateway_port?: number
   remote_workdir?: string
 }

@@ -426,6 +426,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="special",  # handled in composerPane (GfsPanel overlay), not by slash.exec RPC
     ),
 
+    # ── Remote SSH ──────────────────────────────────────────────────────────
+    CommandDef(
+        "remote",
+        "Connect to a remote server via SSH tunnel (manage configs, connect/disconnect)",
+        "Remote",
+        handler="special",  # handled in composerPane (SshRemotePanel overlay), not by slash.exec RPC
+    ),
+
     # ── Meta ─────────────────────────────────────────────────────────────────
     CommandDef(
         "help",

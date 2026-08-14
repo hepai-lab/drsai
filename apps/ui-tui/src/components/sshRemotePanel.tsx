@@ -45,15 +45,12 @@ interface EditForm {
   username: string
   password: string
   private_key_path: string
-  remote_python: string
-  remote_python_src_root: string
   remote_workdir: string
 }
 
 const EMPTY_FORM: EditForm = {
   name: '', host: '', port: '22', username: '', password: '',
-  private_key_path: '', remote_python: 'python3',
-  remote_python_src_root: '', remote_workdir: '',
+  private_key_path: '', remote_workdir: '',
 }
 
 const EDIT_FIELDS: { key: keyof EditForm; label: string; hint?: string }[] = [
@@ -63,9 +60,7 @@ const EDIT_FIELDS: { key: keyof EditForm; label: string; hint?: string }[] = [
   { key: 'username', label: 'Username' },
   { key: 'password', label: 'Password', hint: 'or use private key below' },
   { key: 'private_key_path', label: 'Private Key Path', hint: '~/.ssh/id_rsa' },
-  { key: 'remote_python', label: 'Remote Python', hint: 'python3' },
-  { key: 'remote_python_src_root', label: 'Remote PYTHONPATH', hint: 'drsai src dir (optional)' },
-  { key: 'remote_workdir', label: 'Remote Workdir', hint: 'working directory on remote' },
+  { key: 'remote_workdir', label: 'Remote Workdir', hint: "working directory on remote, press 'b' to browse" },
 ]
 
 export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconnect }: Props) {
@@ -85,6 +80,8 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
   const [dirEntries, setDirEntries] = useState<RemoteDirEntry[]>([])
   const [dirCursor, setDirCursor] = useState(0)
   const [dirPath, setDirPath] = useState('~')
+  // Track where dir browser was opened from, so 'q' returns correctly
+  const [dirReturnView, setDirReturnView] = useState<'list' | 'edit'>('list')
 
   // ── Refresh configs ────────────────────────────────────────────────
   const refresh = useCallback(async () => {
@@ -192,8 +189,6 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
         username: cfg.username,
         password: '',  // don't prefill masked password
         private_key_path: cfg.private_key_path || '',
-        remote_python: cfg.remote_python || 'python3',
-        remote_python_src_root: cfg.remote_python_src_root || '',
         remote_workdir: cfg.remote_workdir || '',
       })
       setIsEditing(true)
@@ -212,8 +207,6 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
         host: form.host,
         port: parseInt(form.port) || 22,
         username: form.username,
-        remote_python: form.remote_python,
-        remote_python_src_root: form.remote_python_src_root,
         remote_workdir: form.remote_workdir,
       }
       if (form.password) params.password = form.password
@@ -228,9 +221,34 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
     }
   }
 
-  const browseDirs = async (path: string) => {
+  /**
+   * Browse remote directories.
+   *
+   * Two modes:
+   *  - 'connected': use remote.list_files via existing tunnel (fast, for list view 'b' key)
+   *  - 'browse':    use remote.browse_dirs with a temporary SSH connection (for edit view 'b' key)
+   */
+  const browseDirs = async (path: string, mode: 'connected' | 'browse' = 'connected') => {
     try {
-      const res = await gw.request<{ entries: RemoteDirEntry[] }>('remote.list_files', { path })
+      // Track return view
+      if (mode === 'browse') setDirReturnView('edit')
+      else setDirReturnView('list')
+
+      let res: { entries: RemoteDirEntry[] }
+      if (mode === 'browse') {
+        // Build params from the current form — no saved config needed
+        const params: Record<string, unknown> = {
+          host: form.host,
+          port: parseInt(form.port) || 22,
+          username: form.username,
+          path,
+        }
+        if (form.password) params.password = form.password
+        if (form.private_key_path) params.private_key_path = form.private_key_path
+        res = await gw.request<{ entries: RemoteDirEntry[] }>('remote.browse_dirs', params)
+      } else {
+        res = await gw.request<{ entries: RemoteDirEntry[] }>('remote.list_files', { path })
+      }
       setDirEntries(res.entries || [])
       setDirPath(path)
       setDirCursor(0)
@@ -285,6 +303,16 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
           setFormFieldIdx(i => i + 1)
         }
       }
+      // 'b' on remote_workdir field → browse remote directories via temp SSH
+      if (input === 'b' && EDIT_FIELDS[formFieldIdx].key === 'remote_workdir') {
+        if (!form.host || !form.username) {
+          showMsg('⚠ Fill in Host and Username first', theme.warn)
+          return
+        }
+        showMsg('⏳ Browsing remote directories...', theme.muted)
+        browseDirs(form.remote_workdir || '~', 'browse')
+        return
+      }
       // Tab to cycle fields
       if (key.tab) {
         setFormFieldIdx(i => (i + 1) % EDIT_FIELDS.length)
@@ -292,26 +320,42 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
     }
 
     if (view === 'dirs') {
-      if (input === 'q') { setView('edit'); return }
+      if (input === 'q') { setView(dirReturnView); return }
+      // Go to parent directory
+      if (key.backspace || input === '-') {
+        const parent = dirPath.replace(/\/[^/]+\/?$/, '') || '/'
+        if (dirReturnView === 'edit') {
+          browseDirs(parent, 'browse')
+        } else {
+          browseDirs(parent)
+        }
+        return
+      }
       if (key.upArrow) setDirCursor(c => Math.max(0, c - 1))
       if (key.downArrow) setDirCursor(c => Math.min(dirEntries.length - 1, c + 1))
       if (key.return && dirEntries[dirCursor]) {
         const entry = dirEntries[dirCursor]
         if (entry.is_dir) {
-          browseDirs(entry.path)
+          // Continue browsing into subdirectory
+          if (dirReturnView === 'edit') {
+            // In edit mode, keep using browse_dirs with temp SSH
+            browseDirs(entry.path, 'browse')
+          } else {
+            browseDirs(entry.path)
+          }
         } else {
-          // Select as workdir (parent dir)
+          // Select parent dir as workdir
           const parent = entry.path.replace(/\/[^/]+$/, '')
           setForm(f => ({ ...f, remote_workdir: parent }))
           showMsg(`✓ Workdir set to: ${parent}`, theme.good)
-          setView('edit')
+          setView(dirReturnView)
         }
       }
-      if (input === 's' && dirEntries[dirCursor]) {
+      if (input === 's') {
         // Select current dir as workdir
         setForm(f => ({ ...f, remote_workdir: dirPath }))
         showMsg(`✓ Workdir set to: ${dirPath}`, theme.good)
-        setView('edit')
+        setView(dirReturnView)
       }
     }
   })
@@ -395,6 +439,9 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
         <Box marginTop={1}>
           <Text color={theme.muted} dimColor>
             Field: {field.label} {field.hint ? `(${field.hint})` : ''}
+            {field.key === 'remote_workdir' && (
+              <Text color={theme.accent}> · press 'b' to browse remote dirs</Text>
+            )}
           </Text>
         </Box>
 
@@ -406,7 +453,7 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
 
         <Box marginTop={1}>
           <Text color={theme.muted} dimColor>
-            ↑↓ fields · Tab next · Enter save/next · q cancel
+            ↑↓ fields · Tab next · Enter save/next · b browse dirs (on Workdir) · q cancel
           </Text>
         </Box>
       </Box>
@@ -500,7 +547,7 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
 
         <Box marginTop={1}>
           <Text color={theme.muted} dimColor>
-            ↑↓ nav · Enter open dir · s select as workdir · q back
+            ↑↓ nav · Enter open dir · s select this dir · Backspace parent dir · q back
           </Text>
         </Box>
       </Box>

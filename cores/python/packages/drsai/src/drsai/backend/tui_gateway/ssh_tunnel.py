@@ -49,15 +49,18 @@ REMOTE_PID_FILE = f"{REMOTE_TMP_DIR}/gateway.pid"
 
 @dataclass
 class SSHConfig:
-    """一条 SSH 远程连接配置。"""
+    """一条 SSH 远程连接配置。
+
+    远程服务器上只需能通过命令行执行 `opendrsai` (由 install_drsai.sh/ps1
+    安装并加入 PATH)。后端通过 `command -v opendrsai` 定位启动器,
+    查不到时兜底 `~/.drsai/bin/opendrsai`。
+    """
     name: str = ""
     host: str = ""
     port: int = 22
     username: str = ""
     password: str = ""
     private_key_path: str = ""
-    remote_python: str = "python3"
-    remote_python_src_root: str = ""       # 远程 PYTHONPATH (drsai src 目录)
     remote_gateway_port: int = 0           # 0 = 自动选择
     remote_workdir: str = ""               # 远程工作目录
 
@@ -113,6 +116,7 @@ class SSHTunnelManager:
         self._tunnel_stop = threading.Event()
         self._local_socket: Optional[socket.socket] = None
         self._forward_threads: list[threading.Thread] = []
+        self._opendrsai: str = ""          # 远程 opendrsai 可执行文件 (connect 时解析)
         self.status = TunnelStatus()
 
     # ── 连接 ────────────────────────────────────────────────────────
@@ -164,8 +168,13 @@ class SSHTunnelManager:
             # 获取远程主机信息
             self.status.remote_hostname = self._exec_remote("hostname")[0].strip()
             self.status.remote_cwd = self._exec_remote("pwd")[0].strip()
-            py_ver_out, _, _ = self._exec_remote(f"{cfg.remote_python} --version 2>&1")
-            self.status.remote_python_version = py_ver_out.strip()
+
+            # 定位远程 opendrsai 可执行文件 (PATH → 默认安装目录)
+            self._opendrsai = self._resolve_opendrsai()
+            logger.info("远程 opendrsai: %s", self._opendrsai)
+
+            py_ver_out, _, _ = self._exec_remote(f"{self._opendrsai} --version 2>&1 || true")
+            self.status.remote_python_version = py_ver_out.strip().splitlines()[0] if py_ver_out.strip() else ""
 
             # 选择远程 gateway 端口
             remote_port = cfg.remote_gateway_port or self._find_free_remote_port(cfg)
@@ -193,6 +202,37 @@ class SSHTunnelManager:
 
     # ── 远程操作 ────────────────────────────────────────────────────
 
+    def _resolve_opendrsai(self) -> str:
+        """定位远程 `opendrsai` 可执行文件。
+
+        解析顺序:
+          1. `command -v opendrsai` — 远程 PATH 中查找 (install_drsai.sh
+             会把安装目录的 bin/ 写入 ~/.bashrc 等, ssh 非交互式 shell
+             在多数发行版上也会 source ~/.bashrc, 因此通常能命中)
+          2. 兜底: 默认安装目录 `~/.drsai/bin/opendrsai` — 检查文件存在
+
+        Returns:
+            可直接在远程 shell 中执行的命令字符串
+            (PATH 命中时为 'opendrsai', 否则为完整路径)
+
+        Raises:
+            RuntimeError: 两种方式都找不到 opendrsai
+        """
+        out, _, _ = self._exec_remote("command -v opendrsai 2>/dev/null || true")
+        launcher = out.strip().splitlines()[0].strip() if out.strip() else ""
+        if launcher:
+            return launcher
+
+        fallback = "~/.drsai/bin/opendrsai"
+        out, _, _ = self._exec_remote(f"test -x {fallback} && echo FOUND || true")
+        if "FOUND" in out:
+            return fallback
+
+        raise RuntimeError(
+            "远程服务器上找不到 opendrsai 可执行文件 (PATH 和 ~/.drsai/bin/ 均未命中)。\n"
+            "请先在远程服务器上运行 scripts/install_drsai.sh 完成安装。"
+        )
+
     def _exec_remote(self, cmd: str, timeout: float = 15) -> tuple[str, str, int]:
         """执行远程命令，返回 (stdout, stderr, returncode)。"""
         assert self._client is not None
@@ -203,15 +243,17 @@ class SSHTunnelManager:
         return out, err, code
 
     def _find_free_remote_port(self, cfg: SSHConfig) -> int:
-        """在远程找一个可用端口 (通过 python -c)。"""
+        """在远程找一个可用端口 (通过远程 python, 由安装环境自带)。"""
+        # 安装环境自带便携 Python, venv 路径固定在安装目录内;
+        # 但此处不依赖具体路径 — 优先用 PATH 中的 python3。
         out, _, code = self._exec_remote(
-            f"{cfg.remote_python} -c \"import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); "
-            "print(s.getsockname()[1]); s.close()\""
+            "python3 -c \"import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); "
+            "print(s.getsockname()[1]); s.close()\" 2>/dev/null || true"
         )
         if code == 0:
             try:
-                return int(out.strip())
-            except ValueError:
+                return int(out.strip().splitlines()[-1])
+            except (ValueError, IndexError):
                 pass
         return 8765  # fallback
 
@@ -229,18 +271,16 @@ class SSHTunnelManager:
         if cfg.remote_workdir:
             env_parts.append(f"DRSAI_USER_CWD={cfg.remote_workdir}")
 
-        pythonpath_prefix = ""
-        if cfg.remote_python_src_root:
-            pythonpath_prefix = f"PYTHONPATH={cfg.remote_python_src_root}:$PYTHONPATH "
-
         env_str = " ".join(env_parts)
         cwd_arg = f"cd {cfg.remote_workdir} && " if cfg.remote_workdir else ""
 
-        # 启动命令 — 使用 nohup 后台运行
+        # 启动命令 — 使用 opendrsai 启动器的 tui-gateway 子命令。
+        # 启动器脚本自身会设置好 venv python / PYTHONPATH 等环境,
+        # 无需在此处关心远程 Python 路径。
         start_cmd = (
             f"{cwd_arg}"
-            f"{pythonpath_prefix}{env_str} "
-            f"nohup {cfg.remote_python} -m drsai.backend.tui_gateway "
+            f"{env_str} "
+            f"nohup {self._opendrsai} tui-gateway "
             f"> {REMOTE_LOG_PATH} 2>&1 & "
             f"echo $! > {REMOTE_PID_FILE}; cat {REMOTE_PID_FILE}"
         )
@@ -470,12 +510,35 @@ class SSHTunnelManager:
                 connect_kwargs["allow_agent"] = True
                 connect_kwargs["look_for_keys"] = True
             client.connect(**connect_kwargs)
-            stdin, stdout, stderr = client.exec_command(
-                f"hostname; {cfg.remote_python} --version 2>&1"
-            )
-            info = stdout.read().decode().strip()
+
+            def _exec(cmd: str) -> str:
+                _, so, _ = client.exec_command(cmd, timeout=10)
+                return so.read().decode("utf-8", errors="replace").strip()
+
+            hostname = _exec("hostname")
+
+            # 定位 opendrsai 可执行文件 (PATH → 默认安装目录)
+            launcher = _exec("command -v opendrsai 2>/dev/null || true").splitlines()
+            opendrsai = launcher[0].strip() if launcher and launcher[0].strip() else ""
+            if not opendrsai:
+                if "FOUND" in _exec("test -x ~/.drsai/bin/opendrsai && echo FOUND || true"):
+                    opendrsai = "~/.drsai/bin/opendrsai"
+
+            if not opendrsai:
+                client.close()
+                return False, (
+                    f"SSH 连接成功 (host: {hostname}), 但远程找不到 opendrsai。\n"
+                    "PATH 和 ~/.drsai/bin/ 均未命中。\n"
+                    "请先在远程服务器上运行 scripts/install_drsai.sh 完成安装。"
+                )
+
+            version = _exec(f"{opendrsai} --version 2>&1 || true").splitlines()
             client.close()
-            return True, info
+            return True, (
+                f"{hostname}\n"
+                f"opendrsai: {opendrsai}\n"
+                + (version[0] if version else "")
+            )
         except Exception as e:
             return False, str(e)
 

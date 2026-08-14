@@ -37,18 +37,23 @@
 | 文件 | 说明 |
 |------|------|
 | `cores/python/packages/drsai/src/drsai/backend/tui_gateway/ssh_tunnel.py` | SSH 隧道管理器：paramiko 连接、远程 gateway 启动、端口转发、配置持久化 |
-| `cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/remote.py` | 10 个 JSON-RPC 方法（`remote.connect` / `remote.disconnect` / `remote.status` 等） |
+| `cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/remote.py` | 11 个 JSON-RPC 方法（`remote.connect` / `remote.disconnect` / `remote.status` / `remote.browse_dirs` 等） |
 | `cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/__init__.py` | 注册 `remote` handler 模块（已修改） |
-| `cores/python/packages/drsai/src/drsai/backend/tui_gateway/server.py` | 将 `remote.connect/test/exec` 加入 `_LONG_HANDLERS`（已修改） |
+| `cores/python/packages/drsai/src/drsai/backend/tui_gateway/server.py` | 将 `remote.connect/test/exec/browse_dirs` 加入 `_LONG_HANDLERS`（已修改） |
+| `cores/python/packages/drsai/src/drsai/backend/cli/commands.py` | 注册 `/remote` 命令到 `COMMAND_REGISTRY`（已修改） |
 
 ### 前端 (TypeScript / React / Ink)
 
 | 文件 | 说明 |
 |------|------|
 | `apps/ui-tui/src/components/sshRemotePanel.tsx` | SSH 远程管理面板 UI（配置列表 / 编辑 / 目录浏览 / 状态查看） |
-| `apps/ui-tui/src/gatewayTypes.ts` | 新增 `SSHConfigEntry`、`RemoteConnectionResult` 等类型（已修改） |
-| `apps/ui-tui/src/gatewayClient.ts` | 新增 `switchToWebSocket()` / `switchToSubprocess()` 方法（已修改） |
+| `apps/ui-tui/src/gatewayTypes.ts` | 新增 `SSHConfigEntry`、`RemoteConnectionResult`、`remote.lost` 事件等类型（已修改） |
+| `apps/ui-tui/src/gatewayClient.ts` | 新增 `switchToWebSocket()` / `switchToSubprocess()` / `handleRemoteLost()` 方法（已修改） |
 | `apps/ui-tui/src/components/composerPane.tsx` | 新增 `/remote` 命令 + `remote.panel` 事件 + 面板渲染（已修改） |
+| `apps/ui-tui/src/app.tsx` | 新增 `remote_lost` 断链提示界面（已修改） |
+| `apps/ui-tui/src/app/createGatewayEventHandler.ts` | 新增 `remote.lost` 事件处理（已修改） |
+| `apps/ui-tui/src/app/uiStore.ts` | 新增 `remote_lost` 连接状态（已修改） |
+| `apps/ui-tui/src/components/statusBar.tsx` | 新增 `remote lost` 状态指示器（已修改） |
 
 ### Demo (概念验证)
 
@@ -62,21 +67,24 @@
 
 ### 1. 远程服务器准备
 
-在远程服务器上安装 DrSai 及其依赖：
+在远程服务器上运行安装脚本（唯一必需步骤）：
 
 ```bash
-# 克隆代码（或通过 git pull 更新）
-git clone <drsai-repo> ~/drsai_dev
-cd ~/drsai_dev
+# Linux / macOS
+curl -fsSL <URL>/install_drsai.sh | bash
+# 或下载后执行
+bash install_drsai.sh
+```
 
-# 安装 Python 依赖
-cd cores/python/packages/drsai
-pip install -e ".[all]"
+安装完成后验证 `opendrsai` 可用：
 
-# 验证 gateway 可以独立启动
-python -m drsai.backend.tui_gateway --help
-# 或直接测试（会等待 stdin 输入，Ctrl+C 退出）
-DRSAI_TUI_ENABLE_WS=1 DRSAI_TUI_WS_PORT=9999 python -m drsai.backend.tui_gateway
+```bash
+opendrsai --version
+# 如果提示找不到命令，重新登录 shell 或执行:
+source ~/.bashrc
+
+# 验证 gateway 可以独立启动（Ctrl+C 退出）
+DRSAI_TUI_ENABLE_WS=1 DRSAI_TUI_WS_PORT=9999 opendrsai tui-gateway
 ```
 
 > **注意：** 远程服务器需要能访问 LLM API（配置好 API Key 或本地模型）。
@@ -129,61 +137,247 @@ drsai chat
 /remote
 ```
 
-### 面板操作快捷键
+`/remote` 已注册到命令目录中，支持 Tab 补全，也会在 `/help` 中显示。
 
-#### 配置列表视图 (List)
+---
 
-| 按键 | 功能 |
-|------|------|
-| `↑` / `↓` | 上下导航 |
-| `Enter` | 连接选中的远程服务器 |
-| `n` | 新建 SSH 配置 |
-| `e` | 编辑选中的配置 |
-| `t` | 测试 SSH 连接（不启动 gateway） |
-| `d` | 删除选中的配置 |
-| `s` | 查看当前连接状态 |
-| `x` | 断开当前连接 |
-| `r` | 刷新配置列表 |
-| `q` / `Esc` | 退出面板 |
+### 面板视图总览
 
-#### 配置编辑视图 (Edit)
+SSH 远程管理面板包含 **4 个视图**，通过按键在不同视图间切换：
 
-| 按键 | 功能 |
-|------|------|
-| `↑` / `↓` | 切换字段 |
-| `Tab` | 跳到下一个字段 |
-| `Enter` | 保存（在最后一个字段）或跳到下一个字段 |
-| `q` / `Esc` | 取消编辑 |
+```
+  List (配置列表)
+    ├── n → Edit (新建配置)
+    ├── e → Edit (编辑配置)
+    ├── Enter → 连接远程 → Status (连接状态)
+    ├── s → Status (连接状态)
+    └── b → Dirs (目录浏览, 需已连接)
 
-需要填写的字段：
+  Edit (配置编辑)
+    ├── b (在 Workdir 字段) → Dirs (浏览远程目录)
+    └── q → 返回 List
 
-| 字段 | 说明 | 示例 |
+  Dirs (目录浏览)
+    ├── Enter → 进入子目录
+    ├── s → 选定当前目录
+    ├── Backspace → 返回上级目录
+    └── q → 返回来源视图 (List 或 Edit)
+
+  Status (连接状态)
+    ├── x → 断开连接
+    └── q → 返回 List
+```
+
+---
+
+### 配置列表视图 (List)
+
+面板的主视图，显示所有已保存的 SSH 配置。
+
+```
+🔌 SSH Remote Manager  ● gpu-server
+
+  Name             Host                   User         Port   Workdir
+▶ gpu-3090         192.168.32.192         xiongdb      22     /home/xiongdb/projects
+  dev-server       10.0.1.100             admin        2222   ~
+
+↑↓ nav · Enter connect · e edit · t test · d delete · n new · s status · x disconnect · q quit
+```
+
+| 按键 | 功能 | 说明 |
 |------|------|------|
-| Name | 配置名称（唯一标识） | `gpu-server` |
-| Host | 远程服务器 IP 或域名 | `192.168.32.192` |
-| Port | SSH 端口 | `22` |
-| Username | SSH 用户名 | `xiongdb` |
-| Password | SSH 密码（与私钥二选一） | `***` |
-| Private Key Path | SSH 私钥路径 | `~/.ssh/id_rsa` |
-| Remote Python | 远程 Python 命令 | `python3` |
-| Remote PYTHONPATH | 远程 drsai src 目录（可选） | `/home/xiongdb/drsai_dev/cores/python/packages/drsai/src` |
-| Remote Workdir | 远程工作目录 | `/home/xiongdb/projects` |
+| `↑` / `↓` | 上下导航 | 在配置列表中移动光标 |
+| `Enter` | **连接** | 连接选中的远程服务器（启动远程 gateway + 建立隧道） |
+| `n` | **新建** | 创建新的 SSH 配置（进入 Edit 视图） |
+| `e` | **编辑** | 编辑选中的配置（进入 Edit 视图） |
+| `t` | **测试** | 测试 SSH 连接（只验证 SSH 是否能连通，不启动 gateway） |
+| `d` | **删除** | 删除选中的配置 |
+| `s` | **状态** | 查看当前连接状态（进入 Status 视图） |
+| `x` | **断开** | 断开当前连接（仅在已连接时可用） |
+| `r` | **刷新** | 重新加载配置列表 |
+| `b` | **浏览目录** | 浏览远程目录（需已连接，进入 Dirs 视图） |
+| `q` / `Esc` | **退出** | 关闭面板，返回 TUI 主界面 |
 
-#### 目录浏览视图 (Dirs)
+---
 
-| 按键 | 功能 |
-|------|------|
-| `↑` / `↓` | 上下导航 |
-| `Enter` | 打开子目录 |
-| `s` | 选定当前目录作为工作目录 |
-| `q` / `Esc` | 返回编辑视图 |
+### 配置编辑视图 (Edit)
 
-#### 连接状态视图 (Status)
+新建或编辑 SSH 连接配置。按 `n`（新建）或 `e`（编辑）进入。
 
-| 按键 | 功能 |
-|------|------|
-| `x` | 断开连接 |
-| `q` / `Esc` | 返回列表视图 |
+```
+New SSH Config
+
+▶ Name                : (empty)
+  Host                : (empty)
+  Port                : 22
+  Username            : (empty)
+  Password            : (empty)
+  Private Key Path    : (empty)
+  Remote Workdir      : (empty)
+
+Field: Name (unique identifier)
+
+↑↓ fields · Tab next · Enter save/next · b browse dirs (on Workdir) · q cancel
+```
+
+| 按键 | 功能 | 说明 |
+|------|------|------|
+| `↑` / `↓` | 切换字段 | 在表单字段间移动光标 |
+| `Tab` | 下一个字段 | 快速跳到下一个字段 |
+| `Enter` | 下一个/保存 | 非最后字段：跳到下一个字段；最后字段：保存配置 |
+| `b` | **浏览远程目录** | 仅在 `Remote Workdir` 字段时可用，通过临时 SSH 连接浏览远程目录 |
+| `q` / `Esc` | 取消 | 放弃编辑，返回列表视图 |
+
+#### 字段详细说明
+
+| 字段 | 必填 | 说明 | 示例 |
+|------|------|------|------|
+| **Name** | ✅ | 配置的唯一标识名称，用于在列表中区分多个服务器 | `gpu-server`、`dev-3090` |
+| **Host** | ✅ | 远程服务器的 IP 地址或域名 | `192.168.32.192`、`gpu.example.com` |
+| **Port** | ✅ | SSH 服务端口号，默认 `22` | `22`、`2222` |
+| **Username** | ✅ | SSH 登录用户名 | `xiongdb` |
+| **Password** | 二选一 | SSH 密码。**与私钥二选一**，都填则优先用私钥 | （不填则用私钥） |
+| **Private Key Path** | 二选一 | 本地 SSH 私钥文件路径。Windows 用户注意路径格式 | `~/.ssh/id_rsa`、`C:\Users\HP\.ssh\id_rsa` |
+| **Remote Workdir** | 推荐 | 远程工作目录。远程 gateway 以此作为 `cwd`，AI 的文件操作都在此目录下。**可按 `b` 键浏览选择** | `/home/xiongdb/projects` |
+
+> **不需要配置远程 Python 路径**：远程服务器通过 `scripts/install_drsai.sh/ps1` 安装后，`opendrsai` 命令即可在命令行使用。后端连接时自动通过 `command -v opendrsai` 定位启动器（PATH 查不到时兜底 `~/.drsai/bin/opendrsai`），启动器脚本内部会处理好 venv Python、PYTHONPATH 等一切环境。
+
+#### 关于密码 vs 私钥
+
+- **推荐私钥**：更安全，且不需要在配置中存储密码
+- **Windows 私钥路径**：使用完整路径如 `C:\Users\HP\.ssh\id_rsa`
+- **PuTTY 格式私钥**：需要转换为 OpenSSH 格式（`puttygen id_rsa.ppk -O private-openssh -o id_rsa`）
+- **两者都不填**：尝试使用 SSH Agent 或默认密钥（`~/.ssh/id_rsa` 等）
+
+#### 远程环境要求
+
+远程服务器只需满足一个条件：**能通过命令行执行 `opendrsai`**。
+
+安装方式（在远程服务器上执行一次）：
+
+```bash
+# Linux / macOS
+curl -fsSL <URL>/install_drsai.sh | bash
+# 或 Windows 远程桌面
+# powershell -File install_drsai.ps1
+```
+
+安装脚本会：
+1. 把 OpenDrSai 安装到 `~/.drsai`（含便携 Python/Node、venv、启动器）
+2. 创建启动器 `~/.drsai/bin/opendrsai`
+3. 把 `~/.drsai/bin` 写入 `~/.bashrc` / `~/.zshrc` 的 PATH
+
+后端连接远程时按以下顺序定位 `opendrsai`：
+
+1. `command -v opendrsai` — 远程 PATH 查找
+2. `~/.drsai/bin/opendrsai` — 默认安装目录兜底
+
+两种方式都找不到时，连接/测试会给出明确错误提示。
+
+> 远程 gateway 通过 `opendrsai tui-gateway` 子命令启动（`drsai` CLI 内置），
+> 启动器脚本会自动设置 venv Python、`DRSAI_PYTHON_SRC_ROOT` 等环境变量，
+> 因此 SSH 配置中**不需要**任何 Python 路径相关字段。
+
+#### 关于 Remote Workdir
+
+- 这是远程 gateway 启动时的 **工作目录**（`cwd`）
+- AI 对话中的文件读写、代码执行等操作都以此为基准目录
+- **推荐填写**，避免默认 home 目录下文件混乱
+- 在 `Remote Workdir` 字段按 **`b`** 键可以通过 SSH 浏览远程目录，选中后自动填入
+
+---
+
+### 目录浏览视图 (Dirs)
+
+浏览远程服务器的目录结构，用于选择工作目录。
+
+**两种打开方式：**
+
+| 方式 | 前提 | 说明 |
+|------|------|------|
+| 编辑视图中按 `b`（Workdir 字段） | 已填写 Host + Username + 认证信息 | 通过**临时 SSH 连接**浏览，不需要已连接 |
+| 列表视图中按 `b`（已连接时） | 已连接远程服务器 | 通过**已有隧道**浏览，速度更快 |
+
+```
+📁 Remote Directory: /home/xiongdb
+
+▶ 📁 drsai_dev
+  📁 projects
+  📁 data
+  📁 .ssh
+  📄 .bashrc
+  📄 .bash_profile
+
+↑↓ nav · Enter open dir · s select this dir · Backspace parent dir · q back
+```
+
+| 按键 | 功能 | 说明 |
+|------|------|------|
+| `↑` / `↓` | 上下导航 | 在文件/目录列表中移动光标 |
+| `Enter` | 进入子目录 | 打开选中的目录，继续浏览 |
+| `s` | **选定当前目录** | 将**当前浏览路径**设为 `remote_workdir`，返回来源视图 |
+| `Backspace` / `-` | 上级目录 | 返回上一级目录 |
+| `q` / `Esc` | 返回 | 返回来时的视图（Edit 或 List） |
+
+**典型操作：**
+
+1. 在编辑视图填好 Host、Username、Private Key Path
+2. 光标移到 `Remote Workdir` 字段
+3. 按 `b` → 等待几秒（临时建立 SSH 连接）
+4. 看到远程 home 目录 → `Enter` 进入 `projects` 子目录
+5. 按 `s` 选定 `/home/xiongdb/projects` 为工作目录
+6. 自动返回编辑视图，`Remote Workdir` 已填好
+
+---
+
+### 连接状态视图 (Status)
+
+显示当前远程连接的详细信息。按 `s` 从列表视图进入。
+
+```
+Remote Connection Status
+
+  ● Connected
+  Host:          gpu-server-01
+  Remote CWD:    /home/xiongdb/projects
+  Remote Port:   39127
+  Local Port:    51234
+  Remote PID:    12345
+  Python:        Python 3.12.3
+  WS URL:        ws://127.0.0.1:51234/attach
+
+x disconnect · q back
+```
+
+| 按键 | 功能 | 说明 |
+|------|------|------|
+| `x` | **断开连接** | 断开 SSH 隧道，清理远程 gateway 进程 |
+| `q` / `Esc` | 返回 | 返回列表视图 |
+
+---
+
+### 断链提示界面
+
+当远程 SSH WebSocket 连接意外断开时，TUI **不会退出**，而是显示断链提示：
+
+```
+⚠  Remote connection lost
+
+WebSocket connection closed
+
+Choose an action:
+  [R] — Reconnect (switch to local, then open /remote panel)
+  [L] — Switch to local mode
+  [Ctrl+D] — Exit
+```
+
+| 按键 | 功能 | 说明 |
+|------|------|------|
+| `R` | 重连 | 先切回本地模式，然后手动用 `/remote` 重新连接 |
+| `L` | 切回本地 | 切换到本地 gateway，创建新的本地 session |
+| `Ctrl+D` | 退出 | 关闭 TUI |
+
+> **注意：** 断链后切换回本地会创建**新的本地 session**，之前的远程 session 上下文不会保留。SSH 连接已启用 keepalive（每 30 秒），可以有效防止 NAT/防火墙静默断开。
 
 ---
 
@@ -217,29 +411,28 @@ drsai chat
 
 #### Step 3: 配置 SSH 连接
 
-1. 在 TUI 中输入 `/remote`
+1. 在 TUI 中输入 `/remote`（可按 Tab 补全）
 2. 按 `n` 新建配置
-3. 填写：
+3. 依次填写各字段（↑↓ 切换，Tab 下一个）：
    - Name: `gpu-3090`
    - Host: `192.168.32.192`
    - Port: `22`
    - Username: `xiongdb`
+   - Password: 留空
    - Private Key Path: `C:\Users\HP\.ssh\id_rsa`
-   - Remote Python: `python3`
-   - Remote PYTHONPATH: `/home/xiongdb/drsai_dev/cores/python/packages/drsai/src`
-   - Remote Workdir: `/home/xiongdb/projects`
+   - Remote Workdir: 光标停在此字段，按 **`b`** 浏览远程目录选择
 4. 按 `Enter` 保存
 
 #### Step 4: 测试连接
 
 1. 选中刚创建的 `gpu-3090` 配置
 2. 按 `t` 测试连接
-3. 应看到：`✅ zzd-3090\nPython 3.12.x`
+3. 应看到：`✅ gpu-server-hostname\nPython 3.12.x`
 
 #### Step 5: 连接远程服务器
 
 1. 选中配置，按 `Enter`
-2. 等待显示：`✅ Connected to zzd-3090 (port XXXX→YYYY)`
+2. 等待显示：`✅ Connected to gpu-server (port XXXX→YYYY)`
 3. TUI 自动切换到远程 gateway
 4. 此时所有操作都在远程服务器上执行
 
@@ -298,22 +491,35 @@ Demo 提供交互式 UI，可以：
 ```
 
 1. `paramiko.SSHClient.connect()` 建立 SSH 连接
-2. `client.get_transport()` 获取底层 Transport
-3. 远程 `nohup python -m drsai.backend.tui_gateway` 启动 gateway
+2. `client.get_transport()` 获取底层 Transport，并设置 `set_keepalive(30)` 防止静默断开
+3. 远程 `nohup opendrsai tui-gateway` 启动 gateway
 4. `transport.open_channel("direct-tcpip", ...)` 创建端口转发通道
 5. 本地 TCP socket 接受连接，双向转发数据到 SSH channel
 6. WebSocket 升级在隧道上透明完成
 
 ### 远程 gateway 启动命令
 
+后端通过 SSH 定位远程 `opendrsai` 启动器（`command -v opendrsai`，兜底 `~/.drsai/bin/opendrsai`），然后执行：
+
 ```bash
 cd {remote_workdir} && \
-PYTHONPATH={src_root}:$PYTHONPATH \
 DRSAI_TUI_ENABLE_WS=1 \
 DRSAI_TUI_WS_PORT={port} \
 DRSAI_USER_CWD={remote_workdir} \
-nohup {python} -m drsai.backend.tui_gateway > /tmp/drsai_ssh_tui/gateway.log 2>&1 &
+nohup opendrsai tui-gateway \
+  > /tmp/drsai_ssh_tui/gateway.log 2>&1 &
 ```
+
+> `opendrsai tui-gateway` 是 `drsai` CLI 内置子命令，用于以独立进程启动
+> JSON-RPC TUI gateway。启动器脚本自身会导出 venv Python、`DRSAI_PYTHON_SRC_ROOT`
+> 等环境变量，因此不需要在 SSH 配置中填写任何 Python 路径。
+
+### 断链检测机制
+
+1. **SSH keepalive**：`transport.set_keepalive(30)` 每 30 秒发送 keepalive 包，防止 NAT/防火墙断开空闲连接
+2. **WebSocket close 事件**：前端 `GatewayClient` 检测到 WebSocket 断开时，区分是远程 SSH 模式还是普通 attach 模式
+3. **远程 SSH 模式断链**：发出 `remote.lost` 事件，TUI 显示断链提示界面，不退出
+4. **普通 attach 模式断链**：发出 `gateway.exit` 事件，TUI 正常退出
 
 ### 配置存储
 
@@ -328,28 +534,31 @@ SSH 配置保存在 `~/.drsai/configs/ssh_configs.json`：
     "username": "xiongdb",
     "password": "",
     "private_key_path": "~/.ssh/id_rsa",
-    "remote_python": "python3",
-    "remote_python_src_root": "/home/xiongdb/drsai_dev/cores/python/packages/drsai/src",
     "remote_gateway_port": 0,
     "remote_workdir": "/home/xiongdb/projects"
   }
 ]
 ```
 
+> **安全说明：** `password` 字段在列表 API 中以 `***` 脱敏返回。`private_key_path` 指向的私钥文件仅在本机使用，不会上传到远程。
+
 ### JSON-RPC 方法列表
 
-| 方法 | 说明 | 耗时 |
-|------|------|------|
-| `remote.config.list` | 列出已保存配置（脱敏） | 短 |
-| `remote.config.save` | 保存/更新配置 | 短 |
-| `remote.config.delete` | 删除配置 | 短 |
-| `remote.test` | 测试 SSH 连接 | 长（线程池） |
-| `remote.connect` | 连接 + 启动远程 gateway + 建立隧道 | 长（线程池） |
-| `remote.disconnect` | 断开 + 清理远程进程 | 短 |
-| `remote.status` | 获取连接状态 | 短 |
-| `remote.list_dirs` | 列出远程目录 | 短 |
-| `remote.list_files` | 列出远程文件 | 短 |
-| `remote.exec` | 远程执行 shell 命令 | 长（线程池） |
+| 方法 | 说明 | 耗时 | 需要已连接 |
+|------|------|------|-----------|
+| `remote.config.list` | 列出已保存配置（脱敏） | 短 | 否 |
+| `remote.config.save` | 保存/更新配置 | 短 | 否 |
+| `remote.config.delete` | 删除配置 | 短 | 否 |
+| `remote.test` | 测试 SSH 连接 | 长（线程池） | 否 |
+| `remote.connect` | 连接 + 启动远程 gateway + 建立隧道 | 长（线程池） | 否 |
+| `remote.disconnect` | 断开 + 清理远程进程 | 短 | — |
+| `remote.status` | 获取连接状态 | 短 | 否 |
+| `remote.list_dirs` | 列出远程目录 | 短 | ✅ |
+| `remote.list_files` | 列出远程文件 | 短 | ✅ |
+| `remote.exec` | 远程执行 shell 命令 | 长（线程池） | ✅ |
+| `remote.browse_dirs` | 临时 SSH 连接浏览远程目录 | 长（线程池） | 否 |
+
+> `remote.browse_dirs` 与 `remote.list_files` 的区别：`browse_dirs` 使用临时 SSH 连接，不需要已建立隧道，用于配置阶段选择 workdir；`list_files` 使用已有隧道，速度更快，用于已连接后浏览。
 
 ---
 
@@ -391,16 +600,28 @@ head -1 ~/.ssh/id_rsa
 ```bash
 # 手动在远程测试 gateway 启动
 ssh xiongdb@192.168.32.192
-DRSAI_TUI_ENABLE_WS=1 DRSAI_TUI_WS_PORT=9999 \
-  python3 -m drsai.backend.tui_gateway
+DRSAI_TUI_ENABLE_WS=1 DRSAI_TUI_WS_PORT=9999 opendrsai tui-gateway
 
 # 查看远程日志
 cat /tmp/drsai_ssh_tui/gateway.log
 
 # 常见原因：
-# 1. drsai 未安装 → pip install -e .
-# 2. API Key 未配置 → drsai config
-# 3. PYTHONPATH 不对 → 检查 remote_python_src_root
+# 1. opendrsai 未安装 → 在远程运行 install_drsai.sh 安装
+# 2. API Key 未配置 → 远程运行 opendrsai config
+# 3. opendrsai 不在 PATH → 确认 ~/.drsai/bin/opendrsai 存在
+```
+
+### 目录浏览失败（编辑视图按 b 无反应）
+
+**可能原因：**
+1. Host 或 Username 未填写 — 先填写这两个字段
+2. SSH 认证信息不正确 — 确认 Password 或 Private Key Path 正确
+3. 网络不通 — 先按 `t` 在列表视图测试连接
+
+**排查：**
+```bash
+# 手动测试 SSH 连接
+ssh -i ~/.ssh/id_rsa xiongdb@192.168.32.192 "ls ~"
 ```
 
 ### 连接成功但 TUI 无响应
@@ -417,6 +638,15 @@ ss -tlnp | grep 9999   # 检查端口
 # 检查日志
 cat /tmp/drsai_ssh_tui/gateway.log
 ```
+
+### 远程连接意外断开
+
+TUI 会显示断链提示界面，不会直接退出。你可以选择：
+- `R` — 重连（切回本地，然后用 `/remote` 重新连接）
+- `L` — 切回本地模式
+- `Ctrl+D` — 退出
+
+如果频繁断连，检查网络稳定性，或确认中间是否有防火墙/NAT 超时。SSH keepalive（30s）已默认启用。
 
 ### Windows 特定问题
 
@@ -465,6 +695,7 @@ print(stdout.read().decode())
 
 # 测试端口转发
 transport = client.get_transport()
+transport.set_keepalive(30)  # 启用 keepalive
 channel = transport.open_channel("direct-tcpip", ("127.0.0.1", 9999), ("127.0.0.1", 0))
 print("Channel created:", channel)
 
@@ -488,3 +719,4 @@ pnpm dev      # 开发模式（热重载）
 2. **端口转发范围：** 隧道仅绑定 `127.0.0.1`（本地回环），不暴露到网络。
 3. **远程进程清理：** 断开时自动 `kill` 远程 gateway 进程。异常退出时可能残留，需手动清理。
 4. **API Key 隔离：** 远程使用远程自己的 DrSai 配置和 API Key，与本地完全独立。
+5. **SSH Keepalive：** 默认每 30 秒发送 keepalive 包，防止 NAT/防火墙静默断开，同时也能更快检测到断链。

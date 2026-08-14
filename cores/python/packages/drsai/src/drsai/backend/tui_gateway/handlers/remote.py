@@ -9,9 +9,10 @@ remote.py — tui_gateway 中的远程 SSH 管理 RPC 处理器。
   - remote.connect        — 连接远程服务器, 启动远程 tui_gateway, 建立隧道
   - remote.disconnect     — 断开远程连接
   - remote.status         — 获取当前连接状态
-  - remote.list_dirs      — 列出远程目录
-  - remote.list_files     — 列出远程文件
-  - remote.exec           — 在远程执行命令
+  - remote.list_dirs      — 列出远程目录 (需已连接)
+  - remote.list_files     — 列出远程文件 (需已连接)
+  - remote.exec           — 在远程执行命令 (需已连接)
+  - remote.browse_dirs    — 临时 SSH 连接浏览远程目录 (无需已连接)
 
 连接成功后, 通过事件 `remote.connected` 通知 TUI,
 TUI 可以使用返回的 `ws_attach_url` 切换 GatewayClient 到 WebSocket attach 模式。
@@ -22,6 +23,8 @@ from __future__ import annotations
 import logging
 import threading
 from typing import Optional
+
+import os
 
 from ..server import _emit, _err, _ok, method
 from ..ssh_tunnel import (
@@ -261,4 +264,106 @@ def remote_exec(rid, params: dict) -> dict:
             "host": tunnel.status.remote_hostname,
         })
     except Exception as e:
+        return _err(rid, -32000, str(e))
+
+
+# ── 配置阶段目录浏览 (无需已连接) ────────────────────────────────────
+
+
+@method("remote.browse_dirs")
+def remote_browse_dirs(rid, params: dict) -> dict:
+    """临时建立 SSH 连接来浏览远程目录，无需已连接远程 gateway。
+
+    用于编辑 SSH 配置时选择 remote_workdir。
+    接受完整配置参数或已保存的配置名。
+
+    params:
+      name: 配置名称 (可选, 用于加载已保存的配置)
+      或直接传入 host/port/username/password/private_key_path 等
+      path: 要浏览的远程目录路径 (默认 "~")
+
+    返回:
+      entries: [{name, path, is_dir, size}, ...]
+    """
+    try:
+        from ..ssh_tunnel import SSHConfig, SSHTunnelManager, _HAS_PARAMIKO
+
+        if not _HAS_PARAMIKO:
+            return _err(rid, -32000, "paramiko 未安装")
+
+        # 构建配置: 优先从 name 加载, 然后用 params 覆盖
+        name = params.get("name", "")
+        if name:
+            cfg = get_ssh_config(name)
+            if cfg is None:
+                return _err(rid, -32000, f"配置 '{name}' 不存在")
+            # 用 params 中的字段覆盖 (除了 name/path)
+            for k, v in params.items():
+                if k not in ("name", "path") and hasattr(cfg, k) and v:
+                    setattr(cfg, k, v)
+        else:
+            cfg = SSHConfig.from_dict(params)
+
+        errs = cfg.validate()
+        if errs:
+            return _err(rid, -32000, "; ".join(errs))
+
+        path = params.get("path", "~")
+
+        # 临时建立 SSH 连接 (不启动 gateway, 不建立隧道)
+        import paramiko
+
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        connect_kwargs: dict = {
+            "hostname": cfg.host,
+            "port": cfg.port,
+            "username": cfg.username,
+            "timeout": 10,
+        }
+        key_path = os.path.expanduser(cfg.private_key_path) if cfg.private_key_path else ""
+        if key_path and os.path.exists(key_path):
+            connect_kwargs["key_filename"] = key_path
+        elif cfg.password:
+            connect_kwargs["password"] = cfg.password
+        else:
+            connect_kwargs["allow_agent"] = True
+            connect_kwargs["look_for_keys"] = True
+
+        try:
+            client.connect(**connect_kwargs)
+        except Exception as e:
+            return _err(rid, -32000, f"SSH 连接失败: {e}")
+
+        try:
+            # 使用 SFTP 列出目录
+            sftp = client.open_sftp()
+            try:
+                # 展开 ~ 为用户主目录
+                if path.startswith("~"):
+                    stdin, stdout, stderr = client.exec_command("echo $HOME")
+                    home = stdout.read().decode().strip()
+                    path = path.replace("~", home, 1)
+
+                entries = []
+                for attr in sftp.listdir_attr(path):
+                    import stat as stat_module
+                    is_dir = stat_module.S_ISDIR(attr.st_mode) if attr.st_mode else False
+                    entries.append({
+                        "name": attr.filename,
+                        "path": path.rstrip("/") + "/" + attr.filename,
+                        "is_dir": is_dir,
+                        "size": str(attr.st_size) if attr.st_size else "",
+                    })
+                # 目录排在前面
+                entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+                return _ok(rid, {"path": path, "entries": entries})
+            finally:
+                sftp.close()
+        finally:
+            client.close()
+
+    except Exception as e:
+        logger.exception("remote.browse_dirs failed")
         return _err(rid, -32000, str(e))
