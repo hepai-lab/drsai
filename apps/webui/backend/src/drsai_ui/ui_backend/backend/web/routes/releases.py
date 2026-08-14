@@ -29,13 +29,14 @@ TRUSTASIA_CROSS_CERTIFICATE = (
 def _configured_release_channels() -> tuple[str, ...]:
     configured = os.getenv("OPENDRSAI_RELEASE_CHANNELS")
     if configured is None:
-        # Preserve explicit legacy single-channel deployments. A fresh
-        # development deployment prefers beta and falls back to stable.
+        # Preserve explicit legacy single-channel deployments. The generic
+        # backend defaults safely to stable; the development launcher opts in
+        # to beta-first behavior explicitly.
         configured = os.getenv("OPENDRSAI_RELEASE_CHANNEL")
     if configured is None:
         configured = os.getenv("OPENDRSAI_MACOS_RELEASE_CHANNEL")
     if configured is None:
-        configured = "beta,stable"
+        configured = "stable"
 
     channels: list[str] = []
     for raw_channel in configured.split(","):

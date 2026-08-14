@@ -206,3 +206,7 @@ def test_release_channel_configuration_supports_new_and_legacy_env(
     monkeypatch.delenv("OPENDRSAI_RELEASE_CHANNELS")
     monkeypatch.setenv("OPENDRSAI_RELEASE_CHANNEL", "stable")
     assert _configured_release_channels() == ("stable",)
+
+    monkeypatch.delenv("OPENDRSAI_RELEASE_CHANNEL")
+    monkeypatch.delenv("OPENDRSAI_MACOS_RELEASE_CHANNEL", raising=False)
+    assert _configured_release_channels() == ("stable",)

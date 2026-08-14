@@ -9,6 +9,7 @@ VENV_DIR="${DRSAI_VENV_DIR:-${REPO_ROOT}/.venv}"
 
 BACKEND_HOST="${DRSAI_BACKEND_HOST:-0.0.0.0}"
 BACKEND_PORT="${DRSAI_BACKEND_PORT:-4291}"
+export OPENDRSAI_RELEASE_CHANNELS="${OPENDRSAI_RELEASE_CHANNELS:-beta,stable}"
 
 if [[ ! -x "${VENV_DIR}/bin/drsai-ui" ]]; then
     echo "Error: drsai-ui is not installed in ${VENV_DIR}." >&2
