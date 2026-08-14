@@ -9,6 +9,7 @@ export const MAX_STREAMING_FRAME_DURATION_MS = 200;
 export const MAX_STREAMING_AUDIO_CHUNK_BYTES = 48_000;
 
 export function validateStreamingVoiceStartRequest(request: DesktopStreamingVoiceStartRequest): void {
+  if (request.protocolVersion !== undefined && request.protocolVersion !== 1 && request.protocolVersion !== 2) throw new Error("Unsupported streaming voice protocol version.");
   if (!isSafeId(request.turnId)) throw new Error("A valid streaming voice turn ID is required.");
   if (request.encoding !== "pcm_s16le") throw new Error("Only pcm_s16le streaming audio is supported.");
   if (!STREAMING_VOICE_SAMPLE_RATES_HZ.includes(request.sampleRateHz as typeof STREAMING_VOICE_SAMPLE_RATES_HZ[number])) {
@@ -27,8 +28,9 @@ export function validateStreamingVoiceStartRequest(request: DesktopStreamingVoic
 
 export function validateStreamingVoiceAudioChunk(
   chunk: DesktopStreamingVoiceAudioChunk,
-  expected: Pick<DesktopStreamingVoiceStartRequest, "turnId" | "encoding" | "sampleRateHz" | "channels"> & { sessionId: string },
+  expected: Pick<DesktopStreamingVoiceStartRequest, "turnId" | "encoding" | "sampleRateHz" | "channels" | "protocolVersion"> & { sessionId: string },
 ): void {
+  if ((chunk.protocolVersion ?? 1) !== (expected.protocolVersion ?? 1)) throw new Error("Streaming audio protocol version changed during the session.");
   if (!isSafeId(chunk.sessionId) || chunk.sessionId !== expected.sessionId) throw new Error("Streaming audio session mismatch.");
   if (!isSafeId(chunk.turnId) || chunk.turnId !== expected.turnId) throw new Error("Streaming audio turn mismatch.");
   if (!Number.isSafeInteger(chunk.sequence) || chunk.sequence < 0) throw new Error("Invalid streaming audio sequence.");

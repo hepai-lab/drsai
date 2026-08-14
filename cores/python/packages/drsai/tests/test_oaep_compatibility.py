@@ -12,6 +12,7 @@ READY = {
     "migration_ratio": 1.0,
     "legacy_request_ratio": 0.0009,
     "fallback_error_rate": 0.001,
+    "supported_runtime_requires_legacy": False,
     "rollback_artifact_verified": True,
     "rollback_artifact_sha256": "a" * 64,
     "migration_transcript_before_sha256": "b" * 64,
@@ -36,6 +37,7 @@ def test_legacy_removal_requires_threshold_migration_and_rollback_evidence() -> 
         ("migration_ratio", 0.999),
         ("legacy_request_ratio", 0.001),
         ("fallback_error_rate", 0.0011),
+        ("supported_runtime_requires_legacy", True),
         ("rollback_artifact_verified", False),
         ("database_migration_verified", False),
         ("migration_transcript_after_sha256", "c" * 64),
@@ -58,3 +60,5 @@ def test_legacy_removal_rejects_missing_and_out_of_range_metrics() -> None:
         LegacyRemovalMetrics.from_mapping({**READY, "oaep_client_ratio": 1.1})
     with pytest.raises(ValueError, match="digest_invalid"):
         LegacyRemovalMetrics.from_mapping({**READY, "rollback_artifact_sha256": "bad"})
+    with pytest.raises(ValueError, match="metric_invalid"):
+        LegacyRemovalMetrics.from_mapping({**READY, "supported_runtime_requires_legacy": "false"})

@@ -170,9 +170,11 @@ export const useChatWebSocket = ({
             // arriving TextMessage is empty or much shorter (common before tools).
             let bestDraft: (typeof current.messages)[0] | null = null;
             let bestDraftLen = 0;
+            let lastDraft: (typeof current.messages)[0] | null = null;
             for (const m of current.messages) {
               if (m.config.source !== chunkSourceKey) continue;
               if (!isLiveStreamDraft(m)) continue;
+              lastDraft = m;
               const len =
                 typeof m.config.content === "string" ? m.config.content.trim().length : 0;
               if (len > bestDraftLen) {
@@ -180,9 +182,16 @@ export const useChatWebSocket = ({
                 bestDraftLen = len;
               }
             }
+            // Reasoning models stream everything inside <think>, so the draft's
+            // visible content can be empty — still carry its thought onto the
+            // final message so the ThinkBubble persists instead of vanishing.
+            const draftForThought = bestDraft ?? lastDraft;
             const draftLiveThought =
-              typeof (bestDraft?.config.metadata as any)?._live_thought === "string"
-                ? String((bestDraft!.config.metadata as any)._live_thought).trim()
+              typeof (draftForThought?.config.metadata as any)?._live_thought ===
+              "string"
+                ? String(
+                    (draftForThought!.config.metadata as any)._live_thought
+                  ).trim()
                 : "";
 
             // Content-plane split: reply visible, thought stays attached as <think>
@@ -282,161 +291,150 @@ export const useChatWebSocket = ({
             };
             return updatedRun;
 
-          case "message_chunk":
+          case "message_chunk": {
+            // One live draft bubble per source. Every token appends to the
+            // draft's raw buffer, which is then re-projected into the
+            // reply/thought planes (projectStreamContent).
             if (!wsMessage.data) return current;
-
             const chunkData = wsMessage.data as any;
-            if (chunkData.content && typeof chunkData.content === "string") {
-              const incomingRaw = chunkData.content as string;
-              if (!incomingRaw) return current;
-              const lastMsgIndex = current.messages.length - 1;
-              const chunkSource =
-                typeof chunkData.source === "string" ? chunkData.source : "assistant";
-              const sanitizedChunkMetadata =
-                chunkData.metadata && typeof chunkData.metadata === "object"
-                  ? { ...(chunkData.metadata as Record<string, unknown>) }
-                  : {};
-              const rawStartFlag = sanitizedChunkMetadata?.start_flag;
-              const startFlagValue =
-                typeof rawStartFlag === "string" ? rawStartFlag : undefined;
-              const isStartChunk = startFlagValue?.toLowerCase() === "yes";
+            if (!chunkData.content || typeof chunkData.content !== "string") {
+              return current;
+            }
+            const incomingRaw = chunkData.content as string;
+            const chunkSource =
+              typeof chunkData.source === "string"
+                ? chunkData.source
+                : "assistant";
+            const chunkMeta =
+              chunkData.metadata && typeof chunkData.metadata === "object"
+                ? { ...(chunkData.metadata as Record<string, unknown>) }
+                : {};
+            const isStartChunk =
+              typeof chunkMeta.start_flag === "string" &&
+              chunkMeta.start_flag.toLowerCase() === "yes";
 
-              const streamMeta = {
-                ...sanitizedChunkMetadata,
-                _stream_draft: true,
-                stream_source_label: chunkSource,
-              };
+            const buildDraft = (combinedRaw: string, startFlag: string) => {
+              const { reply, thought, thoughtDone } =
+                projectStreamContent(combinedRaw);
+              return {
+                source: chunkSource,
+                content: reply,
+                metadata: {
+                  ...chunkMeta,
+                  _stream_draft: true,
+                  stream_source_label: chunkSource,
+                  start_flag: startFlag,
+                  _stream_raw: combinedRaw,
+                  _live_thought: thought || undefined,
+                  _thought_done: thoughtDone ? "yes" : "no",
+                },
+              } as unknown as AgentMessageConfig;
+            };
 
-              const sealPriorStreams = (msgs: typeof current.messages) =>
-                msgs
-                  .map((m) => {
-                    if (m.config.source !== chunkSource || !isLiveStreamDraft(m)) {
-                      return m;
-                    }
-                    const content =
-                      typeof m.config.content === "string" ? m.config.content.trim() : "";
-                    const liveThought =
-                      typeof (m.config.metadata as any)?._live_thought === "string"
-                        ? String((m.config.metadata as any)._live_thought).trim()
-                        : "";
-                    if (!content && !liveThought) return null;
-                    return sealStreamMessage(m);
-                  })
-                  .filter(Boolean) as typeof current.messages;
-
-              const existingChunkIdx = current.messages.reduceRight(
-                (found: number, m, i) =>
-                  found >= 0
-                    ? found
-                    : m.config.source === chunkSource && isLiveStreamDraft(m)
-                    ? i
-                    : -1,
-                -1
+            // A draft that is still accumulating raw stream (excludes sealed
+            // TextMessages that merely kept a leftover start_flag).
+            const isAccumulatingDraft = (
+              m: (typeof current.messages)[number]
+            ) => {
+              const meta = (m.config.metadata || {}) as Record<string, unknown>;
+              return (
+                meta._stream_draft === true ||
+                typeof meta._stream_raw === "string" ||
+                meta._is_streaming_chunk === true ||
+                (m.config as any).type === "ModelClientStreamingChunkEvent"
               );
+            };
+            const draftIdx = current.messages.reduceRight(
+              (found: number, m, i) =>
+                found >= 0
+                  ? found
+                  : m.config.source === chunkSource && isAccumulatingDraft(m)
+                  ? i
+                  : -1,
+              -1
+            );
 
-              const buildStreamMessage = (
-                combinedRaw: string,
-                forceStartFlag?: string
-              ) => {
-                const { reply, thought, thoughtDone } =
-                  projectStreamContent(combinedRaw);
-                return {
-                  source: chunkSource,
-                  content: reply,
+            // Branch 1 — append to the existing draft. This also covers tokens
+            // that wrongly carry start_flag mid-burst (treating them as a new
+            // burst used to reset the bubble to the last few lines). A start
+            // flag only opens a new bubble when another event interrupted the
+            // tail (draft no longer last).
+            const lastIdx = current.messages.length - 1;
+            if (draftIdx >= 0 && (draftIdx === lastIdx || !isStartChunk)) {
+              const existing = current.messages[draftIdx];
+              const existingMeta = (existing.config.metadata || {}) as any;
+              const prevRaw =
+                typeof existingMeta._stream_raw === "string"
+                  ? (existingMeta._stream_raw as string)
+                  : typeof existing.config.content === "string"
+                  ? (existing.config.content as string)
+                  : "";
+              const payload = buildDraft(
+                prevRaw + incomingRaw,
+                existingMeta.start_flag || "yes"
+              );
+              const messages = [...current.messages];
+              messages[draftIdx] = {
+                ...existing,
+                config: {
+                  ...existing.config,
+                  content: payload.content as string,
                   metadata: {
-                    ...streamMeta,
-                    start_flag: forceStartFlag || startFlagValue || "yes",
-                    _stream_raw: combinedRaw,
-                    _live_thought: thought || undefined,
-                    _thought_done: thoughtDone ? "yes" : "no",
+                    ...existingMeta,
+                    ...(payload.metadata as any),
                   },
-                } as unknown as AgentMessageConfig;
-              };
-
-              if (isStartChunk || existingChunkIdx < 0) {
-                const baseMsgs =
-                  isStartChunk && existingChunkIdx >= 0
-                    ? sealPriorStreams(current.messages)
-                    : current.messages;
-                const payload = buildStreamMessage(incomingRaw, startFlagValue || "yes");
-                // Keep the bubble even when only thinking (reply still empty).
-                if (!payload.content && !(payload.metadata as any)?._live_thought) {
-                  updatedRun = { ...current, messages: baseMsgs };
-                  return updatedRun;
-                }
-                const newChunkMessage = createMessage(
-                  payload,
-                  current.id,
-                  session.id,
-                  userEmail
-                );
-                streamingMessageRef.current = {
-                  source: chunkSource,
-                  content: String(payload.content || ""),
-                };
-                updatedRun = {
-                  ...current,
-                  messages: [...baseMsgs, newChunkMessage],
-                };
-                return updatedRun;
-              }
-
-              if (existingChunkIdx === lastMsgIndex) {
-                const existingChunk = current.messages[existingChunkIdx];
-                const prevRaw =
-                  typeof (existingChunk.config.metadata as any)?._stream_raw === "string"
-                    ? ((existingChunk.config.metadata as any)._stream_raw as string)
-                    : typeof existingChunk.config.content === "string"
-                    ? (existingChunk.config.content as string)
-                    : "";
-                const combinedRaw = prevRaw + incomingRaw;
-                const payload = buildStreamMessage(
-                  combinedRaw,
-                  (existingChunk.config.metadata as any)?.start_flag || "yes"
-                );
-                const updatedMessages = [...current.messages];
-                updatedMessages[existingChunkIdx] = {
-                  ...existingChunk,
-                  config: {
-                    ...existingChunk.config,
-                    content: payload.content as string,
-                    metadata: {
-                      ...(existingChunk.config.metadata || {}),
-                      ...(payload.metadata as any),
-                    },
-                  },
-                } as typeof existingChunk;
-                streamingMessageRef.current = {
-                  source: chunkSource,
-                  content: String(payload.content || ""),
-                };
-                updatedRun = { ...current, messages: updatedMessages };
-                return updatedRun;
-              }
-
-              const sealed = sealPriorStreams(current.messages);
-              const payload = buildStreamMessage(incomingRaw, "yes");
-              if (!payload.content && !(payload.metadata as any)?._live_thought) {
-                updatedRun = { ...current, messages: sealed };
-                return updatedRun;
-              }
-              const newChunkMessage = createMessage(
-                payload,
-                current.id,
-                session.id,
-                userEmail
-              );
+                },
+              } as typeof existing;
               streamingMessageRef.current = {
                 source: chunkSource,
                 content: String(payload.content || ""),
               };
-              updatedRun = {
-                ...current,
-                messages: [...sealed, newChunkMessage],
-              };
+              updatedRun = { ...current, messages };
               return updatedRun;
             }
-            return current;
+
+            // Branch 2 — open a new draft bubble. Seal any prior live drafts
+            // from this source into normal bubbles first (drop empty ones).
+            const sealed = current.messages
+              .map((m) => {
+                if (m.config.source !== chunkSource || !isLiveStreamDraft(m)) {
+                  return m;
+                }
+                const content =
+                  typeof m.config.content === "string"
+                    ? m.config.content.trim()
+                    : "";
+                const liveThought =
+                  typeof (m.config.metadata as any)?._live_thought === "string"
+                    ? String((m.config.metadata as any)._live_thought).trim()
+                    : "";
+                if (!content && !liveThought) return null;
+                return sealStreamMessage(m);
+              })
+              .filter(Boolean) as typeof current.messages;
+
+            const payload = buildDraft(
+              incomingRaw,
+              isStartChunk ? (chunkMeta.start_flag as string) : "yes"
+            );
+            // Nothing visible yet (no reply and no thought): just keep state.
+            if (!payload.content && !(payload.metadata as any)?._live_thought) {
+              updatedRun = { ...current, messages: sealed };
+              return updatedRun;
+            }
+            streamingMessageRef.current = {
+              source: chunkSource,
+              content: String(payload.content || ""),
+            };
+            updatedRun = {
+              ...current,
+              messages: [
+                ...sealed,
+                createMessage(payload, current.id, session.id, userEmail),
+              ],
+            };
+            return updatedRun;
+          }
 
           case "message_log":
             if (!wsMessage.data) return current;

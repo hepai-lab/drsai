@@ -1,7 +1,9 @@
 package ai.drsai.remote.remote.model
 
 import ai.drsai.remote.remote.data.OaepJsonCodec
+import ai.drsai.remote.remote.generated.OaepCommandExecutionContent
 import ai.drsai.remote.remote.generated.OaepItem
+import ai.drsai.remote.remote.generated.OaepToolCallContent
 import java.security.MessageDigest
 import org.json.JSONArray
 import org.json.JSONObject
@@ -17,6 +19,14 @@ fun oaepItemsDigest(items: List<OaepItem>): String {
                 // Python/Desktop preserve absence. Canonical digests must
                 // treat those representations as the same semantic value.
                 if (value.optJSONArray("parts")?.length() == 0) value.remove("parts")
+                val emptyReplayPolicy = when (val itemContent = item.content) {
+                    is OaepCommandExecutionContent -> itemContent.replayPolicy.isEmpty()
+                    is OaepToolCallContent -> itemContent.replayPolicy.isEmpty()
+                    else -> false
+                }
+                if (emptyReplayPolicy) {
+                    value.remove("replay_policy")
+                }
             }
             linkedMapOf(
                 "id" to item.id,

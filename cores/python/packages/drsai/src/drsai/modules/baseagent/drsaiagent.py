@@ -160,6 +160,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         set_model_client: Callable | None = None,
         llm_mode_config: Dict[str, Any] | None = None,
         defult_config_name: str|None = None,
+        owns_model_client: bool = True,
         **kwargs,
             ):
         '''
@@ -178,6 +179,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 raise ValueError("Please provide a model_client.")
         self._metadata = metadata or {}
         self._model_client = model_client
+        self._owns_model_client = owns_model_client
         self._model_client_stream = model_client_stream
         # Store llm_mode_config and defult_config_name for token limit access
         self._llm_mode_config = llm_mode_config or {}
@@ -496,6 +498,62 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                     yield inference_output
 
             assert model_result is not None, "No model result was produced."
+
+            # ``[Continuing]`` is an internal acknowledgement inserted by
+            # ``_sanitize_api_messages`` to preserve user/assistant role
+            # alternation for providers such as Anthropic.  It must never be
+            # exposed as the agent's final answer.  Treat it like an empty
+            # completion and give the model one bounded retry.
+            if (
+                isinstance(model_result.content, str)
+                and model_result.content.strip() in {"", "[Continuing]"}
+            ):
+                logger.warning(
+                    "Model returned an empty/internal continuation response; retrying once"
+                )
+                await model_context.add_message(
+                    AssistantMessage(content="[Continuing]", source=agent_name)
+                )
+                await model_context.add_message(
+                    UserMessage(
+                        content=(
+                            "Your previous reply was empty or contained only an internal "
+                            "continuation marker. Please provide the complete answer to the "
+                            "user's request."
+                        ),
+                        source="user",
+                    )
+                )
+
+                retry_result = None
+                async for inference_output in self._call_llm(
+                    model_client=model_client,
+                    model_client_stream=model_client_stream,
+                    system_messages=system_messages,
+                    model_context=model_context,
+                    workbench=workbench,
+                    handoff_tools=handoff_tools,
+                    agent_name=agent_name,
+                    cancellation_token=cancellation_token,
+                    output_content_type=output_content_type,
+                ):
+                    if self.is_paused:
+                        raise asyncio.CancelledError()
+                    if isinstance(inference_output, CreateResult):
+                        retry_result = inference_output
+                    else:
+                        yield inference_output
+
+                if retry_result is None:
+                    raise RuntimeError("No model result was produced by the retry.")
+                if (
+                    isinstance(retry_result.content, str)
+                    and retry_result.content.strip() in {"", "[Continuing]"}
+                ):
+                    raise RuntimeError(
+                        "Model returned an empty/internal continuation response after retry."
+                    )
+                model_result = retry_result
 
             # --- NEW: If the model produced a hidden "thought," yield it as an event ---
             if model_result.thought:
@@ -1126,8 +1184,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         #     f"to {new_model_client._create_args.get('model', 'unknown')}"
         # )
 
-        # Close the old client
-        await self._model_client.close()
+        if not self._owns_model_client:
+            raise RuntimeError("A non-owning agent cannot switch the shared model client")
+        old_model_client = self._model_client
         # Update to new client
         self._model_client = new_model_client
 
@@ -1136,20 +1195,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         # (_incremental_compress) and summary generation
         # (summry_conversation_to_memory) all use the new model client.
         # 
-        # IMPORTANT: Create an independent copy for the context, similar to how
-        # DrSaiAssistant._create_context creates independent_model_client.
-        # This prevents the context from sharing the same client instance with
-        # the agent, which could cause issues when one is closed.
         if hasattr(self._model_context, 'update_model_client'):
             try:
-                model_config = new_model_client.dump_component()
-                independent_client = ChatCompletionClient.load_component(model_config)
-                # Preserve model_info from the new client
-                independent_client._model_info = new_model_client._model_info
-                await self._model_context.update_model_client(independent_client)
-            except Exception as e:
-                logger.warning(f"Failed to create independent model_client for context, using shared client: {e}")
                 await self._model_context.update_model_client(new_model_client)
+            except Exception as e:
+                logger.warning(f"Failed to update context model_client: {e}")
+        if old_model_client is not new_model_client:
+            await old_model_client.close()
 
         # Sanitize immediately after model switch so that any orphaned tool
         # results or unmatched tool_calls left over from the previous model are
@@ -1362,8 +1414,8 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         logger.info(f"Closing {self.name}...")
         if self._cancellation_token is not None and not self._cancellation_token.is_cancelled():
             self._cancellation_token.cancel()
-        # Close the model client.
-        await self._model_client.close()
+        if self._owns_model_client:
+            await self._model_client.close()
 
     async def pause(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Pause the agent by setting the paused state."""

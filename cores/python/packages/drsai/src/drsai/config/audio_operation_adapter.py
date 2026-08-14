@@ -7,6 +7,8 @@ from typing import Literal
 
 import httpx
 
+from drsai.platform_auth import get_model_credential_provider
+
 from .model_operation_adapters import ModelProtocolError
 from .model_operation_routing import ResolvedAgentOperation
 
@@ -95,7 +97,12 @@ class OpenAIAudioOperationAdapter:
 
     def _post(self, resolved: ResolvedAgentOperation, path: str, **kwargs) -> httpx.Response:
         provider = resolved.model.provider
-        key = provider.api_key.reveal() if provider.api_key else None
+        static_key = provider.api_key.reveal() if provider.api_key else None
+        credential = (
+            get_model_credential_provider(static_key, provider.base_url)
+            if provider.name == "hepai" else None
+        )
+        key = credential.access_token if credential is not None else static_key
         if provider.requires_api_key and not key:
             raise ModelProtocolError("credential_unavailable", "Provider credential is unavailable")
         headers = dict(kwargs.pop("headers", {}))
@@ -104,7 +111,8 @@ class OpenAIAudioOperationAdapter:
             headers["Authorization"] = f"Bearer {key}"
         try:
             with httpx.Client(timeout=self.timeout, transport=self.transport, follow_redirects=False) as client:
-                response = client.post(f"{provider.base_url.rstrip('/')}{path}", headers=headers, **kwargs)
+                base_url = credential.openai_base_url if credential is not None else provider.base_url
+                response = client.post(f"{base_url.rstrip('/')}{path}", headers=headers, **kwargs)
         except httpx.TimeoutException as exc:
             raise ModelProtocolError("provider_timeout", "Audio Provider timed out", retryable=True) from exc
         except httpx.HTTPError as exc:

@@ -101,6 +101,10 @@ if (pythonCredentials.includes('"-w", secret') || pythonCredentials.includes("'-
   console.error("macOS Keychain command exposes the secret in process arguments.");
   process.exit(1);
 }
+if (!pythonCredentials.includes("SecKeychainAddGenericPassword") || !pythonCredentials.includes("Security.framework/Security")) {
+  console.error("macOS model Provider credentials must use the native Security.framework boundary.");
+  process.exit(1);
+}
 if (/response\.(?:text|content)|response\.headers/.test(pythonConnectivity)) {
   console.error("Connectivity probe may expose upstream response bodies or headers.");
   process.exit(1);

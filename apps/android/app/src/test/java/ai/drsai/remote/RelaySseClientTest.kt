@@ -1,6 +1,7 @@
 package ai.drsai.remote
 
 import ai.drsai.remote.remote.data.RelaySseClient
+import ai.drsai.remote.remote.data.RemoteResourceLeaseRegistry
 import ai.drsai.remote.remote.model.*
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
@@ -213,5 +214,22 @@ class RelaySseClientTest {
             "/v1/runtimes/rt/workspaces/ws/session-catalog-events/stream",
             server.takeRequest().path,
         )
+    }
+
+    @Test fun `completed stream returns its bounded process lease`() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"event_id\":\"evt-1\",\"sequence\":1,\"runtime_id\":\"rt\"," +
+                "\"workspace_id\":\"ws\",\"session_id\":\"session\",\"run_id\":\"run\"," +
+                "\"timestamp\":\"now\",\"kind\":\"run.started\",\"payload\":{}}\n\n",
+        ))
+        val resources = RemoteResourceLeaseRegistry()
+        resources.registerOwner("sse_stream", this, capacity = 1)
+
+        RelaySseClient(server.url("/").toString(), { "token" }, resources = resources)
+            .stream(identity, 0)
+            .toList()
+
+        assertEquals(0, resources.activeCount())
+        assertEquals(1, resources.ownershipSnapshot().single().ownerCount)
     }
 }

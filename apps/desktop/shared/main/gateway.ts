@@ -1,8 +1,8 @@
 import { execFile, spawn, type ChildProcess } from "child_process";
 import { randomBytes } from "crypto";
-import { get } from "http";
+import { Agent, get } from "http";
 import { connect as connectTcp } from "net";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import type { GatewayEndpointStatus, GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
@@ -11,6 +11,11 @@ import { collectMigrationAliases, getCliConfigUserId, rememberUserIdAlias, setCl
 import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
 import { redactDesktopSecrets } from "./secretRedaction";
 import { redactSensitiveData } from "../api/sensitiveData";
+import {
+  registerGatewayIdentitySynchronizer,
+  requireCoordinatedAuthContext,
+} from "./authGatewayCoordination";
+import { resolveGatewayPort } from "./gatewayEnvironment";
 
 let processService: DesktopProcessService | null = null;
 let desktopAppRuntime = {
@@ -27,13 +32,20 @@ export function configureGatewayPlatform(input: {
 }
 
 const GATEWAY_HOST = "127.0.0.1";
-const GATEWAY_PORT = getGatewayPort();
+// Local Runtime traffic must never inherit NODE_USE_ENV_PROXY. Otherwise a
+// machine-wide HTTP proxy can answer the loopback /health request itself
+// (commonly with 403), which looks like a Gateway token conflict and prevents
+// an otherwise healthy local Agent from starting.
+const LOOPBACK_HTTP_AGENT = new Agent({ keepAlive: false });
+const GATEWAY_PORT = resolveGatewayPort();
 const GATEWAY_BASE_URL = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 const DEV_MANAGED_EXTERNAL_GATEWAY = process.env.DRSAI_GATEWAY_DEV_MANAGED === "1";
 const HOT_RELOAD_GATEWAY = process.env.DRSAI_GATEWAY_HOT_RELOAD === "1";
 const GATEWAY_TOKEN_PATH = join(DRSAI_HOME, "runtime", "instance-token");
+const GATEWAY_LOG_PATH = join(DRSAI_HOME, "logs", "gateway.log");
 const GATEWAY_INSTANCE_TOKEN = loadGatewayInstanceToken();
 const PERSIST_RUNTIME = !HOT_RELOAD_GATEWAY && process.env.OPENDRSAI_RUNTIME_PERSIST !== "0";
+const GATEWAY_PYTHON = resolveGatewayPythonExecutable();
 const GATEWAY_START_TIMEOUT_MS = Math.max(5_000, Math.min(120_000,
   Number(process.env.OPENDRSAI_GATEWAY_START_TIMEOUT_MS || "30000") || 30_000));
 const GATEWAY_PROBE_TIMEOUT_MS = Math.max(500, Math.min(15_000,
@@ -105,6 +117,33 @@ export function getGatewayRequestHeaders(): Record<string, string> {
   return { "X-OpenDrSai-Gateway-Token": GATEWAY_INSTANCE_TOKEN };
 }
 
+/**
+ * Authenticate a Desktop-to-Gateway request with the current HepAI session.
+ *
+ * The instance token authenticates the local Desktop process; it is not a
+ * model credential. Provider-backed routes also need the OIDC context so the
+ * Gateway can attach the user's bearer token to HepAI model requests.
+ */
+export async function getAuthenticatedGatewayRequestHeaders(): Promise<Record<string, string>> {
+  const headers = getGatewayRequestHeaders();
+  try {
+    const auth = await requireCoordinatedAuthContext();
+    if (auth.authMode === "oidc" && auth.accessToken) {
+      return {
+        ...headers,
+        Authorization: `Bearer ${auth.accessToken}`,
+        "X-OpenDrSai-Auth-Mode": "oidc",
+        "X-OpenDrSai-Principal": auth.userId,
+      };
+    }
+  } catch {
+    // Offline/local Providers continue to use their saved credential. The
+    // Gateway will return a structured credential error for HepAI if sign-in
+    // is actually required.
+  }
+  return headers;
+}
+
 export function checkGatewayReady(): Promise<boolean> {
   if (!isManagedGatewayRunning() && !DEV_MANAGED_EXTERNAL_GATEWAY && !adoptedPersistentRuntime) {
     return Promise.resolve(false);
@@ -118,6 +157,9 @@ async function checkGatewayEndpoints(): Promise<boolean> {
 
 export async function getGatewayStatus(): Promise<GatewayStatus> {
   const probe = await probeGatewayEndpoints();
+  // A later healthy instance must receive identity again, but routine health
+  // reads against the same instance must not rewrite identical identity state.
+  if (!probe.ready) lastSyncedGatewayUserId = null;
   // Ownership and health are deliberately independent. A managed Runtime that
   // misses one probe deadline is degraded, not a foreign port occupant.
   const managed = isGatewayOwnershipKnown();
@@ -132,7 +174,7 @@ export async function getGatewayStatus(): Promise<GatewayStatus> {
     externalConflict: probe.portOpen && !managed && !externalMode,
     baseUrl: GATEWAY_BASE_URL,
     pid: gatewayProcess?.pid ?? null,
-    lastLog: lastGatewayLog,
+    lastLog: readGatewayLogTail() || lastGatewayLog,
     portOpen: probe.portOpen,
     diagnosticCode: probe.diagnosticCode,
     diagnosticMessage,
@@ -177,8 +219,9 @@ export async function syncAuthIdentityToGateway(explicitUserId?: string): Promis
   process.env.DRSAI_DESKTOP_USER = userId;
   process.env.DRSAI_USER_ID = userId;
 
-  // Runtime override does not evict agents; safe to refresh on adopt/start.
-  await putGatewayJson("/v1/config/user-name", { user_name: userId });
+  // Runtime override does not evict agents, but an unchanged identity must not
+  // generate a PUT (and INFO log) on every health/recovery cycle.
+  if (identityChanged) await putGatewayJson("/v1/config/user-name", { user_name: userId });
 
   // cli_config PUT evicts the user's agent pool — only when the id changes.
   if (identityChanged && previousCliUserId !== userId) {
@@ -193,14 +236,15 @@ export async function syncAuthIdentityToGateway(explicitUserId?: string): Promis
   return userId;
 }
 
+registerGatewayIdentitySynchronizer(syncAuthIdentityToGateway);
+
 async function canonicalizeHistoricalUserIds(
   canonicalUserId: string,
   previousCliUserId: string | null,
 ): Promise<void> {
   let email: string | null = null;
   try {
-    const { requireAuthContext } = await import("./auth");
-    email = (await requireAuthContext()).session.user?.email ?? null;
+    email = (await requireCoordinatedAuthContext()).session.user?.email ?? null;
   } catch {
     email = null;
   }
@@ -370,12 +414,25 @@ async function startGatewayOnce(): Promise<boolean> {
     ));
     if (!killed) return false;
   }
+  // Source development has a single Gateway owner: dev.ps1/watch-gateway.ps1.
+  // If that watcher disappears, spawning an internal Windows Gateway here
+  // creates a direct uvicorn process without source reload. Electron restarts
+  // then keep adopting that stale process even after Python files change.
+  // Fail closed so the developer sees that the managed Runtime is unavailable
+  // and can restart the bootstrap; never replace the watcher with a different
+  // lifecycle model behind the same development port.
+  if (DEV_MANAGED_EXTERNAL_GATEWAY) {
+    appendGatewayLog(Buffer.from(
+      "\nDevelopment Gateway watcher is unavailable; refusing to start a non-reloading fallback Runtime.",
+    ));
+    return false;
+  }
   if (gatewayProcess && !gatewayProcess.killed) {
     const ready = await pollGatewayReady(gatewayProcess, GATEWAY_READY_POLL_MS);
     if (ready && desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
     return ready;
   }
-  if (!existsSync(DRSAI_PYTHON)) return false;
+  if (!existsSync(GATEWAY_PYTHON)) return false;
 
   // uvicorn's Windows reload worker uses a SelectorEventLoop and cannot
   // reliably launch the subprocess-backed Agent backends. Keep the Desktop
@@ -400,7 +457,8 @@ async function startGatewayOnce(): Promise<boolean> {
     : {};
 
   gatewaySpawnError = null;
-  gatewayProcess = spawn(DRSAI_PYTHON, args, {
+  prepareGatewayLog();
+  gatewayProcess = spawn(GATEWAY_PYTHON, args, {
     cwd: existsSync(DRSAI_REPO) ? DRSAI_REPO : undefined,
     env: {
       ...process.env,
@@ -408,6 +466,9 @@ async function startGatewayOnce(): Promise<boolean> {
       DRSAI_API_PORT: GATEWAY_PORT,
       PYTHONDONTWRITEBYTECODE: "1",
       OPENDRSAI_GATEWAY_INSTANCE_TOKEN: GATEWAY_INSTANCE_TOKEN,
+      OPENDRSAI_DESKTOP_RUNTIME: "1",
+      OPENDRSAI_GATEWAY_LOG_PATH: GATEWAY_LOG_PATH,
+      ...(process.env.OPENDRSAI_DESKTOP_DEV === "1" ? { OPENDRSAI_ENABLE_REGRESSION_CONTROL: "1" } : {}),
       ...(NODE_PTY_MODULE ? { OPENDRSAI_NODE_PTY_MODULE: NODE_PTY_MODULE } : {}),
       ...localCodexEnv,
       ...identityEnv,
@@ -468,8 +529,7 @@ function normalizeDesktopUserId(value: unknown): string | null {
 
 async function resolveAuthenticatedUserId(): Promise<string | null> {
   try {
-    const { requireAuthContext } = await import("./auth");
-    return normalizeDesktopUserId((await requireAuthContext()).userId);
+    return normalizeDesktopUserId((await requireCoordinatedAuthContext()).userId);
   } catch {
     return null;
   }
@@ -548,6 +608,24 @@ function findCommandOnPath(command: string): Promise<string | null> {
   });
 }
 
+/**
+ * A Windows virtual environment's console launcher can start the base Python
+ * interpreter as a second console process. When its parent is Electron, that
+ * second hop may ask the configured Windows terminal host to create a visible
+ * window even though Node's first spawn used `windowsHide`.
+ *
+ * Gateway is a background service and already writes to the managed log sink,
+ * so use the GUI-subsystem launcher on Windows. Interactive CLI and developer
+ * terminal commands continue to use DRSAI_PYTHON.
+ */
+export function resolveGatewayPythonExecutable(
+  pythonExecutable = DRSAI_PYTHON,
+  platform = process.platform,
+): string {
+  if (platform !== "win32") return pythonExecutable;
+  const backgroundExecutable = join(dirname(pythonExecutable), "pythonw.exe");
+  return existsSync(backgroundExecutable) ? backgroundExecutable : pythonExecutable;
+}
 function isManagedGatewayRunning(): boolean {
   return Boolean(gatewayProcess && gatewayProcess.pid && !gatewayProcess.killed);
 }
@@ -560,7 +638,32 @@ function isGatewayOwnershipKnown(): boolean {
 }
 
 function appendGatewayLog(chunk: Buffer): void {
-  lastGatewayLog = redactSensitiveData(redactDesktopSecrets(`${lastGatewayLog}${chunk.toString()}`)).slice(-12000);
+  const safe = redactSensitiveData(redactDesktopSecrets(chunk.toString()));
+  lastGatewayLog = `${lastGatewayLog}${safe}`.slice(-12000);
+  try {
+    mkdirSync(dirname(GATEWAY_LOG_PATH), { recursive: true });
+    appendFileSync(GATEWAY_LOG_PATH, safe, "utf8");
+  } catch { /* In-memory status still exposes the bounded failure summary. */ }
+}
+
+function prepareGatewayLog(): void {
+  try {
+    mkdirSync(dirname(GATEWAY_LOG_PATH), { recursive: true });
+    if (existsSync(GATEWAY_LOG_PATH) && statSync(GATEWAY_LOG_PATH).size >= 5 * 1024 * 1024) {
+      const previous = `${GATEWAY_LOG_PATH}.1`;
+      if (existsSync(previous)) unlinkSync(previous);
+      renameSync(GATEWAY_LOG_PATH, previous);
+    }
+  } catch { /* Python also performs bounded rotation before opening its sink. */ }
+}
+
+function readGatewayLogTail(): string {
+  try {
+    const content = readFileSync(GATEWAY_LOG_PATH, "utf8");
+    return redactSensitiveData(redactDesktopSecrets(content)).slice(-12000);
+  } catch {
+    return "";
+  }
 }
 
 async function probeGatewayEndpoints(): Promise<GatewayProbe> {
@@ -643,7 +746,7 @@ function requestJson(
       settled = true;
       resolve(result);
     };
-    const req = get(url, { headers }, (res) => {
+    const req = get(url, { headers, agent: LOOPBACK_HTTP_AGENT }, (res) => {
       let body = "";
       res.setEncoding("utf8");
       res.on("data", (chunk: string) => {
@@ -691,6 +794,12 @@ export async function stopGateway(): Promise<boolean> {
   if (gatewayStartPromise) await gatewayStartPromise.catch(() => false);
   if (gatewayStopPromise) return gatewayStopPromise;
   const proc = gatewayProcess;
+  // In source development the outer dev.ps1/watch-gateway.ps1 process owns
+  // the Runtime lifecycle. Desktop may adopt and use that authenticated
+  // endpoint, but must never call /v1/runtime/shutdown for it. Otherwise any
+  // internal repair or quit path kills the watcher child and creates a
+  // permanent restart loop while Electron remains alive.
+  if (DEV_MANAGED_EXTERNAL_GATEWAY && !isProcessRunning(proc)) return false;
   if (!isProcessRunning(proc)) {
     if (adoptedPersistentRuntime && await checkGatewayEndpoints().then((value) => value)) {
       const stopped = await requestRuntimeShutdown();
@@ -841,10 +950,4 @@ function waitForProcessExit(proc: ChildProcess, timeoutMs: number): Promise<bool
     const timer = setTimeout(() => finish(!isProcessRunning(proc)), timeoutMs);
     proc.once("exit", onExit);
   });
-}
-
-function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
-  const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
 }

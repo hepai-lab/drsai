@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from drsai.config import connectivity
 from drsai.config.loader import parse_user_config
 from drsai.config.resolver import resolve_model_config
-from drsai.config.probe_history import clear_probe_history, latest_probe_result
+from drsai.config.probe_history import clear_probe_history, latest_probe_result, probe_fingerprint, reload_probe_history
+from drsai.platform_auth import PlatformAuthContext, platform_auth_scope
+
+
+@pytest.fixture(autouse=True)
+def _isolated_probe_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRSAI_HOME", str(tmp_path))
+    clear_probe_history(persistent=True)
+    yield
+    clear_probe_history(persistent=True)
 
 
 class _Response:
@@ -58,7 +69,11 @@ def _resolved(*, wire_api="openai", requires_key=True):
 
 def test_openai_model_probe_returns_bounded_output_without_leaking_secret(monkeypatch) -> None:
     clear_probe_history()
-    _Client.response = _Response(200, {"choices": [{"message": {"content": "pong"}}]})
+    _Client.response = _Response(200, {
+        "id": "resp_probe",
+        "status": "completed",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "pong"}]}],
+    })
     monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
 
     result = asyncio.run(connectivity.test_provider_connection(_resolved()))
@@ -69,10 +84,11 @@ def test_openai_model_probe_returns_bounded_output_without_leaking_secret(monkey
     assert result["mode"] == "model"
     assert isinstance(result["duration_ms"], int)
     assert result["output"] == "pong"
-    assert _Client.request[0:2] == ("POST", "https://provider.example/v1/chat/completions")
+    assert _Client.request[0:2] == ("POST", "https://provider.example/v1/responses")
     assert _Client.request[2]["Authorization"] == "Bearer probe-secret"
-    assert _Client.request[3]["messages"][-1] == {"role": "user", "content": "ping"}
-    assert _Client.request[3]["max_tokens"] == 256
+    assert _Client.request[3]["input"] == "ping"
+    assert _Client.request[3]["instructions"] == "Reply with exactly one lowercase word: pong"
+    assert _Client.request[3]["max_output_tokens"] == 256
     assert "probe-secret" not in repr(result)
     latest = latest_probe_result("custom")
     assert latest["ok"] is True
@@ -80,6 +96,36 @@ def test_openai_model_probe_returns_bounded_output_without_leaking_secret(monkey
     assert latest["mode"] == "model"
     assert "output" not in latest
     assert "probe-secret" not in repr(latest)
+
+
+def test_hepai_model_probe_uses_request_scoped_oidc_for_responses(monkeypatch) -> None:
+    config = parse_user_config({
+        "model": "deepseek-v4-flash",
+        "model_provider": "hepai",
+        "model_providers": {"hepai": {
+            "base_url": "https://legacy.example/apiv2/v1",
+            "wire_api": "openai",
+            "requires_api_key": False,
+        }},
+    })
+    resolved = resolve_model_config(config, require_credentials=False)
+    auth = PlatformAuthContext(
+        access_token="oidc-request-token",
+        subject="user-1",
+        issuer="https://issuer.example",
+        expires_at=4_102_444_800,
+        model_base_url="https://ai-dev.example/apiv2/v1",
+    )
+    _Client.response = _Response(200, {"output_text": "pong"})
+    monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
+
+    with platform_auth_scope(auth):
+        result = asyncio.run(connectivity.test_provider_connection(resolved))
+
+    assert result["ok"] is True
+    assert _Client.request[0:2] == ("POST", "https://ai-dev.example/apiv2/v1/responses")
+    assert _Client.request[2]["Authorization"] == "Bearer oidc-request-token"
+    assert "oidc-request-token" not in repr(result)
 
 
 def test_gemini_native_model_probe_uses_generate_content(monkeypatch) -> None:
@@ -124,7 +170,7 @@ def test_anthropic_and_no_key_probes_use_correct_protocol(monkeypatch) -> None:
     assert _Client.request[3]["messages"] == [{"role": "user", "content": "ping"}]
     assert _Client.request[3]["max_tokens"] == 256
 
-    _Client.response = _Response(200, {"choices": [{"message": {"content": "pong"}}]})
+    _Client.response = _Response(200, {"output_text": "pong"})
     result = asyncio.run(connectivity.test_provider_connection(_resolved(requires_key=False)))
     assert result["ok"] is True
     assert _Client.request[2] == {"content-type": "application/json"}
@@ -139,32 +185,37 @@ def test_error_response_distinguishes_model_from_endpoint(monkeypatch) -> None:
     assert asyncio.run(connectivity.test_provider_connection(_resolved()))["error"] == "endpoint_not_found"
 
 
-def test_openai_model_probe_calls_chat_completion_directly(monkeypatch) -> None:
-    class ChatOnlyClient(_Client):
+def test_openai_model_probe_calls_responses_directly(monkeypatch) -> None:
+    class ResponsesOnlyClient(_Client):
         async def get(self, url, *, headers):
             type(self).request = ("GET", url, headers, None)
             return _Response(404, {"error": "route not found"})
 
         async def post(self, url, *, headers, json):
             type(self).request = ("POST", url, headers, json)
-            return _Response(200, {"choices": [{"message": {"content": "pong"}}]})
+            return _Response(200, {
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "pong"}]}],
+            })
 
-    monkeypatch.setattr(connectivity.httpx, "AsyncClient", ChatOnlyClient)
+    monkeypatch.setattr(connectivity.httpx, "AsyncClient", ResponsesOnlyClient)
     result = asyncio.run(connectivity.test_provider_connection(_resolved(), mode="model"))
     assert result["ok"] is True
     assert result["may_incur_cost"] is True
     assert result["output"] == "pong"
-    assert ChatOnlyClient.request[0:2] == ("POST", "https://provider.example/v1/chat/completions")
+    assert ResponsesOnlyClient.request[0:2] == ("POST", "https://provider.example/v1/responses")
 
 
 def test_model_probe_fails_when_output_is_empty_or_not_pong(monkeypatch) -> None:
     monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
-    _Client.response = _Response(200, {"choices": [{"message": {"content": ""}}]})
+    _Client.response = _Response(200, {"status": "completed", "output": []})
     empty = asyncio.run(connectivity.test_provider_connection(_resolved(), mode="model"))
     assert empty["ok"] is False
     assert empty["error"] == "model_output_empty"
 
-    _Client.response = _Response(200, {"choices": [{"message": {"content": "hello"}}]})
+    _Client.response = _Response(200, {
+        "status": "completed",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "hello"}]}],
+    })
     mismatch = asyncio.run(connectivity.test_provider_connection(_resolved(), mode="model"))
     assert mismatch["ok"] is False
     assert mismatch["error"] == "model_output_mismatch"
@@ -175,10 +226,9 @@ def test_model_probe_fails_when_output_is_empty_or_not_pong(monkeypatch) -> None
 def test_reasoning_model_reports_exhausted_output_budget(monkeypatch) -> None:
     monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
     _Client.response = _Response(200, {
-        "choices": [{
-            "finish_reason": "length",
-            "message": {"content": "", "reasoning_content": "The model is still reasoning."},
-        }],
+        "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+        "output": [{"type": "reasoning", "summary": []}],
     })
 
     result = asyncio.run(connectivity.test_provider_connection(_resolved(), mode="model"))
@@ -194,3 +244,51 @@ def test_rate_limit_has_stable_guidance(monkeypatch) -> None:
     result = asyncio.run(connectivity.test_provider_connection(_resolved(), retries=0))
     assert result["error"] == "rate_limited"
     assert result["guidance"]["retryable"] is True
+
+
+def test_probe_history_survives_restart_and_retains_last_success(monkeypatch) -> None:
+    monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
+    _Client.response = _Response(200, {"output_text": "pong"})
+    assert asyncio.run(connectivity.test_provider_connection(_resolved()))["ok"] is True
+
+    reload_probe_history()
+    restored = latest_probe_result("custom", "custom-model")
+    assert restored is not None
+    assert restored["ok"] is True
+    assert restored["mode"] == "model"
+
+    _Client.response = _Response(429, {"error": "too many requests"})
+    assert asyncio.run(connectivity.test_provider_connection(_resolved(), retries=0))["ok"] is False
+    latest = latest_probe_result("custom", "custom-model")
+    assert latest is not None
+    assert latest["error"] == "rate_limited"
+    assert latest["last_success"]["ok"] is True
+
+    _Client.response = _Response(200, {"data": [{"id": "custom-model"}]})
+    assert asyncio.run(connectivity.test_provider_connection(_resolved(), mode="basic"))["ok"] is True
+    latest = latest_probe_result("custom", "custom-model")
+    assert latest is not None
+    assert latest["mode"] == "basic"
+    assert latest["last_success"]["mode"] == "model"
+
+
+def test_non_recording_probe_does_not_change_saved_verification(monkeypatch) -> None:
+    monkeypatch.setattr(connectivity.httpx, "AsyncClient", _Client)
+    _Client.response = _Response(200, {"output_text": "pong"})
+    assert asyncio.run(connectivity.test_provider_connection(_resolved(), record_history=False))["ok"] is True
+    assert latest_probe_result("custom", "custom-model") is None
+
+
+def test_oidc_rotation_keeps_account_fingerprint_but_account_switch_invalidates() -> None:
+    import base64
+    import json
+
+    def token(subject: str, expires: int) -> str:
+        payload = base64.urlsafe_b64encode(json.dumps({"iss": "https://issuer", "sub": subject, "aud": "models", "exp": expires}).encode()).decode().rstrip("=")
+        return f"header.{payload}.signature"
+
+    first = probe_fingerprint("hepai", "model", "https://models", "openai", token("user-1", 1))
+    rotated = probe_fingerprint("hepai", "model", "https://models", "openai", token("user-1", 2))
+    switched = probe_fingerprint("hepai", "model", "https://models", "openai", token("user-2", 2))
+    assert first == rotated
+    assert first != switched

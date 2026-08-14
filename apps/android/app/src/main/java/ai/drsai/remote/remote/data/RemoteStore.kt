@@ -15,7 +15,10 @@ import ai.drsai.remote.remote.generated.GeneratedSessionEvent
 import ai.drsai.remote.remote.generated.OaepEvent
 import ai.drsai.remote.remote.generated.OaepItem
 import ai.drsai.remote.remote.generated.OaepSnapshot
+import ai.drsai.remote.remote.generated.OaepSnapshotCheckpoint
+import org.json.JSONArray
 import org.json.JSONObject
+import java.time.Instant
 
 @Entity(
     tableName = "remote_runtimes",
@@ -211,6 +214,7 @@ data class RemoteOaepItemEntity(
     val latestEventSequence: Long, val sourceBackend: String, val sourceClient: String?,
     val sourceMessageId: String?, val createdAt: String, val updatedAt: String,
     val contentJson: String, val optimistic: Boolean = false,
+    @ColumnInfo(defaultValue = "'{}'") val sourceJson: String = "{}",
 )
 
 @Entity(
@@ -275,6 +279,10 @@ interface RemoteCacheDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertOaepEvent(item: RemoteOaepEventEntity): Long
     @Query("SELECT * FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId ORDER BY runId,itemSequence,itemId")
     suspend fun oaepItems(subject: String, organization: String, runtimeId: String, sessionId: String): List<RemoteOaepItemEntity>
+    @Query("SELECT * FROM (SELECT * FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId ORDER BY latestEventSequence DESC,itemSequence DESC,itemId DESC LIMIT :limit) ORDER BY latestEventSequence,itemSequence,itemId")
+    suspend fun oaepItemWindow(subject: String, organization: String, runtimeId: String, sessionId: String, limit: Int): List<RemoteOaepItemEntity>
+    @Query("SELECT * FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND LOWER(contentJson) LIKE '%' || LOWER(:query) || '%' ESCAPE '\\' ORDER BY runId,itemSequence,itemId LIMIT :limit")
+    suspend fun searchOaepItems(subject: String, organization: String, runtimeId: String, sessionId: String, query: String, limit: Int): List<RemoteOaepItemEntity>
     @Query("SELECT * FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND itemId=:itemId")
     suspend fun oaepItem(subject: String, organization: String, runtimeId: String, sessionId: String, itemId: String): RemoteOaepItemEntity?
     @Query("SELECT * FROM remote_oaep_items WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND sourceMessageId=:sourceMessageId AND optimistic=1 LIMIT 1")
@@ -485,6 +493,8 @@ fun offlineRemotePolicy(online: Boolean): OfflineRemotePolicy = if (online) {
 }
 
 class RemoteCacheRepository(private val database: ChatDatabase) {
+    private val maintenanceLock = Any()
+    private val lastMaintenanceByAccount = mutableMapOf<Pair<String, String>, Long>()
     suspend fun oaepSessionCursor(
         subject: String, organization: String, runtimeId: String, sessionId: String,
     ): RemoteEventCursorEntity? =
@@ -494,6 +504,26 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
         subject: String, organization: String, runtimeId: String, sessionId: String,
     ): List<RemoteOaepItemEntity> =
         database.remoteDao().oaepItems(subject, organization, runtimeId, sessionId)
+
+    suspend fun oaepSessionItemWindow(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        sessionId: String,
+        limit: Int = 1_000,
+    ): List<RemoteOaepItemEntity> = database.remoteDao().oaepItemWindow(
+        subject, organization, runtimeId, sessionId, limit.coerceIn(1, 2_000),
+    )
+
+    suspend fun oaepSessionItem(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        sessionId: String,
+        itemId: String,
+    ): RemoteOaepItemEntity? = database.remoteDao().oaepItem(
+        subject, organization, runtimeId, sessionId, itemId,
+    )
 
     suspend fun uncertainOaepSourceMessageIds(
         subject: String, organization: String, runtimeId: String, sessionId: String,
@@ -507,6 +537,24 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
         .mapNotNull(RemoteOaepItemEntity::sourceMessageId)
         .distinct()
         .toList()
+
+    suspend fun searchCachedOaepItems(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        sessionId: String,
+        query: String,
+        limit: Int = 200,
+    ): List<RemoteOaepItemEntity> {
+        val normalized = query.trim()
+        require(normalized.isNotEmpty() && normalized.length <= 200) {
+            "remote_transcript_search_query_invalid"
+        }
+        val escaped = normalized.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return database.remoteDao().searchOaepItems(
+            subject, organization, runtimeId, sessionId, escaped, limit.coerceIn(1, 500),
+        )
+    }
 
     suspend fun replaceOaepSnapshot(
         subject: String,
@@ -522,8 +570,16 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
             subject, organization, runtimeId, "oaep-session", snapshot.session.id,
         )?.lastSequence ?: 0L
         require(snapshot.snapshotSequence >= committed) { "oaep_snapshot_sequence_regression" }
-        dao.clearOaepRuns(subject, organization, runtimeId, snapshot.session.id)
-        dao.clearAuthoritativeOaepItems(subject, organization, runtimeId, snapshot.session.id)
+        // A windowed Snapshot contains only the newest page. Clearing the
+        // projection here would discard older pages the user already loaded
+        // every time a live Event triggers a leading-window refresh. OAEP
+        // Items are stable identities and the following upserts replace newer
+        // revisions safely, so retain older windows. A non-windowed Snapshot
+        // is explicitly complete and may replace the whole projection.
+        if (snapshot.window == null) {
+            dao.clearOaepRuns(subject, organization, runtimeId, snapshot.session.id)
+            dao.clearAuthoritativeOaepItems(subject, organization, runtimeId, snapshot.session.id)
+        }
         snapshot.items.forEach { item ->
             item.source.messageId?.let {
                 dao.clearOptimisticOaepMessage(subject, organization, runtimeId, snapshot.session.id, it)
@@ -578,6 +634,29 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
         })
     }
 
+    suspend fun verifyOaepProjectionCheckpoint(
+        subject: String,
+        organization: String,
+        runtimeId: String,
+        sessionId: String,
+        checkpoint: OaepSnapshotCheckpoint,
+    ) {
+        val rows = database.remoteDao().oaepItems(subject, organization, runtimeId, sessionId)
+            .filterNot(RemoteOaepItemEntity::optimistic)
+        require(rows.size.toLong() == checkpoint.itemCount) { "oaep_projection_item_count_mismatch" }
+        val items = JSONArray(rows.map { row ->
+            JSONObject()
+                .put("id", row.itemId).put("session_id", row.sessionId).put("run_id", row.runId)
+                .put("type", row.type).put("status", row.status).put("sequence", row.itemSequence)
+                .put("created_at", row.createdAt).put("updated_at", row.updatedAt)
+                .put("source", JSONObject(row.sourceJson))
+                .put("content", JSONObject(row.contentJson))
+        })
+        require(OaepProjectionIntegrity.digestItems(items) == checkpoint.snapshotHash) {
+            "oaep_projection_checkpoint_digest_mismatch"
+        }
+    }
+
     suspend fun saveOptimisticOaepMessage(
         subject: String,
         organization: String,
@@ -599,6 +678,8 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
             dao.cursor(subject, organization, runtimeId, "oaep-session", sessionId)?.lastSequence ?: 0L,
             "android", "android", sourceMessageId, syncedAt.toString(), syncedAt.toString(),
             JSONObject().put("role", "user").put("text", text).put("delivery_state", "optimistic").toString(), true,
+            JSONObject().put("backend", "android").put("client", "android")
+                .put("message_id", sourceMessageId).toString(),
         )))
     }
 
@@ -609,7 +690,15 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
         val dao = database.remoteDao()
         val item = dao.optimisticOaepItem(subject, organization, runtimeId, sessionId, sourceMessageId)
             ?: return@withTransaction
-        val content = JSONObject(item.contentJson).put("delivery_state", delivery.name.lowercase())
+        val content = JSONObject(item.contentJson)
+        val current = runCatching {
+            RemoteDeliveryState.valueOf(content.getString("delivery_state").uppercase())
+        }.getOrElse { error("remote_delivery_state_invalid") }
+        // Network callbacks, idempotency recovery and OAEP projection updates
+        // can arrive out of order. Never let a late callback regress a user
+        // message to an older state inside the authoritative Room transaction.
+        if (!canTransitionDelivery(current, delivery)) return@withTransaction
+        content.put("delivery_state", delivery.name.lowercase())
         dao.saveOaepItems(listOf(item.copy(contentJson = content.toString(), updatedAt = syncedAt.toString())))
     }
 
@@ -646,6 +735,18 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
                     event.sequence, event.type, event.timestamp, event.dedupeKey,
                     OaepJsonCodec.eventJson(event).toString(),
                 )) != -1L) { "oaep_event_insert_conflict" }
+                (event.data.extra["run"] as? Map<*, *>)?.let { rawRun ->
+                    val run = OaepJsonCodec.run(JSONObject(rawRun))
+                    require(run.sessionId == expectedSessionId &&
+                        (event.runId == null || run.id == event.runId)) {
+                        "oaep_event_run_scope_invalid"
+                    }
+                    dao.saveOaepRuns(listOf(RemoteOaepRunEntity(
+                        subject, organization, expectedRuntimeId, expectedWorkspaceId,
+                        expectedSessionId, run.id, run.parentRunId, run.status,
+                        run.createdAt, run.updatedAt, run.completedAt,
+                    )))
+                }
                 event.data.item?.let { item ->
                     item.source.messageId?.let {
                         dao.clearOptimisticOaepMessage(
@@ -658,9 +759,12 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
                 }
                 if (event.data.item == null && event.type == "event.item.delta") {
                     event.itemId?.let { itemId ->
-                        dao.oaepItem(
+                        val current = dao.oaepItem(
                             subject, organization, expectedRuntimeId, expectedSessionId, itemId,
-                        )?.applyOaepDelta(event)?.let { updated ->
+                        ) ?: event.toDeltaItemEntity(
+                            subject, organization, expectedRuntimeId, expectedWorkspaceId,
+                        )
+                        current?.applyOaepDelta(event)?.let { updated ->
                             dao.saveOaepItems(listOf(updated))
                         }
                     }
@@ -885,6 +989,44 @@ class RemoteCacheRepository(private val database: ChatDatabase) {
             pruneStaleCursors(subject, organization, cursorBeforeMillis)
         }
     }
+
+    suspend fun maintainAccountIfDue(
+        subject: String,
+        organization: String,
+        nowMillis: Long = System.currentTimeMillis(),
+        intervalMillis: Long = RemoteCachePolicy.MAINTENANCE_INTERVAL_MS,
+        maxEvents: Int = RemoteCachePolicy.MAX_EVENTS_PER_ACCOUNT,
+        maxTerminalItems: Int = RemoteCachePolicy.MAX_TERMINAL_ITEMS_PER_ACCOUNT,
+    ): Boolean {
+        require(subject.isNotBlank() && nowMillis >= 0 && intervalMillis > 0) {
+            "remote_cache_maintenance_input_invalid"
+        }
+        val account = subject to organization
+        val reserved = synchronized(maintenanceLock) {
+            val previous = lastMaintenanceByAccount[account]
+            if (previous != null && nowMillis - previous < intervalMillis) {
+                false
+            } else {
+                // Reserve before suspension so concurrent Session refreshes do
+                // not launch duplicate global Room pruning transactions. A
+                // failed attempt remains rate-limited instead of causing a hot
+                // retry loop; the next interval retries normally.
+                lastMaintenanceByAccount[account] = nowMillis
+                true
+            }
+        }
+        if (!reserved) return false
+        val cutoffMillis = nowMillis - RemoteCachePolicy.JOURNAL_RETENTION_MS
+        maintainAccount(
+            subject,
+            organization,
+            Instant.ofEpochMilli(cutoffMillis).toString(),
+            cutoffMillis,
+            maxEvents,
+            maxTerminalItems,
+        )
+        return true
+    }
 }
 
 private fun GeneratedSessionConversationItem.toEntity(
@@ -916,10 +1058,24 @@ private fun OaepItem.toOaepEntity(
     subject, organization, runtimeId, workspaceId, sessionId, runId, id, type,
     status, sequence, eventSequence, source.backend, source.client, source.messageId,
     createdAt, updatedAt, OaepJsonCodec.contentJson(content), false,
+    OaepJsonCodec.sourceJson(source).toString(),
 )
 
 private fun RemoteOaepItemEntity.applyOaepDelta(event: OaepEvent): RemoteOaepItemEntity? {
     val delta = event.data.delta ?: return null
+    require(status !in setOf("completed", "failed", "cancelled")) {
+        "oaep_item_event_after_terminal"
+    }
+    val expectedType = when {
+        delta.kind.startsWith("reasoning.") -> "reasoning"
+        delta.kind.startsWith("plan.") -> "plan"
+        delta.kind.startsWith("command.") -> "command_execution"
+        delta.kind.startsWith("tool.") -> "tool_call"
+        delta.kind.startsWith("subtask.") -> "subtask"
+        delta.kind.startsWith("message.") -> "message"
+        else -> null
+    }
+    require(expectedType == null || type == expectedType) { "oaep_item_type_changed" }
     val text = delta.text.orEmpty()
     if (text.isEmpty() && delta.kind != "reasoning.segment.added") return this.copy(
         latestEventSequence = event.sequence,
@@ -932,18 +1088,31 @@ private fun RemoteOaepItemEntity.applyOaepDelta(event: OaepEvent): RemoteOaepIte
             val segments = content.optJSONArray("segments") ?: org.json.JSONArray().also {
                 content.put("segments", it)
             }
-            if (segments.length() == 0) {
-                segments.put(JSONObject().put("id", delta.segmentId ?: "stream").put("text", text))
+            val segmentId = delta.segmentId ?: "$itemId:text"
+            val index = (0 until segments.length()).firstOrNull {
+                segments.getJSONObject(it).optString("id") == segmentId
+            }
+            if (index == null) {
+                segments.put(JSONObject().put("id", segmentId).put("text", text)
+                    .put("kind", delta.reasoningKind ?: "summary")
+                    .put("visibility", delta.visibility ?: "user")
+                    .put("source", delta.reasoningSource ?: "backend"))
             } else {
-                val last = segments.getJSONObject(segments.length() - 1)
-                last.put("text", last.optString("text") + text)
+                val target = segments.getJSONObject(index)
+                target.put("text", target.optString("text") + text)
             }
         }
         "reasoning.segment.added" -> {
             val segments = content.optJSONArray("segments") ?: org.json.JSONArray().also {
                 content.put("segments", it)
             }
-            segments.put(JSONObject().put("id", delta.segmentId ?: "segment-${event.sequence}").put("text", text))
+            val segmentId = delta.segmentId ?: "$itemId:segment:${segments.length() + 1}"
+            if ((0 until segments.length()).none { segments.getJSONObject(it).optString("id") == segmentId }) {
+                segments.put(JSONObject().put("id", segmentId).put("text", text)
+                    .put("kind", delta.reasoningKind ?: "summary")
+                    .put("visibility", delta.visibility ?: "user")
+                    .put("source", delta.reasoningSource ?: "backend"))
+            }
         }
         "plan.text.append" -> content.put("text", content.optString("text") + text)
         "command.output.append" -> content.put("output", content.optString("output") + text)
@@ -955,5 +1124,45 @@ private fun RemoteOaepItemEntity.applyOaepDelta(event: OaepEvent): RemoteOaepIte
         latestEventSequence = event.sequence,
         updatedAt = event.timestamp,
         contentJson = content.toString(),
+    )
+}
+
+private fun OaepEvent.toDeltaItemEntity(
+    subject: String,
+    organization: String,
+    runtimeId: String,
+    workspaceId: String,
+): RemoteOaepItemEntity? {
+    val delta = data.delta ?: return null
+    val itemType = when {
+        delta.kind.startsWith("reasoning.") -> "reasoning"
+        delta.kind.startsWith("plan.") -> "plan"
+        delta.kind.startsWith("command.") -> "command_execution"
+        delta.kind.startsWith("tool.") -> "tool_call"
+        delta.kind.startsWith("subtask.") -> "subtask"
+        delta.kind.startsWith("message.") -> "message"
+        else -> return null
+    }
+    val id = itemId ?: return null
+    val run = runId ?: return null
+    val content = when (itemType) {
+        "message" -> JSONObject().put("role", "assistant").put("phase", "final")
+            .put("text", "").put("parts", JSONArray()).put("citations", JSONArray())
+        "reasoning" -> JSONObject().put("segments", JSONArray())
+        "plan" -> JSONObject().put("text", "").put("steps", JSONArray())
+        "command_execution" -> JSONObject().put("command", JSONArray()).put("display_command", "")
+            .put("cwd", ".").put("output", "").put("stdout_tail", "").put("stderr_tail", "")
+            .put("exit_code", JSONObject.NULL).put("duration_ms", JSONObject.NULL)
+            .put("replay_policy", JSONObject())
+        "tool_call" -> JSONObject().put("tool_kind", "tool").put("tool_name", "tool")
+            .put("call_id", id).put("arguments", JSONObject()).put("result", "")
+            .put("replay_policy", JSONObject())
+        "subtask" -> JSONObject().put("title", "Subtask").put("summary", "")
+        else -> return null
+    }
+    return RemoteOaepItemEntity(
+        subject, organization, runtimeId, workspaceId, sessionId, run, id, itemType,
+        "running", sequence, sequence, source.backend, source.client, source.messageId,
+        timestamp, timestamp, content.toString(), false, OaepJsonCodec.sourceJson(source).toString(),
     )
 }

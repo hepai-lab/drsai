@@ -57,6 +57,24 @@ def remove_legacy_model_selection(*, path: str | Path | None = None) -> None:
     _atomic_write(config_path, lines)
 
 
+def update_current_agent(
+    *, agent_name: str, agent_config_file: str, path: str | Path | None = None,
+) -> None:
+    """Atomically update the default Agent pointer in config.toml."""
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", agent_name):
+        raise ConfigError("current_agent is invalid")
+    normalized = agent_config_file.replace("\\", "/")
+    expected = f"configs/agents/agent_{agent_name}.toml"
+    if normalized != expected:
+        raise ConfigError(f"agent_config_file must be '{expected}'")
+    config_path = Path(path) if path is not None else default_config_path()
+    lines = _read_lines(config_path)
+    lines = _set_top_level(lines, "config_version", str(CURRENT_CONFIG_VERSION))
+    lines = _set_top_level(lines, "current_agent", _toml_string(agent_name))
+    lines = _set_top_level(lines, "agent_config_file", _toml_string(normalized))
+    _atomic_write(config_path, lines)
+
+
 def upsert_provider(
     name: str,
     values: Mapping[str, object],

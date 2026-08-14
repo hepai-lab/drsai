@@ -49,9 +49,9 @@ export function SessionRunHistory({ workspacePath, workspaceId, sessionId, selec
     {error ? <p className="run-inspector-inline-error" role="alert"><AlertCircle size={14} />{error}</p> : null}
     {listing?.data.length ? <ol className="run-history-list" data-rendered-runs={Math.min(50, listing.data.length - visibleStart)}>{listing.data.slice(visibleStart, visibleStart + 50).map((run) => {
       const runStatus = String(run.status || "unknown");
-      const replay = typeof run.parent_run_id === "string" && run.parent_run_id.length > 0;
+      const relation = relationLabel(run.relation_type, language);
       return <li key={run.run_id}><button type="button" aria-current={run.run_id === selectedRunId ? "true" : undefined} onClick={() => onSelectRun(run.run_id)}>
-        <span>{statusLabel(runStatus, language)}{replay ? ` · ${zh ? "重放" : "Replay"}` : ""}</span>
+        <span>{statusLabel(runStatus, language)}{relation ? ` · ${relation}` : ""}</span>
         <small>{formatTime(String(run.created_at || ""))} · {run.run_id}</small>
       </button></li>;
     })}</ol> : loading ? null : <p className="run-inspector-muted">{zh ? "没有符合条件的运行。" : "No Runs match this filter."}</p>}
@@ -69,5 +69,11 @@ function dedupeRuns(runs: SessionRunList["data"]): SessionRunList["data"] { retu
 function statusLabel(status: string, language: "en" | "zh"): string {
   const labels: Record<string, [string, string]> = { queued: ["Queued", "排队中"], running: ["Running", "运行中"], waiting_approval: ["Waiting approval", "等待审批"], completed: ["Completed", "已完成"], failed: ["Failed", "失败"], cancelled: ["Cancelled", "已取消"] };
   return labels[status]?.[language === "zh" ? 1 : 0] ?? status;
+}
+function relationLabel(relation: SessionRunList["data"][number]["relation_type"], language: "en" | "zh"): string {
+  if (relation === "experiment_replay") return language === "zh" ? "实验重放" : "Experiment replay";
+  if (relation === "subagent") return language === "zh" ? "子智能体" : "Subagent";
+  if (relation === "retry") return language === "zh" ? "重试" : "Retry";
+  return "";
 }
 function formatTime(value: string): string { if (!value) return "—"; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString(); }

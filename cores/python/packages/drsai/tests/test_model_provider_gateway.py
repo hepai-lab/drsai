@@ -72,6 +72,34 @@ def test_model_state_and_doctor_are_redacted(monkeypatch, tmp_path) -> None:
     assert asyncio.run(gateway.doctor_model_config()) == {"ok": True, "checks": []}
 
 
+def test_provider_list_keeps_persisted_models_when_credential_is_unavailable(monkeypatch) -> None:
+    config = parse_user_config({
+        "model_providers": {
+            "zhizengzeng": {
+                "base_url": "https://api.zhizengzeng.com/v1",
+                "api_key_credential": "drsai-credential:00000000-0000-0000-0000-000000000001",
+                "models": {
+                    "deepseek-v4-pro": {
+                        "input_modalities": ["text"],
+                        "output_modalities": ["text"],
+                        "api_protocol": "openai",
+                        "capabilities": ["chat", "reasoning"],
+                    },
+                },
+            },
+        },
+    })
+    monkeypatch.setattr(gateway, "load_model_provider_config", lambda: config)
+    monkeypatch.setattr(gateway, "resolve_credential", lambda _reference: None)
+
+    payload = asyncio.run(gateway.list_model_provider_configs())
+    provider = next(item for item in payload["providers"] if item["name"] == "zhizengzeng")
+
+    assert provider["has_api_key"] is False
+    assert provider["models"] == ["deepseek-v4-pro"]
+    assert provider["model_configs"]["deepseek-v4-pro"]["enabled"] is True
+
+
 def test_restore_model_config_marks_runtime_stale(monkeypatch) -> None:
     config = _custom_config(with_key=False)
     resolved = gateway.resolve_model_config(config, environ={}, require_credentials=False)
@@ -200,8 +228,8 @@ def test_provider_delete_preflight_lists_active_reference_without_mutation(monke
         "references": [
             {
                 "kind": "agent_model_policy",
-                "id": "my-drsai",
-                "label": "Local OpenDrSai Agent model",
+                    "id": "opendrsai",
+                    "label": "opendrsai primary model",
                 "model_id": "custom-model",
             },
         ],
@@ -246,8 +274,8 @@ def test_provider_delete_preflight_finds_explicit_agent_policy(monkeypatch) -> N
     assert result["can_delete"] is False
     assert result["references"] == [{
         "kind": "agent_model_policy",
-        "id": "my-drsai",
-            "label": "Local OpenDrSai Agent model",
+        "id": "opendrsai",
+            "label": "opendrsai primary model",
         "model_id": "selected",
     }]
 
@@ -624,6 +652,11 @@ def test_agent_manager_keeps_old_runtime_when_new_client_creation_fails(monkeypa
     monkeypatch.setattr(gateway, "create_agent", fail_create)
     monkeypatch.setattr(gateway, "_load_remote_hepai_tools", no_remote_tools)
     monkeypatch.setattr(gateway, "_get_db", lambda: object())
+    monkeypatch.setattr(
+        gateway,
+        "_resolve_agent_primary_model",
+        lambda *_args: SimpleNamespace(provider=SimpleNamespace(name="custom"), model_id="model"),
+    )
     with pytest.raises(RuntimeError, match="new client failed"):
         asyncio.run(manager.get_or_create("thread", user_id="user"))
     assert manager._agents["user:thread"] is old_agent
@@ -939,6 +972,11 @@ def test_failed_config_refresh_keeps_previous_agent_available(monkeypatch) -> No
     monkeypatch.setattr(gateway, "_get_db", lambda: object())
     monkeypatch.setattr(gateway, "_get_default_model_alias", lambda: "default-model")
     monkeypatch.setattr(gateway, "create_agent", fail_create)
+    monkeypatch.setattr(
+        gateway,
+        "_resolve_agent_primary_model",
+        lambda *_args: SimpleNamespace(provider=SimpleNamespace(name="custom"), model_id="model"),
+    )
 
     with pytest.raises(RuntimeError, match="invalid replacement"):
         asyncio.run(manager.get_or_create("thread", "user"))

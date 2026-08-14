@@ -65,6 +65,33 @@ class RemoteReliabilityTest {
         assertNull(policy.delay(1, 120_000, RemoteFailure(RemoteFailureSource.RELAY, "timeout", true)))
     }
 
+    @Test fun `wifi to cellular rebuilds transport even while still online`() {
+        val tracker = RemoteNetworkGenerationTracker("wifi", initialOnline = true, initialMetered = false)
+        assertEquals(0L, tracker.state.generation)
+        assertEquals(0L, tracker.observe("wifi", online = true, metered = false).generation)
+        val cellular = tracker.observe("cellular", online = true, metered = true)
+        assertTrue(cellular.online)
+        assertTrue(cellular.metered)
+        assertEquals(1L, cellular.generation)
+        assertEquals(2L, tracker.observe(null, online = false, metered = true).generation)
+    }
+
+    @Test fun `stream retry covers eof 429 and 5xx but remains bounded`() {
+        val policy = RemoteRetryPolicy(baseMs = 1, maxDelayMs = 8, maxWindowMs = 10, random = Random(2))
+        listOf<Throwable>(
+            java.io.EOFException("eof"),
+            RelayHttpException(429, null, "rate_limited"),
+            RelayHttpException(503, null, "runtime_unavailable"),
+        ).forEach { failure ->
+            val retry = RemoteStreamRetryState(policy)
+            assertNotNull(retry.nextDelay(failure, 1_000_000L))
+            assertNull(retry.nextDelay(failure, 12_000_000L))
+        }
+        assertNull(RemoteStreamRetryState(policy).nextDelay(
+            RelayHttpException(403, null, "association_revoked"), 1_000_000L,
+        ))
+    }
+
     @Test fun `ten thousand events remain bounded`() {
         val buffer = BoundedRemoteEventBuffer<Int>(512)
         repeat(10_000, buffer::add)

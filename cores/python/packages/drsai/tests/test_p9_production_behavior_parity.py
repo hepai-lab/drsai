@@ -8,7 +8,7 @@ from autogen_core import CancellationToken, FunctionCall
 from autogen_core.models import CreateResult, RequestUsage, SystemMessage
 import pytest
 
-from drsai.backend.runtime.agent_kernel import AgentRunConfig, agent_kernel_identity
+from drsai.backend.runtime.agent_kernel import AgentRunConfig, agent_kernel_identity, normalize_kernel_host_port
 from drsai.backend.runtime.agent_kernel_factory import create_agent_kernel
 from drsai.backend.runtime.desktop_agent_kernel_adapter import run_agent_through_kernel
 from drsai.modules.agents.skills_agent.drsai_assistant import DrSaiAssistant
@@ -83,6 +83,15 @@ def _agent(fixture: dict) -> DrSaiAssistant:
     agent._scheduled_task_tools = []
     agent._tool_approval_handler = None
     agent._shared_agent_kernel = create_agent_kernel(surface="desktop")
+    agent._kernel_host_port = normalize_kernel_host_port({
+        "schema_version": 1,
+        "protocol_version": "p9-host-port-v1",
+        "surface": "desktop",
+        "capabilities": [
+            {"id": "chat", "version": 1, "required": True},
+            {"id": "streaming", "version": 1, "required": False},
+        ],
+    }, surface="desktop")
     agent._skip_startup_checks = True
     agent._clear_elevated_tools = lambda: None
     agent._init_memory_documents = None

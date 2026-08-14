@@ -1,0 +1,12 @@
+config_version = 3
+current_agent = "opendrsai"
+agent_config_file = "configs/agents/agent_opendrsai.toml"
+model = "deepseek-v4-flash"
+model_provider = "hepai"
+
+[model_providers.hepai]
+base_url = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+anthropic_base_url = "https://ai-dev.ihep.ac.cn/apiv2/anthropic"
+google_base_url = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+requires_api_key = false
+models_file = "configs/models/provider_hepai.toml"

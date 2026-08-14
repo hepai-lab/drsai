@@ -29,6 +29,7 @@ internal class DevicePresenceController(
     private val authenticated: () -> Boolean,
     private val intervalMillis: Long = DEVICE_PRESENCE_INTERVAL_MILLIS,
     private val failureJitterMillis: () -> Long = { (0L..2_000L).random() },
+    private val waitFor: suspend (Long) -> Unit = { delay(it) },
 ) {
     private val monitor = Any()
     private var foreground = false
@@ -72,7 +73,7 @@ internal class DevicePresenceController(
         loop = scope.launch {
             while (isActive) {
                 val failed = renewOnce()
-                delay(intervalMillis + if (failed) failureJitterMillis().coerceAtLeast(0L) else 0L)
+                waitFor(intervalMillis + if (failed) failureJitterMillis().coerceAtLeast(0L) else 0L)
             }
         }
     }

@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from "crypto";
 import { getDiagnosticPropagationHeaders } from "./diagnosticContext";
 import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
-import { parseRemoteProtocolError, REMOTE_SSH_PROTOCOL_VERSION, type RemoteProtocolErrorBody } from "../api/remoteSshProtocol";
+import { parseRemoteProtocolError, RemoteProtocolError, REMOTE_SSH_PROTOCOL_VERSION, type RemoteProtocolErrorBody } from "../api/remoteSshProtocol";
 import type { OWOPOperation, OWOPParamsByOperation } from "../api/owop.generated";
 import type {
   OaepEventPage,
   OaepSnapshot,
 } from "../api/oaep.generated";
+import { assertOaepSnapshotIntegrity } from "./oaepIntegrity";
 import type { RunInspection, RunItemLocator, RunReproductionManifest, SessionRunList } from "../api/runInspection";
-import type { ReplayBoundaries, ReplayExecutionResult, ReplayPlan, RunAdoption, RunComparison, RunExperiment, RunExperimentCandidateSnapshot, RunExperimentCapabilities, RunExperimentPackage, RunRelations, RunExperimentOverrides, ReplayMode, WorktreeAdoptionApplyResult, WorktreeAdoptionPreview } from "../api/runExperiment";
+import type { CreateRunComparisonEvaluationRequest, ReplayBoundaries, ReplayExecutionResult, ReplayPlan, RunAdoption, RunComparison, RunComparisonEvaluation, RunComparisonEvaluationList, RunExperiment, RunExperimentCandidateSnapshot, RunExperimentCapabilities, RunExperimentPackage, RunRelations, RunExperimentOverrides, ReplayMode, WorktreeAdoptionApplyResult, WorktreeAdoptionPreview } from "../api/runExperiment";
 export type {
   OaepEvent,
   OaepEventPage,
@@ -34,7 +35,23 @@ import type {
   RuntimeModelRef,
 } from "../api/desktopApi";
 
-const packagedRecoveryRuns = new Map<string, { failures: number; events: RuntimeAgentEvent[] }>();
+function ensureLoopbackNoProxy(): void {
+  for (const key of ["NO_PROXY", "no_proxy"] as const) {
+    const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+    for (const host of ["127.0.0.1", "localhost"]) {
+      if (!entries.some((entry) => entry.toLowerCase() === host)) entries.push(host);
+    }
+    process.env[key] = entries.join(",");
+  }
+}
+
+// Node 24 can route global fetch through HTTP_PROXY when NODE_USE_ENV_PROXY is
+// enabled. Runtime endpoints are deliberately loopback-only and must remain
+// direct, including on corporate/proxied Windows installations.
+ensureLoopbackNoProxy();
+
+const packagedOaepRecoverySessions = new Set<string>();
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_.:-]{1,200}$/;
 
 interface RemoteGatewayAccess {
   baseUrl: string;
@@ -79,7 +96,7 @@ export interface RuntimeCapabilities {
   capabilities: string[];
   capability_versions: Record<string, number>;
   protocols?: {
-    oaep?: { version: string; profiles: string[] };
+    oaep?: { version: string; profiles: string[]; schema_sha256?: string };
     owop?: { version: string; capabilities: string[] };
     control?: { version: string };
     relay?: { version: string };
@@ -208,6 +225,18 @@ export interface RuntimeSessionList {
   object: "list";
   data: unknown[];
   total: number;
+}
+
+export interface RuntimeWorkspaceSessionCatalogEvent {
+  event_id: string;
+  session_id: string;
+  type: "event.session.created" | "event.session.updated" | "event.session.archived" | "event.session.unarchived" | "event.session.deleted";
+  sequence: number;
+}
+
+export interface RuntimeWorkspaceSessionCatalogStream {
+  response: Response;
+  events: ReadableStream<Uint8Array>;
 }
 
 export interface RuntimeSession { session_id: string; workspace_id: string; title: string; archived?: boolean; lifecycle?: string; created_at?: string; updated_at?: string; message_count?: number; }
@@ -404,6 +433,8 @@ export interface RuntimeClient {
   archiveWorktree(workspaceId: string, worktreeId: string, idempotencyKey: string): Promise<RuntimeWorktree>;
   removeWorktree(workspaceId: string, worktreeId: string, expectedStatus: "merged" | "archived", idempotencyKey: string): Promise<RuntimeWorktree>;
   listSessions(workspaceId: string): Promise<RuntimeSessionList>;
+  getSession(sessionId: string): Promise<RuntimeSession>;
+  openWorkspaceSessionCatalogStream(workspaceId: string, signal: AbortSignal): Promise<RuntimeWorkspaceSessionCatalogStream>;
   createSession(workspaceId: string, title?: string): Promise<RuntimeSession>;
   updateSession(sessionId: string, updates: { archived?: boolean; title?: string }): Promise<RuntimeSession>;
   importLegacyDesktopAgentRun(request: LegacyDesktopAgentRunMigrationRequest): Promise<LegacyDesktopAgentRunMigrationResult>;
@@ -415,6 +446,7 @@ export interface RuntimeClient {
   openOaepEventStream(sessionId: string, afterSequence: number, signal: AbortSignal): Promise<OaepEventStream>;
   getAgentRun(runId: string): Promise<RuntimeAgentRun>;
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun>;
+  getAgentRunByIdempotency(sessionId: string, idempotencyKey: string): Promise<RuntimeAgentRun | null>;
   getRunGoal(runId: string): Promise<RuntimeGoal>;
   proposeRunGoal(runId: string, prompt: string, materials: string[], expectedVersion?: number, clarifications?: Record<string, string>): Promise<RuntimeGoalProposal>;
   reviseRunGoal(runId: string, goal: RuntimeGoal["goal"], expectedVersion: number): Promise<RuntimeGoal>;
@@ -449,12 +481,15 @@ export interface RuntimeClient {
   executeReplayPlan(replayPlanId: string, request: { draftVersion: number; planDigest: string; baseManifestDigest: string; idempotencyKey: string; approvalId?: string; runtimeApprovalId?: string; isolatedWorktreeId?: string }, auth?: RuntimeExecutionAuth): Promise<ReplayExecutionResult>;
   createRunComparison(baselineRunId: string, candidateRunId: string, auth?: RuntimeExecutionAuth): Promise<RunComparison>;
   getRunComparison(comparisonId: string, auth?: RuntimeExecutionAuth): Promise<RunComparison>;
+  listRunComparisonEvaluations(comparisonId: string, auth?: RuntimeExecutionAuth): Promise<RunComparisonEvaluationList>;
+  createRunComparisonEvaluation(request: CreateRunComparisonEvaluationRequest, auth?: RuntimeExecutionAuth): Promise<RunComparisonEvaluation>;
   getWorktreeAdoptionPreview(sourceWorkspaceId: string, worktreeId: string, auth?: RuntimeExecutionAuth): Promise<WorktreeAdoptionPreview>;
   applyWorktreeAdoption(sourceWorkspaceId: string, worktreeId: string, request: { previewDigest: string; selectedPaths: string[]; approvalId: string }, auth?: RuntimeExecutionAuth): Promise<WorktreeAdoptionApplyResult>;
   getRunAdoptionPreview(comparisonId: string, auth?: RuntimeExecutionAuth): Promise<RunAdoption>;
   applyRunAdoption(adoptionId: string, selectedPaths: string[], approvalId?: string, auth?: RuntimeExecutionAuth): Promise<RunAdoption>;
   discardRunAdoption(adoptionId: string, cleanup: boolean, approvalId?: string, auth?: RuntimeExecutionAuth): Promise<RunAdoption>;
   decideSecurityApproval(approvalId: string, decision: "approved" | "denied", auth?: RuntimeExecutionAuth): Promise<{ approval_id: string; decision: string }>;
+  getRunApproval(approvalId: string, auth?: RuntimeExecutionAuth): Promise<Record<string, unknown> & { approval_id: string; status: string }>;
   decideRunApproval(approvalId: string, decision: "approved" | "denied", auth?: RuntimeExecutionAuth): Promise<Record<string, unknown> & { approval_id: string; status: string }>;
   respondAgentApproval(runId: string, approvalId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel"): Promise<void>;
   createRun(request: RuntimeRunRequest, signal?: AbortSignal): Promise<RuntimeRunStream>;
@@ -471,6 +506,7 @@ export interface RuntimeClient {
   shrinkMobileAssociation(
     associationId: string,
     permissions: DesktopMobileAssociation["permissions"],
+    scope?: DesktopMobilePairingScope,
   ): Promise<DesktopMobileAssociation>;
   revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
   pauseMobileRemoteAccess(): Promise<DesktopRuntimeRemoteAccessState>;
@@ -694,6 +730,24 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return this.requestJson(`/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}&limit=100`);
   }
 
+  getSession(sessionId: string): Promise<RuntimeSession> {
+    this.assertResourceId("Session", sessionId);
+    return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  async openWorkspaceSessionCatalogStream(
+    workspaceId: string,
+    signal: AbortSignal,
+  ): Promise<RuntimeWorkspaceSessionCatalogStream> {
+    this.assertResourceId("Workspace", workspaceId);
+    const response = await this.request(
+      `/v1/workspaces/${encodeURIComponent(workspaceId)}/session-catalog-events/stream`,
+      { headers: { Accept: "text/event-stream" }, signal },
+    );
+    if (!response.body) throw new Error("Runtime Workspace did not return a Session catalog stream.");
+    return { response, events: response.body };
+  }
+
   createSession(workspaceId: string, title = "New session"): Promise<RuntimeSession> {
     return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspace_id: workspaceId, title }) });
   }
@@ -764,9 +818,11 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/agent-backend/binding`);
   }
 
-  getOaepSnapshot(sessionId: string): Promise<OaepSnapshot> {
+  async getOaepSnapshot(sessionId: string): Promise<OaepSnapshot> {
     this.assertResourceId("Session", sessionId);
-    return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/oaep-snapshot`);
+    const snapshot = await this.requestJson<OaepSnapshot>(`/v1/sessions/${encodeURIComponent(sessionId)}/oaep-snapshot`);
+    assertOaepSnapshotIntegrity(snapshot);
+    return snapshot;
   }
 
   listOaepEvents(sessionId: string, afterSequence = 0, limit = 500): Promise<OaepEventPage> {
@@ -790,7 +846,34 @@ abstract class HttpRuntimeClient implements RuntimeClient {
       { headers: { Accept: "text/event-stream" }, signal },
     );
     if (!response.body) throw new Error("Runtime Session did not return an OAEP Event stream.");
-    return { response, events: response.body };
+    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE !== "1" || !packagedOaepRecoverySessions.has(sessionId)) {
+      return { response, events: response.body };
+    }
+    // L5 must exercise OAEP replay, not the retired per-Run polling fixture.
+    // Forward complete SSE frames and terminate exactly after the first alpha
+    // delta. The shared Session controller then reconnects from its durable
+    // cursor and receives beta + the Run terminal without duplicating alpha.
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    let buffered = "";
+    const interrupted = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffered += decoder.decode(chunk, { stream: true });
+        while (true) {
+          const boundary = buffered.indexOf("\n\n");
+          if (boundary < 0) return;
+          const frame = buffered.slice(0, boundary + 2);
+          buffered = buffered.slice(boundary + 2);
+          controller.enqueue(encoder.encode(frame));
+          if (frame.includes('"text":"alpha"')) {
+            packagedOaepRecoverySessions.delete(sessionId);
+            controller.terminate();
+            return;
+          }
+        }
+      },
+    }));
+    return { response, events: interrupted };
   }
 
   getAgentRun(runId: string): Promise<RuntimeAgentRun> {
@@ -798,15 +881,23 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   }
 
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun> {
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && idempotencyKey === "desktop-runtime-packaged_chat_crash_001") {
-      return Promise.resolve({ run_id: "packaged-runtime-crash-run", session_id: sessionId, workspace_id: "packaged-runtime-workspace", backend_id: agentDefinition, status: "running" });
-    }
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && idempotencyKey === "desktop-runtime-packaged_chat_recovery_001") {
-      return Promise.resolve({ run_id: "packaged-runtime-recovery-run", session_id: sessionId, workspace_id: "packaged-runtime-workspace", backend_id: agentDefinition, status: "running" });
-    }
+    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && idempotencyKey === "desktop-runtime-packaged_chat_recovery_001") packagedOaepRecoverySessions.add(sessionId);
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/runs`, { method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ agent_definition: agentDefinition }) });
+  }
+
+  async getAgentRunByIdempotency(sessionId: string, idempotencyKey: string): Promise<RuntimeAgentRun | null> {
+    this.assertResourceId("Session", sessionId);
+    if (!IDEMPOTENCY_KEY.test(idempotencyKey)) throw new Error("Run idempotency key is invalid.");
+    try {
+      return await this.requestJson(
+        `/v1/sessions/${encodeURIComponent(sessionId)}/runs/by-idempotency/${encodeURIComponent(idempotencyKey)}`,
+      );
+    } catch (error) {
+      if (error instanceof RemoteProtocolError && error.status === 404) return null;
+      throw error;
+    }
   }
 
   getRunGoal(runId: string): Promise<RuntimeGoal> {
@@ -844,18 +935,6 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
     auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }> {
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && provenance?.sourceMessageId === "desktop:packaged_chat_crash_001") {
-      packagedRecoveryRuns.set(runId, { failures: 0, events: [{ event_id: `fixture-${runId}-1`, run_id: runId, sequence: 1, type: "agent.message.delta", data: { text: "preserved before crash" } }] });
-      return new Promise((_resolve, reject) => signal?.addEventListener("abort", () => reject(new DOMException("Packaged crash fixture aborted.", "AbortError")), { once: true }));
-    }
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && provenance?.sourceMessageId === "desktop:packaged_chat_recovery_001") {
-      packagedRecoveryRuns.set(runId, { failures: 1, events: [
-        { event_id: `fixture-${runId}-1`, run_id: runId, sequence: 1, type: "agent.message.delta", data: { text: "alpha" } },
-        { event_id: `fixture-${runId}-2`, run_id: runId, sequence: 2, type: "agent.message.delta", data: { text: " beta" } },
-        { event_id: `fixture-${runId}-3`, run_id: runId, sequence: 3, type: "run.completed", data: {} },
-      ] });
-      return new Promise((resolve) => setTimeout(() => resolve({ run: { run_id: runId } as RuntimeAgentRun, result: { fixture: "runtime-event-poll-recovery" } }), 250));
-    }
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/execute`, { method: "POST", signal,
       headers: {
         "Content-Type": "application/json",
@@ -890,13 +969,6 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   }
 
   async listAgentRunEvents(runId: string, afterSequence = 0): Promise<RuntimeAgentEvent[]> {
-    const fixture = packagedRecoveryRuns.get(runId);
-    if (fixture?.failures) { fixture.failures -= 1; throw new Error("Packaged Runtime event poll network interruption."); }
-    if (fixture) return fixture.events.filter((event) => event.sequence > afterSequence);
-    if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && runId === "packaged-runtime-crash-run") return [
-      { event_id: `fixture-${runId}-1`, run_id: runId, sequence: 1, type: "agent.message.delta", data: { text: "preserved before crash" } },
-      { event_id: `fixture-${runId}-2`, run_id: runId, sequence: 2, type: "run.failed", data: { reason: "desktop_process_crash" } },
-    ].filter((event) => event.sequence > afterSequence);
     const result = await this.requestJson<{ data?: RuntimeAgentEvent[] }>(`/v1/runs/${encodeURIComponent(runId)}/events?after_sequence=${afterSequence}`);
     return result.data ?? [];
   }
@@ -1025,11 +1097,24 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     });
   }
 
-  decideRunApproval(approvalId: string, decision: "approved" | "denied", auth?: RuntimeExecutionAuth): Promise<Record<string, unknown> & { approval_id: string; status: string }> {
-    return this.requestJson(`/v1/approvals/${encodeURIComponent(approvalId)}/decision`, {
-      method: "POST", headers: { ...this.runtimeEvidenceHeaders(auth), "Content-Type": "application/json" },
-      body: JSON.stringify({ decision, detail: { idempotency_key: `desktop:${approvalId}:${decision}` } }),
+  getRunApproval(approvalId: string, auth?: RuntimeExecutionAuth): Promise<Record<string, unknown> & { approval_id: string; status: string }> {
+    return this.requestJson(`/v1/approvals/${encodeURIComponent(approvalId)}`, {
+      headers: this.runtimeEvidenceHeaders(auth),
     });
+  }
+
+  async decideRunApproval(approvalId: string, decision: "approved" | "denied", auth?: RuntimeExecutionAuth): Promise<Record<string, unknown> & { approval_id: string; status: string }> {
+    try {
+      return await this.requestJson(`/v1/approvals/${encodeURIComponent(approvalId)}/decision`, {
+        method: "POST", headers: { ...this.runtimeEvidenceHeaders(auth), "Content-Type": "application/json" },
+        body: JSON.stringify({ decision, detail: { idempotency_key: `desktop:${approvalId}:${decision}` } }),
+      });
+    } catch (failure) {
+      if (!this.isUncertainMutationFailure(failure)) throw failure;
+      const recovered = await this.recoverApprovalOutcome(approvalId, auth);
+      if (recovered) return recovered;
+      throw failure;
+    }
   }
 
   createRunComparison(baselineRunId: string, candidateRunId: string, auth?: RuntimeExecutionAuth): Promise<RunComparison> {
@@ -1041,6 +1126,24 @@ abstract class HttpRuntimeClient implements RuntimeClient {
 
   getRunComparison(comparisonId: string, auth?: RuntimeExecutionAuth): Promise<RunComparison> {
     return this.requestJson(`/v1/run-comparisons/${encodeURIComponent(comparisonId)}`, { headers: this.runtimeEvidenceHeaders(auth) });
+  }
+
+  listRunComparisonEvaluations(comparisonId: string, auth?: RuntimeExecutionAuth): Promise<RunComparisonEvaluationList> {
+    return this.requestJson(`/v1/run-comparisons/${encodeURIComponent(comparisonId)}/evaluations`, { headers: this.runtimeEvidenceHeaders(auth) });
+  }
+
+  createRunComparisonEvaluation(request: CreateRunComparisonEvaluationRequest, auth?: RuntimeExecutionAuth): Promise<RunComparisonEvaluation> {
+    return this.requestJson(`/v1/run-comparisons/${encodeURIComponent(request.comparisonId)}/evaluations`, {
+      method: "POST",
+      headers: { ...this.runtimeEvidenceHeaders(auth), "Content-Type": "application/json", "Idempotency-Key": request.idempotencyKey },
+      body: JSON.stringify({
+        expected_latest_revision: request.expectedLatestRevision,
+        verdict: request.verdict,
+        scores: request.scores,
+        note: request.note || "",
+        evidence_refs: request.evidenceRefs || [],
+      }),
+    });
   }
 
   getWorktreeAdoptionPreview(sourceWorkspaceId: string, worktreeId: string, auth?: RuntimeExecutionAuth): Promise<WorktreeAdoptionPreview> {
@@ -1092,9 +1195,15 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   }
 
   async respondAgentApproval(runId: string, approvalId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel"): Promise<void> {
-    await this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }),
-    });
+    try {
+      await this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }),
+      });
+    } catch (failure) {
+      if (!this.isUncertainMutationFailure(failure)) throw failure;
+      if (await this.recoverApprovalOutcome(approvalId)) return;
+      throw failure;
+    }
   }
 
   async createRun(request: RuntimeRunRequest, signal?: AbortSignal): Promise<RuntimeRunStream> {
@@ -1211,6 +1320,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
   shrinkMobileAssociation(
     associationId: string,
     permissions: DesktopMobileAssociation["permissions"],
+    scope?: DesktopMobilePairingScope,
   ): Promise<DesktopMobileAssociation> {
     this.assertResourceId("Association", associationId);
     return this.requestJson(
@@ -1218,7 +1328,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ permissions }),
+        body: JSON.stringify({ permissions, ...(scope ?? {}) }),
       },
     );
   }
@@ -1295,6 +1405,28 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return response;
   }
 
+  private isUncertainMutationFailure(failure: unknown): boolean {
+    return failure instanceof RemoteProtocolError ? failure.status >= 500 : failure instanceof Error;
+  }
+
+  private async recoverApprovalOutcome(
+    approvalId: string,
+    auth?: RuntimeExecutionAuth,
+  ): Promise<(Record<string, unknown> & { approval_id: string; status: string }) | null> {
+    for (const delayMs of [0, 100, 250, 500, 1_000]) {
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      try {
+        const approval = await this.getRunApproval(approvalId, auth);
+        if (["approved", "denied", "cancelled", "expired", "disconnected", "timeout"].includes(approval.status)) {
+          return approval;
+        }
+      } catch (failure) {
+        if (!this.isUncertainMutationFailure(failure)) throw failure;
+      }
+    }
+    return null;
+  }
+
   private assertProtocol(received: number): void {
     if (received !== REMOTE_SSH_PROTOCOL_VERSION) throw new RuntimeProtocolCompatibilityError(received);
   }
@@ -1302,6 +1434,18 @@ abstract class HttpRuntimeClient implements RuntimeClient {
 
 export class LocalRuntimeClient extends HttpRuntimeClient {
   readonly location = "local" as const;
+
+  /** Connect only when a Runtime is already healthy; never spawn one as a
+   * side effect of read-only startup discovery. */
+  static async connectIfAvailable(): Promise<LocalRuntimeClient | null> {
+    const status = await getGatewayStatus();
+    if (!status.ready && !status.externalReady) return null;
+    try {
+      return await LocalRuntimeClient.connect();
+    } catch {
+      return null;
+    }
+  }
 
   static async connect(): Promise<LocalRuntimeClient> {
     const started = await startGateway();
@@ -1607,11 +1751,115 @@ export async function connectRuntimeClientForWorkspace(
     throw new Error("Remote Workspace is offline; Runtime operation refused without local fallback (stale cache is read-only).");
   }
   const client = await LocalRuntimeClient.connect();
-  // Desktop Workspace IDs are presentation/persistence identities. Local Full
-  // Runtime owns a distinct authoritative Workspace ID, so resolve it by path.
-  // A non-persisted ID is already a Runtime execution identity (for example a
-  // Worktree Workspace selected by a Thread) and must remain unchanged.
-  if (workspaceId && workspaceId !== "current" && !persisted) return { client, workspaceId };
-  const opened = await client.openWorkspace(workspacePath, persisted?.name ?? workspaceName);
+  return resolveLocalRuntimeWorkspace(client, workspacePath, workspaceId, persisted?.name ?? workspaceName, Boolean(persisted));
+}
+
+export interface RuntimeClientLease<T extends RuntimeClient = RuntimeClient> {
+  client: T;
+  workspaceId: string;
+  release: () => void;
+}
+
+/**
+ * Acquire a finite-operation lease without exposing the connect/retain race.
+ * A previous OAEP owner can release the last reference immediately after a
+ * caller resolves the shared client. Retrying here is safe because no Session
+ * or Run mutation has happened yet.
+ */
+export async function acquireRuntimeClientLease<T extends RuntimeClient>(
+  resolve: () => Promise<{ client: T; workspaceId: string }>,
+): Promise<RuntimeClientLease<T>> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const resolved = await resolve();
+      return { ...resolved, release: retainRuntimeClient(resolved.client) };
+    } catch (error) {
+      if (attempt < 2 && error instanceof RuntimeClientGenerationInvalidatedError) continue;
+      throw error;
+    }
+  }
+  throw new RuntimeClientGenerationInvalidatedError();
+}
+
+/**
+ * Borrows the current workspace Runtime client for the complete duration of a
+ * finite operation. A connected client is shared with OAEP streams, so callers
+ * must hold a reference while awaiting an IPC request; otherwise the final
+ * stream subscriber can release and close the client underneath that request.
+ */
+export async function withRuntimeClientForWorkspace<T>(
+  workspacePath: string,
+  workspaceId: string | undefined,
+  operation: (resolved: { client: RuntimeClient; workspaceId: string }) => Promise<T>,
+  workspaceName?: string,
+): Promise<T> {
+  const lease = await acquireRuntimeClientLease(() =>
+    connectRuntimeClientForWorkspace(workspacePath, workspaceId, workspaceName));
+  try {
+    return await operation(lease);
+  } finally {
+    lease.release();
+  }
+}
+
+/** Resolve an already-running Runtime for read-only restoration work without
+ * spawning the local Gateway. Callers can fall back to persisted Desktop data
+ * when this returns null. */
+export async function connectRuntimeClientForWorkspaceIfAvailable(
+  workspacePath: string,
+  workspaceId?: string,
+  workspaceName?: string,
+): Promise<{ client: RuntimeClient; workspaceId: string } | null> {
+  const access = workspaceRouting.getRemoteGatewayAccess(workspacePath, workspaceId);
+  if (access) {
+    const runtimeAccess = {
+      baseUrl: access.baseUrl,
+      headers: { "X-OpenDrSai-Gateway-Token": access.token },
+      identity: { location: "remote" as const, routeId: access.workspaceId, authGeneration: access.authGeneration },
+    };
+    return {
+      client: await connectAuthoritativeRuntimeClient(runtimeAccess, (resolvedAccess) => new RemoteRuntimeClient(
+        access.baseUrl,
+        access.token,
+        access.workspaceId,
+        resolvedAccess.identity?.runtimeId,
+        resolvedAccess.identity?.instanceId,
+        resolvedAccess.identity?.authGeneration,
+      )),
+      workspaceId: access.workspaceId,
+    };
+  }
+  const persisted = workspaceId ? await workspaceRouting.findWorkspaceById(workspaceId) : undefined;
+  if (persisted?.location === "remote") return null;
+  const client = await LocalRuntimeClient.connectIfAvailable();
+  if (!client) return null;
+  return resolveLocalRuntimeWorkspace(client, workspacePath, workspaceId, persisted?.name ?? workspaceName, Boolean(persisted));
+}
+
+/**
+ * Desktop can briefly retain a provisional Workspace ID while the Runtime
+ * startup refresh replaces it with an authoritative ID. Unknown IDs may also
+ * legitimately identify a Runtime-owned Worktree, so validate them against
+ * Runtime before deciding whether to preserve or heal them by canonical path.
+ */
+export async function resolveLocalRuntimeWorkspace<T extends Pick<RuntimeClient, "listWorkspaces" | "openWorkspace">>(
+  client: T,
+  workspacePath: string,
+  workspaceId?: string,
+  workspaceName?: string,
+  persisted = false,
+): Promise<{ client: T; workspaceId: string }> {
+  if (workspaceId && workspaceId !== "current" && !persisted) {
+    try {
+      const runtimeWorkspace = (await client.listWorkspaces(true)).find(
+        (candidate) => candidate.workspace_id === workspaceId && candidate.open,
+      );
+      if (runtimeWorkspace) return { client, workspaceId };
+    } catch {
+      // Opening by path is the safe fallback: it heals provisional IDs and
+      // preserves Worktree identity because Worktree paths are authoritative.
+    }
+  }
+  const opened = await client.openWorkspace(workspacePath, workspaceName);
   return { client, workspaceId: opened.workspace_id };
 }

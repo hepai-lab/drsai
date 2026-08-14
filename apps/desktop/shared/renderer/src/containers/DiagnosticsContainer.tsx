@@ -4,7 +4,6 @@ import { copyTextSafely } from "../clipboard";
 import { OperationalStateBar } from "../components/OperationalStateBar";
 
 interface DiagnosticsContainerProps {
-  autoRecoverKey?: string;
   decision: OperationalStateDecision;
   formatError: (error: unknown) => string;
   language: "en" | "zh";
@@ -12,11 +11,9 @@ interface DiagnosticsContainerProps {
   onRecover: () => Promise<string | void>;
 }
 
-const completedAutomaticRecoveries = new Set<string>();
-
 /** Owns transient recovery and diagnostic-copy state; callers provide only
  * domain operations and a redacted report projection. */
-export function DiagnosticsContainer({ autoRecoverKey, decision, formatError, language, onRecover, report }: DiagnosticsContainerProps): React.JSX.Element {
+export function DiagnosticsContainer({ decision, formatError, language, onRecover, report }: DiagnosticsContainerProps): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -41,12 +38,6 @@ export function DiagnosticsContainer({ autoRecoverKey, decision, formatError, la
       if (mountedRef.current) setBusy(false);
     }
   }
-
-  useEffect(() => {
-    if (!autoRecoverKey || completedAutomaticRecoveries.has(autoRecoverKey)) return;
-    completedAutomaticRecoveries.add(autoRecoverKey);
-    void recover();
-  }, [autoRecoverKey]);
 
   async function copyDiagnostics(): Promise<void> {
     await copyTextSafely(JSON.stringify(report(), null, 2));

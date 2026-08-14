@@ -145,7 +145,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     needs: verify-macos-unsigned
     runs-on: [self-hosted, macOS, ARM64, opendrsai-nightly]
-    timeout-minutes: 240
+    timeout-minutes: 360
     defaults:
       run:
         working-directory: apps/desktop
@@ -173,6 +173,7 @@ jobs:
         env:
           OPENDRSAI_MACOS_L5_RESTART_ITERATIONS: "100"
           OPENDRSAI_MACOS_L5_STABILITY_MS: "7200000"
+          OPENDRSAI_MACOS_L5_MATRIX_ITERATIONS: "20"
         run: |
           npm run verify:packaged:l5 --workspace opendrsai-macos-desktop
           npm run record:l5-evidence --workspace opendrsai-macos-desktop
@@ -188,7 +189,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || inputs.run_signed_release
     needs: [verify-macos-unsigned]
     runs-on: [self-hosted, macOS, ARM64, opendrsai-release]
-    timeout-minutes: 240
+    timeout-minutes: 360
     defaults:
       run:
         working-directory: apps/desktop
@@ -214,13 +215,29 @@ jobs:
             exit 1
           fi
           echo "OPENDRSAI_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+      - name: Materialize App Store Connect API key
+        env:
+          APPLE_API_KEY_SECRET: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          if [[ "$APPLE_API_KEY_SECRET" == *"BEGIN PRIVATE KEY"* ]]; then
+            key_path="$RUNNER_TEMP/AuthKey.p8"
+            printf '%s\n' "$APPLE_API_KEY_SECRET" > "$key_path"
+            chmod 600 "$key_path"
+          else
+            key_path="$APPLE_API_KEY_SECRET"
+          fi
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
       - name: Build signed and notarized arm64 artifacts
         env:
           MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
           MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          OPENDRSAI_MACOS_L5_RESTART_ITERATIONS: "100"
+          OPENDRSAI_MACOS_L5_STABILITY_MS: "7200000"
+          OPENDRSAI_MACOS_L5_MATRIX_ITERATIONS: "20"
         run: |
           npm run preflight:release --workspace opendrsai-macos-desktop
           npm run prepare:runtime:macos --workspace opendrsai-macos-desktop
@@ -229,29 +246,14 @@ jobs:
           npm run record:l4-evidence --workspace opendrsai-macos-desktop
           npm run verify:packaged:l5 --workspace opendrsai-macos-desktop
           npm run record:l5-evidence --workspace opendrsai-macos-desktop
-      - name: Verify real model Provider compatibility matrix
-        env:
-          DRSAI_MATRIX_OPENAI_BASE_URL: ${{ secrets.DRSAI_MATRIX_OPENAI_BASE_URL }}
-          DRSAI_MATRIX_OPENAI_MODEL: ${{ secrets.DRSAI_MATRIX_OPENAI_MODEL }}
-          DRSAI_MATRIX_OPENAI_API_KEY: ${{ secrets.DRSAI_MATRIX_OPENAI_API_KEY }}
-          DRSAI_MATRIX_ANTHROPIC_BASE_URL: ${{ secrets.DRSAI_MATRIX_ANTHROPIC_BASE_URL }}
-          DRSAI_MATRIX_ANTHROPIC_MODEL: ${{ secrets.DRSAI_MATRIX_ANTHROPIC_MODEL }}
-          DRSAI_MATRIX_ANTHROPIC_API_KEY: ${{ secrets.DRSAI_MATRIX_ANTHROPIC_API_KEY }}
-          DRSAI_MATRIX_DEEPSEEK_BASE_URL: ${{ secrets.DRSAI_MATRIX_DEEPSEEK_BASE_URL }}
-          DRSAI_MATRIX_DEEPSEEK_MODEL: ${{ secrets.DRSAI_MATRIX_DEEPSEEK_MODEL }}
-          DRSAI_MATRIX_DEEPSEEK_API_KEY: ${{ secrets.DRSAI_MATRIX_DEEPSEEK_API_KEY }}
-          DRSAI_MATRIX_OLLAMA_BASE_URL: ${{ secrets.DRSAI_MATRIX_OLLAMA_BASE_URL }}
-          DRSAI_MATRIX_OLLAMA_MODEL: ${{ secrets.DRSAI_MATRIX_OLLAMA_MODEL }}
-          DRSAI_MATRIX_CHAT_ONLY_BASE_URL: ${{ secrets.DRSAI_MATRIX_CHAT_ONLY_BASE_URL }}
-          DRSAI_MATRIX_CHAT_ONLY_MODEL: ${{ secrets.DRSAI_MATRIX_CHAT_ONLY_MODEL }}
-          DRSAI_MATRIX_CHAT_ONLY_REQUIRES_KEY: ${{ secrets.DRSAI_MATRIX_CHAT_ONLY_REQUIRES_KEY }}
-          DRSAI_MATRIX_CHAT_ONLY_API_KEY: ${{ secrets.DRSAI_MATRIX_CHAT_ONLY_API_KEY }}
-          DRSAI_MATRIX_CUSTOM_PROXY_BASE_URL: ${{ secrets.DRSAI_MATRIX_CUSTOM_PROXY_BASE_URL }}
-          DRSAI_MATRIX_CUSTOM_PROXY_MODEL: ${{ secrets.DRSAI_MATRIX_CUSTOM_PROXY_MODEL }}
-          DRSAI_MATRIX_CUSTOM_PROXY_API_KEY: ${{ secrets.DRSAI_MATRIX_CUSTOM_PROXY_API_KEY }}
+      - name: Verify Keychain lock lifecycle and 20 sleep/wake rounds
         run: |
-          python3 -m pip install --disable-pip-version-check --no-input -e ../../cores/python/packages/drsai
-          python3 ../../scripts/verify_model_provider_compatibility.py --real-env --require-all --output macos/build/acceptance/model-provider-real-opt-in.json
+          npm run verify:keychain-lock:device --workspace opendrsai-macos-desktop
+          npm run verify:sleep-wake:device --workspace opendrsai-macos-desktop
+      - name: Verify real HepAI platform model matrix
+        env:
+          OPENDRSAI_HEPAI_ORIGIN: https://ai-dev.ihep.ac.cn
+        run: npm run verify:model-provider-real --workspace opendrsai-macos-desktop
       - name: Verify signed release, Gatekeeper and clean install
         run: npm run verify:release:l6-auto --workspace opendrsai-macos-desktop
       - name: Verify update metadata and immutable asset contract
@@ -264,9 +266,12 @@ jobs:
           npm run verify:online-update:l6 --workspace opendrsai-macos-desktop
           npm run record:signed-update-evidence --workspace opendrsai-macos-desktop
       - name: Verify real-device TCC and notification behavior
+        env:
+          OPENDRSAI_MACOS_TCC_REAL_DEVICE: "1"
         run: npm run verify:tcc:l6 --workspace opendrsai-macos-desktop
       - name: Record L6 evidence
         run: |
+          npm run record:stability-matrix --workspace opendrsai-macos-desktop
           npm run record:l6-evidence --workspace opendrsai-macos-desktop
           npm run verify:acceptance --workspace opendrsai-macos-desktop -- --require-l4 --require-l5 --require-l6
           npm run record:p2-acceptance --workspace opendrsai-macos-desktop
@@ -287,8 +292,6 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, opendrsai-release]
     environment: macos-production-release
     env:
-      GH_TOKEN: ${{ github.token }}
-      OPENDRSAI_RELEASE_REPOSITORY: hepai-lab/drsai
       OPENDRSAI_OSS_BUCKET: hepai-release
       OPENDRSAI_OSSUTIL_BIN: ${{ vars.OPENDRSAI_OSSUTIL_BIN }}
     steps:
@@ -327,28 +330,12 @@ jobs:
           test -x "$OPENDRSAI_OSSUTIL_BIN"
           "$OPENDRSAI_OSSUTIL_BIN" --version
           npm run publish:update:oss -- --execute --preflight --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
-      - name: Create immutable GitHub draft release
-        run: |
-          if gh release view "$OPENDRSAI_RELEASE_TAG" --repo "$OPENDRSAI_RELEASE_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release already exists; refusing to overwrite immutable assets."
-            exit 1
-          fi
-          gh release create "$OPENDRSAI_RELEASE_TAG" \
-            --repo "$OPENDRSAI_RELEASE_REPOSITORY" \
-            --draft \
-            --verify-tag \
-            --title "OpenDrSai $OPENDRSAI_RELEASE_TAG" \
-            --generate-notes \
-            signed-release/apps/desktop/macos/release/*.zip \
-            signed-release/apps/desktop/macos/release/latest-mac.yml
       - name: Upload immutable OSS assets without changing stable
         working-directory: apps/desktop/macos
         run: npm run publish:update:oss -- --execute --assets-only --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
-      - name: Verify staged CDN and GitHub draft byte identity
+      - name: Verify staged OSS/CDN byte identity
         working-directory: apps/desktop/macos
         run: npm run verify:update-published -- --pre-promotion --tag "$OPENDRSAI_RELEASE_TAG" --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
-      - name: Publish verified GitHub release before stable promotion
-        run: gh release edit "$OPENDRSAI_RELEASE_TAG" --repo "$OPENDRSAI_RELEASE_REPOSITORY" --draft=false
       - name: Snapshot current stable metadata
         working-directory: apps/desktop/macos
         run: npm run publish:update:oss -- --execute --snapshot-stable --state-file "$RUNNER_TEMP/opendrsai-macos-stable-state.json" --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
@@ -358,7 +345,14 @@ jobs:
       - name: Verify stable metadata
         working-directory: apps/desktop/macos
         run: |
-          if ! npm run verify:update-published -- --metadata-only --tag "$OPENDRSAI_RELEASE_TAG" --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"; then
+          version="${OPENDRSAI_RELEASE_TAG#v}"
+          if ! npm run verify:update-published -- --metadata-only --tag "$OPENDRSAI_RELEASE_TAG" --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release" || \
+             ! npm run verify:website-release -- \
+               --origin https://opendrsai-dev.ihep.ac.cn/ \
+               --download-origin https://download-opendrsai.ihep.ac.cn/ \
+               --version "$version" \
+               --arch arm64 \
+               --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"; then
             npm run publish:update:oss -- --execute --rollback-metadata --state-file "$RUNNER_TEMP/opendrsai-macos-stable-state.json" --release-dir "$GITHUB_WORKSPACE/signed-release/apps/desktop/macos/release"
             exit 1
           fi

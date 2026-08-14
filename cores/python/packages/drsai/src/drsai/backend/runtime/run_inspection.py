@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 from drsai.backend.runtime.oaep import OAEP_VERSION
 from drsai.version import __version__ as DRS_AI_VERSION
+from drsai.relay.security import redact_credentials
 from .security import redact_sensitive
 
 
@@ -113,20 +114,20 @@ def reproducibility(value: Mapping[str, Any]) -> tuple[str, list[str]]:
 
 def safe_manifest(value: Mapping[str, Any]) -> dict[str, Any]:
     """Return the bounded public view. Prompt/message bodies never survive."""
-    safe = redact_sensitive(dict(value))
+    safe = redact_sensitive(dict(value), "", "audit")
     if not isinstance(safe, dict):
         return {}
     safe.pop("input_text", None)
     safe.pop("system_prompt", None)
     prompt = value.get("prompt") if isinstance(value.get("prompt"), Mapping) else {}
     safe["prompt"] = {
-        key: _scrub_public(redact_sensitive(prompt[key]), key)
+        key: _scrub_public(redact_sensitive(prompt[key], "", "audit"), key)
         for key in ("id", "version", "digest", "template_digest")
         if key in prompt
     }
     input_evidence = value.get("input") if isinstance(value.get("input"), Mapping) else {}
     safe["input"] = {
-        key: _scrub_public(redact_sensitive(input_evidence[key]), key)
+        key: _scrub_public(redact_sensitive(input_evidence[key], "", "audit"), key)
         for key in ("sha256", "length", "resource_digest")
         if key in input_evidence
     }
@@ -147,8 +148,8 @@ def safe_manifest(value: Mapping[str, Any]) -> dict[str, Any]:
     error = outcome.get("error") if isinstance(outcome.get("error"), Mapping) else {}
     if error.get("message"):
         safe_outcome["error"] = {
-            "code": str(redact_sensitive(error.get("code")))[:120],
-            "message": str(redact_sensitive(error.get("message")))[:500],
+            "code": str(redact_sensitive(error.get("code"), "", "audit"))[:120],
+            "message": redact_credentials(str(error.get("message"))),
             "retryable": bool(error.get("retryable", False)),
         }
     if safe_outcome:
@@ -158,7 +159,7 @@ def safe_manifest(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def safe_inspection_item(value: Mapping[str, Any]) -> dict[str, Any]:
     """Return a bounded public OAEP item; private chain-of-thought is never exported."""
-    safe = _scrub_public(redact_sensitive(dict(value)))
+    safe = _scrub_public(redact_sensitive(dict(value), "", "audit"))
     if not isinstance(safe, dict):
         return {}
     if safe.get("type") == "reasoning":
@@ -168,7 +169,7 @@ def safe_inspection_item(value: Mapping[str, Any]) -> dict[str, Any]:
         public_summary = original_content.get("public_summary") or original_content.get("summary")
         safe["content"] = {
             "segments": [],
-            **({"summary": str(_scrub_public(redact_sensitive(public_summary)))[:2_000]} if isinstance(public_summary, str) else {}),
+            **({"summary": str(_scrub_public(redact_sensitive(public_summary, "", "audit")))[:2_000]} if isinstance(public_summary, str) else {}),
         }
     bounded = _bound_public(safe)
     return bounded if isinstance(bounded, dict) else {}
@@ -216,6 +217,23 @@ def _scrub_public(value: Any, key: str = "") -> Any:
     if isinstance(value, list):
         return [_scrub_public(item, key) for item in value]
     if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith(("{", "[")):
+            try:
+                structured = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                structured = None
+            if isinstance(structured, (dict, list)):
+                # Scrubbing a serialized JSON envelope as opaque text can
+                # consume the backslash that escapes a quote after a Windows
+                # path, corrupting otherwise valid OAEP evidence. Preserve
+                # the envelope by scrubbing its values structurally.
+                return json.dumps(
+                    _scrub_public(structured, key),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
         if key.lower() in {"path", "root", "cwd", "workspace_path"} and (
             value.startswith("/")
             or _WINDOWS_ABSOLUTE.match(value)
@@ -332,6 +350,8 @@ def merge_manifest(base: Mapping[str, Any], update: Mapping[str, Any]) -> dict[s
             if key in result and result[key] != value:
                 raise ValueError(f"Run manifest {key} is immutable")
             continue
+        if key == "agent_config_snapshot" and key in result and result[key] not in ({}, None) and result[key] != value:
+            raise ValueError("Run manifest agent_config_snapshot is immutable")
         if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
             result[key] = merge_manifest(result[key], value)
         else:
@@ -342,10 +362,10 @@ def merge_manifest(base: Mapping[str, Any], update: Mapping[str, Any]) -> dict[s
 def event_summary(event_type: str, data: Mapping[str, Any]) -> str:
     error = data.get("error")
     if isinstance(error, Mapping) and error.get("message"):
-        return str(redact_sensitive(error.get("message")))
+        return str(redact_sensitive(error.get("message"), "", "content"))
     for key in ("summary", "reason", "name", "status"):
         if data.get(key) not in {None, ""}:
-            return str(redact_sensitive(data[key]))[:500]
+            return str(redact_sensitive(data[key], "", "content"))[:500]
     return event_type.replace(".", " ")
 
 

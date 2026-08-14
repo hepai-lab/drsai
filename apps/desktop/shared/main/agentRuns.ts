@@ -9,6 +9,8 @@ import type { AgentRunEvent, AgentRunFileEvent, AgentRunRequest, ChatAttachment,
 import { buildAgentTaskDepthContract, isAgentTaskDepth } from "../api/agentTaskDepth";
 import { invalidateAuthSession, requireAuthContext, type AuthContext } from "./auth";
 import { getGatewayRequestHeaders, startGateway } from "./gateway";
+import { resolveGatewayPort } from "./gatewayEnvironment";
+import { getCurrentAgentName } from "./myDrSaiConfig";
 import {
   ChatSseError,
   isCompletionDoneFrame,
@@ -30,7 +32,7 @@ import {
 } from "./networkRecovery";
 import { listRecordedAgentRunEvents, recordAgentRunEvent } from "./agentRunJournal";
 import { BoundedEventDispatcher } from "./boundedEventDispatcher";
-import { abortChat, startChat } from "./chat";
+import { cancelChatTurn, startChat } from "./chat";
 import { createOaepAgentRunBridge } from "./oaepAgentRunBridge";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
@@ -99,7 +101,7 @@ export async function startAgentRun(
   }
   const controller = new AbortController();
   activeRuns.set(requestId, { controller, request, webContents });
-  startRuntimeAgentSurface(webContents, requestId, sessionId, runId, request);
+  void startRuntimeAgentSurface(webContents, requestId, sessionId, runId, request);
 
   return { requestId, sessionId, runId };
 }
@@ -111,25 +113,53 @@ export function abortAgentRun(requestId: string): boolean {
   const active = activeRuns.get(requestId);
   if (!active) return false;
   active.controller.abort("user");
-  return abortChat(requestId);
+  void cancelChatTurn({ requestId, sessionId: active.request.sessionId || active.request.threadId });
+  return true;
 }
 
-function startRuntimeAgentSurface(
+async function startRuntimeAgentSurface(
   webContents: WebContents,
   requestId: string,
   sessionId: string,
   runId: string,
   request: AgentRunRequest,
-): void {
+): Promise<void> {
+  const agentName = await getCurrentAgentName();
+  const active = activeRuns.get(requestId);
+  if (!active || active.controller.signal.aborted) {
+    await upsertThreadFromRun({
+      id: sessionId,
+      kind: "agent_run",
+      title: request.task.replace(/\s+/g, " ").trim().slice(0, 80),
+      workspacePath: request.workspacePath,
+      lastRunId: runId,
+      lastRequestId: requestId,
+      status: "idle",
+    });
+    emit(webContents, { requestId, sessionId, runId, type: "aborted" });
+    activeRuns.delete(requestId);
+    return;
+  }
   const bridge = createOaepAgentRunBridge({ requestId, sessionId, runId });
   const target = {
     send(channel: string, event: unknown): void {
       if (channel !== "desktop:chat-event" || !event || typeof event !== "object") return;
       const mapped = bridge.map(event as ChatEvent);
-      for (const item of mapped) emit(webContents, item);
-      if (mapped.some((item) => item.type === "done" || item.type === "error" || item.type === "aborted")) {
-        activeRuns.delete(requestId);
+      const terminal = mapped.find((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+      if (!terminal) {
+        for (const item of mapped) emit(webContents, item);
+        return;
       }
+      // The Agent surface treats a terminal event as permission to reload the
+      // thread immediately. Persist the matching terminal state first so that
+      // listThreads can never observe a completed/failed Run as still running.
+      void updateThread({
+        id: sessionId,
+        status: terminal.type === "done" || terminal.type === "aborted" ? "idle" : "error",
+      }).catch(() => undefined).then(() => {
+        for (const item of mapped) emit(webContents, item);
+        activeRuns.delete(requestId);
+      });
     },
   };
   startChat(target, {
@@ -137,7 +167,7 @@ function startRuntimeAgentSurface(
     threadId: sessionId,
     sessionId,
     runId,
-    agentId: "my-drsai",
+    agentId: agentName,
     workspacePath: request.workspacePath,
     attachments: normalizeAgentRunAttachments(request.files),
     messages: [{ role: "user", content: buildAgentExecutionPrompt(request) }],
@@ -838,7 +868,5 @@ function getPositiveIntEnv(name: string, fallback: number): number {
 }
 
 function getGatewayPort(): string {
-  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "18642";
-  const parsed = Number(rawPort);
-  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? String(parsed) : "18642";
+  return resolveGatewayPort();
 }

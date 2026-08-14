@@ -3,8 +3,8 @@ import type { OperationalStateDecision } from "@shared/operationalState";
 import type { AppLanguage } from "../navigation";
 
 const LABELS = {
-  zh: { identity: "身份", runtime: "运行时", model: "HAI 模型", workspace: "工作区", run: "任务运行" },
-  en: { identity: "Identity", runtime: "Runtime", model: "HAI model", workspace: "Workspace", run: "Task run" },
+  zh: { identity: "身份", runtime: "运行时", agent: "智能体", workspace: "工作区" },
+  en: { identity: "Identity", runtime: "Runtime", agent: "Agent", workspace: "Workspace" },
 } as const;
 
 const STATE_COPY: Record<string, { zh: string; en: string }> = {
@@ -15,30 +15,20 @@ const STATE_COPY: Record<string, { zh: string; en: string }> = {
   preparing: { zh: "正在准备本地运行时", en: "Preparing the local runtime" },
   blocked: { zh: "运行时需要修复", en: "Runtime needs attention" },
   ready: { zh: "已就绪", en: "Ready" },
-  unconfigured: { zh: "需要配置模型", en: "Model setup required" },
-  untested: { zh: "需要验证模型连接", en: "Model connection test required" },
+  unavailable: { zh: "没有可用的智能体", en: "No Agent is available" },
+  unconfigured: { zh: "当前智能体需要配置模型", en: "Current Agent model setup required" },
+  untested: { zh: "当前智能体模型尚未手动测试", en: "Current Agent model has not been manually tested" },
   none: { zh: "需要选择工作区", en: "Workspace selection required" },
   untrusted: { zh: "需要信任工作区", en: "Workspace trust required" },
   trusted: { zh: "已信任", en: "Trusted" },
-  idle: { zh: "可以开始任务", en: "Ready to start a task" },
-  queued: { zh: "任务正在排队", en: "Task is queued" },
-  running: { zh: "任务正在运行", en: "Task is running" },
-  waiting_approval: { zh: "任务等待你的批准", en: "Task needs your approval" },
-  recovering: { zh: "正在恢复任务", en: "Recovering the task" },
-  failed: { zh: "任务失败，需要处理", en: "Task failed and needs attention" },
-  completed: { zh: "最近任务已完成", en: "Latest task completed" },
-  cancelled: { zh: "最近任务已取消", en: "Latest task cancelled" },
 };
 
 const AUTO_OPEN_STATES = new Set([
   "anonymous",
   "blocked",
   "unconfigured",
-  "untested",
   "none",
   "untrusted",
-  "waiting_approval",
-  "failed",
 ]);
 
 export function OperationalStateBar({ decision, language, busy = false, actionMessage, onPrimaryAction, onCopyDiagnostics }: {
@@ -51,8 +41,8 @@ export function OperationalStateBar({ decision, language, busy = false, actionMe
 }): React.JSX.Element {
   const zh = language === "zh";
   const labels = LABELS[language];
-  const currentCopy = busy && decision.currentLayer === "model"
-    ? (zh ? "正在验证模型连接" : "Verifying model connection")
+  const currentCopy = busy && decision.currentLayer === "agent"
+    ? (zh ? "正在验证当前智能体模型" : "Verifying current Agent model")
     : STATE_COPY[decision.state]?.[language] ?? decision.state;
   const [open, setOpen] = useState(false);
 
@@ -76,7 +66,7 @@ export function OperationalStateBar({ decision, language, busy = false, actionMe
       <span className="operational-state-dot" aria-hidden="true" />
       <span>{currentCopy}</span>
     </summary>
-    <div className="operational-state-popover" role="dialog" aria-label={zh ? "任务运行状态" : "Task run status"}>
+    <div className="operational-state-popover" role="dialog" aria-label={zh ? "OpenDrSai 就绪状态" : "OpenDrSai readiness status"}>
       <header>
         <strong>{labels[decision.currentLayer]}</strong>
         <span>{currentCopy}</span>
@@ -88,7 +78,7 @@ export function OperationalStateBar({ decision, language, busy = false, actionMe
           <small>{STATE_COPY[item.state]?.[language] ?? item.state}</small>
         </li>)}
       </ol>
-      {decision.blockingLayer ? <div className="operational-state-actions" role="group" aria-label={zh ? "恢复操作" : "Recovery actions"}>
+      {decision.blockingLayer || (decision.currentLayer === "agent" && decision.state === "untested") ? <div className="operational-state-actions" role="group" aria-label={zh ? "恢复操作" : "Recovery actions"}>
         {onPrimaryAction ? <button type="button" data-testid="operational-primary-action" disabled={busy} onClick={() => void onPrimaryAction()}>
           {busy ? (zh ? "正在处理…" : "Working…") : primaryActionLabel(decision, language)}
         </button> : null}
@@ -103,7 +93,10 @@ function primaryActionLabel(decision: OperationalStateDecision, language: AppLan
   const zh = language === "zh";
   if (decision.currentLayer === "identity") return zh ? "前往登录" : "Go to sign in";
   if (decision.currentLayer === "runtime") return zh ? "修复并重试运行时" : "Repair and retry runtime";
-  if (decision.currentLayer === "model") return decision.state === "untested" ? (zh ? "验证模型连接" : "Test model connection") : (zh ? "重新配置 HAI 模型" : "Reconfigure HAI model");
+  if (decision.currentLayer === "agent") {
+    if (decision.state === "unavailable") return zh ? "打开智能体配置" : "Open Agent configuration";
+    return decision.state === "untested" ? (zh ? "打开模型提供方设置" : "Open Model provider settings") : (zh ? "配置当前智能体模型" : "Configure current Agent model");
+  }
   if (decision.currentLayer === "workspace") return decision.state === "untrusted" ? (zh ? "信任此工作区" : "Trust this workspace") : (zh ? "选择工作区" : "Choose workspace");
-  return decision.state === "waiting_approval" ? (zh ? "查看待批准操作" : "Review pending approval") : (zh ? "查看并重试任务" : "Review and retry task");
+  return zh ? "检查工作区" : "Check workspace";
 }

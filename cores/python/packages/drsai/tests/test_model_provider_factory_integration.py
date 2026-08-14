@@ -40,13 +40,17 @@ def test_factory_uses_custom_openai_provider_for_initial_and_switched_model(monk
     assert client.kwargs["model"] == "custom-model"
     assert client.kwargs["base_url"] == "https://provider.example/v1"
     assert client.kwargs["api_key"] == "factory-secret"
+    assert client.kwargs["use_responses_api"] is True
     assert result["system_message"].startswith(AgentRunConfig().authoritative_prompt())
     identity = agent_kernel_identity()
     host_port = normalize_kernel_host_port({
         "schema_version": 1, "protocol_version": "p9-host-port-v1", "surface": "desktop",
         "capabilities": [
             {"id": value, "version": 1, "required": value == "chat"}
-            for value in ["chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts"]
+            for value in [
+                    "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+                    "web_search", "web_fetch", "network.public_https", "image_generation", "image_edit",
+            ]
         ],
     }, surface="desktop")
     assert result["metadata"] == {
@@ -78,6 +82,103 @@ def test_factory_uses_custom_openai_provider_for_initial_and_switched_model(monk
     assert switched.kwargs["model"] == "another-model"
     assert switched.kwargs["base_url"] == "https://new-provider.example/v1"
     assert switched.kwargs["api_key"] == "new-factory-secret"
+
+
+def test_factory_uses_responses_api_for_zhizengzeng(monkeypatch, tmp_path) -> None:
+    config = parse_user_config({
+        "model": "deepseek-v4-flash",
+        "model_provider": "zhizengzeng",
+        "model_providers": {
+            "zhizengzeng": {
+                "base_url": "https://api.zhizengzeng.com/v1",
+                "api_key": "factory-secret",
+            },
+        },
+    })
+    monkeypatch.setattr(factory, "load_user_config", lambda: config)
+    monkeypatch.setattr(factory, "HepAIChatCompletionClient", _Client)
+
+    result = factory.create_agent(
+        cli_cfg={"workspace_enabled": True},
+        assistant_cls=_assistant,
+        work_dir=str(tmp_path),
+    )
+
+    client = result["model_client"]
+    assert client.kwargs["base_url"] == "https://api.zhizengzeng.com/v1"
+    assert client.kwargs["use_responses_api"] is True
+    assert client.kwargs["allow_deferred_oidc"] is False
+    assert client.kwargs["model"] == "deepseek-v4-flash"
+
+
+def test_factory_uses_responses_api_for_hepai_oidc_models(monkeypatch, tmp_path) -> None:
+    config = parse_user_config({
+        "model": "deepseek-v4-flash",
+        "model_provider": "hepai",
+        "model_providers": {
+            "hepai": {
+                "base_url": "https://ai-dev.example/apiv2/v1",
+                "requires_api_key": False,
+                "models": {"deepseek-v4-flash": {
+                    "input_modalities": ["text"],
+                    "output_modalities": ["text"],
+                    "api_protocol": "openai",
+                    "capabilities": ["chat", "tool_calling", "reasoning"],
+                }},
+            },
+        },
+    })
+    monkeypatch.setattr(factory, "load_user_config", lambda: config)
+    monkeypatch.setattr(factory, "get_platform_auth", lambda: object())
+    monkeypatch.setattr(factory, "HepAIChatCompletionClient", _Client)
+
+    result = factory.create_agent(
+        cli_cfg={"workspace_enabled": True},
+        assistant_cls=_assistant,
+        work_dir=str(tmp_path),
+    )
+
+    client = result["model_client"]
+    assert client.kwargs["model"] == "deepseek-v4-flash"
+    assert client.kwargs["base_url"] == "https://ai-dev.example/apiv2/v1"
+    assert client.kwargs["use_responses_api"] is True
+    assert client.kwargs["allow_deferred_oidc"] is True
+
+
+def test_oidc_login_does_not_make_env_selected_external_provider_key_optional(
+    monkeypatch, tmp_path,
+) -> None:
+    config = parse_user_config({
+        "model_providers": {
+            "zhizengzeng": {
+                "base_url": "https://api.zhizengzeng.com/v1",
+                "api_key": "external-provider-secret",
+            },
+        },
+    })
+    real_resolve = factory.resolve_model_config
+    credential_requirements: list[bool] = []
+
+    def tracked_resolve(*args, **kwargs):
+        credential_requirements.append(kwargs["require_credentials"])
+        return real_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(factory, "load_user_config", lambda: config)
+    monkeypatch.setattr(factory, "resolve_model_config", tracked_resolve)
+    monkeypatch.setattr(factory, "get_platform_auth", lambda: object())
+    monkeypatch.setattr(factory, "HepAIChatCompletionClient", _Client)
+    monkeypatch.setenv("DRSAI_MODEL_PROVIDER", "zhizengzeng")
+    monkeypatch.setenv("DRSAI_MODEL", "deepseek-v4-flash")
+
+    result = factory.create_agent(
+        cli_cfg={"workspace_enabled": True},
+        assistant_cls=_assistant,
+        work_dir=str(tmp_path),
+    )
+
+    assert credential_requirements and all(credential_requirements)
+    assert result["model_client"].kwargs["api_key"] == "external-provider-secret"
+    assert result["model_client"].kwargs["allow_deferred_oidc"] is False
 
 
 def test_factory_honors_anthropic_protocol_over_model_name_heuristics(monkeypatch, tmp_path) -> None:

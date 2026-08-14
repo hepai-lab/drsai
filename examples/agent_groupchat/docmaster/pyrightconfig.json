@@ -1,0 +1,13 @@
+{
+  "include": [
+    "run_docmaster.py"
+  ],
+  "extraPaths": [
+    "..",
+    "../../../cores/python/packages/drsai/src"
+  ],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}

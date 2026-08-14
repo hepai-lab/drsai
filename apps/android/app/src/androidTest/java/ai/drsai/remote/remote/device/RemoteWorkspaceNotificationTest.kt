@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -31,8 +32,8 @@ class RemoteWorkspaceNotificationTest {
         assertFalse(incoming.extras!!.keySet().any { it in setOf("message", "body", "command", "path") })
     }
 
-    @Test fun providerDataUsesOnlyOpaqueIdentityEnvelope() {
-        val payload = RemoteNotificationPayload.from(mapOf(
+    @Test fun providerDataRejectsAnyNonOpaqueEnvelopeField() {
+        val failure = assertThrows(IllegalArgumentException::class.java) { RemoteNotificationPayload.from(mapOf(
             "version" to "1",
             "kind" to "run_completed",
             "runtime_id" to "runtime-one",
@@ -41,10 +42,21 @@ class RemoteWorkspaceNotificationTest {
             "event_id" to "event-one",
             "message" to "must be ignored",
             "command" to "must be ignored",
-        ))
+        )) }
 
-        assertEquals("event-one", payload.eventId)
-        assertEquals("run_completed", payload.kind)
-        assertFalse(payload.toString().contains("must be ignored"))
+        assertEquals("remote_notification_envelope_invalid", failure.message)
+    }
+
+    @Test fun providerDataRejectsUnboundedOrNonOpaqueIdentity() {
+        val base = mapOf(
+            "version" to "1", "kind" to "run_completed", "runtime_id" to "runtime-one",
+            "workspace_id" to "workspace-one", "session_id" to "session-one",
+        )
+        assertEquals(
+            "remote_notification_event_id_invalid",
+            assertThrows(IllegalArgumentException::class.java) {
+                RemoteNotificationPayload.from(base + ("event_id" to "not/opaque"))
+            }.message,
+        )
     }
 }

@@ -45,25 +45,151 @@ namespace OpenDrSai.Installer
         }
 
         [CustomAction]
-        public static ActionResult AdvanceProgress(Session session)
+        public static ActionResult RunInstallerStage(Session session)
         {
+            Process process = null;
+            string progressFile = null;
             try
             {
-                int ticks = int.Parse(
+                string stage = session.CustomActionData["Stage"];
+                string scriptPath = session.CustomActionData["ScriptPath"];
+                string installRoot = session.CustomActionData["InstallRoot"];
+                string runtimeUrl = session.CustomActionData["RuntimeUrl"];
+                string runtimeSha256 = session.CustomActionData["RuntimeSha256"];
+                string runtimeSizeBytes = session.CustomActionData["RuntimeSizeBytes"];
+                string bootstrapperVersion = session.CustomActionData["BootstrapperVersion"];
+                string installSessionId = session.CustomActionData["InstallSessionId"];
+                string extraInstallArgs = session.CustomActionData.ContainsKey("ExtraInstallArgs")
+                    ? session.CustomActionData["ExtraInstallArgs"]
+                    : string.Empty;
+                progressFile = session.CustomActionData["ProgressFile"];
+                int stageTicks = int.Parse(
                     session.CustomActionData["Ticks"],
                     CultureInfo.InvariantCulture);
-                if (ticks <= 0 || ticks > TotalProgressTicks)
+                if (stageTicks <= 0 || stageTicks > TotalProgressTicks)
                 {
                     throw new InvalidDataException("Progress ticks must be between 1 and 1000.");
                 }
-                ReportProgress(session, ticks);
+
+                DeleteIfPresent(progressFile);
+                ProcessStartInfo startInfo = new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = string.Join(" ", new[]
+                    {
+                        "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden",
+                        "-File " + QuoteArgument(scriptPath),
+                        "-Stage " + QuoteArgument(stage),
+                        "-InstallRoot " + QuoteArgument(installRoot),
+                        "-RuntimeUrl " + QuoteArgument(runtimeUrl),
+                        "-RuntimeSha256 " + QuoteArgument(runtimeSha256),
+                        "-RuntimeSizeBytes " + QuoteArgument(runtimeSizeBytes),
+                        "-BootstrapperVersion " + QuoteArgument(bootstrapperVersion),
+                        "-InstallSessionId " + QuoteArgument(installSessionId),
+                        "-ProgressFile " + QuoteArgument(progressFile),
+                        "-MachineInstall -NoShortcuts -NoLaunch -Quiet",
+                        extraInstallArgs
+                    }),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                process = Process.Start(startInfo);
+                if (process == null)
+                {
+                    throw new InvalidOperationException("Could not start the OpenDrSai installer stage.");
+                }
+
+                int reportedPercent = 0;
+                string lastDetail = string.Empty;
+                while (!process.WaitForExit(100))
+                {
+                    if (!ReportStageFile(session, progressFile, stageTicks, ref reportedPercent, ref lastDetail))
+                    {
+                        try { process.Kill(); } catch { }
+                        return ActionResult.UserExit;
+                    }
+                }
+                ReportStageFile(session, progressFile, stageTicks, ref reportedPercent, ref lastDetail);
+                if (process.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "OpenDrSai installer stage {0} failed with exit code {1}. See the installer log under ProgramData\\OpenDrSai\\Installer\\logs.",
+                        stage,
+                        process.ExitCode));
+                }
+                if (reportedPercent < 100)
+                {
+                    ReportProgress(session, stageTicks - (reportedPercent * stageTicks / 100));
+                }
                 return ActionResult.Success;
             }
             catch (Exception ex)
             {
-                session.Log("OpenDrSai installer progress update failed: " + ex);
+                session.Log("OpenDrSai installer stage failed: " + ex);
+                ShowError(session, ex.Message);
                 return ActionResult.Failure;
             }
+            finally
+            {
+                if (process != null) process.Dispose();
+                DeleteIfPresent(progressFile);
+            }
+        }
+
+        private static bool ReportStageFile(
+            Session session,
+            string progressFile,
+            int stageTicks,
+            ref int reportedPercent,
+            ref string lastDetail)
+        {
+            if (string.IsNullOrEmpty(progressFile) || !File.Exists(progressFile)) return true;
+            string progress;
+            try
+            {
+                using (FileStream stream = new FileStream(
+                    progressFile,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete))
+                using (StreamReader reader = new StreamReader(stream))
+                {
+                    progress = reader.ReadToEnd();
+                }
+            }
+            catch (IOException)
+            {
+                return true;
+            }
+            int separator = progress.IndexOf('\t');
+            if (separator <= 0) return true;
+            int percent;
+            if (!int.TryParse(progress.Substring(0, separator), NumberStyles.Integer, CultureInfo.InvariantCulture, out percent))
+            {
+                return true;
+            }
+            percent = Math.Max(0, Math.Min(100, percent));
+            if (percent > reportedPercent)
+            {
+                int previousTicks = reportedPercent * stageTicks / 100;
+                int targetTicks = percent * stageTicks / 100;
+                if (targetTicks > previousTicks) ReportProgress(session, targetTicks - previousTicks);
+                reportedPercent = percent;
+            }
+            string detail = progress.Substring(separator + 1).Trim();
+            if (detail.Length > 0 && !string.Equals(detail, lastDetail, StringComparison.Ordinal))
+            {
+                lastDetail = detail;
+                return SendActionData(session, detail);
+            }
+            return true;
+        }
+
+        private static string QuoteArgument(string value)
+        {
+            return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
         }
 
         private static string ResolveRuntimeSource(Session session, string sourcePath, string runtimeUrl)

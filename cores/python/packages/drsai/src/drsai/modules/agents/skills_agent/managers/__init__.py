@@ -16,6 +16,7 @@ from .get_managers_tools import (
     create_local_venv,
     get_agent_skills_tool,
     get_subagent_tools,
+    get_regression_read_tools,
     get_todo_manager_tool,
 )
 from .get_scheduled_task_tools import get_scheduled_task_tool

@@ -14,6 +14,7 @@ const outputPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(ro
 const channel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "beta").toLowerCase();
 const minimumUpdaterVersion = resolveMinimumUpdaterVersion(process.env.OPENDRSAI_MINIMUM_UPDATER_VERSION);
 const isPrereleaseVersion = version.includes("-");
+const buildLabel = String(process.env.OPENDRSAI_BUILD_LABEL || "").trim();
 const baseUrl = String(
   process.env.OPENDRSAI_RELEASE_BASE_URL ||
   `https://download-opendrsai.ihep.ac.cn/releases/v${version}/windows`,
@@ -38,6 +39,7 @@ if (runtimeManifest.platform !== "windows-x64" || runtimeManifest.layoutVersion 
 const manifest = {
   schemaVersion: 1,
   version,
+  ...(buildLabel ? { buildLabel } : {}),
   channel,
   publishedAt: process.env.OPENDRSAI_RELEASE_PUBLISHED_AT || new Date().toISOString(),
   minimumUpdaterVersion,

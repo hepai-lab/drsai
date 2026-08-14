@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from drsai.relay.registry import RelayRegistryError
-from drsai.relay.security import RelayTicketIssuer, RuntimePermissionEnforcer, redact_secrets
+from drsai.relay.security import RelayTicketIssuer, RuntimePermissionEnforcer, redact_credentials, redact_secrets
 
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -65,3 +65,16 @@ def test_shared_secret_redaction_canaries() -> None:
         assert "[REDACTED]" in redacted
         for canary in sample["must_not_contain"]:
             assert canary not in redacted
+
+
+def test_credential_redaction_preserves_provider_error_fields() -> None:
+    raw = (
+        'Error code: 400 - {"error":{"message":"unsupported field"}} '
+        'access_token=private-token'
+    )
+    redacted = redact_credentials(raw)
+
+    assert 'code: 400' in redacted
+    assert '"message":"unsupported field"' in redacted
+    assert 'access_token=[REDACTED]' in redacted
+    assert 'private-token' not in redacted

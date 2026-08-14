@@ -52,17 +52,14 @@ try {
   await shellPage.locator(".app-shell").waitFor({ state: "visible", timeout: 10000 });
   assert.equal(await shellPage.evaluate(() => window.openDrSai?.isOperationalStateE2eEnabled()), true, "operational-state fixture bridge is disabled");
   const diagnostic = shellPage.getByTestId("operational-state-bar");
-  const facts = { identity: "authenticated", runtime: "ready", model: "unconfigured", workspace: "none", run: "idle" };
+  const facts = { identity: "authenticated", runtime: "ready", agent: "unconfigured", workspace: "none" };
   for (let attempt = 0; attempt < 20 && !(await diagnostic.count()); attempt += 1) {
     await shellPage.evaluate((detail) => window.dispatchEvent(new CustomEvent("drsai:e2e-operational-state", { detail })), facts);
     await shellPage.waitForTimeout(100);
   }
   assert.equal(await diagnostic.count(), 1, `diagnostics container missing; observed=${await shellPage.evaluate(() => `${document.documentElement.dataset.operationalE2eState || "none"}/${document.documentElement.dataset.operationalE2eDecision || "none"}`)} actions=${await shellPage.locator(".conversation-titlebar-actions").evaluate((node) => node.innerHTML).catch(() => "missing")} errors=${JSON.stringify(runtimeErrors)} body=${(await shellPage.locator("body").innerText()).slice(0, 1000)}`);
-  assert.equal(await diagnostic.getAttribute("data-current-layer"), "model");
-  await diagnostic.getByTestId("operational-primary-action").click();
-  const recoveryMessage = diagnostic.getByTestId("operational-action-message");
-  await recoveryMessage.waitFor({ state: "visible", timeout: 10000 });
-  assert.match(await recoveryMessage.innerText(), /minimal call|最小调用/);
+  assert.equal(await diagnostic.getAttribute("data-current-layer"), "agent");
+  assert.match(await diagnostic.getByTestId("operational-primary-action").innerText(), /配置当前智能体模型|Configure current Agent model/);
   assert.equal(await shellPage.getByTestId("model-provider-settings").count(), 0);
   const resultsLink = shellPage.getByText(/Results Library|成果库/, { exact: true }).first();
   await resultsLink.click();

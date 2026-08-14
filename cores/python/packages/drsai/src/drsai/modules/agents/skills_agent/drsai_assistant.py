@@ -13,7 +13,7 @@ from typing import (
     # Mapping,
     # TYPE_CHECKING,
     )
-import json, re, uuid, shutil, copy
+import json, re, uuid, shutil
 import asyncio, traceback
 from pydantic import BaseModel
 from pathlib import Path
@@ -98,6 +98,7 @@ from .managers.get_managers_tools import (
     get_agent_skills_tool,
     get_subagent_tools,
     get_todo_manager_tool,
+    get_regression_read_tools,
     create_local_venv,
 )
 from .managers.get_scheduled_task_tools import get_scheduled_task_tool
@@ -114,14 +115,22 @@ from drsai.backend.runtime.agent_kernel import DEFAULT_MAX_PARALLEL_TOOL_CALLS, 
 _DESKTOP_READ_ONLY_TOOLS = {
     "run_read", "run_grep", "run_glob", "get_bash_task", "list_bash_tasks",
     "get_powershell_task", "list_powershell_tasks", "Skill",
-    "retrieve_from_memory", "read_session_memory_by_index",
+    "retrieve_from_memory", "read_session_memory_by_index", "web_search", "web_fetch",
+    "regression_list_suites", "regression_list_cases", "regression_get_case",
+    "regression_preflight", "regression_history", "regression_get", "regression_events",
 }
 _DESKTOP_LOCAL_WRITE_TOOLS = {"run_write", "run_edit", "TodoWrite", "UpdateUserConfig"}
 _DESKTOP_CONDITIONAL_TOOLS = {
     "run_bash", "run_bash_background", "run_powershell", "kill_bash_task",
     "kill_powershell_task",
+    "regression_start", "regression_cancel",
 }
 _DESKTOP_REQUIRED_APPROVAL_TOOLS = {"Delegate", "ScheduledTaskManager"}
+_REGRESSION_READ_TOOL_NAMES = {
+    "regression_list_suites", "regression_list_cases", "regression_get_case",
+    "regression_preflight", "regression_history", "regression_get", "regression_events",
+}
+_REGRESSION_EXECUTION_TOOL_NAMES = {"regression_start", "regression_cancel"}
 
 
 def _tool_schema_name(value: Any) -> str:
@@ -144,6 +153,11 @@ def _desktop_execution_metadata(name: str, executor_id: str) -> dict[str, Any]:
         # Dynamically loaded MCP/HepAI tools can have external side effects.
         # They remain visible for compatibility but may not claim no-approval safety.
         risk, approval = "external_write", "required"
+    required_capabilities = ["network.public_https"] if name in {"web_search", "web_fetch"} else []
+    if name == "web_search": required_capabilities.insert(0, "web_search")
+    if name == "web_fetch": required_capabilities.insert(0, "web_fetch")
+    if name in {"image_generation", "image_edit"}:
+        required_capabilities = [name]
     return {
         "version": 1,
         "source": "desktop-host",
@@ -151,7 +165,7 @@ def _desktop_execution_metadata(name: str, executor_id: str) -> dict[str, Any]:
         "risk": risk,
         "approval_mode": approval,
         "executor_id": executor_id,
-        "required_capabilities": [],
+        "required_capabilities": required_capabilities,
     }
 
 
@@ -263,6 +277,18 @@ _READONLY_DISALLOWED_TOOLS: set = _DEFAULT_DISALLOWED_FOR_SUBAGENTS | {
 }
 
 
+def filter_agent_skills(
+    skills: Dict[str, Any], *, mode: str, enabled: Sequence[str], disabled: Sequence[str],
+) -> Dict[str, Any]:
+    disabled_set = set(disabled)
+    enabled_set = set(enabled)
+    if mode == "explicit":
+        return {name: skill for name, skill in skills.items() if name in enabled_set and name not in disabled_set}
+    if mode in {"inherit", "all_enabled"}:
+        return {name: skill for name, skill in skills.items() if name not in disabled_set}
+    raise ValueError("Agent skills mode is invalid")
+
+
 class DelegateDepthExceededError(Exception):
     """Raised when subagent delegation depth exceeds the maximum."""
     pass
@@ -357,6 +383,14 @@ class DrSaiAssistant(DrSaiAgent):
         # LLM retry configuration
         llm_max_retries: int = 3,  # Retry bounded transient failures only
         llm_retry_base_delay: float = 2.0,  # Base delay (s) for exponential backoff
+        tool_resource_ids: Optional[Sequence[str]] = None,
+        tool_policy_revision: Optional[str] = None,
+        skill_policy_mode: str = "inherit",
+        skill_resource_ids: Optional[Sequence[str]] = None,
+        disabled_skill_ids: Optional[Sequence[str]] = None,
+        allow_thread_skill_override: bool = True,
+        skill_policy_revision: Optional[str] = None,
+        owns_model_client: bool = True,
     ):
         super().__init__(
             name=name,
@@ -383,9 +417,17 @@ class DrSaiAssistant(DrSaiAgent):
             set_model_client=set_model_client,
             llm_mode_config=llm_mode_config,
             defult_config_name=defult_config_name,
+            owns_model_client=owns_model_client,
         )
 
         self._developer_system_message = system_message or ""
+        self._tool_resource_ids = None if tool_resource_ids is None else frozenset(tool_resource_ids)
+        self._tool_policy_revision = tool_policy_revision
+        self._skill_policy_mode = skill_policy_mode
+        self._skill_resource_ids = frozenset(skill_resource_ids or ())
+        self._disabled_skill_ids = frozenset(disabled_skill_ids or ())
+        self._allow_thread_skill_override = allow_thread_skill_override
+        self._skill_policy_revision = skill_policy_revision
         self._active_model_tool_snapshot: Dict[str, Any] | None = None
         self._active_execution_tool_registry: Dict[str, Any] | None = None
         self._tool_approval_handler: Callable[[dict[str, Any], dict[str, Any]], Awaitable[bool]] | None = None
@@ -412,6 +454,11 @@ class DrSaiAssistant(DrSaiAgent):
             self._work_dir = Path(work_dir) / self._user_id
         if not self._work_dir.exists():
             self._work_dir.mkdir(parents=True)
+        # Keep the user-visible Workspace distinct from the Agent's private
+        # profile/storage directory. Desktop Host tools and the Regression
+        # Skill both resolve their execution scope from this stable binding.
+        if work_dir:
+            self._runtime_workspace_path = Path(work_dir).resolve()
 
         # === initial UserProfileManager ===
         self._user_profile_manager = UserProfileManager(
@@ -516,13 +563,10 @@ class DrSaiAssistant(DrSaiAgent):
         self._learning_document_id = None
         
         # memory manager
-        model_config = model_client.dump_component()
-        independent_model_client = ChatCompletionClient.load_component(model_config)
-        independent_model_client._model_info = copy.deepcopy(model_client._model_info)
         self._model_context = self._create_context(
             model_context=model_context,
             context_type=context_type,
-            independent_model_client=independent_model_client,
+            model_client=model_client,
             db_manager=db_manager,
         )
         self._register_context_tools()
@@ -567,6 +611,15 @@ class DrSaiAssistant(DrSaiAgent):
         # === todo manager ===
         self._todo_manager = TodoManager()
         self._todo_tools = [get_todo_manager_tool()]
+        self._regression_tools = get_regression_read_tools()
+        from .managers.regression_manager import RegressionManager
+        self._regression_manager = RegressionManager(
+            self._work_dir,
+            workspace_resolver=lambda: (
+                getattr(self, "_runtime_workspace_path", None) or work_dir
+            ),
+            workspace_id_resolver=lambda: getattr(self, "_runtime_workspace_id", None),
+        )
 
         # === scheduled task manager ===
         # 注意: task_manager 实例会在 run.py 中创建并注入到 app._task_manager
@@ -603,7 +656,7 @@ class DrSaiAssistant(DrSaiAgent):
         self,
         model_context: Optional[ChatCompletionContext],
         context_type: str,
-        independent_model_client: ChatCompletionClient,
+        model_client: ChatCompletionClient,
         db_manager: Optional[Any] = None,
     ) -> ChatCompletionContext:
         """
@@ -623,7 +676,7 @@ class DrSaiAssistant(DrSaiAgent):
             self._context_type = "sqlite"
             return DrSaiSQLiteChatCompletionContext(
                 agent_name=self._user_profile_manager.agent_name,
-                model_client=independent_model_client,
+                model_client=model_client,
                 db_manager=db_manager,
                 thread_id=self._thread_id,
                 user_id=self._user_id,
@@ -636,7 +689,7 @@ class DrSaiAssistant(DrSaiAgent):
         else:
             # 默认使用 RAGFlow 上下文
             self._context_type = "ragflow"
-            return self._create_ragflow_context(independent_model_client)
+            return self._create_ragflow_context(model_client)
 
     def _create_ragflow_context(self, model_client: ChatCompletionClient) -> "DrSaiChatCompletionContext":
         """创建 RAGFlow ChatCompletionContext"""
@@ -1090,6 +1143,14 @@ class DrSaiAssistant(DrSaiAgent):
             if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
                 skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
 
+            if skills_loader is not None:
+                skills_loader.skills = filter_agent_skills(
+                    skills_loader.skills,
+                    mode=self._skill_policy_mode,
+                    enabled=self._skill_resource_ids,
+                    disabled=self._disabled_skill_ids,
+                )
+
             if skills_loader and skills_loader.skills:
                 self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
             else:
@@ -1135,6 +1196,11 @@ class DrSaiAssistant(DrSaiAgent):
 
         # 逐个加载工具，收集错误但不中断
         for idx, tool in enumerate(tools_config):
+            tool_id = str(tool.get("tool_id") or "").strip()
+            if tool.get("enabled", True) is not True:
+                continue
+            if self._tool_resource_ids is not None and tool_id not in self._tool_resource_ids:
+                continue
             tool_type = tool.get("type", "unknown")
             try:
                 if tool_type == "mcp-std":
@@ -1430,7 +1496,7 @@ class DrSaiAssistant(DrSaiAgent):
             skills_loader = self._cached_skills_loader
 
             # manager ToolSchema
-            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools
+            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools+self._regression_tools
 
             # count the number of tools (only for DrSaiChatCompletionContext which has _tool_schema)
             if hasattr(self._model_context, '_tool_schema'):
@@ -2359,7 +2425,13 @@ class DrSaiAssistant(DrSaiAgent):
                     ))
                     continue
                 approval_handler = self._tool_approval_handler
-                if not await approval_handler(registry_record, {
+                # DrSaiAssistant is shared by Desktop, TUI, WebUI and direct
+                # worker transports. Not every consumer currently exposes an
+                # interactive approval channel, so a missing handler is the
+                # compatibility mode and must not make required tools unusable.
+                # An installed handler remains authoritative: an explicit
+                # denial still blocks execution.
+                if approval_handler is not None and not await approval_handler(registry_record, {
                     **dict(arguments), "_runtime_call_id": call_id,
                 }):
                     exec_results.append(FunctionExecutionResult(
@@ -2406,6 +2478,30 @@ class DrSaiAssistant(DrSaiAgent):
                     logger.exception(f"Error executing Skill tool: {e}")
                     exec_results.append(FunctionExecutionResult(
                         content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+
+            elif tool_name in _REGRESSION_READ_TOOL_NAMES | _REGRESSION_EXECUTION_TOOL_NAMES:
+                try:
+                    result_content = self._regression_manager.execute(tool_name, arguments)
+                    exec_results.append(FunctionExecutionResult(
+                        content=result_content,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    yield AgentLogEvent(
+                        title=f"Reading regression data: {tool_name}",
+                        source=agent_name,
+                        content=json.dumps(arguments, ensure_ascii=False),
+                        content_type="tools",
+                    )
+                except Exception as e:
+                    logger.exception(f"Error executing {tool_name}: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=json.dumps({"error": {"code": "regression_tool_failed", "message": str(e)}}, ensure_ascii=False),
                         name=tool_name,
                         call_id=call_id,
                         is_error=True,
@@ -2923,40 +3019,6 @@ class DrSaiAssistant(DrSaiAgent):
 
         return [t for t in tools if t.name not in disallowed]
 
-    async def _create_independent_model_client(self) -> ChatCompletionClient:
-        """Create an independent model_client copy for subagent use.
-
-        Creates a new instance with its own underlying httpx.AsyncClient so that
-        subagent.close() does not affect the parent's HTTP connections.
-
-        Uses raw config for HepAIChatCompletionClient to avoid
-        ``dump_component``/``load_component`` losing the HepAI type
-        (HepAIChatCompletionClient inherits ``component_provider_override`` from
-        OpenAIChatCompletionClient, so ``load_component`` would instantiate an
-        OpenAIChatCompletionClient instead).
-        """
-        if self._model_client is None:
-            raise ValueError("Parent model_client is not initialized")
-
-        # HepAI client: preserve the subclass type via raw config
-        try:
-            from hepai.agents.modules.components.LLMClient import (
-                HepAIChatCompletionClient,
-            )
-            if isinstance(self._model_client, HepAIChatCompletionClient):
-                raw = getattr(self._model_client, '_raw_config', {}).copy()
-                independent = HepAIChatCompletionClient(**raw)
-                independent._model_info = copy.deepcopy(self._model_client._model_info)
-                return independent
-        except ImportError:
-            pass
-
-        # Default path (works for all Component-based clients)
-        model_config = self._model_client.dump_component()
-        independent = ChatCompletionClient.load_component(model_config)
-        independent._model_info = copy.deepcopy(self._model_client._model_info)
-        return independent
-
     async def _create_local_subagent(
         self,
         sub_agent_name: str,
@@ -2986,16 +3048,14 @@ class DrSaiAssistant(DrSaiAgent):
         # Get filtered tools for subagent
         tools = self._get_tools_for_subagent(sub_agent_name)
 
-        # Independent model_client
-        independent_model_client = await self._create_independent_model_client()
-
         # Always use SQLite context (isolated thread_id in shared DB)
         model_context_arg = None
         context_type_arg = "sqlite"
 
         subagent = DrSaiAssistant(
             name=sub_agent_name,
-            model_client=independent_model_client,
+            model_client=self._model_client,
+            owns_model_client=False,
             model_client_stream=True,
             tools=tools,
             system_message=sub_system,
@@ -3383,14 +3443,7 @@ class DrSaiAssistant(DrSaiAgent):
         注意: 此方法会为子智能体创建独立的 model_client 副本,
         避免子智能体关闭时影响全局的 model_client
         """
-        # 为子智能体创建独立的 model_client 副本
-        # 使用 dump_component 和 load_component 来创建深拷贝
-        independent_model_client = None
-        if model_client is not None:
-            model_config = model_client.dump_component()
-            independent_model_client = ChatCompletionClient.load_component(model_config)
-            independent_model_client._model_info = copy.deepcopy(model_client._model_info)
-
+        # Local DrSaiAgent children borrow the caller's shared model client.
         # Get agent
         if sub_agent_name in self._user_sub_agents:
             sub_agent = self._user_sub_agents[sub_agent_name]
@@ -3414,7 +3467,8 @@ class DrSaiAssistant(DrSaiAgent):
                     system_message=sub_system,
                     description=description,
                     tools=tools,
-                    model_client=independent_model_client,
+                    model_client=model_client,
+                    owns_model_client=False,
                     model_client_stream=model_client_stream,
                     output_content_type=output_content_type,)
             elif sub_agent_type == "HepAIWorkerAgent":

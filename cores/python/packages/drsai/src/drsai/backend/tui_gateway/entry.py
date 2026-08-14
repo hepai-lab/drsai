@@ -239,7 +239,19 @@ def main() -> None:
             continue
 
         method_name = req.get("method") if isinstance(req, dict) else None
-        resp = dispatch(req)
+        try:
+            resp = dispatch(req)
+        except Exception as exc:
+            # A single bad RPC (e.g. a provider returning an invalid model id)
+            # must never kill the gateway process — that surfaces to the TUI as
+            # "gateway not running" and takes down the whole session.  Log it
+            # for forensics and return a structured JSON-RPC error instead.
+            logger.exception("dispatch raised for method=%r", method_name)
+            resp = {
+                "jsonrpc": "2.0",
+                "id": req.get("id") if isinstance(req, dict) else None,
+                "error": {"code": -32000, "message": f"handler error: {exc}"},
+            }
         if resp is not None:
             if not write_json(resp):
                 _log_exit(

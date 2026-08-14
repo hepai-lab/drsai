@@ -18,8 +18,9 @@ const checks = [
   ["analyzer cleanup", meter.includes("window.cancelAnimationFrame(animationFrameRef.current)")],
   ["audio context cleanup", meter.includes("audioContext.close()")],
   ["meter unmount cleanup", meter.includes("useEffect(() => stop, [stop])")],
-  ["capture unmount cleanup", hook.includes("controllerRef.current?.dispose()")],
-  ["transcription cancellation on unmount", transcriptionHook.includes("controllerRef.current?.dispose()")],
+  ["capture controller initialized in effect", hook.includes("const controller = new VoiceCaptureController") && hook.includes("controllerRef.current = controller")],
+  ["capture StrictMode remount safety", hook.includes("if (controllerRef.current === controller) controllerRef.current = null") && hook.includes("controller.dispose()")],
+  ["transcription StrictMode remount safety", transcriptionHook.includes("if (controllerRef.current === controller) controllerRef.current = null") && transcriptionHook.includes("controller.dispose()")],
 ];
 const failed = checks.filter(([, passed]) => !passed);
 if (failed.length) throw new Error(`Voice capture safety verification failed: ${failed.map(([name]) => name).join(", ")}`);

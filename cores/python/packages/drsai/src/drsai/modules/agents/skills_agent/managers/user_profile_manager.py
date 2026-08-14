@@ -20,6 +20,7 @@ import json
 from datetime import datetime
 from loguru import logger
 from pydantic import BaseModel
+from drsai.configs.constant import WORKSPACE_RUNS_DIR
 from drsai.modules.components.tool import (
     ToolSchema,
     ParametersSchema,
@@ -75,6 +76,26 @@ class SessionMemory(BaseModel):
     # 用户反馈
     user_feedback: Optional[Dict[str, Any]] = None
 
+def _resolve_internal_storage_dir(work_dir: str | Path) -> Path:
+    """Resolve profile storage without ever using the repository CWD by accident.
+
+    Production callers pass an absolute per-user storage directory.  A relative
+    value is retained for compatibility with lightweight callers, but is always
+    rooted beneath ``DRSAI_HOME/workspace/runs`` rather than ``Path.cwd()``.
+    """
+    requested = Path(work_dir).expanduser()
+    if requested.is_absolute():
+        return requested.resolve()
+
+    storage_root = Path(WORKSPACE_RUNS_DIR).resolve()
+    resolved = (storage_root / requested).resolve()
+    try:
+        resolved.relative_to(storage_root)
+    except ValueError as exc:
+        raise ValueError("Relative profile storage must remain inside DRSAI_HOME/workspace/runs.") from exc
+    return resolved
+
+
 class UserProfileManager:
     """
     管理用户画像、记忆、技能和偏好设置的文件管理器
@@ -96,8 +117,8 @@ class UserProfileManager:
         
         self.agent_name = agent_name
         self.user_name = user_id
-        self.work_dir = Path(work_dir)
-        self.work_dir.mkdir(exist_ok=True)
+        self.work_dir = _resolve_internal_storage_dir(work_dir)
+        self.work_dir.mkdir(parents=True, exist_ok=True)
         self.tmp_dir = self.work_dir / "tmp"
         self.tmp_dir.mkdir(exist_ok=True)
         self.download_dir = self.work_dir / "downloads"
@@ -123,7 +144,6 @@ class UserProfileManager:
 
         # 初始化文件
         self._initialize_files()
-
     def _initialize_files(self):
         """初始化所有必要的文件"""
  
@@ -466,8 +486,20 @@ You can update one or multiple fields at once. Only provide the fields that need
             logger.error(f"Failed to sync AGENTS.md profile: {e}")
 
     def load_user_tools_config(self) -> dict:
-        tools_config_data = json.loads(self.tools_config_path.read_text(encoding='utf-8'))
-        return tools_config_data
+        from drsai.config.tool_registry import list_tool_resources, public_tool_config, resolve_tool_config
+
+        return [
+            {
+                "tool_id": resource.tool_id, "type": resource.type,
+                "config": (
+                    resolve_tool_config(resource.config, self.config_path)
+                    if resource.type in {"mcp-std", "mcp-sse", "mcp-http"}
+                    else public_tool_config(resource.config)
+                ),
+                "name": resource.name, "enabled": resource.enabled, "source": resource.source,
+            }
+            for resource in list_tool_resources(self.config_path)
+        ]
     
     def save_learned_skill(self, skill_name: str, skill_content: str) -> str:
         """

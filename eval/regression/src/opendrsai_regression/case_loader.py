@@ -9,6 +9,7 @@ import yaml
 from jsonschema import Draft202012Validator
 
 from .models import RegressionCase, RegressionSuite
+from .workspace_digest import directory_digest, directory_snapshot
 
 
 class DefinitionError(ValueError):
@@ -97,18 +98,25 @@ class CaseCatalog:
 
     def resolve(self, *, suite: str | None = None, case_ids: Iterable[str] = (), tags: Iterable[str] = ()) -> list[RegressionCase]:
         cases = self.load_cases()
-        selected: set[str] = set(case_ids)
+        ordered: list[str] = []
+        seen: set[str] = set()
+        def add(values: Iterable[str]) -> None:
+            for case_id in values:
+                if case_id not in seen:
+                    ordered.append(case_id)
+                    seen.add(case_id)
         if suite:
-            selected.update(self.load_suite(suite, cases).cases)
+            add(self.load_suite(suite, cases).cases)
+        add(case_ids)
         wanted_tags = set(tags)
         if wanted_tags:
-            selected.update(case.id for case in cases.values() if wanted_tags.issubset(set(case.data.get("tags") or [])))
-        if not selected:
-            selected.update(cases)
-        missing = selected.difference(cases)
+            add(case.id for case in cases.values() if wanted_tags.issubset(set(case.data.get("tags") or [])))
+        if not ordered:
+            add(cases)
+        missing = seen.difference(cases)
         if missing:
             raise DefinitionError(f"Unknown cases: {', '.join(sorted(missing))}")
-        return [cases[case_id] for case_id in sorted(selected)]
+        return [cases[case_id] for case_id in ordered]
 
     def _validate_assets(self, data: dict[str, Any], case_path: Path) -> None:
         references: list[dict[str, Any]] = []
@@ -145,13 +153,12 @@ class CaseCatalog:
                 raise DefinitionError(f"Workspace fixture escapes regression root: {workspace['fixture']}") from exc
             if not fixture.is_dir():
                 raise DefinitionError(f"Workspace fixture not found: {workspace['fixture']}")
-            aggregate = hashlib.sha256()
-            for item in sorted(path for path in fixture.rglob("*") if path.is_file()):
-                relative = item.relative_to(fixture).as_posix()
-                digest = hashlib.sha256(item.read_bytes()).digest()
-                aggregate.update(relative.encode("utf-8"))
-                aggregate.update(b"\0")
-                aggregate.update(digest)
-                aggregate.update(b"\0")
-            if aggregate.hexdigest() != workspace.get("fixture_sha256"):
-                raise DefinitionError(f"Workspace fixture digest mismatch: {workspace['fixture']}")
+            actual_fixture_sha256 = directory_digest(fixture)
+            expected_fixture_sha256 = workspace.get("fixture_sha256")
+            if actual_fixture_sha256 != expected_fixture_sha256:
+                fixture_entries = directory_snapshot(fixture)
+                raise DefinitionError(
+                    f"Workspace fixture digest mismatch: {workspace['fixture']}:"
+                    f"expected={expected_fixture_sha256}:actual={actual_fixture_sha256}:"
+                    f"files={','.join(f'{relative}={digest}' for relative, digest in fixture_entries.items())}"
+                )

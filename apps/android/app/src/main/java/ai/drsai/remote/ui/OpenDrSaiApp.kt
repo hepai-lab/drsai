@@ -154,6 +154,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.material3.rememberDrawerState
 import ai.drsai.remote.AppViewModel
 import ai.drsai.remote.BuildConfig
@@ -320,7 +322,9 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
             if (state.destination == AppDestination.Chat && AppRoute.parse(requested) != null) {
                 mainRoutePath = requested
                 remoteFocusItemId = state.requestedRemoteItemId
-                viewModel.consumeRequestedRoute()
+                if (AppRoute.parse(requested) !is AppRoute.RemoteSession ||
+                    state.requestedRemoteItemId == null
+                ) viewModel.consumeRequestedRoute()
             }
         }
     }
@@ -557,6 +561,9 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                 } else if (mainRoute == AppRoute.RemoteHome) {
                     val remoteViewModel: RemoteHomeViewModel = viewModel(key = "remote-home")
                     val remoteState by remoteViewModel.state.collectAsState()
+                    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+                        remoteViewModel.onForeground()
+                    }
                     val notificationPermission = rememberLauncherForActivityResult(
                         ActivityResultContracts.RequestPermission(),
                     ) { remoteViewModel.refreshNotificationReadiness() }
@@ -565,21 +572,53 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                             computer.workspaces.map { computer.displayName to it }
                         })
                     }
+                    fun startRemoteAssociationScan() {
+                        remoteViewModel.beginAssociationScan()
+                        com.google.mlkit.common.MlKit.initialize(context)
+                        GmsBarcodeScanning.getClient(context).startScan()
+                            .addOnSuccessListener { barcode ->
+                                barcode.rawValue?.let(remoteViewModel::associate)
+                                    ?: remoteViewModel.cancelAssociationScan()
+                            }
+                            .addOnFailureListener { remoteViewModel.cancelAssociationScan() }
+                            .addOnCanceledListener(remoteViewModel::cancelAssociationScan)
+                    }
                     RemoteHomeScreen(
                         state = remoteState,
                         onBack = { mainRoutePath = AppRoute.Chat.path },
                         onAssociate = {
+                            remoteViewModel.beginAssociationScan()
                             com.google.mlkit.common.MlKit.initialize(context)
                             GmsBarcodeScanning.getClient(context).startScan()
                                 .addOnSuccessListener { barcode ->
-                                    barcode.rawValue?.let(remoteViewModel::associate)
-                                        ?: Toast.makeText(context, "二维码内容为空", Toast.LENGTH_SHORT).show()
+                                    barcode.rawValue?.let(remoteViewModel::associate) ?: run {
+                                        remoteViewModel.cancelAssociationScan()
+                                        Toast.makeText(context, "二维码内容为空", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                                 .addOnFailureListener { failure ->
+                                    remoteViewModel.cancelAssociationScan()
                                     Toast.makeText(context, failure.message ?: "无法启动扫码", Toast.LENGTH_SHORT).show()
                                 }
+                                .addOnCanceledListener(remoteViewModel::cancelAssociationScan)
                         },
                         onRefresh = { remoteViewModel.refresh() },
+                        onDiagnose = remoteViewModel::diagnoseConnection,
+                        onDiagnosticAction = { action -> when (action) {
+                            ai.drsai.remote.remote.ui.RemoteDiagnosticAction.SIGN_IN -> viewModel.login()
+                            ai.drsai.remote.remote.ui.RemoteDiagnosticAction.REPAIR_DEVICE -> startRemoteAssociationScan()
+                            ai.drsai.remote.remote.ui.RemoteDiagnosticAction.UPDATE -> mainRoutePath = AppRoute.Settings.path
+                            ai.drsai.remote.remote.ui.RemoteDiagnosticAction.ENABLE_NOTIFICATIONS -> {
+                                if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                else context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                })
+                            }
+                            else -> remoteViewModel.refresh()
+                        } },
+                        onSignIn = viewModel::login,
+                        onCheckUpdate = { mainRoutePath = AppRoute.Settings.path },
+                        onContactAdmin = { mainRoutePath = AppRoute.Settings.path },
                         onEnableNotifications = {
                             if (Build.VERSION.SDK_INT >= 33) {
                                 notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -660,6 +699,9 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     }
                     val sessionViewModel: RemoteSessionViewModel = viewModel(key = route.path, factory = factory)
                     val remoteChatState by sessionViewModel.state.collectAsState()
+                    LaunchedEffect(route.path, remoteFocusItemId) {
+                        remoteFocusItemId?.let(sessionViewModel::focusItem)
+                    }
                     RemoteChatScreen(
                         state = remoteChatState,
                         onBack = { mainRoutePath = AppRoute.WorkspaceSessions(route.runtimeId, route.workspaceId).path },
@@ -667,11 +709,18 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                         onDraftChange = sessionViewModel::updateDraft,
                         onCancelRun = sessionViewModel::cancel,
                         onRetryRun = sessionViewModel::retry,
+                        onSearchTranscript = sessionViewModel::searchTranscript,
                         onApproval = sessionViewModel::decide,
                         onOpenArtifact = sessionViewModel::openArtifact,
                         onConfirmArtifact = sessionViewModel::confirmArtifactDownload,
                         onLoadOlderHistory = sessionViewModel::loadOlderHistory,
                         focusItemId = remoteFocusItemId,
+                        onFocusResolved = {
+                            remoteFocusItemId = null
+                            viewModel.consumeRequestedRoute(focusedItemId = state.requestedRemoteItemId)
+                        },
+                        onRendered = sessionViewModel::onUiRendered,
+                        onSignIn = viewModel::login,
                         onOpenAudit = {
                             remoteChatState.activeRunId?.let { runId ->
                                 mainRoutePath = AppRoute.RunAudit(route.runtimeId, route.workspaceId, route.sessionId, runId).path
@@ -890,6 +939,42 @@ private fun ChatDiagnosticTab(state: AppState) {
                 state.runtimeStatus?.let { DiagnosticMessage(it, false) }
                 diagnostic.bindReason?.let { DiagnosticMessage(it, false) }
                 state.error?.let { DiagnosticMessage(it, true) }
+            }
+        }
+        item {
+            HorizontalDivider()
+            Spacer(Modifier.height(14.dp))
+            Text("OAEP 原始事件", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            if (state.oaepDiagnosticEvents.isEmpty()) {
+                Text("等待当前 Run 的第一个 OAEP 事件。", style = MaterialTheme.typography.bodySmall)
+            } else {
+                state.oaepDiagnosticEvents.forEach { event ->
+                    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                        Text(
+                            "#${event.sequence}  ${event.type}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (event.errorCode != null) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            listOfNotNull(
+                                event.runId?.let { "run=${it.takeLast(12)}" },
+                                event.itemId?.let { "item=${it.takeLast(16)}" },
+                                "source=${event.source}",
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        event.errorCode?.let { code ->
+                            Text(
+                                listOf(code, event.errorMessage.orEmpty()).filter(String::isNotBlank).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
             }
         }
     }

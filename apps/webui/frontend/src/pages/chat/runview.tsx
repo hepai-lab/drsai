@@ -43,7 +43,7 @@ const StreamingChunkRender = React.memo(
     thoughtDone?: boolean;
   }) => {
     const composed = thought
-      ? thoughtDone
+      ? thoughtDone || content
         ? `<think>${thought}</think>\n\n${content || ""}`
         : `<think>${thought}`
       : content;
@@ -851,10 +851,12 @@ const RunView: React.FC<RunViewProps> = ({
         }
         // Strip ThoughtEvent content from the chunk — the raw LLM stream begins with
         // the thought text, so the chunk starts with the same content as the ThoughtEvent.
-        for (const thoughtText of allThoughtTexts) {
-          if (thoughtText && chunkContent.trimStart().startsWith(thoughtText)) {
-            chunkContent = chunkContent.trimStart().slice(thoughtText.length).trimStart();
-            if (!liveThought) {
+        // Skip when the draft already has a thought plane: `content` is the reply,
+        // and stripping a long ThoughtEvent prefix would leave only the last lines.
+        if (!liveThought) {
+          for (const thoughtText of allThoughtTexts) {
+            if (thoughtText && chunkContent.trimStart().startsWith(thoughtText)) {
+              chunkContent = chunkContent.trimStart().slice(thoughtText.length).trimStart();
               liveThought = thoughtText;
               thoughtDone = true;
             }

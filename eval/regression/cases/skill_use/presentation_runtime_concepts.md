@@ -3,7 +3,7 @@
 ## 身份与目的
 
 - Case ID：`skill.presentation`
-- Revision：1
+- Revision：4
 - 目的：验证能力选择、Presentation Skill 流程、可编辑 PPTX、结构与视觉质量、Artifact 交付和 Run 可追溯性。
 
 ## 固定内容与范围
@@ -18,7 +18,9 @@
 
 ## 预期工作流
 
-Agent 必须激活 `presentations` Skill，完整读取说明，创建 PPTX，渲染全部页面，逐页检查并在必要时修正，最后注册 Artifact。只在最终回答中声称“已使用 Skill”不构成证据；Runtime/Skill 事件必须记录说明已加载、已创建、已渲染、已视觉检查和已注册产物。
+Agent 必须激活仓库实际内置的 `pptx` Skill（用户界面可称 Presentation Skill），完整读取说明，创建 PPTX，渲染全部页面，逐页检查并在必要时修正，最后注册 Artifact。只在最终回答中声称“已使用 Skill”不构成证据；Runtime/Skill 事件必须记录说明已加载、已创建、已渲染、已视觉检查和已注册产物。
+
+回归控制只允许执行三个产品 Skill 脚本。Host 同时校验 Python 入口、Skill ID、脚本相对路径、脚本 SHA-256、参数数量及所有输入输出的隔离 Workspace 解析路径，并拒绝换行、管道、重定向和 Shell 控制符。不得要求用户开启 `/dangerous on`，也不得放开任意脚本执行。
 
 ## 文件与结构验收
 

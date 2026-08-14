@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
+import { isAbsolute } from "node:path";
+import { isIP } from "node:net";
+import { requireAuthContext, refreshAuthContextAfterUnauthorized } from "../../../../shared/main/auth";
+import { classifyMobileRemoteDiagnostics } from "../../../../shared/main/mobileRemoteDiagnostics";
 import type { IpcMain } from "electron";
 import { portForwardRegistry } from "../../../../shared/main/portForwards";
 import { remoteGatewayInstaller, validateRemoteGatewayInstallRequest } from "../../../../shared/main/remoteGatewayInstaller";
 import { remoteWorkspaceController } from "../../../../shared/main/remoteWorkspaceController";
 import { sshHostService } from "../../../../shared/main/sshHosts";
 import { findWorkspaceById } from "../../../../shared/main/workspaces";
+import { LocalRuntimeClient } from "../../../../shared/main/runtimeClient";
 import type { MacosServiceContainer } from "../serviceContainer";
 
 export type MacosRemoteAccessIpcServices = Pick<MacosServiceContainer, "approvals">;
@@ -53,4 +58,37 @@ export function registerMacosRemoteAccessIpc(
   ipcMain.handle("desktop:port-forward-pause", (_event, id) => portForwardRegistry.pause(id));
   ipcMain.handle("desktop:port-forward-resume", (_event, id) => portForwardRegistry.resume(id));
   ipcMain.handle("desktop:port-forward-remove", (_event, id) => portForwardRegistry.remove(id));
+  ipcMain.handle("desktop:mobile-remote-diagnose", async () => {
+    try {
+      const runtime = await (await LocalRuntimeClient.connect()).getMobileRemoteDiagnostics();
+      const auth = await requireAuthContext().catch(() => null);
+      return classifyMobileRemoteDiagnostics({ ...runtime.checks, oidc: auth?.authMode === "oidc" && auth.accessToken ? "ok" : "failed" });
+    } catch {
+      return classifyMobileRemoteDiagnostics({ runtime: "failed", relay: "unknown", oidc: "unknown", device_proof: "unknown", wss: "unknown", heartbeat: "unknown", protocol: "unknown", push: "unknown" });
+    }
+  });
+  ipcMain.handle("desktop:mobile-runtime-rename", async (_event, displayName) => {
+    const safeName = typeof displayName === "string" ? displayName.trim().replace(/\s+/g, " ") : "";
+    if (!safeName || safeName.length > 64 || /[\\/\0]/.test(safeName) || safeName.includes("://") || isAbsolute(safeName) || isIP(safeName.replace(/^\[|\]$/g, "")) !== 0) throw new Error("runtime_display_name_invalid");
+    const readiness = await (await LocalRuntimeClient.connect()).getMobilePairingReadiness();
+    if (!readiness.runtime_id) throw new Error("mobile_pairing_runtime_not_registered");
+    let auth = await requireAuthContext();
+    const relayUrl = trustedRelayUrl(auth.issuer, readiness.runtime_id);
+    const send = (token: string) => fetch(relayUrl, { method: "PATCH", headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ display_name: safeName }), redirect: "error" });
+    if (auth.authMode !== "oidc" || !auth.accessToken) throw new Error("mobile_pairing_oidc_login_required");
+    let response = await send(auth.accessToken);
+    if (response.status === 401) { auth = await refreshAuthContextAfterUnauthorized(); if (auth.authMode !== "oidc" || !auth.accessToken) throw new Error("mobile_pairing_oidc_login_required"); response = await send(auth.accessToken); }
+    if (!response.ok) throw new Error(`mobile_runtime_rename_failed:${response.status}`);
+    const body = await response.json() as Record<string, unknown>;
+    if (body.runtime_id !== readiness.runtime_id || body.display_name !== safeName) throw new Error("mobile_runtime_rename_response_invalid");
+    return { runtime_id: readiness.runtime_id, display_name: safeName };
+  });
+}
+
+function trustedRelayUrl(issuer: string | undefined, runtimeId: string): string {
+  const configured = process.env.OPENDRSAI_RUNTIME_RELAY_BASE_URL?.trim().replace(/\/+$/, "");
+  const origin = issuer ? new URL(issuer).origin : (process.env.OPENDRSAI_DESKTOP_DEV === "1" ? "https://ai-dev.ihep.ac.cn" : "https://ai.ihep.ac.cn");
+  const base = new URL(configured || `${origin}/api/runtime-relay`);
+  if (base.protocol !== "https:" || base.port || !["ai.ihep.ac.cn", "ai-dev.ihep.ac.cn"].includes(base.hostname) || base.pathname.replace(/\/+$/, "") !== "/api/runtime-relay" || base.username || base.password || base.search || base.hash) throw new Error("mobile_pairing_relay_url_not_trusted");
+  return `${base.origin}/api/runtime-relay/v1/runtimes/${encodeURIComponent(runtimeId)}`;
 }

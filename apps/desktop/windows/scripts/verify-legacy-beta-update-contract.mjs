@@ -8,12 +8,15 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
 const manifestPath = resolve(process.env.OPENDRSAI_UPDATE_MANIFEST_PATH || join(root, "release", "latest-windows.json"));
 const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : null;
 const workflow = readFileSync(join(repoRoot, ".github", "workflows", "windows-desktop.yml"), "utf8");
+const promotionWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "windows-release-promote.yml"), "utf8");
 const runtimeBuilder = readFileSync(join(root, "installer", "create-opendrsai-runtime.ps1"), "utf8");
 
 assert(compareSemver(packageJson.version, "1.4.3-beta.1") > 0, "beta.1 would not recognize this package as newer.");
-assert(/draft:\s*false/.test(workflow), "The tag workflow must publish rather than leave a draft invisible to beta.1.");
+assert(/draft:\s*true/.test(workflow), "The build workflow must retain an unverified tag as a draft.");
 assert(/prerelease:\s*false/.test(workflow), "The compatibility Release must participate in GitHub releases/latest.");
-assert(/make_latest:\s*true/.test(workflow), "The compatibility Release must advance GitHub releases/latest.");
+assert(/make_latest:\s*false/.test(workflow), "The build workflow must not advance GitHub releases/latest before real Sandbox acceptance.");
+assert(/gh release edit[\s\S]*--draft=false[\s\S]*--latest/.test(promotionWorkflow), "The evidence-gated promotion workflow must publish and advance GitHub releases/latest for legacy clients.");
+assert(/verify:sandbox-oidc-evidence/.test(promotionWorkflow), "The legacy-compatible latest promotion is not guarded by real Sandbox OIDC evidence.");
 assert(/\$channel = "beta"/.test(workflow), "Tagged Windows releases must publish the beta update channel.");
 assert(
   /https:\/\/download-opendrsai\.ihep\.ac\.cn\/releases\/\$tag\/windows/.test(workflow),

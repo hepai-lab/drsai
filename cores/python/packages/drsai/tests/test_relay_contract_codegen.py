@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 import json
+import ast
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
+from pydantic import ValidationError
 from drsai.relay.generated_contract import (
     CAPABILITIES,
     CAPABILITY_PROFILES,
+    ENDPOINTS,
     MINIMUM_VERSIONS,
+    RELAY_ERROR_ACTIONS,
+    RELAY_USER_ACTIONS,
     SESSION_EVENT_KINDS,
+    GeneratedApprovalDecisionRecoveryResponse,
+    GeneratedLatencyObservationRequest,
+    GeneratedRunCreateRequest,
+    generated_relay_error_action,
 )
 from drsai.relay.models import (
     ConversationSnapshot,
@@ -29,6 +39,77 @@ def test_relay_contract_generated_files_have_no_drift() -> None:
     result = subprocess.run([sys.executable, str(ROOT / "scripts/generate_relay_contract.py"), "--check"],
                             cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_generated_error_actions_exhaust_reference_relay_codes_and_have_safe_fallback() -> None:
+    emitted: set[str] = set()
+    relay_root = ROOT / "cores/python/packages/drsai/src/drsai/relay"
+    for source in relay_root.glob("*.py"):
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "RelayRegistryError"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                continue
+            emitted.add(node.args[0].value)
+    assert emitted <= RELAY_ERROR_ACTIONS.keys()
+    assert set(RELAY_ERROR_ACTIONS.values()) == RELAY_USER_ACTIONS == {
+        "retry", "login", "re-pair", "update", "contact-admin",
+    }
+    assert generated_relay_error_action("unknown_transient", retryable=True) == "retry"
+    assert generated_relay_error_action("unknown_permanent") == "contact-admin"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "request_id": "550e8400-e29b-41d4-a716-446655440000",
+            "correlation_id": "corr",
+            "idempotency_key": "idem-key",
+            "message": "hello",
+            "unknown": True,
+        },
+        {
+            "request_id": "550e8400-e29b-41d4-a716-446655440000",
+            "correlation_id": "corr",
+            "message": "hello",
+        },
+        {
+            "request_id": "550e8400-e29b-41d4-a716-446655440000",
+            "correlation_id": "corr",
+            "idempotency_key": "idem-key",
+            "message": 42,
+        },
+    ],
+)
+def test_generated_write_request_fails_closed_on_shape_or_type_drift(payload: dict) -> None:
+    with pytest.raises(ValidationError):
+        GeneratedRunCreateRequest.model_validate(payload)
+
+
+def test_generated_latency_and_recovery_response_are_strict() -> None:
+    with pytest.raises(ValidationError):
+        GeneratedLatencyObservationRequest.model_validate({
+            "client_receive_at_ms": "1",
+            "render_at_ms": 2,
+        })
+    with pytest.raises(ValidationError):
+        GeneratedApprovalDecisionRecoveryResponse.model_validate({
+            "status": "succeeded",
+            "operation": "approval.decide",
+            "resource": {
+                "runtime_id": "runtime",
+                "approval_id": "approval",
+                "status": "approved",
+                "workspace_id": "must-not-leak",
+            },
+        })
 
 
 def test_relay_openapi_has_no_drift_and_contract_is_backward_compatible() -> None:
@@ -56,9 +137,13 @@ def test_v2_schema_defines_resource_lifecycle_and_complete_mobile_control_surfac
     assert {
         "association_create", "runtime_connect", "session_read", "conversation_read",
         "run_list", "event_stream", "approval_list", "approval_decision",
+        "approval_decision_recovery",
         "association_revoke", "runtime_association_list",
         "runtime_association_revoke", "runtime_enrollment_revoke",
     }.issubset(schema["x-relay-endpoints"])
+    assert ENDPOINTS["approval_decision_recovery"] == (
+        "GET /v1/runtimes/{runtime_id}/idempotency/approval.decide/{idempotency_key}"
+    )
     assert {
         "session.read", "conversation.read", "run.list", "event.stream",
         "event.cursor_expired", "approval.list", "approval.decide",

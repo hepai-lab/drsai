@@ -4,12 +4,18 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Release preflight requires Apple Silicon macOS.");
+if (Number(process.versions.node.split(".")[0]) !== 22) throw new Error(`Release preflight requires Node 22; received ${process.version}.`);
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const output = resolve(root, "build/acceptance/release-preflight.json");
 const identities = run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"]);
 const developerIds = [...identities.matchAll(/\"(Developer ID Application:[^\"]+)\"/g)].map((match) => match[1]);
+const packagedSigningCertificate = Boolean(
+  (process.env.CSC_LINK?.trim() || process.env.MACOS_CSC_LINK?.trim())
+    && (process.env.CSC_KEY_PASSWORD?.trim() || process.env.MACOS_CSC_KEY_PASSWORD?.trim()),
+);
 const credentials = {
-  signingIdentity: developerIds.length === 1,
+  signingIdentity: developerIds.length === 1 || packagedSigningCertificate,
+  signingIdentitySource: developerIds.length === 1 ? "keychain" : packagedSigningCertificate ? "pkcs12" : "missing",
   notarization: Boolean(process.env.APPLE_API_KEY?.trim() && process.env.APPLE_API_KEY_ID?.trim() && process.env.APPLE_API_ISSUER?.trim()),
 };
 const signingGraph = [

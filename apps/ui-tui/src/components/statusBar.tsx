@@ -53,6 +53,7 @@ export function StatusBar() {
     conn === 'ready' ? <Text color={theme.good}>● connected</Text> :
     conn === 'connecting' ? <Text color={theme.warn}>○ connecting</Text> :
     conn === 'exited' ? <Text color={theme.error}>✗ exited</Text> :
+    conn === 'remote_lost' ? <Text color={theme.error}>✗ remote lost</Text> :
     <Text color={theme.error}>✗ error</Text>
 
   const modelLabel = meta?.model ?? '?'

@@ -1,14 +1,13 @@
 import com.android.build.api.variant.impl.VariantOutputImpl
 import groovy.json.JsonSlurper
+import java.security.MessageDigest
 
 val systemVersionFile = rootProject.file(
-    "../webui/backend/src/drsai_ui/ui_backend/version.py"
+    "../../cores/VERSION"
 )
-val systemVersion = Regex("""(?m)^VERSION\s*=\s*[\"']([^\"']+)[\"']""")
-    .find(systemVersionFile.readText())
-    ?.groupValues
-    ?.get(1)
-    ?: error("Unable to read OpenDrSai VERSION from $systemVersionFile")
+val systemVersion = systemVersionFile.readText().trim()
+    .takeIf { Regex("""^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$""").matches(it) }
+    ?: error("Unable to read a valid OpenDrSai VERSION from $systemVersionFile")
 fun versionCodeFor(version: String): Int {
     val parts = version.split(".").map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
     return (parts.getOrElse(0) { 0 } * 10_000) +
@@ -38,9 +37,17 @@ val desktopAgentParityComplete = p9AcceptanceItems.all {
         (it["tests"] as? List<*>)?.isNotEmpty() == true &&
         (it["evidence"] as? List<*>)?.isNotEmpty() == true
 }
-val androidBuildPython = providers.gradleProperty("opendrsai.android.buildPython")
+val androidBuildPythonOverride = providers.gradleProperty("opendrsai.android.buildPython")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_BUILD_PYTHON"))
-    .getOrElse(rootProject.file("../../.venv/Scripts/python.exe").absolutePath)
+    .orNull
+val androidRuntimePythonVersion = providers.gradleProperty("opendrsai.android.pythonVersion")
+    .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_PYTHON_VERSION"))
+    .getOrElse("3.12")
+    .also {
+        require(it in setOf("3.11", "3.12", "3.13", "3.14")) {
+            "Unsupported Android Runtime Python version: $it"
+        }
+    }
 val runtimePolicyPublicKey = providers.gradleProperty("opendrsai.android.runtimePolicyPublicKey")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_RUNTIME_POLICY_PUBLIC_KEY"))
     .getOrElse("")
@@ -147,8 +154,14 @@ plugins {
 
 chaquopy {
     defaultConfig {
-        version = "3.11"
-        buildPython(androidBuildPython)
+        version = androidRuntimePythonVersion
+        if (androidBuildPythonOverride != null) {
+            buildPython(androidBuildPythonOverride)
+        } else if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+            buildPython("py", "-$androidRuntimePythonVersion")
+        } else {
+            buildPython("python$androidRuntimePythonVersion")
+        }
     }
     sourceSets {
         getByName("main") {
@@ -526,10 +539,21 @@ data class GeneratedRuntimeSessionEventFrame(
 
 tasks.register("generateAndroidRelayBindings") {
     inputs.file(relaySchemaFile)
+    inputs.file(rootProject.file("../../scripts/generate_relay_contract.py"))
     outputs.file(generatedRelayFile)
     doLast {
-        generatedRelayFile.parentFile.mkdirs()
-        generatedRelayFile.writeText(renderAndroidRelayBindings())
+        val repositoryRoot = rootProject.file("../..")
+        val windowsPython = repositoryRoot.resolve(".venv/Scripts/python.exe")
+        val unixPython = repositoryRoot.resolve(".venv/bin/python")
+        val python = when {
+            windowsPython.isFile -> windowsPython.absolutePath
+            unixPython.isFile -> unixPython.absolutePath
+            else -> "python3"
+        }
+        exec {
+            workingDir(repositoryRoot)
+            commandLine(python, "scripts/generate_relay_contract.py")
+        }
     }
 }
 
@@ -539,16 +563,51 @@ tasks.register("verifyAndroidRelayBindings") {
     inputs.file(generatedRelayFile)
     doLast {
         check(generatedRelayFile.exists()) {
-            "Missing generated Android Relay bindings. Run generateAndroidRelayBindings."
+            "Missing generated Android Relay bindings. Run scripts/generate_relay_contract.py."
         }
-        check(generatedRelayFile.readText().replace("\r\n", "\n") == renderAndroidRelayBindings().replace("\r\n", "\n")) {
-            "Android Relay bindings drifted from cores/protocol/relay/runtime-relay.schema.json."
+        val expectedHash = MessageDigest.getInstance("SHA-256")
+            .digest(relaySchemaFile.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        val generatedHash = Regex(
+            "SOURCE_SCHEMA_SHA256: String = \\\"([0-9a-f]{64})\\\""
+        ).find(generatedRelayFile.readText())?.groupValues?.get(1)
+        check(generatedHash == expectedHash) {
+            "Android Relay bindings drifted from cores/protocol/relay/runtime-relay.schema.json. " +
+                "Run scripts/generate_relay_contract.py."
         }
     }
 }
 
 tasks.named("preBuild").configure {
     dependsOn("verifyAndroidOwopBindings", "verifyAndroidRelayBindings")
+}
+
+val verifyFirebasePushConfig = tasks.register("verifyFirebasePushConfig") {
+    group = "verification"
+    description = "Fail closed when a release-like APK has no coherent Firebase Android App configuration."
+    doLast {
+        check(Regex("^AIza[0-9A-Za-z_-]{35}$").matches(firebaseApiKey)) {
+            "push_build_invalid:firebase_api_key"
+        }
+        val application = Regex("^\\d+:(\\d+):android:[0-9a-fA-F]+$").matchEntire(firebaseApplicationId)
+            ?: error("push_build_invalid:firebase_application_id")
+        check(Regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$").matches(firebaseProjectId)) {
+            "push_build_invalid:firebase_project_id"
+        }
+        check(firebaseSenderId.all(Char::isDigit) && firebaseSenderId.isNotEmpty()) {
+            "push_build_invalid:firebase_sender_id"
+        }
+        check(application.groupValues[1] == firebaseSenderId) {
+            "push_build_invalid:firebase_sender_mismatch"
+        }
+    }
+}
+
+// Debug/acceptance intentionally retain the NOT_CONFIGURED product state so
+// its UI and negative tests remain reproducible. Public release and the
+// installable MVP artifact must never silently ship with push disabled.
+tasks.matching { it.name == "preReleaseBuild" || it.name == "preMvpBuild" }.configureEach {
+    dependsOn(verifyFirebasePushConfig)
 }
 
 dependencies {
@@ -592,5 +651,8 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
+    // AndroidJUnitRunner calls androidx.tracing.Trace before the first test.
+    // Keep it explicit so a minified release-like test APK is self-contained.
+    androidTestImplementation("androidx.tracing:tracing:1.2.0")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

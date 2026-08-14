@@ -1,7 +1,7 @@
 schema_version: opendrsai.agent-regression-case/1
 
 id: image.input.ui_error
-revision: 1
+revision: 2
 title: 根据 Desktop 截图诊断 Agent Runtime 授权失败
 description: 验证图片输入链路、UI 诊断理解、事实与推断分离以及不确定性表达。
 owner: agent-runtime
@@ -21,7 +21,7 @@ input:
 
             1. 当前运行发生了什么？
             2. 截图中显示的错误类型、错误消息、Backend 和模型是什么？
-            3. 根据截图，最可能应该优先检查什么？
+            3. 根据截图，最可能应该优先检查什么，身份恢复后应怎么做？
             4. 哪些信息因为被截断或脱敏而无法确定？
 
             请区分截图中明确可见的事实、合理诊断和无法确认的信息。

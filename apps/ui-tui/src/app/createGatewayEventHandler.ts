@@ -134,6 +134,14 @@ export function createGatewayEventHandler(
         $connectionError.set(payload?.preview || 'protocol error')
         return
       }
+      case 'remote.lost': {
+        // Remote SSH connection dropped — update status but don't exit.
+        // The App-level handler will transition to the remote_lost screen.
+        $connectionStatus.set('remote_lost')
+        const payload = ev.payload as { reason?: string } | undefined
+        $connectionError.set(payload?.reason || 'Remote connection lost')
+        return
+      }
       case 'session.info': {
         const payload = ev.payload as { user_id?: string } | undefined
         $sessionMeta.set(ev.payload as never)

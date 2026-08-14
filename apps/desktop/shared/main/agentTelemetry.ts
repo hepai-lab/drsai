@@ -22,6 +22,8 @@ export interface AgentTelemetryRecord {
   durationMs?: number;
   errorCode?: string;
   count?: number;
+  requestId?: string;
+  runId?: string;
 }
 
 /** Records operational metadata only. User messages, URLs, tokens and config are not accepted. */
@@ -39,6 +41,11 @@ export function recordAgentTelemetry(record: AgentTelemetryRecord): void {
       ...(Number.isFinite(record.durationMs) ? { durationMs: Math.max(0, Math.round(record.durationMs!)) } : {}),
       ...(record.errorCode ? { errorCode: sanitize(record.errorCode, 80) } : {}),
       ...(Number.isFinite(record.count) ? { count: Math.max(0, Math.round(record.count!)) } : {}),
+      ...(record.requestId ? { requestId: sanitize(record.requestId, 160) } : {}),
+      ...(record.runId ? { runId: sanitize(record.runId, 160) } : {}),
+      ...(process.env.OPENDRSAI_ACCEPTANCE_RUN_ID
+        ? { acceptanceRunId: sanitize(process.env.OPENDRSAI_ACCEPTANCE_RUN_ID, 160) }
+        : {}),
     };
     appendFileSync(TELEMETRY_PATH, `${JSON.stringify(safe)}\n`, { encoding: "utf8", mode: 0o600 });
   } catch {

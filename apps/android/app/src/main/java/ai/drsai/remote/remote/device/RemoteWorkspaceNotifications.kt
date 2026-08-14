@@ -28,11 +28,21 @@ data class RemoteNotificationPayload(
 ) {
     init {
         require(kind in KINDS) { "remote_notification_kind_invalid" }
-        require(eventId.isNotBlank()) { "remote_notification_event_id_required" }
+        require(OPAQUE_ID.matches(eventId) && eventId != "." && eventId != "..") {
+            "remote_notification_event_id_invalid"
+        }
+        require(itemId == null || OPAQUE_ID.matches(itemId) && itemId != "." && itemId != "..") {
+            "remote_notification_item_id_invalid"
+        }
     }
 
     companion object {
         val KINDS = setOf("run_completed", "run_failed", "run_cancelled", "approval_required")
+        private val OPAQUE_ID = Regex("^[A-Za-z0-9_.:-]{1,200}$")
+        private val REQUIRED_KEYS = setOf(
+            "version", "kind", "runtime_id", "workspace_id", "session_id", "event_id",
+        )
+        private val ALLOWED_KEYS = REQUIRED_KEYS + "item_id"
 
         fun from(intent: Intent): RemoteNotificationPayload {
             require(intent.action == ACTION_REMOTE_WORKSPACE_NOTIFICATION) { "remote_notification_action_invalid" }
@@ -42,6 +52,9 @@ data class RemoteNotificationPayload(
         }
 
         fun from(data: Map<String, String>): RemoteNotificationPayload {
+            require(data.keys.all { it in ALLOWED_KEYS } && REQUIRED_KEYS.all(data::containsKey)) {
+                "remote_notification_envelope_invalid"
+            }
             require(data["version"] == "1") { "remote_notification_version_invalid" }
             return RemoteNotificationPayload(
                 kind = requireNotNull(data["kind"]),

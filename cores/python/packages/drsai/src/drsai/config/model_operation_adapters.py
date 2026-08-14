@@ -8,6 +8,8 @@ from typing import Any, AsyncIterator, Mapping, Sequence
 
 import httpx
 
+from drsai.platform_auth import get_model_credential_provider
+
 from .model_operation_routing import OperationProtocol, ResolvedAgentOperation
 
 
@@ -83,13 +85,20 @@ class OpenAITextOperationAdapter:
         if max_output_tokens < 1 or max_output_tokens > 4_096:
             raise ModelProtocolError("request_rejected", "max_output_tokens is outside the probe limit")
         provider = resolved.model.provider
-        key = provider.api_key.reveal() if provider.api_key else None
+        static_key = provider.api_key.reveal() if provider.api_key else None
+        credential = (
+            get_model_credential_provider(static_key, provider.base_url)
+            if provider.name == "hepai" else None
+        )
+        key = credential.access_token if credential is not None else static_key
         if provider.requires_api_key and not key:
             raise ModelProtocolError("credential_unavailable", "Provider credential is unavailable")
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
         if key:
             headers["Authorization"] = f"Bearer {key}"
-        base_url = provider.base_url.rstrip("/")
+        base_url = (
+            credential.openai_base_url if credential is not None else provider.base_url
+        ).rstrip("/")
         if protocol == "openai_responses":
             url = f"{base_url}/responses"
             payload: dict[str, object] = {
@@ -152,21 +161,29 @@ class OpenAITextOperationAdapter:
         if protocol not in {"openai_responses", "openai_chat_completions"}:
             raise ModelProtocolError("protocol_unsupported", f"Unsupported text protocol: {protocol}")
         provider = resolved.model.provider
-        key = provider.api_key.reveal() if provider.api_key else None
+        static_key = provider.api_key.reveal() if provider.api_key else None
+        credential = (
+            get_model_credential_provider(static_key, provider.base_url)
+            if provider.name == "hepai" else None
+        )
+        key = credential.access_token if credential is not None else static_key
         if provider.requires_api_key and not key:
             raise ModelProtocolError("credential_unavailable", "Provider credential is unavailable")
         headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
         if key:
             headers["Authorization"] = f"Bearer {key}"
+        base_url = (
+            credential.openai_base_url if credential is not None else provider.base_url
+        ).rstrip("/")
         if protocol == "openai_responses":
-            url = f"{provider.base_url.rstrip('/')}/responses"
+            url = f"{base_url}/responses"
             payload: dict[str, object] = {"model": resolved.model.model, "input": input_value, "stream": True, "max_output_tokens": max_output_tokens}
             if tools:
                 payload["tools"] = list(tools)
             if reasoning_effort:
                 payload["reasoning"] = {"effort": reasoning_effort}
         else:
-            url = f"{provider.base_url.rstrip('/')}/chat/completions"
+            url = f"{base_url}/chat/completions"
             payload = {
                 "model": resolved.model.model,
                 "messages": [{"role": "user", "content": input_value}] if isinstance(input_value, str) else list(input_value),

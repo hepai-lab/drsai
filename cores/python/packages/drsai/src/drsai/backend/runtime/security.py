@@ -136,7 +136,7 @@ class ApprovalRegistry:
 
     @staticmethod
     def _resource_hash(resource: Mapping[str, Any]) -> str:
-        return hashlib.sha256(json.dumps(redact_sensitive(resource), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return hashlib.sha256(json.dumps(redact_sensitive(resource, "", "audit"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def request(self, principal_id: str, workspace_id: str, action: str, resource: Mapping[str, Any]) -> str:
         approval_id = f"security-approval-{uuid.uuid4()}"
@@ -194,7 +194,7 @@ class AuditLog:
     def record(self, event: str, context: OperationContext, detail: Mapping[str, Any] | None = None) -> dict[str, Any]:
         audit_id, created = f"audit-{uuid.uuid4()}", time.time()
         context_value = context.as_dict()
-        detail_value = redact_sensitive(dict(detail or {}))
+        detail_value = redact_sensitive(dict(detail or {}), "", "audit")
         with self._connect() as db:
             db.execute("INSERT INTO runtime_audit VALUES(?,?,?,?,?)", (audit_id, event, json.dumps(context_value, sort_keys=True), json.dumps(detail_value, sort_keys=True), created))
         return {"audit_id": audit_id, "event": event, "context": context_value, "detail": detail_value, "created_at": created}
@@ -240,7 +240,7 @@ class RuntimeSecurity:
 
 _SENSITIVE_KEY = re.compile(
     r"(?:token|password|secret|private.?key|authorization|api.?key|credential|"
-    r"file.?content|message|prompt|command|arguments|cookie)",
+    r"file.?content|prompt|command|arguments|cookie)",
     re.I,
 )
 _BEARER = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+")
@@ -253,18 +253,40 @@ _COOKIE_HEADER = re.compile(r"(?i)\bCookie\s*:\s*[^\r\n]+")
 _URL_USERINFO = re.compile(r"(?i)([a-z][a-z0-9+.-]{0,31}://)[^/@\s]+@")
 
 
-def redact_sensitive(value: Any, key: str = "") -> Any:
+# ``content`` path: values are delivered to end users through OAEP snapshots and
+# event streams. No enclosing layer bounds these (SQLite envelope_json is TEXT,
+# SSE has no chunk cap on this route, gateway has no body cap), so we still
+# defend against pathological megabyte-scale strings but the bound must not
+# clip a normal assistant reply.
+CONTENT_MAX_CHARS = 1_048_576
+CONTENT_MAX_ITEMS = 10_000
+
+# ``audit`` path: values are written to local audit logs, metric dimensions,
+# and resource-hash inputs. Bodies are not expected here, so a tight cap keeps
+# these tables small and any leakage bounded.
+AUDIT_MAX_CHARS = 4096
+AUDIT_MAX_ITEMS = 100
+
+
+def redact_sensitive(value: Any, key: str, context: str) -> Any:
+    if context not in ("content", "audit"):
+        raise ValueError("redact_sensitive context must be 'content' or 'audit'")
+    max_chars = CONTENT_MAX_CHARS if context == "content" else AUDIT_MAX_CHARS
+    max_items = CONTENT_MAX_ITEMS if context == "content" else AUDIT_MAX_ITEMS
     if _SENSITIVE_KEY.search(key):
         return "[REDACTED]"
     if isinstance(value, Mapping):
-        items = list(value.items())[:100]
-        result = {str(child_key): redact_sensitive(child, str(child_key)) for child_key, child in items}
+        items = list(value.items())[:max_items]
+        result = {
+            str(child_key): redact_sensitive(child, str(child_key), context)
+            for child_key, child in items
+        }
         if len(value) > len(items):
             result["_truncated_fields"] = len(value) - len(items)
         return result
     if isinstance(value, (list, tuple)):
-        items = list(value)[:100]
-        result = [redact_sensitive(item) for item in items]
+        items = list(value)[:max_items]
+        result = [redact_sensitive(item, "", context) for item in items]
         if len(value) > len(items):
             result.append(f"[TRUNCATED {len(value) - len(items)} ITEMS]")
         return result
@@ -273,7 +295,7 @@ def redact_sensitive(value: Any, key: str = "") -> Any:
         redacted = _INLINE_CREDENTIAL.sub(lambda match: f"{match.group(1)}=[REDACTED]", redacted)
         redacted = _COOKIE_HEADER.sub("Cookie: [REDACTED]", redacted)
         redacted = _URL_USERINFO.sub(r"\1[REDACTED]@", redacted)
-        return redacted if len(redacted) <= 4096 else f"{redacted[:4096]}[TRUNCATED {len(redacted) - 4096} CHARS]"
+        return redacted if len(redacted) <= max_chars else f"{redacted[:max_chars]}[TRUNCATED {len(redacted) - max_chars} CHARS]"
     return value
 
 

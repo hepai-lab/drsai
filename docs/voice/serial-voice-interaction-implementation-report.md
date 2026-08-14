@@ -1,4 +1,4 @@
-# Windows App 串行语音交互实施报告
+# Windows App 串行语音路线 P1 实施报告
 
 最后更新：2026-07-19  
 适用范围：`apps/desktop/windows`  

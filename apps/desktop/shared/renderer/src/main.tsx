@@ -6,11 +6,13 @@ import drsaiLogo from "./assets/drsai.png";
 import { hasDesktopApi } from "./desktopApi";
 import { installMockDesktopApi } from "./mockDesktopApi";
 import { installDebugLogCapture } from "./debugLogStore";
+import { installReactPerformanceMeasureGuard } from "./reactPerformanceGuard";
 import "./styles.css";
 
 if (import.meta.env.DEV || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1") {
   installMockDesktopApi();
 }
+if (import.meta.env.DEV) installReactPerformanceMeasureGuard();
 installDebugLogCapture();
 
 function BridgeUnavailable(): React.JSX.Element {

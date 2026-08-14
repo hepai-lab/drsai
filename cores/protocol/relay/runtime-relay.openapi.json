@@ -370,6 +370,604 @@
         "title": "AssociationResult",
         "type": "object"
       },
+      "GeneratedApprovalDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "deny",
+              "cancel"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "decision"
+        ],
+        "title": "GeneratedApprovalDecisionRequest",
+        "type": "object"
+      },
+      "GeneratedApprovalProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_definition_id": {
+            "title": "Agent Definition Id",
+            "type": "string"
+          },
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "backend_id": {
+            "title": "Backend Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "risk_summary": {
+            "title": "Risk Summary",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "cancelled",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "workspace_id",
+          "session_id",
+          "run_id",
+          "approval_id",
+          "agent_definition_id",
+          "backend_id",
+          "operation",
+          "risk_summary",
+          "scope",
+          "expires_at",
+          "correlation_id",
+          "status"
+        ],
+        "title": "GeneratedApprovalProjection",
+        "type": "object"
+      },
+      "GeneratedFirstScreenObservationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "authority_refresh_at_ms": {
+            "title": "Authority Refresh At Ms",
+            "type": "integer"
+          },
+          "cache_load_at_ms": {
+            "title": "Cache Load At Ms",
+            "type": "integer"
+          },
+          "first_render_at_ms": {
+            "title": "First Render At Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cache_load_at_ms",
+          "authority_refresh_at_ms",
+          "first_render_at_ms"
+        ],
+        "title": "GeneratedFirstScreenObservationRequest",
+        "type": "object"
+      },
+      "GeneratedLatencyObservationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "client_receive_at_ms": {
+            "title": "Client Receive At Ms",
+            "type": "integer"
+          },
+          "render_at_ms": {
+            "title": "Render At Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "client_receive_at_ms",
+          "render_at_ms"
+        ],
+        "title": "GeneratedLatencyObservationRequest",
+        "type": "object"
+      },
+      "GeneratedLatencyObservationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "latencies_ms": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencies Ms"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "stages_present": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stages Present",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ready",
+          "stages_present",
+          "latencies_ms"
+        ],
+        "title": "GeneratedLatencyObservationResponse",
+        "type": "object"
+      },
+      "GeneratedOperationConfirmationObservationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation_render_at_ms": {
+            "title": "Confirmation Render At Ms",
+            "type": "integer"
+          },
+          "request_dispatch_at_ms": {
+            "title": "Request Dispatch At Ms",
+            "type": "integer"
+          },
+          "runtime_commit_at_ms": {
+            "title": "Runtime Commit At Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_dispatch_at_ms",
+          "runtime_commit_at_ms",
+          "confirmation_render_at_ms"
+        ],
+        "title": "GeneratedOperationConfirmationObservationRequest",
+        "type": "object"
+      },
+      "GeneratedReconnectObservationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "disconnect_detect_at_ms": {
+            "title": "Disconnect Detect At Ms",
+            "type": "integer"
+          },
+          "replay_catchup_at_ms": {
+            "title": "Replay Catchup At Ms",
+            "type": "integer"
+          },
+          "transport_restore_at_ms": {
+            "title": "Transport Restore At Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "disconnect_detect_at_ms",
+          "transport_restore_at_ms",
+          "replay_catchup_at_ms"
+        ],
+        "title": "GeneratedReconnectObservationRequest",
+        "type": "object"
+      },
+      "GeneratedRunCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Attachment Refs",
+            "type": "array"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          },
+          "source_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Message Id"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "idempotency_key",
+          "message"
+        ],
+        "title": "GeneratedRunCreateRequest",
+        "type": "object"
+      },
+      "GeneratedRunProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Attachment Refs",
+            "type": "array"
+          },
+          "backend_id": {
+            "title": "Backend Id",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_approval",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "workspace_id",
+          "session_id",
+          "run_id",
+          "backend_id",
+          "status",
+          "correlation_id",
+          "created_at",
+          "message",
+          "attachment_refs"
+        ],
+        "title": "GeneratedRunProjection",
+        "type": "object"
+      },
+      "GeneratedSessionCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_definition_id": {
+            "title": "Agent Definition Id",
+            "type": "string"
+          },
+          "agent_definition_version": {
+            "title": "Agent Definition Version",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id",
+          "idempotency_key",
+          "title",
+          "agent_definition_id",
+          "agent_definition_version"
+        ],
+        "title": "GeneratedSessionCreateRequest",
+        "type": "object"
+      },
+      "GeneratedSessionProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_definition_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Definition Id"
+          },
+          "agent_definition_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Definition Version"
+          },
+          "backend_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend Id"
+          },
+          "last_run_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Status"
+          },
+          "lifecycle": {
+            "enum": [
+              "active",
+              "archived",
+              "removed"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "runtime_id": {
+            "title": "Runtime Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_id",
+          "workspace_id",
+          "session_id",
+          "title",
+          "lifecycle",
+          "updated_at"
+        ],
+        "title": "GeneratedSessionProjection",
+        "type": "object"
+      },
+      "GeneratedSessionUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "lifecycle": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "archived",
+                  "removed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "request_id",
+          "correlation_id"
+        ],
+        "title": "GeneratedSessionUpdateRequest",
+        "type": "object"
+      },
+      "GeneratedUserSloObservationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "latencies_ms": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencies Ms"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "stages_present": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stages Present",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ready",
+          "stages_present",
+          "latencies_ms"
+        ],
+        "title": "GeneratedUserSloObservationResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1844,10 +2442,28 @@
               "history_gap",
               "insufficient_window",
               "threshold_failed",
+              "runtime_compatibility_unknown",
+              "supported_runtime_requires_legacy",
               "eligible"
             ],
             "title": "Status",
             "type": "string"
+          },
+          "supported_runtime_count": {
+            "minimum": 0.0,
+            "title": "Supported Runtime Count",
+            "type": "integer"
+          },
+          "supported_runtime_requires_legacy": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supported Runtime Requires Legacy"
           }
         },
         "required": [
@@ -1861,6 +2477,8 @@
           "legacy_ratio",
           "fallback_error_ratio",
           "gap_days",
+          "supported_runtime_count",
+          "supported_runtime_requires_legacy",
           "requirements",
           "eligible"
         ],
@@ -1899,6 +2517,11 @@
             "const": 0,
             "title": "Release Cycles",
             "type": "integer"
+          },
+          "supported_runtime_requires_legacy": {
+            "const": false,
+            "title": "Supported Runtime Requires Legacy",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1907,9 +2530,47 @@
           "oaep_ratio",
           "legacy_ratio",
           "migration_ratio",
-          "fallback_error_ratio"
+          "fallback_error_ratio",
+          "supported_runtime_requires_legacy"
         ],
         "title": "ProtocolDeletionRequirements",
+        "type": "object"
+      },
+      "PushProviderReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "fcm": {
+            "title": "Fcm",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fcm"
+        ],
+        "title": "PushProviderReadiness",
+        "type": "object"
+      },
+      "PushReadinessResult": {
+        "additionalProperties": false,
+        "properties": {
+          "providers": {
+            "$ref": "#/components/schemas/PushProviderReadiness"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "worker_running": {
+            "title": "Worker Running",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "providers",
+          "worker_running"
+        ],
+        "title": "PushReadinessResult",
         "type": "object"
       },
       "PushRegistrationRequest": {
@@ -2066,6 +2727,197 @@
         ],
         "title": "ResourceLifecycle",
         "type": "string"
+      },
+      "UserSloJourneyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bottleneck": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bottleneck"
+          },
+          "complete_count": {
+            "minimum": 0.0,
+            "title": "Complete Count",
+            "type": "integer"
+          },
+          "incomplete_count": {
+            "minimum": 0.0,
+            "title": "Incomplete Count",
+            "type": "integer"
+          },
+          "invalid_count": {
+            "minimum": 0.0,
+            "title": "Invalid Count",
+            "type": "integer"
+          },
+          "journey": {
+            "enum": [
+              "first_screen",
+              "event_to_render",
+              "operation_confirmation",
+              "reconnect"
+            ],
+            "title": "Journey",
+            "type": "string"
+          },
+          "p50_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Ms"
+          },
+          "p95_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Ms"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "sample_count": {
+            "minimum": 0.0,
+            "title": "Sample Count",
+            "type": "integer"
+          },
+          "stages": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/UserSloStageReport"
+            },
+            "title": "Stages",
+            "type": "object"
+          },
+          "threshold_ms": {
+            "exclusiveMinimum": 0.0,
+            "title": "Threshold Ms",
+            "type": "number"
+          },
+          "within_threshold": {
+            "title": "Within Threshold",
+            "type": "boolean"
+          },
+          "worker_count": {
+            "minimum": 0.0,
+            "title": "Worker Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "journey",
+          "threshold_ms",
+          "sample_count",
+          "complete_count",
+          "incomplete_count",
+          "invalid_count",
+          "worker_count",
+          "ready",
+          "within_threshold",
+          "stages"
+        ],
+        "title": "UserSloJourneyResponse",
+        "type": "object"
+      },
+      "UserSloJourneysResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "event_to_render": {
+            "$ref": "#/components/schemas/UserSloJourneyResponse"
+          },
+          "first_screen": {
+            "$ref": "#/components/schemas/UserSloJourneyResponse"
+          },
+          "operation_confirmation": {
+            "$ref": "#/components/schemas/UserSloJourneyResponse"
+          },
+          "reconnect": {
+            "$ref": "#/components/schemas/UserSloJourneyResponse"
+          }
+        },
+        "required": [
+          "first_screen",
+          "event_to_render",
+          "operation_confirmation",
+          "reconnect"
+        ],
+        "title": "UserSloJourneysResponse",
+        "type": "object"
+      },
+      "UserSloReportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "journeys": {
+            "$ref": "#/components/schemas/UserSloJourneysResponse"
+          },
+          "minimum_complete_samples": {
+            "const": 20,
+            "title": "Minimum Complete Samples",
+            "type": "integer"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "const": "p6-user-slo/1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "minimum_complete_samples",
+          "ready",
+          "journeys"
+        ],
+        "title": "UserSloReportResponse",
+        "type": "object"
+      },
+      "UserSloStageReport": {
+        "additionalProperties": false,
+        "properties": {
+          "p50_ms": {
+            "minimum": 0.0,
+            "title": "P50 Ms",
+            "type": "number"
+          },
+          "p95_ms": {
+            "minimum": 0.0,
+            "title": "P95 Ms",
+            "type": "number"
+          },
+          "sample_count": {
+            "minimum": 0.0,
+            "title": "Sample Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sample_count",
+          "p50_ms",
+          "p95_ms"
+        ],
+        "title": "UserSloStageReport",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -2228,70 +3080,6 @@
         "title": "WorkspacePublishRequest",
         "type": "object"
       },
-      "_ApprovalDecision": {
-        "additionalProperties": false,
-        "properties": {
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "decision": {
-            "title": "Decision",
-            "type": "string"
-          },
-          "idempotency_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Idempotency Key"
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "request_id",
-          "correlation_id",
-          "decision"
-        ],
-        "title": "_ApprovalDecision",
-        "type": "object"
-      },
-      "_ConversationLatencyClientObservation": {
-        "additionalProperties": false,
-        "properties": {
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "duration_ms": {
-            "title": "Duration Ms",
-            "type": "number"
-          },
-          "operation_id": {
-            "title": "Operation Id",
-            "type": "string"
-          },
-          "stage": {
-            "title": "Stage",
-            "type": "string"
-          }
-        },
-        "required": [
-          "correlation_id",
-          "operation_id",
-          "stage",
-          "duration_ms"
-        ],
-        "title": "_ConversationLatencyClientObservation",
-        "type": "object"
-      },
       "_OwopRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2327,54 +3115,6 @@
         "title": "_OwopRequest",
         "type": "object"
       },
-      "_RunCreate": {
-        "additionalProperties": false,
-        "properties": {
-          "attachment_refs": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Attachment Refs",
-            "type": "array"
-          },
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "idempotency_key": {
-            "title": "Idempotency Key",
-            "type": "string"
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
-          },
-          "retry_of": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Retry Of"
-          }
-        },
-        "required": [
-          "request_id",
-          "correlation_id",
-          "idempotency_key",
-          "message"
-        ],
-        "title": "_RunCreate",
-        "type": "object"
-      },
       "_RuntimeRename": {
         "additionalProperties": false,
         "properties": {
@@ -2387,85 +3127,6 @@
           "display_name"
         ],
         "title": "_RuntimeRename",
-        "type": "object"
-      },
-      "_SessionCreate": {
-        "additionalProperties": false,
-        "properties": {
-          "agent_definition_id": {
-            "title": "Agent Definition Id",
-            "type": "string"
-          },
-          "agent_definition_version": {
-            "title": "Agent Definition Version",
-            "type": "string"
-          },
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "idempotency_key": {
-            "title": "Idempotency Key",
-            "type": "string"
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "request_id",
-          "correlation_id",
-          "idempotency_key",
-          "title",
-          "agent_definition_id",
-          "agent_definition_version"
-        ],
-        "title": "_SessionCreate",
-        "type": "object"
-      },
-      "_SessionUpdate": {
-        "additionalProperties": false,
-        "properties": {
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "lifecycle": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResourceLifecycle"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          }
-        },
-        "required": [
-          "request_id",
-          "correlation_id"
-        ],
-        "title": "_SessionUpdate",
         "type": "object"
       }
     }
@@ -2813,16 +3474,16 @@
         "summary": "Upsert User Push Registration"
       }
     },
-    "/v1/metrics/conversation-latency": {
+    "/v1/metrics/capacity": {
       "get": {
-        "operationId": "conversation_latency_metrics_v1_metrics_conversation_latency_get",
+        "operationId": "capacity_metrics_v1_metrics_capacity_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Conversation Latency Metrics V1 Metrics Conversation Latency Get",
+                  "title": "Response Capacity Metrics V1 Metrics Capacity Get",
                   "type": "object"
                 }
               }
@@ -2830,7 +3491,7 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Conversation Latency Metrics"
+        "summary": "Capacity Metrics"
       }
     },
     "/v1/metrics/oaep": {
@@ -2885,7 +3546,63 @@
           }
         },
         "summary": "Protocol Usage Deletion Decision",
-        "x-p5-platform-contract-sha256": "f29e5ed662e51eb61afcf31b1f2d21f56c8e5f1ed262928e648e15026d17be62"
+        "x-p5-platform-contract-sha256": "1b4722299b660ac687dea112b2e53cb41b580a2cb3878a73c8ae61d2d83b95ec"
+      }
+    },
+    "/v1/metrics/relay-latency": {
+      "get": {
+        "operationId": "conversation_latency_metrics_v1_metrics_relay_latency_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Conversation Latency Metrics V1 Metrics Relay Latency Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Conversation Latency Metrics"
+      }
+    },
+    "/v1/metrics/user-slo": {
+      "get": {
+        "operationId": "user_slo_metrics_v1_metrics_user_slo_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSloReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "User Slo Metrics"
+      }
+    },
+    "/v1/push/readiness": {
+      "get": {
+        "operationId": "push_readiness_v1_push_readiness_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushReadinessResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Push Readiness"
       }
     },
     "/v1/runtime-connections/{runtime_id}/heartbeat": {
@@ -3410,7 +4127,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/_ApprovalDecision"
+                "$ref": "#/components/schemas/GeneratedApprovalDecisionRequest"
               }
             }
           },
@@ -3420,7 +4137,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedApprovalProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -3909,7 +4628,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedRunProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -4438,7 +5159,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedRunProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -4627,7 +5350,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/_SessionCreate"
+                "$ref": "#/components/schemas/GeneratedSessionCreateRequest"
               }
             }
           },
@@ -4637,7 +5360,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedSessionProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -4692,7 +5417,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedSessionProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -4745,7 +5472,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/_SessionUpdate"
+                "$ref": "#/components/schemas/GeneratedSessionUpdateRequest"
               }
             }
           },
@@ -4755,7 +5482,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedSessionProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -4855,66 +5584,6 @@
           }
         },
         "summary": "Conversation"
-      }
-    },
-    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-latency": {
-      "post": {
-        "operationId": "record_client_conversation_latency_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__conversation_latency_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "runtime_id",
-            "required": true,
-            "schema": {
-              "title": "Runtime Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "workspace_id",
-            "required": true,
-            "schema": {
-              "title": "Workspace Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "session_id",
-            "required": true,
-            "schema": {
-              "title": "Session Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/_ConversationLatencyClientObservation"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Record Client Conversation Latency"
       }
     },
     "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot": {
@@ -5114,6 +5783,146 @@
           }
         },
         "summary": "Session Event Stream"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/{event_id}/latency-observation": {
+      "get": {
+        "operationId": "get_latency_observation_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__events__event_id__latency_observation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedLatencyObservationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Latency Observation"
+      },
+      "post": {
+        "operationId": "record_latency_observation_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__events__event_id__latency_observation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedLatencyObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedLatencyObservationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Latency Observation"
       }
     },
     "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events": {
@@ -5469,7 +6278,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/_RunCreate"
+                "$ref": "#/components/schemas/GeneratedRunCreateRequest"
               }
             }
           },
@@ -5479,7 +6288,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedRunProjection"
+                }
               }
             },
             "description": "Successful Response"
@@ -5497,6 +6308,313 @@
         },
         "summary": "Create Run"
       }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/first-screen/{sample_id}": {
+      "post": {
+        "operationId": "record_first_screen_slo_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__slo_first_screen__sample_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sample_id",
+            "required": true,
+            "schema": {
+              "title": "Sample Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedFirstScreenObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedUserSloObservationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record First Screen Slo"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/operation-confirmation/{sample_id}": {
+      "post": {
+        "operationId": "record_operation_confirmation_slo_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__slo_operation_confirmation__sample_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sample_id",
+            "required": true,
+            "schema": {
+              "title": "Sample Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedOperationConfirmationObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedUserSloObservationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Operation Confirmation Slo"
+      }
+    },
+    "/v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/reconnect/{sample_id}": {
+      "post": {
+        "operationId": "record_reconnect_slo_v1_runtimes__runtime_id__workspaces__workspace_id__sessions__session_id__slo_reconnect__sample_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runtime_id",
+            "required": true,
+            "schema": {
+              "title": "Runtime Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sample_id",
+            "required": true,
+            "schema": {
+              "title": "Sample Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedReconnectObservationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedUserSloObservationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Reconnect Slo"
+      }
     }
+  },
+  "x-relay-latency-observability": {
+    "authorization_precedes_body_and_storage": true,
+    "content_free": true,
+    "correlation_key": "sha256(runtime_id\u0000workspace_id\u0000session_id\u0000event_id)",
+    "failure_modes": [
+      "missing_stage",
+      "single_worker",
+      "duplicate_conflict",
+      "out_of_order"
+    ],
+    "minimum_complete_correlations": 20,
+    "minimum_worker_count": 2,
+    "multi_worker_ready_requires": [
+      "complete_correlations",
+      "worker_count"
+    ],
+    "persistent_layers": [
+      "redis",
+      "postgresql"
+    ],
+    "public_worker_dimension": "worker_count",
+    "retention_days": 30,
+    "sample_limit": 100000,
+    "schema_version": "p6-relay-latency/1",
+    "stages": [
+      "runtime_receive",
+      "runtime_commit",
+      "relay_fanout",
+      "android_receive",
+      "android_render"
+    ],
+    "worker_identity": "internal_sha256_only"
+  },
+  "x-user-slo": {
+    "authorization_precedes_body_and_storage": true,
+    "bottleneck": "highest_stage_p95_ms",
+    "content_free": true,
+    "identity_dimensions": [],
+    "journeys": {
+      "event_to_render": {
+        "stages": [
+          "runtime_receive",
+          "runtime_commit",
+          "relay_fanout",
+          "android_receive",
+          "android_render"
+        ],
+        "threshold_ms": 1000
+      },
+      "first_screen": {
+        "stages": [
+          "cache_load",
+          "authority_refresh",
+          "first_render"
+        ],
+        "threshold_ms": 2000
+      },
+      "operation_confirmation": {
+        "stages": [
+          "request_dispatch",
+          "runtime_commit",
+          "confirmation_render"
+        ],
+        "threshold_ms": 2000
+      },
+      "reconnect": {
+        "stages": [
+          "disconnect_detect",
+          "transport_restore",
+          "replay_catchup"
+        ],
+        "threshold_ms": 30000
+      }
+    },
+    "minimum_complete_samples": 20,
+    "readiness": "each_journey_complete_samples_gte_20",
+    "schema_version": "p6-user-slo/1",
+    "scope_hash": "sha256"
   }
 }

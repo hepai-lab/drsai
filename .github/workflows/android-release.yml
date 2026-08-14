@@ -47,6 +47,14 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bind Android Runtime build Python
+        run: |
+          "OPENDRSAI_ANDROID_BUILD_PYTHON=$((Get-Command python).Source)" >> $env:GITHUB_ENV
+
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Decode channel signing keystore

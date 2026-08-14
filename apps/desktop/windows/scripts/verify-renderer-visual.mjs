@@ -12,7 +12,7 @@ const l3Only = process.env.OPENDRSAI_RENDERER_L3_ONLY === "1";
 const modelProviderOnly = process.argv.includes("--model-provider-only");
 const axePath = join(root, "node_modules", "axe-core", "axe.min.js");
 const disabledFeatures = new Set((process.env.OPENDRSAI_RENDERER_DISABLED_FEATURES || "").split(",").map((value) => value.trim()).filter(Boolean));
-const featureKeys = ["auth", "runtime", "chat", "agents", "threads", "workspaceFiles", "git", "terminal", "serialVoice", "streamingVoice", "approvals", "browser", "debugger", "mcp", "remoteWorkspace", "portForwarding", "checkpoints", "worktrees", "automation", "collaboration", "channels", "diagnostics", "codexBackend"];
+const featureKeys = ["auth", "runtime", "chat", "agents", "threads", "workspaceFiles", "git", "terminal", "serialVoice", "streamingVoice", "duplexVoice", "approvals", "browser", "debugger", "mcp", "remoteWorkspace", "portForwarding", "checkpoints", "worktrees", "automation", "collaboration", "channels", "diagnostics", "codexBackend"];
 const featureCapabilities = Object.fromEntries(featureKeys.map((key) => [key, !disabledFeatures.has(key)]));
 const artifactDir =
   process.env.OPENDRSAI_VISUAL_ARTIFACT_DIR ||
@@ -942,6 +942,48 @@ async function runCurrentVisual() {
   }
   }
 
+  console.log("Checking workspace creation journeys...");
+  const localWorkspaceWin = await createWindow(1280, 760, true, "visual-workspace-create-local");
+  const localDialogOpened = await localWorkspaceWin.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=workspace-create-button]'); button?.click(); return Boolean(button); })()");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  if (!localDialogOpened) fail("could not open the unified workspace creation dialog");
+  const typeAudit = await localWorkspaceWin.webContents.executeJavaScript("(() => { const dialog=document.querySelector('[data-testid=workspace-create-dialog]'); return { visible:Boolean(dialog), text:dialog?.innerText || '', local:Boolean(document.querySelector('[data-testid=workspace-type-local]')), remote:Boolean(document.querySelector('[data-testid=workspace-type-remote]')) }; })()");
+  if (!typeAudit.visible || !typeAudit.local || !typeAudit.remote) fail("workspace type dialog did not expose Local and Remote choices");
+  if (typeAudit.text.includes("现有文件夹") || typeAudit.text.includes("空白本地项目")) fail("workspace type dialog still exposes the retired Existing or Blank choices");
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  await captureVisual(localWorkspaceWin, "workspace-create-type");
+  await localWorkspaceWin.webContents.executeJavaScript("document.querySelector('[data-testid=workspace-type-local]')?.click()");
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await localWorkspaceWin.webContents.executeJavaScript("document.querySelector('[data-testid=local-workspace-folder-picker]')?.click()");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const localWorkspaceAudit = await localWorkspaceWin.webContents.executeJavaScript("(() => { const path=document.querySelector('[data-testid=local-workspace-path]'); const name=document.querySelector('[data-testid=workspace-name-input]'); const submit=[...document.querySelectorAll('.workspace-create-actions button')].find((button)=>button.textContent.includes('添加工作区')||button.textContent.includes('Add workspace')); return { path:path?.value || '', name:name?.value || '', readOnly:Boolean(path?.readOnly), nameEditable:Boolean(name && !name.readOnly && !name.disabled), submitEnabled:Boolean(submit && !submit.disabled) }; })()");
+  if (!localWorkspaceAudit.path.endsWith("source-project") || localWorkspaceAudit.name !== "source-project") fail("local source folder did not supply the default workspace name: " + JSON.stringify(localWorkspaceAudit));
+  if (!localWorkspaceAudit.readOnly || !localWorkspaceAudit.nameEditable || !localWorkspaceAudit.submitEnabled) fail("local workspace form does not have the expected editable and submit states");
+  const localNameOverridden = await localWorkspaceWin.webContents.executeJavaScript("(() => { const input=document.querySelector('[data-testid=workspace-name-input]'); if (!input) return ''; const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(input,'指定工作区'); input.dispatchEvent(new Event('input',{bubbles:true})); return input.value; })()");
+  if (localNameOverridden !== "指定工作区") fail("local workspace name could not be overridden");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  await captureVisual(localWorkspaceWin, "workspace-create-local");
+  localWorkspaceWin.close();
+
+  const remoteWorkspaceWin = await createWindow(1280, 800, true, "visual-workspace-create-remote");
+  await remoteWorkspaceWin.webContents.executeJavaScript("document.querySelector('[data-testid=workspace-create-button]')?.click()");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await remoteWorkspaceWin.webContents.executeJavaScript("document.querySelector('[data-testid=workspace-type-remote]')?.click()");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const remoteHostReady = await remoteWorkspaceWin.webContents.executeJavaScript("(() => { const host=document.querySelector('[data-testid=remote-workspace-host]'); return Boolean(host && host.value === 'zhangtianshuo_4090'); })()");
+  if (!remoteHostReady) fail("remote workspace form did not select the available host");
+  await remoteWorkspaceWin.webContents.executeJavaScript("document.querySelector('[data-testid=remote-workspace-load]')?.click()");
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const remoteFolderSelected = await remoteWorkspaceWin.webContents.executeJavaScript("(() => { const option=[...document.querySelectorAll('.remote-directory-list [role=option]')].find((item)=>item.textContent.includes('ai_completion')); option?.click(); return Boolean(option); })()");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const remoteWorkspaceAudit = await remoteWorkspaceWin.webContents.executeJavaScript("(() => { const path=document.querySelector('[data-testid=remote-workspace-path]'); const name=document.querySelector('[data-testid=workspace-name-input]'); const content=document.querySelector('.workspace-create-content'); const submit=[...document.querySelectorAll('.workspace-create-actions button')].find((button)=>button.textContent.includes('添加工作区')||button.textContent.includes('Add workspace')); return { path:path?.value || '', name:name?.value || '', directories:document.querySelectorAll('.remote-directory-list [role=option]').length, nameEditable:Boolean(name && !name.readOnly && !name.disabled), submitEnabled:Boolean(submit && !submit.disabled), contentOverflow:Boolean(content && content.scrollHeight > content.clientHeight + 1) }; })()");
+  if (!remoteFolderSelected || !remoteWorkspaceAudit.path.endsWith("/ai_completion") || remoteWorkspaceAudit.name !== "ai_completion") fail("remote directory selection did not update the source path and default name: " + JSON.stringify(remoteWorkspaceAudit));
+  if (remoteWorkspaceAudit.directories < 3 || !remoteWorkspaceAudit.nameEditable || !remoteWorkspaceAudit.submitEnabled) fail("remote workspace form is missing its directory browser or valid submit state");
+  if (remoteWorkspaceAudit.contentOverflow) fail("remote workspace form requires a second outer scrollbar at 1280x800");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  await captureVisual(remoteWorkspaceWin, "workspace-create-remote");
+  remoteWorkspaceWin.close();
+
   console.log("Checking Chinese core pages...");
   const chineseWin = await createWindow(1280, 720, true);
   const checkChinesePage = async (label) => {
@@ -990,21 +1032,28 @@ async function runCurrentVisual() {
   if (!(await fillTextarea(interactive, "visual release check"))) fail("could not fill chat textarea");
   await new Promise((resolve) => setTimeout(resolve, 50));
   if (!(await clickByAnyText(interactive, [text.sendZh, "Send"]))) fail("could not click Send");
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  // The renderer registers the request before the mock emits the start event; allow
+  // React one complete render cycle before asserting the transient Stop state.
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  const runningHasStop = await interactive.webContents.executeJavaScript("Boolean(document.querySelector('.composer-submit.stop'))");
   let interaction = await auditWindow(interactive, "interaction-chat-running");
   await captureVisual(interactive, "interaction-chat-running");
   if (!interaction.text.includes("visual release check")) fail("running chat user message did not render");
-  if (!interaction.buttons.some((button) => [text.stopZh, "Stop"].includes(button.text))) fail("running chat did not expose Stop state");
+  if (!runningHasStop) fail("running chat did not expose Stop state");
   await new Promise((resolve) => setTimeout(resolve, 2200));
   interaction = await auditWindow(interactive, "interaction-chat");
   await captureVisual(interactive, "interaction-chat");
   if (!interaction.text.includes("visual release check")) fail("chat user message did not render");
   if (!interaction.text.includes("renderer") || !interaction.text.includes("ok")) fail("chat stream markdown did not render");
-  if (interaction.buttons.some((button) => [text.stopZh, "Stop"].includes(button.text))) {
+  if (await interactive.webContents.executeJavaScript("Boolean(document.querySelector('.composer-submit.stop'))")) {
     fail("chat request stayed in Stop state after stream completion");
   }
   if (!includesAny(interaction.text, ["部分可复现", "Partial evidence"])) fail("chat summary did not render the reproducibility badge");
   if (!includesAny(interaction.text, ["工具 1", "Tools 1"])) fail("chat summary did not render stable step counts");
+  await interactive.webContents.executeJavaScript(
+    "(() => { const details=document.querySelector('details.structured-process'); if (details && !details.open) details.querySelector('summary')?.click(); return Boolean(details); })()",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
   const inspectorStartedAt = Date.now();
   const openedRunInspector = await interactive.webContents.executeJavaScript(
     "(() => { const button=document.querySelector('.structured-activity-inspect'); button?.click(); return Boolean(button); })()",
@@ -1223,6 +1272,40 @@ contextBridge.exposeInMainWorld("openDrSai", {
   getPlatformDescriptor: async () => ({ id: "windows", defaultTerminalShell: "powershell", capabilities: { terminal: true, credentials: true, notifications: true, permissions: true, install: true, update: true, features: ${JSON.stringify(featureCapabilities)} } }),
   onOpenRequest: () => () => undefined,
   onLifecycleEvent: () => () => undefined,
+  onDuplexVoiceEvents: () => () => undefined,
+  getDuplexVoiceCapabilities: async () => ({
+    protocolVersion: 1,
+    inputAudioEncodings: ["pcm_s16le"],
+    outputAudioEncodings: ["pcm_s16le"],
+    inputSampleRatesHz: [24_000],
+    outputSampleRatesHz: [24_000],
+    supportsInputTranscription: true,
+    supportsOutputTranscription: true,
+    supportsServerVad: true,
+    supportsResponseCancel: true,
+    supportsConversationTruncation: true,
+    supportsToolCalling: true,
+    supportsSessionResume: false,
+    maxUplinkBufferedAudioMs: 2_000,
+    maxPlaybackBufferedAudioMs: 3_000,
+    maxSessionDurationSeconds: 1_800,
+  }),
+  startDuplexVoiceSession: async (request) => ({
+    sessionId: request.sessionId,
+    acceptedAt: new Date().toISOString(),
+    runtimeId: "mock-local",
+    providerId: request.providerId,
+    modelId: request.modelId,
+    capabilities: await window.openDrSai.getDuplexVoiceCapabilities(),
+  }),
+  sendDuplexVoiceAudioChunk: () => true,
+  updateDuplexVoiceSession: async () => true,
+  interruptDuplexVoiceSession: async () => true,
+  submitDuplexVoiceToolResult: async () => true,
+  stopDuplexVoiceSession: async () => true,
+  cancelDuplexVoiceSession: async () => true,
+  disposeDuplexVoiceSession: async () => true,
+  appendDuplexVoiceHistory: async () => ({ version: 1, threads: [] }),
   onDiagnosticEvent: () => () => undefined,
   onRuntimeLogEvent: () => () => undefined,
   recordDiagnostic: async (event) => ({ ...event, id: "visual-diagnostic", timestamp: new Date().toISOString() }),
@@ -1269,9 +1352,6 @@ contextBridge.exposeInMainWorld("openDrSai", {
   logout: async () => ({ ok: true, message: "Mock sign-out complete." }),
   previewLocalDataCleanup: async (scope) => ({ scope, applicationData: [{ category: "sessions", label: "会话", description: "清除会话记录。" }], preservedUserMaterials: [], preservesAllWorkspaceFiles: true, confirmationPhrase: scope === "all_local_data" ? "清除" : undefined, requiresSignInAgain: scope === "all_local_data" }),
   clearLocalData: async (request) => ({ ok: true, scope: request.scope, removedPaths: [], protectedWorkspacePaths: [], skippedTargets: [], requiresSignInAgain: request.scope === "all_local_data", message: "应用数据已清除；用户工作区文件和成果未受影响。" }),
-  startDesktopSsoLogin: async () => ({ ok: false, message: "Mock SSO is unavailable." }),
-  pollDesktopSsoLogin: async () => ({ ok: false, state: "error", message: "Mock SSO is unavailable." }),
-  cancelDesktopSsoLogin: async () => undefined,
   refreshAuthSession: async () => ({
     authenticated: true,
     user: {
@@ -1448,8 +1528,52 @@ contextBridge.exposeInMainWorld("openDrSai", {
   }),
   onStreamingVoiceTranscriptionEvent: () => () => undefined,
   getStreamingVoiceCapabilities: async () => null,
+  getDuplexVoiceCapabilities: async () => ({ enabled: false, inputAudioEncodings: ["pcm_s16le"], outputAudioEncodings: ["pcm_s16le"], inputSampleRates: [24000], outputSampleRates: [24000], channels: [1], maxChunkBytes: 65536, maxBufferedAudioMs: 2000, supportsServerVad: false, supportsBargeIn: false, supportsTools: false, providerDisclosure: "Visual fixture duplex voice is disabled.", reason: "visual_fixture" }),
+  startDuplexVoiceSession: async () => { throw new Error("Duplex voice is disabled in the visual fixture."); },
+  sendDuplexVoiceAudioChunk: () => false,
+  updateDuplexVoiceSession: async () => false,
+  interruptDuplexVoiceSession: async () => false,
+  submitDuplexVoiceToolResult: async () => false,
+  stopDuplexVoiceSession: async () => false,
+  cancelDuplexVoiceSession: async () => false,
+  disposeDuplexVoiceSession: async () => false,
+  onDuplexVoiceEvents: () => () => undefined,
+  appendDuplexVoiceHistory: async () => { throw new Error("Duplex voice history is unavailable in the visual fixture."); },
   recoverChatRun: async () => [],
-  listSshHosts: async () => [],
+  listSshHosts: async () => [{ alias: "zhangtianshuo_4090", hostname: "remote.example", user: "zhangtianshuo", port: 22, identityFiles: [] }],
+  diagnoseSshHost: async (hostAlias) => ({ hostAlias, state: "reachable", elapsedMs: 1 }),
+  inspectSshHostKeys: async () => [],
+  testSshHost: async () => true,
+  approveSshHostKey: async () => true,
+  listRemoteDirectories: async (_hostAlias, remotePath) => {
+    const base = (remotePath || "/home/zhangtianshuo").replace(/\/$/, "");
+    return ["ai_completion", "Cline", "hai", "hai-ddf-main", "hai-k8s", "mineru2_hepai-main", "openclaw-main"].map((name) => ({
+      name,
+      path: base + "/" + name,
+      directory: true,
+      readable: true,
+      writable: true,
+      mode: "drwxr-xr-x",
+    }));
+  },
+  connectRemoteWorkspace: async (request) => {
+    const now = new Date().toISOString();
+    const id = "remote-workspace-" + crypto.randomUUID();
+    return {
+      id,
+      name: request.name,
+      path: request.path,
+      location: "remote",
+      transport: "ssh",
+      type: "remote-ssh",
+      remote: { hostAlias: request.hostAlias, canonicalPath: request.path, workspaceId: id, connectionState: "ready" },
+      createdAt: now,
+      updatedAt: now,
+      lastOpenedAt: now,
+      trusted: true,
+    };
+  },
+  disconnectRemoteWorkspace: async () => true,
   listWorkspaces: async () => [{ id: "visual-workspace", name: "Visual workspace", path: "C:\\Users\\Demo\\workspace", location: "local", type: "local", description: "Renderer visual fixture", createdAt: "2026-08-05T00:00:00.000Z", updatedAt: "2026-08-05T00:00:00.000Z", lastOpenedAt: "2026-08-05T00:00:00.000Z", trusted: true }],
   createWorkspace: async (request) => ({
     id: "workspace-" + crypto.randomUUID(),
@@ -1457,6 +1581,19 @@ contextBridge.exposeInMainWorld("openDrSai", {
     path: request && request.path ? request.path : "C:\\Users\\Demo\\project",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+  }),
+  createDefaultWorkspace: async () => ({
+    id: "visual-workspace",
+    name: "Visual workspace",
+    path: "C:\\Users\\Demo\\workspace",
+    location: "local",
+    type: "local",
+    description: "Renderer visual fixture",
+    createdAt: "2026-08-05T00:00:00.000Z",
+    updatedAt: "2026-08-05T00:00:00.000Z",
+    lastOpenedAt: "2026-08-05T00:00:00.000Z",
+    trusted: true,
+    metadata: { managedDefault: true, defaultWorkspaceVersion: 1 },
   }),
   updateWorkspace: async (request) => ({
     id: request && request.id ? request.id : "workspace-visual",
@@ -1466,7 +1603,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
     updatedAt: new Date().toISOString(),
   }),
   deleteWorkspace: async () => ({ deleted: true }),
-  pickFolder: async () => null,
+  pickFolder: async () => ({ canceled: false, paths: ["C:\\Users\\Demo\\source-project"] }),
   pickFiles: async () => [],
   listThreads: async () => threads,
   createThread: async (request) => {
@@ -1590,22 +1727,24 @@ contextBridge.exposeInMainWorld("openDrSai", {
   closeMcpReusableSession: async () => ({ ok: true }),
   startChat: async (request) => {
     const requestId = request.requestId || crypto.randomUUID();
-    emit(chatListeners, { requestId, runId: "run-runtime-visual", seq: 1, type: "start" });
     const latestMessage = Array.isArray(request.messages) ? request.messages.at(-1)?.content || "" : "";
     if (latestMessage.includes("visual rail turn")) {
-      setTimeout(() => emit(chatListeners, { requestId, seq: 2, type: "chunk", content: "Rail response." }), 20);
-      setTimeout(() => emit(chatListeners, { requestId, seq: 3, type: "done" }), 45);
+      setTimeout(() => emit(chatListeners, { requestId, runId: requestId, seq: 1, type: "start" }), 10);
+      setTimeout(() => emit(chatListeners, { requestId, seq: 2, type: "chunk", content: "Rail response." }), 30);
+      setTimeout(() => emit(chatListeners, { requestId, seq: 3, type: "done" }), 60);
       return requestId;
     }
+    // Do not beat the renderer's request-id registration on fast machines.
+    setTimeout(() => emit(chatListeners, { requestId, runId: "run-runtime-visual", seq: 1, type: "start" }), 100);
     setTimeout(() => emit(chatListeners, { requestId, seq: 2, type: "reasoning", content: "Checking renderer constraints." }), 700);
-    setTimeout(() => emit(chatListeners, { requestId, seq: 3, type: "tool_timeline", toolTimeline: { id: "visual-read", oaepItemId: "visual-read", kind: "tool_call", title: "Read workspace file", toolName: "read_file", status: "completed", content: "src/main.ts" } }), 900);
+    setTimeout(() => emit(chatListeners, { requestId, seq: 3, type: "tool_timeline", oaepItemId: "visual-read", toolTimeline: { id: "visual-read", oaepItemId: "visual-read", kind: "tool_call", title: "Read workspace file", toolName: "read_file", status: "completed", content: "src/main.ts" } }), 900);
     setTimeout(() => emit(chatListeners, { requestId, seq: 4, type: "chunk", content: "Mock **desktop** chat stream.\n\n" }), 1200);
     setTimeout(() => emit(chatListeners, { requestId, seq: 4, type: "chunk", content: "DUPLICATE MUST NOT RENDER" }), 1300);
     setTimeout(() => emit(chatListeners, { requestId, seq: 5, type: "chunk", content: "| item | status |\n| --- | --- |\n| renderer | ok |\n\n" }), 1600);
     setTimeout(() => emit(chatListeners, { requestId, seq: 6, type: "done" }), 1900);
     return requestId;
   },
-  abortChat: async () => true,
+  cancelChatTurn: async () => ({ accepted: true, state: "cancelling" }),
   listSessionRuns: async () => ({ schema_version: "opendrsai.run-inspection/1", object: "list", data: [], next_cursor: null, has_more: false }),
   getRunInspection: async (request) => {
     const pageIndex = Number(request.timelineCursor || 0);

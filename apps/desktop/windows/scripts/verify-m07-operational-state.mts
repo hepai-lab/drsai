@@ -1,57 +1,41 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { deriveOperationalRunState, deriveOperationalState, shouldShowOperationalStateBar, type OperationalStateFacts } from "../../shared/api/operationalState.ts";
+import { deriveOperationalState, shouldShowOperationalStateBar, type OperationalStateFacts } from "../../shared/api/operationalState.ts";
 
 const identities: OperationalStateFacts["identity"][] = ["loading", "anonymous", "authenticated"];
 const runtimes: OperationalStateFacts["runtime"][] = ["unknown", "preparing", "blocked", "ready"];
-const models: OperationalStateFacts["model"][] = ["unknown", "unconfigured", "untested", "ready"];
+const agents: OperationalStateFacts["agent"][] = ["unknown", "unavailable", "unconfigured", "untested", "ready"];
 const workspaces: OperationalStateFacts["workspace"][] = ["none", "untrusted", "trusted"];
-const runs: OperationalStateFacts["run"][] = ["idle", "queued", "running", "waiting_approval", "recovering", "failed", "completed", "cancelled"];
 
 let combinations = 0;
-for (const identity of identities) for (const runtime of runtimes) for (const model of models) for (const workspace of workspaces) for (const run of runs) {
-  const facts = { identity, runtime, model, workspace, run };
+for (const identity of identities) for (const runtime of runtimes) for (const agent of agents) for (const workspace of workspaces) {
+  const facts = { identity, runtime, agent, workspace };
   const decision = deriveOperationalState(facts);
   combinations += 1;
-  const expectedLayer = identity !== "authenticated" ? "identity" : runtime !== "ready" ? "runtime" : model !== "ready" ? "model" : workspace !== "trusted" ? "workspace" : "run";
+  const expectedLayer = identity !== "authenticated" ? "identity" : runtime !== "ready" ? "runtime" : ["unknown", "unavailable", "unconfigured"].includes(agent) ? "agent" : workspace !== "trusted" ? "workspace" : agent === "untested" ? "agent" : "workspace";
   assert.equal(decision.currentLayer, expectedLayer, JSON.stringify(facts));
   assert.equal(decision.state, facts[expectedLayer], JSON.stringify(facts));
-  assert.equal(decision.layers.length, 5);
+  assert.equal(decision.layers.length, 4);
   assert.equal(decision.layers.filter((item) => item.status === "current").length, 1);
-  assert.equal(decision.readyForRun, expectedLayer === "run");
-  const expectedBlocker = expectedLayer !== "run" ? expectedLayer : (["waiting_approval", "failed"].includes(run) ? "run" : null);
+  const hardBlocked = workspace !== "trusted" || identity !== "authenticated" || runtime !== "ready" || ["unknown", "unavailable", "unconfigured"].includes(agent);
+  assert.equal(decision.readyForRun, !hardBlocked);
+  const expectedBlocker = hardBlocked ? expectedLayer : null;
   assert.equal(decision.blockingLayer, expectedBlocker);
 }
-assert.equal(combinations, 1152);
-
-const decisionFor = (run: OperationalStateFacts["run"]) => deriveOperationalState({
-  identity: "authenticated",
-  runtime: "ready",
-  model: "ready",
-  workspace: "trusted",
-  run,
-});
-for (const run of ["queued", "running", "waiting_approval", "recovering", "failed"] as const) {
-  assert.equal(shouldShowOperationalStateBar(decisionFor(run)), true, `${run} should remain globally visible`);
-}
-for (const run of ["idle", "completed", "cancelled"] as const) {
-  assert.equal(shouldShowOperationalStateBar(decisionFor(run)), false, `${run} should not occupy the global overlay`);
-}
+assert.equal(combinations, 180);
 assert.equal(shouldShowOperationalStateBar(deriveOperationalState({
   identity: "authenticated",
   runtime: "blocked",
-  model: "ready",
+  agent: "ready",
   workspace: "trusted",
-  run: "idle",
 })), true, "a blocking prerequisite should remain globally visible");
-
-const task = (status: string, updatedAt: string, recoveredAt?: string) => ({ status, updatedAt, ...(recoveredAt ? { recoveredAt } : {}) }) as never;
-assert.equal(deriveOperationalRunState([], null), "idle");
-assert.equal(deriveOperationalRunState([], "request-1"), "running");
-assert.equal(deriveOperationalRunState([task("waiting_approval", "2026-08-05T00:00:00Z")]), "waiting_approval");
-assert.equal(deriveOperationalRunState([task("queued", "2026-08-05T00:00:00Z", "2026-08-05T00:00:00Z")]), "recovering");
-assert.equal(deriveOperationalRunState([task("blocked", "2026-08-05T00:00:00Z")]), "failed");
+assert.equal(shouldShowOperationalStateBar(deriveOperationalState({
+  identity: "authenticated",
+  runtime: "ready",
+  agent: "untested",
+  workspace: "trusted",
+})), true, "untested models should remain visible without blocking useful work");
 
 const app = readFileSync(resolve(import.meta.dirname, "../../shared/renderer/src/App.tsx"), "utf8");
 const component = readFileSync(resolve(import.meta.dirname, "../../shared/renderer/src/components/OperationalStateBar.tsx"), "utf8");
@@ -69,8 +53,26 @@ assert.match(component, /data-current-state=\{decision\.state\}/);
 assert.match(component, /aria-current=\{item\.status === "current" \? "step"/);
 assert.match(component, /aria-label=\{zh \? "OpenDrSai 当前状态"/);
 assert.match(component, /AUTO_OPEN_STATES/);
+assert.doesNotMatch(component, /AUTO_OPEN_STATES[\s\S]{0,180}"untested"/);
+assert.doesNotMatch(diagnosticsContainer, /autoRecoverKey|completedAutomaticRecoveries/);
+assert.doesNotMatch(app, /automaticAgentModelVerificationsRef|recordSuccessfulModelUsage/);
+assert.equal((app.match(/testMyDrSaiModelProvider\(/g) ?? []).length, 1, "only the explicit Model provider settings action may probe a model");
+assert.match(app, /agent: !agentCatalogLoaded[\s\S]{0,420}: "ready"/);
+assert.match(app, /actualOperationalFacts = \{[\s\S]{0,800}identity:[\s\S]*runtime:[\s\S]*agent:[\s\S]*workspace:/);
+assert.doesNotMatch(app, /actualOperationalFacts = \{[\s\S]{0,700}run:/);
+assert.match(component, /agent: "智能体"/);
+assert.doesNotMatch(component, /任务运行|Task run/);
+const authProvider = readFileSync(resolve(import.meta.dirname, "../../shared/renderer/src/auth/AuthProvider.tsx"), "utf8");
+assert.match(authProvider, /!session\.authenticated[\s\S]{0,220}serviceBlocker[\s\S]{0,120}void retryBootstrap\(\)/);
 assert.match(styles, /\.operational-state-popover\s*\{\s*position:\s*absolute/);
 assert.doesNotMatch(styles, /\.operational-state-(?:bar|control)\s*\{[^}]*position:\s*fixed/s);
 assert.doesNotMatch(component, /Codex/i);
 
-console.log(`M07 operational state verified (${combinations} property combinations + 5 run mappings + contextual visibility + 11 production UI contracts).`);
+const windowsStatus = readFileSync(resolve(import.meta.dirname, "../src/main/status.ts"), "utf8");
+const quickHealth = windowsStatus.match(/export async function getDesktopHealth[\s\S]*?\n\}/)?.[0] ?? "";
+assert.match(quickHealth, /const gateway = getGatewaySnapshot\(\)/);
+assert.match(quickHealth, /gatewayReady: gateway\.ready/);
+assert.match(quickHealth, /\bgateway,/);
+assert.doesNotMatch(quickHealth, /gatewayReady: false/);
+
+console.log(`M07 operational state verified (${combinations} four-layer property combinations + Gateway snapshot consistency + production UI contracts).`);

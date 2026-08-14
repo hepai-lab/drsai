@@ -7,7 +7,7 @@ import { atom } from 'nanostores'
 
 import type { GatewaySkin, SessionMetadata } from '../gatewayTypes.js'
 
-export type ConnectionStatus = 'connecting' | 'ready' | 'error' | 'exited'
+export type ConnectionStatus = 'connecting' | 'ready' | 'error' | 'exited' | 'remote_lost'
 
 export const $connectionStatus = atom<ConnectionStatus>('connecting')
 export const $connectionError = atom<string>('')

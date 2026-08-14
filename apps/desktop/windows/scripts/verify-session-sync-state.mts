@@ -22,17 +22,21 @@ try {
     payloadHash: sessionPayloadHash({ message }),
   };
   const first = await store.beginOutbox(sessionId, pending);
+  assert.equal(first.deliveryState, "optimistic");
   assert.deepEqual(await store.beginOutbox(sessionId, pending), first, "same semantic retry must reuse outbox");
   await assert.rejects(
     () => store.beginOutbox(sessionId, { ...pending, sourceMessageId: "desktop-request-two" }),
     /awaiting Runtime acknowledgement/,
   );
-  await store.attachRun(sessionId, pending.sourceMessageId, "run-one");
+  await store.markOutboxDelivery(sessionId, pending.sourceMessageId, "sending");
+  const acknowledged = await store.attachRun(sessionId, pending.sourceMessageId, "run-one");
+  assert.equal(acknowledged.deliveryState, "accepted");
 
   const restarted = new SessionSyncStateStore(path);
   const recovered = await restarted.get(sessionId);
   assert.equal(recovered.cursor, 15);
   assert.equal(recovered.outbox?.runId, "run-one");
+  assert.equal(recovered.outbox?.deliveryState, "accepted");
   assert.deepEqual(
     await restarted.beginOutbox(sessionId, pending),
     recovered.outbox,
@@ -46,6 +50,8 @@ try {
   await restarted.advanceCursor(sessionId, 21);
   assert.equal((await new SessionSyncStateStore(path).get(sessionId)).cursor, 21,
     "a second Desktop restart must resume from the latest durable OAEP cursor");
+  await restarted.markOutboxDelivery(sessionId, pending.sourceMessageId, "running");
+  await restarted.markOutboxDelivery(sessionId, pending.sourceMessageId, "terminal");
   assert.equal(await restarted.completeOutbox(sessionId, pending.sourceMessageId), true);
   assert.equal((await restarted.get(sessionId)).outbox, undefined);
 
@@ -58,6 +64,11 @@ try {
   assert(chatSource.includes('isCodexBackend ? "codex@1" : "opendrsai@1"'));
   assert(chatSource.includes('sourceClient: "windows"'));
   assert(chatSource.includes("sessionSyncState.beginOutbox"));
+  assert(
+    chatSource.includes("runtimeTerminalStatus !== undefined")
+      && /runtimeReachedTerminal[\s\S]{0,500}completeOutbox\(runtimeSessionId, sourceMessageId\)/.test(chatSource),
+    "runRuntimeBackendChat must clear the outbox once the Runtime reports a Run terminal, or subsequent messages get blocked as 'awaiting Runtime acknowledgement'",
+  );
   assert(
     !chatSource.includes('/v1/chat/completions'),
     "local Desktop agents must not bypass Runtime create_run semantics",

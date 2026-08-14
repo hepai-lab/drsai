@@ -55,8 +55,9 @@ try {
   const chatWorkspace = await readFile(join(root, "../shared/renderer/src/components/ChatWorkspace.tsx"), "utf8");
   assert(chatWorkspace.includes('className="chat-recovery-actions"') && chatWorkspace.includes("onRecoveryAction(message.id, action.id)"));
   assert(app.includes("health?.update.currentVersion"), "About must show the Electron Desktop version, not the Runtime version");
-  const locationBlock = app.slice(app.indexOf("workspaceLocationChoice === null"), app.indexOf("workspaceLocationChoice === \"remote\""));
-  assert(locationBlock.includes('"本地" : "Local"') && locationBlock.includes('"远程" : "Remote"'));
+  const locationStart = app.indexOf('data-testid="workspace-type-local"');
+  const locationBlock = app.slice(locationStart, app.indexOf('workspaceLocationChoice === "local" ?', locationStart));
+  assert(locationStart >= 0 && locationBlock.includes('"本地" : "Local"') && locationBlock.includes('data-testid="workspace-type-remote"') && locationBlock.includes('"远程" : "Remote"'));
   assert(!/Codex Workspace|Codex 工作区/.test(locationBlock), "Codex must not become a third Workspace location");
   const statusBundle = join(temp, "status.mjs");
   await build({ entryPoints: [join(root, "src/main/codexBackendStatus.ts")], outfile: statusBundle, bundle: true, platform: "node", format: "esm", target: "node22" });
@@ -139,13 +140,27 @@ try {
     devScript.includes("Get-GatewayInstanceToken")
       && devScript.includes("X-OpenDrSai-Gateway-Token")
       && devScript.includes("$env:OPENDRSAI_GATEWAY_INSTANCE_TOKEN = $instanceToken")
+      && devScript.includes('"-InstanceTokenPath"')
       && devScript.includes("-Headers $gatewayHeaders -Method Post"),
     "Source Gateway startup, readiness probes, and shutdown must share the Desktop instance token",
   );
+  const gatewayWatcher = await readFile(join(root, "scripts/watch-gateway.ps1"), "utf8");
+  assert(
+    gatewayWatcher.includes("[string]$InstanceTokenPath")
+      && gatewayWatcher.includes("Set-GatewayChildToken")
+      && gatewayWatcher.includes("$env:OPENDRSAI_GATEWAY_INSTANCE_TOKEN = $token")
+      && gatewayWatcher.includes('Join-Path $RepoRoot "cores\\python\\packages\\drsai\\src"')
+      && gatewayWatcher.includes("$env:PYTHONPATH")
+      && gatewayWatcher.includes("EnvironmentVariables.Clear()")
+      && gatewayWatcher.includes("ToUpperInvariant()")
+      && gatewayWatcher.includes("^[A-Za-z0-9_-]{32,128}$")
+      && !gatewayWatcher.includes("[string]$InstanceToken,"),
+    "The source watcher must reload the bounded token, normalize inherited environment keys, and keep the token off its command line",
+  );
   const desktopDevEntry = await readFile(join(root, "../windows-desktop-dev.cmd"), "utf8");
   assert(
-    desktopDevEntry.includes("-WithGateway"),
-    "The canonical apps/desktop development entry must launch the source Gateway",
+    desktopDevEntry.includes("-LaunchMode Development") && !desktopDevEntry.includes("-HotLoad"),
+    "The canonical apps/desktop development entry must leave Gateway hot-load opt-in",
   );
   console.log("Codex Desktop product integration verification passed.");
 } finally {

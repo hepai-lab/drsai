@@ -41,6 +41,34 @@ detailed instructions and access to resources.""",
     
     return tool_schema
 
+
+def get_regression_read_tools(strict: bool = False) -> list[ToolSchema]:
+    """Return narrow, read-only tools used by the regression-testing Skill."""
+    def schema(name: str, description: str, properties: dict, required: list[str] | None = None) -> ToolSchema:
+        return ToolSchema(
+            name=name,
+            description=description,
+            parameters=ParametersSchema(
+                type="object",
+                properties=properties,
+                required=required or [],
+                additionalProperties=False,
+            ),
+            strict=strict,
+        )
+
+    return [
+        schema("regression_list_suites", "List the current validated OpenDrSai regression suites. Use before claiming which suites exist.", {}),
+        schema("regression_list_cases", "List cases in canonical Suite order with current revision and definition hash.", {"suite_id": {"type": "string"}}, ["suite_id"]),
+        schema("regression_get_case", "Get the safe current input, expectations, environment and execution rules for one regression case.", {"case_id": {"type": "string"}}, ["case_id"]),
+        schema("regression_preflight", "Validate an exact Suite/case selection and return missing requirements, risks, catalog revision and a scope-bound confirmation token when needed.", {"suite_id": {"type": "string"}, "case_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100}}, ["suite_id", "case_ids"]),
+        schema("regression_start", "Start one idempotent background regression evaluation after successful preflight. Risky or multi-case selections require the exact confirmation token returned by preflight.", {"suite_id": {"type": "string"}, "case_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100}, "catalog_revision": {"type": "string"}, "options": {"type": "object", "properties": {"failure_policy": {"type": "string", "enum": ["continue", "stop"]}}, "additionalProperties": False}, "confirmation_token": {"type": "string"}}, ["suite_id", "case_ids", "catalog_revision"]),
+        schema("regression_history", "Read persisted regression evaluation history.", {"limit": {"type": "integer", "minimum": 1, "maximum": 500}}),
+        schema("regression_get", "Read one authoritative persisted regression evaluation.", {"evaluation_id": {"type": "string"}}, ["evaluation_id"]),
+        schema("regression_events", "Read evaluation, case, Gateway Run, approval and artifact lifecycle events after a stable opaque integer cursor.", {"evaluation_id": {"type": "string"}, "after_cursor": {"type": "integer", "minimum": 0}}, ["evaluation_id"]),
+        schema("regression_cancel", "Cancel an active evaluation, its current Gateway Run and Runner process while preserving partial results and evidence.", {"evaluation_id": {"type": "string"}}, ["evaluation_id"]),
+    ]
+
 def get_todo_manager_tool(strict: bool = False,) -> ToolSchema:
     parameters = ParametersSchema(
         type="object",

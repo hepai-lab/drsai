@@ -25,7 +25,30 @@ interface RunInspectorPanelProps {
   request: RunInspectionOpenRequest | null;
   focusedItemId?: string;
   onOpenDebug?: () => void;
-  onOpenRun?: (runId: string) => void;
+  onOpenRun?: (runId: string, itemId?: string) => void;
+}
+
+interface WebSearchCandidateInspection {
+  rank: number;
+  title: string;
+  url: string;
+  domain: string;
+  snippet: string;
+  accepted: boolean;
+  reason: string;
+}
+
+interface WebSearchInspection {
+  kind: "web_search";
+  query: string;
+  requested_query?: string;
+  effective_query?: string;
+  rewrite_reason?: string;
+  provider: string;
+  candidate_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  candidates: WebSearchCandidateInspection[];
 }
 
 const ITEM_TYPES = [
@@ -119,6 +142,10 @@ export function RunInspectorPanel({
   const selectedItem = useMemo(
     () => inspection?.timeline.find((item) => item.id === selectedItemId),
     [inspection, selectedItemId],
+  );
+  const webSearchInspection = useMemo(
+    () => selectedItem ? findWebSearchInspection(selectedItem.content) : null,
+    [selectedItem],
   );
 
   useEffect(() => {
@@ -295,6 +322,7 @@ export function RunInspectorPanel({
       <div className="run-inspector-item-detail">
         <button type="button" onClick={() => void copyTextSafely(selectedItem.id)} aria-label={zh ? "复制完整记录编号" : "Copy full record identifier"}>{zh ? "记录" : "Record"} {selectedItem.id.slice(-8)}</button>
         <dl><div><dt>{zh ? "状态" : "Status"}</dt><dd>{runStatusLabel(selectedItem.status, language)}</dd></div><div><dt>{zh ? "来源" : "Source"}</dt><dd>{userFacingExecutionSource(selectedItem.source.backend, language)}</dd></div></dl>
+        {webSearchInspection ? <WebSearchInspectionView value={webSearchInspection} language={language} /> : null}
         <details><summary>{zh ? "查看脱敏技术数据" : "View redacted technical data"}</summary><pre>{boundedJson(selectedItem.content)}</pre></details>
         <p><strong>{zh ? "事件引用" : "Event references"}:</strong> {selectedItem.event_refs.length ? selectedItem.event_refs.map((ref) => `${ref.event_id} (#${ref.sequence})`).join(", ") : (zh ? "未记录" : "Not recorded")}</p>
       </div>
@@ -325,8 +353,77 @@ export function RunInspectorPanel({
 
     {error && describedError ? <aside className="run-inspector-inline-error" role="alert"><strong>{describedError.title}</strong><p>{describedError.action}</p><details><summary>{zh ? "技术详情" : "Technical details"}</summary><code>{describedError.code}</code><pre>{redactRunInspectionText(error)}</pre></details></aside> : null}
     {onOpenDebug ? <button type="button" className="run-inspector-debug-link" onClick={onOpenDebug}>{zh ? "打开技术诊断" : "Open technical diagnostics"}</button> : null}
-    {experimentOpen && request ? <RunExperimentPanel request={request} itemId={selectedItemId} language={language} onClose={() => setExperimentOpen(false)} /> : null}
+    {experimentOpen && request ? <RunExperimentPanel
+      request={request} itemId={selectedItemId} language={language}
+      onOpenEvidence={(runId, evidenceItemId) => { setExperimentOpen(false); onOpenRun?.(runId, evidenceItemId); }}
+      onClose={() => setExperimentOpen(false)}
+    /> : null}
   </section>;
+}
+
+function WebSearchInspectionView({ value, language }: { value: WebSearchInspection; language: "en" | "zh" }): React.JSX.Element {
+  const zh = language === "zh";
+  const requested = value.requested_query || value.query;
+  const effective = value.effective_query || value.query;
+  const rewritten = requested !== effective;
+  return <section className="run-inspector-search-results" aria-label={zh ? "网络搜索结果" : "Web search results"}>
+    <header>
+      <div>
+        <strong>{zh ? "搜索结果" : "Search results"}</strong>
+        {rewritten ? <>
+          <small>{zh ? `原始问题：${requested}` : `Requested: ${requested}`}</small>
+          <small>{zh ? `实际搜索：${effective}` : `Searched: ${effective}`}</small>
+        </> : <small>{effective}</small>}
+      </div>
+      <span>{zh ? `${value.accepted_count} 条采用 · ${value.rejected_count} 条过滤` : `${value.accepted_count} used · ${value.rejected_count} filtered`}</span>
+    </header>
+    {value.candidates.length ? <ol>
+      {value.candidates.map((candidate) => <li key={`${candidate.rank}:${candidate.url}`}>
+        <div className="run-inspector-search-result-heading">
+          <span className={candidate.accepted ? "accepted" : "rejected"}>{candidate.accepted ? (zh ? "采用" : "Used") : (zh ? "已过滤" : "Filtered")}</span>
+          <button type="button" onClick={() => void desktopApi.openExternal(candidate.url)}>{candidate.title}</button>
+        </div>
+        <small>{candidate.domain || candidate.url}</small>
+        {candidate.snippet ? <p>{candidate.snippet}</p> : null}
+        {!candidate.accepted ? <em>{searchRejectionLabel(candidate.reason, language)}</em> : null}
+      </li>)}
+    </ol> : <p className="run-inspector-muted">{zh ? "搜索引擎没有返回可展示的候选结果。" : "The search engine returned no displayable candidates."}</p>}
+  </section>;
+}
+
+function searchRejectionLabel(reason: string, language: "en" | "zh"): string {
+  if (reason === "query_mismatch") return language === "zh" ? "与查询主体不匹配" : "Did not match the query entity";
+  if (reason === "result_limit") return language === "zh" ? "超出本次采用数量" : "Beyond the result limit";
+  return language === "zh" ? "未采用" : "Not used";
+}
+
+function findWebSearchInspection(value: unknown, depth = 0): WebSearchInspection | null {
+  if (depth > 5) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+    try { return findWebSearchInspection(JSON.parse(trimmed), depth + 1); } catch { return null; }
+  }
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = findWebSearchInspection(child, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const candidate = record._inspection && typeof record._inspection === "object"
+    ? record._inspection as Record<string, unknown>
+    : record;
+  if (candidate.kind === "web_search" && Array.isArray(candidate.candidates)) {
+    return candidate as unknown as WebSearchInspection;
+  }
+  for (const key of ["result", "content", "output", "tool"]) {
+    const found = findWebSearchInspection(record[key], depth + 1);
+    if (found) return found;
+  }
+  return null;
 }
 
 function describeInspectionError(raw: string, language: "en" | "zh"): { title: string; action: string; code: string } {

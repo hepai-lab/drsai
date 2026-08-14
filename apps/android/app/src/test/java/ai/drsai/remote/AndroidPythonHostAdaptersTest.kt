@@ -120,7 +120,7 @@ class AndroidPythonHostAdaptersTest {
     }
 
     @Test
-    fun `shared Kernel tool choice policy reaches production-aware gateway`() = runTest {
+    fun `specified tool uses provider-neutral filtering and mandatory instruction`() = runTest {
         val gateway = FakeModelGateway()
         val choice = JSONObject().put("policy_version", "p9-tool-choice-v1")
             .put("mode", "specified").put("specified_tool", "clock")
@@ -132,8 +132,30 @@ class AndroidPythonHostAdaptersTest {
             ),
         ).toList()
 
-        assertEquals("specified", gateway.toolChoice?.getString("mode"))
-        assertEquals("clock", gateway.toolChoice?.getString("specified_tool"))
+        assertEquals("auto", gateway.toolChoice?.getString("mode"))
+        assertEquals(1, gateway.toolSchemas.length())
+        assertEquals("clock", gateway.toolSchemas.getJSONObject(0).getString("name"))
+        assertTrue(gateway.messages.last().content.contains("requires using the only available tool 'clock'"))
+    }
+
+    @Test
+    fun `required tool domain follows Desktop filtering and provider auto choice`() = runTest {
+        val gateway = FakeModelGateway()
+        val choice = JSONObject().put("policy_version", "p9-tool-choice-v1")
+            .put("mode", "required")
+            .put("specified_tool", JSONObject.NULL)
+            .put("matching_tools", JSONArray().put("clock"))
+        val tools = JSONArray()
+            .put(JSONObject().put("name", "clock"))
+            .put(JSONObject().put("name", "workspace.read"))
+
+        HaiPythonModelHostPort(gateway).stream(
+            HostModelRequest("required", "model-1", JSONArray(), tools, choice),
+        ).toList()
+
+        assertEquals("auto", gateway.toolChoice?.getString("mode"))
+        assertEquals(1, gateway.toolSchemas.length())
+        assertEquals("clock", gateway.toolSchemas.getJSONObject(0).getString("name"))
     }
 
     @Test

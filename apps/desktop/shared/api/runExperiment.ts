@@ -40,30 +40,13 @@ export interface ExperimentResourceOverride {
   kind?: string;
 }
 
-export interface ExperimentIdentityOverride {
-  reference: string;
-  version?: string;
-  digest?: string;
-}
-
 export interface RunExperimentOverrides {
   input?: { message: string };
   attachments?: ExperimentResourceOverride[];
-  resources?: ExperimentResourceOverride[];
   model?: {
     provider_id: string;
     model_id: string;
-    revision_digest?: string;
-    temperature?: number;
-    top_p?: number;
-    max_output_tokens?: number;
-    seed?: number;
   };
-  prompt?: ExperimentIdentityOverride;
-  agent?: ExperimentIdentityOverride;
-  skills?: ExperimentIdentityOverride[];
-  tools?: ExperimentIdentityOverride[];
-  credential_refs?: string[];
 }
 
 export interface RunExperiment {
@@ -210,7 +193,7 @@ export interface ReplayExecutionResult {
 }
 export interface RunComparison {
   comparison_id: string;
-  schema_version: "opendrsai.run-comparison/1";
+  schema_version: "opendrsai.run-comparison/1" | "opendrsai.run-comparison/2";
   baseline_run_id: string;
   candidate_run_id: string;
   source_digest: string;
@@ -222,6 +205,11 @@ export interface RunComparison {
   files: Array<Record<string, unknown>>;
   artifacts: Array<Record<string, unknown>>;
   usage: Record<string, unknown>;
+  metrics?: {
+    baseline: RunComparisonMetrics;
+    candidate: RunComparisonMetrics;
+    delta: Record<Exclude<keyof RunComparisonMetrics, "status">, number | null>;
+  };
   attribution: Array<Record<string, unknown>>;
   candidate_snapshot?: null | {
     experiment_id: string; worktree_id: string; candidate_head: string;
@@ -229,8 +217,63 @@ export interface RunComparison {
   };
   incomplete: boolean;
 }
+export interface RunComparisonMetrics {
+  status: string;
+  duration_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  tool_calls: number | null;
+  tool_errors: number | null;
+  approvals: number | null;
+  artifacts: number | null;
+  warnings: number | null;
+}
 export interface CreateRunComparisonRequest extends WorkspaceRuntimeRequest { baselineRunId: string; candidateRunId: string }
 export interface GetRunComparisonRequest extends WorkspaceRuntimeRequest { comparisonId: string }
+export type RunComparisonEvaluationVerdict = "baseline_better" | "candidate_better" | "tie" | "inconclusive";
+export type RunComparisonEvaluationCriterionId = "outcome_quality" | "execution_quality" | "safety_reproducibility";
+export interface RunComparisonEvaluationScore { baseline: number; candidate: number }
+export interface RunComparisonEvaluationEvidenceRef { run_id: string; item_id: string }
+export interface RunComparisonEvaluationRubric {
+  rubric_id: "opendrsai.comparison.default";
+  revision: 1;
+  criteria: Array<{ id: RunComparisonEvaluationCriterionId; title: string; description: string }>;
+  score_min: 1;
+  score_max: 5;
+}
+export interface RunComparisonEvaluation {
+  evaluation_id: string;
+  comparison_id: string;
+  revision: number;
+  schema_version: "opendrsai.run-comparison-evaluation/1";
+  comparison_digest: string;
+  rubric_snapshot: RunComparisonEvaluationRubric;
+  scores: Record<RunComparisonEvaluationCriterionId, RunComparisonEvaluationScore>;
+  verdict: RunComparisonEvaluationVerdict;
+  note: string;
+  evidence_refs: RunComparisonEvaluationEvidenceRef[];
+  created_by: string;
+  created_at: string;
+}
+export interface RunComparisonEvaluationList {
+  schema_version: "opendrsai.run-comparison-evaluation/1";
+  comparison_id: string;
+  comparison_digest: string;
+  rubric_snapshot: RunComparisonEvaluationRubric;
+  latest_revision: number;
+  evaluations: RunComparisonEvaluation[];
+}
+export interface ListRunComparisonEvaluationsRequest extends WorkspaceRuntimeRequest { comparisonId: string }
+export interface CreateRunComparisonEvaluationRequest extends WorkspaceRuntimeRequest {
+  comparisonId: string;
+  expectedLatestRevision: number;
+  idempotencyKey: string;
+  verdict: RunComparisonEvaluationVerdict;
+  scores: Record<RunComparisonEvaluationCriterionId, RunComparisonEvaluationScore>;
+  note?: string;
+  evidenceRefs?: RunComparisonEvaluationEvidenceRef[];
+}
 export interface WorktreeAdoptionPreview {
   source_workspace_id: string; worktree_id: string; base_commit: string; source_head: string; candidate_head: string;
   preview_digest: string; source_clean: boolean; candidate_clean: boolean; conflict_count: number; can_apply: boolean;

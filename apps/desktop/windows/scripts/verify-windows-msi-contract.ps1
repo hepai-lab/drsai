@@ -29,7 +29,52 @@ $database = $installer.OpenDatabase($msi, 0)
 
 Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductName'") "OpenDrSai" "ProductName"
 Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ALLUSERS'") "1" "ALLUSERS"
-Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ARPNOREPAIR'") "1" "ARPNOREPAIR"
+if (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ARPNOREPAIR'") {
+    throw "ARPNOREPAIR must not disable Runtime repair."
+}
+$arpSizeText = Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ARPSIZE'"
+if (-not $arpSizeText -or $arpSizeText -notmatch '^\d+$') {
+    throw "ARPSIZE must be authored as an integer number of KiB, got '$arpSizeText'."
+}
+$arpSizeKB = [Int64]$arpSizeText
+$runtimeSizeBytes = [Int64](Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='RUNTIMESIZEBYTES'")
+$minimumRuntimeSizeKB = [Int64][Math]::Ceiling($runtimeSizeBytes / 1KB)
+if ($arpSizeKB -lt $minimumRuntimeSizeKB) {
+    throw "ARPSIZE must include at least the downloaded Runtime archive: $arpSizeKB KiB < $minimumRuntimeSizeKB KiB."
+}
+$runtimeArchive = Join-Path (Split-Path -Parent $msi) "OpenDrSai-Windows-v$((Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\package.json") -Raw | ConvertFrom-Json).version)-x64.zip"
+if (Test-Path -LiteralPath $runtimeArchive -PathType Leaf) {
+    $archiveItem = Get-Item -LiteralPath $runtimeArchive
+    $receiptPath = "$runtimeArchive.receipt.json"
+    $receipt = if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+        Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else { $null }
+    if ($receipt -and [int]$receipt.schemaVersion -ge 2 -and $receipt.status -eq "complete" -and
+        $receipt.verification.status -eq "passed" -and [Int64]$receipt.payload.expandedSizeBytes -gt 0) {
+        if ([Int64]$receipt.artifact.size -ne [Int64]$archiveItem.Length) {
+            throw "Runtime receipt size differs from the local archive used by the MSI contract."
+        }
+        [Int64]$expandedBytes = [Int64]$receipt.payload.expandedSizeBytes
+    } else {
+        # Backward-compatible validation for legacy Runtime receipts.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($archiveItem.FullName)
+        try {
+            [Int64]$expandedBytes = 0
+            foreach ($entry in $archive.Entries) { $expandedBytes += [Int64]$entry.Length }
+        } finally {
+            $archive.Dispose()
+        }
+    }
+    [Int64]$supportBytes = 0
+    foreach ($name in @("install-opendrsai.ps1", "uninstall-opendrsai.ps1", "run-opendrsai-install.vbs", "run-opendrsai-uninstall.vbs")) {
+        $supportBytes += [Int64](Get-Item -LiteralPath (Join-Path $PSScriptRoot "..\installer\$name")).Length
+    }
+    $expectedArpSizeKB = [Int64][Math]::Ceiling(($expandedBytes + [Int64]$archiveItem.Length + $supportBytes) / 1KB)
+    if ($arpSizeKB -ne $expectedArpSizeKB) {
+        throw "ARPSIZE must equal the retained archive plus expanded Runtime and support files: $arpSizeKB KiB != $expectedArpSizeKB KiB."
+    }
+}
 Assert-Equal (Read-SingleValue $database "SELECT ``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='INSTALLFOLDER'") "ProgramFiles64Folder" "INSTALLFOLDER parent"
 Assert-Equal (Read-SingleValue $database "SELECT ``Root`` FROM ``Registry`` WHERE ``Key``='Software\HepAI\OpenDrSai' AND ``Name``='Installed'") "2" "Installed registry hive"
 $sameVersionUpgradeAttributes = [int](Read-SingleValue $database "SELECT ``Attributes`` FROM ``Upgrade`` WHERE ``ActionProperty``='WIX_UPGRADE_DETECTED'")
@@ -66,27 +111,43 @@ foreach ($action in @(
     if (($type -band 1024) -eq 0 -or ($type -band 2048) -eq 0) {
         throw "$action must be deferred and run without impersonation; type=$type."
     }
-    $command = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='$action'"
-    if ($action -ne "DownloadOpenDrSaiRuntime" -and $command -notmatch '(?i)^powershell\.exe ') {
-        throw "$action must invoke PowerShell directly without a WScript/VBS wrapper: $command"
+    $entryPoint = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='$action'"
+    if ($action -in @("VerifyOpenDrSaiRuntime", "ExtractOpenDrSaiRuntime", "InstallOpenDrSaiRuntime", "CompleteOpenDrSaiInstall") -and $entryPoint -ne "RunInstallerStage") {
+        throw "$action must use the managed real-time stage progress bridge: $entryPoint"
+    }
+    if ($action -eq "RunOpenDrSaiUninstaller" -and $entryPoint -notmatch '(?i)^powershell\.exe ') {
+        throw "$action must invoke the hidden uninstall script directly: $entryPoint"
     }
 }
+$rollbackType = [int](Read-SingleValue $database "SELECT ``Type`` FROM ``CustomAction`` WHERE ``Action``='RollbackOpenDrSaiInstall'")
+if (($rollbackType -band 256) -eq 0 -or ($rollbackType -band 2048) -eq 0) {
+    throw "RollbackOpenDrSaiInstall must be a non-impersonated rollback custom action; type=$rollbackType."
+}
+$rollbackData = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='SetRollbackOpenDrSaiInstall'"
+foreach ($requiredData in @('-Stage Rollback', '-InstallSessionId "[ProductCode]"', '-InstallRoot "[INSTALLFOLDER]."')) {
+    if ($rollbackData -notmatch [regex]::Escape($requiredData)) {
+        throw "Rollback custom action data is missing '$requiredData': $rollbackData"
+    }
+}
+$rollbackCondition = Read-SingleValue $database "SELECT ``Condition`` FROM ``InstallExecuteSequence`` WHERE ``Action``='RollbackOpenDrSaiInstall'"
+Assert-Equal $rollbackCondition 'NOT REMOVE~="ALL"' "Runtime rollback scheduling condition"
 
 $progressMilestones = @{
-    AdvanceVerifyProgress = "Ticks=50"
-    AdvanceExtractProgress = "Ticks=200"
-    AdvanceInstallProgress = "Ticks=120"
-    AdvanceCompleteProgress = "Ticks=30"
+    VerifyOpenDrSaiRuntime = "Ticks=50"
+    ExtractOpenDrSaiRuntime = "Ticks=200"
+    InstallOpenDrSaiRuntime = "Ticks=120"
+    CompleteOpenDrSaiInstall = "Ticks=30"
 }
 foreach ($action in $progressMilestones.Keys) {
-    $entryPoint = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='$action'"
-    Assert-Equal $entryPoint "AdvanceProgress" "$action managed entry point"
-    $type = [int](Read-SingleValue $database "SELECT ``Type`` FROM ``CustomAction`` WHERE ``Action``='$action'")
-    if (($type -band 1024) -eq 0 -or ($type -band 2048) -eq 0) {
-        throw "$action must be deferred and run without impersonation; type=$type."
-    }
     $data = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='Set$action'"
-    Assert-Equal $data $progressMilestones[$action] "$action progress allocation"
+    if ($data -notmatch [regex]::Escape($progressMilestones[$action])) {
+        throw "$action must reserve $($progressMilestones[$action]) and report it incrementally: $data"
+    }
+    foreach ($requiredData in @("ProgressFile=[INSTALLFOLDER]cache", "InstallSessionId=[ProductCode]", "ScriptPath=[INSTALLFOLDER]install-opendrsai.ps1")) {
+        if ($data -notmatch [regex]::Escape($requiredData)) {
+            throw "$action custom action data is missing '$requiredData': $data"
+        }
+    }
 }
 
 foreach ($setter in @(
@@ -97,10 +158,10 @@ foreach ($setter in @(
     "SetRunOpenDrSaiUninstaller"
 )) {
     $target = Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='$setter'"
-    if ($setter -ne "SetRunOpenDrSaiUninstaller" -and $target -notmatch '(?i)-MachineInstall') {
-        throw "$setter must force machine installation: $target"
+    if ($setter -ne "SetRunOpenDrSaiUninstaller" -and $target -notmatch '(?i)InstallRoot=\[INSTALLFOLDER\]\.') {
+        throw "$setter must pass the selected INSTALLFOLDER to the stage bridge: $target"
     }
-    if ($target -notmatch '(?i)-InstallRoot\s+"\[INSTALLFOLDER\]\."') {
+    if ($setter -eq "SetRunOpenDrSaiUninstaller" -and $target -notmatch '(?i)-InstallRoot\s+"\[INSTALLFOLDER\]\."') {
         throw "$setter must pass the selected INSTALLFOLDER with a trailing dot that safely terminates quoted paths: $target"
     }
 }
@@ -147,6 +208,19 @@ foreach ($stage in $stageDescriptions.Keys) {
     Assert-Equal $description $stageDescriptions[$stage] "$stage progress text"
 }
 
+foreach ($action in @("DownloadOpenDrSaiRuntime", "VerifyOpenDrSaiRuntime", "ExtractOpenDrSaiRuntime", "InstallOpenDrSaiRuntime", "CompleteOpenDrSaiInstall")) {
+    $condition = Read-SingleValue $database "SELECT ``Condition`` FROM ``InstallExecuteSequence`` WHERE ``Action``='$action'"
+    Assert-Equal $condition 'NOT REMOVE~="ALL"' "$action repair/install condition"
+}
+
+Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT'") "Launch OpenDrSai" "Finish-page launch checkbox text"
+Assert-Equal (Read-SingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='WIXUI_EXITDIALOGOPTIONALCHECKBOX'") "1" "Finish-page launch checkbox default"
+Assert-Equal (Read-SingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action``='LaunchOpenDrSai'") '"[INSTALLFOLDER]app\OpenDrSai.exe"' "Finish-page launch command"
+$launchCondition = Read-SingleValue $database "SELECT ``Condition`` FROM ``ControlEvent`` WHERE ``Dialog_``='ExitDialog' AND ``Control_``='Finish' AND ``Argument``='LaunchOpenDrSai'"
+if ($launchCondition -notmatch 'WIXUI_EXITDIALOGOPTIONALCHECKBOX' -or $launchCondition -notmatch 'NOT Installed') {
+    throw "Finish must launch only when the checkbox is selected after a first-time install: $launchCondition"
+}
+
 $downloadError = Read-SingleValue $database "SELECT ``Message`` FROM ``Error`` WHERE ``Error``=25001"
 Assert-Equal $downloadError "OpenDrSai Runtime download failed: [2]" "Runtime download error message"
 
@@ -154,5 +228,23 @@ $startMenuTarget = Read-SingleValue $database "SELECT ``Target`` FROM ``Shortcut
 $desktopTarget = Read-SingleValue $database "SELECT ``Target`` FROM ``Shortcut`` WHERE ``Shortcut``='DesktopShortcut'"
 Assert-Equal $startMenuTarget "[INSTALLFOLDER]app\OpenDrSai.exe" "Start menu shortcut target"
 Assert-Equal $desktopTarget "[INSTALLFOLDER]app\OpenDrSai.exe" "Desktop shortcut target"
+
+$installerScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\installer\install-opendrsai.ps1") -Raw
+if ($installerScript -notmatch '\[IO\.FileShare\]::ReadWrite\s+-bor\s+\[IO\.FileShare\]::Delete') {
+    throw "Runtime stage progress writers must coexist with MSI progress readers."
+}
+if ($installerScript -notmatch 'Progress reporting is best-effort') {
+    throw "Runtime stage progress failures must not abort installation."
+}
+if ($installerScript -notmatch 'if \(\$MachineInstall\) \{\s*Join-Path \$machineDataRoot "staging"') {
+    throw "Elevated MSI Runtime staging must use the short ProgramData path instead of a deferred user's TEMP value."
+}
+if ($installerScript -notmatch '\[Environment\]::ExpandEnvironmentVariables\(\$env:TEMP\)') {
+    throw "Non-machine Runtime staging must expand environment-variable references in TEMP."
+}
+$customActionSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\installer\OpenDrSaiInstallerActions.cs") -Raw
+if ($customActionSource -notmatch 'FileShare\.ReadWrite\s*\|\s*FileShare\.Delete') {
+    throw "MSI progress readers must allow the Runtime stage writer to replace its progress file."
+}
 
 Write-Host "Windows MSI contract verified for elevated per-machine Program Files installation and ARP uninstall." -ForegroundColor Green

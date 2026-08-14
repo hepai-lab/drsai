@@ -9,11 +9,31 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from drsai.oaep.protocol import OAEPStreamValidator, OAEPValidationError
+from drsai.backend.runtime.oaep import _safe_operation_ref, _safe_text
 
 
 ROOT = Path(__file__).resolve().parents[5]
 SCHEMA = ROOT / "cores" / "protocol" / "oaep" / "oaep.schema.json"
 EXAMPLES = ROOT / "cores" / "protocol" / "oaep" / "examples.json"
+
+
+def test_runtime_oaep_preserves_public_error_code_but_redacts_credentials() -> None:
+    safe = _safe_text('{"error_code":"service_unavailable","api_key":"secret-value"}')
+    assert "service_unavailable" in safe
+    assert "secret-value" not in safe
+
+
+def test_runtime_oaep_drops_invalid_historical_owop_operation_reference() -> None:
+    valid = {
+        "protocol": "owop/1",
+        "operation_id": "operation-one",
+        "workspace_id": "workspace-one",
+        "operation": "process.start",
+        "correlation_id": "correlation-one",
+    }
+    assert _safe_operation_ref(valid) == valid
+    assert _safe_operation_ref({**valid, "operation": "legacy free form tool"}) is None
+    assert _safe_operation_ref({**valid, "operation": "Process.Start"}) is None
 
 
 def _fixture_ref(data: dict[str, Any], ref: str) -> Any:

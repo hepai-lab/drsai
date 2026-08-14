@@ -155,6 +155,13 @@ def test_relations_cover_branches_and_executed_lineage_is_immutable(engine: Runt
     assert {row["run_id"] for row in base_relations["children"]} >= {child["run_id"], replay["run_id"]}
     assert replay_relations["parent"]["source_run_id"] == base["run_id"]
     assert replay_relations["parent"]["relation_type"] == "experiment_replay"
+    listed = {
+        row["run_id"]: row["relation_type"]
+        for row in engine.list_session_runs_page(session["session_id"])["data"]
+    }
+    assert listed[base["run_id"]] == "root"
+    assert listed[child["run_id"]] == "subagent"
+    assert listed[replay["run_id"]] == "experiment_replay"
     with pytest.raises(ExperimentImmutable):
         engine.experiments.delete(draft["experiment_id"])
     with pytest.raises(ExperimentImmutable):

@@ -29,16 +29,8 @@ try {
   assert.ok(["granted", "denied", "restricted"].includes(result.microphone.state), `microphone TCC remained unresolved: ${result.microphone.state}`);
   assert.ok(["granted", "denied"].includes(result.automation.state), `Automation TCC remained unresolved: ${result.automation.state}`);
   assert.equal(result.notifications.canRequest, true);
+  assert.equal(result.notificationShown, true, "macOS did not emit the native notification show event");
   assert.equal(result.filesSettingsOpened, true);
-  const operator = run("/usr/bin/osascript", [
-    "-e", 'tell application "System Events"',
-    "-e", "with timeout of 610 seconds",
-    "-e", "activate",
-    "-e", 'display dialog "Did the OpenDrSai notification appear, and did macOS open the Files/Full Disk Access settings pane?" buttons {"Reject", "Confirmed"} default button "Confirmed" cancel button "Reject" with title "OpenDrSai TCC Acceptance" giving up after 600',
-    "-e", "end timeout",
-    "-e", "end tell",
-  ], 610_000);
-  assert.match(operator, /button returned:Confirmed/);
   const machine = machineEvidence();
   const acceptance = join(root, "build", "acceptance");
   mkdirSync(acceptance, { recursive: true });
@@ -51,7 +43,7 @@ try {
     appExecutableSha256: sha256(executable),
     microphoneState: result.microphone.state,
     automationState: result.automation.state,
-    notificationVisiblyConfirmed: true,
+    notificationShowEventObserved: true,
     filesSettingsOpened: true,
     osVersion: machine.osVersion,
     osBuild: machine.osBuild,

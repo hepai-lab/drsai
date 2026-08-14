@@ -1,0 +1,87 @@
+{
+  "schema_version": "opendrsai.p9-e04-memory-context-checkpoint/1",
+  "evidence_tier": "emulator_preflight",
+  "release_evidence": false,
+  "generated_at": "2026-08-11T19:14:30Z",
+  "shared_python": {
+    "tests": 94,
+    "failures": 0,
+    "errors": 0,
+    "path": "docs/android/reports/preflight/p9-emulator/e04-shared-memory-context.xml",
+    "sha256": "f3311445ea2f9319279777a66d83df03ef02b94ffa1f0d6cb8b9433dfcd1b2f3"
+  },
+  "android_jvm": {
+    "tests": 61,
+    "failures": 0,
+    "errors": 0,
+    "suites": {
+      "MemoryPolicyTest": "caf4556e2bee8c6479fb23935157b93a27480acc397d7c95208dc3db7a24a457",
+      "MemoryCandidateEnvelopeTest": "bd2a94816456b250de88850686839ae17bdfd9028f096bdc0e5546c85cf41372",
+      "ContextAssemblerTest": "fbe4415071d94d20282de8ab025d3fc812be26ce8dc9c2faad0ed3a79315950f",
+      "PythonAgentLoopCoordinatorTest": "84b1491f8c79a4f83e9665b9448ef6fd586416c11f212e49b6fadc991b2d22bd",
+      "PythonRuntimeReconciliationTest": "d58807b45e47263f6bc1ba2b937f03bfeaadde1f6d66028e3a3086d44b53c1bc",
+      "PythonRuntimeEventMapperTest": "fe7c2dfcdfdf8103610a935bcada3628d7fdb36bbbae3bd86b6c3f6139a79229"
+    },
+    "isolated_from_unrelated_gate": "verifyAndroidRelayBindings"
+  },
+  "device_lifecycle": {
+    "path": "docs/android/reports/preflight/p9-emulator/lifecycle-api35.json",
+    "app_apk_sha256": "72187207d7de4ce0c6e6cad6fb5c3fbb706eb4a304239dd59c51e6ff139ef83d",
+    "test_apk_sha256": "cf6a27cb63b3bd4f9dfbdae49c8295554139f8e7fab3e05e486415c03eb294d6",
+    "sha256": "2c00e4036b1888e5a9f3bb0d79c38af52185b71476b0863e54511cff2eede6e7",
+    "passed": true
+  },
+  "features": {
+    "E04-F01": {
+      "gates": {
+        "three_natural_save_phrases": true,
+        "each_phrase_repeated_three_times": true,
+        "save_and_replace_authorized": true,
+        "no_memory_explicit_intent_false_rejection": true,
+        "android_subject_and_capability_isolation": true
+      },
+      "passed": true
+    },
+    "E04-F02": {
+      "gates": {
+        "result_and_no_result_selection_fixtures": true,
+        "conflicting_result_answer_source_contract": true
+      },
+      "passed": true
+    },
+    "E04-F03": {
+      "gates": {
+        "password_token_private_key_denied": true,
+        "health_privacy_denied": true,
+        "host_defense_in_depth_denied": true,
+        "safe_explanation_can_complete_run": true
+      },
+      "passed": true
+    },
+    "E04-F04": {
+      "gates": {
+        "read_edit_and_unicode_budget_fixtures": true,
+        "oversized_active_tool_result_is_bounded": true,
+        "multiple_tool_receipts_preserve_order": true,
+        "call_result_id_and_sha256_preserved": true,
+        "no_context_active_chain_budget_overflow": true
+      },
+      "passed": true
+    },
+    "E04-F05": {
+      "gates": {
+        "model_and_tool_checkpoint_recovery": true,
+        "side_effect_at_most_once_jvm": true,
+        "oaep_pre_post_commit_device_fault_windows": true
+      },
+      "passed": true
+    }
+  },
+  "passed_features": [
+    "E04-F01",
+    "E04-F02",
+    "E04-F03",
+    "E04-F04",
+    "E04-F05"
+  ]
+}

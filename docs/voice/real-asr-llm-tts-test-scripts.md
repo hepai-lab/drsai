@@ -14,12 +14,14 @@
 ## 前置条件
 
 1. 使用包含真实 Provider 配置的环境启动 Windows 桌面程序。
-2. Gateway 健康地址 `http://127.0.0.1:18642/health` 可访问。
+2. Gateway 健康地址可访问：开发环境默认为 `http://127.0.0.1:28642/health`，正式环境默认为 `http://127.0.0.1:18642/health`。
 3. ASR 或完整链路测试需要一个不超过 10 MB 的授权音频文件。
 
 ## 运行命令
 
 在 `apps/desktop/windows` 目录执行。
+
+测试脚本默认连接开发环境的 `28642` 端口，并读取 `~/.drsai-dev/runtime/instance-token`。验证正式环境时传入 `--environment production`；`--gateway` 或 `OPENDRSAI_GATEWAY_BASE_URL` 始终具有最高优先级。
 
 完整串行链路：
 

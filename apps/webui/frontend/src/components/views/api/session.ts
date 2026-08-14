@@ -1,5 +1,6 @@
 import { Session, SessionRuns } from "../../types/datamodel";
 import { getServerUrl } from "../../utils";
+import { getAuthToken } from "../../../utils/authSession";
 
 export class SessionAPI {
     private getBaseUrl(): string {
@@ -7,9 +8,14 @@ export class SessionAPI {
     }
 
     private getHeaders(): HeadersInit {
-        return {
+        const headers: Record<string, string> = {
             "Content-Type": "application/json",
         };
+        const token = getAuthToken();
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
+        return headers;
     }
 
     async listSessions(userId: string): Promise<Session[]> {

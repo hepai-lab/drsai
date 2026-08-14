@@ -229,7 +229,7 @@ Chat 是桌面端最核心链路：
 - 用户隔离：请求中带 `user_id: getUserName()`。
 - 模型选择：主进程从 `/v1/models/config` 获取默认 alias，再作为 OpenAI `model` 字段传给 Gateway。
 - 工具进度：解析 `event: tool.progress` / `event: drsai.tool.progress`。
-- 停止生成：渲染进程调用 `abortChat()`，主进程通过 AbortController 取消当前 HTTP 请求。
+- 停止或取消排队：渲染进程统一调用 `cancelChatTurn()`；主进程的唯一 Turn Registry 负责中止准备阶段、取消 Runtime Run，并由同一终态投影收敛界面状态。
 - Thread 控制：pause/resume/stop 调用 `/v1/threads/{thread_id}/{action}`。
 
 ### 4.5 会话与线程

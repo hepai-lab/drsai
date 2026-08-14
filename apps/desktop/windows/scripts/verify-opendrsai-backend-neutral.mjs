@@ -15,7 +15,8 @@ for (const identifier of forbiddenSharedIdentifiers) {
   assert.equal(source.includes(identifier), false, `${identifier} must not name shared Runtime/OAEP state`);
 }
 assert.match(source, /interface RuntimeProjectionTarget/, "shared OAEP projection must use Runtime terminology");
-assert.match(source, /const runtimeChatTargets = new Map/, "shared active Run state must use Runtime terminology");
+assert.match(source, /const chatTurns = new Map/, "shared Chat lifecycle must use the single Turn Registry");
+assert.doesNotMatch(source, /activeChats|activeChatEventTargets|runtimeChatTargets|recoveredRuntimeSubscriptions|platformChatTargets/, "parallel Chat lifecycle registries must not return");
 assert.match(source, /function emitRuntimeOaepEvent/, "shared OAEP events must use Runtime terminology");
 assert.match(source, /agentDefinition === "codex@1"/, "Codex-specific preflight must remain explicitly scoped to the adapter branch");
 

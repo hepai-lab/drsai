@@ -41,6 +41,7 @@ from drsai.modules.components.model_client.anthropic import (
     _MODEL_INFO,
 )
 from drsai.modules.components.model_client.gemini_client import GeminiNativeChatCompletionClient
+from drsai.modules.components.skills import resolve_builtin_skills_dir
 from drsai.modules.managers.database import DatabaseManager
 from drsai.platform_auth import get_platform_auth
 
@@ -59,6 +60,11 @@ If a question can be answered by exploring the codebase, explore the codebase in
 OPENDRSAI_ASSISTANT_NAME = "OpenDrSai"
 OPENDRSAI_IDENTITY_SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
+# Endpoint defaults — match run_drsai_agent.py
+# Defined before DEFAULT_LLM_MODE_CONFIG because catalog entries reference them.
+_DEFAULT_ANTHROPIC_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2/anthropic"
+_DEFAULT_OPENAI_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2"
+_DEFAULT_RAGFLOW_URL = "https://ragflow.ihep.ac.cn"
 
 # ── Workspace ────────────────────────────────────────────────────────────────
 
@@ -136,7 +142,12 @@ class ReasoningConfig:
 
 @dataclass
 class ModelEntry:
-    """A single entry in the LLM mode config."""
+    """A single entry in the LLM mode config.
+
+    Expanded to carry full connection info so the YAML catalog is the single
+    source of truth for set_model_client.  Missing connection fields fall back
+    to cli_config.json defaults (openai_base_url / anthropic_base_url etc.).
+    """
 
     model: str                           # Full model ID (e.g. "anthropic/claude-sonnet-4-6")
     token_limit: int                     # Total context window size (input + output tokens combined)
@@ -144,6 +155,17 @@ class ModelEntry:
     client_type: str = "auto"            # anthropic | openai | auto
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     vision: bool = False                 # Unknown models are never assumed to accept images.
+    # ── Connection info (yaml-only mode) ──
+    base_url: str = _DEFAULT_OPENAI_BASE_URL   # API endpoint; "" → fall back to cli_config.json default
+    api_key: str = ""                    # Plaintext API key; "" → try api_key_env or fallback
+    api_key_env: str = ""                # Environment variable name for API key
+    requires_api_key: bool = True        # False → endpoint needs no authentication
+    # ── Wire protocol ──
+    # None → infer in set_model_client (OpenAI new-series gpt-5.x/o* → True, else
+    # False). True/False → force, overrides inference. Lets users opt out of the
+    # Responses API for third-party OpenAI-compatible endpoints that only
+    # implement Chat Completions (e.g. HEPAI gateway for kimi/glm/deepseek).
+    use_responses_api: Optional[bool] = None
 
     @staticmethod
     def from_dict(alias: str, data: Any) -> "ModelEntry":
@@ -178,6 +200,14 @@ class ModelEntry:
                 client_type=str(data.get("client_type", "auto")),
                 reasoning=reasoning,
                 vision=vision,
+                base_url=str(data.get("base_url", "")),
+                api_key=str(data.get("api_key", "")),
+                api_key_env=str(data.get("api_key_env", "")),
+                requires_api_key=bool(data.get("requires_api_key", True)),
+                use_responses_api=(
+                    None if data.get("use_responses_api") is None
+                    else bool(data.get("use_responses_api"))
+                ),
             )
 
         # Old format (v1): [model, token_limit] list/tuple
@@ -215,10 +245,19 @@ class ModelEntry:
             "client_type": self.client_type,
             "vision": self.vision,
         }
+        if self.base_url:
+            d["base_url"] = self.base_url
+        if self.api_key:
+            d["api_key"] = self.api_key
+        if self.api_key_env:
+            d["api_key_env"] = self.api_key_env
+        if not self.requires_api_key:
+            d["requires_api_key"] = self.requires_api_key
+        if self.use_responses_api is not None:
+            d["use_responses_api"] = self.use_responses_api
         if self.reasoning.supported:
             d["reasoning"] = self.reasoning.to_dict()
         return d
-
 
 # ── Default LLM catalog (v2 format) ─────────────────────────────────────────
 # Synced with /home/xiongdb/drsai_test/llm_mode_config.example.json
@@ -321,6 +360,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
         vision=False,           # MiniMax M2.7 does not support image input
+        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
     "hepai/minimax-m2.7-highspeed": ModelEntry(
         model="hepai/minimax-m2.7-highspeed",
@@ -329,6 +369,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
         vision=False,
+        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
     # ── Anthropic Claude ──────────────────────────────────────────────
     # token_limit = total context window (input + output share the same window)
@@ -341,6 +382,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
         vision=True,            # Claude Sonnet 4.6 supports image input
+        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
     "claude-opus-4-7": ModelEntry(
         model="anthropic/claude-opus-4-7",
@@ -349,6 +391,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
         vision=True,            # Claude Opus 4.7 supports image input
+        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
     "claude-opus-4-8": ModelEntry(
         model="anthropic/claude-opus-4-8",
@@ -357,6 +400,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
         vision=True,            # Claude Opus 4.7 supports image input
+        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
     "claude-haiku-4-5": ModelEntry(
         model="anthropic/claude-haiku-4-5",
@@ -365,16 +409,11 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
         vision=True,            # Claude Haiku 4.5 supports image input
+        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
 }
 
 DEFAULT_CONFIG_NAME = "deepseek-v4-pro"
-
-
-# Endpoint defaults — match run_drsai_agent.py
-_DEFAULT_ANTHROPIC_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2/anthropic"
-_DEFAULT_OPENAI_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2"
-_DEFAULT_RAGFLOW_URL = "https://ragflow.ihep.ac.cn"
 
 
 DISPLAY_NAME_OVERRIDES: dict[str, str] = {
@@ -704,6 +743,13 @@ def create_agent(
     extra_tools: Optional[list] = None,
     enable_security: bool = False,
     kernel_surface: str = "desktop",
+    tool_resource_ids: Optional[list[str]] = None,
+    tool_policy_revision: Optional[str] = None,
+    skill_policy_mode: str = "inherit",
+    skill_resource_ids: Optional[list[str]] = None,
+    disabled_skill_ids: Optional[list[str]] = None,
+    allow_thread_skill_override: bool = True,
+    skill_policy_revision: Optional[str] = None,
 ) -> DrSaiAssistant:
     """Build a local OpenDrSai assistant from CLI config.
 
@@ -757,7 +803,18 @@ def create_agent(
     resolved_user_model: ResolvedModelConfig | None = None
     if unified_model_config_active:
         compatibility_environ = dict(os.environ)
-        selected_provider = user_model_config.model_provider or "hepai"
+        # Use the same provider precedence as resolve_model_config().  The
+        # desktop runtime supplies an explicit external provider through the
+        # request/environment even when config.toml has no global
+        # model_provider selection.  Previously this check defaulted to hepai,
+        # made credentials optional under OIDC, then the resolver selected the
+        # external provider and constructed it with an empty API key.
+        selected_provider = (
+            model_provider
+            or os.environ.get("DRSAI_MODEL_PROVIDER")
+            or user_model_config.model_provider
+            or "hepai"
+        )
         if selected_provider in {"hepai", "hepai-anthropic"}:
             compatibility_environ.setdefault(
                 "HEPAI_API_KEY",
@@ -773,7 +830,7 @@ def create_agent(
                 "ANTHROPIC_API_KEY",
                 str(cli_cfg.get("anthropic_api_key") or api_key or ""),
             )
-        requested_provider = model_provider or selected_provider
+        requested_provider = selected_provider
         require_static_credentials = not (
             requested_provider in {"hepai", "hepai-anthropic"}
             and get_platform_auth() is not None
@@ -877,7 +934,12 @@ def create_agent(
         else None
     )
 
-    skills_dir = _resolve(cli_cfg, "skills_dir", "SYSTEM_SKILLS_DIR") or None
+    configured_skills_dir = _resolve(cli_cfg, "skills_dir", "SYSTEM_SKILLS_DIR") or None
+    builtin_skills_dir = resolve_builtin_skills_dir(
+        configured_skills_dir,
+        search_from=(Path(__file__), Path.cwd()),
+    )
+    skills_dir = str(builtin_skills_dir) if builtin_skills_dir is not None else None
     rag_flow_url = _resolve(
         cli_cfg, "ragflow_url", "RAGFLOW_URL", default=_DEFAULT_RAGFLOW_URL,
     )
@@ -936,47 +998,46 @@ def create_agent(
                 )
             )
             active_capabilities = active_user_model.capabilities
-            entry = ModelEntry(
-                model=active_user_model.model,
-                token_limit=active_capabilities.token_limit,
-                max_tokens=active_capabilities.max_tokens,
-                client_type=active_user_model.provider.wire_api,
-                reasoning=ReasoningConfig(
-                    supported=active_capabilities.reasoning.supported,
-                    effort_levels=list(active_capabilities.reasoning.effort_levels),
-                    param_type=active_capabilities.reasoning.param_type,
-                ),
-                vision=active_capabilities.vision,
-            )
+            # Prefer yaml entry for model metadata (token_limit, max_tokens,
+            # vision, reasoning) when available; fall back to config.toml
+            # capabilities for unknown models.
+            yaml_entry = llm_mode_config.get(alias) or llm_mode_config.get(active_user_model.model)
+            if yaml_entry is not None:
+                entry = yaml_entry
+            else:
+                entry = ModelEntry(
+                    model=active_user_model.model,
+                    token_limit=active_capabilities.token_limit,
+                    max_tokens=active_capabilities.max_tokens,
+                    client_type=active_user_model.provider.wire_api,
+                    reasoning=ReasoningConfig(
+                        supported=active_capabilities.reasoning.supported,
+                        effort_levels=list(active_capabilities.reasoning.effort_levels),
+                        param_type=active_capabilities.reasoning.param_type,
+                    ),
+                    vision=active_capabilities.vision,
+                )
         else:
             entry = llm_mode_config.get(alias)
             if entry is None:
                 entry = llm_mode_config[resolved_config_name]
         llm_model = entry.model
-        active_base_url = (
-            active_user_model.provider.base_url
-            if active_user_model is not None
-            else openai_base_url
-        )
-        active_api_key = (
-            active_user_model.provider.api_key.reveal()
-            if active_user_model is not None and active_user_model.provider.api_key is not None
-            else ""
-        )
-        provider_model = normalize_provider_model_name(llm_model, active_base_url)
         token_limit = entry.token_limit
         max_tokens = entry.max_tokens if entry.max_tokens > 0 else int(token_limit * 0.25)
         client_type = entry.client_type
         reasoning_config = entry.reasoning
 
-        # A configured Provider protocol is authoritative. Legacy catalog
-        # entries retain the historical model-name heuristics.
+        # ── Determine client_type ──
+        # Priority: platform_auth > yaml entry (explicit) > config.toml provider > model-name heuristic
         platform_auth = get_platform_auth()
         if platform_auth is not None:
             # The OIDC model service is the authoritative transport for this
             # request. A static Provider selected in config.toml must not force
             # an Anthropic-prefixed catalog model through the OpenAI wire API.
             client_type = "anthropic" if llm_model.casefold().startswith("anthropic/") else "openai"
+        elif entry.client_type in ("openai", "anthropic", "gemini"):
+            # yaml entry is authoritative when explicitly set (not "auto")
+            client_type = entry.client_type
         elif active_user_model is not None:
             client_type = active_user_model.provider.wire_api
         elif client_type == "auto":
@@ -988,6 +1049,33 @@ def create_agent(
         # Handle "minimax" specially - use anthropic client with HepAI endpoint
         if active_user_model is None and "minimax" in llm_model:
             client_type = "anthropic"
+
+        # ── Resolve connection info ──
+        # Priority: ModelEntry (yaml) > active_user_model (config.toml) > cli_config.json defaults
+        if client_type == "anthropic":
+            default_base_url = anthropic_base_url
+            default_api_key = anthropic_api_key
+        else:
+            default_base_url = openai_base_url
+            default_api_key = openai_api_key
+
+        if entry.base_url:
+            active_base_url = entry.base_url
+        elif active_user_model is not None:
+            active_base_url = active_user_model.provider.base_url
+        else:
+            active_base_url = default_base_url
+
+        if entry.api_key:
+            active_api_key = entry.api_key
+        elif entry.api_key_env:
+            active_api_key = os.environ.get(entry.api_key_env, "")
+        elif active_user_model is not None and active_user_model.provider.api_key is not None:
+            active_api_key = active_user_model.provider.api_key.reveal()
+        else:
+            active_api_key = default_api_key
+
+        provider_model = normalize_provider_model_name(llm_model, active_base_url)
 
         if client_type == "gemini":
             return GeminiNativeChatCompletionClient(
@@ -1012,8 +1100,8 @@ def create_agent(
                 model_info["anthropic_cache_control"] = anthropic_cache_control
             return HepAIAnthropicChatCompletionClient(
                 model=llm_model,
-                base_url=active_base_url if active_user_model is not None else anthropic_base_url,
-                api_key=active_api_key if active_user_model is not None else anthropic_api_key,
+                base_url=active_base_url,
+                api_key=active_api_key,
                 model_info=model_info,
                 max_tokens=max_tokens,
             )
@@ -1038,24 +1126,43 @@ def create_agent(
         needs_max_completion = any(
             model_suffix.startswith(prefix) for prefix in _OPENAI_NEW_MODEL_PREFIXES
         )
+        # The model declaration owns the wire protocol. The Responses API is
+        # only available on OpenAI-native new-series endpoints; third-party
+        # OpenAI-compatible gateways (HEPAI for kimi/glm/deepseek) only
+        # implement Chat Completions. Per-model override (entry.use_responses_api)
+        # wins; otherwise infer from the model name.
+        if client_type != "openai":
+            use_responses_api = False
+        elif entry.use_responses_api is not None:
+            use_responses_api = entry.use_responses_api
+        else:
+            use_responses_api = needs_max_completion
+        allow_deferred_oidc = bool(
+            active_user_model is None
+            or active_user_model.provider.name in {"hepai", "hepai-anthropic"}
+        )
 
         if needs_max_completion:
             return HepAIChatCompletionClient(
                 model=provider_model,
-                api_key=active_api_key if active_user_model is not None else openai_api_key,
+                api_key=active_api_key,
                 base_url=active_base_url,
                 model_info=model_info,
                 max_completion_tokens=max_tokens,
                 timeout=openai_timeout,
+                use_responses_api=use_responses_api,
+                allow_deferred_oidc=allow_deferred_oidc,
             )
         else:
             return HepAIChatCompletionClient(
                 model=provider_model,
-                api_key=active_api_key if active_user_model is not None else openai_api_key,
+                api_key=active_api_key,
                 base_url=active_base_url,
                 model_info=model_info,
                 max_tokens=max_tokens,
                 timeout=openai_timeout,
+                use_responses_api=use_responses_api,
+                allow_deferred_oidc=allow_deferred_oidc,
             )
 
     entry = llm_mode_config.get(resolved_config_name)
@@ -1091,6 +1198,7 @@ def create_agent(
     kernel_identity = agent_kernel_identity(surface="desktop")
     desktop_host_capabilities = [
         "chat", "streaming", "local_memory", "project_files", "shell", "approvals", "artifacts",
+        "web_search", "web_fetch", "network.public_https", "image_generation", "image_edit",
     ]
     kernel_host_port = normalize_kernel_host_port({
         "schema_version": 1,
@@ -1145,6 +1253,13 @@ def create_agent(
         rag_flow_token=rag_flow_token,
         memory_dataset_id=memory_dataset_id,
         context_type=context_type,  # "ragflow" or "sqlite", from env DRSAI_CONTEXT_TYPE
+        tool_resource_ids=tool_resource_ids,
+        tool_policy_revision=tool_policy_revision,
+        skill_policy_mode=skill_policy_mode,
+        skill_resource_ids=skill_resource_ids,
+        disabled_skill_ids=disabled_skill_ids,
+        allow_thread_skill_override=allow_thread_skill_override,
+        skill_policy_revision=skill_policy_revision,
     )
     exporter = getattr(assistant, "export_production_parity_manifest", None)
     parity_manifest = exporter() if callable(exporter) else desktop_production_parity_manifest(assistant)
@@ -1162,7 +1277,7 @@ def create_agent(
             "policy_version": "p9-context-budget-v1",
             "context_window_tokens": int(token_limit),
                 "reserved_output_tokens": max(1, min(int(reserved_output_tokens), int(token_limit) - 1)),
-            "max_messages": 40,
+            "max_messages": 80,
                 "summary_tokens": min(1_024, max(0, (int(token_limit) - int(reserved_output_tokens)) // 8)),
         }
         assistant._production_parity_manifest = parity_manifest

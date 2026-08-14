@@ -1,7 +1,7 @@
 {
   "schema_version": "opendrsai.agent-runtime-phase3-live-model-failure/1",
-  "generated_at": "2026-08-05T09:44:42.488Z",
-  "invocation_nonce": "ff944935-9596-4b08-bed3-8b29a786c96d",
+  "generated_at": "2026-08-11T17:39:27.815Z",
+  "invocation_nonce": "ce834f8c-ad6d-49d0-be25-b123c73bb60f",
   "failure_stage": "vision_transport_probe",
   "error_code": "ERR_ASSERTION",
   "diagnostics": {

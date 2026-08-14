@@ -68,9 +68,10 @@ function sha256(path) { return createHash("sha256").update(readFileSync(path)).d
 
 function findIdentity() {
   const identities = run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"]);
-  const matches = [...identities.matchAll(/\"(Developer ID Application:[^\"]+)\"/g)].map((match) => match[1]);
-  if (matches.length !== 1) throw new Error(`Expected exactly one Developer ID Application identity, found ${matches.length}.`);
-  return matches[0];
+  const matches = [...identities.matchAll(/^\s*\d+\)\s+([A-F0-9]{40})\s+\"Developer ID Application:[^\"]+\"/gm)].map((match) => match[1]);
+  const unique = [...new Set(matches)];
+  if (unique.length !== 1) throw new Error(`Expected exactly one distinct Developer ID Application identity, found ${unique.length}.`);
+  return unique[0];
 }
 
 function run(command, args) {

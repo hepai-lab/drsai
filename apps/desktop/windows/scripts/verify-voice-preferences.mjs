@@ -22,6 +22,7 @@ values.set(VOICE_PREFERENCES_STORAGE_KEY, "not-json");
 assert.deepEqual(loadVoicePreferences(), defaultVoicePreferences);
 values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
   autoReadResponses: true,
+  confirmBeforeSend: true,
   inputDeviceId: "usb-mic",
   inputLanguage: "en-US",
   interactionMode: "streaming",
@@ -33,6 +34,7 @@ values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
 }));
 assert.deepEqual(loadVoicePreferences(), {
   autoReadResponses: true,
+  confirmBeforeSend: true,
   inputDeviceId: "usb-mic",
   inputLanguage: "en-US",
   interactionMode: "streaming",
@@ -45,6 +47,7 @@ assert.deepEqual(loadVoicePreferences(), {
 values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({ inputLanguage: "invalid", playbackRate: 0.1 }));
 assert.equal(loadVoicePreferences().inputLanguage, "auto");
 assert.equal(loadVoicePreferences().interactionMode, "serial");
+assert.equal(loadVoicePreferences().confirmBeforeSend, true);
 assert.equal(loadVoicePreferences().playbackRate, 0.5);
 assert.equal(loadVoicePreferences().remoteSttConsent, false);
 assert.equal(loadVoicePreferences().remoteTtsConsent, false);
@@ -62,12 +65,24 @@ assert.equal(loadVoicePreferences().autoReadResponses, true);
 assert.equal(loadVoicePreferences().inputLanguage, "zh-CN");
 assert.equal(loadVoicePreferences().playbackRate, 1.25);
 assert.equal(loadVoicePreferences().interactionMode, "serial");
+assert.equal(loadVoicePreferences().confirmBeforeSend, true);
+values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
+  version: 4,
+  preferences: { confirmBeforeSend: false },
+}));
+assert.equal(loadVoicePreferences().confirmBeforeSend, true);
 values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
   version: VOICE_PREFERENCES_SCHEMA_VERSION,
-  preferences: { interactionMode: "streaming" },
+  preferences: { confirmBeforeSend: false, interactionMode: "streaming" },
 }));
 assert.equal(loadVoicePreferences().interactionMode, "streaming");
+assert.equal(loadVoicePreferences().confirmBeforeSend, false);
+values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
+  version: VOICE_PREFERENCES_SCHEMA_VERSION,
+  preferences: { interactionMode: "duplex" },
+}));
+assert.equal(loadVoicePreferences().interactionMode, "duplex");
 values.set(VOICE_PREFERENCES_STORAGE_KEY, JSON.stringify({ version: 999, preferences: { autoReadResponses: true } }));
 assert.deepEqual(loadVoicePreferences(), defaultVoicePreferences);
 
-console.log("Voice preferences verification passed (16 checks, including schema migration and removed-voice fallback).");
+console.log("Voice preferences verification passed (19 checks, including duplex persistence, confirmation-default migration, and removed-voice fallback).");

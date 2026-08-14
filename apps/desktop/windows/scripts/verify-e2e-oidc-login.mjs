@@ -6,6 +6,12 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+for (const key of ["NO_PROXY", "no_proxy"]) {
+  const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+  for (const host of ["127.0.0.1", "localhost"]) if (!entries.includes(host)) entries.push(host);
+  process.env[key] = entries.join(",");
+}
+
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const currentBackendSource = resolve(root, "..", "..", "..", "cores", "python", "packages", "drsai", "src");
 const currentBackendVersionFile = resolve(currentBackendSource, "drsai", "version.py");
@@ -24,6 +30,7 @@ const externalIssuer = process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER?.replace(/
 const issuer = externalIssuer || `http://127.0.0.1:${port}/backend`;
 const useExternalIssuer = Boolean(externalIssuer);
 const interactiveExternalLogin = useExternalIssuer && process.env.OPENDRSAI_E2E_OIDC_INTERACTIVE === "1";
+const expectedLoginError = process.env.OPENDRSAI_E2E_OIDC_EXPECT_LOGIN_ERROR?.trim() || "";
 const signingKid = "e2e-oidc-rs256-1";
 const signingKey = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const publicJwk = {
@@ -48,10 +55,11 @@ if (!existsSync(exePath) && !existsSync(electronCmd)) {
 
 const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-e2e-oidc-"));
 const drsaiHome = join(tempDir, "drsai-home");
-const runtimeRepo = join(tempDir, "runtime", "drsai-agent");
+const runtimeRepo = join(drsaiHome, "drsai-agent");
 const userDataDir = join(tempDir, "electron-user-data");
 const resultPath = join(tempDir, "result.json");
 const sessionPath = join(drsaiHome, "auth", "auth.json");
+const deviceHandoffPath = join(tempDir, "device-login-handoff.json");
 mkdirSync(drsaiHome, { recursive: true });
 mkdirSync(userDataDir, { recursive: true });
 createRuntimeFixture(runtimeRepo);
@@ -68,16 +76,24 @@ try {
   if (!result.ok) {
     throw new Error(`E2E OIDC login failed:\n${JSON.stringify(result, null, 2)}`);
   }
-  assertOidcDiagnostics(result);
-  if (!useExternalIssuer) {
-    assertIssuerHits();
+  if (expectedLoginError) {
+    if (existsSync(sessionPath)) throw new Error("Rejected device login left a session file behind.");
+  } else {
+    assertOidcDiagnostics(result);
+    assertModelCatalogStatusArtifact();
+    if (!useExternalIssuer) assertIssuerHits();
+    assertGatewayHits();
+    assertSessionClearedByLogout();
   }
-  assertGatewayHits();
-  assertSessionClearedByLogout();
+  if (!globalThis.__opendrsaiDeviceHandoffObserved || existsSync(deviceHandoffPath)) {
+    throw new Error("Device-login handoff was not observed or was not cleared after login.");
+  }
   console.log(
     useExternalIssuer
       ? `E2E OIDC login passed with Electron main process + external OIDC issuer ${issuer}.`
-      : "E2E OIDC login passed with Electron main process + fake OIDC issuer.",
+      : expectedLoginError
+        ? `E2E OIDC ${expectedLoginError} rejection passed.`
+        : "E2E OIDC login passed with Electron main process + fake OIDC issuer.",
   );
   if (fakeIssuer) {
     await new Promise((resolve) => fakeIssuer.close(resolve));
@@ -108,11 +124,21 @@ function startFakeGateway() {
   globalThis.__opendrsaiOidcGatewayHits = hits;
   const runtimeStreams = new Map();
   const runtimeSessions = new Map();
+  let runtimeSessionSequence = 0;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${gatewayPort}`);
     if (url.pathname === "/health") {
       hits.health += 1;
       writeJson(res, 200, { status: "ok" });
+      return;
+    }
+    if (url.pathname === "/v1/capabilities" && req.method === "GET") {
+      writeJson(res, 200, {
+        protocol_version: 1,
+        capabilities: ["chat", "tools", "goals", "approvals", "oaep.v1", "oaep.session.snapshot", "oaep.session.events", "oaep.session.events.stream", "event.cursor_expired"],
+        capability_versions: { chat: 1, tools: 1, goals: 1, approvals: 1 },
+        protocols: { oaep: { version: "1.0", profiles: ["oaep.session-stream/1"], schema_sha256: "1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09" } },
+      });
       return;
     }
     if (url.pathname === "/v1/models") {
@@ -121,6 +147,31 @@ function startFakeGateway() {
         authMode: req.headers["x-opendrsai-auth-mode"] || "",
       });
       writeJson(res, 200, { object: "list", data: [{ id: "drsai", object: "model" }] });
+      return;
+    }
+    if (url.pathname === "/v1/config/agents" && req.method === "GET") {
+      writeJson(res, 200, {
+        current_agent: "opendrsai",
+        agents: [{
+          agent_name: "opendrsai",
+          display_name: "OpenDrSai",
+          current: true,
+          schema_version: 2,
+          config_file: "configs/agents/agent_opendrsai.toml",
+        }],
+      });
+      return;
+    }
+    if (url.pathname === "/v1/config/agents/opendrsai/models" && req.method === "GET") {
+      const ref = { provider_id: "hepai", model_id: "deepseek-v4-pro" };
+      writeJson(res, 200, {
+        agent_id: "opendrsai",
+        valid: true,
+        error: null,
+        primary_model: { mode: "explicit", ref },
+        effective_ref: ref,
+        revision: "sha256:e2e-oidc-agent-model-policy",
+      });
       return;
     }
     if (url.pathname === "/v1/runtime" && req.method === "GET") {
@@ -140,7 +191,8 @@ function startFakeGateway() {
     }
     if (url.pathname === "/v1/sessions" && req.method === "POST") {
       const body = JSON.parse(await readBody(req));
-      const sessionId = "oidc-runtime-session";
+      runtimeSessionSequence += 1;
+      const sessionId = `oidc-runtime-session-${runtimeSessionSequence}`;
       runtimeSessions.set(sessionId, body.workspace_id);
       writeJson(res, 201, { session_id: sessionId, workspace_id: body.workspace_id, title: body.title || "OIDC chat" });
       return;
@@ -193,19 +245,20 @@ function startFakeGateway() {
         writeJson(res, 502, { error: "fake_model_rejected_runtime" });
         return;
       }
-      const sessionId = "oidc-runtime-session";
+      const sessionId = [...runtimeStreams.keys()].at(-1) || "oidc-runtime-session-1";
       const stream = runtimeStreams.get(sessionId);
+      const responseContent = String(requestId).includes("agent") ? "oidc agent bearer ok" : "oidc chat bearer ok";
       if (stream) {
         const now = new Date().toISOString();
         const source = { backend: "opendrsai", client: "runtime" };
         const events = [
-          { version: "1.0", event_id: "oidc-oaep-1", dedupe_key: "oidc-oaep-1", session_id: sessionId, run_id: runId, item_id: "oidc-message", sequence: 1, timestamp: now, type: "event.item.delta", source, data: { delta: { kind: "message.text.append", text: "oidc chat bearer ok" } } },
+          { version: "1.0", event_id: "oidc-oaep-1", dedupe_key: "oidc-oaep-1", session_id: sessionId, run_id: runId, item_id: "oidc-message", sequence: 1, timestamp: now, type: "event.item.delta", source, data: { delta: { kind: "message.text.append", text: responseContent } } },
           { version: "1.0", event_id: "oidc-oaep-2", dedupe_key: "oidc-oaep-2", session_id: sessionId, run_id: runId, sequence: 2, timestamp: now, type: "event.run.completed", source, data: { run: { id: runId, status: "completed", created_at: now, completed_at: now } } },
         ];
         for (const event of events) stream.write(`data: ${JSON.stringify(event)}\n\n`);
         stream.end();
       }
-      writeJson(res, 200, { run: { run_id: runId, session_id: sessionId, status: "completed" }, result: { content: "oidc chat bearer ok" } });
+      writeJson(res, 200, { run: { run_id: runId, session_id: sessionId, status: "completed" }, result: { content: responseContent } });
       return;
     }
     if (url.pathname === "/v1/chat/completions" && req.method === "POST") {
@@ -273,6 +326,7 @@ function startFakeModelService() {
 
 function startFakeOidcIssuer() {
   const codes = new Map();
+  const devices = new Map();
   let refreshCount = 0;
   const hits = {
     discovery: 0,
@@ -281,6 +335,10 @@ function startFakeOidcIssuer() {
     token: 0,
     refresh: 0,
     revoke: 0,
+    deviceAuthorization: 0,
+    devicePending: 0,
+    deviceSlowDown: 0,
+    deviceToken: 0,
   };
   globalThis.__opendrsaiFakeOidcHits = hits;
   const server = createServer(async (req, res) => {
@@ -331,6 +389,41 @@ function startFakeOidcIssuer() {
         writeJson(res, 200, tokenResponse(null, "refresh-e2e-1", refreshCount));
         return;
       }
+      if (grantType === "urn:ietf:params:oauth:grant-type:device_code") {
+        const deviceCode = body.get("device_code") || "";
+        const row = devices.get(deviceCode);
+        if (!row || body.get("client_id") !== "opendrsai-desktop") {
+          writeJson(res, 400, { error: "invalid_grant" });
+          return;
+        }
+        row.polls += 1;
+        if (expectedLoginError === "denied") {
+          writeJson(res, 400, { error: "access_denied" });
+          return;
+        }
+        if (expectedLoginError === "expired") {
+          writeJson(res, 400, { error: "expired_token" });
+          return;
+        }
+        if (expectedLoginError === "invalid_grant") {
+          writeJson(res, 400, { error: "invalid_grant" });
+          return;
+        }
+        if (row.polls === 1) {
+          hits.deviceSlowDown += 1;
+          writeJson(res, 400, { error: "slow_down" });
+          return;
+        }
+        if (row.polls === 2) {
+          hits.devicePending += 1;
+          writeJson(res, 400, { error: "authorization_pending" });
+          return;
+        }
+        devices.delete(deviceCode);
+        hits.deviceToken += 1;
+        writeJson(res, 200, tokenResponse(null, "refresh-e2e-1"));
+        return;
+      }
       writeJson(res, 400, { error: "unsupported_grant_type" });
       return;
     }
@@ -343,7 +436,32 @@ function startFakeOidcIssuer() {
         token_endpoint: `${issuer}/oauth2/token`,
         jwks_uri: `${issuer}/.well-known/jwks.json`,
         revocation_endpoint: `${issuer}/oauth2/revoke`,
+        device_authorization_endpoint: `${issuer}/oauth2/device_authorization`,
       });
+      return;
+    }
+    if (url.pathname === "/backend/oauth2/device_authorization" && req.method === "POST") {
+      const body = new URLSearchParams(await readBody(req));
+      if (body.get("client_id") !== "opendrsai-desktop" || !String(body.get("scope") || "").includes("openid")) {
+        writeJson(res, 400, { error: "invalid_client" });
+        return;
+      }
+      hits.deviceAuthorization += 1;
+      const deviceCode = `device-${hits.deviceAuthorization}`;
+      devices.set(deviceCode, { polls: 0 });
+      writeJson(res, 200, {
+        device_code: deviceCode,
+        user_code: "E2E1-CODE",
+        verification_uri: `${issuer}/device`,
+        verification_uri_complete: `${issuer}/device?user_code=E2E1-CODE`,
+        expires_in: 30,
+        interval: 1,
+      });
+      return;
+    }
+
+    if (url.pathname === "/backend/device") {
+      writeJson(res, 200, { status: "approved" });
       return;
     }
 
@@ -459,11 +577,16 @@ function runPackagedApp() {
         PATH: systemPath,
         PYTHONPATH: [currentBackendSource, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
         DRSAI_HOME: drsaiHome,
+        OPENDRSAI_DEV_HOME: drsaiHome,
         DRSAI_REPO: runtimeRepo,
         DRSAI_GATEWAY_DEV_MANAGED: "1",
         OPENDRSAI_GATEWAY_PORT: String(gatewayPort),
+        OPENDRSAI_DEV_GATEWAY_PORT: String(gatewayPort),
         OPENDRSAI_OIDC_ISSUER: issuer,
         OPENDRSAI_E2E_OIDC: "1",
+        OPENDRSAI_ACCEPTANCE_AUTO_DEVICE_LOGIN: "1",
+        OPENDRSAI_OIDC_DEVICE_HANDOFF_PATH: deviceHandoffPath,
+        ...(expectedLoginError ? { OPENDRSAI_E2E_OIDC_EXPECT_LOGIN_ERROR: expectedLoginError } : {}),
         ...(!interactiveExternalLogin
           ? { OPENDRSAI_E2E_OIDC_AUTO_CALLBACK: "1" }
           : {}),
@@ -482,9 +605,19 @@ function runPackagedApp() {
     });
     let stdout = "";
     let stderr = "";
+    const handoffMonitor = setInterval(() => {
+      if (!existsSync(deviceHandoffPath)) return;
+      try {
+        const handoff = JSON.parse(readFileSync(deviceHandoffPath, "utf8"));
+        if (handoff.schemaVersion === 1 && handoff.userCode === "E2E1-CODE" && handoff.verificationUri === `${issuer}/device`) {
+          globalThis.__opendrsaiDeviceHandoffObserved = true;
+        }
+      } catch { /* The writer uses atomic rename; a transient read is harmless. */ }
+    }, 25);
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      clearInterval(handoffMonitor);
       killProcessTree(child.pid);
       reject(new Error(`E2E OIDC login timed out.\n${stdout}\n${stderr}`));
     }, interactiveExternalLogin ? 620_000 : 60_000);
@@ -498,12 +631,14 @@ function runPackagedApp() {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(handoffMonitor);
       reject(error);
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(handoffMonitor);
       if (code === 0) {
         resolvePromise();
         return;
@@ -572,13 +707,30 @@ function assertOidcDiagnostics(result) {
   }
 }
 
+function assertModelCatalogStatusArtifact() {
+  const statusPath = join(drsaiHome, "logs", "model-catalog-status.json");
+  if (!existsSync(statusPath)) {
+    throw new Error(`OIDC smoke did not write the model-catalog status artifact: ${statusPath}`);
+  }
+  const status = JSON.parse(readFileSync(statusPath, "utf8"));
+  const keys = Object.keys(status).sort();
+  const containsSensitiveKey = keys.some((key) => /token|secret|password|cookie|authorization|api.?key|credential/i.test(key));
+  if (status.authMode !== "oidc" || status.state !== "ready" || Number(status.modelCount) <= 0 || containsSensitiveKey) {
+    throw new Error(`OIDC smoke wrote an invalid model-catalog status artifact:\n${JSON.stringify({ keys, status }, null, 2)}`);
+  }
+}
+
 function assertIssuerHits() {
   const hits = globalThis.__opendrsaiFakeOidcHits;
   if (
     !hits ||
     hits.discovery < 1 ||
     hits.jwks < 1 ||
-    hits.authorize !== 1 ||
+    hits.authorize !== 0 ||
+    hits.deviceAuthorization !== 1 ||
+    hits.deviceSlowDown !== 1 ||
+    hits.devicePending !== 1 ||
+    hits.deviceToken !== 1 ||
     hits.token < 2 ||
     hits.refresh < 1 ||
     hits.revoke !== 1
@@ -598,19 +750,19 @@ function assertGatewayHits() {
   const hits = globalThis.__opendrsaiOidcGatewayHits;
   const modelAuth = hits?.models?.find((hit) => hit.hasBearer);
   const modelHits = globalThis.__opendrsaiOidcModelHits;
+  const chatHit = hits?.chat?.find((hit) => hit.requestId === "e2e-oidc-chat-0001");
+  const agentHit = hits?.chat?.find((hit) => hit.requestId === "e2e-oidc-agent-0001")
+    || hits?.agent?.find((hit) => hit.requestId === "e2e-oidc-agent-0001");
   if (
     !hits ||
     hits.health < 1 ||
     hits.models.length < 1 ||
-    hits.chat.length !== 1 ||
-    hits.agent.length !== 1 ||
-    !hits.chat[0].hasBearer ||
-    !hits.agent[0].hasBearer ||
+    !chatHit?.hasBearer ||
+    !agentHit?.hasBearer ||
     !modelAuth ||
     modelAuth.authMode !== "oidc" ||
-    hits.chat[0].authMode !== "oidc" ||
-    hits.chat[0].model !== "deepseek-v4-pro" ||
-    hits.agent[0].authMode !== "oidc" ||
+    chatHit.authMode !== "oidc" ||
+    agentHit.authMode !== "oidc" ||
     !Array.isArray(modelHits) ||
     modelHits.length !== 2 ||
     !modelHits.every((hit) => hit.hasBearer)

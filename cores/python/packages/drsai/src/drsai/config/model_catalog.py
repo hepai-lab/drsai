@@ -139,6 +139,7 @@ class AgentModelPolicy:
     image_understanding_model: AgentModelSelection | None = None
     image_generation_model: AgentModelSelection | None = None
     text_to_speech_model: AgentModelSelection | None = None
+    realtime_voice_model: AgentModelSelection | None = None
     speech_to_text_model: AgentModelSelection | None = None
     reasoning_effort: ReasoningEffort | None = None
     expected_revision: str | None = None

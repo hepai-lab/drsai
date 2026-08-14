@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+const { StreamingProviderCapabilityRegistry, selectStreamingProvider, decideStreamingRecovery } = await import("../../shared/main/voiceStreaming/providerPolicy.ts");
+const provider = (id, overrides = {}) => ({ id, available: true, protocolVersion: 2, encodings: ["pcm_s16le"], languages: ["*"], endpointing: true, resume: false, maxAudioMs: 120_000, latencyMs: 300, costTier: 1, privacyTier: "private", ...overrides });
+const registry = new StreamingProviderCapabilityRegistry();
+registry.register(provider("slow", { latencyMs: 500, resume: true }));
+registry.register(provider("fast", { latencyMs: 100, costTier: 2 }));
+registry.register(provider("local", { latencyMs: 200, costTier: 0, privacyTier: "local" }));
+assert.equal(registry.list().length, 3);
+assert.equal(selectStreamingProvider(registry.list(), { encoding: "pcm_s16le", language: "zh-CN" }).id, "fast");
+assert.equal(selectStreamingProvider(registry.list(), { preferredId: "slow", encoding: "pcm_s16le", requireResume: true }).id, "slow");
+assert.equal(selectStreamingProvider(registry.list(), { encoding: "opus" }), null);
+const current = provider("primary", { privacyTier: "private" });
+assert.deepEqual(decideStreamingRecovery({ current, candidates: [], retryable: true, attempt: 0, maxSameProviderRetries: 2, allowCrossProvider: false, serialAvailable: true }), { action: "retry_same", providerId: "primary" });
+assert.deepEqual(decideStreamingRecovery({ current, candidates: [provider("external", { privacyTier: "external", latencyMs: 1 }), provider("local", { privacyTier: "local" })], retryable: false, attempt: 2, maxSameProviderRetries: 2, allowCrossProvider: true, serialAvailable: true }), { action: "switch_provider", providerId: "local" }, "failover must not weaken privacy");
+assert.deepEqual(decideStreamingRecovery({ current, candidates: [provider("external", { privacyTier: "external" })], retryable: false, attempt: 2, maxSameProviderRetries: 2, allowCrossProvider: false, serialAvailable: true }), { action: "fallback_serial" });
+assert.deepEqual(decideStreamingRecovery({ current, candidates: [], retryable: false, attempt: 2, maxSameProviderRetries: 2, allowCrossProvider: false, serialAvailable: false }), { action: "stop" });
+console.log("Streaming Provider policy tests passed (registry snapshot, deterministic routing, same-Provider retry, privacy-gated failover, serial fallback, and stop).");

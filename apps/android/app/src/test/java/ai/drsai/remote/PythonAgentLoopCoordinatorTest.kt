@@ -11,6 +11,7 @@ import kotlinx.coroutines.test.runTest
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -655,6 +656,80 @@ class PythonAgentLoopCoordinatorTest {
         assertEquals("a", failed.payload.getString("subagent_id"))
         assertEquals("model_timeout", failed.payload.getString("code"))
         assertEquals(true, failed.payload.getBoolean("retryable"))
+        assertEquals("timeout", failed.payload.getString("message"))
+    }
+
+    @Test
+    fun `model api failure preserves redacted provider body and stable code`() = runTest {
+        val commands = mutableListOf<PythonRuntimeEnvelope>()
+        val bridge = object : PythonRuntimeBridge {
+            override suspend fun execute(envelope: PythonRuntimeEnvelope): PythonRuntimeExecutionResult {
+                commands += envelope
+                val outbound = if (envelope.messageType == PythonRuntimeMessageType.START_RUN) listOf(
+                    PythonRuntimeEnvelope(
+                        PythonRuntimeMessageType.MODEL_REQUEST, "model-request", "run-1", "session-1", 1,
+                        "model-key", JSONObject().put("model_id", "model-1").put("messages", JSONArray()),
+                    ),
+                ) else emptyList()
+                return PythonRuntimeExecutionResult(
+                    MailboxDecision.ACCEPTED, envelope.requestId, "accepted", "python_runtime_ready", outbound,
+                )
+            }
+        }
+        val base = fakePorts()
+        val ports = base.copy(model = object : PythonModelHostPort {
+            override fun stream(request: HostModelRequest): Flow<HostModelChunk> = flow {
+                throw ai.drsai.remote.data.ApiException(
+                    400, "provider rejected api_key=secret-value", retryable = false, code = "invalid_request",
+                )
+            }
+        })
+
+        PythonAgentLoopCoordinator(bridge, ports).execute(start()).toList()
+
+        val failed = commands.single { it.messageType == PythonRuntimeMessageType.MODEL_FAILED }
+        assertEquals("invalid_request", failed.payload.getString("code"))
+        assertEquals(400, failed.payload.getInt("status"))
+        assertEquals(false, failed.payload.getBoolean("retryable"))
+        assertTrue(failed.payload.getString("message").contains("api_key=[REDACTED]"))
+        assertFalse(failed.payload.getString("message").contains("secret-value"))
+    }
+
+    @Test
+    fun `provider http matrix preserves status stable code and retryability`() = runTest {
+        mapOf(400 to false, 401 to false, 403 to false, 408 to true, 429 to true, 500 to true)
+            .forEach { (status, retryable) ->
+                val commands = mutableListOf<PythonRuntimeEnvelope>()
+                val bridge = object : PythonRuntimeBridge {
+                    override suspend fun execute(envelope: PythonRuntimeEnvelope): PythonRuntimeExecutionResult {
+                        commands += envelope
+                        val outbound = if (envelope.messageType == PythonRuntimeMessageType.START_RUN) listOf(
+                            PythonRuntimeEnvelope(
+                                PythonRuntimeMessageType.MODEL_REQUEST, "model-$status", "run-1", "session-1", 1,
+                                "model-key-$status", JSONObject().put("model_id", "model-1")
+                                    .put("messages", JSONArray()),
+                            ),
+                        ) else emptyList()
+                        return PythonRuntimeExecutionResult(
+                            MailboxDecision.ACCEPTED, envelope.requestId, "accepted", "python_runtime_ready", outbound,
+                        )
+                    }
+                }
+                val base = fakePorts()
+                val ports = base.copy(model = object : PythonModelHostPort {
+                    override fun stream(request: HostModelRequest): Flow<HostModelChunk> = flow {
+                        throw ai.drsai.remote.data.ApiException(status, "safe provider error $status")
+                    }
+                })
+
+                PythonAgentLoopCoordinator(bridge, ports).execute(start()).toList()
+
+                val failed = commands.single { it.messageType == PythonRuntimeMessageType.MODEL_FAILED }
+                assertEquals("provider_http_$status", failed.payload.getString("code"))
+                assertEquals(status, failed.payload.getInt("status"))
+                assertEquals(retryable, failed.payload.getBoolean("retryable"))
+                assertEquals("safe provider error $status", failed.payload.getString("message"))
+            }
     }
 
     @Test

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
@@ -21,12 +22,18 @@ class DesktopAgentManagerPorts:
         self._cancellation_token = cancellation_token
 
     def ports(self, visible_names: set[str]) -> dict[str, ManagerPort]:
+        regression_names = {
+            "regression_list_suites", "regression_list_cases", "regression_get_case",
+            "regression_preflight", "regression_start", "regression_history",
+            "regression_get", "regression_events", "regression_cancel",
+        }
         known = {
             "Skill": self.skill,
             "TodoWrite": self.todo_write,
             "UpdateUserConfig": self.update_user_config,
             "Delegate": self.delegate,
             "ScheduledTaskManager": self.scheduled_task,
+            **{name: self.regression for name in regression_names},
         }
         unknown = visible_names - set(known)
         if unknown:
@@ -72,6 +79,36 @@ class DesktopAgentManagerPorts:
         warning = str(getattr(manager, "_last_warning", "") or "")
         content = manager.get_task_prompt()
         return self._success(call_id, f"{warning}\n\n{content}".strip())
+
+    async def regression(self, payload: Mapping[str, Any]) -> DesktopToolResult:
+        call_id, name, arguments = self._arguments(payload)
+        manager = getattr(self._agent, "_regression_manager", None)
+        if manager is None:
+            return DesktopToolResult(
+                call_id, False, {"content": "Regression manager unavailable"},
+                "regression_manager_unavailable",
+            )
+        runtime_workspace_path = getattr(self._agent, "_runtime_workspace_path", None)
+        if isinstance(runtime_workspace_path, (str, Path)):
+            # The Manager's storage root belongs to the Agent profile, while
+            # preflight and execution must target the Workspace bound to the
+            # current Desktop Run.  Refresh this immediately before dispatch
+            # so the native Kernel port cannot observe a stale profile path.
+            manager.workspace_path = Path(runtime_workspace_path).resolve()
+        try:
+            # Catalog and preflight adapters perform bounded filesystem and
+            # loopback Gateway reads. Never block the Gateway event loop while
+            # querying that same Gateway from an ordinary Agent tool call.
+            result = await asyncio.to_thread(manager.execute, name, arguments)
+            return self._success(call_id, result)
+        except Exception as exc:
+            # Preserve a stable public code while keeping arbitrary catalog or
+            # filesystem exception text out of the Kernel tool envelope.
+            return DesktopToolResult(
+                call_id, False,
+                {"error": {"code": "regression_tool_failed", "type": type(exc).__name__}},
+                "regression_tool_failed",
+            )
 
     async def update_user_config(self, payload: Mapping[str, Any]) -> DesktopToolResult:
         call_id, _, arguments = self._arguments(payload)

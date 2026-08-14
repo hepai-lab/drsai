@@ -68,6 +68,28 @@ def test_projects_tool_updates_as_activity_not_chat_parts() -> None:
     assert not projector.parts
 
 
+def test_projects_capability_configuration_as_a_typed_private_interaction() -> None:
+    projector = _projector()
+    events = projector.project("interaction.request", {
+        "request_id": "capability-1",
+        "interaction_type": "capability_configuration",
+        "prompt": "Web search is needed",
+        "request_summary": {
+            "capability": "web.search",
+            "resource_kind": "public_web",
+            "preferred_adapter": "tavily",
+            "reason": "credential_missing",
+            "query_disclosed": False,
+        },
+    })
+    part = next(event["part"] for event in events if event["type"] == "part.started")
+    assert part["interactionType"] == "capability_configuration"
+    assert part["capability"] == "web.search"
+    assert part["preferredAdapter"] == "tavily"
+    assert part["queryDisclosed"] is False
+    assert "api_key" not in json.dumps(part).lower()
+
+
 def test_multiple_thinking_events_share_one_reasoning_part() -> None:
     projector = _projector()
     events = projector.project("thinking.delta", {"text": "one", "source": "agent"})
@@ -223,6 +245,25 @@ def test_provider_metadata_citations_are_normalized_and_deduplicated() -> None:
     assert first[0]["locator"] == "chars 4-9"
     assert first[1]["path"] == "results.csv"
     assert first[1]["artifact_id"] == "result-table"
+
+
+def test_knowledge_citation_metadata_survives_normalization_and_projection() -> None:
+    state = TRANSLATOR.TurnState()
+    source = "opendrsai://regression/knowledge/kb/revisions/1/documents/doc.md"
+    payload = TRANSLATOR.extract_citation_payloads({"citations": [{
+        "url": source, "title": "Runtime", "relation": "searched_scope",
+        "knowledge_base_id": "kb", "revision": 1, "document_path": "doc.md",
+        "corpus_complete": True,
+    }]}, state)[0]
+    projector = _projector()
+    projector.project("message.delta", {"text": "No answer"})
+    projector.project("citation.added", payload)
+    citation = next(part for part in projector.parts.values() if part["kind"] == "citation")
+    assert citation["relation"] == "searched_scope"
+    assert citation["knowledge_base_id"] == "kb"
+    assert citation["revision"] == 1
+    assert citation["document_path"] == "doc.md"
+    assert citation["corpus_complete"] is True
 
 
 def test_error_and_cancelled_turns_keep_terminal_part_state() -> None:

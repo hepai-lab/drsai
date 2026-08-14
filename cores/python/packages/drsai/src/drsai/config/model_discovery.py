@@ -7,11 +7,19 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any
 
+import re
+
 import httpx
 
 from .schema import ResolvedModelConfig
 from .model_registry import find_model_capabilities
 from .model_catalog import ModelDescriptor, ModelRef, build_runtime_model_catalog
+
+# Mirror of ModelRef._identity — providers (e.g. HepAI) return "models" whose
+# ids contain spaces (agent display names like "Dr.Sai Assistant").  Those are
+# not selectable chat models and would otherwise crash ModelRef.__post_init__
+# with ValueError("model_id is invalid"), killing the TUI gateway on /model.
+_MODEL_ID_PATTERN = re.compile(r"^[^\s\x00-\x1f]{1,240}$")
 
 
 @dataclass(frozen=True)
@@ -115,10 +123,19 @@ async def discover_provider_models(
         rows = payload.get("models") if provider.wire_api == "gemini" and isinstance(payload, dict) else payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
             raise ValueError
-        models = tuple(sorted({
+        discovered_models = sorted({
             (item.get("name", "").removeprefix("models/") if provider.wire_api == "gemini" else item.get("id", "")) for item in rows
-            if isinstance(item, dict) and isinstance(item.get("name" if provider.wire_api == "gemini" else "id"), str) and item.get("name" if provider.wire_api == "gemini" else "id", "").strip()
-        }))[:500]
+            if isinstance(item, dict)
+            and isinstance(item.get("name" if provider.wire_api == "gemini" else "id"), str)
+            and _MODEL_ID_PATTERN.fullmatch(item.get("name" if provider.wire_api == "gemini" else "id", ""))
+            and "/" in item.get("name" if provider.wire_api == "gemini" else "id", "")
+        })
+        discovered_set = set(discovered_models)
+        # Preserve configured models that the Provider really returned before
+        # bounding a large catalog. Otherwise late-sorting IDs such as tts-1
+        # and whisper-1 can be misreported as unverified.
+        configured_models = [model_id for model_id in provider.models if model_id in discovered_set]
+        models = tuple(dict.fromkeys((*configured_models, *discovered_models)))[:500]
     except (TypeError, ValueError):
         return _remember_failure(cache_key, generation, "invalid_response", "error", cache_ttl)
     updated_at = datetime.now(timezone.utc).isoformat()
@@ -150,6 +167,12 @@ def _result(
     details = []
     descriptors: list[ModelDescriptor] = []
     for model in models:
+        # Defensive: even if a caller bypasses the discovery filter, never let a
+        # malformed id (spaces/control chars) crash ModelRef and take down the
+        # gateway process. Only expose chat-style ids (contain "/"); agent
+        # display names without "/" are not selectable chat models.
+        if not _MODEL_ID_PATTERN.fullmatch(model) or "/" not in model:
+            continue
         capabilities, known = find_model_capabilities(model)
         details.append({
             "id": model,

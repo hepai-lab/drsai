@@ -10,6 +10,7 @@ from drsai.config.loader import parse_user_config
 from drsai.config.model_catalog import AgentModelPolicy, AgentModelSelection, ModelRef
 from drsai.config.model_operation_adapters import ModelProtocolError, OpenAITextOperationAdapter
 from drsai.config.model_operation_routing import resolve_agent_operation
+from drsai.platform_auth import PlatformAuthContext, platform_auth_scope
 
 
 def _resolved(operation="chat"):
@@ -25,6 +26,23 @@ def _resolved(operation="chat"):
     policy = AgentModelPolicy(
         agent_id="my-drsai",
         primary_model=AgentModelSelection("explicit", ModelRef("zhizengzeng", "deepseek-v4-flash")),
+    )
+    return resolve_agent_operation(config, policy, role="primary_model", operation=operation, require_credentials=False)
+
+
+def _resolved_hepai(operation="chat"):
+    config = parse_user_config({
+        "model_providers": {"hepai": {
+            "base_url": "https://legacy.example/apiv2/v1", "requires_api_key": False,
+            "models": {"deepseek-v4-flash": {
+                "input_modalities": ["text"], "output_modalities": ["text"],
+                "capabilities": ["chat", "tool_calling", "reasoning"],
+            }},
+        }},
+    })
+    policy = AgentModelPolicy(
+        agent_id="my-drsai",
+        primary_model=AgentModelSelection("explicit", ModelRef("hepai", "deepseek-v4-flash")),
     )
     return resolve_agent_operation(config, policy, role="primary_model", operation=operation, require_credentials=False)
 
@@ -144,6 +162,42 @@ def test_responses_stream_normalizes_text_and_fragmented_tool_arguments() -> Non
     assert result is not None and result.response_id == "resp-stream"
     assert result.tool_calls[0].arguments == {"a": 17, "b": 25}
     assert result.input_tokens == 4 and result.output_tokens == 3
+
+
+def test_responses_stream_uses_request_scoped_hepai_oidc() -> None:
+    seen = {}
+    content = '\n'.join([
+        'data: {"type":"response.completed","response":{"id":"resp","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}',
+        "data: [DONE]", "",
+    ])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["authorization"] = request.headers.get("authorization")
+        return httpx.Response(200, text=content, headers={"content-type": "text/event-stream"})
+
+    auth = PlatformAuthContext(
+        access_token="oidc-stream-token",
+        subject="user-1",
+        issuer="https://issuer.example",
+        expires_at=4_102_444_800,
+        model_base_url="https://ai-dev.example/apiv2/v1",
+    )
+    adapter = OpenAITextOperationAdapter(transport=httpx.MockTransport(handler))
+
+    async def collect():
+        return [event async for event in adapter.stream(
+            _resolved_hepai(), protocol="openai_responses", input_value="ping",
+        )]
+
+    with platform_auth_scope(auth):
+        events = asyncio.run(collect())
+
+    assert events[-1].result is not None
+    assert seen == {
+        "url": "https://ai-dev.example/apiv2/v1/responses",
+        "authorization": "Bearer oidc-stream-token",
+    }
 
 
 def test_chat_stream_assembles_tool_delta_and_never_persists_reasoning() -> None:

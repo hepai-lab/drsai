@@ -17,6 +17,7 @@ export interface MobilePairingRuntimeClient {
   shrinkMobileAssociation(
     associationId: string,
     permissions: DesktopMobileAssociation["permissions"],
+    scope?: DesktopMobilePairingScope,
   ): Promise<DesktopMobileAssociation>;
   revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
   pauseMobileRemoteAccess(): Promise<DesktopRuntimeRemoteAccessState>;
@@ -124,13 +125,15 @@ export class MobilePairingController {
   async shrinkAssociation(
     associationId: string,
     permissions: DesktopMobileAssociation["permissions"],
+    scope?: DesktopMobilePairingScope,
   ): Promise<DesktopMobileAssociation> {
     const unique = [...new Set(permissions)];
     if (!unique.length || unique.some((value) => !["read", "send", "approve", "files"].includes(value))) {
       throw new Error("Mobile association permissions are invalid.");
     }
+    const selection = scope === undefined ? undefined : this.validateScope(scope);
     return (
-      await this.invoke((client) => client.shrinkMobileAssociation(associationId, unique))
+      await this.invoke((client) => client.shrinkMobileAssociation(associationId, unique, selection))
     ).value;
   }
 

@@ -127,6 +127,9 @@ _LONG_HANDLERS = frozenset({
     "skills.manage",
     "gateway.shutdown",
     "gfs.test",
+    "remote.connect",
+    "remote.test",
+    "remote.exec",
 })
 
 try:

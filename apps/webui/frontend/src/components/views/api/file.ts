@@ -1,4 +1,5 @@
 import { getServerUrl } from "../../utils";
+import { getAuthToken } from "../../../utils/authSession";
 
 export class FileAPI {
     private getBaseUrl(): string {
@@ -6,9 +7,12 @@ export class FileAPI {
     }
 
     private getHeaders(): HeadersInit {
-        return {
-            // Don't set Content-Type for file uploads, let the browser set it with boundary
-        };
+        const headers: Record<string, string> = {};
+        const token = getAuthToken();
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
+        return headers;
     }
 
      async saveFilesToServer(

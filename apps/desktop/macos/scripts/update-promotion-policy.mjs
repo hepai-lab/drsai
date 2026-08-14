@@ -4,13 +4,10 @@ export const MACOS_PROMOTION_SEQUENCE = [
   "signed-l6",
   "upload-oss-versioned-assets",
   "verify-cdn-assets",
-  "upload-github-draft-assets",
-  "verify-dual-source-digests",
   "stage-temporary-feed",
   "verify-online-update",
-  "publish-github-release",
   "promote-stable-metadata",
-  "verify-production-fallback",
+  "verify-production-assets",
 ];
 
 export function validateMacosPromotionReceipt(receipt, { allowUnsigned = false } = {}) {
