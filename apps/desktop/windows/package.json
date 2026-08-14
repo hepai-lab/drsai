@@ -54,6 +54,7 @@
     "verify:structured-conversation": "node scripts/verify-structured-conversation.mjs",
     "verify:structured-gateway": "node scripts/verify-structured-gateway.mjs",
     "verify:structured-renderer": "node scripts/verify-structured-message-renderer.mjs",
+    "verify:grounded-citations": "node scripts/verify-grounded-citations.mjs",
     "verify:run-inspector-ui": "node scripts/verify-run-inspector-ui.mjs",
     "verify:run-traceability-phase1-release": "node scripts/verify-run-traceability-phase1-release.mjs",
     "verify:run-traceability-phase1-windows-e2e": "node scripts/verify-run-traceability-phase1-windows-e2e.mjs",
@@ -634,7 +635,7 @@
     "verify:conversation-turn-rail-ui": "node scripts/verify-conversation-turn-rail-ui.mjs",
     "smoke:clean-win": "powershell -ExecutionPolicy Bypass -File scripts/smoke-clean-windows.ps1",
     "icon:win": "powershell -ExecutionPolicy Bypass -File scripts/create-windows-icon.ps1",
-    "verify": "npm run verify:architecture && npm run typecheck && npm run verify:update-legacy-beta && npm run verify:structured-conversation && npm run verify:structured-gateway && npm run verify:structured-renderer && npm run verify:structured-debug && npm run verify:unified-diagnostics && npm run verify:source-navigation && npm run verify:deep-tracing && npm run verify:root-cause-intelligence && npm run verify:interactive-debugging && npm run verify:python-dap-real && npm run verify:production-diagnostics && npm run verify:structured-quality && npm run verify:structured-integration && npm run verify:structured-visual && npm run verify:structured-release && npm run verify:chat-output && npm run verify:chat-sse && npm run verify:platform-config && npm run verify:oidc-login && npm run verify:platform-auth && npm run verify:workspace-context && npm run verify:workspace-checkpoints && npm run verify:gateway-smoke && npm run verify:startup-performance && npm run verify:ui"
+    "verify": "npm run verify:architecture && npm run typecheck && npm run verify:update-legacy-beta && npm run verify:structured-conversation && npm run verify:structured-gateway && npm run verify:structured-renderer && npm run verify:grounded-citations && npm run verify:structured-debug && npm run verify:unified-diagnostics && npm run verify:source-navigation && npm run verify:deep-tracing && npm run verify:root-cause-intelligence && npm run verify:interactive-debugging && npm run verify:python-dap-real && npm run verify:production-diagnostics && npm run verify:structured-quality && npm run verify:structured-integration && npm run verify:structured-visual && npm run verify:structured-release && npm run verify:chat-output && npm run verify:chat-sse && npm run verify:platform-config && npm run verify:oidc-login && npm run verify:platform-auth && npm run verify:workspace-context && npm run verify:workspace-checkpoints && npm run verify:gateway-smoke && npm run verify:startup-performance && npm run verify:ui"
   },
   "dependencies": {
     "@electron-toolkit/preload": "3.0.2",
