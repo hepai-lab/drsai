@@ -491,7 +491,7 @@ function platformCachePath(subjectKey: string): string {
   return join(
     DRSAI_HOME,
     "cache",
-    `platform-agents.${ACTIVE_PLATFORM.name}.${PLATFORM_CACHE_ID}.${subjectKey}.v2.json`,
+    `platform-agents.${ACTIVE_PLATFORM.name}.${PLATFORM_CACHE_ID}.${subjectKey}.v3.json`,
   );
 }
 

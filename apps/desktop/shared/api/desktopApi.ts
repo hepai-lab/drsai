@@ -3202,6 +3202,8 @@ export interface DesktopAgent {
   description: string;
   localizedDescription?: DesktopAgentLocalizedText;
   owner: string;
+  /** Worker-declared display attribution. Never use this field for authorization. */
+  author?: string;
   source: DesktopAgentSource;
   status: DesktopAgentStatus;
   mode?: string;

@@ -17,6 +17,7 @@ import { LOCAL_OPENDRSAI_AGENT_NAME } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
 import { userFacingFailureMessage } from "../userFacingLanguage";
+import drsaiLogo from "../assets/drsai.png";
 
 interface AgentSquareViewProps {
   language: AppLanguage;
@@ -788,10 +789,11 @@ function AgentLogo({
   large?: boolean;
 }): React.JSX.Element {
   const [failed, setFailed] = useState(false);
+  const logo = agent.source === "local" ? drsaiLogo : agent.logo;
   return (
     <span className={`agent-logo ${large ? "large" : ""}`}>
-      {agent.logo && !failed ? (
-        <img src={agent.logo} alt="" onError={() => setFailed(true)} />
+      {logo && !failed ? (
+        <img src={logo} alt="" onError={() => setFailed(true)} />
       ) : agent.name.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -821,7 +823,7 @@ function AgentDetailDialog({
         </header>
         <p>{getAgentDescription(agent, zh)}</p>
         <dl>
-          <div><dt>{zh ? "可用状态" : "Availability"}</dt><dd>{available ? (zh ? "可用" : "Available") : (zh ? "当前不可用" : "Currently unavailable")}</dd></div>
+          <div><dt>{zh ? "可用状态" : "Availability"}</dt><dd>{available ? (zh ? "在线可用" : "Available online") : (zh ? "当前不可用" : "Currently unavailable")}</dd></div>
           <div><dt>{zh ? "来源" : "Source"}</dt><dd>{getGroupLabel(agent.catalogGroup ?? (agent.source === "local" ? "local" : "official"), zh)}</dd></div>
         </dl>
         {(agent.capabilities ?? []).length > 0 && <div className="agent-detail-section"><strong>{zh ? "能力" : "Capabilities"}</strong><div className="agent-card-tags">{agent.capabilities?.map((item) => <span key={item}>{getCapabilityLabel(item, zh)}</span>)}</div></div>}
@@ -837,7 +839,7 @@ function getStatusLabel(agent: DesktopAgent, zh: boolean): string {
   if (agent.source === "local") return zh ? "本机" : "Local";
   if (agent.catalogState === "cached") return zh ? "缓存结果" : "Cached";
   return isAgentUsable(agent)
-    ? (zh ? "可用" : "Available")
+    ? (zh ? "在线可用" : "Available online")
     : (zh ? "不可用" : "Unavailable");
 }
 
