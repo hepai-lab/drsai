@@ -15,8 +15,7 @@ from fastapi import APIRouter, HTTPException, Response
 router = APIRouter()
 
 CDN_ORIGIN = "https://download-opendrsai.ihep.ac.cn"
-RELEASE_CHANNEL = os.getenv("OPENDRSAI_RELEASE_CHANNEL", "beta")
-MACOS_RELEASE_CHANNEL = os.getenv("OPENDRSAI_MACOS_RELEASE_CHANNEL", "stable")
+SUPPORTED_RELEASE_CHANNELS = ("beta", "stable")
 VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 TRUSTASIA_INTERMEDIATE = (
@@ -25,6 +24,34 @@ TRUSTASIA_INTERMEDIATE = (
 TRUSTASIA_CROSS_CERTIFICATE = (
     Path(__file__).resolve().parent / "certs" / "TrustAsiaTLSRSARootCA-cross.pem"
 )
+
+
+def _configured_release_channels() -> tuple[str, ...]:
+    configured = os.getenv("OPENDRSAI_RELEASE_CHANNELS")
+    if configured is None:
+        # Preserve explicit legacy single-channel deployments. A fresh
+        # development deployment prefers beta and falls back to stable.
+        configured = os.getenv("OPENDRSAI_RELEASE_CHANNEL")
+    if configured is None:
+        configured = os.getenv("OPENDRSAI_MACOS_RELEASE_CHANNEL")
+    if configured is None:
+        configured = "beta,stable"
+
+    channels: list[str] = []
+    for raw_channel in configured.split(","):
+        channel = raw_channel.strip().lower()
+        if not channel:
+            continue
+        if channel not in SUPPORTED_RELEASE_CHANNELS:
+            raise ValueError(f"Unsupported OpenDrSai release channel: {channel}")
+        if channel not in channels:
+            channels.append(channel)
+    if not channels:
+        raise ValueError("At least one OpenDrSai release channel is required")
+    return tuple(channels)
+
+
+RELEASE_CHANNELS = _configured_release_channels()
 
 
 def _asset_name(url: str) -> str:
@@ -70,6 +97,24 @@ def _release_labels(
     return None, channel.strip() or None
 
 
+def _manifest_channel(manifest: dict[str, Any], selected_channel: str) -> str:
+    channel = str(manifest.get("channel") or selected_channel).strip().lower()
+    if channel != selected_channel:
+        raise ValueError(
+            f"Release manifest channel {channel!r} does not match "
+            f"requested channel {selected_channel!r}"
+        )
+    return channel
+
+
+def _manifest_url(
+    platform: Literal["windows", "android", "macos"], channel: str
+) -> str:
+    if platform == "macos":
+        return f"{CDN_ORIGIN}/channels/{channel}/macos/arm64/latest-mac.yml"
+    return f"{CDN_ORIGIN}/channels/{channel}/latest-{platform}.json"
+
+
 async def _fetch_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     response = await client.get(url)
     response.raise_for_status()
@@ -89,7 +134,7 @@ async def _fetch_yaml(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
 
 
 async def _windows_release(
-    client: httpx.AsyncClient, manifest: dict[str, Any]
+    client: httpx.AsyncClient, manifest: dict[str, Any], selected_channel: str
 ) -> dict[str, Any]:
     version = _validated_version(manifest.get("version"))
     runtime = manifest.get("runtime")
@@ -115,7 +160,7 @@ async def _windows_release(
     except (httpx.HTTPError, ValueError):
         pass
 
-    channel = str(manifest.get("channel") or RELEASE_CHANNEL)
+    channel = _manifest_channel(manifest, selected_channel)
     build_label, release_label = _release_labels(
         version, channel, manifest.get("buildLabel")
     )
@@ -140,7 +185,9 @@ async def _windows_release(
     }
 
 
-def _android_release(manifest: dict[str, Any]) -> dict[str, Any]:
+def _android_release(
+    manifest: dict[str, Any], selected_channel: str
+) -> dict[str, Any]:
     version = _validated_version(manifest.get("version"))
     apk = manifest.get("apk")
     if not isinstance(apk, dict):
@@ -150,7 +197,7 @@ def _android_release(manifest: dict[str, Any]) -> dict[str, Any]:
     apk_size = int(apk.get("sizeBytes"))
     if apk_size < 1:
         raise ValueError("Android APK size must be positive")
-    channel = str(manifest.get("channel") or RELEASE_CHANNEL)
+    channel = _manifest_channel(manifest, selected_channel)
     build_label, release_label = _release_labels(
         version, channel, manifest.get("buildLabel")
     )
@@ -171,7 +218,7 @@ def _android_release(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _macos_release(
-    client: httpx.AsyncClient, manifest: dict[str, Any]
+    client: httpx.AsyncClient, manifest: dict[str, Any], selected_channel: str
 ) -> dict[str, Any]:
     version = _validated_version(manifest.get("version"))
     files = manifest.get("files")
@@ -194,13 +241,14 @@ async def _macos_release(
         raise ValueError("macOS installer size must be positive")
 
     application_url = f"{CDN_ORIGIN}/releases/v{version}/macos/{application_name}"
+    channel = _manifest_channel(manifest, selected_channel)
     build_label, release_label = _release_labels(
-        version, MACOS_RELEASE_CHANNEL, manifest.get("buildLabel")
+        version, channel, manifest.get("buildLabel")
     )
     return {
         "platform": "macos",
         "version": version,
-        "channel": MACOS_RELEASE_CHANNEL,
+        "channel": channel,
         "buildLabel": build_label,
         "releaseLabel": release_label,
         "publishedAt": manifest.get("releaseDate"),
@@ -221,16 +269,11 @@ async def _macos_release(
 async def fetch_latest_release(
     platform: Literal["windows", "android", "macos"],
     client: httpx.AsyncClient | None = None,
+    channels: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    if platform == "macos":
-        manifest_url = (
-            f"{CDN_ORIGIN}/channels/{MACOS_RELEASE_CHANNEL}"
-            "/macos/arm64/latest-mac.yml"
-        )
-    else:
-        manifest_url = (
-            f"{CDN_ORIGIN}/channels/{RELEASE_CHANNEL}/latest-{platform}.json"
-        )
+    selected_channels = RELEASE_CHANNELS if channels is None else channels
+    if not selected_channels:
+        raise ValueError("At least one release channel is required")
     owns_client = client is None
     ssl_context = ssl.create_default_context()
     ssl_context.load_verify_locations(cafile=TRUSTASIA_INTERMEDIATE)
@@ -245,16 +288,28 @@ async def fetch_latest_release(
         verify=ssl_context,
     )
     try:
-        manifest = (
-            await _fetch_yaml(active_client, manifest_url)
-            if platform == "macos"
-            else await _fetch_json(active_client, manifest_url)
-        )
-        if platform == "windows":
-            return await _windows_release(active_client, manifest)
-        if platform == "android":
-            return _android_release(manifest)
-        return await _macos_release(active_client, manifest)
+        for index, channel in enumerate(selected_channels):
+            if channel not in SUPPORTED_RELEASE_CHANNELS:
+                raise ValueError(f"Unsupported OpenDrSai release channel: {channel}")
+            manifest_url = _manifest_url(platform, channel)
+            try:
+                manifest = (
+                    await _fetch_yaml(active_client, manifest_url)
+                    if platform == "macos"
+                    else await _fetch_json(active_client, manifest_url)
+                )
+            except httpx.HTTPStatusError as exc:
+                has_fallback = index + 1 < len(selected_channels)
+                if exc.response.status_code == 404 and has_fallback:
+                    continue
+                raise
+
+            if platform == "windows":
+                return await _windows_release(active_client, manifest, channel)
+            if platform == "android":
+                return _android_release(manifest, channel)
+            return await _macos_release(active_client, manifest, channel)
+        raise ValueError("Latest release metadata is unavailable")
     finally:
         if owns_client:
             await active_client.aclose()

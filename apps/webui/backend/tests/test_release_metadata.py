@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from drsai_ui.ui_backend.backend.web.routes.releases import (
+    _configured_release_channels,
     _release_labels,
     fetch_latest_release,
 )
@@ -30,7 +31,7 @@ async def test_fetch_latest_windows_release_normalizes_manifest() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        release = await fetch_latest_release("windows", client)
+        release = await fetch_latest_release("windows", client, ("beta",))
 
     assert release["version"] == "1.5.3"
     assert release["buildLabel"] == "Beta 3"
@@ -57,7 +58,7 @@ async def test_fetch_latest_android_release_normalizes_manifest() -> None:
         return httpx.Response(200, content=json.dumps(manifest))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        release = await fetch_latest_release("android", client)
+        release = await fetch_latest_release("android", client, ("beta",))
 
     assert release["version"] == "1.5.3"
     assert release["download"]["file"] == "OpenDrSai-Android-v1.5.3.apk"
@@ -84,7 +85,7 @@ opendrsaiRuntimeSha256: 4f814613e02cadcf6c1c4687ad5f4908f0eb703e3dde9f592cd3336c
         return httpx.Response(200, text=manifest)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        release = await fetch_latest_release("macos", client)
+        release = await fetch_latest_release("macos", client, ("stable",))
 
     assert release["version"] == "1.5.1"
     assert release["channel"] == "stable"
@@ -112,3 +113,96 @@ def test_release_labels_support_current_and_legacy_manifests(
     expected: tuple[str | None, str | None],
 ) -> None:
     assert _release_labels(version, channel, build_label) == expected
+
+
+@pytest.mark.asyncio
+async def test_development_policy_falls_back_from_missing_beta_to_stable() -> None:
+    requested_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        if request.url.path == "/channels/beta/latest-android.json":
+            return httpx.Response(404, request=request)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "version": "1.5.7",
+                "channel": "stable",
+                "apk": {
+                    "url": "https://download-opendrsai.ihep.ac.cn/releases/v1.5.7/android/OpenDrSai-Android-v1.5.7.apk",
+                    "sizeBytes": 3076779,
+                    "sha256": "74fcb63c37ed5777196681b0b98d390ab74ba92c52b309e12c86778ba4051f8e",
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        release = await fetch_latest_release(
+            "android", client, ("beta", "stable")
+        )
+
+    assert requested_paths == [
+        "/channels/beta/latest-android.json",
+        "/channels/stable/latest-android.json",
+    ]
+    assert release["channel"] == "stable"
+    assert release["releaseLabel"] == "Stable"
+
+
+@pytest.mark.asyncio
+async def test_production_policy_requests_stable_only() -> None:
+    requested_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        if request.method == "HEAD":
+            return httpx.Response(
+                200, request=request, headers={"content-length": "647168"}
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "version": "1.5.8",
+                "channel": "stable",
+                "runtime": {
+                    "url": "https://download-opendrsai.ihep.ac.cn/releases/v1.5.8/windows/OpenDrSai-Windows-v1.5.8-x64.zip",
+                    "sizeBytes": 355495575,
+                    "sha256": "e710fa6d0837ec7d6f5f8109d6c9d4801736b0452c2a844dd7c70748b6fd9ea1",
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        release = await fetch_latest_release("windows", client, ("stable",))
+
+    assert requested_paths[0] == "/channels/stable/latest-windows.json"
+    assert not any("/beta/" in path for path in requested_paths)
+    assert release["channel"] == "stable"
+
+
+@pytest.mark.asyncio
+async def test_invalid_beta_manifest_does_not_silently_fall_back() -> None:
+    requested_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        return httpx.Response(200, request=request, json={"version": "invalid"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError):
+            await fetch_latest_release("android", client, ("beta", "stable"))
+
+    assert requested_paths == ["/channels/beta/latest-android.json"]
+
+
+def test_release_channel_configuration_supports_new_and_legacy_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENDRSAI_RELEASE_CHANNELS", "beta, stable, beta")
+    assert _configured_release_channels() == ("beta", "stable")
+
+    monkeypatch.delenv("OPENDRSAI_RELEASE_CHANNELS")
+    monkeypatch.setenv("OPENDRSAI_RELEASE_CHANNEL", "stable")
+    assert _configured_release_channels() == ("stable",)
