@@ -1,6 +1,6 @@
 # OpenDrSai macOS v1.5.8 Beta VM 自动化测试验收方案
 
-> 状态：执行中（P0 已完成，P1 待开始）
+> 状态：执行中（P0、P1 已完成；v1.5.8-beta.2 最终 DMG 已通过 P1，P2 及后续矩阵待执行）
 > 制定日期：2026-08-13
 > 目标版本：OpenDrSai macOS Desktop v1.5.8 Beta（Apple Silicon arm64）
 > 目标产物：签名、公证并 staple 的 DMG，以及与其绑定的 Runtime、更新 ZIP、发布元数据和验收证据
@@ -730,3 +730,21 @@ v1.5.8 Beta VM 自动化达到“可用于发布决策”必须满足：
 - P1 参数正向 dry-run 与 HTTP/非批准域名负向测试通过；
 - 使用一次性 clone 验证 guest 已具备 codesign、spctl、xcrun/stapler、hdiutil、curl、shasum、open、osascript、screencapture、ditto、plutil 和无交互自动化安装能力；
 - 当前本机仅有 v1.5.3/v1.5.7 DMG，尚无 v1.5.8 Beta 最终 URL、SHA-256 和 commit，因此真实 P1 运行等待候选制品，禁止以旧版本替代。
+
+### 2026-08-14：v1.5.8-beta.1 判定不合格
+
+- VM P1 发现 beta.1 DMG 同时包含 v1.5.7 与 v1.5.8-beta.1 的 Runtime archive、SBOM 和 provenance；App 可以启动，但制品不满足版本唯一性，因此拒绝候选；
+- Runtime 构建脚本改为在生成前清理旧 archive、SBOM、provenance 和 manifest；P1 改为以 manifest 引用为准，严格断言包内只能存在当前版本三件套；
+- P1 挂载点从受限的 `/Volumes` 改为 guest 用户 Downloads，公开制品校验超时从 10 分钟提高到 30 分钟，避免正常大文件下载被误判失败。
+
+### 2026-08-14：v1.5.8-beta.2 P1 通过
+
+- 构建候选 commit：`e86d3e584b4546865e9f4df7dda4930950d00cbf`，App build id：`1.5.8-beta.2+e86d3e584b45`，源码验收 381/381 通过；
+- Runtime 只包含 `1.5.8-beta.2` archive、SBOM、provenance，Runtime SHA-256 为 `60c26c73d6501e57904aa15d8230a1753ef09fc4184148516e1f39a9eff94bfb`；
+- App 与 DMG 均完成 Developer ID 签名、公证和 staple；本机 Gatekeeper、更新制品、release contract 与 packaged smoke 门禁通过；
+- beta.2 已发布到不可变 OSS/CDN 路径，stable 通道保持不变；公开 CDN 的 HEAD、Range、SHA-256 与本地候选逐字节一致；
+- 最终 DMG 为 584,445,714 字节，SHA-256 为 `d43200aff3e21b58b5c430e72e626d63dc64b2bb908a86762f9409d4cc532a1a`；
+- 最终 P1 使用固定 digest 的 pristine macOS `26.6.1` / Build `25G76` VM，从权威 CDN 冷下载 DMG，完成摘要、签名、Gatekeeper、公证票据、Bundle 版本、Runtime 唯一性、App/Runtime provenance、`/Applications` 安装、黑盒启动、VNC 首屏截图、正常退出和零残留检查，结果 `success: true`；
+- P1 runner 修复了 shell `find` 转义问题，并改用 Tart VNC 图形后端按新增 VM 窗口 ID 定向截图，避免 Guest Agent 后台上下文无法访问 WindowServer，也避免截取宿主机其他窗口；
+- 证据目录：`apps/desktop/macos/build/acceptance/macos-vm/p1/2026-08-14T03-45-25-467Z-cda14a/`；`summary.json` SHA-256 为 `e46b8d9ac9aedf34024d7f6380d78b871b22df9a6a7bc2692070bfc2611ef547`，`first-launch.png` SHA-256 为 `58a8b71dd96ec5b3754fb897e2b91ee9175b7a6be656e763f7f40fc9e0165c60`；
+- 验收后所有 `opendrsai-p1-*` 一次性 VM 均已删除，仅保留停止状态的 pristine 基础镜像。P1 退出条件满足；真实登录、Runtime Ready、工作区和任务链路继续按 P2/P3 执行。

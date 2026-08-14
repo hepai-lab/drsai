@@ -84,10 +84,10 @@ P1 只接受最终候选 OSS/CDN 字节，不接受本地开发 App 或旧版本
 
 ```bash
 npm run verify:beta:vm:p1 --workspace opendrsai-macos-desktop -- \
-  --url "https://download-opendrsai.ihep.ac.cn/releases/v1.5.8-beta.1/macos/OpenDrSai-macOS-v1.5.8-beta.1-arm64.dmg" \
+  --url "https://download-opendrsai.ihep.ac.cn/releases/v1.5.8-beta.2/macos/OpenDrSai-macOS-v1.5.8-beta.2-arm64.dmg" \
   --sha256 "<64 位小写 SHA-256>" \
   --commit "<40 位完整 Git commit>" \
-  --version "1.5.8-beta.1" \
+  --version "1.5.8-beta.2" \
   --dry-run
 ```
 
@@ -98,7 +98,7 @@ npm run verify:beta:vm:p1 --workspace opendrsai-macos-desktop -- \
 3. guest 内下载 DMG 并校验 SHA-256；
 4. 校验 codesign、Gatekeeper、App/DMG staple 和 Bundle 版本；
 5. 比较 App build metadata、Runtime provenance 与预期 commit/version；
-6. 安装至 `/Applications`，黑盒启动、截图、退出并检查残留进程；
+6. 安装至 `/Applications`，黑盒启动，通过 Tart VNC 新增窗口定向截图，退出并检查残留进程；
 7. 导出 receipt、启动日志和截图，最后删除 clone。
 
-当前仓库和本机只有 v1.5.3/v1.5.7 DMG，尚未发现 v1.5.8 Beta 候选，因此 P1 只能 dry-run，不能用旧 DMG 代替。
+v1.5.8-beta.2 已在固定 digest 的 pristine macOS 26.6.1 VM 中完成真实 P1；证据位于 `build/acceptance/macos-vm/p1/2026-08-14T03-45-25-467Z-cda14a/`。
