@@ -188,3 +188,47 @@ def test_verification_and_unknown_oaep_events_remain_observable_logs() -> None:
     assert verification.metadata["kernel_event"] == "verification.required"
     assert verification.metadata["level"] == "warning"
     assert unknown.metadata["kernel_event"] == "artifact.created"
+
+
+def test_knowledge_citation_survives_the_shape_the_host_actually_sends() -> None:
+    # Every other test in this file passes `result` as a plain dict, which is
+    # why this went unnoticed: in production the host sends a JSON string
+    # wrapping {"content": "<json>"}. Requiring a Mapping skipped the branch
+    # entirely, so a correctly cited answer reached the UI with no citations —
+    # and the failure is silent, because no evidence also means no citations
+    # are demanded.
+    state = DesktopKernelTurnState("OpenDrSai")
+    state.grounded = True
+    source = "opendrsai_runtime_overview_v1.md"
+    inner = {
+        "query": "Session Run", "require_citations": True, "status": "completed",
+        "completed": True, "corpus_complete": True, "supporting_match": True,
+        "documents": [{
+            "knowledge_base_id": "runtime-test", "knowledge_base_revision": 2,
+            "document_path": source, "corpus_complete": True,
+        }],
+        "evidence": [{
+            "knowledge_id": "runtime-test", "knowledge_base_revision": 2,
+            "document_path": source, "title": source, "source": source,
+            "chunk_id": f"{source}:0", "content": "Session 表示一段持续的用户会话。",
+            "content_sha256": "a" * 64, "relation": "supports_claim",
+            "locator": {"kind": "line", "line_start": 1, "line_end": 13},
+            "locator_label": "L1-13",
+        }],
+    }
+
+    translate_kernel_event(_event(
+        1, "tool.result", call_id="knowledge-1", name="knowledge_search",
+        result=json.dumps({"content": json.dumps(inner, ensure_ascii=False)}, ensure_ascii=False),
+    ), state)
+    message = translate_kernel_event(_event(
+        2, "message.completed", text="Session 表示一段持续的用户会话。[E1]",
+    ), state)[0]
+
+    citation = json.loads(message.metadata["citations_json"])[0]
+    assert citation["knowledge_base_id"] == "runtime-test"
+    assert citation["document_path"] == source
+    # The locator is what lets the UI open the document at the cited lines
+    # rather than leaving the reader to search the file.
+    assert citation["locator"]["line_start"] == 1
+    assert citation["locator"]["line_end"] == 13

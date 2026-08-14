@@ -36,6 +36,44 @@ GROUNDED_RETRIEVAL_TOOLS = frozenset({"knowledge_search"})
 # source on the next turn.
 GROUNDED_WITHHELD_DOMAINS = frozenset({"retrieval", "memory"})
 
+# How many envelopes to peel before giving up. Deep enough for the shapes seen
+# in practice, bounded so a self-referential result cannot loop.
+_MAX_RESULT_ENVELOPES = 4
+
+
+def unwrap_tool_result(value: Any) -> Any:
+    """Read the tool result out of whatever the host wrapped it in.
+
+    The same result reaches this code in three shapes: the object itself, a JSON
+    string, and a JSON string holding ``{"content": "<json>"}``. Reading only the
+    outer shape finds no evidence, and the failure is silent in the worst
+    direction — no evidence means no citations are required, so the answers that
+    most need checking are the ones that stop being checked.
+
+    The unwrapping exists in two other places, written out by hand: the kernel's
+    citation evidence and the engine's per-sentence check. Missing this third
+    site is what left a correctly cited answer showing no citations at all.
+    Those two cannot import this module without a cycle (`grounded` imports
+    `agent_kernel`) or without breaking the standalone-source-set rule that
+    `mobile_core` is held to, so folding them in means moving the helper into
+    `agent_kernel` and re-exporting through `mobile_core.context`.
+    """
+
+    for _ in range(_MAX_RESULT_ENVELOPES):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, json.JSONDecodeError):
+                return {}
+        # Only descend when the outer object cannot be the result itself.
+        # An object that already carries evidence is the result, even if it
+        # happens to have a "content" key as well.
+        elif isinstance(value, Mapping) and "evidence" not in value and "content" in value:
+            value = value["content"]
+        else:
+            return value
+    return value
+
 _EXPLICIT_GROUNDED_PATTERNS = (
     # Chinese: "仅根据/只根据/只能根据……回答", "根据提供的……回答"
     r"(?:仅|只|仅仅|只能)(?:根据|依据|基于|使用|用)",

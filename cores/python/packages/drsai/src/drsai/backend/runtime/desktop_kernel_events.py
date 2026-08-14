@@ -7,7 +7,7 @@ import ast
 import hashlib
 import re
 import json
-from typing import Any
+from typing import Any, Mapping
 
 from autogen_core import FunctionCall
 from autogen_core.models import FunctionExecutionResult
@@ -23,6 +23,7 @@ from autogen_agentchat.messages import (
 
 from drsai.modules.managers.messages.agent_messages import AgentLogEvent
 
+from .grounded import unwrap_tool_result
 from .mobile_core import MessageType, RuntimeEnvelope
 
 
@@ -143,12 +144,16 @@ def translate_kernel_event(
         )], source=state.assistant_name),)
     if kind in {"tool.result", "tool.error"}:
         result = payload.get("result")
-        if kind == "tool.result" and payload.get("name") == "knowledge_search" and isinstance(result, dict):
+        # The host hands this back as a JSON string wrapping {"content": "<json>"},
+        # so requiring a Mapping here skipped every knowledge result and left the
+        # answer with no citations at all — while the model had cited correctly.
+        evidence_result = unwrap_tool_result(result) if kind == "tool.result" else {}
+        if payload.get("name") == "knowledge_search" and isinstance(evidence_result, Mapping):
             documents = {
                 str(item.get("document_path") or ""): item
-                for item in result.get("documents") or [] if isinstance(item, dict)
+                for item in evidence_result.get("documents") or [] if isinstance(item, dict)
             }
-            for item in result.get("evidence") or []:
+            for item in evidence_result.get("evidence") or []:
                 if not isinstance(item, dict) or not item.get("source"):
                     continue
                 document_path = str(item.get("document_path") or item.get("document_id") or "")
