@@ -20,6 +20,7 @@ import {
 import { userFacingBusinessText } from "../userFacingLanguage";
 import { formatWebSearchActivitySummary } from "../webSearchPresentation";
 import { stripTrailingSourceList } from "../sourceListPresentation";
+import type { InlineCitationLink } from "../citationMarkerPlugin";
 import { boundedProcessWindow, PROCESS_ACTIVITY_WINDOW_SIZE, PROCESS_PART_WINDOW_SIZE } from "../boundedProcessWindow";
 import type {
   ArtifactPart,
@@ -102,6 +103,16 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     && (turn.status === "running" || !respondedRequestIds.has(part.requestId))
   );
   const resultParts = turn.parts.filter((part) => part.kind === "markdown" || part.kind === "artifact" || part.kind === "citation");
+  // The model writes `[E1]` so the support check can tell which passage each
+  // sentence rests on. The reader has no use for the number, so the marker is
+  // shown as the document it stands for. Order is the marker order the runtime
+  // assigned, which is what the model was given.
+  const inlineCitations = useMemo<InlineCitationLink[]>(() => citationParts.map((part, index) => ({
+    marker: index + 1,
+    citationId: part.citationId,
+    label: citationFileName(part),
+    title: [part.path ?? part.url ?? part.title, part.locator].filter(Boolean).join(" · "),
+  })), [citationParts]);
   const noticeParts = turn.parts.filter((part): part is NoticePart => part.kind === "notice");
   const publicSources = useMemo(() => extractPublicSources(turn), [turn]);
   const hasUserWarning = noticeParts.some((part) => part.level === "warning") || turn.parts.some((part) => part.kind === "markdown" && /could not be fully verified|citation_evidence_incomplete/i.test(part.markdown));
@@ -160,13 +171,22 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       const displayedMarkdown = publicSources.length ? stripTrailingSourceList(part.markdown) : part.markdown;
       return displayedMarkdown ? (
         <div key={part.id} className={`structured-markdown-part ${focusedPartId === part.id ? "relation-focus" : ""}`} data-structured-part-id={part.id}>
-          <ChatMessageContent content={displayedMarkdown} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
+          <ChatMessageContent
+            content={displayedMarkdown}
+            streaming={part.status === "running"}
+            language={language}
+            onOpenLink={onOpenLink}
+            citations={inlineCitations}
+            onOpenCitation={(citationId) => {
+              const citation = citationParts.find((candidate) => candidate.citationId === citationId);
+              if (citation) onOpenCitation(citation);
+            }}
+          />
           {part.citationIds?.length ? <div className="structured-inline-citations" aria-label={language === "zh" ? "本段引用" : "Citations for this section"}>
             {part.citationIds.map((citationId) => {
               const citation = citationParts.find((candidate) => candidate.citationId === citationId);
               if (!citation) return null;
-              const index = citationParts.findIndex((candidate) => candidate.id === citation.id);
-              return <button type="button" key={citationId} onClick={() => focusPart(citation.id)} title={citation.title} aria-label={`${language === "zh" ? "定位引用" : "Go to citation"} ${index + 1}: ${citation.title}`}>[{index + 1}]</button>;
+              return <button type="button" key={citationId} onClick={() => focusPart(citation.id)} title={[citation.path ?? citation.url ?? citation.title, citation.locator].filter(Boolean).join(" · ")} aria-label={`${language === "zh" ? "定位引用" : "Go to citation"}: ${citation.title}`}>{citationFileName(citation)}</button>;
             })}
           </div> : null}
         </div>
@@ -179,7 +199,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       {part.total !== undefined && part.completed !== undefined ? <small>{part.completed}/{part.total}</small> : null}
     </div>;
     if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} />;
-    if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
+    if (part.kind === "citation") return <CitationItem key={part.id} part={part} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
     if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} capabilityConfigured={configuredCapabilityRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} onOpenLink={onOpenLink} />;
     if (part.kind === "subtask") return <div className={`structured-subtask ${part.status}`} key={part.id}><ListChecks size={14} aria-hidden="true" /><span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span></div>;
     return <NoticeItem key={part.id} part={part} language={language} onOpenDebug={onOpenDebug} />;
@@ -595,27 +615,33 @@ function ArtifactItem({
   );
 }
 
+/** The name a reader recognises: the file, not the number the model wrote. */
+export function citationFileName(part: CitationPart): string {
+  const source = part.documentPath || part.path || part.title;
+  const leaf = source.split(/[\\/]/).filter(Boolean).pop();
+  return leaf || part.title;
+}
+
 function CitationItem({
   part,
-  index,
   language,
   focused,
   onOpen,
   onBack,
 }: {
   part: CitationPart;
-  index: number;
   language: "en" | "zh";
   focused: boolean;
   onOpen: () => void;
   onBack?: () => void;
 }): React.JSX.Element {
-  // Checking a claim means reading the passage it rests on. Only a public URL
-  // can actually be opened; a knowledge citation names a file inside a corpus
-  // the chat cannot resolve, so clicking used to do nothing at all. Showing the
-  // cited passage in place answers the same question without the navigation.
+  // Checking a claim means reading the passage it rests on. A public URL opens
+  // in the browser pane and a Knowledge Base document opens in the source pane
+  // at the cited lines. Anything else can still show its passage in place,
+  // which answers the same question without the navigation.
   const [showExcerpt, setShowExcerpt] = useState(false);
-  const openable = Boolean(part.url && /^https?:\/\//i.test(part.url));
+  const isWeb = Boolean(part.url && /^https?:\/\//i.test(part.url));
+  const openable = isWeb || Boolean(part.knowledgeBaseId && (part.documentPath || part.path));
   const expandable = Boolean(part.excerpt);
   return (
     <div className={`structured-citation ${focused ? "relation-focus" : ""}`} data-structured-part-id={part.id} data-citation-id={part.citationId}>
@@ -627,8 +653,7 @@ function CitationItem({
         aria-expanded={expandable && !openable ? showExcerpt : undefined}
         title={part.url || part.path || part.title}
       >
-        <span className="structured-citation-index">[{index}]</span>
-        <Globe2 size={13} aria-hidden="true" />
+        {isWeb ? <Globe2 size={13} aria-hidden="true" /> : <FileText size={13} aria-hidden="true" />}
         <span>{part.title}</span>
         {part.locator ? <small>{part.locator}</small> : null}
         {openable ? <ArrowUpRight size={12} aria-hidden="true" /> : null}
@@ -645,7 +670,7 @@ function CitationItem({
         </button>
       ) : null}
       {onBack ? (
-        <button type="button" className="structured-citation-back" onClick={onBack} title={language === "zh" ? "返回引用位置" : "Back to citation marker"} aria-label={language === "zh" ? `返回引用 ${index} 的正文位置` : `Back to citation ${index} in the answer`}>
+        <button type="button" className="structured-citation-back" onClick={onBack} title={language === "zh" ? "返回引用位置" : "Back to citation marker"} aria-label={language === "zh" ? `返回引用 ${citationFileName(part)} 的正文位置` : `Back to where ${citationFileName(part)} is cited in the answer`}>
           <Reply size={13} aria-hidden="true" />
         </button>
       ) : null}

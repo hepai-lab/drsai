@@ -9,6 +9,7 @@ import { createStreamingTextFadePlugin, useStreamingTextSegments } from "../stre
 import { splitStreamingMarkdown } from "../streamingMarkdown";
 import { useStreamingDisplayBuffer } from "../streamingDisplayBuffer";
 import { observeStreamingRenderMetric } from "../streamingRenderMetrics";
+import { CITATION_HREF_PREFIX, createCitationMarkerPlugin, type InlineCitationLink } from "../citationMarkerPlugin";
 
 interface ChatMessageContentProps {
   content: string;
@@ -17,7 +18,16 @@ interface ChatMessageContentProps {
   onOpenLink: (href: string | undefined) => void;
   /** When true, treat the whole string as markdown and do not emit nested reasoning blocks. */
   plainMarkdown?: boolean;
+  /**
+   * Citations this message can link its `[E<n>]` markers to. Omitted everywhere
+   * except grounded answers, so ordinary chat renders exactly as before.
+   */
+  citations?: readonly InlineCitationLink[];
+  onOpenCitation?: (citationId: string) => void;
 }
+
+type MarkdownRendererProps =
+  Pick<ChatMessageContentProps, "content" | "onOpenLink" | "streaming" | "citations" | "onOpenCitation">;
 
 function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
@@ -39,19 +49,38 @@ function CopyButton({ value, label }: { value: string; label: string }): React.J
   );
 }
 
-const MarkdownRenderer = memo(function MarkdownRenderer({ content, onOpenLink, streaming = false }: Pick<ChatMessageContentProps, "content" | "onOpenLink" | "streaming">): React.JSX.Element {
+const MarkdownRenderer = memo(function MarkdownRenderer({ content, onOpenLink, streaming = false, citations, onOpenCitation }: MarkdownRendererProps): React.JSX.Element {
   const streamingSegments = useStreamingTextSegments(content, streaming);
   const rehypePlugins = useMemo(() => streamingSegments.length ? [createStreamingTextFadePlugin(streamingSegments)] : [], [streamingSegments]);
+  const remarkPlugins = useMemo(() => {
+    const citationPlugin = citations?.length ? createCitationMarkerPlugin(citations) : undefined;
+    return citationPlugin ? [remarkGfm, citationPlugin] : [remarkGfm];
+  }, [citations]);
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={remarkPlugins}
       rehypePlugins={rehypePlugins}
       components={{
-        a: ({ href, children }) => (
-          <button className="markdown-link" type="button" onClick={() => onOpenLink(href)}>
-            {children}
-          </button>
-        ),
+        a: ({ href, children, title }) => {
+          if (href?.startsWith(CITATION_HREF_PREFIX)) {
+            const citationId = href.slice(CITATION_HREF_PREFIX.length);
+            return (
+              <button
+                className="markdown-citation-link"
+                type="button"
+                title={title}
+                onClick={() => onOpenCitation?.(citationId)}
+              >
+                {children}
+              </button>
+            );
+          }
+          return (
+            <button className="markdown-link" type="button" onClick={() => onOpenLink(href)}>
+              {children}
+            </button>
+          );
+        },
         pre: ({ children }) => {
           const child = Array.isArray(children) ? children[0] : children;
           const props = child && typeof child === "object" && "props" in child
@@ -81,7 +110,7 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content, onOpenLink, s
   );
 });
 
-function MarkdownContent({ content, onOpenLink, streaming = false }: Pick<ChatMessageContentProps, "content" | "onOpenLink" | "streaming">): React.JSX.Element {
+function MarkdownContent({ content, onOpenLink, streaming = false, citations, onOpenCitation }: MarkdownRendererProps): React.JSX.Element {
   const renderStartedAt = performance.now();
   const displayedContent = useStreamingDisplayBuffer(content, streaming);
   const split = useMemo(() => streaming ? splitStreamingMarkdown(displayedContent) : { stable: "", tail: displayedContent }, [displayedContent, streaming]);
@@ -92,8 +121,8 @@ function MarkdownContent({ content, onOpenLink, streaming = false }: Pick<ChatMe
     <Profiler id="streaming-markdown" onRender={(_id, _phase, actualDuration) => {
       if (streaming) observeStreamingRenderMetric("markdown-render", actualDuration);
     }}>
-      {split.stable ? <MarkdownRenderer content={split.stable} onOpenLink={onOpenLink} /> : null}
-      {split.tail ? <MarkdownRenderer content={split.tail} onOpenLink={onOpenLink} streaming={streaming} /> : null}
+      {split.stable ? <MarkdownRenderer content={split.stable} onOpenLink={onOpenLink} citations={citations} onOpenCitation={onOpenCitation} /> : null}
+      {split.tail ? <MarkdownRenderer content={split.tail} onOpenLink={onOpenLink} streaming={streaming} citations={citations} onOpenCitation={onOpenCitation} /> : null}
     </Profiler>
   );
 }
@@ -167,12 +196,14 @@ export const ChatMessageContent = memo(function ChatMessageContent({
   language,
   onOpenLink,
   plainMarkdown = false,
+  citations,
+  onOpenCitation,
 }: ChatMessageContentProps): React.JSX.Element {
   if (plainMarkdown) {
     return (
       <div className="chat-output">
         <div className="chat-markdown">
-          <MarkdownContent content={content} onOpenLink={onOpenLink} streaming={streaming} />
+          <MarkdownContent content={content} onOpenLink={onOpenLink} streaming={streaming} citations={citations} onOpenCitation={onOpenCitation} />
         </div>
       </div>
     );
@@ -184,7 +215,7 @@ export const ChatMessageContent = memo(function ChatMessageContent({
         <ReasoningPart key={part.id} text={part.text} complete={part.complete && !streaming} language={language} />
       ) : (
         <div className="chat-markdown" key={part.id}>
-          <MarkdownContent content={part.text} onOpenLink={onOpenLink} streaming={streaming} />
+          <MarkdownContent content={part.text} onOpenLink={onOpenLink} streaming={streaming} citations={citations} onOpenCitation={onOpenCitation} />
         </div>
       ))}
     </div>

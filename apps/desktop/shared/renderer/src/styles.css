@@ -4546,14 +4546,17 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
 }
 
 .structured-inline-citations button {
-  min-width: 22px;
+  max-width: 220px;
   height: 22px;
-  padding: 0 3px;
+  padding: 0 6px;
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: var(--app-accent-strong);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .structured-inline-citations button:hover {
@@ -4842,11 +4845,6 @@ button.structured-activity-detail:hover {
   text-align: left;
 }
 
-.structured-citation-index {
-  color: var(--app-accent-strong);
-  font-size: 10px;
-}
-
 .structured-citation-back {
   display: grid;
   place-items: center;
@@ -5102,6 +5100,30 @@ button.structured-activity-detail:hover {
   color: var(--app-accent-strong);
   text-align: left;
   text-decoration: underline;
+}
+
+/* Sits at the end of a claim, so it has to read as apparatus rather than as
+   part of the sentence: smaller, quiet until pointed at, and never wrapping
+   mid-name. */
+.markdown-citation-link {
+  display: inline;
+  min-height: auto;
+  margin-left: 3px;
+  padding: 1px 5px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 10px;
+  background: var(--app-panel-soft);
+  color: var(--app-text-secondary);
+  font-size: 0.85em;
+  line-height: 1.4;
+  text-align: left;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.markdown-citation-link:hover {
+  border-color: var(--app-accent-strong);
+  color: var(--app-accent-strong);
 }
 
 .composer {
