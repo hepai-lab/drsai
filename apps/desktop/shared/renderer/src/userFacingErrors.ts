@@ -63,6 +63,96 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       }),
     };
   }
+  if (envelope.code === "image_understanding_model_unavailable") {
+    return {
+      title: language === "zh" ? "未配置图像理解模型" : "Image-understanding model is not configured",
+      action: language === "zh"
+        ? "图片附件和输入内容已保留。请在 Agent 模型设置中绑定图像理解模型后再发送。"
+        : "Your image attachment and input were preserved. Bind an image-understanding model in Agent model settings, then send again.",
+      retryable: false,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "image_generation_model_unavailable") {
+    return {
+      title: language === "zh" ? "未配置图像生成模型" : "Image-generation model is not configured",
+      action: language === "zh"
+        ? "输入内容已保留。请在 Agent 模型设置中绑定图像生成模型后再发送。"
+        : "Your input was preserved. Bind an image-generation model in Agent model settings, then send again.",
+      retryable: false,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "image_understanding_failed") {
+    return {
+      title: language === "zh" ? "图像理解失败" : "Image understanding failed",
+      action: language === "zh"
+        ? "图片附件和输入内容已保留。请检查图像理解模型与凭证后重试，或更换可用的识图模型。"
+        : "Your image attachment and input were preserved. Check the image-understanding model and credentials, then retry or select another vision model.",
+      retryable: envelope.retryable,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "model_unauthorized") {
+    return {
+      title: language === "zh" ? "图像理解模型鉴权失败" : "Image-understanding model authorization failed",
+      action: language === "zh"
+        ? "图片附件已保留。请重新登录 AI 平台账号，确认已开通该识图模型，然后重试。"
+        : "Your image attachment was preserved. Sign in to the AI platform again, confirm the vision model is enabled, then retry.",
+      retryable: envelope.retryable,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "upstream_unavailable" || envelope.code === "worker_unavailable") {
+    return {
+      title: language === "zh" ? "所选模型暂时不可用" : "The selected model is temporarily unavailable",
+      action: language === "zh"
+        ? "请到 AI 平台确认该模型是否在线，稍后重试，或在 Agent 模型设置中改选其他可用模型。"
+        : "Check the AI platform for model availability, retry later, or select another available model in Agent model settings.",
+      retryable: true,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "reasoning_effort_unsupported") {
+    return {
+      title: language === "zh" ? "当前模型不支持该推理强度" : "This model does not support the selected reasoning effort",
+      action: language === "zh"
+        ? "请把推理强度改为「无」或不支持推理的模型可用的档位，或改回 DeepSeek 等支持推理的主模型。"
+        : "Clear reasoning effort, pick a supported level, or switch back to a reasoning-capable primary model such as DeepSeek.",
+      retryable: false,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
   if (envelope.code === "runtime_restart_interrupted") {
     return {
       title: language === "zh" ? "任务因 Runtime 重启而中断" : "The task was interrupted by a Runtime restart",

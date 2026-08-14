@@ -112,7 +112,8 @@ import { copyTextSafely } from "./clipboard";
 import { PerceptorSettingsPanel } from "./components/PerceptorSettingsPanel";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
 import { userFacingBusinessText, userFacingFailureMessage } from "./userFacingLanguage";
-import { isSelectableModelAvailability, modelCatalogRecoveryCopy } from "./modelCatalogRecovery";
+import { isSelectableModelAvailability, modelCatalogRecoveryCopy, supportsFullAgentPrimaryRuntime } from "./modelCatalogRecovery";
+
 import { normalizeRuntimeErrorEnvelope } from "../../api/errorEnvelope";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
@@ -515,13 +516,19 @@ function AuthenticatedApp({
     DesktopAgent["examples"]
   >();
   const selectedChatAgent = availableChatAgents.find((agent) => agent.id === selectedChatAgentId);
+  const selectedChatModelRef = selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id
+    ? myDrSaiAgentModelPolicy?.effective_ref ?? undefined
+    : selectedChatAgentId
+      ? agentConfigurations[selectedChatAgentId]?.modelRef
+      : undefined;
   const chatModelOptions = useMemo(
     () => getAgentModelOptions(
       availableChatModels,
       selectedChatAgent,
       selectedChatModel,
+      selectedChatModelRef,
     ),
-    [availableChatModels, selectedChatAgent, selectedChatModel],
+    [availableChatModels, selectedChatAgent, selectedChatModel, selectedChatModelRef],
   );
   const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
   const resultsContainer = useResultsContainerController();
@@ -2046,7 +2053,10 @@ function AuthenticatedApp({
 
   function handleChatModelSelect(model: string, providerId?: string): void {
     if (selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id) {
-      void configureAgentModel(selectedChatAgentId, model, providerId);
+      void configureAgentModel(selectedChatAgentId, model, providerId).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setModelConfigMessage(zh ? `切换模型失败：${message}` : `Model switch failed: ${message}`);
+      });
       return;
     }
     setSelectedChatModel(model);
@@ -2061,32 +2071,53 @@ function AuthenticatedApp({
   async function configureAgentModel(agentId: string, model: string, providerId?: string): Promise<void> {
     if (agentId === myDrSaiAgentModelPolicy?.agent_id) {
       const activeProvider = myDrSaiConfig?.modelConnection?.model_provider;
-      const candidates = availableChatModels.filter((item) => item.alias === model && item.provider_id);
+      const candidates = availableChatModels.filter((item) => {
+        if (!item.provider_id) return false;
+        const normalized = model.trim().toLowerCase();
+        return [item.alias, item.model, item.display_name]
+          .filter((value): value is string => Boolean(value))
+          .some((value) => value.trim().toLowerCase() === normalized);
+      });
       const selected = candidates.find((item) => item.provider_id === providerId)
         ?? candidates.find((item) => item.provider_id === activeProvider)
         ?? candidates[0];
       if (!selected?.provider_id) throw new Error("The selected OpenDrSai model is not in the Provider catalog.");
-      const currentEffort = myDrSaiAgentModelPolicy?.reasoning_effort;
-      const selectedEfforts = selected.reasoning_efforts ?? [];
-      const reasoningEffort = currentEffort && selectedEfforts.includes(currentEffort)
-        ? currentEffort
-        : selectedEfforts.includes("high") ? "high" : selectedEfforts[0] ?? null;
+      if (!supportsFullAgentPrimaryRuntime(selected)) {
+        throw new Error(
+          "The selected model cannot be used as the OpenDrSai primary model. Choose a model with chat and tool_calling, and assign vision models under Image understanding.",
+        );
+      }
+      // Always re-read revision: external/config edits otherwise cause silent ConfigConflict
+      // and the Composer model picker appears stuck.
+      const latestPolicy = await desktopApi.getMyDrSaiAgentModelPolicy(agentId);
+      setMyDrSaiAgentModelPolicy(latestPolicy);
+      const selectedEfforts = selected.operations?.includes("reasoning")
+        ? (selected.reasoning_efforts ?? [])
+        : [];
+      const currentEffort = latestPolicy.reasoning_effort;
+      const reasoningEffort = selectedEfforts.length === 0
+        ? null
+        : currentEffort && selectedEfforts.includes(currentEffort)
+          ? currentEffort
+          : selectedEfforts.includes("high") ? "high" : selectedEfforts[0] ?? null;
+      const modelId = selected.model || selected.alias;
       const updated = await desktopApi.updateMyDrSaiAgentModelPolicy(agentId, {
         agent_id: agentId,
-        primary_model: { mode: "explicit", ref: { provider_id: selected.provider_id, model_id: selected.alias } },
-        image_understanding_model: myDrSaiAgentModelPolicy?.image_understanding_model ?? null,
-        image_generation_model: myDrSaiAgentModelPolicy?.image_generation_model ?? myDrSaiAgentModelPolicy?.image_model ?? null,
-        text_to_speech_model: myDrSaiAgentModelPolicy?.text_to_speech_model ?? null,
-        realtime_voice_model: myDrSaiAgentModelPolicy?.realtime_voice_model ?? null,
-        speech_to_text_model: myDrSaiAgentModelPolicy?.speech_to_text_model ?? null,
+        primary_model: { mode: "explicit", ref: { provider_id: selected.provider_id, model_id: modelId } },
+        image_understanding_model: latestPolicy.image_understanding_model ?? null,
+        image_generation_model: latestPolicy.image_generation_model ?? latestPolicy.image_model ?? null,
+        text_to_speech_model: latestPolicy.text_to_speech_model ?? null,
+        realtime_voice_model: latestPolicy.realtime_voice_model ?? myDrSaiAgentModelPolicy?.realtime_voice_model ?? null,
+        speech_to_text_model: latestPolicy.speech_to_text_model ?? null,
         reasoning_effort: reasoningEffort,
-        expected_revision: myDrSaiAgentModelPolicy?.revision,
+        expected_revision: latestPolicy.revision,
       });
       if (!updated.valid || !updated.effective_ref) {
         throw new Error(updated.error || "The Agent primary model configuration is invalid.");
       }
       const effectiveRef = updated.effective_ref;
       setMyDrSaiAgentModelPolicy(updated);
+      if (reasoningEffort) setDefaultThinkingEffort(reasoningEffort);
       setAgentConfigurations((current) => ({
         ...current,
         [agentId]: { ...current[agentId], model: effectiveRef.model_id, modelRef: effectiveRef },
@@ -2731,6 +2762,20 @@ function AuthenticatedApp({
           onRecoveryAction={handleChatRecoveryAction}
           onOpenPreviewBrowser={platformDescriptor?.capabilities.features.browser !== true ? undefined : openPreviewBrowser}
           onOpenWorkspaceArtifact={(path) => {
+            const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+            setActiveThreadFileTraceEvents([
+              {
+                action: "agent_artifact",
+                at: new Date().toISOString(),
+                hash: `open-${name}`,
+                name,
+                path,
+                scopeId: activeThreadId,
+                snapshotId: `artifact-open-${Date.now().toString(36)}`,
+                source: "chat artifact",
+              },
+              ...workspaceFileTraceEvents,
+            ]);
             setFilesPanelFocusPath(path);
             setActiveRightTab("files");
             setRightPanelCollapsed(false);
@@ -3610,6 +3655,21 @@ function loadRemoteRecentPaths(): string[] {
  * chips, strip injection text, coalesce empty assistant shells, and keep a richer
  * local transcript when Runtime only sends thin placeholders.
  */
+function preferAttachmentPreviews(
+  incoming: ChatAttachment[],
+  existing?: ChatAttachment[],
+): ChatAttachment[] {
+  if (!existing?.length) return incoming;
+  return incoming.map((attachment) => {
+    if (attachment.screenshotDataUrl?.startsWith("data:image/")) return attachment;
+    const match = existing.find((candidate) =>
+      (candidate.path && attachment.path && candidate.path === attachment.path)
+      || (candidate.name && attachment.name && candidate.name === attachment.name));
+    if (!match?.screenshotDataUrl?.startsWith("data:image/")) return attachment;
+    return { ...attachment, screenshotDataUrl: match.screenshotDataUrl };
+  });
+}
+
 function mergeThreadSnapshotForDisplay(
   incoming: ChatThreadSnapshot,
   existing?: ChatThreadSnapshot,
@@ -3621,10 +3681,11 @@ function mergeThreadSnapshotForDisplay(
   const scrubbedIncoming = incoming.messages.map((message) => {
     if (message.role !== "user") return message;
     const content = stripAttachmentContextFromUserContent(message.content);
-    const attachments = message.attachments?.length
-      ? message.attachments
-      : existingUserAttachments[userIndex];
+    const existingAttachments = existingUserAttachments[userIndex];
     userIndex += 1;
+    const attachments = message.attachments?.length
+      ? preferAttachmentPreviews(message.attachments, existingAttachments)
+      : existingAttachments;
     if (content === message.content && attachments === message.attachments) return message;
     return {
       ...message,
@@ -9016,8 +9077,11 @@ function SettingsPanel({
                       {providerModels.map((model) => {
                         const selected = model.provider_id === displayedPrimaryModelRef?.provider_id && model.alias === displayedPrimaryModelRef?.model_id;
                         const usable = isSelectableModelAvailability(model.availability);
-                        const status = usable ? "" : ` · ${model.availability}`;
-                        return <option key={`${model.provider_id || "backend"}:${model.alias}`} disabled={!usable && !selected} value={activeAgentConfigurationTab === "opendrsai" ? `${encodeURIComponent(model.provider_id || "") }::${encodeURIComponent(model.alias)}` : model.alias}>{`${model.display_name || model.alias}${status}`}</option>;
+                        const primaryReady = supportsFullAgentPrimaryRuntime(model);
+                        const status = !primaryReady
+                          ? (zh ? " · 不可作主模型" : " · not a primary model")
+                          : usable ? "" : ` · ${model.availability}`;
+                        return <option key={`${model.provider_id || "backend"}:${model.alias}`} disabled={(!usable || !primaryReady) && !selected} value={activeAgentConfigurationTab === "opendrsai" ? `${encodeURIComponent(model.provider_id || "") }::${encodeURIComponent(model.alias)}` : model.alias}>{`${model.display_name || model.alias}${status}`}</option>;
                       })}
                     </optgroup>)}
                   </select>
@@ -9403,10 +9467,25 @@ function getAgentModelOptions(
   selectedModel: string | null,
   selectedModelRef?: { provider_id: string; model_id: string },
 ): MyDrSaiModelConfig[] {
+  const isSelectedPrimary = (model: MyDrSaiModelConfig): boolean => {
+    if (selectedModelRef?.provider_id && selectedModelRef.model_id) {
+      return model.provider_id === selectedModelRef.provider_id
+        && (model.alias === selectedModelRef.model_id || model.model === selectedModelRef.model_id);
+    }
+    if (!selectedModel?.trim()) return false;
+    const normalized = selectedModel.trim().toLowerCase();
+    return [model.alias, model.model, model.display_name]
+      .filter((value): value is string => Boolean(value))
+      .some((value) => value.trim().toLowerCase() === normalized);
+  };
+  const allowAsPrimaryOption = (model: MyDrSaiModelConfig): boolean =>
+    supportsFullAgentPrimaryRuntime(model) || isSelectedPrimary(model);
+
   if (agent?.source === "local" && agent.id !== "my-codex") {
     const providerAware = new Map<string, MyDrSaiModelConfig>();
     for (const model of catalog) {
       if (!model.provider_id || !model.alias) continue;
+      if (!allowAsPrimaryOption(model)) continue;
       providerAware.set(`${model.provider_id}\0${model.alias}`, model);
     }
     if (providerAware.size > 0) return [...providerAware.values()];
