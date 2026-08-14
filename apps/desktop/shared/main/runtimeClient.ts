@@ -557,7 +557,8 @@ export class RuntimeProtocolCompatibilityError extends Error {
 
 export class RuntimeClientGenerationInvalidatedError extends Error {
   readonly code = "runtime_client_generation_invalidated";
-  readonly retryable = false;
+  /** Callers should reconnect with a fresh Runtime client; the previous generation is gone. */
+  readonly retryable = true;
   constructor() {
     super("Runtime connection generation changed; reconnect using the current Runtime endpoint.");
     this.name = "RuntimeClientGenerationInvalidatedError";
@@ -1723,6 +1724,27 @@ export function invalidateRuntimeClientRegistry(streamIdentity?: string): void {
 }
 
 export async function connectRuntimeClientForWorkspace(
+  workspacePath: string,
+  workspaceId?: string,
+  workspaceName?: string,
+): Promise<{ client: RuntimeClient; workspaceId: string }> {
+  let lastError: unknown;
+  // Thread switches and concurrent hydration often race a Runtime generation
+  // change. One bounded reconnect avoids surfacing a transient connection
+  // invalidation as a conversation-history failure banner.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await connectRuntimeClientForWorkspaceOnce(workspacePath, workspaceId, workspaceName);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof RuntimeClientGenerationInvalidatedError) || attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function connectRuntimeClientForWorkspaceOnce(
   workspacePath: string,
   workspaceId?: string,
   workspaceName?: string,

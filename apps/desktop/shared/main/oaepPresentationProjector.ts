@@ -76,9 +76,12 @@ export function projectOaepEventForPresentation(
     return output;
   }
   if (event.type === "event.run.resumed") {
+    // Protocol: resume only follows waiting, and must carry a reason
+    // (approval_resolved / resumed). Reason-less resumes are audit noise.
+    const reason = event.data?.reason;
+    if (typeof reason !== "string" || !reason.trim()) return output;
     ensureStarted();
-    output.push({ ...base("turn-resumed"), type: "turn.resumed",
-      ...(event.data.reason ? { reason: String(event.data.reason) } : {}) });
+    output.push({ ...base("turn-resumed"), type: "turn.resumed", reason });
     return output;
   }
   if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {

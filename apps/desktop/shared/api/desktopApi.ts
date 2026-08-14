@@ -5030,6 +5030,8 @@ export interface PickedFileDescriptor {
   sensitiveKinds?: Array<"api_key" | "bearer_token" | "email" | "phone" | "user_secret">;
   sensitiveValueCount?: number;
   privacyNotice?: string;
+  /** Bounded data URL for image chips / chat bubbles (pick-time preview). */
+  previewDataUrl?: string;
 }
 
 export type MaterialRole =

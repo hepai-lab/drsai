@@ -11,9 +11,15 @@ import { copyTextSafely } from "../clipboard";
 import type { AppLanguage } from "../navigation";
 import { useAuth } from "./AuthProvider";
 
+const LANGUAGE_STORAGE_KEY = "opendrsai.language";
+
+function loadStoredLanguage(): AppLanguage {
+  return window.localStorage.getItem(LANGUAGE_STORAGE_KEY) === "en" ? "en" : "zh";
+}
+
 export function LoginScreen(): React.JSX.Element {
   const auth = useAuth();
-  const [language, setLanguage] = useState<AppLanguage>("zh");
+  const [language, setLanguage] = useState<AppLanguage>(() => loadStoredLanguage());
   const [debugOpen, setDebugOpen] = useState(false);
   const [loginEvents, setLoginEvents] = useState<OidcLoginDebugEvent[]>([]);
   const [rememberMe, setRememberMe] = useState(true);
@@ -28,6 +34,11 @@ export function LoginScreen(): React.JSX.Element {
     if (!latestLoginEvent) return zh ? "尚未开始" : "Not started";
     return getDebugStageLabel(latestLoginEvent.stage, zh);
   }, [latestLoginEvent, zh]);
+
+  useEffect(() => {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+  }, [language]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {

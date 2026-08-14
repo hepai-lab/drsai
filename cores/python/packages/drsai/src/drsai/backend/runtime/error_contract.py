@@ -19,7 +19,7 @@ _SECRET = re.compile(r"(?:token|secret|password|cookie|authorization|api.?key|cr
 _SAFE_DETAIL_KEYS = frozenset({
     "request_id", "run_id", "event", "method", "bound_model", "requested_model",
     "maximum_queue_length", "received_bytes", "maximum_bytes", "reason",
-    "approval_id",
+    "approval_id", "error_code", "provider_status",
 })
 
 
@@ -35,7 +35,7 @@ def error_category(code: str) -> str:
         return "resource"
     if any(part in value for part in ("history", "cursor", "snapshot")):
         return "history"
-    if "model" in value:
+    if "image_understanding" in value or "worker_unavailable" in value or "model" in value:
         return "model"
     if any(part in value for part in ("connection", "transport", "eof", "timeout", "network", "bridge")):
         return "transport"

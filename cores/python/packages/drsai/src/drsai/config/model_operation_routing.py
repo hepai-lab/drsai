@@ -187,12 +187,28 @@ def resolve_agent_operation(
     except ValueError as exc:
         raise ModelOperationRoutingError("configuration_invalid", str(exc)) from exc
     route_plan = default_operation_routes(selection.ref, operation)
-    is_gemini_family = selection.ref.model_id.casefold().startswith("gemini-")
-    if role == "image_understanding_model" and operation == "chat" and is_gemini_family:
-        route_plan = ModelOperationRoutePlan(selection.ref, operation, (
-            *route_plan.routes,
-            ModelOperationRoute("gemini_generate_content", 30),
-        ))
+    model_id = selection.ref.model_id.casefold()
+    is_gemini_family = (
+        model_id.startswith("gemini-")
+        or model_id.startswith("google/gemini")
+        or "/gemini" in model_id
+    )
+    if role == "image_understanding_model" and operation == "chat":
+        # Match WebUI Magentic-One: multimodal OpenAI Chat Completions first, with
+        # data-URL image_url parts. Gemini generateContent is only a fallback —
+        # HepAI Magentic does not use it for screenshot understanding.
+        openai_first = (
+            ModelOperationRoute("openai_chat_completions", 10),
+            ModelOperationRoute("openai_responses", 20),
+        )
+        route_plan = ModelOperationRoutePlan(
+            selection.ref,
+            operation,
+            (
+                *openai_first,
+                ModelOperationRoute("gemini_generate_content", 30),
+            ) if is_gemini_family else openai_first,
+        )
     elif role == "image_understanding_model" and operation == "tool_calling" and is_gemini_family:
         route_plan = ModelOperationRoutePlan(selection.ref, operation, (
             ModelOperationRoute("gemini_generate_content", 10),

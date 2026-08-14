@@ -1,6 +1,19 @@
-import type { RuntimeModelAvailability, RuntimeModelCatalogState } from "../../api/desktopApi";
+import type {
+  MyDrSaiModelConfig,
+  RuntimeModelAvailability,
+  RuntimeModelCatalogState,
+} from "../../api/desktopApi";
 
 export type ModelCatalogRecoveryState = RuntimeModelCatalogState | RuntimeModelAvailability | "unconfigured" | "empty" | "timeout";
+
+/** Full Agent Runtime primary models must declare chat + tool_calling (Gateway gate). */
+export function supportsFullAgentPrimaryRuntime(model: Pick<MyDrSaiModelConfig, "operations" | "input_modalities" | "output_modalities">): boolean {
+  const operations = model.operations ?? [];
+  if (!operations.includes("chat") || !operations.includes("tool_calling")) return false;
+  if (model.input_modalities && !model.input_modalities.includes("text")) return false;
+  if (model.output_modalities && !model.output_modalities.includes("text")) return false;
+  return true;
+}
 
 const COPY: Record<string, { zh: [string, string]; en: [string, string] }> = {
   unconfigured: { zh: ["尚未配置模型服务", "先在“模型提供方”中配置 Provider 和模型。"], en: ["Model service is not configured", "Configure a Provider and its models in Model providers."] },

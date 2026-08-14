@@ -104,8 +104,31 @@ def test_image_understanding_includes_gemini_native_candidate() -> None:
         require_credentials=False,
     )
     assert [route.protocol for route in resolved.route_plan.routes] == [
-        "openai_responses", "openai_chat_completions", "gemini_generate_content",
+        "openai_chat_completions", "openai_responses", "gemini_generate_content",
     ]
+
+
+def test_image_understanding_accepts_google_prefixed_gemini_ids() -> None:
+    config = parse_user_config({"model_providers": {"hepai": {
+        "base_url": "https://aiapi.ihep.ac.cn/apiv2",
+        "google_base_url": "https://aiapi.ihep.ac.cn/apiv2/google",
+        "requires_api_key": False,
+        "models": {"google/gemini-3-flash-preview": {
+            "input_modalities": ["text", "image"], "output_modalities": ["text"],
+            "capabilities": ["chat", "tool_calling"], "api_protocol": "gemini",
+        }},
+    }}})
+    policy = AgentModelPolicy(
+        agent_id="opendrsai",
+        image_understanding_model=AgentModelSelection(
+            "explicit", ModelRef("hepai", "google/gemini-3-flash-preview"),
+        ),
+    )
+    resolved = resolve_agent_operation(
+        config, policy, role="image_understanding_model", operation="chat",
+        require_credentials=False,
+    )
+    assert "gemini_generate_content" in [route.protocol for route in resolved.route_plan.routes]
 
 
 def test_image_understanding_tool_calling_uses_gemini_native_route() -> None:
@@ -116,7 +139,7 @@ def test_image_understanding_tool_calling_uses_gemini_native_route() -> None:
     assert [route.protocol for route in resolved.route_plan.routes] == ["gemini_generate_content"]
 
 
-def test_openai_image_understanding_uses_responses_for_chat_and_tools() -> None:
+def test_openai_image_understanding_prefers_chat_completions_like_webui() -> None:
     config = parse_user_config({"model_providers": {"zhizengzeng": {
         "base_url": "https://provider.example/v1", "requires_api_key": False,
         "models": {"gpt-5.6-luna": {
@@ -135,9 +158,12 @@ def test_openai_image_understanding_uses_responses_for_chat_and_tools() -> None:
             config, policy, role="image_understanding_model", operation=operation,
             require_credentials=False,
         )
-        assert [route.protocol for route in resolved.route_plan.routes] == [
-            "openai_responses", "openai_chat_completions",
-        ]
+        expected = (
+            ["openai_chat_completions", "openai_responses"]
+            if operation == "chat"
+            else ["openai_responses", "openai_chat_completions"]
+        )
+        assert [route.protocol for route in resolved.route_plan.routes] == expected
 
 
 def test_agent_operation_resolves_provider_key_from_process_environment(monkeypatch) -> None:

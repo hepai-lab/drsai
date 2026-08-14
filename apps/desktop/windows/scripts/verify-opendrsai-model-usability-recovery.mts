@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { isSelectableModelAvailability, modelCatalogRecoveryCopy } from "../../shared/renderer/src/modelCatalogRecovery.ts";
+import { isSelectableModelAvailability, modelCatalogRecoveryCopy, supportsFullAgentPrimaryRuntime } from "../../shared/renderer/src/modelCatalogRecovery.ts";
 
 const states = ["unconfigured", "empty", "unauthorized", "offline", "timeout", "stale", "unavailable", "error"] as const;
 const zhTitles = new Set<string>();
@@ -20,6 +20,15 @@ assert.equal(isSelectableModelAvailability("configured_unverified"), true);
 for (const state of ["stale", "offline", "unauthorized", "unavailable"] as const) {
   assert.equal(isSelectableModelAvailability(state), false, `${state} models must not be selectable for a new task`);
 }
+assert.equal(
+  supportsFullAgentPrimaryRuntime({ operations: ["chat", "tool_calling"], input_modalities: ["text"], output_modalities: ["text"] }),
+  true,
+);
+assert.equal(
+  supportsFullAgentPrimaryRuntime({ operations: ["chat"], input_modalities: ["text", "image"], output_modalities: ["text"] }),
+  false,
+  "vision-only chat models must not qualify as Full Agent primary models",
+);
 
 const appSource = readFileSync(resolve(import.meta.dirname, "../../shared/renderer/src/App.tsx"), "utf8");
 const configSource = readFileSync(resolve(import.meta.dirname, "../../shared/main/myDrSaiConfig.ts"), "utf8");
@@ -27,7 +36,8 @@ const apiSource = readFileSync(resolve(import.meta.dirname, "../../shared/api/de
 
 assert.match(appSource, /<optgroup key=\{provider\} label=\{provider\}>/, "Agent models must be grouped by Provider");
 assert.match(appSource, /data-testid="agent-text-model-select" aria-label=/, "model selection must have an accessible name");
-assert.match(appSource, /disabled=\{!usable && !selected\}/, "unusable models must be disabled while the current selection remains visible");
+assert.match(appSource, /disabled=\{\(!usable \|\| !primaryReady\) && !selected\}/, "unusable or non-primary models must be disabled while the current selection remains visible");
+assert.match(appSource, /supportsFullAgentPrimaryRuntime/, "OpenDrSai primary pickers must require Full Agent Runtime capabilities");
 assert.match(appSource, /data-testid="agent-model-catalog-recovery"[\s\S]{0,900}agent-model-refresh/, "catalog failures must expose an inline refresh action");
 assert.match(appSource, /agent-model-sign-in/, "authorization failures must expose re-authentication");
 assert.match(appSource, /agent-model-use-default/, "unavailable selections must expose an explicit Provider-default recovery");

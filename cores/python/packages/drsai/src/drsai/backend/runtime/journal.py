@@ -535,6 +535,16 @@ class RuntimeConversationJournal:
             normalized["type"] = "event.session.updated"
             normalized.pop("item_id", None)
             normalized.pop("item_revision", None)
+            return normalized
+        # Older builds mis-projected Item audit rows as event.run.resumed
+        # without a resume reason. Demote them on read/write so replay and
+        # live clients stop treating every token delta as a Run resume.
+        if event_type == "event.run.resumed":
+            data = normalized.get("data") if isinstance(normalized.get("data"), dict) else {}
+            if not data.get("reason"):
+                normalized["type"] = "event.session.updated"
+                normalized.pop("item_id", None)
+                normalized.pop("item_revision", None)
         return normalized
 
     def _store_oaep_event(

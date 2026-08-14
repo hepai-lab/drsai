@@ -73,6 +73,36 @@ def test_artifact_rejects_invalid_ranges(tmp_path: Path, offset: int, length: in
     assert error.value.code == "artifact_range_invalid"
 
 
+def test_image_mime_publishes_as_image_artifact_type(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    image_path = root / "artifacts" / "opendrsai-agent-runtime.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    store = RuntimeArtifactStore(tmp_path / "artifacts.sqlite3", lambda _: root)
+
+    published = store.publish(
+        _context(),
+        {
+            "path": "artifacts/opendrsai-agent-runtime.png",
+            "display_name": "opendrsai-agent-runtime.png",
+            "mime_type": "image/png",
+        },
+    )
+    assert published["artifact_type"] == "image"
+    assert published["previewable"] is True
+    assert published["path"] == "artifacts/opendrsai-agent-runtime.png"
+
+    opaque = store.publish_content(
+        _context(),
+        b"\x89PNG\r\n\x1a\n" + b"\x00" * 32,
+        display_name="inline.png",
+        mime_type="image/png",
+    )
+    assert opaque["artifact_type"] == "image"
+    assert opaque["previewable"] is True
+
+
 def test_artifact_publish_rejects_path_escape_and_directory(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     root.mkdir()

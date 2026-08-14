@@ -729,6 +729,15 @@ export function useDesktopChatAdapter({
     }
     if (event.type === "oaep" && event.oaepEvent) {
       const oaep = event.oaepEvent;
+      // High-frequency stream events must not fill the debug ring buffer with
+      // full envelopes — that previously OOMed the renderer on long runs.
+      if (
+        oaep.type === "event.item.delta"
+        || oaep.type === "event.session.updated"
+        || (oaep.type === "event.run.resumed" && !(typeof oaep.data?.reason === "string" && oaep.data.reason.trim()))
+      ) {
+        return;
+      }
       appendRuntimeLogEvent({
         id: oaep.event_id,
         timestamp: oaep.timestamp,
@@ -749,7 +758,11 @@ export function useDesktopChatAdapter({
         sequence: oaep.sequence,
         cursor: oaep.sequence,
         source: oaep.source.backend,
-        details: oaep as unknown as Record<string, unknown>,
+        details: {
+          eventId: oaep.event_id,
+          dedupeKey: oaep.dedupe_key,
+          type: oaep.type,
+        },
       });
       const capabilityConfiguration = capabilityConfigurationPartFromOaep(oaep);
       if (capabilityConfiguration) {
@@ -2901,7 +2914,9 @@ function applyStructuredEventToMessage(
     content: content || errorNotice?.message || message.content,
     reasoningContent,
     streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
-    error: structuredTurn.status === "error" || message.error,
+    error: structuredTurn.status === "completed" || structuredTurn.status === "cancelled"
+      ? false
+      : structuredTurn.status === "error" || Boolean(message.error),
     inputRequest: activeInteraction && activeInteraction.interactionType !== "capability_configuration"
       ? {
           requestId: activeInteraction.requestId,
@@ -2937,7 +2952,11 @@ function sanitizeStructuredAssistantMessage(message: UiMessage): UiMessage {
     // interrupted/cancelled run may still carry the older `streaming: true`
     // flag, which otherwise leaves the elapsed-time indicator running forever.
     streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
-    error: hadTerminalError ? false : message.error,
+    // A late transport/error event must not keep "Reply failed" after OAEP has
+    // already completed or cancelled the same turn.
+    error: structuredTurn.status === "completed" || structuredTurn.status === "cancelled"
+      ? false
+      : hadTerminalError ? false : Boolean(message.error),
   };
 }
 

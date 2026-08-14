@@ -111,8 +111,9 @@ import { desktopApi } from "./desktopApi";
 import { copyTextSafely } from "./clipboard";
 import { PerceptorSettingsPanel } from "./components/PerceptorSettingsPanel";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
-import { userFacingFailureMessage } from "./userFacingLanguage";
-import { isSelectableModelAvailability, modelCatalogRecoveryCopy } from "./modelCatalogRecovery";
+import { userFacingBusinessText, userFacingFailureMessage } from "./userFacingLanguage";
+import { isSelectableModelAvailability, modelCatalogRecoveryCopy, supportsFullAgentPrimaryRuntime } from "./modelCatalogRecovery";
+
 import { normalizeRuntimeErrorEnvelope } from "../../api/errorEnvelope";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
@@ -422,6 +423,8 @@ function AuthenticatedApp({
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState(() => loadRestoredThreadId());
   const activeThreadIdRef = useRef(activeThreadId);
+  // Deleted ids must ignore late abort/handoff/catalog upserts that would recreate the row.
+  const deletedThreadIdsRef = useRef(new Set<string>());
   useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
   const threadSnapshotStoreRef = useRef<ThreadSnapshotStore | null>(null);
   if (!threadSnapshotStoreRef.current) threadSnapshotStoreRef.current = new ThreadSnapshotStore();
@@ -446,6 +449,7 @@ function AuthenticatedApp({
   }, [activeThreadId]);
   const [hydratingThreadId, setHydratingThreadId] = useState<string | null>(null);
   const [threadHydrationError, setThreadHydrationError] = useState<{ threadId: string; message: string } | null>(null);
+  const [messageFocus, setMessageFocus] = useState<{ messageId: string; nonce: number } | null>(null);
   const [workspaceSortMode, setWorkspaceSortMode] = useState<WorkspaceSortMode>(
     () => loadWorkspaceSortMode(),
   );
@@ -512,13 +516,19 @@ function AuthenticatedApp({
     DesktopAgent["examples"]
   >();
   const selectedChatAgent = availableChatAgents.find((agent) => agent.id === selectedChatAgentId);
+  const selectedChatModelRef = selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id
+    ? myDrSaiAgentModelPolicy?.effective_ref ?? undefined
+    : selectedChatAgentId
+      ? agentConfigurations[selectedChatAgentId]?.modelRef
+      : undefined;
   const chatModelOptions = useMemo(
     () => getAgentModelOptions(
       availableChatModels,
       selectedChatAgent,
       selectedChatModel,
+      selectedChatModelRef,
     ),
-    [availableChatModels, selectedChatAgent, selectedChatModel],
+    [availableChatModels, selectedChatAgent, selectedChatModel, selectedChatModelRef],
   );
   const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
   const resultsContainer = useResultsContainerController();
@@ -902,11 +912,13 @@ function AuthenticatedApp({
       }
     });
     const removeSnapshot = desktopApi.onThreadSnapshot((event) => {
+      if (deletedThreadIdsRef.current.has(event.threadId)) return;
       const snapshot = mergeThreadSnapshotForDisplay(event.snapshot, threadSnapshotStore.get(event.threadId) ?? undefined);
       if (!threadSnapshotCoordinatorRef.current.commitEnvelope(event, () => threadSnapshotStore.set(event.threadId, snapshot))) return;
       batcher.clearThread(event.threadId);
     });
     const removePatch = desktopApi.onThreadSnapshotPatch((event) => {
+      if (deletedThreadIdsRef.current.has(event.threadId)) return;
       threadSyncMetrics.observe("transport", Math.max(0, Date.now() - event.patch.updatedAt));
       const waterline = threadSnapshotCoordinatorRef.current.get(event.threadId);
       if (!threadSnapshotCoordinatorRef.current.acceptPatch(event)) {
@@ -930,6 +942,7 @@ function AuthenticatedApp({
     };
   }, []);
   useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
+    if (deletedThreadIdsRef.current.has(event.thread.id)) return;
     setThreads((current) => sortThreadsForSidebar([
       event.thread,
       ...current.filter((item) => item.id !== event.thread.id),
@@ -1285,7 +1298,16 @@ function AuthenticatedApp({
           setMyDrSaiConfig(myDrSaiConfig);
         }
         setMyDrSaiConfigLoaded(true);
-        if (!myDrSaiConfig.ready) scheduleRetry();
+        // ready:true with a missing modelConnection used to stop retries forever
+        // after a transient /v1/config/model-state failure during gateway startup.
+        if (!myDrSaiConfig.ready) {
+          scheduleRetry();
+        } else if (
+          (!myDrSaiConfig.modelConnection?.model || !myDrSaiConfig.modelConnection.model_provider)
+          && (!agentModelPolicy.valid || !agentModelPolicy.effective_ref)
+        ) {
+          scheduleRetry();
+        }
         if (cancelled || agents.length === 0) return;
         const defaultAgent =
           agents.find((agent) => agent.isDefault) ??
@@ -1704,7 +1726,7 @@ function AuthenticatedApp({
     navigateTo(MENU_IDS.currentSession);
   }
 
-  function handleThreadSelect(threadId: string): void {
+  function handleThreadSelect(threadId: string, messageId?: string): void {
     const thread = threads.find((item) => item.id === threadId);
     if (thread?.boundAgentId) {
       const boundAgent = availableChatAgents.find((agent) => agent.id === thread.boundAgentId);
@@ -1730,6 +1752,9 @@ function AuthenticatedApp({
     setRightPanelCollapsed(true);
     if ((thread?.messageCount ?? 0) > 0 || thread?.runtimeSessionId) {
       void hydrateThreadSnapshot(threadId);
+    }
+    if (messageId) {
+      setMessageFocus({ messageId, nonce: Date.now() });
     }
     if (thread?.unread) {
       void handleThreadUpdate(threadId, { unread: false });
@@ -1785,6 +1810,17 @@ function AuthenticatedApp({
       if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, snapshot))) return;
     } catch (error) {
       if ((error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && /abort|cancel/i.test(error.name))) return;
+      // Runtime generation races during sidebar switches are recovered by the
+      // main-process reconnect path; do not surface them as a hard history banner.
+      const errorCode = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+      if (errorCode === "runtime_client_generation_invalidated" || errorCode === "runtime_generation_invalidated") {
+        if (activeThreadIdRef.current === threadId) {
+          window.setTimeout(() => {
+            if (activeThreadIdRef.current === threadId) void hydrateThreadSnapshot(threadId, { forceFresh: true });
+          }, 250);
+        }
+        return;
+      }
       const state = threadSnapshotCoordinatorRef.current.noteResyncFailure(threadId);
       const friendly = describeUserFacingError(error, language);
       setThreadHydrationError({
@@ -2017,7 +2053,10 @@ function AuthenticatedApp({
 
   function handleChatModelSelect(model: string, providerId?: string): void {
     if (selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id) {
-      void configureAgentModel(selectedChatAgentId, model, providerId);
+      void configureAgentModel(selectedChatAgentId, model, providerId).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setModelConfigMessage(zh ? `切换模型失败：${message}` : `Model switch failed: ${message}`);
+      });
       return;
     }
     setSelectedChatModel(model);
@@ -2032,32 +2071,53 @@ function AuthenticatedApp({
   async function configureAgentModel(agentId: string, model: string, providerId?: string): Promise<void> {
     if (agentId === myDrSaiAgentModelPolicy?.agent_id) {
       const activeProvider = myDrSaiConfig?.modelConnection?.model_provider;
-      const candidates = availableChatModels.filter((item) => item.alias === model && item.provider_id);
+      const candidates = availableChatModels.filter((item) => {
+        if (!item.provider_id) return false;
+        const normalized = model.trim().toLowerCase();
+        return [item.alias, item.model, item.display_name]
+          .filter((value): value is string => Boolean(value))
+          .some((value) => value.trim().toLowerCase() === normalized);
+      });
       const selected = candidates.find((item) => item.provider_id === providerId)
         ?? candidates.find((item) => item.provider_id === activeProvider)
         ?? candidates[0];
       if (!selected?.provider_id) throw new Error("The selected OpenDrSai model is not in the Provider catalog.");
-      const currentEffort = myDrSaiAgentModelPolicy?.reasoning_effort;
-      const selectedEfforts = selected.reasoning_efforts ?? [];
-      const reasoningEffort = currentEffort && selectedEfforts.includes(currentEffort)
-        ? currentEffort
-        : selectedEfforts.includes("high") ? "high" : selectedEfforts[0] ?? null;
+      if (!supportsFullAgentPrimaryRuntime(selected)) {
+        throw new Error(
+          "The selected model cannot be used as the OpenDrSai primary model. Choose a model with chat and tool_calling, and assign vision models under Image understanding.",
+        );
+      }
+      // Always re-read revision: external/config edits otherwise cause silent ConfigConflict
+      // and the Composer model picker appears stuck.
+      const latestPolicy = await desktopApi.getMyDrSaiAgentModelPolicy(agentId);
+      setMyDrSaiAgentModelPolicy(latestPolicy);
+      const selectedEfforts = selected.operations?.includes("reasoning")
+        ? (selected.reasoning_efforts ?? [])
+        : [];
+      const currentEffort = latestPolicy.reasoning_effort;
+      const reasoningEffort = selectedEfforts.length === 0
+        ? null
+        : currentEffort && selectedEfforts.includes(currentEffort)
+          ? currentEffort
+          : selectedEfforts.includes("high") ? "high" : selectedEfforts[0] ?? null;
+      const modelId = selected.model || selected.alias;
       const updated = await desktopApi.updateMyDrSaiAgentModelPolicy(agentId, {
         agent_id: agentId,
-        primary_model: { mode: "explicit", ref: { provider_id: selected.provider_id, model_id: selected.alias } },
-        image_understanding_model: myDrSaiAgentModelPolicy?.image_understanding_model ?? null,
-        image_generation_model: myDrSaiAgentModelPolicy?.image_generation_model ?? myDrSaiAgentModelPolicy?.image_model ?? null,
-        text_to_speech_model: myDrSaiAgentModelPolicy?.text_to_speech_model ?? null,
-        realtime_voice_model: myDrSaiAgentModelPolicy?.realtime_voice_model ?? null,
-        speech_to_text_model: myDrSaiAgentModelPolicy?.speech_to_text_model ?? null,
+        primary_model: { mode: "explicit", ref: { provider_id: selected.provider_id, model_id: modelId } },
+        image_understanding_model: latestPolicy.image_understanding_model ?? null,
+        image_generation_model: latestPolicy.image_generation_model ?? latestPolicy.image_model ?? null,
+        text_to_speech_model: latestPolicy.text_to_speech_model ?? null,
+        realtime_voice_model: latestPolicy.realtime_voice_model ?? myDrSaiAgentModelPolicy?.realtime_voice_model ?? null,
+        speech_to_text_model: latestPolicy.speech_to_text_model ?? null,
         reasoning_effort: reasoningEffort,
-        expected_revision: myDrSaiAgentModelPolicy?.revision,
+        expected_revision: latestPolicy.revision,
       });
       if (!updated.valid || !updated.effective_ref) {
         throw new Error(updated.error || "The Agent primary model configuration is invalid.");
       }
       const effectiveRef = updated.effective_ref;
       setMyDrSaiAgentModelPolicy(updated);
+      if (reasoningEffort) setDefaultThinkingEffort(reasoningEffort);
       setAgentConfigurations((current) => ({
         ...current,
         [agentId]: { ...current[agentId], model: effectiveRef.model_id, modelRef: effectiveRef },
@@ -2124,10 +2184,60 @@ function AuthenticatedApp({
   }
 
   async function handleDeleteThread(threadId: string): Promise<void> {
-    await desktopApi.deleteThread(threadId);
-    setThreads((current) => current.filter((thread) => thread.id !== threadId));
-    if (activeThreadId === threadId) {
-      void handleNewChat();
+    deletedThreadIdsRef.current.add(threadId);
+    const thread = threads.find((item) => item.id === threadId);
+    const wasActive = activeThreadId === threadId;
+    // Optimistic sidebar removal so the row disappears before persistence finishes.
+    setThreads((current) => current.filter((item) => item.id !== threadId));
+    threadSnapshotStore.delete(threadId);
+    setThreadSnapshots((current) => {
+      if (!(threadId in current)) return current;
+      const { [threadId]: _removed, ...rest } = current;
+      return rest;
+    });
+    setThreadHydrationError((current) => (current?.threadId === threadId ? null : current));
+    try {
+      const hydration = threadHydrationsRef.current.get(threadId);
+      if (hydration) {
+        void desktopApi.cancelThreadSnapshotHydration(hydration.requestId).catch(() => false);
+        threadHydrationsRef.current.delete(threadId);
+      }
+      void desktopApi.unsubscribeThreadSnapshot(threadId).catch(() => undefined);
+      // WorkspaceShell persists first via deleteDesktopThread; keep this idempotent for
+      // other entry points. Never rethrow — stale HMR + menu catch was masking real deletes.
+      try {
+        if (typeof window.openDrSai?.deleteThread === "function") {
+          await window.openDrSai.deleteThread(threadId);
+        }
+      } catch (persistError) {
+        console.error("[handleDeleteThread] persist failed", threadId, persistError);
+        deletedThreadIdsRef.current.delete(threadId);
+        await refreshThreads().catch(() => undefined);
+        const detail = persistError instanceof Error ? persistError.message : String(persistError);
+        void showAppNotice({
+          id: "delete-thread-failed",
+          title: language === "zh" ? "删除失败" : "Delete failed",
+          description: language === "zh"
+            ? `本地对话未能永久删除，已恢复到列表。${detail}`
+            : `The local conversation could not be permanently deleted and was restored. ${detail}`,
+        });
+        return;
+      }
+      if (wasActive) {
+        if (window.localStorage.getItem(LAST_THREAD_STORAGE_KEY) === threadId) {
+          window.localStorage.removeItem(LAST_THREAD_STORAGE_KEY);
+        }
+        await chat.abort().catch(() => undefined);
+        setRightPanelCollapsed(true);
+        setActiveThreadId(createLocalThreadId());
+        navigateTo(MENU_IDS.currentSession);
+      } else if (thread?.status === "running" && thread.lastRunId) {
+        const abort = thread.kind === "agent_run" ? desktopApi.abortAgentRun : desktopApi.abortChat;
+        await abort(thread.lastRunId).catch(() => undefined);
+      }
+    } catch (error) {
+      // Persistence already attempted above; keep sidebar tombstone and do not rethrow.
+      console.warn("[handleDeleteThread] cleanup failed", threadId, error);
     }
   }
 
@@ -2135,10 +2245,12 @@ function AuthenticatedApp({
     threadId: string,
     updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThread["fork"] },
   ): Promise<void> {
+    if (deletedThreadIdsRef.current.has(threadId)) return;
     const thread = updates.archived === undefined ? await desktopApi.updateThread({
       id: threadId,
       ...updates,
     }) : await desktopApi.setThreadArchived({ threadId, archived: updates.archived });
+    if (deletedThreadIdsRef.current.has(threadId)) return;
     setThreads((current) =>
       sortThreadsForSidebar([
         thread,
@@ -2173,7 +2285,9 @@ function AuthenticatedApp({
 
   async function handleThreadUpdated(
     snapshot: ChatThreadSnapshot,
+    options?: { preserveSidebarOrder?: boolean },
   ): Promise<void> {
+    if (deletedThreadIdsRef.current.has(snapshot.threadId)) return;
     const storedSnapshot = threadSnapshotStore.get(snapshot.threadId);
     if (!storedSnapshot || storedSnapshot.updatedAt < snapshot.updatedAt) {
       threadSnapshotStore.set(snapshot.threadId, snapshot);
@@ -2181,19 +2295,43 @@ function AuthenticatedApp({
     void desktopApi.updateThreadSnapshot(snapshot).catch(() => {
       // The local snapshot is still kept in renderer state and localStorage if disk persistence fails.
     });
+    const nextStatus = snapshot.messages.some((message) => message.streaming)
+      ? "running"
+      : "idle";
+    // Handoff/settle while switching must not bump updatedAt — that jumps the
+    // previous thread to the top of the sidebar under the newly selected one.
+    if (options?.preserveSidebarOrder) {
+      setThreads((current) => current.map((item) =>
+        item.id === snapshot.threadId
+          ? {
+              ...item,
+              title: snapshot.title || item.title,
+              status: nextStatus,
+              messageCount: snapshot.messageCount,
+            }
+          : item,
+      ));
+      return;
+    }
     const existingThread = threads.find((item) => item.id === snapshot.threadId);
-    const thread = await desktopApi.updateThread({
-      id: snapshot.threadId,
-      kind: existingThread?.kind ?? "chat",
-      title: snapshot.title,
-      workspacePath: effectiveWorkspacePath,
-      boundAgentId: existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined,
-      boundAgentName: existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined,
-      status: snapshot.messages.some((message) => message.streaming)
-        ? "running"
-        : "idle",
-      messageCount: snapshot.messageCount,
-    });
+    let thread: DesktopThread;
+    try {
+      thread = await desktopApi.updateThread({
+        id: snapshot.threadId,
+        kind: existingThread?.kind ?? "chat",
+        title: snapshot.title,
+        workspacePath: effectiveWorkspacePath,
+        boundAgentId: existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined,
+        boundAgentName: existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined,
+        status: nextStatus,
+        messageCount: snapshot.messageCount,
+      });
+    } catch (error) {
+      const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+      if (code === "thread_deleted" || deletedThreadIdsRef.current.has(snapshot.threadId)) return;
+      throw error;
+    }
+    if (deletedThreadIdsRef.current.has(snapshot.threadId)) return;
     setThreads((current) =>
       sortThreadsForSidebar([
         thread,
@@ -2204,7 +2342,8 @@ function AuthenticatedApp({
 
   async function refreshThreads(): Promise<void> {
     try {
-      setThreads(await desktopApi.listThreads());
+      const listed = await desktopApi.listThreads();
+      setThreads(listed.filter((thread) => !deletedThreadIdsRef.current.has(thread.id)));
     } finally {
       setThreadsLoaded(true);
     }
@@ -2512,7 +2651,16 @@ function AuthenticatedApp({
             <DiagnosticsContainer
               decision={operationalDecision}
               language={language}
-              formatError={(error) => userFacingFailureMessage(error, language)}
+              formatError={(error) => {
+                // Prefer explicit recovery guidance (e.g. model auth failure) over the generic backend fallback.
+                const detail = error instanceof Error
+                  ? userFacingBusinessText(error.message, "")
+                  : "";
+                if (detail) {
+                  return language === "zh" ? `操作未完成：${detail}` : `Operation did not complete: ${detail}`;
+                }
+                return userFacingFailureMessage(error, language);
+              }}
               onRecover={performOperationalRecovery}
               report={() => ({
                 product: "OpenDrSai Windows App",
@@ -2550,6 +2698,7 @@ function AuthenticatedApp({
           agentOptions={availableChatAgents}
           modelOptions={chatModelOptions}
           samplePrompts={selectedChatAgent?.examples ?? selectedChatExamples}
+          messageFocus={messageFocus}
           structuredTurnFocus={structuredTurnFocus}
           externalAttachments={externalChatAttachments}
           ideContext={ideContext}
@@ -2613,6 +2762,20 @@ function AuthenticatedApp({
           onRecoveryAction={handleChatRecoveryAction}
           onOpenPreviewBrowser={platformDescriptor?.capabilities.features.browser !== true ? undefined : openPreviewBrowser}
           onOpenWorkspaceArtifact={(path) => {
+            const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+            setActiveThreadFileTraceEvents([
+              {
+                action: "agent_artifact",
+                at: new Date().toISOString(),
+                hash: `open-${name}`,
+                name,
+                path,
+                scopeId: activeThreadId,
+                snapshotId: `artifact-open-${Date.now().toString(36)}`,
+                source: "chat artifact",
+              },
+              ...workspaceFileTraceEvents,
+            ]);
             setFilesPanelFocusPath(path);
             setActiveRightTab("files");
             setRightPanelCollapsed(false);
@@ -3492,6 +3655,21 @@ function loadRemoteRecentPaths(): string[] {
  * chips, strip injection text, coalesce empty assistant shells, and keep a richer
  * local transcript when Runtime only sends thin placeholders.
  */
+function preferAttachmentPreviews(
+  incoming: ChatAttachment[],
+  existing?: ChatAttachment[],
+): ChatAttachment[] {
+  if (!existing?.length) return incoming;
+  return incoming.map((attachment) => {
+    if (attachment.screenshotDataUrl?.startsWith("data:image/")) return attachment;
+    const match = existing.find((candidate) =>
+      (candidate.path && attachment.path && candidate.path === attachment.path)
+      || (candidate.name && attachment.name && candidate.name === attachment.name));
+    if (!match?.screenshotDataUrl?.startsWith("data:image/")) return attachment;
+    return { ...attachment, screenshotDataUrl: match.screenshotDataUrl };
+  });
+}
+
 function mergeThreadSnapshotForDisplay(
   incoming: ChatThreadSnapshot,
   existing?: ChatThreadSnapshot,
@@ -3503,10 +3681,11 @@ function mergeThreadSnapshotForDisplay(
   const scrubbedIncoming = incoming.messages.map((message) => {
     if (message.role !== "user") return message;
     const content = stripAttachmentContextFromUserContent(message.content);
-    const attachments = message.attachments?.length
-      ? message.attachments
-      : existingUserAttachments[userIndex];
+    const existingAttachments = existingUserAttachments[userIndex];
     userIndex += 1;
+    const attachments = message.attachments?.length
+      ? preferAttachmentPreviews(message.attachments, existingAttachments)
+      : existingAttachments;
     if (content === message.content && attachments === message.attachments) return message;
     return {
       ...message,
@@ -8898,8 +9077,11 @@ function SettingsPanel({
                       {providerModels.map((model) => {
                         const selected = model.provider_id === displayedPrimaryModelRef?.provider_id && model.alias === displayedPrimaryModelRef?.model_id;
                         const usable = isSelectableModelAvailability(model.availability);
-                        const status = usable ? "" : ` · ${model.availability}`;
-                        return <option key={`${model.provider_id || "backend"}:${model.alias}`} disabled={!usable && !selected} value={activeAgentConfigurationTab === "opendrsai" ? `${encodeURIComponent(model.provider_id || "") }::${encodeURIComponent(model.alias)}` : model.alias}>{`${model.display_name || model.alias}${status}`}</option>;
+                        const primaryReady = supportsFullAgentPrimaryRuntime(model);
+                        const status = !primaryReady
+                          ? (zh ? " · 不可作主模型" : " · not a primary model")
+                          : usable ? "" : ` · ${model.availability}`;
+                        return <option key={`${model.provider_id || "backend"}:${model.alias}`} disabled={(!usable || !primaryReady) && !selected} value={activeAgentConfigurationTab === "opendrsai" ? `${encodeURIComponent(model.provider_id || "") }::${encodeURIComponent(model.alias)}` : model.alias}>{`${model.display_name || model.alias}${status}`}</option>;
                       })}
                     </optgroup>)}
                   </select>
@@ -9285,10 +9467,25 @@ function getAgentModelOptions(
   selectedModel: string | null,
   selectedModelRef?: { provider_id: string; model_id: string },
 ): MyDrSaiModelConfig[] {
+  const isSelectedPrimary = (model: MyDrSaiModelConfig): boolean => {
+    if (selectedModelRef?.provider_id && selectedModelRef.model_id) {
+      return model.provider_id === selectedModelRef.provider_id
+        && (model.alias === selectedModelRef.model_id || model.model === selectedModelRef.model_id);
+    }
+    if (!selectedModel?.trim()) return false;
+    const normalized = selectedModel.trim().toLowerCase();
+    return [model.alias, model.model, model.display_name]
+      .filter((value): value is string => Boolean(value))
+      .some((value) => value.trim().toLowerCase() === normalized);
+  };
+  const allowAsPrimaryOption = (model: MyDrSaiModelConfig): boolean =>
+    supportsFullAgentPrimaryRuntime(model) || isSelectedPrimary(model);
+
   if (agent?.source === "local" && agent.id !== "my-codex") {
     const providerAware = new Map<string, MyDrSaiModelConfig>();
     for (const model of catalog) {
       if (!model.provider_id || !model.alias) continue;
+      if (!allowAsPrimaryOption(model)) continue;
       providerAware.set(`${model.provider_id}\0${model.alias}`, model);
     }
     if (providerAware.size > 0) return [...providerAware.values()];

@@ -134,6 +134,38 @@ def _timestamp(value: str | None) -> float:
         return 0.0
 
 
+def _public_input_evidence(
+    manifest_payload: Mapping[str, Any], timeline: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Expose attachment/image admission facts without OCR-injected prompt text."""
+    stored = manifest_payload.get("input_evidence") if isinstance(manifest_payload.get("input_evidence"), Mapping) else {}
+    attachments = stored.get("attachments") if isinstance(stored.get("attachments"), list) else None
+    if attachments is None:
+        raw_attachments = manifest_payload.get("attachments")
+        attachments = list(raw_attachments) if isinstance(raw_attachments, list) else []
+    has_image_part = False
+    for item in timeline:
+        if str(item.get("type") or "") != "message":
+            continue
+        content = item.get("content") if isinstance(item.get("content"), dict) else {}
+        if str(content.get("role") or item.get("role") or "") != "user":
+            continue
+        parts = content.get("parts") if isinstance(content.get("parts"), list) else []
+        if any(isinstance(part, dict) and str(part.get("type") or "") == "image" for part in parts):
+            has_image_part = True
+            break
+    return {
+        "attachments": [dict(item) for item in attachments if isinstance(item, Mapping)],
+        "require_manifest_reference": bool(
+            stored.get("require_manifest_reference", bool(attachments))
+        ),
+        "require_oaep_user_message_part": bool(
+            stored.get("require_oaep_user_message_part", has_image_part)
+        ),
+        "forbid_ocr_text_injection": bool(stored.get("forbid_ocr_text_injection", True)),
+    }
+
+
 class _CheckpointCipher:
     """Encrypt resumable state; Windows protects the data key with current-user DPAPI."""
 
@@ -1766,9 +1798,49 @@ class RuntimeEngine:
             "attachments_recorded": True,
             **(dict(declarations) if isinstance(declarations, Mapping) else {}),
         }
+        parts: list[dict[str, Any]] = [{"type": "text", "text": safe_message}] if safe_message else []
+        image_attachments: list[dict[str, Any]] = []
+        for resource in normalized_resources:
+            mime = str(resource.get("mime") or "")
+            if resource.get("kind") != "file" or not mime.startswith("image/"):
+                continue
+            part: dict[str, Any] = {
+                "type": "image",
+                "resource_id": resource["resource_id"],
+                "mime_type": mime,
+                "name": resource.get("name"),
+            }
+            if resource.get("sha256"):
+                part["sha256"] = resource["sha256"]
+            if resource.get("reference"):
+                part["reference"] = resource["reference"]
+            parts.append(part)
+            image_attachments.append({
+                "type": "image",
+                "mime_type": mime,
+                "sha256": resource.get("sha256"),
+                "resource_id": resource["resource_id"],
+                "ref": resource.get("reference"),
+                "name": resource.get("name"),
+            })
+        supplied_attachments = manifest_evidence.get("attachments")
+        if isinstance(supplied_attachments, list) and supplied_attachments:
+            manifest_evidence["attachments"] = supplied_attachments
+        elif image_attachments:
+            manifest_evidence["attachments"] = image_attachments
+        else:
+            manifest_evidence.setdefault(
+                "attachments",
+                [{"ref": ref, "ref_sha256": text_digest(ref)} for ref in (attachment_refs or [])],
+            )
         manifest_evidence.setdefault(
-            "attachments",
-            [{"ref": ref, "ref_sha256": text_digest(ref)} for ref in (attachment_refs or [])],
+            "input_evidence",
+            {
+                "attachments": list(manifest_evidence.get("attachments") or []),
+                "require_manifest_reference": bool(manifest_evidence.get("attachments")),
+                "require_oaep_user_message_part": any(part.get("type") == "image" for part in parts),
+                "forbid_ocr_text_injection": True,
+            },
         )
         already_bound = False
         with self._lock, self._connect() as db:
@@ -1811,7 +1883,7 @@ class RuntimeEngine:
                     payload={
                         "content": safe_message,
                         "text": safe_message,
-                        "parts": [{"type": "text", "text": safe_message}] if safe_message else [],
+                        "parts": parts,
                         "phase": "final",
                         "status": "completed",
                         "attachment_refs": json.loads(encoded),
@@ -1819,6 +1891,9 @@ class RuntimeEngine:
                             {
                                 "resource_id": value["resource_id"], "kind": value["kind"],
                                 "name": value["name"], "status": value["status"],
+                                **({"mime": value["mime"]} if value.get("mime") else {}),
+                                **({"sha256": value["sha256"]} if value.get("sha256") else {}),
+                                **({"reference": value["reference"]} if value.get("reference") else {}),
                             }
                             for value in normalized_resources
                         ],
@@ -1939,6 +2014,7 @@ class RuntimeEngine:
             },
             "timeline": public_page,
             "manifest": manifest_view,
+            "input_evidence": _public_input_evidence(manifest_payload, public_page),
             "page": {
                 "next_cursor": (
                     encode_timeline_cursor(
@@ -3070,15 +3146,23 @@ class RuntimeEngine:
                 "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,NULL)",
                 (event_id, run_id, sequence, event_type, json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created),
             )
-            self.conversation_journal.append_event_in_transaction(
-                db,
-                str(run["session_id"]),
-                _session_event_kind(event_type),
-                {"runtime_event_id": event_id, "type": event_type, "data": safe_data},
-                run_id=run_id,
-                dedupe_key=f"runtime-event:{event_id}",
-                created_at=created,
-            )
+            # Message/thinking deltas are projected solely through the canonical
+            # Item journal path. Mirroring the raw Runtime Event as a second
+            # conversation.item.delta (without item_id) used to flood OAEP with
+            # fake event.run.resumed envelopes.
+            item_owns_journal = event_type in {
+                "message.delta", "agent.message.delta", "thinking.delta",
+            } or event_type.startswith("oaep.item.")
+            if not item_owns_journal:
+                self.conversation_journal.append_event_in_transaction(
+                    db,
+                    str(run["session_id"]),
+                    _session_event_kind(event_type),
+                    {"runtime_event_id": event_id, "type": event_type, "data": safe_data},
+                    run_id=run_id,
+                    dedupe_key=f"runtime-event:{event_id}",
+                    created_at=created,
+                )
             self._record_runtime_event_item_in_transaction(
                 db,
                 session_id=str(run["session_id"]),
@@ -3118,8 +3202,10 @@ class RuntimeEngine:
                 (event_id, run_id, sequence, event_type,
                  json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key),
             )
-            canonical_item_event = event_type.startswith("oaep.item.")
-            if not canonical_item_event:
+            item_owns_journal = event_type in {
+                "message.delta", "agent.message.delta", "thinking.delta",
+            } or event_type.startswith("oaep.item.")
+            if not item_owns_journal:
                 self.conversation_journal.append_event_in_transaction(
                     db,
                     str(run["session_id"]),
@@ -3144,7 +3230,7 @@ class RuntimeEngine:
             )
             row = db.execute("SELECT * FROM runtime_events WHERE event_id=?", (event_id,)).fetchone()
             db.commit()
-        if not canonical_item_event or item_created:
+        if not item_owns_journal or item_created:
             self.conversation_journal.notify_committed()
         return self._event(row)
 
@@ -3603,7 +3689,8 @@ class RuntimeEngine:
                 source_client="runtime",
                 payload={
                     "approval_id": approval_id,
-                    "status": "pending",
+                    # OAEP interaction status: Desktop binds approvalId on waiting/pending.
+                    "status": "waiting",
                     "request": safe_request,
                     "deadline_at": deadline_at,
                 },

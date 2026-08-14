@@ -19,11 +19,14 @@ const target = (category: CleanupTarget["category"], ...segments: string[]): Cle
   ({ category, path: resolve(DRSAI_HOME, ...segments) });
 const SESSION_TARGETS = [
   target("sessions", "desktop", "threads.json"),
+  target("sessions", "desktop", "deleted-threads.json"),
   target("sessions", "desktop", "thread-snapshots.json"),
+  target("sessions", "desktop", "thread-snapshots"),
 ];
 const ALL_LOCAL_DATA_TARGETS: CleanupTarget[] = [
   ...SESSION_TARGETS,
   target("account", "auth"), target("account", ".env"),
+  target("account", "runtime"),
   target("settings", "config.yaml"), target("settings", "configs"),
   target("cache", "cache"), target("cache", "logs"),
   ...["background-tasks.json", "manager-presentation-tasks.json", "reusable-tasks.json", "scheduled-tasks.json", "workflow-runs.json"].map((name) => target("tasks", "desktop", name)),

@@ -24,7 +24,7 @@ export function runtimeErrorCategory(code: string): RuntimeErrorCategory {
   if (value.includes("approval")) return "approval";
   if (["resource", "attachment", "workspace_escape", "disk_", "path_"].some((part) => value.includes(part))) return "resource";
   if (["history", "cursor", "snapshot"].some((part) => value.includes(part))) return "history";
-  if (value.includes("model")) return "model";
+  if (value.includes("image_understanding") || value.includes("worker_unavailable") || value.includes("model")) return "model";
   if (["connection", "transport", "eof", "timeout", "network", "bridge"].some((part) => value.includes(part))) return "transport";
   if (["contract", "schema", "protocol", "jsonrpc", "jsonl", "response_invalid"].some((part) => value.includes(part))) return "contract";
   if (["runtime", "gateway", "run_"].some((part) => value.includes(part))) return "runtime";

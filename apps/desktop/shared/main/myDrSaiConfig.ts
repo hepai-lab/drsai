@@ -13,7 +13,19 @@ export async function getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiC
   try {
     const [cli, modelConnection, modelProviders] = await Promise.all([
       gatewayRequest<{ path?: string; config?: Record<string, unknown> }>(gateway.baseUrl, "GET", "/v1/config/cli"),
-      readModelConnection(gateway.baseUrl).catch(() => undefined),
+      readModelConnection(gateway.baseUrl).catch(async (error) => {
+        // One bounded retry: a brief gateway stall during startup used to leave
+        // the desktop permanently on "model unconfigured" because ready:true
+        // skipped the renderer refresh loop.
+        console.warn(`[desktop] Model connection read failed once: ${safeMessage(error)}`);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        try {
+          return await readModelConnection(gateway.baseUrl);
+        } catch (retryError) {
+          console.warn(`[desktop] Model connection read failed again: ${safeMessage(retryError)}`);
+          return undefined;
+        }
+      }),
       readModelProviders(gateway.baseUrl).catch(() => []),
     ]);
     let runtimeCatalog: RuntimeModelCatalog;
@@ -124,7 +136,19 @@ export async function saveMyDrSaiModelProvider(provider: string, raw: unknown): 
   };
 }
 
-export async function testMyDrSaiModelProvider(provider: string, model?: string): Promise<MyDrSaiProviderTestResult> { validateProviderName(provider); const gateway = await getGatewayStatus(); if (!gateway.ready) throw new Error("OpenDrSai is not running."); return gatewayRequest(gateway.baseUrl, "POST", `/v1/config/model-providers/${encodeURIComponent(provider)}/test`, model ? { model } : {}, provider === "hepai" ? await oidcGatewayHeaders() : undefined); }
+export async function testMyDrSaiModelProvider(provider: string, model?: string): Promise<MyDrSaiProviderTestResult> {
+  validateProviderName(provider);
+  const gateway = await getGatewayStatus();
+  if (!gateway.ready) throw new Error("OpenDrSai is not running.");
+  // HepAI uses request-scoped OIDC (same as draft test / model discovery), not a stored API key.
+  return gatewayRequest(
+    gateway.baseUrl,
+    "POST",
+    `/v1/config/model-providers/${encodeURIComponent(provider)}/test`,
+    model ? { model } : {},
+    provider === "hepai" ? await oidcGatewayHeaders() : undefined,
+  );
+}
 export async function probeMyDrSaiProviderModel(provider: string, request: { model: string; operation: import("../api/desktopApi").ModelCapabilityProbeOperation; protocol?: string }): Promise<import("../api/desktopApi").ModelCapabilityProbeResult> {
   validateProviderName(provider); if (!request.model.trim()) throw new Error("Model is required.");
   const gateway = await getGatewayStatus(); if (!gateway.ready) throw new Error("OpenDrSai is not running.");
