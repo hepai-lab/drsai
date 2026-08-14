@@ -2,12 +2,18 @@ import { useState } from "react";
 import { Code2, Eye, FileText } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { HighlightedLines } from "./HighlightedLines";
 import type { PreviewerProps } from "./types";
 
 export function MarkdownPreviewer({
   preview,
+  highlight,
+  language,
 }: PreviewerProps): React.JSX.Element {
-  const [mode, setMode] = useState<"rendered" | "source">("rendered");
+  // Opened to check a citation, the source view is the one that can show the
+  // cited lines; rendered markdown has no line to point at. Still switchable,
+  // because reading the passage in context is the next thing a reader wants.
+  const [mode, setMode] = useState<"rendered" | "source">(highlight ? "source" : "rendered");
   const content = preview.content ?? "";
   return (
     <div className="files-preview-markdown">
@@ -40,7 +46,12 @@ export function MarkdownPreviewer({
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
         </div>
       ) : (
-        <pre className="files-preview-code">{content}</pre>
+        <HighlightedLines
+          content={content}
+          highlight={highlight}
+          language={language}
+          truncated={preview.truncated}
+        />
       )}
     </div>
   );

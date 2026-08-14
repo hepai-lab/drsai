@@ -141,6 +141,8 @@ import { DebugPanel } from "./components/DebugPanel";
 import { RunInspectorPanel } from "./components/RunInspectorPanel";
 import { AppDecisionDialogHost, requestAppDecision, showAppNotice } from "./components/AppDecisionDialog";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
+import { CitationSourcePanel } from "./components/files/CitationSourcePanel";
+import type { CitationPart } from "@shared/structuredConversation";
 import {
   createAgentRunContextTraceEvents,
   createTraceEventFromAgentFileEvent,
@@ -527,6 +529,10 @@ function AuthenticatedApp({
     useState<TerminalCommandProposal | null>(null);
   const [browserPanelUrl, setBrowserPanelUrl] = useState<string | undefined>();
   const [filesPanelFocusPath, setFilesPanelFocusPath] = useState<string | undefined>();
+  // Takes over the right panel rather than living behind a tab: it is opened by
+  // clicking one specific citation, and a tab the reader has to find again
+  // would lose the connection to the claim they were checking.
+  const [citationSource, setCitationSource] = useState<CitationPart | null>(null);
   const [structuredTurnFocus, setStructuredTurnFocus] = useState<{ turnId: string; nonce: number } | null>(null);
   const [browserAttachments, setBrowserAttachments] = useState<ChatAttachment[]>([]);
   const [ideContext, setIdeContext] = useState<DesktopIdeContextSnapshot | null>(null);
@@ -2617,6 +2623,10 @@ function AuthenticatedApp({
             setActiveRightTab("files");
             setRightPanelCollapsed(false);
           }}
+          onOpenCitationSource={(part) => {
+            setCitationSource(part);
+            setRightPanelCollapsed(false);
+          }}
           onPickFiles={() => desktopApi.pickFiles()}
           onPickFolder={() => desktopApi.pickFolder()}
           onSummarizeWorkspaceFolder={(request) =>
@@ -2924,7 +2934,13 @@ function AuthenticatedApp({
   );
 
   const rightPanelContent =
-    activeRightTab === "run" ? (
+    citationSource ? (
+      <CitationSourcePanel
+        citation={citationSource}
+        language={language}
+        onClose={() => setCitationSource(null)}
+      />
+    ) : activeRightTab === "run" ? (
       <RunInspectorPanel
         language={language}
         request={runInspectionRequest}

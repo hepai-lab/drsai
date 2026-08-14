@@ -10548,6 +10548,125 @@ button.structured-activity-detail:hover {
   line-height: 1.6;
 }
 
+.files-preview-highlighted {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+}
+
+.files-preview-highlight-note {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--app-panel-soft);
+  color: var(--app-text-secondary);
+  font-size: 11px;
+}
+
+.files-preview-line {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.files-preview-line-number {
+  color: var(--app-text-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.files-preview-line-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The marked band is what the answer actually stood on, so it has to be
+   findable at a glance without making the rest of the file unreadable. */
+.files-preview-line.cited {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--app-accent-strong) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--app-accent-strong);
+}
+
+.citation-source-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+  padding: 12px;
+}
+
+.citation-source-header {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--app-panel-border);
+  color: var(--app-text-secondary);
+}
+
+.citation-source-title {
+  display: grid;
+  min-width: 0;
+}
+
+.citation-source-title strong {
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-source-title small {
+  color: var(--app-text-muted);
+  font-size: 11px;
+}
+
+.citation-source-header button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-text-muted);
+}
+
+.citation-source-header button:hover {
+  background: var(--app-panel-soft);
+}
+
+.citation-source-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.citation-source-status {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+}
+
+.citation-source-status.error {
+  color: var(--app-danger, #b42318);
+}
+
+.citation-source-status blockquote {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--app-panel-border);
+  background: var(--app-panel-soft);
+  color: var(--app-text-secondary);
+  white-space: pre-wrap;
+}
+
 .files-preview-image {
   display: grid;
   align-items: center;

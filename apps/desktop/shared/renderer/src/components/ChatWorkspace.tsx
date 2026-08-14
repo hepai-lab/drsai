@@ -330,6 +330,8 @@ interface ChatWorkspaceProps {
   onCreateRunExperiment?: (runId: string, itemId?: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
   onOpenWorkspaceArtifact?: (path: string) => void;
+  /** Open a Knowledge Base citation at the position it was taken from. */
+  onOpenCitationSource?: (part: CitationPart) => void;
   onPickFiles?: () => Promise<PickDialogResult>;
   onPickFolder?: () => Promise<PickDialogResult>;
   onSummarizeWorkspaceFolder?: (
@@ -396,6 +398,7 @@ function ChatWorkspaceImpl({
   onCreateRunExperiment,
   onOpenPreviewBrowser,
   onOpenWorkspaceArtifact,
+  onOpenCitationSource,
   onPickFiles,
   onPickFolder,
   onSummarizeWorkspaceFolder,
@@ -2597,6 +2600,13 @@ function ChatWorkspaceImpl({
   const openStructuredCitation = useEventCallback((part: CitationPart): void => {
     if (part.url && isSafeWebUrl(part.url)) {
       openPreviewBrowser(part.url);
+      return;
+    }
+    // A Knowledge Base document is not in the workspace, so the file panel
+    // cannot find it. Its path is relative to a corpus root that only the
+    // source pane knows how to resolve.
+    if (part.knowledgeBaseId && (part.documentPath || part.path)) {
+      onOpenCitationSource?.(part);
       return;
     }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
