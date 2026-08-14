@@ -2238,10 +2238,18 @@ class DrSaiAssistant(DrSaiAgent):
                 except Exception:
                     pass  # parse error → handled in normal loop below
 
-        if len(delegate_indices) >= 2:
+        # Approval gating is the responsibility of the backend/runtime kernel
+        # (desktop_agent_kernel_adapter), which wires `_tool_approval_handler`.
+        # In legacy paths (run_worker / subagents / TUI legacy) no handler is
+        # injected, so we MUST NOT block here — otherwise every tool classified
+        # as `approval_mode == "required"` (Delegate, ScheduledTaskManager, and
+        # any unknown MCP/GFS/remote tool marked external_write) is rejected
+        # with "Tool approval channel is unavailable". Only enforce when a
+        # handler is actually present.
+        if len(delegate_indices) >= 2 and self._tool_approval_handler is not None:
             delegate_record = execution_tool_record(self._active_execution_tool_registry or {}, "Delegate")
             approval_handler = self._tool_approval_handler
-            approved = approval_handler is not None and await approval_handler(delegate_record, {
+            approved = await approval_handler(delegate_record, {
                 "parallel_calls": [delegate_indices[index] for index in sorted(delegate_indices)],
             })
             if not approved:
@@ -2341,7 +2349,7 @@ class DrSaiAssistant(DrSaiAgent):
                 continue
 
             registry_record = execution_tool_record(self._active_execution_tool_registry or {}, tool_name)
-            if registry_record["approval_mode"] == "required":
+            if registry_record["approval_mode"] == "required" and self._tool_approval_handler is not None:
                 if call_id in registry_denied_call_ids:
                     exec_results.append(FunctionExecutionResult(
                         content="Tool approval was denied or unavailable.",
@@ -2351,14 +2359,6 @@ class DrSaiAssistant(DrSaiAgent):
                     ))
                     continue
                 approval_handler = self._tool_approval_handler
-                if approval_handler is None:
-                    exec_results.append(FunctionExecutionResult(
-                        content="Tool approval channel is unavailable; execution was blocked.",
-                        name=tool_name,
-                        call_id=call_id,
-                        is_error=True,
-                    ))
-                    continue
                 if not await approval_handler(registry_record, {
                     **dict(arguments), "_runtime_call_id": call_id,
                 }):
