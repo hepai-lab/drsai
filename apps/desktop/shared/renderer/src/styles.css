@@ -4746,6 +4746,31 @@ button.structured-activity-detail:hover {
   text-align: left;
 }
 
+.structured-citation-excerpt {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--app-panel-border);
+  background: var(--app-panel-soft);
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.structured-citation-excerpt cite {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--app-text-tertiary, var(--app-text-secondary));
+  font-style: normal;
+  font-size: 11px;
+}
+
+.structured-citation-excerpt p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .structured-artifact {
   grid-template-columns: 18px minmax(0, 1fr) auto 16px;
   gap: 8px;

@@ -12,6 +12,7 @@ import {
   Image,
   Info,
   ListChecks,
+  Quote,
   Reply,
   Table2,
   TriangleAlert,
@@ -609,19 +610,50 @@ function CitationItem({
   onOpen: () => void;
   onBack?: () => void;
 }): React.JSX.Element {
+  // Checking a claim means reading the passage it rests on. Only a public URL
+  // can actually be opened; a knowledge citation names a file inside a corpus
+  // the chat cannot resolve, so clicking used to do nothing at all. Showing the
+  // cited passage in place answers the same question without the navigation.
+  const [showExcerpt, setShowExcerpt] = useState(false);
+  const openable = Boolean(part.url && /^https?:\/\//i.test(part.url));
+  const expandable = Boolean(part.excerpt);
   return (
     <div className={`structured-citation ${focused ? "relation-focus" : ""}`} data-structured-part-id={part.id} data-citation-id={part.citationId}>
-      <button type="button" className="structured-citation-open" onClick={onOpen} title={part.url || part.path || part.title}>
+      <button
+        type="button"
+        className="structured-citation-open"
+        onClick={openable ? onOpen : expandable ? () => setShowExcerpt((value) => !value) : undefined}
+        disabled={!openable && !expandable}
+        aria-expanded={expandable && !openable ? showExcerpt : undefined}
+        title={part.url || part.path || part.title}
+      >
         <span className="structured-citation-index">[{index}]</span>
         <Globe2 size={13} aria-hidden="true" />
         <span>{part.title}</span>
         {part.locator ? <small>{part.locator}</small> : null}
-        <ArrowUpRight size={12} aria-hidden="true" />
+        {openable ? <ArrowUpRight size={12} aria-hidden="true" /> : null}
       </button>
+      {expandable && openable ? (
+        <button
+          type="button"
+          className="structured-citation-back"
+          onClick={() => setShowExcerpt((value) => !value)}
+          aria-expanded={showExcerpt}
+          title={language === "zh" ? "查看引用原文" : "Show the cited passage"}
+        >
+          <Quote size={13} aria-hidden="true" />
+        </button>
+      ) : null}
       {onBack ? (
         <button type="button" className="structured-citation-back" onClick={onBack} title={language === "zh" ? "返回引用位置" : "Back to citation marker"} aria-label={language === "zh" ? `返回引用 ${index} 的正文位置` : `Back to citation ${index} in the answer`}>
           <Reply size={13} aria-hidden="true" />
         </button>
+      ) : null}
+      {showExcerpt && part.excerpt ? (
+        <blockquote className="structured-citation-excerpt">
+          {part.locator ? <cite>{part.locator}</cite> : null}
+          <p>{part.excerpt}</p>
+        </blockquote>
       ) : null}
     </div>
   );
