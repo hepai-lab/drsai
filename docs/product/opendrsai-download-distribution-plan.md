@@ -28,16 +28,26 @@
 - macOS 完整 DMG（含首次安装 Runtime）用于 CDN 首次安装；应用内更新 ZIP 不重复携带已持久化到 `~/.drsai` 的 Runtime。DMG、ZIP 和 `latest-mac.yml` 发布到 OSS/CDN；首发只支持 Apple Silicon arm64。
 - macOS Channel 目录保留同字节的版本化 ZIP 别名，使相对 URL `latest-mac.yml` 在 Generic CDN 上可用；该 ZIP 名含版本和架构且不可覆盖，权威归档位于 `/releases/v版本/macos/`。
 - `/releases/v版本/`：不可覆盖，缓存一年，发布后预热 MSI、ZIP、APK、DMG。
-- `/channels/stable/`：缓存 30～60 秒，不预热；更新清单最后上传。
+- `/channels/beta/`、`/channels/stable/`：可变指针，缓存 0～60 秒，不预热；对应频道清单必须是该次发布的最后一次 OSS 写入，覆盖后立即刷新 CDN。
 - 不对 MSI、ZIP、APK、DMG 做 CDN 动态压缩；客户端必须校验版本、文件大小和 SHA-256。macOS 还必须通过 Apple 代码签名验证后才允许安装。
+
+## Windows beta/stable 约定
+
+- 版本资产先写入 `/releases/v{version}/windows/`，禁止覆盖；ossutil v2 对已存在对象使用 `--ignore-existing`，随后用公网字节身份校验拒绝同路径不同内容。MSI、Runtime ZIP、版本清单和发布摘要一经验收即保持不可变。
+- beta 指针固定为 `/channels/beta/latest-windows.json`。beta 清单必须包含 `channel: "beta"` 和非空 `buildLabel`，例如当前 `version: "1.5.8"`、`buildLabel: "Beta 3"`。
+- stable 指针固定为 `/channels/stable/latest-windows.json`。stable 晋级复用已验收的版本资产，但必须重新生成 `channel: "stable"`、`requireSignature: true` 的清单，并删除 `buildLabel`，不得把 `Beta 3` 原样带入生产频道。
+- 开发站读取 beta，只有 beta 清单缺失或不可用时才回退 stable；生产站只读取 stable。WebUI 只消费频道清单，不用页面内硬编码版本替代发布状态。
+- 晋级前必须完成 Sandbox/升级/签名验收；未完成时不得切换频道指针。当前已发布的 v1.5.8 Beta 3 不因 stable 链路建设而改变。
+
+当前 Windows beta 基线（2026-08-14 公网复核）：`version=1.5.8`、`channel=beta`、`buildLabel="Beta 3"`；Runtime 为 `355495575` bytes，SHA-256 为 `e710fa6d0837ec7d6f5f8109d6c9d4801736b0452c2a844dd7c70748b6fd9ea1`；MSI 为 `643072` bytes，SHA-256 为 `ce641707e5a7dad889caffd195d42493efff66c72b9a7dac841c65ce8dc5de2b`。两者当前均为 `NotSigned`，因此只允许处于 beta，不能晋级 stable。
 
 ## 发布顺序
 
-1. 完成构建、测试和签名检查。
-2. 上传版本化资产到 OSS，并通过 CDN 验证 `HEAD`、Range、大小和 SHA-256。
-3. 预热大文件，再上传版本清单和 `channels/stable` 清单。
-4. 最后晋级 `channels/stable` 清单，失败时恢复上一份 stable 快照。
-5. 验证 CDN 下载、自动更新和 `opendrsai-dev.ihep.ac.cn` 发布入口。
+1. 完成构建、Sandbox/升级测试和签名检查，生成本地清单与摘要。
+2. 以禁止覆盖方式上传版本化资产到 OSS；通过严格 TLS 从 CDN 验证 Range、大小、SHA-256、签名状态及与本地验收制品的字节身份。
+3. 生成目标频道清单：beta 保留明确的 `buildLabel`；stable 删除 `buildLabel` 并强制签名。
+4. 将目标频道清单作为最后一次 OSS 写入，再刷新该可变清单的 CDN 缓存；失败时不得暴露半发布状态，stable 还要保留可恢复的上一指针。
+5. 从公网重新验证频道清单、Range、大小、SHA-256、签名、字节身份、自动更新及对应网站入口。
 
 macOS 的详细实现、无签名开发边界、Feed 回退状态机和分层发布门禁见 [OpenDrSai macOS 下载与更新完整链路规划](./opendrsai-macos-download-update-implementation-plan.md)。在 Developer ID、公证凭据和上一稳定签名版本齐备前，只允许产出 unsigned 开发证据，不得更新生产 `channels/stable/macos/arm64/latest-mac.yml`。
 
