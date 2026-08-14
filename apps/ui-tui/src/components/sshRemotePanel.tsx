@@ -293,18 +293,20 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
     }
 
     if (view === 'edit') {
-      if (input === 'q') { setView('list'); return }
-      if (key.upArrow) setFormFieldIdx(i => Math.max(0, i - 1))
-      if (key.downArrow) setFormFieldIdx(i => Math.min(EDIT_FIELDS.length - 1, i + 1))
+      const fieldKey = EDIT_FIELDS[formFieldIdx].key
+      if (key.upArrow) { setFormFieldIdx(i => Math.max(0, i - 1)); return }
+      if (key.downArrow) { setFormFieldIdx(i => Math.min(EDIT_FIELDS.length - 1, i + 1)); return }
+      if (key.tab) { setFormFieldIdx(i => (i + 1) % EDIT_FIELDS.length); return }
       if (key.return) {
         if (formFieldIdx === EDIT_FIELDS.length - 1) {
           saveForm()
         } else {
           setFormFieldIdx(i => i + 1)
         }
+        return
       }
       // 'b' on remote_workdir field → browse remote directories via temp SSH
-      if (input === 'b' && EDIT_FIELDS[formFieldIdx].key === 'remote_workdir') {
+      if (input === 'b' && fieldKey === 'remote_workdir') {
         if (!form.host || !form.username) {
           showMsg('⚠ Fill in Host and Username first', theme.warn)
           return
@@ -313,10 +315,23 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
         browseDirs(form.remote_workdir || '~', 'browse')
         return
       }
-      // Tab to cycle fields
-      if (key.tab) {
-        setFormFieldIdx(i => (i + 1) % EDIT_FIELDS.length)
+      // Backspace deletes last char of current field
+      if (key.backspace || key.delete) {
+        setForm(f => ({ ...f, [fieldKey]: f[fieldKey].slice(0, -1) }))
+        return
       }
+      // Ctrl+U clears current field
+      if (key.ctrl && input === 'u') {
+        setForm(f => ({ ...f, [fieldKey]: '' }))
+        return
+      }
+      // Printable characters append to current field
+      // (filter out control combos and multi-char sequences like paste markers)
+      if (input && !key.ctrl && !key.meta && /^[\x20-\x7e]$/.test(input)) {
+        setForm(f => ({ ...f, [fieldKey]: f[fieldKey] + input }))
+        return
+      }
+      return
     }
 
     if (view === 'dirs') {
@@ -453,7 +468,7 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
 
         <Box marginTop={1}>
           <Text color={theme.muted} dimColor>
-            ↑↓ fields · Tab next · Enter save/next · b browse dirs (on Workdir) · q cancel
+            ↑↓/Tab fields · type to edit · Enter next/save · Ctrl+U clear · b browse (Workdir) · Esc cancel
           </Text>
         </Box>
       </Box>
