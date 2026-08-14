@@ -217,7 +217,6 @@ try {
     "tart",
     [
       "run",
-      "--no-graphics",
       "--no-audio",
       "--no-clipboard",
       "--dir",
@@ -327,7 +326,11 @@ try {
   if (runtimeProvenance.gitCommit !== args.commit) throw new Error(`Runtime commit mismatch: ${runtimeProvenance.gitCommit}`);
   if (runtimeProvenance.version !== args.version) throw new Error(`Runtime version mismatch: ${runtimeProvenance.version}`);
   summary.runtimeProvenance = runtimeProvenance;
-  summary.runtimeManifest = runtimeManifest;
+  const { files: runtimeManifestFiles, ...runtimeManifestMetadata } = runtimeManifest;
+  summary.runtimeManifest = {
+    ...runtimeManifestMetadata,
+    fileCount: Array.isArray(runtimeManifestFiles) ? runtimeManifestFiles.length : 0,
+  };
   summary.checks.runtimePackageHygiene = true;
 
   const asarPath = resolve(evidenceDir, "app.asar");
