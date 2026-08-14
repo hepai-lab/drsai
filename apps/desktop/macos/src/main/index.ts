@@ -281,7 +281,12 @@ app.whenReady().then(async () => {
     ensureWindowOnScreen: ensureMainWindowOnScreen, recover: (reason) => { void recoverAfterInterruption(reason); }, getScheduledTaskWorker: () => scheduledTaskWorker,
     getWindowVisibility: () => !mainWindow || mainWindow.isDestroyed() ? "hidden" : mainWindow.isMinimized() ? "minimized" : mainWindow.isVisible() ? "foreground" : "hidden",
     reloadMainWindow: () => { if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.reload(); },
-    publish: (channel, event) => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, event); },
+    publish: (channel, event) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
+        try { window.webContents.send(channel, event); } catch { /* renderer disposed mid-send */ }
+      }
+    },
   });
   void remoteWorkspaceController.restorePersisted().catch(async () => {
     await appServices.ipcAuditWriter({ channel: "desktop:startup-remote-workspace-restore", outcome: "failed", durationMs: 0, argumentCount: 0, errorCode: "STARTUP_DEGRADED" });

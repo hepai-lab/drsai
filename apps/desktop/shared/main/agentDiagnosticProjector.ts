@@ -101,5 +101,5 @@ function inferConnectionState(events: DiagnosticEvent[], phase: AgentDiagnosticP
 
 function isRunTerminalEvent(event: DiagnosticEvent): boolean {
   return event.agentPhase === "completed" || event.agentPhase === "failed" || event.agentPhase === "cancelled"
-    || /chat\.run|chat\.(done|error|aborted)|run\.(completed|failed|cancelled)/i.test(event.operation);
+    || /chat\.run|chat\.(done|error|aborted)|turn\.(completed|error|cancelled)|run\.(completed|failed|cancelled)/i.test(event.operation);
 }

@@ -6,14 +6,34 @@ import { replaceFileSafely } from "./atomicFileReplace";
 import { DRSAI_HOME } from "./paths";
 
 const JOURNAL_FILE = join(DRSAI_HOME, "desktop", "chat-run-events.json");
-const MAX_RUNS = 200;
-const MAX_EVENTS = 500;
+const MAX_RUNS = 40;
+const MAX_EVENTS = 120;
 let queue = Promise.resolve();
 interface Entry { updatedAt: number; events: ChatEvent[] }
 type Journal = Record<string, Entry>;
 
 export function recordChatRunEvent(event: ChatEvent): void {
   if (!event.runId) return;
+  // Persist only recovery-relevant milestones. Token deltas and bogus resumes
+  // previously ballooned this journal to multi‑MB and helped OOM the renderer.
+  if (event.type === "oaep") {
+    const type = event.oaepEvent?.type;
+    if (
+      type === "event.item.delta"
+      || type === "event.session.updated"
+      || type === "event.item.started"
+      || type === "event.item.updated"
+    ) return;
+    if (type === "event.run.resumed") {
+      const reason = event.oaepEvent?.data?.reason;
+      if (typeof reason !== "string" || !reason.trim()) return;
+    }
+  }
+  if (event.type === "structured") {
+    const type = event.structuredEvent?.type;
+    if (type === "part.delta" || type === "turn.resumed" || type === "activity.updated") return;
+  }
+  if (event.type === "chunk" || event.type === "reasoning" || event.type === "status") return;
   queue = queue.catch(() => undefined).then(async () => {
     const journal = await readJournal();
     const current = journal[event.runId!]?.events ?? [];

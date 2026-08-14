@@ -79,7 +79,7 @@ export class DesktopDiagnostics {
     await this.initializing;
   }
 
-  async record(input: DiagnosticEventInput): Promise<DiagnosticEvent> {
+  async record(input: DiagnosticEventInput & { publish?: boolean }): Promise<DiagnosticEvent> {
     await this.initialize();
     const event = normalizeEvent({ ...input, machineId: input.machineId ?? this.machineId, sequence: input.sequence ?? ++this.sequence });
     if (this.ids.has(event.id)) return this.events.find((item) => item.id === event.id) ?? event;
@@ -91,7 +91,7 @@ export class DesktopDiagnostics {
       this.droppedEvents += removed.length;
     }
     this.updateHealthFromEvent(event);
-    this.publisher?.(event);
+    if (input.publish !== false) this.publisher?.(event);
     this.enqueuePersist(event);
     return event;
   }
@@ -209,13 +209,20 @@ export class DesktopDiagnostics {
       const raw = await readFile(EVENT_FILE, "utf8");
       this.persistedBytes = Buffer.byteLength(raw, "utf8");
       const cutoff = Date.now() - RETENTION_MS;
-      let needsCompaction = false;
+      let needsCompaction = this.persistedBytes > MAX_STORAGE_BYTES / 2;
       for (const line of raw.split(/\r?\n/)) {
         if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line) as DiagnosticEvent;
           if (Date.parse(parsed.timestamp) < cutoff || parsed.schemaVersion !== DIAGNOSTIC_SCHEMA_VERSION) {
             needsCompaction = true;
+            continue;
+          }
+          // Drop historical token-level chat mirrors that previously OOMed the
+          // renderer. Live recording no longer writes these; keep only milestones.
+          if (isHighVolumeChatDiagnosticNoise(parsed)) {
+            needsCompaction = true;
+            this.droppedEvents += 1;
             continue;
           }
           const event = normalizeEvent(parsed);
@@ -688,6 +695,22 @@ function sanitizeAttributes(input?: Record<string, unknown>): Record<string, Dia
     else result[key] = redactText(String(rawValue)).slice(0, 1_000);
   }
   return result;
+}
+
+function isHighVolumeChatDiagnosticNoise(event: Pick<DiagnosticEvent, "operation" | "status" | "agentPhase" | "message">): boolean {
+  const operation = String(event.operation || "");
+  if (/^chat\.(oaep|structured|chunk|reasoning|status|tool_timeline)$/i.test(operation)) {
+    // Keep only terminal structured/OAEP milestones that mark the run done.
+    if (/chat\.(oaep|structured)$/i.test(operation)) {
+      const message = String(event.message || "");
+      const terminal = event.status === "completed" || event.status === "failed" || event.status === "cancelled"
+        || event.agentPhase === "completed" || event.agentPhase === "failed" || event.agentPhase === "cancelled"
+        || /turn\.(completed|cancelled|error)|event\.run\.(completed|failed|cancelled)/i.test(message);
+      return !terminal;
+    }
+    return true;
+  }
+  return false;
 }
 
 export function redactText(value: string): string {
