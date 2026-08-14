@@ -60,7 +60,7 @@ const EDIT_FIELDS: { key: keyof EditForm; label: string; hint?: string }[] = [
   { key: 'username', label: 'Username' },
   { key: 'password', label: 'Password', hint: 'or use private key below' },
   { key: 'private_key_path', label: 'Private Key Path', hint: '~/.ssh/id_rsa' },
-  { key: 'remote_workdir', label: 'Remote Workdir', hint: "working directory on remote, press 'b' to browse" },
+  { key: 'remote_workdir', label: 'Remote Workdir', hint: 'working directory on remote, press Enter to browse' },
 ]
 
 export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconnect }: Props) {
@@ -298,6 +298,17 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
       if (key.downArrow) { setFormFieldIdx(i => Math.min(EDIT_FIELDS.length - 1, i + 1)); return }
       if (key.tab) { setFormFieldIdx(i => (i + 1) % EDIT_FIELDS.length); return }
       if (key.return) {
+        // Enter on the Remote Workdir field opens the remote directory
+        // browser directly (no extra hotkey, so 'b' stays a normal char).
+        if (fieldKey === 'remote_workdir') {
+          if (!form.host || !form.username) {
+            showMsg('⚠ Fill in Host and Username first', theme.warn)
+            return
+          }
+          showMsg('⏳ Browsing remote directories...', theme.muted)
+          browseDirs(form.remote_workdir || '~', 'browse')
+          return
+        }
         if (formFieldIdx === EDIT_FIELDS.length - 1) {
           saveForm()
         } else {
@@ -305,14 +316,9 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
         }
         return
       }
-      // 'b' on remote_workdir field → browse remote directories via temp SSH
-      if (input === 'b' && fieldKey === 'remote_workdir') {
-        if (!form.host || !form.username) {
-          showMsg('⚠ Fill in Host and Username first', theme.warn)
-          return
-        }
-        showMsg('⏳ Browsing remote directories...', theme.muted)
-        browseDirs(form.remote_workdir || '~', 'browse')
+      // Ctrl+S saves from any field
+      if (key.ctrl && input === 's') {
+        saveForm()
         return
       }
       // Backspace deletes last char of current field
@@ -325,11 +331,16 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
         setForm(f => ({ ...f, [fieldKey]: '' }))
         return
       }
-      // Printable characters append to current field
-      // (filter out control combos and multi-char sequences like paste markers)
-      if (input && !key.ctrl && !key.meta && /^[\x20-\x7e]$/.test(input)) {
-        setForm(f => ({ ...f, [fieldKey]: f[fieldKey] + input }))
-        return
+      // Printable characters append to current field.
+      // Paste arrives as a multi-char `input` string (bracketed paste), so
+      // accept 1..n printable chars and strip newlines/tabs/control chars
+      // that may ride along in pasted text.
+      if (input && !key.ctrl && !key.meta) {
+        const cleaned = input.replace(/[^\x20-\x7e]/g, '')
+        if (cleaned) {
+          setForm(f => ({ ...f, [fieldKey]: f[fieldKey] + cleaned }))
+          return
+        }
       }
       return
     }
@@ -455,7 +466,7 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
           <Text color={theme.muted} dimColor>
             Field: {field.label} {field.hint ? `(${field.hint})` : ''}
             {field.key === 'remote_workdir' && (
-              <Text color={theme.accent}> · press 'b' to browse remote dirs</Text>
+              <Text color={theme.accent}> · press Enter to browse remote dirs</Text>
             )}
           </Text>
         </Box>
@@ -468,7 +479,7 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
 
         <Box marginTop={1}>
           <Text color={theme.muted} dimColor>
-            ↑↓/Tab fields · type to edit · Enter next/save · Ctrl+U clear · b browse (Workdir) · Esc cancel
+            ↑↓/Tab fields · type to edit · Enter next/browse (Workdir) · Ctrl+S save · Ctrl+U clear · Esc cancel
           </Text>
         </Box>
       </Box>

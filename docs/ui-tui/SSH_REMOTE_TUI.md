@@ -154,8 +154,9 @@ SSH 远程管理面板包含 **4 个视图**，通过按键在不同视图间切
     └── b → Dirs (目录浏览, 需已连接)
 
   Edit (配置编辑)
-    ├── b (在 Workdir 字段) → Dirs (浏览远程目录)
-    └── q → 返回 List
+    ├── Enter (在 Workdir 字段) → Dirs (浏览远程目录)
+    ├── Ctrl+S → 保存配置 → List
+    └── Esc → 返回 List
 
   Dirs (目录浏览)
     ├── Enter → 进入子目录
@@ -217,16 +218,19 @@ New SSH Config
 
 Field: Name (unique identifier)
 
-↑↓ fields · Tab next · Enter save/next · b browse dirs (on Workdir) · q cancel
+↑↓/Tab fields · type to edit · Enter next/browse (Workdir) · Ctrl+S save · Ctrl+U clear · Esc cancel
 ```
 
 | 按键 | 功能 | 说明 |
 |------|------|------|
 | `↑` / `↓` | 切换字段 | 在表单字段间移动光标 |
 | `Tab` | 下一个字段 | 快速跳到下一个字段 |
-| `Enter` | 下一个/保存 | 非最后字段：跳到下一个字段；最后字段：保存配置 |
-| `b` | **浏览远程目录** | 仅在 `Remote Workdir` 字段时可用，通过临时 SSH 连接浏览远程目录 |
-| `q` / `Esc` | 取消 | 放弃编辑，返回列表视图 |
+| `Enter` | 下一个/**浏览远程目录** | 非 Workdir 字段：跳到下一个字段；在 `Remote Workdir` 字段：通过临时 SSH 连接直接打开远程目录浏览器，选中后自动填回 |
+| 可打印字符 / 粘贴 | 输入文本 | 直接键入或粘贴到当前字段；支持多字符粘贴 |
+| `Backspace` / `Delete` | 删除字符 | 删除当前字段末尾一个字符 |
+| `Ctrl+U` | 清空字段 | 清空当前字段内容 |
+| `Ctrl+S` | **保存配置** | 在任意字段保存并返回列表 |
+| `Esc` | 取消 | 放弃编辑，返回列表视图 |
 
 #### 字段详细说明
 
@@ -238,7 +242,7 @@ Field: Name (unique identifier)
 | **Username** | ✅ | SSH 登录用户名 | `xiongdb` |
 | **Password** | 二选一 | SSH 密码。**与私钥二选一**，都填则优先用私钥 | （不填则用私钥） |
 | **Private Key Path** | 二选一 | 本地 SSH 私钥文件路径。Windows 用户注意路径格式 | `~/.ssh/id_rsa`、`C:\Users\HP\.ssh\id_rsa` |
-| **Remote Workdir** | 推荐 | 远程工作目录。远程 gateway 以此作为 `cwd`，AI 的文件操作都在此目录下。**可按 `b` 键浏览选择** | `/home/xiongdb/projects` |
+| **Remote Workdir** | 推荐 | 远程工作目录。远程 gateway 以此作为 `cwd`，AI 的文件操作都在此目录下。**在此字段按 `Enter` 可浏览选择** | `/home/xiongdb/projects` |
 
 > **不需要配置远程 Python 路径**：远程服务器通过 `scripts/install_drsai.sh/ps1` 安装后，`opendrsai` 命令即可在命令行使用。后端连接时自动通过 `command -v opendrsai` 定位启动器（PATH 查不到时兜底 `~/.drsai/bin/opendrsai`），启动器脚本内部会处理好 venv Python、PYTHONPATH 等一切环境。
 
@@ -283,7 +287,7 @@ curl -fsSL <URL>/install_drsai.sh | bash
 - 这是远程 gateway 启动时的 **工作目录**（`cwd`）
 - AI 对话中的文件读写、代码执行等操作都以此为基准目录
 - **推荐填写**，避免默认 home 目录下文件混乱
-- 在 `Remote Workdir` 字段按 **`b`** 键可以通过 SSH 浏览远程目录，选中后自动填入
+- 在 `Remote Workdir` 字段按 **`Enter`** 键可以通过 SSH 浏览远程目录，选中后自动填入
 
 ---
 
@@ -295,7 +299,7 @@ curl -fsSL <URL>/install_drsai.sh | bash
 
 | 方式 | 前提 | 说明 |
 |------|------|------|
-| 编辑视图中按 `b`（Workdir 字段） | 已填写 Host + Username + 认证信息 | 通过**临时 SSH 连接**浏览，不需要已连接 |
+| 编辑视图中在 Workdir 字段按 `Enter` | 已填写 Host + Username + 认证信息 | 通过**临时 SSH 连接**浏览，不需要已连接 |
 | 列表视图中按 `b`（已连接时） | 已连接远程服务器 | 通过**已有隧道**浏览，速度更快 |
 
 ```
@@ -420,8 +424,8 @@ drsai chat
    - Username: `xiongdb`
    - Password: 留空
    - Private Key Path: `C:\Users\HP\.ssh\id_rsa`
-   - Remote Workdir: 光标停在此字段，按 **`b`** 浏览远程目录选择
-4. 按 `Enter` 保存
+   - Remote Workdir: 光标停在此字段，按 **`Enter`** 浏览远程目录选择
+4. 按 `Ctrl+S` 保存
 
 #### Step 4: 测试连接
 
