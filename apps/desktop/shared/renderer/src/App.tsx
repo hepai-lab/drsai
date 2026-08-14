@@ -2061,7 +2061,11 @@ function AuthenticatedApp({
     if (selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id) {
       void configureAgentModel(selectedChatAgentId, model, providerId).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        setModelConfigMessage(zh ? `切换模型失败：${message}` : `Model switch failed: ${message}`);
+        void showAppNotice({
+          id: "chat-model-switch-failed",
+          title: language === "zh" ? "切换模型失败" : "Model switch failed",
+          description: message,
+        });
       });
       return;
     }
@@ -2196,11 +2200,6 @@ function AuthenticatedApp({
     // Optimistic sidebar removal so the row disappears before persistence finishes.
     setThreads((current) => current.filter((item) => item.id !== threadId));
     threadSnapshotStore.delete(threadId);
-    setThreadSnapshots((current) => {
-      if (!(threadId in current)) return current;
-      const { [threadId]: _removed, ...rest } = current;
-      return rest;
-    });
     setThreadHydrationError((current) => (current?.threadId === threadId ? null : current));
     try {
       const hydration = threadHydrationsRef.current.get(threadId);
@@ -2238,8 +2237,15 @@ function AuthenticatedApp({
         setActiveThreadId(createLocalThreadId());
         navigateTo(MENU_IDS.currentSession);
       } else if (thread?.status === "running" && thread.lastRunId) {
-        const abort = thread.kind === "agent_run" ? desktopApi.abortAgentRun : desktopApi.abortChat;
-        await abort(thread.lastRunId).catch(() => undefined);
+        if (thread.kind === "agent_run") {
+          await desktopApi.abortAgentRun(thread.lastRunId).catch(() => undefined);
+        } else {
+          await desktopApi.cancelChatTurn({
+            requestId: thread.lastRunId,
+            sessionId: thread.id,
+            runId: thread.lastRunId,
+          }).catch(() => undefined);
+        }
       }
     } catch (error) {
       // Persistence already attempted above; keep sidebar tombstone and do not rethrow.

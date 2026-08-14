@@ -54,6 +54,7 @@ import { selectCurrentUserInput } from "./chatInput";
 import { isPresentationNoiseOaepEvent, materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
 import { selectRuntimeConversationProtocolResult } from "./runtimeProtocolSelection";
 import { decideRuntimeRestartRecovery } from "../api/runtimeRestartRecovery";
+import { OAEP_VERSION } from "../api/oaep.generated";
 import {
   createOaepPresentationProjection,
   projectOaepEventForPresentation,
@@ -1821,7 +1822,7 @@ async function runRuntimeBackendChat(
         if (item.run_id !== activeRuntimeRunId) continue;
         if (item.type !== "message" || item.content.role !== "assistant") continue;
         const synthetic = {
-          version: "oaep/1",
+          version: OAEP_VERSION,
           event_id: `snapshot:${item.id}:${item.sequence}`,
           session_id: runtimeSessionId,
           sequence: item.sequence,
@@ -1842,9 +1843,10 @@ async function runRuntimeBackendChat(
       for (const shadow of state.deltaShadows.values()) {
         if (shadow.runId !== activeRuntimeRunId || shadow.type !== "message") continue;
         const item = materializeOaepDeltaShadow(shadow);
+        if (item.type !== "message") continue;
         if (item.content.role !== "assistant") continue;
         const synthetic = {
-          version: "oaep/1",
+          version: OAEP_VERSION,
           event_id: `snapshot-shadow:${shadow.id}:${shadow.lastEventSequence}`,
           session_id: runtimeSessionId,
           sequence: shadow.lastEventSequence,

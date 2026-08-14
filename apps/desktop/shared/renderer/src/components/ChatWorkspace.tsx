@@ -728,13 +728,14 @@ function ChatWorkspaceImpl({
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      if (!e.dataTransfer?.files.length) return;
+      const dataTransfer = e.dataTransfer;
+      if (!dataTransfer?.files.length) return;
       const getPath = hasDesktopApi()
         ? (f: File): string => desktopApi.getPathForFile(f)
         : (f: File): string => `C:\\Users\\Demo\\Downloads\\${f.name}`;
       void (async () => {
         const added: ComposerAttachment[] = [];
-        for (const f of Array.from(e.dataTransfer.files)) {
+        for (const f of Array.from(dataTransfer.files)) {
           const p = getPath(f);
           if (!p) continue;
           const name = f.name || p.split(/[\\/]/).pop() || "unknown";
