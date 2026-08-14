@@ -282,18 +282,25 @@ async def download_shared_skill(
     if share.expires_at < datetime.utcnow():
         raise HTTPException(status_code=410, detail="Share link has expired")
 
-    # Increment access count
+    # Increment access count (SkillShare has no updated_at; upsert must tolerate that)
     share.access_count = (share.access_count or 0) + 1
     db_mgr.upsert(share)
 
-    # Download from GFS
+    # Download from GFS.
+    # Public upload writes ZIP only to public_skills/{slug}.zip, but still
+    # creates UserSkillMeta so the skill shows up in "my creations" and can
+    # be shared. Share download must therefore fall back to the public copy.
     cfg = _require_gfs()
     tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     tmp_zip.close()
 
+    candidates = [
+        _gfs_zip_path("user", share.skill_slug, share.owner_user_id, "created"),
+        _gfs_zip_path("user", share.skill_slug, share.owner_user_id, "imported"),
+        _gfs_zip_path("public", share.skill_slug),
+    ]
     ok = False
-    for src in ("created", "imported"):
-        remote = _gfs_zip_path("user", share.skill_slug, share.owner_user_id, src)
+    for remote in candidates:
         if gfs_get(remote, tmp_zip.name, cfg, timeout=30):
             ok = True
             break

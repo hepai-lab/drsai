@@ -21,6 +21,7 @@ export type SkillsPublicItem = {
     profile?: string;
     changelog?: string;
     category?: string;
+    source?: string;
 };
 
 export type SkillsPublicDetail = SkillsPublicItem & {
@@ -154,17 +155,60 @@ export class SkillsAPI {
 
     // ── Public skills (GFS) ────────────────────────────────────────────────
 
-    /** List all public skills from GFS. Optionally pass api_key for write hints. */
-    async listPublicSkills(apiKey?: string): Promise<SkillsPublicItem[]> {
-        const qs = apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : '';
+    async listPublicSkillsPage(
+        page = 1,
+        pageSize = 20,
+        apiKey?: string,
+        opts?: { q?: string; category?: string; sort?: "name" | "time" },
+    ): Promise<{
+        data: SkillsPublicItem[];
+        pagination: {
+            page: number;
+            page_size: number;
+            total: number;
+            total_pages: number;
+            has_next: boolean;
+            has_prev: boolean;
+        };
+    }> {
+        const params = new URLSearchParams({ type: "public", page: String(page), page_size: String(pageSize) });
+        if (apiKey) params.set("api_key", apiKey);
+        if (opts?.q?.trim()) params.set("q", opts.q.trim());
+        if (opts?.category?.trim()) params.set("category", opts.category.trim());
+        if (opts?.sort) params.set("sort", opts.sort);
         const headers: HeadersInit = this.getHeaders();
         if (apiKey) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
-        const response = await fetch(`${this.getBaseUrl()}/skills?type=public${qs ? '&' + qs.slice(1) : ''}`, { headers });
+        const response = await fetch(`${this.getBaseUrl()}/skills?${params}`, { headers });
         const data = await response.json();
         if (!data.status) throw new Error(data.message || "Failed to list public skills");
-        return data.data || [];
+        return {
+            data: data.data || [],
+            pagination: data.pagination || {
+                page,
+                page_size: pageSize,
+                total: (data.data || []).length,
+                total_pages: 1,
+                has_next: false,
+                has_prev: false,
+            },
+        };
+    }
+
+    /** List all public skills (follows pagination until exhausted). */
+    async listPublicSkills(apiKey?: string): Promise<SkillsPublicItem[]> {
+        const pageSize = 100;
+        const all: SkillsPublicItem[] = [];
+        let page = 1;
+        let totalPages = 1;
+        do {
+            const result = await this.listPublicSkillsPage(page, pageSize, apiKey);
+            all.push(...result.data);
+            totalPages = result.pagination?.total_pages ?? 1;
+            page += 1;
+        } while (page <= totalPages && page <= 50);
+        return all;
     }
 
     /** Get a single public skill with full body. */
@@ -332,8 +376,22 @@ export class SkillsAPI {
         URL.revokeObjectURL(url);
     }
 
-    /** Import a public skill to My Skills — downloads from public GFS, uploads to user GFS. */
-    async importPublicSkill(slug: string, userId: string, displayName?: string, apiKey?: string): Promise<{ id: string; url: string }> {
+    /** Import a public skill to My Collections — downloads from public GFS, uploads to user GFS. */
+    async importPublicSkill(
+        slug: string,
+        userId: string,
+        meta?: {
+            display_name?: string;
+            icon?: string;
+            description?: string;
+            version?: string;
+            category?: string;
+            owner?: string;
+            changelog?: string;
+        } | string,
+        apiKey?: string,
+    ): Promise<{ id: string; url: string }> {
+        const fields = typeof meta === "string" ? { display_name: meta } : (meta ?? {});
         // Step 1: download public skill zip as blob
         const dlResp = await fetch(
             `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}/download?type=public`,
@@ -345,11 +403,17 @@ export class SkillsAPI {
         const blob = await dlResp.blob();
         const zipFile = new File([blob], `${slug}.zip`, { type: "application/zip" });
 
-        // Step 2: upload to user GFS with source=imported marker
+        // Step 2: upload to user GFS with source=imported, preserving original author/logo
         return this.uploadUserSkill(userId, zipFile, {
-            display_name: displayName || slug,
+            display_name: fields.display_name || slug,
             slug,
             source: "imported",
+            icon: fields.icon,
+            description: fields.description,
+            version: fields.version,
+            category: fields.category,
+            owner: fields.owner,
+            changelog: fields.changelog,
         }, apiKey);
     }
 
@@ -383,6 +447,7 @@ export class SkillsAPI {
             changelog?: string;
             source?: string;
             category?: string;
+            owner?: string;
         },
         apiKey?: string,
     ): Promise<{ id: string; url: string }> {
@@ -397,6 +462,7 @@ export class SkillsAPI {
         if (m.changelog?.trim()) form.append("changelog", m.changelog.trim());
         if (m.source?.trim()) form.append("source", m.source.trim());
         if (m.category?.trim()) form.append("category", m.category.trim());
+        if (m.owner?.trim()) form.append("owner", m.owner.trim());
         const headers: HeadersInit = {};
         let qs = `type=user&user_id=${encodeURIComponent(userId)}`;
         if (apiKey) {
@@ -603,3 +669,73 @@ export class SkillsAPI {
 }
 
 export const skillsAPI = new SkillsAPI();
+
+// ── Skill Tags (admin CRUD) ────────────────────────────────────────────────
+
+export type SkillTagItem = {
+    id: number;
+    uuid: string;
+    name: string;
+    sort_order: number;
+    created_at: string;
+    updated_at: string;
+};
+
+export class SkillTagAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return { "Content-Type": "application/json" };
+    }
+
+    async listTags(operatorUserId: string): Promise<SkillTagItem[]> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/skill-tags/?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.message || "Failed to list tags");
+        return data.data || [];
+    }
+
+    async createTag(operatorUserId: string, name: string, sortOrder = 0): Promise<SkillTagItem> {
+        const qs = `operator_user_id=${encodeURIComponent(operatorUserId)}&name=${encodeURIComponent(name)}&sort_order=${sortOrder}`;
+        const response = await fetch(`${this.getBaseUrl()}/skill-tags/?${qs}`, {
+            method: "POST",
+            headers: this.getHeaders(),
+        });
+        const data = await response.json();
+        if (!data.status) throw new Error(data.message || "Failed to create tag");
+        return data.data;
+    }
+
+    async updateTag(
+        operatorUserId: string,
+        tagId: number,
+        options?: { name?: string; sort_order?: number }
+    ): Promise<SkillTagItem> {
+        let qs = `operator_user_id=${encodeURIComponent(operatorUserId)}`;
+        if (options?.name !== undefined) qs += `&name=${encodeURIComponent(options.name)}`;
+        if (options?.sort_order !== undefined) qs += `&sort_order=${options.sort_order}`;
+        const response = await fetch(`${this.getBaseUrl()}/skill-tags/${tagId}?${qs}`, {
+            method: "PUT",
+            headers: this.getHeaders(),
+        });
+        const data = await response.json();
+        if (!data.status) throw new Error(data.message || "Failed to update tag");
+        return data.data;
+    }
+
+    async deleteTag(operatorUserId: string, tagId: number): Promise<void> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/skill-tags/${tagId}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            { method: "DELETE", headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.message || "Failed to delete tag");
+    }
+}
+
+export const skillTagAPI = new SkillTagAPI();

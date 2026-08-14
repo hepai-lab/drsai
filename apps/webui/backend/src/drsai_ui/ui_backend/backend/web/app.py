@@ -4,7 +4,7 @@ import re
 import yaml
 from dotenv import load_dotenv
 
-from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, cloud, desktop_auth, docmaster, files, local_login, models, native, plans, releases, runs, sessions, settingsroute, skills, skills_gfs, skills_share, teams, users, validation
+from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, cloud, desktop_auth, docmaster, files, local_login, models, native, plans, releases, runs, sessions, settingsroute, skill_tags, skills, skills_gfs, skills_share, teams, users, validation
 load_dotenv()
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -40,6 +40,7 @@ from .routes import (
     skills,
     skills_gfs,
     skills_share,
+    skill_tags,
     docmaster,
     auth,
 )
@@ -402,6 +403,13 @@ api.include_router(
     prefix="/cloud",
     tags=["cloud"],
     responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    skill_tags.router,
+    prefix="/skill-tags",
+    tags=["skill-tags"],
+    responses={403: {"description": "Forbidden"}},
 )
 
 # Version endpoint

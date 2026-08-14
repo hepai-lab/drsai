@@ -174,7 +174,8 @@ class DatabaseManager:
                     select(model_class).where(model_class.id == model.id)
                 ).first()
                 if existing_model:
-                    model.updated_at = datetime.now()
+                    if hasattr(model, "updated_at"):
+                        model.updated_at = datetime.now()
                     for key, value in model.model_dump().items():
                         setattr(existing_model, key, value)
                     model = existing_model  # Use the updated existing model

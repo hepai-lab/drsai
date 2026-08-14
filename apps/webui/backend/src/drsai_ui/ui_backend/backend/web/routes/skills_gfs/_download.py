@@ -25,6 +25,7 @@ async def download_skill(
 ) -> FileResponse:
     """Download a skill ZIP. ?type=public or ?type=user&user_id=xxx"""
     from ....datamodel.db import SkillMeta
+    from ..deer_flow import download_higraf_skill_bytes, is_higraf_skill_slug
     import zipfile
 
     if not _SLUG_RE.match(slug):
@@ -63,13 +64,21 @@ async def download_skill(
                 break
 
     if not ok:
+        if type_ == "public" and is_higraf_skill_slug(slug):
+            zip_bytes = await download_higraf_skill_bytes(slug)
+            if zip_bytes:
+                with open(tmp_zip.name, "wb") as f:
+                    f.write(zip_bytes)
+                ok = True
+
+    if not ok:
         try:
             os.unlink(tmp_zip.name)
         except OSError:
             pass
         raise HTTPException(status_code=404, detail="Skill not found")
 
-    if type_ == "public":
+    if type_ == "public" and not is_higraf_skill_slug(slug):
         background_tasks.add_task(_increment_public_downloads, slug)
 
     def _cleanup() -> None:
@@ -96,7 +105,10 @@ async def get_skill_profile(slug: str) -> FileResponse:
     cfg = _require_gfs()
 
     def _try_profile(prefix: str, sub: str = "") -> FileResponse | None:
-        for ext in _PROFILE_EXT_WHITELIST:
+        # Prefer common image types first so we don't issue 5 GFS 404s per avatar.
+        for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"):
+            if ext not in _PROFILE_EXT_WHITELIST:
+                continue
             remote = f"{prefix}/{sub}profile{ext}" if sub else f"{prefix}/profile{ext}"
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
             tmp.close()
@@ -106,7 +118,11 @@ async def get_skill_profile(slug: str) -> FileResponse:
                     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                     ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
                 }
-                return FileResponse(tmp.name, media_type=media_map.get(ext, "image/png"))
+                return FileResponse(
+                    tmp.name,
+                    media_type=media_map.get(ext, "image/png"),
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
             try:
                 os.unlink(tmp.name)
             except OSError:
@@ -159,8 +175,13 @@ async def get_skill_md(slug: str, request: Request, user_id: str = Query(...)) -
         raise HTTPException(status_code=403, detail="Cannot read skills for another user")
 
     cfg = _require_gfs()
-    for src in ("created", "imported"):
-        remote = _gfs_zip_path("user", slug, user_id, src)
+    # Public upload stores the ZIP under public_skills/ only.
+    candidates = [
+        _gfs_zip_path("user", slug, user_id, "created"),
+        _gfs_zip_path("user", slug, user_id, "imported"),
+        _gfs_zip_path("public", slug),
+    ]
+    for remote in candidates:
         tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
         tmp_zip.close()
         ok = gfs_get(remote, tmp_zip.name, cfg, timeout=30)
