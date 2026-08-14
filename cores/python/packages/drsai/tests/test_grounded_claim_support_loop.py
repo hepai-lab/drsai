@@ -51,6 +51,50 @@ def retrieved_core(*, grounded: bool):
     return core
 
 
+def wrapped_core():
+    """The Desktop host returns the production result wrapped as {"content": "<json>"}."""
+    import json as _json
+
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "请仅根据提供的资料回答，并提供引用：Session 和 Run 是什么？",
+        "model_id": "model", "tools": [knowledge_tool()],
+        "agent": {"schema_version": 1, "grounded": True},
+    }))
+    core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "k-1", "name": "knowledge_search", "arguments": {"query": "Session Run"}},
+    ]}))
+    inner = {
+        "status": "completed", "completed": True, "corpus_complete": True,
+        "require_citations": True, "supporting_match": True,
+        "evidence": [{
+            "knowledge_id": "runtime", "document_path": "overview.md", "source": SOURCE,
+            "chunk_id": "overview.md:0", "content": PASSAGE, "content_sha256": "a" * 64,
+            "relation": "supports_claim", "score": 1.0,
+        }],
+        "documents": [{"knowledge_base_id": "runtime", "document_path": "overview.md", "corpus_complete": True}],
+    }
+    core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "k-1", "succeeded": True,
+        "content": {"content": _json.dumps(inner, ensure_ascii=False)},
+        "artifact_ids": [], "artifacts": [],
+    }))
+    return core
+
+
+def test_wrapped_host_result_still_yields_evidence_for_claim_support() -> None:
+    core = wrapped_core()
+
+    events = core.handle(command(MessageType.MODEL_COMPLETED, 3, {
+        "content": f"A Session can contain multiple Runs. [E1] {SOURCE}",
+    }))
+
+    # Reading only the outer envelope finds no evidence, which makes every
+    # citation look fabricated and reports a correct answer as unverifiable.
+    assert "message.completed" in kinds(events)
+    assert "citation.required" not in kinds(events)
+
+
 def test_grounded_answer_citing_a_figure_absent_from_the_passage_is_sent_back() -> None:
     core = retrieved_core(grounded=True)
 

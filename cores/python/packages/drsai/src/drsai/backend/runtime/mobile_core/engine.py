@@ -100,11 +100,21 @@ def _grounded_evidence_rows(messages: Sequence[Mapping[str, Any]]) -> list[dict[
         if str(message.get("name", "")).casefold() != "knowledge_search":
             continue
         content = message.get("content")
-        if isinstance(content, str):
-            try:
-                content = json.loads(content)
-            except (TypeError, json.JSONDecodeError):
-                continue
+        for _ in range(3):
+            if isinstance(content, str):
+                try:
+                    content = json.loads(content)
+                except (TypeError, json.JSONDecodeError):
+                    break
+            # The Desktop host returns the production result wrapped as
+            # {"content": "<json>"} while the controlled path returns the
+            # result directly. Reading only the outer shape found no evidence
+            # at all, so every citation looked fabricated and a correct answer
+            # was reported as unverifiable.
+            elif isinstance(content, Mapping) and "evidence" not in content and "content" in content:
+                content = content["content"]
+            else:
+                break
         if not isinstance(content, Mapping):
             continue
         evidence = content.get("evidence")

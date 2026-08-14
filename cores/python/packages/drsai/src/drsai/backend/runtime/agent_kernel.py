@@ -912,11 +912,20 @@ def build_citation_evidence(
                         if re.fullmatch(r"memory:[A-Za-z0-9._:-]{1,160}", source_id):
                             memory_sources.add(source_id)
         if name.casefold() == "knowledge_search":
-            if isinstance(content, str):
-                try:
-                    content = json.loads(content)
-                except (TypeError, json.JSONDecodeError):
-                    content = {}
+            for _ in range(3):
+                if isinstance(content, str):
+                    try:
+                        content = json.loads(content)
+                    except (TypeError, json.JSONDecodeError):
+                        content = {}
+                        break
+                # A host may hand the result back wrapped as {"content": ...}.
+                # Reading only the outer shape finds no evidence and silently
+                # stops requiring citations for the very answers that need them.
+                elif isinstance(content, Mapping) and "evidence" not in content and "content" in content:
+                    content = content["content"]
+                else:
+                    break
             if isinstance(content, Mapping):
                 knowledge_citations_required = knowledge_citations_required or content.get("require_citations") is True
                 rows = content.get("evidence", [])
