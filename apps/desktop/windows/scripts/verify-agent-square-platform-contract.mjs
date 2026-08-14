@@ -153,6 +153,7 @@ function harness(responses, { refreshFails = false } = {}) {
       data: [{
         id: "drsai_v3_test",
         owner: "zdzhang@ihep.ac.cn",
+        author: "Agent Research Team",
         examples: {
           zh: ["检查 BESIII 事例选择", "生成 BESIII 分析方案"],
           en: ["Review BESIII event selection", "Create a BESIII analysis plan"],
@@ -166,6 +167,8 @@ function harness(responses, { refreshFails = false } = {}) {
   assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/apiv2/agents/list_agents?refresh=true");
   assert.equal(test.calls.length, 1, "HAI discovery must not wait for a second Portal Native metadata request");
   assert.deepEqual(result.agents.map((agent) => agent.id), ["platform:drsai_v3_test"]);
+  assert.equal(result.agents[0].owner, "zdzhang@ihep.ac.cn", "authenticated catalog owner must remain distinct");
+  assert.equal(result.agents[0].author, "Agent Research Team", "declared author must be preserved separately");
   assert.deepEqual(result.agents[0].examples, [
     { zh: "检查 BESIII 事例选择", en: "Review BESIII event selection" },
     { zh: "生成 BESIII 分析方案", en: "Create a BESIII analysis plan" },

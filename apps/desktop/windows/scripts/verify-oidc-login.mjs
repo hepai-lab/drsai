@@ -192,9 +192,13 @@ const checks = [
     "logout revokes OIDC refresh tokens before local cleanup",
     auth.includes("export async function logout") &&
       auth.includes("revokeOidcRefreshToken(stored.refreshToken)") &&
-      auth.includes("metadata.revocation_endpoint") &&
+    auth.includes("metadata.revocation_endpoint") &&
       auth.includes('token_type_hint: "refresh_token"') &&
-      auth.includes("Sign-out must still clear local credentials"),
+      auth.includes("Sign-out must still clear local credentials") &&
+      auth.includes("logoutInProgress = true") &&
+      auth.includes("if (logoutInProgress) return") &&
+      auth.includes("if (oidcRefreshPromise)") &&
+      auth.includes("logoutInProgress = false"),
   ],
   [
     "tokens stay in main process storage and public session omits raw tokens",

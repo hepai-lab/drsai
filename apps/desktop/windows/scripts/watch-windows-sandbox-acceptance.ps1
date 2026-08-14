@@ -15,6 +15,7 @@ $startedAt = [DateTimeOffset]::Now
 $initialProcess = Get-Process -Id $InitialProcessId -ErrorAction SilentlyContinue
 $initialProcessStartedAt = $(if ($initialProcess) { [DateTimeOffset]$initialProcess.StartTime } else { $startedAt })
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+$logoutGraceSeconds = [Math]::Min(1800, [Math]::Max(600, [int]($TimeoutSeconds / 2)))
 
 function Read-Json([string]$Path) {
     try { if (Test-Path -LiteralPath $Path -PathType Leaf) { return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json } } catch { }
@@ -83,6 +84,10 @@ while ((Get-Date) -lt $deadline) {
             $result = [ordered]@{ schemaVersion=1; runId=$RunId; generatedAt=[DateTime]::UtcNow.ToString("o"); passed=$true; provenance="background-observer"; checks=$checks; failedChecks=@(); completedChatCount=$chats.Count; tavilyResultCount=[int]$tavilyTest.result_count }
             [IO.File]::WriteAllText($markerPath, (($result | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
             $preLogoutWritten = $true
+            # Human/device authorization and functional checks may consume the
+            # original round deadline. Once the pre-logout gate is proven,
+            # give logout its own bounded window instead of racing the timeout.
+            $deadline = (Get-Date).AddSeconds($logoutGraceSeconds)
         }
     }
 
@@ -90,6 +95,16 @@ while ((Get-Date) -lt $deadline) {
         $auth = Read-Json $authPath
         $tokenPresent = $auth -and ($auth.accessToken -or $auth.encryptedAccessToken)
         if (-not $auth -or (-not $auth.authenticated -and -not $tokenPresent)) {
+            # Logout removes credentials before remote revocation and process
+            # coordination finish. Require the cleared state to remain stable
+            # before collecting the final snapshot.
+            Start-Sleep -Seconds 5
+            $stableAuth = Read-Json $authPath
+            $stableTokenPresent = $stableAuth -and ($stableAuth.accessToken -or $stableAuth.encryptedAccessToken)
+            if ($stableAuth -and ($stableAuth.authenticated -or $stableTokenPresent)) {
+                Start-Sleep -Seconds 3
+                continue
+            }
             & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $packageDir "complete-windows-sandbox-acceptance.ps1") -EvidenceDir $EvidenceDir -RunId $RunId -ManualOutcome PASS -ManualNote "Application interactions confirmed; background observer captured chat, restart, Tavily and logout evidence." -NonInteractive
             exit $LASTEXITCODE
         }

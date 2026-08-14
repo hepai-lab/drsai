@@ -7,6 +7,7 @@ import type {
   DesktopThreadSnapshot,
   DesktopThreadHistoryState,
 } from "../api/desktopApi";
+import { citationIdsForMarkdown, projectCitationParts } from "../api/citations";
 import {
   attachmentNameFromPath,
   stripAttachmentContextFromUserContent,
@@ -329,9 +330,18 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
   if (item.type === "message") {
     const markdown = oaepText(item.content);
     if ((!markdown && !includeEmpty) || item.content.role !== "assistant") return { parts: [], activities: [] };
-    return item.content.phase === "commentary"
-      ? { parts: [{ id: item.id, kind: "progress", status, summary: markdown, phase: "commentary" }], activities: [] }
-      : { parts: [{ id: item.id, kind: "markdown", status, markdown }], activities: [] };
+    if (item.content.phase === "commentary") {
+      return { parts: [{ id: item.id, kind: "progress", status, summary: markdown, phase: "commentary" }], activities: [] };
+    }
+    const citations = projectCitationParts(item.id, item.content.citations, status, item.id);
+    const citationIds = citationIdsForMarkdown(markdown, citations);
+    return {
+      parts: [
+        { id: item.id, kind: "markdown", status, markdown, ...(citationIds.length ? { citationIds } : {}) },
+        ...citations,
+      ],
+      activities: [],
+    };
   }
   if (item.type === "reasoning") {
     const visibleSegments = item.content.segments.filter((segment) => !segment.visibility || segment.visibility === "user");

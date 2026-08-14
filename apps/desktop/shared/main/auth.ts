@@ -90,6 +90,7 @@ let pendingOidcLoginDebug: OidcLoginDebugSink | null = null;
 let oidcJwksCache: { keys: JsonWebKey[]; fetchedAt: number } | null = null;
 let oidcMetadataCache: { metadata: OidcProviderMetadata; fetchedAt: number } | null = null;
 let oidcRefreshPromise: Promise<StoredAuthSession | null> | null = null;
+let logoutInProgress = false;
 
 type OidcLoginDebugSink = (event: OidcLoginDebugEvent) => void;
 
@@ -371,10 +372,23 @@ export function cancelOidcLogin(): boolean {
 export async function logout(rawOptions?: unknown): Promise<{ ok: boolean; message: string }> {
   const options = normalizeLogoutOptions(rawOptions);
   const stored = readStoredSession();
-  if (stored?.authMode === "oidc" && stored.refreshToken) {
-    await revokeOidcRefreshToken(stored.refreshToken);
-  }
+  logoutInProgress = true;
+  // Remove local credentials before performing network revocation so a slow
+  // or unavailable issuer cannot leave the UI anonymous while reusable tokens
+  // remain on disk. An already-running refresh is prevented from writing its
+  // result back and is allowed to settle before the final cleanup pass.
   clearStoredSession(Boolean(options.clearLocalData));
+  try {
+    if (stored?.authMode === "oidc" && stored.refreshToken) {
+      await revokeOidcRefreshToken(stored.refreshToken);
+    }
+    if (oidcRefreshPromise) {
+      try { await oidcRefreshPromise; } catch { /* cleanup below is authoritative */ }
+    }
+  } finally {
+    clearStoredSession(Boolean(options.clearLocalData));
+    logoutInProgress = false;
+  }
   return {
     ok: true,
     message: options.clearLocalData ? "Signed out and cleared local auth data." : "Signed out.",
@@ -640,6 +654,7 @@ function readStoredSession(): StoredAuthSession | null {
 }
 
 function writeStoredSession(session: StoredAuthSession): void {
+  if (logoutInProgress) return;
   mkdirSync(dirname(AUTH_SESSION_FILE), { recursive: true });
   const temporaryFile = `${AUTH_SESSION_FILE}.${process.pid}.${randomUUID()}.tmp`;
   const previousReferences = readCredentialReferences(AUTH_SESSION_FILE);

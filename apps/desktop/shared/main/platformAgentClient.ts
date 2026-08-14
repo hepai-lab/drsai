@@ -275,6 +275,7 @@ function normalizePlatformAgent(value: unknown, options: PlatformAgentClientOpti
       description: description.fallback,
       localizedDescription: description.localized,
       owner: firstString(agent.owner, agent.author, "OpenDrSai"),
+      author: firstString(agent.author, agent.publisher) || undefined,
       source: "remote",
       status: available ? "running" : "unreachable",
       available,

@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import tempfile
 import sys
 from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 import uuid
@@ -23,6 +24,13 @@ from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage, TextMess
 from autogen_core import CancellationToken, Image
 from autogen_core.tools import FunctionTool
 
+from ...config.knowledge_registry import (
+    KnowledgeResource,
+    canonical_knowledge_id,
+    index_local_files,
+    put_knowledge_resource,
+    search_local_knowledge_scope,
+)
 from .desktop_autogen_ports import (
     AgentKernelCheckpointPort,
     AutogenDesktopModelPort,
@@ -462,18 +470,80 @@ def _controlled_workspace_write(arguments: Mapping[str, Any], work_dir: str) -> 
 
 
 def _controlled_knowledge_result(query: str, work_dir: str) -> Mapping[str, Any] | None:
+    """Answer `knowledge_search` for a harness-provisioned corpus.
+
+    This used to synthesize the tool result directly, so the regression corpus
+    never went through the parser, the chunker or the retriever a real Knowledge
+    Base uses, and its evidence could not fail the way production evidence
+    fails. It now provisions the declared documents as an ordinary local-files
+    Knowledge Base and searches that, keeping only the harness's identity and
+    completeness claims.
+    """
+
+    prepared = _controlled_knowledge_corpus(work_dir)
+    if prepared is None:
+        return None
+    config_dir, entries = prepared
+
+    evidence: list[dict[str, Any]] = []
+    documents: list[dict[str, Any]] = []
+    corpus_complete = True
+    supporting_match = False
+    for resource, declared in entries:
+        scope = search_local_knowledge_scope(
+            config_dir, resource, query,
+            top_k=_CONTROLLED_KNOWLEDGE_TOP_K,
+            knowledge_base_revision=declared["revision"],
+        )
+        supporting_match = supporting_match or bool(scope["supporting_match"])
+        # The harness owns the completeness claim; indexing can only lower it.
+        complete = bool(declared["corpus_complete"]) and bool(scope["corpus_complete"])
+        corpus_complete = corpus_complete and complete
+        for row in scope["evidence"]:
+            row["source"] = _controlled_knowledge_source(declared, str(row["document_path"]))
+            evidence.append(row)
+        for row in scope["documents"]:
+            row["source"] = _controlled_knowledge_source(declared, str(row["document_path"]))
+            row["corpus_complete"] = complete
+            documents.append(row)
+
+    return {
+        "query": query, "require_citations": True,
+        "status": "completed", "completed": True,
+        "corpus_complete": corpus_complete,
+        "supporting_match": supporting_match,
+        "supporting_matches": [row for row in evidence if row.get("supporting_match")],
+        "evidence": evidence, "documents": documents,
+    }
+
+
+_CONTROLLED_KNOWLEDGE_TOP_K = 12
+_CONTROLLED_KNOWLEDGE_INDEXES: dict[str, tuple[Path, list[tuple[Any, dict[str, Any]]]]] = {}
+
+
+def _controlled_knowledge_source(declared: Mapping[str, Any], document_path: str) -> str:
+    return (
+        f"opendrsai://regression/knowledge/{declared['knowledge_id']}"
+        f"/revisions/{declared['revision']}/documents/{document_path}"
+    )
+
+
+def _controlled_knowledge_corpus(
+    work_dir: str,
+) -> tuple[Path, list[tuple[Any, dict[str, Any]]]] | None:
+    """Verify and index the declared corpus, once per distinct corpus."""
+
     control = _REGRESSION_CONTROL.get()
     if control is None or control.get("network") != "disabled":
         return None
     configured = control.get("knowledge_bases")
     if not isinstance(configured, list) or not configured:
         return None
-    evidence: list[dict[str, Any]] = []
-    documents: list[dict[str, Any]] = []
-    contents: list[str] = []
+
     agent_root = Path(work_dir).resolve()
     roots = (agent_root, agent_root.parent)
-    for index, value in enumerate(configured):
+    declarations: list[tuple[dict[str, Any], bytes]] = []
+    for value in configured:
         if not isinstance(value, Mapping):
             raise ValueError("desktop_regression_knowledge_invalid")
         encoded = value.get("content_base64")
@@ -497,59 +567,48 @@ def _controlled_knowledge_result(query: str, work_dir: str) -> Mapping[str, Any]
         digest = hashlib.sha256(raw).hexdigest()
         if digest != value.get("sha256"):
             raise ValueError("desktop_regression_knowledge_digest_mismatch")
-        document_path = str(value.get("document_path") or (path.name if path else "document"))
-        knowledge_id = str(value.get("knowledge_base_id") or "")
-        revision = int(value.get("knowledge_base_revision") or 0)
-        source = (
-            f"opendrsai://regression/knowledge/{knowledge_id}/revisions/{revision}/"
-            f"documents/{document_path}"
-        )
-        content = raw.decode("utf-8")
-        contents.append(content)
-        evidence.append({
-            "knowledge_id": knowledge_id, "knowledge_base_revision": revision,
-            "document_id": document_path, "document_path": document_path,
-            "title": document_path, "source": source, "chunk_id": f"{document_path}:{index}",
-            "score": 1.0, "content": content, "content_sha256": digest,
-        })
-        documents.append({
-            "knowledge_base_id": knowledge_id, "knowledge_base_revision": revision,
-            "document_path": document_path, "sha256": digest, "source": source,
+        declarations.append(({
+            "knowledge_id": str(value.get("knowledge_base_id") or ""),
+            "revision": int(value.get("knowledge_base_revision") or 0),
+            "document_path": str(value.get("document_path") or (path.name if path else "document")),
+            "sha256": digest,
             "corpus_complete": value.get("corpus_complete") is True,
-        })
-    supporting_match = _knowledge_query_supported(query, "\n".join(contents))
-    for item in evidence:
-        item["supporting_match"] = supporting_match
-        item["relation"] = "supports_claim" if supporting_match else "searched_scope"
-    return {
-        "query": query, "require_citations": True,
-        "status": "completed", "completed": True,
-        "corpus_complete": all(item["corpus_complete"] for item in documents),
-        "supporting_match": supporting_match,
-        "supporting_matches": evidence if supporting_match else [],
-        "evidence": evidence, "documents": documents,
-    }
+        }, raw))
 
+    fingerprint = hashlib.sha256(json.dumps(sorted(
+        (item["knowledge_id"], item["revision"], item["document_path"], item["sha256"])
+        for item, _raw in declarations
+    )).encode()).hexdigest()
+    cached = _CONTROLLED_KNOWLEDGE_INDEXES.get(fingerprint)
+    if cached is not None and cached[0].is_dir():
+        return cached
 
-def _knowledge_query_supported(query: str, content: str) -> bool:
-    """Conservatively identify whether the fixed corpus can support a query.
+    # Deliberately outside the Agent's work dir. Building the index there would
+    # modify the workspace during a Run, which several cases assert does not
+    # happen; the corpus is content-addressed by digest, so a shared location
+    # is safe and lets identical corpora reuse one index.
+    cache_root = Path(tempfile.gettempdir()) / "opendrsai-regression-knowledge" / fingerprint
+    config_dir = cache_root / "config"
+    grouped: dict[str, dict[str, Any]] = {}
+    for item, raw in declarations:
+        corpus_dir = cache_root / "corpus" / canonical_knowledge_id(item["knowledge_id"])
+        document = corpus_dir / item["document_path"]
+        document.parent.mkdir(parents=True, exist_ok=True)
+        document.write_bytes(raw)
+        group = grouped.setdefault(item["knowledge_id"], {**item, "root": corpus_dir})
+        group["corpus_complete"] = bool(group["corpus_complete"]) and bool(item["corpus_complete"])
 
-    This is not a production retriever. It prevents a controlled regression
-    fixture from claiming support merely because a broad document was searched.
-    """
-    folded = content.casefold()
-    latin_terms = {
-        term.casefold() for term in re.findall(r"[A-Za-z][A-Za-z0-9._-]+", query)
-        if term.casefold() not in {"opendrsai", "runtime"}
-    }
-    if latin_terms:
-        return all(term in folded for term in latin_terms)
-    ignored = {"根据", "提供", "知识库", "回答", "请问", "什么", "是否", "可以", "哪个"}
-    cjk_terms = {
-        term for term in re.findall(r"[\u3400-\u9fff]{2,}", query)
-        if term not in ignored and not any(term.startswith(prefix) for prefix in ("根据", "请仅"))
-    }
-    return bool(cjk_terms) and all(term in content for term in cjk_terms)
+    entries: list[tuple[Any, dict[str, Any]]] = []
+    for knowledge_id, group in grouped.items():
+        resource = put_knowledge_resource(config_dir, KnowledgeResource(
+            canonical_knowledge_id(knowledge_id), knowledge_id, "local-files", True,
+            {"root_path": str(group["root"]), "paths": ["."], "chunk_size": 800, "chunk_overlap": 120},
+        ))
+        index_local_files(config_dir, resource)
+        entries.append((resource, group))
+
+    _CONTROLLED_KNOWLEDGE_INDEXES[fingerprint] = (config_dir, entries)
+    return config_dir, entries
 
 
 _CONTROLLED_OPERATIONS = {
