@@ -88,6 +88,7 @@
     "verify:update-publish-plan": "node scripts/verify-update-publish-plan.mjs",
     "verify:oss-release-permissions": "node scripts/verify-oss-release-permissions.mjs",
     "publish:update:oss": "node scripts/publish-update-to-oss.mjs",
+    "refresh:update:cdn": "node scripts/refresh-update-cdn.mjs",
     "verify:update-published": "node scripts/verify-published-update.mjs",
     "verify:website-release": "node scripts/verify-website-release.mjs",
     "stage:update-lab-feed": "node scripts/stage-update-lab-feed.mjs",

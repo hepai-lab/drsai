@@ -40,6 +40,8 @@ export OPENDRSAI_OSS_BUCKET="${OPENDRSAI_OSS_BUCKET:-hepai-release}"
 oss_id="$(awk -F',' 'NR==2 {gsub(/^"|"$/, "", $1); print $1}' "$OSS_CSV")"
 oss_secret="$(awk -F',' 'NR==2 {gsub(/^"|"$/, "", $2); gsub(/\r$/, "", $2); print $2}' "$OSS_CSV")"
 [[ -n "$oss_id" && -n "$oss_secret" ]] || { echo "OSS credential CSV is incomplete." >&2; exit 1; }
+export ALIBABA_CLOUD_ACCESS_KEY_ID="$oss_id"
+export ALIBABA_CLOUD_ACCESS_KEY_SECRET="$oss_secret"
 
 oss_config="$(mktemp /private/tmp/opendrsai-ossutil.XXXXXX)"
 chmod 600 "$oss_config"

@@ -64,10 +64,20 @@ for (const command of betaPlan.commands) {
   assert.match(command.cacheControl, /immutable/);
   assert.doesNotMatch(command.target, /channels\/stable/);
 }
+const betaMetadataResult = spawnSync(process.execPath, [new URL("./publish-update-to-oss.mjs", import.meta.url).pathname, "--release-dir", betaTemp, "--beta", "--promote-metadata"], { encoding: "utf8" });
+assert.equal(betaMetadataResult.status, 0, betaMetadataResult.stderr);
+const betaMetadataPlan = JSON.parse(betaMetadataResult.stdout);
+assert.equal(betaMetadataPlan.phase, "beta-metadata");
+assert.equal(betaMetadataPlan.stableUnchanged, true);
+assert.equal(betaMetadataPlan.commands.length, 1);
+assert.equal(betaMetadataPlan.commands[0].target, "oss://hepai-release/channels/beta/macos/arm64/latest-mac.yml");
+assert.equal(betaMetadataPlan.commands[0].forbidOverwrite, false);
+assert.match(betaMetadataPlan.commands[0].cacheControl, /max-age=30/);
+assert.doesNotMatch(betaMetadataPlan.commands[0].target, /channels\/stable/);
 const invalidBetaFlags = spawnSync(process.execPath, [new URL("./publish-update-to-oss.mjs", import.meta.url).pathname, "--release-dir", betaTemp, "--beta", "--assets-only"], { encoding: "utf8" });
 assert.notEqual(invalidBetaFlags.status, 0, "beta publication must reject stable publication flags");
 const assetReceipt = join(temp, "asset-receipt.json");
 const assetCheck = spawnSync(process.execPath, [new URL("./verify-update-assets.mjs", import.meta.url).pathname, "--release-dir", temp, "--output", assetReceipt], { encoding: "utf8" });
 assert.equal(assetCheck.status, 0, assetCheck.stderr);
 assert.equal(JSON.parse(await import("node:fs").then(({ readFileSync }) => readFileSync(assetReceipt, "utf8"))).installVerified, false);
-console.log("macOS OSS update publish plan passed; stable metadata is last and the only replaceable object.");
+console.log("macOS OSS update publish plan passed; each channel publishes metadata last and only channel metadata is replaceable.");

@@ -18,6 +18,8 @@
 /channels/beta/latest-android.json
 /releases/v1.5.2/macos/OpenDrSai-macOS-v1.5.2-arm64.dmg
 /releases/v1.5.2/macos/OpenDrSai-macOS-v1.5.2-arm64.zip
+/releases/v1.5.2-beta.1/macos/latest-mac.yml
+/channels/beta/macos/arm64/latest-mac.yml
 /channels/stable/latest-windows.json
 /channels/stable/latest-android.json
 /channels/stable/macos/arm64/latest-mac.yml
@@ -28,16 +30,18 @@
 - macOS 完整 DMG（含首次安装 Runtime）用于 CDN 首次安装；应用内更新 ZIP 不重复携带已持久化到 `~/.drsai` 的 Runtime。DMG、ZIP 和 `latest-mac.yml` 发布到 OSS/CDN；首发只支持 Apple Silicon arm64。
 - macOS Channel 目录保留同字节的版本化 ZIP 别名，使相对 URL `latest-mac.yml` 在 Generic CDN 上可用；该 ZIP 名含版本和架构且不可覆盖，权威归档位于 `/releases/v版本/macos/`。
 - `/releases/v版本/`：不可覆盖，缓存一年，发布后预热 MSI、ZIP、APK、DMG。
-- `/channels/stable/`：缓存 30～60 秒，不预热；更新清单最后上传。
+- `/channels/beta/`：缓存 30～60 秒，不保存可变制品，只引用 `/releases/v预发布版本/` 的不可变资产；Beta 更新清单必须在对应 DMG、ZIP 和版本清单完成上传及验收后最后覆盖。
+- `/channels/stable/`：缓存 30～60 秒，不预热；Stable 更新清单最后上传，且只能消费已经通过完整发布门禁的不可变资产。
 - 不对 MSI、ZIP、APK、DMG 做 CDN 动态压缩；客户端必须校验版本、文件大小和 SHA-256。macOS 还必须通过 Apple 代码签名验证后才允许安装。
 
 ## 发布顺序
 
 1. 完成构建、测试和签名检查。
 2. 上传版本化资产到 OSS，并通过 CDN 验证 `HEAD`、Range、大小和 SHA-256。
-3. 预热大文件，再上传版本清单和 `channels/stable` 清单。
-4. 最后晋级 `channels/stable` 清单，失败时恢复上一份 stable 快照。
-5. 验证 CDN 下载、自动更新和 `opendrsai-dev.ihep.ac.cn` 发布入口。
+3. 上传并验证版本清单；若发布 Beta，则记录 Stable 基线，最后覆盖 `channels/beta/macos/arm64/latest-mac.yml`，并刷新该清单的精确 CDN URL。
+4. 使用严格 TLS 验证 Beta 清单为 200、版本正确、DMG/ZIP Range 为 206，完整大小、SHA-512、SHA-256 和 Runtime SHA-256 与原始制品一致，同时确认 Stable 未变。
+5. Stable 晋级是独立事务：保存上一份 Stable 快照，最后覆盖 `channels/stable` 清单，失败时恢复快照；Beta 发布不得修改 Stable。
+6. 验证 CDN 下载、自动更新和 `opendrsai-dev.ihep.ac.cn` 发布入口。开发站要消费 Beta 时应配置 `OPENDRSAI_MACOS_RELEASE_CHANNEL=beta`，默认仍为 Stable。
 
 macOS 的详细实现、无签名开发边界、Feed 回退状态机和分层发布门禁见 [OpenDrSai macOS 下载与更新完整链路规划](./opendrsai-macos-download-update-implementation-plan.md)。在 Developer ID、公证凭据和上一稳定签名版本齐备前，只允许产出 unsigned 开发证据，不得更新生产 `channels/stable/macos/arm64/latest-mac.yml`。
 

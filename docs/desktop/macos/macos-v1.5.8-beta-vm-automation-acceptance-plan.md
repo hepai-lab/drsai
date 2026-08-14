@@ -748,3 +748,13 @@ v1.5.8 Beta VM 自动化达到“可用于发布决策”必须满足：
 - P1 runner 修复了 shell `find` 转义问题，并改用 Tart VNC 图形后端按新增 VM 窗口 ID 定向截图，避免 Guest Agent 后台上下文无法访问 WindowServer，也避免截取宿主机其他窗口；
 - 证据目录：`apps/desktop/macos/build/acceptance/macos-vm/p1/2026-08-14T03-45-25-467Z-cda14a/`；`summary.json` SHA-256 为 `e46b8d9ac9aedf34024d7f6380d78b871b22df9a6a7bc2692070bfc2611ef547`，`first-launch.png` SHA-256 为 `58a8b71dd96ec5b3754fb897e2b91ee9175b7a6be656e763f7f40fc9e0165c60`；
 - 验收后所有 `opendrsai-p1-*` 一次性 VM 均已删除，仅保留停止状态的 pristine 基础镜像。P1 退出条件满足；真实登录、Runtime Ready、工作区和任务链路继续按 P2/P3 执行。
+
+### 2026-08-14：v1.5.8-beta.2 Beta 频道发布完成
+
+- 不可变版本目录 `releases/v1.5.8-beta.2/macos/` 的 DMG、ZIP、`latest-mac.yml` 已先完成 OSS 大小检查和公网严格 TLS 全文件校验，随后才把清单发布到 `channels/beta/macos/arm64/latest-mac.yml`；
+- DMG 为 584,445,714 字节，SHA-256 为 `d43200aff3e21b58b5c430e72e626d63dc64b2bb908a86762f9409d4cc532a1a`，SHA-512 为 `4rrNB7A7Hg8Tp9mUYs88pmqHWC+HT5dRFxkr52U52JVPoFpRlJrQHlds09Ki1uPx+UqgV+Z7KkRtd1GTU+xhsQ==`；
+- ZIP 为 118,868,104 字节，SHA-256 为 `e860a8715181995cfae13ae19807154674c5dea0e8d021840d3914986d7e6588`，SHA-512 为 `Wprca2OhFLI/f1x36cgrVSi/V+uJ39fKmLA20DQD1tN/+9GgRMnKeXy4GkSevT5TXBWhn7kals1R1326iNJydA==`；
+- Beta 清单为 509 字节，SHA-256 为 `c887d88c245c5daf1ff93a9367952e67993edf41288d9398485f83988c369d6c`，版本为 `1.5.8-beta.2`，发布时间为 `2026-08-14T02:49:27.943Z`，Runtime SHA-256 为 `60c26c73d6501e57904aa15d8230a1753ef09fc4184148516e1f39a9eff94bfb`；
+- 阿里云 CDN 已刷新 Beta 清单精确 URL，任务 ID 为 `33128121085`，请求 ID 为 `019FFEA2-CF28-5C2D-B8B4-BFBC8779C2A6`；
+- 公网最终验收确认 Beta 清单返回 200，DMG 和 ZIP Range 均返回 206，清单、DMG、ZIP 的完整大小、SHA-512 和 SHA-256 与本地原始制品一致；
+- Stable 清单保持 v1.5.7，发布前后均为 481 字节、SHA-256 `ced6248c12ca50ad490c8c1861ba01667af97323bda96b5fbe8575eb4d398715`、OSS ETag `4C38F6B189CAB8E1A35C63D30915A6BD`、Version ID `CAEQjgEYgYCAxceM5f8ZIiAxNDM4NDJmNTQ1ZTM0MDQwYmQ3YTFiMTBjZTY3YmNlNA--`，本次发布未修改 Stable。
