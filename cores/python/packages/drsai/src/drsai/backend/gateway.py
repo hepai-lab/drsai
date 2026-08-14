@@ -4113,6 +4113,7 @@ _RUNTIME_EVIDENCE_SOURCE_FILES = (
     "cores/python/packages/drsai/src/drsai/backend/runtime/input_resources.py",
     "cores/python/packages/drsai/src/drsai/backend/runtime/oaep.py",
     "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/grounded.py",
     "cores/python/packages/drsai/src/drsai/backend/runtime/desktop_autogen_ports.py",
     "cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/drsai_assistant.py",
 )

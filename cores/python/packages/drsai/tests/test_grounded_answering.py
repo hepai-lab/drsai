@@ -188,12 +188,60 @@ def test_claim_support_flags_a_citation_that_does_not_exist() -> None:
     assert support["valid"] is False
 
 
-def test_claim_support_counts_uncited_factual_statements() -> None:
+def test_attribution_line_is_apparatus_not_a_claim() -> None:
+    evidence = [{"content": "OpenDrSai Runtime 使用 Session 表示一段持续的用户会话。"}]
+
+    support = build_claim_support(
+        "Session：表示一段持续的用户会话。[E1]\n"
+        "证据引用：\n"
+        "[E1] 来源：opendrsai_runtime_overview_v1.md 第1-13行",
+        evidence,
+    )
+
+    # The line repeats the locator we handed the model. Scoring it as a claim
+    # made our own line numbers look like an invented figure.
+    assert support["valid"] is True
+
+
+def test_an_attribution_lead_in_cannot_smuggle_an_invented_figure() -> None:
+    evidence = [{"content": "OpenDrSai Runtime 使用 Session 表示一段持续的用户会话。"}]
+
+    support = build_claim_support(
+        "Session：表示一段持续的用户会话。[E1]\n来源：默认端口是 18642 并且监听 8080。",
+        evidence,
+    )
+
+    # Exempting anything that opens with "来源：" would turn the exemption into
+    # the easiest way around the check.
+    assert support["valid"] is False
+
+
+def test_a_sentence_continuing_a_cited_one_inherits_its_marker() -> None:
+    evidence = [{"content": "Replay always creates a new Run and never overwrites the original Run."}]
+
+    support = build_claim_support(
+        "Replay always creates a new Run [E1]. It therefore never overwrites the original Run.",
+        evidence,
+    )
+
+    # People cite once and keep writing. Scoring the continuation as uncited
+    # would put a warning on almost every real answer, and a warning that fires
+    # constantly stops being read.
+    assert support["uncited_claims"] == 0
+    assert support["valid"] is True
+
+
+def test_inheriting_a_marker_does_not_let_an_unsupported_claim_through() -> None:
     evidence = [{"content": "Replay always creates a new Run."}]
 
-    support = build_claim_support("Replay always creates a new Run [E1]. Runs are billed hourly.", evidence)
+    support = build_claim_support(
+        "Replay always creates a new Run [E1]. Runs are billed hourly.",
+        evidence,
+    )
 
-    assert support["uncited_claims"] == 1
+    # The inherited passage still has to support the sentence, so inheritance
+    # buys prose continuity without buying immunity.
+    assert support["unsupported_claims"] >= 1
     assert support["valid"] is False
 
 
