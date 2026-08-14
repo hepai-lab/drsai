@@ -4346,6 +4346,140 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   background: var(--app-accent-soft);
 }
 
+.message-attachment-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.message-attachment-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--app-accent-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-panel-bg) 72%, transparent);
+  color: var(--app-text-secondary);
+  font-size: 12px;
+}
+
+.message-attachment-badge span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-image {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  max-width: min(320px, 100%);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.message-attachment-image img {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border: 1px solid var(--app-accent-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-panel-bg) 80%, transparent);
+}
+
+.message-attachment-image-caption {
+  overflow: hidden;
+  color: var(--app-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  -webkit-app-region: no-drag;
+}
+
+.message-attachment-lightbox-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgb(15 23 42 / 62%);
+  cursor: pointer;
+}
+
+.message-attachment-lightbox-panel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  width: min(960px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  padding: 14px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 14px;
+  background: var(--app-panel-bg);
+  box-shadow: 0 24px 64px rgb(15 23 42 / 28%);
+}
+
+.message-attachment-lightbox-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.message-attachment-lightbox-panel header strong {
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-lightbox-panel header button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  color: var(--app-text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.message-attachment-lightbox-panel header button:hover {
+  color: var(--app-text-primary);
+  background: var(--app-panel-soft);
+}
+
+.message-attachment-lightbox-panel img {
+  display: block;
+  width: 100%;
+  max-height: calc(100vh - 140px);
+  object-fit: contain;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-panel-soft) 70%, transparent);
+}
+
 .message.assistant {
   align-self: flex-start;
   width: 100%;
@@ -4819,6 +4953,49 @@ button.structured-activity-detail:hover {
   text-align: left;
 }
 
+.structured-artifact-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.structured-artifact-card.has-preview {
+  padding: 8px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 10px;
+  background: var(--app-card-bg);
+}
+
+.structured-artifact-card.has-preview .structured-artifact {
+  border: 0;
+  background: transparent;
+  min-height: 34px;
+  padding: 2px 0 0;
+}
+
+.structured-artifact-image {
+  display: block;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: min(420px, 100%);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.structured-artifact-image img {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  border: 1px solid var(--app-accent-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-panel-bg) 80%, transparent);
+}
+
 .structured-artifact {
   grid-template-columns: 18px minmax(0, 1fr) auto 16px;
   gap: 8px;
@@ -5274,6 +5451,20 @@ button.structured-activity-detail:hover {
   color: var(--app-text-secondary);
   font-size: 12px;
   background: var(--app-panel-soft);
+}
+
+.composer-attachment-chip.has-image-preview {
+  padding-left: 5px;
+}
+
+.composer-attachment-thumb {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--app-panel-border);
+  background: var(--app-panel-bg);
 }
 
 .composer-attachment-chip button {
@@ -16624,6 +16815,8 @@ button.structured-activity-compact:hover > span {
   gap: 7px;
 }
 
+.chat-agent-input-request.structured-interaction > div,
+.chat-agent-input-request.composer-agent-interaction > .composer-agent-interaction-controls,
 .chat-agent-input-request[data-testid="goal-confirmation-card"] > div {
   display: flex;
   flex-wrap: wrap;

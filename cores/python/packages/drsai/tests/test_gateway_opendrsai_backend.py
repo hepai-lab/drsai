@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -257,6 +258,56 @@ def test_gateway_backend_registers_workspace_artifacts_on_completion(tmp_path: P
     assert result["content"] == "created"
     assert published[0]["relative_path"] == "artifacts/deck.pptx"
     assert any(event_type == "artifact.created" for event_type, _ in services.events)
+
+
+def test_gateway_backend_skips_stale_workspace_artifacts_from_earlier_runs(tmp_path: Path, monkeypatch) -> None:
+    published = []
+
+    class ArtifactStore:
+        def list_for_run(self, _workspace_id, _run_id):
+            return []
+
+        def publish(self, context, arguments):
+            path = tmp_path / arguments["path"]
+            item = {
+                "artifact_id": f"artifact-{len(published) + 1}",
+                "workspace_id": context.workspace_id,
+                "session_id": context.session_id,
+                "run_id": context.run_id,
+                "relative_path": arguments["path"],
+                "display_name": path.name,
+                "mime_type": "image/png",
+                "size": path.stat().st_size,
+                "sha256": "b" * 64,
+            }
+            published.append(item)
+            return item
+
+    monkeypatch.setattr(gateway, "_runtime_artifact_store", lambda: ArtifactStore())
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    stale = artifacts / "opendrsai-agent-runtime.png"
+    stale.write_bytes(b"stale-image")
+    # Pretend this file was left by an earlier Desktop task in the same Workspace.
+    stale_mtime = time.time() - 120
+    os.utime(stale, (stale_mtime, stale_mtime))
+
+    async def runner(**_kwargs):
+        fresh = artifacts / "this-run-only.png"
+        fresh.write_bytes(b"fresh-image")
+        yield TextMessage(source="assistant", content="diagnosed")
+
+    services = RecordingServices()
+    result = asyncio.run(GatewayOpenDrSaiAgentBackend(runner).execute(
+        _context(tmp_path), _definition("zhizengzeng"), "diagnose", services,
+    ))
+
+    assert result["content"] == "diagnosed"
+    assert [item["relative_path"] for item in published] == ["artifacts/this-run-only.png"]
+    assert not any(
+        isinstance(payload, dict) and str(payload.get("relative_path") or "").endswith("opendrsai-agent-runtime.png")
+        for _event_type, payload in services.events
+    )
 
 
 def test_gateway_backend_preserves_secret_free_failure_type(tmp_path: Path) -> None:

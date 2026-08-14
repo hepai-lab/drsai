@@ -1345,10 +1345,25 @@ function findNodeByPath(
   nodes: WorkspaceFileNode[],
   path: string,
 ): WorkspaceFileNode | null {
+  const needle = normalizePathKey(path);
+  if (!needle) return null;
   for (const node of nodes) {
-    if (node.path === path) return node;
+    const absolute = normalizePathKey(node.path);
+    const relative = normalizePathKey(node.relativePath);
+    if (
+      absolute === needle
+      || relative === needle
+      || absolute.endsWith(`/${needle}`)
+      || relative.endsWith(`/${needle}`)
+    ) {
+      return node;
+    }
     const child = findNodeByPath(node.children ?? [], path);
     if (child) return child;
   }
   return null;
+}
+
+function normalizePathKey(path: string): string {
+  return path.trim().replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
 }

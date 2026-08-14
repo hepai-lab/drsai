@@ -77,14 +77,17 @@ function collectArtifacts(
 ): ArtifactItem[] {
   const byPath = new Map<string, ArtifactItem>();
   for (const node of flattenNodes(nodes)) {
-    if (node.type === "file" && (node.gitStatus === "added" || node.gitStatus === "untracked")) {
-      byPath.set(node.path, {
-        node,
-        path: node.path,
-        relativePath: node.relativePath,
-        source: node.gitStatus,
-      });
-    }
+    if (node.type !== "file") continue;
+    const underArtifacts = /(^|[/\\])artifacts[/\\]/i.test(node.relativePath.replace(/\\/g, "/"));
+    const gitNew = node.gitStatus === "added" || node.gitStatus === "untracked";
+    // Runtime image/PPT outputs land under artifacts/ even when git status is quiet.
+    if (!gitNew && !underArtifacts) continue;
+    byPath.set(node.path, {
+      node,
+      path: node.path,
+      relativePath: node.relativePath,
+      source: underArtifacts ? "artifacts" : String(node.gitStatus || "file"),
+    });
   }
   for (const event of events.filter((item) => item.action === "agent_artifact")) {
     byPath.set(event.path, {
