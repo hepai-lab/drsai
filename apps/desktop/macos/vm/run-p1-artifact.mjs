@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { extractFile } from "@electron/asar";
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, resolve } from "node:path";
@@ -95,6 +95,50 @@ function shellQuote(value) {
 
 function sleep(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function virtualizationWindowIds() {
+  const source = `
+import CoreGraphics
+let rows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as! [[String: Any]]
+for row in rows {
+  let layer = row[kCGWindowLayer as String] as? Int ?? -1
+  let name = row[kCGWindowName as String] as? String ?? ""
+  if layer == 0 && name == "Virtualization", let number = row[kCGWindowNumber as String] as? Int {
+    print(number)
+  }
+}`;
+  const result = spawnSync("xcrun", ["swift", "-e", source], {
+    encoding: "utf8",
+    env: process.env,
+    timeout: 30_000,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`failed to enumerate VM windows: ${(result.stderr || result.stdout || result.error?.message || "no output").trim()}`);
+  }
+  return new Set(result.stdout.split("\n").filter(Boolean).map((value) => Number(value)).filter(Number.isSafeInteger));
+}
+
+function waitForNewVirtualizationWindow(previousIds, timeoutSeconds) {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (Date.now() < deadline) {
+    const candidate = [...virtualizationWindowIds()].find((id) => !previousIds.has(id));
+    if (candidate !== undefined) return candidate;
+    sleep(1000);
+  }
+  throw new Error(`Screen Sharing did not expose a new Virtualization window in ${timeoutSeconds}s`);
+}
+
+function captureWindow(windowId, destination) {
+  const result = spawnSync("/usr/sbin/screencapture", ["-x", "-l", String(windowId), destination], {
+    encoding: "utf8",
+    env: process.env,
+    timeout: 30_000,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`failed to capture VM window ${windowId}: ${(result.stderr || result.stdout || result.error?.message || "no output").trim()}`);
+  }
+  if (statSync(destination).size <= 0) throw new Error(`VM screenshot is empty: ${destination}`);
 }
 
 function waitForGuest(vmName, timeoutSeconds) {
@@ -192,12 +236,14 @@ let vmCreated = false;
 let runProcess = null;
 let logFd = null;
 let keepVm = false;
+let vmWindowId = null;
 const guestEvidence = "/Volumes/My Shared Files/evidence";
 const guestDmg = "/Users/admin/Downloads/OpenDrSai-candidate.dmg";
 const mountPoint = "/Users/admin/Downloads/OpenDrSai Candidate Mount";
 const installedApp = "/Applications/OpenDrSai.app";
 
 try {
+  const existingVmWindowIds = virtualizationWindowIds();
   tart(["clone", image.localName, vmName]);
   vmCreated = true;
   tart([
@@ -217,6 +263,7 @@ try {
     "tart",
     [
       "run",
+      "--vnc-experimental",
       "--no-audio",
       "--no-clipboard",
       "--dir",
@@ -227,6 +274,7 @@ try {
   );
 
   const actualGuestVersion = waitForGuest(vmName, config.defaults.bootTimeoutSeconds);
+  vmWindowId = waitForNewVirtualizationWindow(existingVmWindowIds, 60);
   const actualGuestBuild = guest(vmName, "/usr/bin/sw_vers", ["-buildVersion"]).stdout;
   if (actualGuestVersion !== image.guestVersion || actualGuestBuild !== image.guestBuild) {
     throw new Error(`guest identity drifted: ${actualGuestVersion}/${actualGuestBuild}`);
@@ -349,7 +397,8 @@ try {
   guest(vmName, "/usr/bin/open", [installedApp]);
   const launchProbe = guestShell(vmName, "i=0; while test $i -lt 60; do /usr/bin/pgrep -x OpenDrSai >/dev/null && exit 0; /bin/sleep 1; i=$((i + 1)); done; exit 1");
   if (launchProbe.status !== 0) throw new Error("OpenDrSai did not stay running after launch");
-  guestShell(vmName, `/bin/sleep 5; /usr/bin/pgrep -x OpenDrSai >/dev/null; /usr/sbin/screencapture -x ${shellQuote(`${guestEvidence}/first-launch.png`)}`);
+  guestShell(vmName, "/bin/sleep 5; /usr/bin/pgrep -x OpenDrSai >/dev/null");
+  captureWindow(vmWindowId, resolve(evidenceDir, "first-launch.png"));
   summary.checks.blackBoxLaunch = true;
   summary.checks.screenshot = "first-launch.png";
 
