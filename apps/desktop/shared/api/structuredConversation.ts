@@ -62,6 +62,19 @@ export interface CitationPart extends StructuredPartBase {
   excerpt?: string;
   markdownPartId?: string;
   artifactId?: string;
+  /**
+   * Knowledge base this citation came from, and the document path relative to
+   * that base's root. `path` alone cannot be opened: it is relative to a corpus
+   * root the renderer does not otherwise know, so resolving it needs the id.
+   */
+  knowledgeBaseId?: string;
+  documentPath?: string;
+  /**
+   * 1-based line range in the source file, when the locator is line-based.
+   * Page and slide locators carry no lines and only get the label.
+   */
+  lineStart?: number;
+  lineEnd?: number;
 }
 
 export interface InteractionOption {

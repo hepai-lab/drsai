@@ -78,6 +78,24 @@ export function locatorLabel(payload: OaepCitationPayload): string {
   return "";
 }
 
+/**
+ * The 1-based line range the locator points at, when it has one.
+ *
+ * Line numbers come from the indexer counting raw file lines, so they address
+ * the file on disk directly. Page and slide locators have no line range and
+ * must not be guessed into one: highlighting the wrong lines reads as a
+ * verified position and is worse than showing none.
+ */
+export function locatorLineRange(payload: OaepCitationPayload): { start: number; end: number } | undefined {
+  const locator = payload.locator;
+  if (!locator || typeof locator.line_start !== "number" || !Number.isFinite(locator.line_start)) return undefined;
+  const start = Math.max(1, Math.trunc(locator.line_start));
+  const rawEnd = typeof locator.line_end === "number" && Number.isFinite(locator.line_end)
+    ? Math.trunc(locator.line_end)
+    : start;
+  return { start, end: Math.max(start, rawEnd) };
+}
+
 function citationTitle(payload: OaepCitationPayload): string {
   const candidates = [payload.title, payload.document_path, payload.source, payload.url];
   for (const value of candidates) {
@@ -115,6 +133,13 @@ export function projectCitationParts(
     const excerpt = typeof payload.excerpt === "string" && payload.excerpt.trim()
       ? payload.excerpt.trim()
       : undefined;
+    const knowledgeBaseId = typeof payload.knowledge_base_id === "string" && payload.knowledge_base_id.trim()
+      ? payload.knowledge_base_id.trim()
+      : undefined;
+    const documentPath = typeof payload.document_path === "string" && payload.document_path.trim()
+      ? payload.document_path.trim()
+      : undefined;
+    const lines = locatorLineRange(payload);
     parts.push({
       id: `${itemId}:citation:${index + 1}`,
       kind: "citation",
@@ -125,6 +150,9 @@ export function projectCitationParts(
       ...(url ? { url } : {}),
       ...(locator ? { locator } : {}),
       ...(excerpt ? { excerpt } : {}),
+      ...(knowledgeBaseId ? { knowledgeBaseId } : {}),
+      ...(documentPath ? { documentPath } : {}),
+      ...(lines ? { lineStart: lines.start, lineEnd: lines.end } : {}),
       markdownPartId,
     });
   });
