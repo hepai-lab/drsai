@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Bot,
   Brain,
@@ -79,6 +80,7 @@ import type { ChatAttachment, InteractionOption } from "@shared/desktopApi";
 import type { RunReproducibilityLevel } from "@shared/runInspection";
 import type { ArtifactPart, CitationPart, InteractionPart, StructuredAssistantPart, StructuredTurnState } from "@shared/structuredConversation";
 import type { AppLanguage } from "../navigation";
+import { supportsFullAgentPrimaryRuntime } from "../modelCatalogRecovery";
 import { getAgentEmptyChatPrompts, parseCatalogAgentExamples } from "../agentExamplePrompts";
 import { desktopApi, hasDesktopApi } from "../desktopApi";
 import { copyTextSafely } from "../clipboard";
@@ -301,6 +303,7 @@ interface ChatWorkspaceProps {
   currentRuntimeMode?: ChatRuntimeMode | null;
   defaultThinkingEffort?: ThinkingEffort;
   searchRequestNonce?: number;
+  messageFocus?: { messageId: string; nonce: number } | null;
   structuredTurnFocus?: { turnId: string; nonce: number } | null;
   selectedAgentId?: string;
   selectedAgentName?: string;
@@ -369,6 +372,7 @@ function ChatWorkspaceImpl({
   currentRuntimeMode,
   defaultThinkingEffort = "medium",
   searchRequestNonce = 0,
+  messageFocus = null,
   structuredTurnFocus = null,
   selectedAgentId,
   selectedAgentName,
@@ -413,17 +417,21 @@ function ChatWorkspaceImpl({
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [runReproducibility, setRunReproducibility] = useState<Record<string, RunReproducibilityLevel>>({});
+  const runtimeRunIdsKey = useMemo(() => {
+    const runIds = [...new Set(messages
+      .map((message) => message.runtimeRunId)
+      .filter((runId): runId is string => Boolean(runId?.startsWith("run-"))))]
+      .slice(-20);
+    return runIds.join("\n");
+  }, [messages]);
+  const chatStreaming = messages.some((message) => message.streaming);
 
   useEffect(() => {
     if (!workspacePath || typeof desktopApi.getRunReproductionManifest !== "function") return;
-    const runIds = [...new Set(messages
-      .map((message) => message.runtimeRunId)
-      // RuntimeEngine owns the `run-` namespace. Request IDs and platform-run
-      // IDs may also travel through ChatEvent.runId, but they have no Runtime
-      // manifest and must never be sent to a run-scoped Runtime endpoint.
-      .filter((runId): runId is string => Boolean(runId?.startsWith("run-"))))]
-      .slice(-50);
-    if (!runIds.length) return;
+    // Streaming updates `messages` on every token. Never refetch manifests in
+    // that loop — it previously issued hundreds of IPC calls and OOMed Desktop.
+    if (chatStreaming || !runtimeRunIdsKey) return;
+    const runIds = runtimeRunIdsKey.split("\n").filter(Boolean);
     let active = true;
     void Promise.all(runIds.map(async (runId) => {
       try {
@@ -443,7 +451,7 @@ function ChatWorkspaceImpl({
       ));
     });
     return () => { active = false; };
-  }, [messages, selectedWorkspaceId, workspacePath]);
+  }, [chatStreaming, runtimeRunIdsKey, selectedWorkspaceId, workspacePath]);
   const [highlightedTurnId, setHighlightedTurnId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [interactionDraft, setInteractionDraft] = useState("");
@@ -724,15 +732,42 @@ function ChatWorkspaceImpl({
       const getPath = hasDesktopApi()
         ? (f: File): string => desktopApi.getPathForFile(f)
         : (f: File): string => `C:\\Users\\Demo\\Downloads\\${f.name}`;
-      const added: ComposerAttachment[] = [];
-      for (const f of Array.from(e.dataTransfer.files)) {
-        const p = getPath(f);
-        if (!p) continue;
-        added.push({ id: crypto.randomUUID(), kind: "file", path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", importFile: { path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", extension: (f.name || "").includes(".") ? ((f.name || "").split(".").pop() || "") : "", category: "other", status: "ready" } });
-      }
-      if (!added.length) return;
-      setAttachments((c) => { const ex = new Set(c.map((i) => i.path)); return [...c, ...added.filter((a) => !ex.has(a.path))]; });
-      setToolsOpen(false);
+      void (async () => {
+        const added: ComposerAttachment[] = [];
+        for (const f of Array.from(e.dataTransfer.files)) {
+          const p = getPath(f);
+          if (!p) continue;
+          const name = f.name || p.split(/[\\/]/).pop() || "unknown";
+          const extension = name.includes(".") ? (name.split(".").pop() || "").toLowerCase() : "";
+          const category = f.type.startsWith("image/") || isImageFileName(name)
+            ? "image" as const
+            : "other" as const;
+          const screenshotDataUrl = category === "image" && f.size <= MAX_CLIPBOARD_IMAGE_BYTES
+            ? await blobToDataUrl(f).catch(() => undefined)
+            : undefined;
+          added.push({
+            id: crypto.randomUUID(),
+            kind: "file",
+            path: p,
+            name,
+            ...(screenshotDataUrl ? { screenshotDataUrl } : {}),
+            importFile: {
+              path: p,
+              name,
+              extension,
+              category,
+              status: "ready",
+              ...(screenshotDataUrl ? { previewDataUrl: screenshotDataUrl } : {}),
+            },
+          });
+        }
+        if (!added.length) return;
+        setAttachments((c) => {
+          const ex = new Set(c.map((i) => i.path));
+          return [...c, ...added.filter((a) => !ex.has(a.path))];
+        });
+        setToolsOpen(false);
+      })();
     };
     form.addEventListener("dragover", onDrag, true);
     form.addEventListener("drop", onDrop, true);
@@ -808,6 +843,7 @@ function ChatWorkspaceImpl({
 
   useEffect(() => {
     setTaskInteractionMode("normal");
+    setRespondedInputRequests(new Set());
   }, [conversationId]);
 
   useEffect(() => {
@@ -819,20 +855,84 @@ function ChatWorkspaceImpl({
     response: string | Record<string, unknown>,
     transportRequestId = request.requestId,
   ): Promise<void> {
-    const accepted = await desktopApi.respondChatInput(transportRequestId, response);
-    if (!accepted) return;
-    if (typeof response === "object" && response.decision === "revise") return;
-    setRespondedInputRequests((current) => new Set(current).add(request.requestId));
+    const turnId = activeInputMessage?.structuredTurn?.turnId;
+    const runId = turnId?.startsWith("run-") ? turnId.split(":")[0] : undefined;
+    const payload = typeof response === "string"
+      ? response
+      : {
+          ...response,
+          session_id: conversationId,
+          ...(workspacePath ? { workspace_path: workspacePath } : {}),
+          ...(runId ? { run_id: runId } : {}),
+          ...(request.inputType === "approval" && !("approval_id" in response)
+            ? { approval_id: request.requestId.startsWith("approval:")
+              ? request.requestId.slice("approval:".length)
+              : request.requestId }
+            : {}),
+          ...(request.inputType === "approval"
+            && !("decision" in response)
+            && typeof (response as { approved?: unknown }).approved === "boolean"
+            ? { decision: (response as { approved: boolean }).approved ? "accept" : "decline" }
+            : {}),
+        };
+    const dismissStaleRequest = () => {
+      setRespondedInputRequests((current) => new Set(current).add(request.requestId));
+    };
+    try {
+      const accepted = await desktopApi.respondChatInput(transportRequestId, payload);
+      if (!accepted) {
+        window.alert(language === "zh"
+          ? "该批准已失效或运行已结束。已关闭批准框，你可以重新输入发送。"
+          : "That approval is no longer active. The prompt was closed so you can type again.");
+        dismissStaleRequest();
+        return;
+      }
+      if (typeof payload === "object" && payload.decision === "revise") return;
+      dismissStaleRequest();
+    } catch (error) {
+      window.alert(language === "zh"
+        ? `提交批准失败：${error instanceof Error ? error.message : String(error)}\n已关闭批准框，你可以重新输入发送。`
+        : `Approval submit failed: ${error instanceof Error ? error.message : String(error)}\nThe prompt was closed so you can type again.`);
+      dismissStaleRequest();
+    }
   }
 
   const respondToStructuredInteraction = useEventCallback((turnId: string, part: InteractionPart, response: InteractionResponse): void => {
-    void desktopApi.respondChatInput(turnId, response).then((accepted) => {
-      if (!accepted) return;
-      if (typeof response === "object" && response.decision === "revise") return;
+    const runId = turnId.startsWith("run-") ? turnId.split(":")[0] : undefined;
+    const payload = {
+      ...response,
+      session_id: conversationId,
+      ...(workspacePath ? { workspace_path: workspacePath } : {}),
+      ...(runId ? { run_id: runId } : {}),
+      ...(part.interactionType === "approval" && !("approval_id" in response)
+        ? {
+            approval_id: part.requestId.startsWith("approval:")
+              ? part.requestId.slice("approval:".length)
+              : part.requestId,
+          }
+        : {}),
+    };
+    const dismissStaleRequest = () => {
       setRespondedInputRequests((current) => new Set(current).add(part.requestId));
       if (response.capabilityAction === "configured") {
         setConfiguredCapabilityRequests((current) => new Set(current).add(part.requestId));
       }
+    };
+    void desktopApi.respondChatInput(activeRequestId ?? turnId, payload).then((accepted) => {
+      if (!accepted) {
+        window.alert(language === "zh"
+          ? "该批准已失效或运行已结束。已关闭批准框，你可以重新输入发送。"
+          : "That approval is no longer active. The prompt was closed so you can type again.");
+        dismissStaleRequest();
+        return;
+      }
+      if (typeof payload === "object" && "decision" in payload && payload.decision === "revise") return;
+      dismissStaleRequest();
+    }).catch((error) => {
+      window.alert(language === "zh"
+        ? `提交批准失败：${error instanceof Error ? error.message : String(error)}\n已关闭批准框，你可以重新输入发送。`
+        : `Approval submit failed: ${error instanceof Error ? error.message : String(error)}\nThe prompt was closed so you can type again.`);
+      dismissStaleRequest();
     });
   });
 
@@ -841,9 +941,16 @@ function ChatWorkspaceImpl({
     if (response?.trim()) respondToStructuredInteraction(turnId, part, { response: response.trim() });
   });
 
+  function dismissActiveInputRequest(): void {
+    if (!activeInputRequest) return;
+    setRespondedInputRequests((current) => new Set(current).add(activeInputRequest.requestId));
+  }
+
   function respondToActiveInput(response: string | Record<string, unknown>): void {
     if (!activeInputRequest || !activeInputMessage) return;
-    const transportRequestId = activeInputMessage.structuredTurn?.turnId ?? activeInputRequest.requestId;
+    const transportRequestId = activeRequestId
+      ?? activeInputMessage.structuredTurn?.turnId
+      ?? activeInputRequest.requestId;
     void respondToAgentInput(activeInputRequest, response, transportRequestId);
   }
 
@@ -901,6 +1008,24 @@ function ChatWorkspaceImpl({
   }, [activeGoalConfirmation?.requestId, activeGoalConfirmation?.prompt]);
   const hasStreamingMessage = messages.some((message) => message.streaming);
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
+
+  // Leftover approval cards from timed-out/failed runs block the composer.
+  // When nothing is actively streaming, close them so the user can type again.
+  useEffect(() => {
+    if (showStop || !activeInputRequest || activeGoalConfirmation) return;
+    if (activeInputRequest.inputType !== "approval") return;
+    const requestId = activeInputRequest.requestId;
+    setRespondedInputRequests((current) => {
+      if (current.has(requestId)) return current;
+      return new Set(current).add(requestId);
+    });
+  }, [
+    activeGoalConfirmation,
+    activeInputRequest?.inputType,
+    activeInputRequest?.requestId,
+    showStop,
+  ]);
+
   const emptyChat = messages.every((message) => message.id === "welcome");
   const conversationMessages = useMemo(
     () => messages.filter((message) => message.id !== "welcome"),
@@ -961,7 +1086,8 @@ function ChatWorkspaceImpl({
     return THINKING_EFFORTS.filter((effort) => configured.includes(effort));
   }, [activeModelConfig, isLocalOpenDrSaiAgent]);
   useEffect(() => {
-    if (supportedThinkingEfforts.length > 0 && !supportedThinkingEfforts.includes(thinkingEffort)) {
+    if (supportedThinkingEfforts.length === 0) return;
+    if (!supportedThinkingEfforts.includes(thinkingEffort)) {
       setThinkingEffort(supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0]);
     }
   }, [supportedThinkingEfforts, thinkingEffort]);
@@ -1306,7 +1432,10 @@ function ChatWorkspaceImpl({
   ]);
 
   const searchableMessages = useMemo(
-    () => messages.filter((message) => getVisibleChatText(message.content)),
+    () => messages.filter((message) => {
+      if (getVisibleChatText(message.content)) return true;
+      return Boolean(message.structuredTurn && getStructuredTurnEstimateText(message.structuredTurn));
+    }),
     [messages],
   );
 
@@ -1314,7 +1443,11 @@ function ChatWorkspaceImpl({
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
     return searchableMessages
-      .filter((message) => getVisibleChatText(message.content).toLowerCase().includes(query))
+      .filter((message) => {
+        if (getVisibleChatText(message.content).toLowerCase().includes(query)) return true;
+        if (!message.structuredTurn) return false;
+        return getStructuredTurnEstimateText(message.structuredTurn).toLowerCase().includes(query);
+      })
       .map((message) => message.id);
   }, [searchQuery, searchableMessages]);
 
@@ -1476,6 +1609,19 @@ function ChatWorkspaceImpl({
     if (searchRequestNonce <= 0) return;
     openSearch();
   }, [openSearch, searchRequestNonce]);
+
+  useEffect(() => {
+    if (!messageFocus?.messageId) return;
+    const reveal = () => {
+      const selector = `[data-message-id="${CSS.escape(messageFocus.messageId)}"]`;
+      messageListRef.current?.querySelector<HTMLElement>(selector)?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    };
+    window.requestAnimationFrame(reveal);
+    window.setTimeout(reveal, 120);
+  }, [messageFocus]);
 
   useEffect(() => {
     if (!structuredTurnFocus) return;
@@ -2460,6 +2606,9 @@ function ChatWorkspaceImpl({
           path: file.path,
           name: file.name,
           importFile: file,
+          ...(file.previewDataUrl?.startsWith("data:image/")
+            ? { screenshotDataUrl: file.previewDataUrl }
+            : {}),
           ...(file.status === "ready" ? {} : { blockedReason: file.message || file.status }),
         })),
       ];
@@ -2620,7 +2769,7 @@ function ChatWorkspaceImpl({
           <button
             type="button"
             className="chat-search-backdrop"
-            aria-label={zh ? "鍏抽棴鎼滅储" : "Close search"}
+            aria-label={zh ? "关闭搜索" : "Close search"}
             onClick={closeSearch}
           />
           <section className="chat-search-modal" onMouseDown={(event) => event.stopPropagation()}>
@@ -2630,8 +2779,8 @@ function ChatWorkspaceImpl({
                 type="button"
                 className="chat-search-close"
                 onClick={closeSearch}
-                title={zh ? "鍏抽棴鎼滅储" : "Close search"}
-                aria-label={zh ? "鍏抽棴鎼滅储" : "Close search"}
+                title={zh ? "关闭搜索" : "Close search"}
+                aria-label={zh ? "关闭搜索" : "Close search"}
               >
                 <X size={17} />
               </button>
@@ -2698,8 +2847,8 @@ function ChatWorkspaceImpl({
             type="button"
             className="chat-search-close"
             onClick={closeSearch}
-            title={zh ? "鍏抽棴鎼滅储" : "Close search"}
-            aria-label={zh ? "鍏抽棴鎼滅储" : "Close search"}
+            title={zh ? "关闭搜索" : "Close search"}
+            aria-label={zh ? "关闭搜索" : "Close search"}
           >
             <X size={15} />
           </button>
@@ -2784,14 +2933,12 @@ function ChatWorkspaceImpl({
               {message.role === "user" && message.attachments?.length ? (
                 <div className="message-attachment-badges" aria-label={zh ? "附件" : "Attachments"}>
                   {message.attachments.map((attachment, index) => (
-                    <span
-                      className="message-attachment-badge"
+                    <MessageAttachmentBadge
                       key={`${message.id}-attachment-${index}-${attachment.path || attachment.name}`}
-                      title={attachment.path || attachment.name}
-                    >
-                      {renderMessageAttachmentIcon(attachment.kind)}
-                      <span>{attachment.name}</span>
-                    </span>
+                      attachment={attachment}
+                      workspacePath={workspacePath}
+                      zh={zh}
+                    />
                   ))}
                 </div>
               ) : null}
@@ -2811,6 +2958,7 @@ function ChatWorkspaceImpl({
                     turn={message.structuredTurn}
                     runId={message.runtimeRunId}
                     language={language}
+                    workspacePath={workspacePath}
                     respondedRequestIds={respondedInputRequests}
                     configuredCapabilityRequestIds={configuredCapabilityRequests}
                     onOpenLink={handleMarkdownLink}
@@ -3088,7 +3236,7 @@ function ChatWorkspaceImpl({
                     : Paperclip;
               return (
                 <span
-                  className={`composer-attachment-chip ${(attachment.importFile?.status && attachment.importFile.status !== "ready") || attachment.folderImport?.phase === "failed" ? "import-failed" : ""} ${attachment.folderImport?.phase === "scanning" ? "import-scanning" : ""}`}
+                  className={`composer-attachment-chip ${(attachment.importFile?.status && attachment.importFile.status !== "ready") || attachment.folderImport?.phase === "failed" ? "import-failed" : ""} ${attachment.folderImport?.phase === "scanning" ? "import-scanning" : ""} ${isImageAttachment(attachment, attachment.importFile) ? "has-image-preview" : ""}`}
                   key={attachment.id}
                   title={attachment.importFile?.message || attachment.folderImport?.message || attachment.path}
                   data-testid="composer-attachment"
@@ -3106,7 +3254,16 @@ function ChatWorkspaceImpl({
                   data-failed-count={attachment.folderImport?.failed ?? ""}
                   data-duplicate-count={attachment.folderImport?.duplicates ?? ""}
                 >
-                  <Icon size={14} />
+                  {isImageAttachment(attachment, attachment.importFile)
+                    && (attachment.screenshotDataUrl || attachment.importFile?.previewDataUrl)?.startsWith("data:image/") ? (
+                    <img
+                      className="composer-attachment-thumb"
+                      src={attachment.screenshotDataUrl || attachment.importFile?.previewDataUrl}
+                      alt=""
+                    />
+                  ) : (
+                    <Icon size={14} />
+                  )}
                   <span className="composer-attachment-copy">
                     <strong>{attachment.name}</strong>
                     {attachment.importFile ? <small>{formatPickedFileMeta(attachment.importFile, zh)}</small> : null}
@@ -3485,16 +3642,25 @@ function ChatWorkspaceImpl({
                     )
                   ) : activeInputRequest.inputType === "approval" ? (
                     <div className="composer-agent-interaction-controls">
+                      <button type="button" onClick={() => dismissActiveInputRequest()}>
+                        {zh ? "关闭并继续输入" : "Close and type"}
+                      </button>
                       <button type="button" onClick={() => respondToActiveInput({ approved: false })}>{zh ? "拒绝" : "Reject"}</button>
                       <button type="button" className="primary" onClick={() => respondToActiveInput({ approved: true })}>{zh ? "批准" : "Approve"}</button>
                     </div>
                   ) : activeInputRequest.inputType === "confirmation" ? (
                     <div className="composer-agent-interaction-controls">
+                      <button type="button" onClick={() => dismissActiveInputRequest()}>
+                        {zh ? "关闭并继续输入" : "Close and type"}
+                      </button>
                       <button type="button" onClick={() => respondToActiveInput({ decision: "decline" })}>{zh ? "取消" : "Cancel"}</button>
                       <button type="button" className="primary" onClick={() => respondToActiveInput({ decision: "accept" })}>{zh ? "确认" : "Confirm"}</button>
                     </div>
                   ) : activeInputRequest.inputType === "choice" && activeInputRequest.options?.length ? (
                     <div className="composer-agent-interaction-controls">
+                      <button type="button" onClick={() => dismissActiveInputRequest()}>
+                        {zh ? "关闭并继续输入" : "Close and type"}
+                      </button>
                       {activeInputRequest.options.map((option) => (
                         <button
                           type="button"
@@ -3750,7 +3916,16 @@ function ChatWorkspaceImpl({
                   <ChevronDown size={13} />
                 </button>
                 {metaMenuOpen === "configuration" ? (
-                  <div className="composer-configuration-menu" role="dialog" aria-label={zh ? "任务设置" : "Task settings"} onMouseLeave={() => setConfigurationSection(null)}>
+                  <div
+                    className="composer-configuration-menu"
+                    role="dialog"
+                    aria-label={zh ? "任务设置" : "Task settings"}
+                    onMouseLeave={(event) => {
+                      const next = event.relatedTarget;
+                      if (next instanceof Node && event.currentTarget.contains(next)) return;
+                      setConfigurationSection(null);
+                    }}
+                  >
                     <div className="composer-configuration-rows">
                       <button type="button" disabled={!hasAgentOptions} aria-expanded={configurationSection === "agent"} onMouseEnter={(event) => revealConfigurationSection("agent", event.currentTarget)} onFocus={(event) => revealConfigurationSection("agent", event.currentTarget)} onClick={(event) => revealConfigurationSection("agent", event.currentTarget)}><span><strong>{zh ? "智能体" : "Agent"}</strong><small>{activeAgentName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "模型" : "Model"}</strong><small>{activeModelName}</small></span><ChevronRight size={14} /></button>
@@ -3764,12 +3939,20 @@ function ChatWorkspaceImpl({
                             <span><strong>{agent.name}</strong><small>{getAgentOptionMeta(agent, zh)}</small></span>
                             {agent.id === selectedAgentId ? <Check size={14} aria-hidden /> : null}
                           </button>
-                        )) : configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => (
-                          <button key={`${model.provider_id || "backend"}:${model.alias || model.model}`} type="button" role="menuitemradio" aria-checked={(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId)} className={(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId) ? "active" : ""} onClick={() => selectModel(model.alias || model.model || "", model.provider_id)}>
-                            <span><strong>{getModelOptionLabel(model)}</strong><small>{getModelProviderLabel(model, zh)}</small></span>
-                            {(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId) ? <Check size={14} aria-hidden /> : null}
+                        )) : configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => {
+                          const selected = (model.alias || model.model) === selectedModelName
+                            && (!selectedModelProviderId || model.provider_id === selectedModelProviderId);
+                          const primaryReady = supportsFullAgentPrimaryRuntime(model);
+                          return (
+                          <button key={`${model.provider_id || "backend"}:${model.alias || model.model}`} type="button" role="menuitemradio" aria-checked={selected} aria-disabled={!primaryReady} disabled={!primaryReady} className={selected ? "active" : ""} onClick={() => {
+                            if (!primaryReady) return;
+                            selectModel(model.alias || model.model || "", model.provider_id);
+                          }}>
+                            <span><strong>{getModelOptionLabel(model)}</strong><small>{primaryReady ? getModelProviderLabel(model, zh) : (zh ? "不可作主模型 · 请在图像理解中配置" : "Not a primary model · use Image understanding")}</small></span>
+                            {selected ? <Check size={14} aria-hidden /> : null}
                           </button>
-                        )) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
+                          );
+                        }) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
                           <button key={effort} type="button" role="menuitemradio" aria-checked={effort === thinkingEffort} className={effort === thinkingEffort ? "active" : ""} onClick={() => selectThinkingEffort(effort)}>
                             <span><strong>{getThinkingEffortLabel(effort, zh)}</strong></span>
                             {effort === thinkingEffort ? <Check size={14} aria-hidden /> : null}
@@ -4535,6 +4718,140 @@ function formatBytes(size: number): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isImageFileName(name: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name.trim());
+}
+
+function isImageAttachment(
+  attachment: ChatAttachment,
+  importFile?: PickedFileDescriptor,
+): boolean {
+  if (attachment.screenshotDataUrl?.startsWith("data:image/")) return true;
+  if (importFile?.category === "image") return true;
+  if (importFile?.previewDataUrl?.startsWith("data:image/")) return true;
+  return isImageFileName(attachment.name) || isImageFileName(attachment.path);
+}
+
+function MessageAttachmentBadge({
+  attachment,
+  workspacePath,
+  zh,
+}: {
+  attachment: ChatAttachment;
+  workspacePath?: string;
+  zh: boolean;
+}): React.JSX.Element {
+  const [previewSrc, setPreviewSrc] = useState(
+    attachment.screenshotDataUrl?.startsWith("data:image/")
+      ? attachment.screenshotDataUrl
+      : undefined,
+  );
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const showImage = isImageAttachment(attachment);
+
+  useEffect(() => {
+    if (attachment.screenshotDataUrl?.startsWith("data:image/")) {
+      setPreviewSrc(attachment.screenshotDataUrl);
+    }
+  }, [attachment.screenshotDataUrl]);
+
+  useEffect(() => {
+    if (!showImage || previewSrc || !workspacePath?.trim() || !attachment.path.trim()) return;
+    if (attachment.path.startsWith("clipboard:")) return;
+    let cancelled = false;
+    void desktopApi.previewWorkspaceFile({
+      workspacePath,
+      path: attachment.path,
+      maxBytes: 1_500_000,
+    }).then((preview) => {
+      if (!cancelled && preview.kind === "image" && preview.dataUrl?.startsWith("data:image/")) {
+        setPreviewSrc(preview.dataUrl);
+      }
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.path, previewSrc, showImage, workspacePath]);
+
+  useEffect(() => {
+    if (!lightboxOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setLightboxOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [lightboxOpen]);
+
+  if (showImage && previewSrc) {
+    return (
+      <>
+        <button
+          type="button"
+          className="message-attachment-image"
+          title={zh ? `查看大图：${attachment.name}` : `View full size: ${attachment.name}`}
+          aria-label={zh ? `查看大图：${attachment.name}` : `View full size: ${attachment.name}`}
+          data-testid="message-attachment-image"
+          onClick={() => setLightboxOpen(true)}
+        >
+          <img src={previewSrc} alt={attachment.name} />
+          <span className="message-attachment-image-caption">{attachment.name}</span>
+        </button>
+        {lightboxOpen
+          ? createPortal(
+            <div
+              className="message-attachment-lightbox"
+              role="dialog"
+              aria-modal="true"
+              aria-label={attachment.name}
+              data-testid="message-attachment-lightbox"
+            >
+              <button
+                type="button"
+                className="message-attachment-lightbox-backdrop"
+                aria-label={zh ? "关闭大图" : "Close image"}
+                onClick={() => setLightboxOpen(false)}
+              />
+              <div className="message-attachment-lightbox-panel">
+                <header>
+                  <strong title={attachment.path || attachment.name}>{attachment.name}</strong>
+                  <button
+                    type="button"
+                    aria-label={zh ? "关闭" : "Close"}
+                    onClick={() => setLightboxOpen(false)}
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </header>
+                <img src={previewSrc} alt={attachment.name} />
+              </div>
+            </div>,
+            document.body,
+          )
+          : null}
+      </>
+    );
+  }
+
+  return (
+    <span
+      className="message-attachment-badge"
+      title={attachment.path || attachment.name}
+      data-testid="message-attachment-badge"
+    >
+      {renderMessageAttachmentIcon(attachment.kind)}
+      <span>{attachment.name}</span>
+    </span>
+  );
 }
 
 function renderMessageAttachmentIcon(kind: ChatAttachment["kind"]): React.JSX.Element {

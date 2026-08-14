@@ -105,7 +105,42 @@ class DesktopKernelCoordinator:
                 host_steps += 1
                 if host_steps > self._max_host_steps:
                     raise RuntimeError("desktop_kernel_host_step_limit")
-            queue.extend(self._kernel.handle(command))
+            try:
+                queue.extend(self._kernel.handle(command))
+            except Exception as error:
+                # Policy / validation errors must not leave the session run locked
+                # (e.g. approval_tool_must_be_single → session_run_already_active).
+                if command.message_type in {
+                    MessageType.START_RUN,
+                    MessageType.RESUME_RUN,
+                    MessageType.CANCEL_RUN,
+                    MessageType.MODEL_FAILED,
+                }:
+                    raise
+                fail_payload = {
+                    "code": type(error).__name__,
+                    "message": redact_credentials(str(error)).strip() or type(error).__name__,
+                    "retryable": True,
+                }
+                try:
+                    queue.extend(self._kernel.handle(response(
+                        MessageType.MODEL_FAILED, fail_payload, "kernel-command-failed",
+                    )))
+                    return
+                except Exception:
+                    try:
+                        queue.extend(self._kernel.handle(RuntimeEnvelope(
+                            MessageType.CANCEL_RUN,
+                            f"{start.run_id}:desktop-host:cancel",
+                            start.run_id,
+                            start.session_id,
+                            inbound_sequence + 1,
+                            f"{start.run_id}:desktop-host:cancel",
+                            {},
+                        )))
+                        return
+                    except Exception as cancel_error:
+                        raise error from cancel_error
 
         send(start)
         while queue:

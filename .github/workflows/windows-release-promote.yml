@@ -101,4 +101,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $channel = "stable"
+          $manifest = Invoke-RestMethod -Uri "https://download-opendrsai.ihep.ac.cn/channels/$channel/latest-windows.json" -TimeoutSec 30
+          if ($manifest.version -ne ((Get-Content package.json | ConvertFrom-Json).version)) {
+            throw "OSS $channel pointer must be promoted and verified before publishing the GitHub release."
+          }
+          if (($manifest.PSObject.Properties.Name -contains "buildLabel") -or -not $manifest.requireSignature) {
+            throw "Stable OSS pointer must omit buildLabel and require signatures."
+          }
           gh release edit "${{ inputs.release_tag }}" --repo $env:OPENDRSAI_RELEASE_REPOSITORY --draft=false --latest

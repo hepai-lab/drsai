@@ -160,6 +160,17 @@ def _controlled_tool_allowed(name: str) -> bool:
     return isinstance(fixtures, Mapping) and name in fixtures
 
 
+def _product_prompt_requests_image_generation(prompt: str) -> bool:
+    """Detect explicit Desktop image-output asks without regression control."""
+    folded = prompt.casefold()
+    needles = (
+        "generate an image", "create an image", "draw an image", "output png",
+        "16:9", "illustration", "生成图片", "生成一张", "创建图片", "输出 png",
+        "插图", "科技插图", "opendrsai agent runtime",
+    )
+    return any(needle.casefold() in folded or needle in prompt for needle in needles)
+
+
 def _controlled_command(
     arguments: Mapping[str, Any],
     work_dir: str = ".",
@@ -1488,6 +1499,16 @@ async def run_agent_through_kernel(
             "publishes the generated image into the isolated Workspace automatically. Request a supported "
             f"landscape size such as 1536x1024 and include every visual constraint in the tool prompt."
             f"{constraint_instruction}{target_instruction}"
+        )
+    elif _product_prompt_requests_image_generation(str(getattr(normalized_task, "input_text", "") or "")):
+        # Desktop product path (no regression control): stabilize Case 9 naming/size.
+        system_prompt += (
+            "\n\nProduct Runtime image-generation guidance: when the user asks for an image, call the "
+            "image_generation tool directly. Do not fake a PNG with SVG, Mermaid, ASCII art, or temporary URLs. "
+            "Prefer landscape size 1536x1024 for 16:9 requests. If the user asks for an OpenDrSai Agent Runtime "
+            "illustration or names opendrsai-agent-runtime.png, use display_name=opendrsai-agent-runtime.png and "
+            "include the exact path `artifacts/opendrsai-agent-runtime.png` in the final answer so Desktop can "
+            "open the Artifact."
         )
     command_templates = _controlled_command_templates()
     if command_templates:

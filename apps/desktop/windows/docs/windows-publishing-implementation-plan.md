@@ -20,6 +20,24 @@ The repository builds the direct download channel with a WiX MSI,
 signing gates and public release verification. That channel is the source of
 truth for later Store and winget submissions.
 
+The production binary origin is Alibaba Cloud OSS/CDN. GitHub Release remains
+an optional archive/backup, not the mutable update-channel authority.
+
+### OSS channel authority
+
+- Immutable bytes live under `releases/v{version}/windows/` and are uploaded
+  with overwrite forbidden.
+- `channels/beta/latest-windows.json` is the beta pointer. It carries
+  `channel: "beta"` and a non-empty `buildLabel` such as `Beta 3`.
+- `channels/stable/latest-windows.json` is the production pointer. Stable
+  promotion reuses the accepted immutable assets, regenerates the manifest
+  with `channel: "stable"` and `requireSignature: true`, and removes
+  `buildLabel` entirely.
+- The channel pointer is the final OSS write. Every mutable pointer overwrite
+  is followed by CDN invalidation and strict public verification.
+- The development site reads beta and falls back to stable only when beta is
+  unavailable. The production site reads stable only.
+
 ## Current Implementation State
 
 The active Windows distribution contract is the limited per-user MSI bootstrapper
@@ -74,7 +92,8 @@ place. Only these managed runtime paths are replaced:
 
 ### Update manifest
 
-The stable pointer is `latest-windows.json`. Runtime URLs inside it must be
+The channel pointers are `channels/beta/latest-windows.json` and
+`channels/stable/latest-windows.json`. Runtime URLs inside them must be
 immutable, versioned HTTPS Release URLs rather than `latest/download` aliases.
 The schema is versioned and contains:
 
@@ -116,15 +135,45 @@ publisher; unsigned updates are limited to explicit development/test mode.
 
 ### Release ordering
 
-For each `v<version>` Release:
+For each `v<version>` OSS release:
 
 1. Build and sign the MSI, Electron executable, updater helper, and runtime.
 2. Generate `latest-windows.json` from the final immutable runtime bytes.
-3. Upload the MSI, runtime ZIP, manifest, summary, and release notes to a draft.
-4. Download and verify the draft assets, including signatures and hashes.
-5. Publish the versioned Release.
-6. Publish or replace the stable pointer only after every versioned asset is
-   reachable. A failed release leaves the previous stable pointer unchanged.
+3. Upload the MSI, runtime ZIP, version manifest, summary, and release notes to
+   `releases/v<version>/windows/` with overwrite forbidden.
+4. Through strict TLS, verify `206` Range behavior, exact size and SHA-256,
+   Authenticode status, and byte identity with the locally accepted artifacts.
+5. Generate a beta or stable channel manifest from those immutable bytes. A
+   stable manifest must not retain a beta `buildLabel`.
+6. Publish the mutable channel pointer last, refresh its CDN object, and repeat
+   the full public verification. A failed release leaves the previous pointer
+   unchanged.
+
+The repository commands are:
+
+```powershell
+node scripts/verify-windows-oss-publishing.mjs
+
+# Beta staging + promotion (version assets are new and immutable)
+powershell -File scripts/publish-windows-release-to-oss.ps1 `
+  -Channel beta -BuildLabel "Beta 3" -ReleaseDirectory release `
+  -StageVersionAssets -VerifyOnline
+
+# Stable promotion reuses already accepted immutable version assets.
+powershell -File scripts/publish-windows-release-to-oss.ps1 `
+  -Channel stable -ReleaseDirectory release -VerifyOnline
+```
+
+Do not run stable promotion until the MSI and the runtime Electron executable
+have valid Authenticode signatures and the protected release gate has passed.
+
+The currently accepted beta baseline is v1.5.8 / `Beta 3`. Its runtime is
+355495575 bytes with SHA-256
+`e710fa6d0837ec7d6f5f8109d6c9d4801736b0452c2a844dd7c70748b6fd9ea1`;
+the MSI is 643072 bytes with SHA-256
+`ce641707e5a7dad889caffd195d42493efff66c72b9a7dac841c65ce8dc5de2b`.
+Both signatures are currently `NotSigned`, so this exact build remains beta
+and is intentionally ineligible for stable promotion.
 
 ### MVP acceptance gates
 

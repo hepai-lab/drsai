@@ -1206,6 +1206,28 @@ export async function searchRemoteThreadMessages(request: DesktopThreadContentSe
   return results;
 }
 
+/** Merge remote + local content search so an empty remote `[]` never skips local hits. */
+export async function searchThreadMessagesWithRemoteFallback(
+  request: DesktopThreadContentSearchRequest,
+  searchLocal: (request: DesktopThreadContentSearchRequest) => Promise<DesktopThreadContentSearchResult[]>,
+): Promise<DesktopThreadContentSearchResult[]> {
+  const remoteResults = await searchRemoteThreadMessages(request);
+  if (remoteResults === null) return searchLocal(request);
+
+  const requestedIds = request.threadIds || [];
+  const localIds = requestedIds.filter((id) => !remoteThreadWorkspaces.has(id));
+  if (requestedIds.length > 0 && localIds.length === 0) return remoteResults;
+
+  const limit = Math.max(1, Math.min(50, Math.trunc(request.limit ?? 24)));
+  const localResults = await searchLocal(
+    localIds.length > 0 ? { ...request, threadIds: localIds, limit } : { ...request, limit },
+  );
+  const seen = new Set(remoteResults.map((result) => result.threadId));
+  return [...remoteResults, ...localResults.filter((result) => !seen.has(result.threadId))]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, limit);
+}
+
 export async function listRemoteHepaiWorkers(workspaceId: string): Promise<RemoteHepaiWorker[]> {
   const connection = connections.get(workspaceId);
   const host = connection ? hostConnections.get(connection.alias) : undefined;

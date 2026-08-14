@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownAZ,
   ArrowLeft,
@@ -70,7 +70,8 @@ import { extractShareConclusion, extractShareMessageText } from "@shared/threadS
 import { ChatMessageContent } from "./ChatMessageContent";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
 import { userFacingFailureMessage } from "../userFacingLanguage";
-import { showAppNotice } from "./AppDecisionDialog";
+import { showAppNotice, requestAppDecision } from "./AppDecisionDialog";
+import { deleteDesktopThread } from "../deleteDesktopThread";
 import { ThreadActivityBubble } from "./ThreadActivityBubble";
 import type { ThreadActivityState } from "../threadActivity";
 import {
@@ -199,7 +200,7 @@ interface WorkspaceShellProps {
     draft: string,
     expectedDiffHash?: string,
   ) => Promise<ForkConflictDraftWriteResult>;
-  onThreadSelect: (threadId: string) => void;
+  onThreadSelect: (threadId: string, messageId?: string) => void;
   onSearchThreadMessages: (
     query: string,
     threadIds: string[],
@@ -329,10 +330,18 @@ export function WorkspaceShell({
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [threadMenu, setThreadMenu] = useState<{
     thread: WorkspaceThread;
+    anchorX: number;
+    anchorY: number;
     x: number;
     y: number;
+    preferAbove: boolean;
   } | null>(null);
-  const [deleteConfirmThread, setDeleteConfirmThread] = useState<WorkspaceThread | null>(null);
+  const threadMenuRef = useRef<HTMLDivElement | null>(null);
+  const [renameDialog, setRenameDialog] = useState<{
+    thread: WorkspaceThread;
+    title: string;
+  } | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const [shareDialog, setShareDialog] = useState<{
     thread: WorkspaceThread;
     loading: boolean;
@@ -379,6 +388,7 @@ export function WorkspaceShell({
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const rightTabMenuRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteRef = useRef<HTMLDivElement | null>(null);
+  const lastEditableSelectionRef = useRef<EditableSelectionSnapshot | null>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
   const commandPaletteResultsRef = useRef<HTMLElement | null>(null);
   const contentSearchRequestRef = useRef(0);
@@ -577,6 +587,25 @@ export function WorkspaceShell({
   }
 
   useEffect(() => {
+    function captureFromElement(element: Element | null): void {
+      const snapshot = snapshotEditableSelection(element);
+      if (snapshot) lastEditableSelectionRef.current = snapshot;
+    }
+    function handleFocusIn(event: FocusEvent): void {
+      captureFromElement(event.target instanceof Element ? event.target : null);
+    }
+    function handleSelectionChange(): void {
+      captureFromElement(document.activeElement);
+    }
+    window.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      window.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, []);
+
+  useEffect(() => {
     function handlePointerDown(event: PointerEvent): void {
       if (!userMenuRef.current?.contains(event.target as Node)) {
         setUserMenuOpen(false);
@@ -701,12 +730,50 @@ export function WorkspaceShell({
 
   async function performEditCommand(command: DesktopEditCommand): Promise<void> {
     closeWorkbenchMenu();
+    restoreEditableSelection(lastEditableSelectionRef.current);
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
     await desktopApi.performEditCommand(command).catch(() => false);
   }
 
   useEffect(() => {
     setForkConflictPreview(null);
   }, [threadMenu?.thread.id]);
+
+  useLayoutEffect(() => {
+    if (!threadMenu || !threadMenuRef.current) return;
+    const menu = threadMenuRef.current;
+    const pad = 10;
+    const maxHeight = Math.max(180, window.innerHeight - pad * 2);
+    menu.style.maxHeight = `${maxHeight}px`;
+    const rect = menu.getBoundingClientRect();
+    const width = rect.width;
+    const height = Math.min(rect.height, maxHeight);
+    const nextX = Math.min(
+      Math.max(pad, threadMenu.anchorX),
+      Math.max(pad, window.innerWidth - width - pad),
+    );
+    // Prefer opening upward near the bottom so the full menu stays in view
+    // without looking like a cramped scroll panel.
+    let nextY = threadMenu.preferAbove
+      ? threadMenu.anchorY - height
+      : threadMenu.anchorY;
+    if (nextY + height > window.innerHeight - pad) nextY = threadMenu.anchorY - height;
+    if (nextY < pad) nextY = pad;
+    if (nextY + height > window.innerHeight - pad) {
+      nextY = Math.max(pad, window.innerHeight - height - pad);
+    }
+    if (nextX !== threadMenu.x || nextY !== threadMenu.y) {
+      setThreadMenu((current) => (current ? { ...current, x: nextX, y: nextY } : null));
+    }
+  }, [threadMenu]);
+
+  useEffect(() => {
+    if (!renameDialog) return;
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+  }, [renameDialog?.thread.id]);
 
   useEffect(() => {
     if (!commandPaletteOpen) return;
@@ -931,21 +998,36 @@ export function WorkspaceShell({
     const contentMatchByThread = new Map(
       contentSearchResults.map((result) => [`thread:${result.threadId}`, result]),
     );
+    const selectThreadFromPalette = (itemId: string, messageId?: string) => {
+      const threadId = itemId.startsWith("thread:") ? itemId.slice("thread:".length) : itemId;
+      onThreadSelect(threadId, messageId);
+    };
     const titleMatches = searchableChatItems
       .filter((item) => item.label.toLowerCase().includes(query))
-      .map((item) => ({
-        ...item,
-        description: contentMatchByThread.get(item.id)?.snippet,
-      }));
+      .map((item) => {
+        const match = contentMatchByThread.get(item.id);
+        return {
+          ...item,
+          description: match?.snippet,
+          run: () => selectThreadFromPalette(item.id, match?.messageId),
+        };
+      });
     const titleMatchIds = new Set(titleMatches.map((item) => item.id));
     const contentMatches = searchableChatItems
       .filter((item) => contentMatchByThread.has(item.id) && !titleMatchIds.has(item.id))
-      .map((item) => ({
-        ...item,
-        description: contentMatchByThread.get(item.id)?.snippet,
-      }));
+      .map((item) => {
+        const match = contentMatchByThread.get(item.id);
+        return {
+          ...item,
+          description: match?.snippet,
+          run: () => onThreadSelect(
+            item.id.startsWith("thread:") ? item.id.slice("thread:".length) : item.id,
+            match?.messageId,
+          ),
+        };
+      });
     return [...titleMatches, ...contentMatches, ...recommendationMatches];
-  }, [commandPaletteItems, commandPaletteQuery, contentSearchResults, searchableChatItems]);
+  }, [commandPaletteItems, commandPaletteQuery, contentSearchResults, onThreadSelect, searchableChatItems]);
 
   useEffect(() => {
     setCommandPaletteSelectedIndex((index) =>
@@ -971,12 +1053,13 @@ export function WorkspaceShell({
   function openThreadMenu(event: React.MouseEvent, thread: WorkspaceThread): void {
     event.preventDefault();
     event.stopPropagation();
-    const menuWidth = 260;
-    const menuHeight = thread.fork ? 560 : 306;
     setThreadMenu({
       thread,
-      x: Math.min(event.clientX, Math.max(12, window.innerWidth - menuWidth - 12)),
-      y: Math.min(event.clientY, Math.max(46, window.innerHeight - menuHeight - 12)),
+      anchorX: event.clientX,
+      anchorY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      preferAbove: event.clientY > window.innerHeight * 0.55,
     });
   }
 
@@ -985,14 +1068,27 @@ export function WorkspaceShell({
   }
 
   function renameThread(thread: WorkspaceThread): void {
-    const nextTitle = window.prompt(
-      thread.source === "codex"
-        ? (zh ? "设置 OpenDrSai 本地显示名（不会修改 Codex 原始任务名）" : "Set the local OpenDrSai display name (the original Codex task name is unchanged)")
-        : (zh ? "重命名对话" : "Rename conversation"),
-      thread.title,
-    );
-    if (!nextTitle || nextTitle.trim() === thread.title) return;
-    void onThreadUpdate(thread.id, { title: nextTitle.trim() });
+    setRenameDialog({ thread, title: thread.title });
+  }
+
+  function closeRenameDialog(): void {
+    setRenameDialog(null);
+  }
+
+  function submitRenameDialog(): void {
+    if (!renameDialog) return;
+    const nextTitle = renameDialog.title.trim();
+    const threadId = renameDialog.thread.id;
+    const previousTitle = renameDialog.thread.title;
+    setRenameDialog(null);
+    if (!nextTitle || nextTitle === previousTitle) return;
+    void Promise.resolve(onThreadUpdate(threadId, { title: nextTitle })).catch((error) => {
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : (zh ? "重命名失败，请重试。" : "Rename failed. Please retry."),
+      );
+    });
   }
 
   function closeShareDialog(): void {
@@ -2095,6 +2191,7 @@ export function WorkspaceShell({
                 role="menuitem"
                 aria-haspopup="menu"
                 aria-expanded={openWorkbenchMenu === menu.id}
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => setOpenWorkbenchMenu((current) => current === menu.id ? null : menu.id)}
               >
                 {menu.label}
@@ -2298,7 +2395,13 @@ export function WorkspaceShell({
           onScroll={(event) => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
         >
           <div className="sidebar-primary-action">
-            <SidebarButton active={activeNav === MENU_IDS.currentSession} icon={MessageSquarePlus} label={zh ? "新建任务" : "New task"} onClick={onNewChat} />
+            <SidebarButton
+              active={activeNav === MENU_IDS.currentSession}
+              icon={MessageSquarePlus}
+              label={zh ? "新建任务" : "New task"}
+              navId={MENU_IDS.currentSession}
+              onClick={onNewChat}
+            />
           </div>
           <div className="sidebar-action-list">
             <SidebarButton active={activeNav === MENU_IDS.savedPlan} icon={CalendarClock} label={zh ? "已安排" : "Scheduled"} onClick={() => onNavChange(MENU_IDS.savedPlan)} />
@@ -2613,6 +2716,7 @@ export function WorkspaceShell({
       {threadMenu && (
         <div className="thread-context-layer" role="presentation" onMouseDown={closeThreadMenu}>
           <div
+            ref={threadMenuRef}
             className="thread-context-menu"
             role="menu"
             style={{ left: threadMenu.x, top: threadMenu.y }}
@@ -3145,8 +3249,49 @@ export function WorkspaceShell({
               role="menuitem"
               className="thread-context-danger"
               onClick={() =>
-                runThreadMenuAction(() => {
-                  setDeleteConfirmThread(threadMenu.thread);
+                runThreadMenuAction(async () => {
+                  const thread = threadMenu.thread;
+                  const approved = await requestAppDecision({
+                    id: `delete-thread:${thread.id}`,
+                    title: thread.source === "codex"
+                      ? (zh ? "从 OpenDrSai 列表移除？" : "Remove from the OpenDrSai list?")
+                      : (zh ? "永久删除本地对话？" : "Permanently delete this local conversation?"),
+                    description: thread.source === "codex"
+                      ? (zh
+                        ? `「${thread.title}」只移除 OpenDrSai 的本地列表记录，不会删除或归档 Codex 历史；下次同步可重新导入。`
+                        : `"${thread.title}" only removes the local OpenDrSai list entry. Codex history is not deleted or archived and can be imported again.`)
+                      : (zh
+                        ? `「${thread.title}」会永久删除 OpenDrSai 本地聊天记录，且不可恢复。若只想隐藏，请改用归档。`
+                        : `"${thread.title}" permanently deletes the local OpenDrSai chat history and cannot be undone. Use Archive if you only want to hide it.`),
+                    tone: "danger",
+                    kind: "confirmation",
+                    confirmLabel: zh ? "删除" : "Delete",
+                    cancelLabel: zh ? "取消" : "Cancel",
+                  });
+                  if (!approved) return;
+                  // Persist here so delete does not depend on App.tsx HMR
+                  // (App.tsx exceeds Babel's 500KB limit and often keeps a stale handler
+                  // that rethrows into thread-menu-action-failed without writing disk).
+                  try {
+                    await deleteDesktopThread(thread.id);
+                  } catch (error) {
+                    const detail = error instanceof Error ? error.message : String(error);
+                    console.error("[delete-thread] persist failed", thread.id, error);
+                    void showAppNotice({
+                      id: "delete-thread-failed",
+                      title: zh ? "删除失败" : "Delete failed",
+                      description: zh
+                        ? `本地对话未能永久删除。${detail}`
+                        : `The local conversation could not be permanently deleted. ${detail}`,
+                    });
+                    return;
+                  }
+                  try {
+                    await onDeleteThread(thread.id);
+                  } catch (error) {
+                    // Catalog/tombstone already persisted; stale App handlers may still throw.
+                    console.warn("[delete-thread] UI cleanup failed after persist", thread.id, error);
+                  }
                 })
               }
             >
@@ -3308,56 +3453,77 @@ export function WorkspaceShell({
           </section>
         </div>
       )}
-      {deleteConfirmThread && (
+      {renameDialog && (
         <div
           className="thread-delete-confirm-overlay"
           role="presentation"
-          onMouseDown={() => setDeleteConfirmThread(null)}
+          onMouseDown={closeRenameDialog}
         >
           <section
-            className="thread-delete-confirm-dialog"
-            role="alertdialog"
+            className="thread-delete-confirm-dialog thread-rename-dialog"
+            role="dialog"
             aria-modal="true"
-            aria-labelledby="thread-delete-confirm-title"
-            aria-describedby="thread-delete-confirm-desc"
+            aria-labelledby="thread-rename-title"
             onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                closeRenameDialog();
+              }
+            }}
           >
             <div className="thread-delete-confirm-body">
-              <span className="thread-delete-confirm-icon" aria-hidden>
-                !
-              </span>
               <div className="thread-delete-confirm-copy">
-                <h2 id="thread-delete-confirm-title">
-                  {deleteConfirmThread.source === "codex"
-                    ? (zh ? "从 OpenDrSai 列表移除？" : "Remove from the OpenDrSai list?")
-                    : (zh ? "永久删除本地对话？" : "Permanently delete this local conversation?")}
+                <h2 id="thread-rename-title">
+                  {renameDialog.thread.source === "codex"
+                    ? (zh ? "设置本地显示名" : "Set local display name")
+                    : (zh ? "重命名对话" : "Rename conversation")}
                 </h2>
-                <p id="thread-delete-confirm-desc">
-                  <span className="thread-delete-confirm-name">{deleteConfirmThread.title}</span>
-                  {deleteConfirmThread.source === "codex"
-                    ? (zh ? "只移除 OpenDrSai 的本地列表记录，不会删除或归档 Codex 历史；下次同步可重新导入。" : "This only removes the local OpenDrSai list entry. Codex history is not deleted or archived and can be imported again.")
-                    : (zh ? "这会永久删除 OpenDrSai 本地聊天记录，且不可恢复。若只想隐藏，请改用归档。" : "This permanently deletes the local OpenDrSai chat history and cannot be undone. Use Archive if you only want to hide it.")}
-                </p>
+                {renameDialog.thread.source === "codex" ? (
+                  <p className="thread-delete-confirm-note">
+                    {zh
+                      ? "只会修改 OpenDrSai 本地显示名，不会改动 Codex 原始任务名。"
+                      : "This only changes the local OpenDrSai display name. The original Codex task name is unchanged."}
+                  </p>
+                ) : null}
+                <label className="thread-rename-form">
+                  <span>{zh ? "对话名称" : "Conversation name"}</span>
+                  <input
+                    ref={renameInputRef}
+                    value={renameDialog.title}
+                    onChange={(event) =>
+                      setRenameDialog((current) =>
+                        current ? { ...current, title: event.target.value } : current,
+                      )
+                    }
+                    onKeyDown={(event) => {
+                      if (isTextCompositionEvent(event.nativeEvent)) return;
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        submitRenameDialog();
+                      }
+                    }}
+                    maxLength={200}
+                    aria-label={zh ? "对话名称" : "Conversation name"}
+                  />
+                </label>
               </div>
             </div>
             <div className="thread-delete-confirm-actions">
               <button
                 type="button"
                 className="thread-delete-confirm-cancel"
-                onClick={() => setDeleteConfirmThread(null)}
+                onClick={closeRenameDialog}
               >
                 {zh ? "取消" : "Cancel"}
               </button>
               <button
                 type="button"
-                className="thread-delete-confirm-delete"
-                onClick={() => {
-                  const threadId = deleteConfirmThread.id;
-                  setDeleteConfirmThread(null);
-                  void onDeleteThread(threadId);
-                }}
+                className="thread-rename-confirm-save"
+                disabled={!renameDialog.title.trim() || renameDialog.title.trim() === renameDialog.thread.title}
+                onClick={submitRenameDialog}
               >
-                {zh ? "删除" : "Delete"}
+                {zh ? "保存" : "Save"}
               </button>
             </div>
           </section>
@@ -3577,6 +3743,62 @@ function getNextWorkspaceSortMode(
   if (mode === "recent") return "name";
   if (mode === "name") return "created";
   return "recent";
+}
+
+type EditableSelectionSnapshot = {
+  element: HTMLElement;
+  kind: "field" | "contenteditable";
+  start?: number;
+  end?: number;
+  range?: Range;
+};
+
+function isTextEditableField(element: Element): element is HTMLInputElement | HTMLTextAreaElement {
+  if (element instanceof HTMLTextAreaElement) return !element.readOnly && !element.disabled;
+  if (!(element instanceof HTMLInputElement) || element.readOnly || element.disabled) return false;
+  return ["text", "search", "url", "tel", "password", "email", "number", ""].includes(element.type);
+}
+
+function snapshotEditableSelection(element: Element | null): EditableSelectionSnapshot | null {
+  if (!element) return null;
+  if (isTextEditableField(element)) {
+    return {
+      element,
+      kind: "field",
+      start: element.selectionStart ?? 0,
+      end: element.selectionEnd ?? 0,
+    };
+  }
+  if (element instanceof HTMLElement && element.isContentEditable) {
+    const selection = window.getSelection();
+    return {
+      element,
+      kind: "contenteditable",
+      range: selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : undefined,
+    };
+  }
+  return null;
+}
+
+function restoreEditableSelection(snapshot: EditableSelectionSnapshot | null): boolean {
+  if (!snapshot?.element.isConnected) return false;
+  snapshot.element.focus({ preventScroll: true });
+  if (snapshot.kind === "field" && isTextEditableField(snapshot.element)) {
+    const start = snapshot.start ?? snapshot.element.value.length;
+    const end = snapshot.end ?? start;
+    try {
+      snapshot.element.setSelectionRange(start, end);
+    } catch {
+      // Some input types reject selection ranges.
+    }
+    return true;
+  }
+  if (snapshot.kind === "contenteditable" && snapshot.range) {
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(snapshot.range);
+  }
+  return true;
 }
 
 function getWorkspaceSortButtonLabel(

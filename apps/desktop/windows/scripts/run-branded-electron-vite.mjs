@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -12,6 +12,30 @@ const requireFromLauncher = createRequire(import.meta.url);
 
 function resolvePackageRoot(packageName) {
   return dirname(requireFromLauncher.resolve(`${packageName}/package.json`));
+}
+
+const TRANSIENT_FS_CODES = new Set(["EPERM", "EACCES", "EBUSY", "EEXIST"]);
+const COPY_RETRY_DELAYS_MS = [100, 250, 500, 1000, 2000];
+
+async function sleep(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTransientFsRetries(label, action) {
+  let lastError;
+  for (let attempt = 0; attempt <= COPY_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      lastError = error;
+      const code = error?.code;
+      if (!TRANSIENT_FS_CODES.has(code) || attempt >= COPY_RETRY_DELAYS_MS.length) throw error;
+      const delayMs = COPY_RETRY_DELAYS_MS[attempt];
+      console.warn(`Retrying ${label} after ${code} (attempt ${attempt + 1}/${COPY_RETRY_DELAYS_MS.length}, wait ${delayMs}ms)`);
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
 }
 
 async function prepareBrandedElectron() {
@@ -29,9 +53,22 @@ async function prepareBrandedElectron() {
   if (existsSync(brandedExecutable) && existsSync(markerPath)) return brandedExecutable;
 
   const temporaryDist = `${brandedDist}.tmp-${process.pid}`;
-  await rm(temporaryDist, { recursive: true, force: true });
+  await withTransientFsRetries("remove branded electron temp", () =>
+    rm(temporaryDist, { recursive: true, force: true }));
   await mkdir(dirname(brandedDist), { recursive: true });
-  await cp(sourceDist, temporaryDist, { recursive: true, force: true });
+  // Sweep leftover *.tmp-* dirs from earlier failed/interrupted branding runs (common EPERM source on Windows).
+  const cacheRoot = dirname(brandedDist);
+  if (existsSync(cacheRoot)) {
+    for (const entry of await readdir(cacheRoot)) {
+      if (!entry.includes(".tmp-")) continue;
+      await withTransientFsRetries(`remove stale branded temp ${entry}`, () =>
+        rm(join(cacheRoot, entry), { recursive: true, force: true })).catch(() => undefined);
+    }
+  }
+  await withTransientFsRetries("copy electron runtime for branding", async () => {
+    await rm(temporaryDist, { recursive: true, force: true });
+    await cp(sourceDist, temporaryDist, { recursive: true, force: true });
+  });
 
   const rcedit = join(resolvePackageRoot("electron-winstaller"), "vendor", "rcedit.exe");
   if (!existsSync(rcedit)) throw new Error(`Windows branding tool was not found: ${rcedit}`);
@@ -55,8 +92,10 @@ async function prepareBrandedElectron() {
     appVersion: appPackage.version,
     brandingRevision: BRANDING_REVISION,
   }, null, 2)}\n`, "utf8");
-  await rm(brandedDist, { recursive: true, force: true });
-  await rename(temporaryDist, brandedDist);
+  await withTransientFsRetries("replace branded electron cache", async () => {
+    await rm(brandedDist, { recursive: true, force: true });
+    await rename(temporaryDist, brandedDist);
+  });
   return brandedExecutable;
 }
 

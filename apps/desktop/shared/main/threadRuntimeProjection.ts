@@ -379,6 +379,7 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
       artifactType, name: String(item.content.name || item.id),
       ...(item.content.summary ? { summary: String(item.content.summary) } : {}),
       ...(item.content.path ? { path: String(item.content.path) } : {}),
+      ...(item.content.mime_type ? { mime: String(item.content.mime_type) } : {}),
     }], activities: [] };
   }
   if (item.type === "interaction") {

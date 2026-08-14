@@ -2258,27 +2258,34 @@ class DrSaiAssistant(DrSaiAgent):
         """
         verify_model_tool_calls(self._active_model_tool_snapshot or {}, model_result.content)
         tool_loop_policy = getattr(self, "_tool_loop_policy", normalize_tool_loop_policy())
+        original_tool_calls = list(model_result.content)
+        deferred_approval_calls: List[Any] = []
         try:
             execution_records = list(validate_tool_call_batch(
                 self._active_execution_tool_registry or {},
-                model_result.content,
+                original_tool_calls,
                 max_parallel_tool_calls=tool_loop_policy["max_parallel_tool_calls"],
                 allow_homogeneous_approval_batch=True,
             ))
+            active_tool_calls = original_tool_calls
         except ValueError as exc:
-            # Only a badly organized batch is recoverable. A duplicate call id or
-            # an unregistered tool means something is actually wrong and must
-            # still fail. Nothing has executed yet at this point, so retrying
-            # cannot repeat a side effect.
-            if not str(exc).startswith("approval_tool_must_be_single") or self._approval_batch_retry >= 1:
+            if str(exc) != "approval_tool_must_be_single" or not original_tool_calls:
                 raise
-            self._approval_batch_retry += 1
-            await model_context.add_message(SystemMessage(content=(
-                "A tool that requires approval must be requested on its own. "
-                "Re-issue this turn with exactly one tool call, or with only tools that need no approval. "
-                "Do not repeat the previous combination."
-            )))
-            return
+            # Models sometimes batch an approval-gated tool with other tools.
+            # Hard-failing the whole turn made Desktop chat unusable; keep the
+            # first call and return actionable errors for the remainder.
+            active_tool_calls = original_tool_calls[:1]
+            deferred_approval_calls = original_tool_calls[1:]
+            execution_records = list(validate_tool_call_batch(
+                self._active_execution_tool_registry or {},
+                active_tool_calls,
+                max_parallel_tool_calls=tool_loop_policy["max_parallel_tool_calls"],
+                allow_homogeneous_approval_batch=True,
+            ))
+            try:
+                object.__setattr__(model_result, "content", active_tool_calls)
+            except Exception:
+                model_result.content = active_tool_calls  # type: ignore[misc]
         registry_metadata = {
             "execution_registry_sha256": str((self._active_execution_tool_registry or {}).get("sha256", "")),
             "tool_loop_policy_sha256": tool_loop_policy["sha256"],
@@ -2294,7 +2301,7 @@ class DrSaiAssistant(DrSaiAgent):
         }
 
         tool_call_msg = ToolCallRequestEvent(
-            content=model_result.content,
+            content=original_tool_calls,
             source=agent_name,
             models_usage=model_result.usage,
             metadata=registry_metadata,
@@ -2302,7 +2309,7 @@ class DrSaiAssistant(DrSaiAgent):
         inner_messages.append(tool_call_msg)
         logger.debug(tool_call_msg)
         yield tool_call_msg
-        tools_name = [tool.name for tool in model_result.content]
+        tools_name = [tool.name for tool in original_tool_calls]
         yield AgentLogEvent(
             title="I am using tools: " + " ".join(tools_name),
             source=agent_name,
@@ -2313,6 +2320,16 @@ class DrSaiAssistant(DrSaiAgent):
 
         # STEP 4B: Execute tool calls with special tool handling
         exec_results: List[FunctionExecutionResult] = []
+        for tool_call in deferred_approval_calls:
+            exec_results.append(FunctionExecutionResult(
+                content=(
+                    "Tools that require approval cannot be combined with other tools "
+                    "in the same turn. Re-issue this tool call alone in the next turn."
+                ),
+                name=tool_call.name,
+                call_id=tool_call.id,
+                is_error=True,
+            ))
 
         # ── Pre-scan: collect Delegate calls for potential parallel execution ──
         delegate_indices: Dict[int, Dict[str, Any]] = {}

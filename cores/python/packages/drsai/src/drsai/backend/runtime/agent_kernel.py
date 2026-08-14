@@ -222,7 +222,7 @@ def _build_tool_decision_requirement_v1(input_text: str, available_tools: Sequen
         "plan": ("create a plan", "make a plan", "multi-step", "step by step", "制定计划", "多步骤", "分步骤"),
         "image_generation": (
             "generate an image", "create an image", "draw an image", "output png",
-            "生成图片", "生成一张", "创建图片", "输出 png",
+            "16:9", "illustration", "生成图片", "生成一张", "创建图片", "输出 png", "插图", "科技插图",
         ),
         "image_edit": ("edit this image", "modify this image", "编辑这张图片", "修改这张图片"),
     }
@@ -274,8 +274,8 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
         ),
         "retrieval": (
             "latest", "today", "current news", "breaking", "recent", "as of", "verify", "source",
-            "citation", "cite", "look up", "search for", "最新", "今天", "今日", "新闻",
-            "最近", "今年", "截至", "刚刚", "核实", "查证", "验证", "来源", "引用", "搜索",
+            "citation", "cite", "look up", "search for", "最新", "今天", "今日", "新闻", "当前",
+            "最近", "今年", "截至", "刚刚", "核实", "查证", "验证", "来源", "引用", "搜索", "检索",
             "查一下", "联网",
         ),
         "workspace": (
@@ -344,7 +344,7 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
     # than being rejected as an unavailable retrieval request.
     if any(value in folded for value in (
         "generate an image", "create an image", "draw an image", "output png",
-        "生成图片", "生成一张", "创建图片", "输出 png",
+        "16:9", "illustration", "生成图片", "生成一张", "创建图片", "输出 png", "插图", "科技插图",
     )):
         domains.add("image_generation")
     if any(value in folded for value in (
@@ -450,6 +450,31 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
         value in folded for value in ("public web", "website", "web search", "source link", "latest news")
     ):
         domains.discard("retrieval")
+
+    # Screenshot / attached-image diagnosis is grounded in the provided image
+    # (or Trusted image-understanding handoff), not live web retrieval or
+    # device-info Host tools. Case prompts such as "当前运行发生了什么？…是什么？"
+    # must not force web.search; injected diagnosis constraints must not force
+    # get_device_info merely because they mention connectivity failure phrases.
+    screenshot_grounded = any(
+        value in folded
+        for value in (
+            "screenshot",
+            "截图",
+            "这张图",
+            "图片中",
+            "截图中",
+            "attached image",
+            "image attachment",
+            "analyze this image",
+            "分析这张",
+            "trusted opendrsai image-understanding",
+            "[opendrsai diagnosis constraints]",
+        )
+    )
+    if screenshot_grounded:
+        domains.discard("retrieval")
+        domains.discard("device")
     reason = "task_requires_external_or_host_fact" if domains else "stable_or_transformational_request"
     available_domains = sorted({domain for name in names if (domain := _tool_decision_domain(name)) is not None})
     unsigned = {

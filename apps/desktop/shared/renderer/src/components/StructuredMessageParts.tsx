@@ -46,6 +46,7 @@ interface StructuredMessagePartsProps {
   turn: StructuredTurnState;
   runId?: string;
   language: "en" | "zh";
+  workspacePath?: string;
   respondedRequestIds: ReadonlySet<string>;
   configuredCapabilityRequestIds: ReadonlySet<string>;
   onOpenLink: (href: string | undefined) => void;
@@ -74,6 +75,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   turn,
   runId,
   language,
+  workspacePath,
   respondedRequestIds,
   configuredCapabilityRequestIds,
   onOpenLink,
@@ -198,8 +200,8 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       <ChatMessageContent content={part.summary} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
       {part.total !== undefined && part.completed !== undefined ? <small>{part.completed}/{part.total}</small> : null}
     </div>;
-    if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} />;
-    if (part.kind === "citation") return <CitationItem key={part.id} part={part} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
+    if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} workspacePath={workspacePath} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} />;
+    if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
     if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} capabilityConfigured={configuredCapabilityRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} onOpenLink={onOpenLink} />;
     if (part.kind === "subtask") return <div className={`structured-subtask ${part.status}`} key={part.id}><ListChecks size={14} aria-hidden="true" /><span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span></div>;
     return <NoticeItem key={part.id} part={part} language={language} onOpenDebug={onOpenDebug} />;
@@ -577,14 +579,23 @@ function StructuredReasoning({
   );
 }
 
+function isImageArtifact(part: ArtifactPart): boolean {
+  if (part.artifactType === "image") return true;
+  if (part.mime?.toLowerCase().startsWith("image/")) return true;
+  const name = `${part.name || ""} ${part.path || ""}`.toLowerCase();
+  return /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|[?#])/i.test(name);
+}
+
 function ArtifactItem({
   part,
   language,
+  workspacePath,
   focused,
   onOpen,
 }: {
   part: ArtifactPart;
   language: "en" | "zh";
+  workspacePath?: string;
   focused: boolean;
   onOpen: () => void;
 }): React.JSX.Element {
@@ -597,21 +608,63 @@ function ArtifactItem({
         : part.artifactType === "web"
           ? Globe2
           : FileText;
+  const showImage = isImageArtifact(part);
+  const [previewSrc, setPreviewSrc] = useState<string | undefined>(
+    part.url?.startsWith("data:image/") ? part.url : undefined,
+  );
+
+  useEffect(() => {
+    if (part.url?.startsWith("data:image/")) {
+      setPreviewSrc(part.url);
+      return;
+    }
+    if (!showImage || previewSrc || !workspacePath?.trim() || !part.path?.trim()) return;
+    let cancelled = false;
+    void desktopApi.previewWorkspaceFile({
+      workspacePath,
+      path: part.path,
+      maxBytes: 1_500_000,
+    }).then((preview) => {
+      if (!cancelled && preview.kind === "image" && preview.dataUrl?.startsWith("data:image/")) {
+        setPreviewSrc(preview.dataUrl);
+      }
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [part.path, part.url, previewSrc, showImage, workspacePath]);
+
   return (
-    <button
-      type="button"
-      className={`structured-artifact ${focused ? "relation-focus" : ""}`}
+    <div
+      className={`structured-artifact-card ${showImage && previewSrc ? "has-preview" : ""} ${focused ? "relation-focus" : ""}`}
       data-structured-part-id={part.id}
       data-artifact-id={part.artifactId}
       data-status={part.status}
-      onClick={onOpen}
-      title={part.path || part.url || part.name}
     >
-      <Icon size={16} aria-hidden="true" />
-      <span><strong>{part.name}</strong>{part.summary ? <small>{part.summary}</small> : null}</span>
-      <em>{formatPartStatus(part.status, language)}</em>
-      <ArrowUpRight size={14} aria-hidden="true" />
-    </button>
+      {showImage && previewSrc ? (
+        <button
+          type="button"
+          className="structured-artifact-image"
+          onClick={onOpen}
+          title={part.path || part.url || part.name}
+          aria-label={language === "zh" ? `打开图片：${part.name}` : `Open image: ${part.name}`}
+          data-testid="structured-artifact-image"
+        >
+          <img src={previewSrc} alt={part.name} />
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="structured-artifact"
+        onClick={onOpen}
+        title={part.path || part.url || part.name}
+      >
+        <Icon size={16} aria-hidden="true" />
+        <span><strong>{part.name}</strong>{part.summary ? <small>{part.summary}</small> : null}</span>
+        <em>{formatPartStatus(part.status, language)}</em>
+        <ArrowUpRight size={14} aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
@@ -624,12 +677,14 @@ export function citationFileName(part: CitationPart): string {
 
 function CitationItem({
   part,
+  index,
   language,
   focused,
   onOpen,
   onBack,
 }: {
   part: CitationPart;
+  index: number;
   language: "en" | "zh";
   focused: boolean;
   onOpen: () => void;
@@ -653,6 +708,7 @@ function CitationItem({
         aria-expanded={expandable && !openable ? showExcerpt : undefined}
         title={part.url || part.path || part.title}
       >
+        <span className="structured-citation-index">[{index}]</span>
         {isWeb ? <Globe2 size={13} aria-hidden="true" /> : <FileText size={13} aria-hidden="true" />}
         <span>{part.title}</span>
         {part.locator ? <small>{part.locator}</small> : null}

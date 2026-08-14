@@ -35,7 +35,10 @@ export function installMacosAppIntegrations(dependencies: MacosAppIntegrationDep
   remoteWorkspaceController.setPublisher((event) => dependencies.publish("desktop:remote-workspace-status-event", event));
   remoteWorkspaceController.setFilePublisher((event) => dependencies.publish("desktop:workspace-file-change-event", event));
   portForwardRegistry.setPublisher((event) => dependencies.publish("desktop:port-forward-event", event));
-  desktopDiagnostics.setPublisher((event) => { productionDiagnostics.observeEvent(Buffer.byteLength(JSON.stringify(event), "utf8"), event.workspaceId); dependencies.publish("desktop:diagnostics-event", event); });
+  desktopDiagnostics.setPublisher((event) => {
+    productionDiagnostics.observeEvent(Buffer.byteLength(JSON.stringify(event), "utf8"), event.workspaceId);
+    dependencies.publish("desktop:diagnostics-event", event);
+  });
   dependencies.interactiveDebugger.setPublisher((event) => dependencies.publish("desktop:interactive-debug-event", event));
   configureCompletionNotifications({ notifications: MACOS_PLATFORM_SERVICES.notifications, focusApp: dependencies.focusApp, publishClick: (event) => dependencies.publish("desktop:completion-notification-click", event), getWindowVisibility: dependencies.getWindowVisibility });
   app.setName("OpenDrSai"); app.setAsDefaultProtocolClient("opendrsai");

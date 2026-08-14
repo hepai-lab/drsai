@@ -51,7 +51,7 @@ import { BoundedEventDispatcher } from "./boundedEventDispatcher";
 import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
 import { codexContinuationAction } from "./codexSessionResumePolicy";
 import { selectCurrentUserInput } from "./chatInput";
-import { materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
+import { isPresentationNoiseOaepEvent, materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
 import { selectRuntimeConversationProtocolResult } from "./runtimeProtocolSelection";
 import { decideRuntimeRestartRecovery } from "../api/runtimeRestartRecovery";
 import {
@@ -71,10 +71,42 @@ function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher
   if (existing) return existing;
   const dispatcher = new BoundedEventDispatcher<ChatEvent>({
     capacity: 256,
-    deliver: (event) => target.send("desktop:chat-event", event),
+    deliver: (event) => {
+      try {
+        target.send("desktop:chat-event", event);
+      } catch {
+        // Renderer may have OOMed/disposed; drop the batch instead of crashing main.
+      }
+    },
     merge: (previous, next) => {
-      if (previous.requestId !== next.requestId || previous.type !== next.type || (next.type !== "chunk" && next.type !== "reasoning")) return null;
-      return { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` };
+      if (previous.requestId !== next.requestId || previous.type !== next.type) return null;
+      if (next.type === "chunk" || next.type === "reasoning") {
+        return { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` };
+      }
+      if (
+        next.type === "structured"
+        && previous.type === "structured"
+        && previous.structuredEvent?.type === "part.delta"
+        && next.structuredEvent?.type === "part.delta"
+        && previous.structuredEvent.partId === next.structuredEvent.partId
+        && previous.structuredEvent.delta?.kind === next.structuredEvent.delta?.kind
+        && next.structuredEvent.delta
+        && "text" in next.structuredEvent.delta
+        && previous.structuredEvent.delta
+        && "text" in previous.structuredEvent.delta
+      ) {
+        return {
+          ...next,
+          structuredEvent: {
+            ...next.structuredEvent,
+            delta: {
+              ...next.structuredEvent.delta,
+              text: `${previous.structuredEvent.delta.text}${next.structuredEvent.delta.text}`,
+            },
+          },
+        };
+      }
+      return null;
     },
   });
   chatEventDispatchers.set(target, dispatcher);
@@ -585,6 +617,23 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   }
 }
 
+function findChatTurn(requestId: string): { key: string; turn: ChatTurnRecord } | null {
+  const direct = chatTurns.get(requestId);
+  if (direct) return { key: requestId, turn: direct };
+  for (const [key, turn] of chatTurns) {
+    if (turn.runtime?.runId === requestId || turn.runId === requestId) {
+      return { key, turn };
+    }
+  }
+  return null;
+}
+
+function extractRunIdCandidate(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const match = /^(run-[a-zA-Z0-9-]{8,80})/.exec(value);
+  return match?.[1];
+}
+
 export async function respondChatInput(
   requestId: string,
   response: string | Record<string, unknown>,
@@ -602,11 +651,12 @@ export async function respondChatInput(
     if (accepted) platformInputTargets.delete(requestId);
     return accepted;
   }
-  const target = chatTurns.get(requestId)?.platform;
+  const matched = findChatTurn(requestId);
+  const target = matched?.turn.platform;
   if (target && target.mode !== "ddf") {
     return respondToPlatformChatInput(target.agentId, target.threadId, response);
   }
-  const runtime = chatTurns.get(requestId)?.runtime;
+  const runtime = matched?.turn.runtime ?? chatTurns.get(requestId)?.runtime;
   if (runtime?.capabilityConfiguration) {
     const action = typeof response === "string"
       ? response
@@ -669,9 +719,40 @@ export async function respondChatInput(
     pending.settle(true);
     return true;
   }
-  if (!runtime?.approvalId) return false;
-  await runtime.client.respondAgentApproval(runtime.runId, runtime.approvalId, decision);
-  runtime.approvalId = undefined;
+  const responseRecord = typeof response === "object" && response ? response as Record<string, unknown> : {};
+  const rawApprovalId = typeof responseRecord.approval_id === "string"
+    ? responseRecord.approval_id.trim()
+    : "";
+  const responseApprovalId = rawApprovalId.startsWith("approval:")
+    ? rawApprovalId.slice("approval:".length)
+    : rawApprovalId;
+  const approvalId = runtime?.approvalId || responseApprovalId || undefined;
+  const responseRunId = extractRunIdCandidate(
+    typeof responseRecord.run_id === "string" ? responseRecord.run_id : undefined,
+  ) || extractRunIdCandidate(requestId);
+  if (runtime && approvalId) {
+    await runtime.client.respondAgentApproval(runtime.runId, approvalId, decision);
+    runtime.approvalId = undefined;
+    return true;
+  }
+  // Recovered structured turns use runId as turnId, and Desktop restarts clear
+  // in-memory chatTurns. Resolve the workspace from the thread and decide
+  // directly against the durable Runtime approval.
+  if (!approvalId || !responseRunId) return false;
+  const sessionId = typeof responseRecord.session_id === "string" ? responseRecord.session_id.trim() : "";
+  const workspacePath = typeof responseRecord.workspace_path === "string"
+    ? responseRecord.workspace_path.trim()
+    : "";
+  const thread = sessionId
+    ? (await listThreads()).find((candidate) => candidate.id === sessionId)
+    : (await listThreads()).find((candidate) => candidate.lastRunId === responseRunId);
+  const resolvedPath = workspacePath || thread?.workspacePath;
+  if (!resolvedPath) return false;
+  const resolved = await connectRuntimeClientForWorkspace(
+    resolvedPath,
+    thread?.execution?.workspaceId,
+  );
+  await (resolved.client as RuntimeClient).respondAgentApproval(responseRunId, approvalId, decision);
   return true;
 }
 
@@ -1505,6 +1586,17 @@ function isWorkspacePath(relativePath: string): boolean {
   return relativePath === "" || (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..\\`) && !relativePath.startsWith("../"));
 }
 
+/** Heuristic aligned with Runtime tool-decision image_generation needles (item 9). */
+function promptRequestsImageGeneration(prompt: string): boolean {
+  const folded = prompt.toLowerCase();
+  const needles = [
+    "generate an image", "create an image", "draw an image", "output png", "outputpng",
+    "image generation", "16:9", "生成图片", "生成一张", "创建图片", "输出 png", "输出png",
+    "插图", "科技插图",
+  ];
+  return needles.some((needle) => folded.includes(needle.toLowerCase()) || prompt.includes(needle));
+}
+
 async function sha256File(path: string, signal?: AbortSignal): Promise<string> {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path, { signal })) hash.update(chunk as Buffer);
@@ -1721,6 +1813,54 @@ async function runRuntimeBackendChat(
         resolveRuntimeTerminal();
       }
     },
+    onSnapshot(state) {
+      // Backpressure may skip individual deltas; rebuild visible assistant text
+      // from the authoritative Session Item map so streaming does not stall.
+      if (!activeRuntimeRunId) return;
+      for (const item of state.items.values()) {
+        if (item.run_id !== activeRuntimeRunId) continue;
+        if (item.type !== "message" || item.content.role !== "assistant") continue;
+        const synthetic = {
+          version: "oaep/1",
+          event_id: `snapshot:${item.id}:${item.sequence}`,
+          session_id: runtimeSessionId,
+          sequence: item.sequence,
+          type: ["completed", "failed", "cancelled"].includes(item.status)
+            ? "event.item.completed"
+            : "event.item.updated",
+          timestamp: item.updated_at || new Date().toISOString(),
+          item_id: item.id,
+          run_id: activeRuntimeRunId,
+          dedupe_key: `snapshot:${activeRuntimeRunId}:${item.id}:${item.sequence}`,
+          source: item.source,
+          data: { item },
+        } as OaepEvent;
+        emitRuntimeOaepEvent(
+          webContents, requestId, displaySessionId, activeRuntimeRunId, synthetic, liveProjectionTarget, item,
+        );
+      }
+      for (const shadow of state.deltaShadows.values()) {
+        if (shadow.runId !== activeRuntimeRunId || shadow.type !== "message") continue;
+        const item = materializeOaepDeltaShadow(shadow);
+        if (item.content.role !== "assistant") continue;
+        const synthetic = {
+          version: "oaep/1",
+          event_id: `snapshot-shadow:${shadow.id}:${shadow.lastEventSequence}`,
+          session_id: runtimeSessionId,
+          sequence: shadow.lastEventSequence,
+          type: "event.item.updated",
+          timestamp: shadow.updatedAt || new Date().toISOString(),
+          item_id: shadow.id,
+          run_id: activeRuntimeRunId,
+          dedupe_key: `snapshot-shadow:${activeRuntimeRunId}:${shadow.id}:${shadow.lastEventSequence}`,
+          source: shadow.source,
+          data: { item },
+        } as OaepEvent;
+        emitRuntimeOaepEvent(
+          webContents, requestId, displaySessionId, activeRuntimeRunId, synthetic, liveProjectionTarget, item,
+        );
+      }
+    },
     onConnection(status, attempt) {
       if (!activeRuntimeRunId) return;
       emit(webContents, { requestId, sessionId: displaySessionId, runId: activeRuntimeRunId, type: "connection", connection: {
@@ -1742,8 +1882,10 @@ async function runRuntimeBackendChat(
     );
   } catch (error) {
     if (!isUncertainRunCreateFailure(error)) {
-      await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "failed").catch(() => undefined);
       liveSubscription.stop();
+      // createAgentRun never attached a Run — release the outbox so the Session
+      // is not permanently blocked on "awaiting Runtime acknowledgement".
+      await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
       throw error;
     }
     await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "uncertain").catch(() => undefined);
@@ -1752,6 +1894,7 @@ async function runRuntimeBackendChat(
     );
     if (!run) {
       liveSubscription.stop();
+      await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
       throw error;
     }
   }
@@ -1760,6 +1903,7 @@ async function runRuntimeBackendChat(
       return await operation;
     } catch (error) {
       liveSubscription.stop();
+      await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
       throw error;
     }
   };
@@ -1876,6 +2020,7 @@ async function runRuntimeBackendChat(
     });
     if (!approved) {
       liveSubscription.stop();
+      await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
       throw new Error("Task goal was not confirmed; OpenDrSai did not start work.");
     }
   }
@@ -1896,7 +2041,37 @@ async function runRuntimeBackendChat(
         if (!policy.valid || !policy.effective_ref) {
           throw new Error(policy.error || "Configure a primary model for this OpenDrSai Agent before starting a Run.");
         }
+        const hasImageAttachment = staged.resources.some(
+          (resource) => typeof resource.mime === "string" && resource.mime.startsWith("image/"),
+        );
+        if (hasImageAttachment && !policy.effective_image_understanding_ref) {
+          const error = new Error(
+            "Configure an image-understanding model for this OpenDrSai Agent before sending image attachments.",
+          );
+          Object.assign(error, {
+            code: "image_understanding_model_unavailable",
+            category: "model",
+            retryable: false,
+            recovery_actions: ["select_model"],
+          });
+          throw error;
+        }
+        if (promptRequestsImageGeneration(prompt) && !policy.effective_image_generation_ref) {
+          const error = new Error(
+            "Configure an image-generation model for this OpenDrSai Agent before requesting image output.",
+          );
+          Object.assign(error, {
+            code: "image_generation_model_unavailable",
+            category: "model",
+            retryable: false,
+            recovery_actions: ["select_model"],
+          });
+          throw error;
+        }
         return policy.effective_ref;
+      }).catch(async (error) => {
+        await client.cancelAgentRun(run.run_id).catch(() => undefined);
+        throw error;
       })
     : undefined;
   const executionProvenance: {
@@ -1999,20 +2174,29 @@ async function runRuntimeBackendChat(
     failure = runtimeTerminalFailure ?? new Error("Runtime Agent Run failed.");
   }
   // The execute HTTP response is transport acknowledgement, not the Run's
-  // source of truth. If that connection failed ambiguously but OAEP later
-  // proves the same Run completed, do not turn a successful task into an
-  // error and never re-execute it to obtain another acknowledgement.
-  if (failure && runtimeTerminalStatus === "completed" && isRecoverableNetworkError(failure)) failure = undefined;
-  // Also clear outbox on Runtime terminal (failed/cancelled): the Run is
-  // resolved, the next user message is a new semantic entry, not a retry.
+  // source of truth. If OAEP later proves the same Run completed, do not turn
+  // a successful task into an error (network blips, terminal-wait races under
+  // event floods, etc.) and never re-execute it to obtain another acknowledgement.
+  if (failure && runtimeTerminalStatus === "completed") failure = undefined;
+  // Keep the durable outbox only for ambiguous recoverable transport failures
+  // with no OAEP terminal yet — Desktop restart can resume that same semantic
+  // message. Definitive failures/cancels/timeouts must release it, otherwise
+  // every later send on this Session dies with "awaiting Runtime acknowledgement".
   const runtimeReachedTerminal = runtimeTerminalStatus !== undefined;
+  const keepOutboxForRetry = Boolean(
+    failure
+    && isRecoverableNetworkError(failure)
+    && !runtimeReachedTerminal
+  );
   try {
-    if ((!failure && sourceMessageObserved) || runtimeReachedTerminal) {
+    if ((!failure && sourceMessageObserved) || (failure && !keepOutboxForRetry)) {
       if (runtimeReachedTerminal) {
         await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "terminal").catch(() => undefined);
       }
       await sessionSyncState.completeOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
     }
+  } catch {
+    // Outbox release must not mask the Run failure that triggered it.
   } finally {
     liveSubscription.stop();
   }
@@ -2041,16 +2225,22 @@ function emitRuntimeOaepEvent(
   }
 }
 
+function isNoiseOaepEvent(event: OaepEvent): boolean {
+  return isPresentationNoiseOaepEvent(event);
+}
+
 function mapRuntimeOaepEvent(
   requestId: string, sessionId: string, runId: string,
   event: OaepEvent, target: RuntimeProjectionTarget, currentItem?: OaepItem,
 ): Array<Omit<ChatEvent, "seq">> {
+  if (isNoiseOaepEvent(event)) return [];
   const item = isOaepItem(event.data.item) ? event.data.item : currentItem;
   if (
     item?.type === "interaction"
     && ["pending", "running", "waiting"].includes(item.status)
+    && item.content.approval_id
   ) {
-    target.approvalId = String(item.content.approval_id ?? "");
+    target.approvalId = String(item.content.approval_id);
   }
   return [{
     requestId,
@@ -2839,30 +3029,80 @@ async function recordChatDiagnosticEvent(event: ChatEvent, seq: number, runtimeT
       chatDiagnosticOperations.delete(event.requestId);
       return;
     }
-    const source = event.structuredEvent?.source ?? event.connection?.source ?? "gateway";
-    const component = source === "codex-runtime" ? "codex-adapter"
+    const structuredType = event.type === "structured" ? event.structuredEvent?.type : undefined;
+    const oaepType = event.type === "oaep" ? event.oaepEvent?.type : undefined;
+    const terminalKind =
+      structuredType === "turn.completed" || oaepType === "event.run.completed" ? "completed"
+        : structuredType === "turn.cancelled" || oaepType === "event.run.cancelled" ? "cancelled"
+          : structuredType === "turn.error" || oaepType === "event.run.failed" ? "failed"
+            : undefined;
+    // Never mirror per-token OAEP/structured traffic into Desktop diagnostics.
+    // Doing so has OOMed the renderer (100k+ chat.oaep/chat.structured rows).
+    // Raw protocol views still receive these events through the chat stream.
+    if (event.type === "oaep" || event.type === "structured") {
+      if (!terminalKind) return;
+    } else if (
+      event.type === "chunk"
+      || event.type === "reasoning"
+      || event.type === "status"
+      || event.type === "tool_timeline"
+    ) {
+      return;
+    }
+    const source = event.structuredEvent?.source
+      ?? event.connection?.source
+      ?? event.oaepEvent?.source?.backend
+      ?? "gateway";
+    const component = source === "codex-runtime" || source === "codex" ? "codex-adapter"
       : source === "remote-gateway" ? "remote-runtime"
       : "gateway";
-    const status = event.type === "connection" && event.connection?.status === "retrying" ? "waiting"
-      : event.type === "input_request" ? "waiting"
-      : event.type === "start" ? "started"
-      : "running";
+    const status = terminalKind
+      ?? (event.type === "connection" && event.connection?.status === "retrying" ? "waiting"
+        : event.type === "input_request" ? "waiting"
+          : event.type === "start" ? "started"
+            : "running");
+    const diagnosticOperation = terminalKind === "completed" ? "chat.done"
+      : terminalKind === "cancelled" ? "chat.aborted"
+        : terminalKind === "failed" ? "chat.error"
+          : `chat.${event.type}`;
     await desktopDiagnostics.record({
       traceId: event.requestId,
       parentSpanId: operation?.spanId,
       module: component === "codex-adapter" ? "backend" : "runtime",
       component,
-      operation: `chat.${event.type}`,
+      operation: diagnosticOperation,
       message: summarizeChatDiagnosticEvent(event),
       status,
-      level: event.level === "ERROR" || event.level === "FATAL" ? "error"
+      level: terminalKind === "failed" || event.level === "ERROR" || event.level === "FATAL" ? "error"
         : event.level === "WARNING" ? "warn"
         : "info",
       sessionId: event.sessionId,
       runId: event.runId,
-      backendId: component === "codex-adapter" ? "codex" : undefined,
-      attributes: { eventSequence: seq, source },
+      backendId: component === "codex-adapter" ? "codex" : "opendrsai",
+      domain: "agent",
+      ...(terminalKind ? {
+        agentPhase: terminalKind === "completed" ? "completed" as const
+          : terminalKind === "cancelled" ? "cancelled" as const
+            : "failed" as const,
+        visibility: "milestone" as const,
+      } : {}),
+      attributes: {
+        eventSequence: seq,
+        source,
+        ...(oaepType ? { oaepType } : {}),
+        ...(structuredType ? { structuredType } : {}),
+      },
     });
+    if (terminalKind === "completed") {
+      await operation?.complete("Chat run completed", { eventSequence: seq });
+      chatDiagnosticOperations.delete(event.requestId);
+    } else if (terminalKind === "failed") {
+      await operation?.fail(new Error(summarizeChatDiagnosticEvent(event)), "CHAT_RUN_FAILED");
+      chatDiagnosticOperations.delete(event.requestId);
+    } else if (terminalKind === "cancelled") {
+      await operation?.cancel("Chat run cancelled");
+      chatDiagnosticOperations.delete(event.requestId);
+    }
   } catch {
     // Diagnostic capture must never interrupt chat streaming.
   }
@@ -2959,6 +3199,7 @@ function summarizeChatDiagnosticEvent(event: ChatEvent): string {
     : "Connection restored";
   if (event.type === "input_request") return "Waiting for user input";
   if (event.type === "structured") return `Structured event: ${event.structuredEvent?.type ?? "unknown"}`;
+  if (event.type === "oaep") return `OAEP event: ${event.oaepEvent?.type ?? "unknown"}`;
   if (event.type === "status") return "Backend status updated";
   if (event.type === "tool_timeline") return `Tool activity: ${event.toolTimeline?.title ?? event.toolTimeline?.kind ?? "tool"}`;
   if (event.type === "start") return "Backend stream started";

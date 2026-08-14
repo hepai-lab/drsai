@@ -1056,21 +1056,37 @@ class DrSaiAgentKernel:
                         "max_tool_rounds": state.tool_loop_policy["max_tool_rounds"],
                     },
                 )
-            validate_tool_call_batch(
-                state.execution_tool_registry,
-                tool_calls,
-                max_parallel_tool_calls=state.tool_loop_policy["max_parallel_tool_calls"],
-                # Two calls to the same tool carry one approval decision, so a
-                # homogeneous batch is still a single thing to approve. The
-                # Assistant path already allows this; keeping the Kernel path
-                # stricter only meant the same model behaviour failed here.
-                allow_homogeneous_approval_batch=True,
-            )
+            deferred_approval_calls: list[Mapping[str, Any]] = []
+            try:
+                validate_tool_call_batch(
+                    state.execution_tool_registry,
+                    tool_calls,
+                    max_parallel_tool_calls=state.tool_loop_policy["max_parallel_tool_calls"],
+                    allow_homogeneous_approval_batch=True,
+                )
+            except ValueError as exc:
+                if str(exc) != "approval_tool_must_be_single" or len(tool_calls) <= 1:
+                    raise
+                # Models sometimes batch an approval-gated tool with others.
+                # Keep the first call; close the remainder with actionable errors
+                # so the session is not left stuck in an active run.
+                deferred_approval_calls = [
+                    value for value in tool_calls[1:] if isinstance(value, Mapping)
+                ]
+                tool_calls = tool_calls[:1]
+                validate_tool_call_batch(
+                    state.execution_tool_registry,
+                    tool_calls,
+                    max_parallel_tool_calls=state.tool_loop_policy["max_parallel_tool_calls"],
+                    allow_homogeneous_approval_batch=True,
+                )
             for raw_call in tool_calls:
                 call_id = self._required_string(raw_call, "call_id")
                 if call_id in state.pending_tool_calls or call_id in state.completed_side_effects:
                     raise ValueError("tool_call_duplicate")
             state.tool_round_count += 1
+        else:
+            deferred_approval_calls = []
         citation_event: tuple[RuntimeEnvelope, ...] = ()
         if not tool_calls:
             citation = build_citation_evidence(
@@ -1303,13 +1319,54 @@ class DrSaiAgentKernel:
                     "execution_registry_sha256": normalized["execution_registry_sha256"],
                 }))
                 replies.append(self._request(state, MessageType.TOOL_CALL_REQUEST, normalized, f"tool:{call_id}"))
+        deferred_tool_calls = []
+        for raw_call in deferred_approval_calls:
+            call_id = self._required_string(raw_call, "call_id")
+            name = self._required_string(raw_call, "name")
+            arguments = raw_call.get("arguments", {})
+            if not isinstance(arguments, Mapping):
+                raise ValueError("tool_arguments_invalid")
+            deferred_tool_calls.append({
+                "call_id": call_id,
+                "name": name,
+                "arguments": dict(arguments),
+            })
         state.messages.append(
             {
                 "role": "assistant",
                 "content": content,
-                "tool_calls": [dict(value) for value in state.pending_tool_calls.values()],
+                "tool_calls": [
+                    *[dict(value) for value in state.pending_tool_calls.values()],
+                    *deferred_tool_calls,
+                ],
             }
         )
+        for deferred in deferred_tool_calls:
+            error = classify_tool_error("invalid_request", "sensitive")
+            error = {
+                **error,
+                "actionable": (
+                    "Tools that require approval cannot be combined with other tools "
+                    "in the same turn. Re-issue this tool call alone in the next turn."
+                ),
+            }
+            state.messages.append({
+                "role": "tool",
+                "tool_call_id": deferred["call_id"],
+                "name": deferred["name"],
+                "content": {"error": error},
+                "succeeded": False,
+            })
+            state.completed_side_effects.add(deferred["call_id"])
+            replies.append(self._event(state, "tool.error", {
+                "item_id": f"{state.run_id}:tool:{deferred['call_id']}",
+                "call_id": deferred["call_id"],
+                "name": deferred["name"],
+                "tool_kind": "host",
+                "succeeded": False,
+                "policy_blocked": True,
+                **error,
+            }))
         if approval_call is not None:
             state.phase = RunPhase.WAITING_APPROVAL
             call_id = self._required_string(approval_call, "call_id")

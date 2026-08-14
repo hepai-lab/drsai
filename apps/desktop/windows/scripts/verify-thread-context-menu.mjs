@@ -120,10 +120,12 @@ const checks = [
       shell.includes("{ pinned: !threadMenu.thread.pinned }"),
   ],
   [
-    "rename conversation action is wired",
+    "rename conversation action opens an in-app dialog instead of window.prompt",
     shell.includes("function renameThread") &&
-      shell.includes("window.prompt") &&
-      shell.includes("{ title: nextTitle.trim() }"),
+      shell.includes("setRenameDialog") &&
+      shell.includes("thread-rename-dialog") &&
+      shell.includes("{ title: nextTitle }") &&
+      !shell.includes("window.prompt"),
   ],
   [
     "archive conversation action is wired",
@@ -162,8 +164,18 @@ const checks = [
   [
     "context menu visual styles and unread pinned markers exist",
     css.includes(".thread-context-menu") &&
+      css.includes("max-height: calc(100vh - 20px)") &&
+      css.includes("scrollbar-width: thin") &&
       css.includes(".thread-unread-dot") &&
       css.includes(".thread-pinned-mark"),
+  ],
+  [
+    "context menu clamps into the viewport after measuring its real height",
+    shell.includes("threadMenuRef") &&
+      shell.includes("useLayoutEffect") &&
+      shell.includes("preferAbove") &&
+      shell.includes("anchorY") &&
+      shell.includes("threadMenu.anchorY - height"),
   ],
   [
     "fork merge pending recovery actions are visible from the thread context menu",

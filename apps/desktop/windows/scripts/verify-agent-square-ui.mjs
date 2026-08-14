@@ -28,7 +28,7 @@ const config = readFileSync(join(root, "../shared/main/myDrSaiConfig.ts"), "utf8
 assert(view.includes('["local", "official", "mine"]'), "C1 catalog grouping is missing");
 assert(view.includes('value={availability}') && view.includes('value={sort}'), "C2 availability filter or sorting is missing");
 assert(view.includes("agent.capabilities") && view.includes("getCapabilityLabel"), "C3 user-facing capability labels are missing");
-assert(view.includes("agent.logo && !failed") && view.includes("onError={() => setFailed(true)}"), "C4 logo fallback is missing");
+assert(view.includes("const logo = agent.source === \"local\" ? drsaiLogo : agent.logo") && view.includes("logo && !failed") && view.includes("onError={() => setFailed(true)}"), "C4 local/remote logo selection and fallback are missing");
 assert(view.includes("AgentDetailDialog") && view.includes("Example tasks"), "C5 detail dialog is missing");
 assert(view.includes("getAgentCatalogSnapshot") && view.includes("preferCache: true") && view.includes("refresh: true"), "cache-first background refresh is not wired");
 assert(view.includes("AgentConfigDialog") && view.includes('event.key === "Escape"'), "configuration/details dialogs are not separated or Escape-accessible");

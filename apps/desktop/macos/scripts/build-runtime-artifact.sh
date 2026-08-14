@@ -24,6 +24,15 @@ if [[ ! -f "$LOCK_FILE" || ! -f "$BROWSER_LOCK_FILE" ]]; then
   echo "Missing reviewed Runtime dependency lock: $LOCK_FILE or $BROWSER_LOCK_FILE" >&2
   exit 1
 fi
+# electron-builder copies every matching archive, SBOM and provenance file
+# from this directory. Remove outputs from older versions before producing the
+# current Runtime so a release DMG cannot silently contain multiple runtimes.
+find "$OUTPUT" -maxdepth 1 -type f \( \
+  -name 'opendrsai-runtime-macos-arm64-*.tar.gz' -o \
+  -name 'runtime-sbom-*.json' -o \
+  -name 'runtime-provenance-*.json' -o \
+  -name 'runtime-manifest.json' \
+\) -delete
 SOURCE_PYTHON_VERSION="$("$RUNTIME_PYTHON" -c 'import platform; print(platform.python_version())')"
 if [[ "$SOURCE_PYTHON_VERSION" != "$EXPECTED_PYTHON" ]]; then
   echo "Runtime source interpreter must be Python $EXPECTED_PYTHON, got $SOURCE_PYTHON_VERSION from $RUNTIME_PYTHON." >&2

@@ -8,7 +8,7 @@ import {
   realpathSync,
   writeFileSync,
 } from "fs";
-import { copyFile, mkdir, open as openFile, rename, stat as statFile, unlink, writeFile } from "fs/promises";
+import { copyFile, mkdir, open as openFile, readFile, rename, stat as statFile, unlink, writeFile } from "fs/promises";
 import { createHash } from "crypto";
 import {
   app,
@@ -223,6 +223,7 @@ import {
 import {
   getRuntimeThreadSnapshot,
   getRuntimeThreadSnapshotEnvelope,
+  isRuntimeGenerationInvalidated,
   subscribeRuntimeThreadSnapshot,
 } from "../../../shared/main/threadRuntimeSubscription";
 import { setThreadArchived } from "./threadArchive";
@@ -347,7 +348,7 @@ import {
   getRemoteWorkspaceGitFileAtRef,
   getRemoteWorkspaceRootForPath,
   getRemoteThreadSnapshot,
-  searchRemoteThreadMessages,
+  searchThreadMessagesWithRemoteFallback,
   commitRemoteWorkspace,
   getRemoteWorkspaceContextOverview,
   getRemoteSshDiagnosticReport,
@@ -607,21 +608,36 @@ async function applyRuntimeWorkspaceCatalogEvent(
 ): Promise<void> {
   if (webContents.isDestroyed()) return;
   const client = await LocalRuntimeClient.connect();
-  const [session, workspaces] = await Promise.all([
+  const [session, workspaces, existingThreads] = await Promise.all([
     client.getSession(sessionId),
     listWorkspaces(),
+    listThreads(),
   ]);
   if (session.workspace_id !== workspaceId) throw new Error("session_catalog_workspace_mismatch");
   const workspace = workspaces.find((item) => item.id === workspaceId);
   if (!workspace) return;
+  // Desktop chat already owns a thread-* row bound to this Runtime Session.
+  // Never materialize a second sidebar entry keyed by session_id, and never
+  // overwrite execution status/messageCount from catalog events — those belong
+  // to the chat/run pipeline. A late session.updated must not resurrect
+  // "running" after the Run has already settled to idle.
+  const boundDesktop = existingThreads.find((thread) =>
+    thread.runtimeSessionId === session.session_id && thread.id !== session.session_id);
+  const catalogId = boundDesktop?.id ?? session.session_id;
   const thread = await upsertThreadFromRun({
-    id: session.session_id,
-    kind: "chat",
-    title: session.title,
+    id: catalogId,
+    kind: boundDesktop?.kind ?? "chat",
+    title: session.title || boundDesktop?.title,
     workspacePath: workspace.path,
+    boundAgentId: boundDesktop?.boundAgentId,
+    boundAgentName: boundDesktop?.boundAgentName,
     runtimeSessionId: session.session_id,
-    status: "idle",
-    messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+    ...(boundDesktop
+      ? {}
+      : {
+          status: "idle" as const,
+          messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+        }),
   });
   const updated = await updateThread({
     id: thread.id,
@@ -2940,7 +2956,7 @@ function createWindow(): void {
     height: restoredWindowState.bounds?.height ?? 820,
     ...(restoredWindowState.bounds
       ? { x: restoredWindowState.bounds.x, y: restoredWindowState.bounds.y }
-      : {}),
+      : { center: true }),
     minWidth: effectiveMinWidth,
     minHeight: effectiveMinHeight,
     title: "OpenDrSai",
@@ -3456,13 +3472,32 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
 
 const codexWorkspaceSyncControllers = new Map<string, AbortController>();
 
+const QUIET_DIAGNOSTIC_IPC = new Set([
+  "desktop:run-manifest",
+  "desktop:run-manifest-export",
+  "desktop:update-thread",
+  "desktop:update-thread-snapshot",
+  "desktop:delete-thread",
+  "desktop:create-thread",
+  "desktop:get-health",
+  "desktop:get-gateway-status",
+  "desktop:get-install-status",
+  "desktop:background-tasks-list",
+  "desktop:list-threads",
+  "desktop:get-thread",
+  "desktop:get-diagnostic-snapshot",
+  "desktop:get-production-diagnostic-status",
+]);
+
 function secureHandle<T extends unknown[]>(
   channel: string,
   handler: (event: IpcMainInvokeEvent, ...args: T) => unknown,
 ): void {
   ipcMain.handle(channel, async (event, ...args: T) => {
     assertTrustedSender(event);
-    if (channel.startsWith("desktop:diagnostics-")) return handler(event, ...args);
+    if (channel.startsWith("desktop:diagnostics-") || QUIET_DIAGNOSTIC_IPC.has(channel)) {
+      return handler(event, ...args);
+    }
     const target = classifyDiagnosticChannel(channel);
     const propagated = extractDiagnosticContext(args[0]);
     const operation = await desktopDiagnostics.start({
@@ -4306,6 +4341,18 @@ async function inspectPickedFileWithTimeout(path: string, category: PickedFileDe
   }
 }
 
+const PICKED_IMAGE_PREVIEW_MAX_BYTES = 1_500_000;
+
+function pickedImageMime(extension: string): string | null {
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".gif") return "image/gif";
+  if (extension === ".bmp") return "image/bmp";
+  if (extension === ".svg") return "image/svg+xml";
+  return null;
+}
+
 async function describePickedFiles(paths: string[], canceled: boolean): Promise<{ canceled: boolean; paths: string[]; files: PickedFileDescriptor[] }> {
   const files = await Promise.all(paths.map(async (path): Promise<PickedFileDescriptor> => {
     const extension = extname(path).toLowerCase();
@@ -4314,7 +4361,21 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
     try {
       const info = await statFile(path);
       if (!info.isFile()) return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "所选项目不是文件。", recoveryAction: "请选择一个可读取的本地文件。" };
-      return { ...base, sizeBytes: info.size, ...(await inspectPickedFileWithTimeout(path, category, extension)) };
+      const inspected = { ...base, sizeBytes: info.size, ...(await inspectPickedFileWithTimeout(path, category, extension)) };
+      if (inspected.status !== "ready" || category !== "image" || info.size > PICKED_IMAGE_PREVIEW_MAX_BYTES) {
+        return inspected;
+      }
+      const mime = pickedImageMime(extension);
+      if (!mime) return inspected;
+      try {
+        const buffer = await readFile(path);
+        return {
+          ...inspected,
+          previewDataUrl: `data:${mime};base64,${buffer.toString("base64")}`,
+        };
+      } catch {
+        return inspected;
+      }
     } catch {
       return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "文件无法读取或已经被移动；其他已选文件仍可使用。", recoveryAction: "请检查文件权限和位置，或复制到本地后重新导入。" };
     }
@@ -4466,8 +4527,8 @@ function registerIpc(): void {
     return result;
   });
   secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());
-  secureHandle("desktop:logout", (_event, options) => {
-    stopGateway();
+  secureHandle("desktop:logout", async (_event, options) => {
+    await stopGateway();
     return logout(options);
   });
   secureHandle("desktop:restart-application", () => {
@@ -4692,7 +4753,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:local-data-cleanup", async (_event, request) => {
     if (hasActiveChats() || hasActiveAgentRuns()) throw new Error("Stop active tasks before clearing local data.");
-    stopGateway();
+    await stopGateway();
     const result = await clearLocalData(request);
     if (result.scope === "all_local_data") {
       await desktopDiagnostics.clear();
@@ -5333,7 +5394,14 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread", (_event, request) =>
     updateThread(request),
   );
-  secureHandle("desktop:delete-thread", (_event, threadId) => deleteThread(threadId));
+  secureHandle("desktop:delete-thread", async (_event, threadId) => {
+    try {
+      return await deleteThread(threadId);
+    } catch (error) {
+      console.error("[desktop:delete-thread] failed", threadId, error);
+      throw error;
+    }
+  });
   secureHandle("desktop:set-thread-archived", (_event, request) => {
     const value = request as { threadId?: unknown; archived?: unknown };
     if (typeof value?.threadId !== "string" || typeof value.archived !== "boolean") throw new Error("Archive request is invalid.");
@@ -5393,14 +5461,20 @@ function registerIpc(): void {
     try {
       const thread = (await listThreads()).find((item) => item.id === threadId);
       if (thread?.runtimeSessionId) {
-        const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
-        if (envelope) return envelope;
+        try {
+          const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
+          if (envelope) return envelope;
+        } catch (error) {
+          // Generation races during rapid thread switching must not blank the
+          // conversation body; fall through to the last persisted snapshot.
+          if (!isRuntimeGenerationInvalidated(error)) throw error;
+        }
       }
       controller.signal.throwIfAborted();
       const remote = await getRemoteThreadSnapshot(threadId);
       const snapshot = remote ?? await getThreadSnapshot(threadId);
       if (!snapshot) return null;
-      return { version: 1, projection: "conversation/1", threadId,
+      return { version: 1, namespace: "conversation/1", threadId,
         runtimeSessionId: thread?.runtimeSessionId ?? `persisted:${threadId}`,
         sessionSequence: 0, generation: 0, source: "persisted", snapshot };
     } catch (error) {
@@ -5449,7 +5523,7 @@ function registerIpc(): void {
     return runtimeThreadSubscriptions.delete(key);
   });
   secureHandle("desktop:search-thread-messages", async (_event, request: DesktopThreadContentSearchRequest) =>
-    (await searchRemoteThreadMessages(request)) || searchThreadMessages(request),
+    searchThreadMessagesWithRemoteFallback(request, searchThreadMessages),
   );
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),
@@ -6515,8 +6589,11 @@ app.whenReady().then(async () => {
   desktopDiagnostics.setPublisher((event) => {
     productionDiagnostics.observeEvent(Buffer.byteLength(JSON.stringify(event), "utf8"), event.workspaceId);
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
+      try {
         window.webContents.send("desktop:diagnostics-event", event);
+      } catch {
+        // Renderer can dispose mid-send (OOM / navigation); never fail the publisher.
       }
     }
   });

@@ -375,6 +375,16 @@ async function consumeSse(
   }
 }
 
+/** Session heartbeats that must not consume the bounded listener dispatch budget. */
+export function isPresentationNoiseOaepEvent(event: OaepEvent): boolean {
+  if (event.type === "event.session.updated") return true;
+  if (event.type === "event.run.resumed") {
+    const reason = event.data?.reason;
+    return typeof reason !== "string" || !reason.trim();
+  }
+  return false;
+}
+
 class SharedOaepSessionController {
   readonly items = new Map<string, OaepItem>();
   readonly deltaShadows = new Map<string, OaepDeltaShadow>();
@@ -483,8 +493,12 @@ class SharedOaepSessionController {
   }
 
   private notifyEvent(event: OaepEvent, source: "replay" | "stream"): void {
+    if (isPresentationNoiseOaepEvent(event)) return;
+    // Never drop item/run events under backpressure — they are the streaming path.
+    // Noise session.updated previously filled the queue and starved item.delta.
+    const critical = event.type.startsWith("event.item.") || event.type.startsWith("event.run.");
     for (const listener of this.listeners) {
-      this.dispatch(listener, () => listener.onEvent?.(event, this.state, source), true, true);
+      this.dispatch(listener, () => listener.onEvent?.(event, this.state, source), true, !critical);
     }
   }
 

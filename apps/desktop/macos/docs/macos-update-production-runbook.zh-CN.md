@@ -37,13 +37,14 @@ OSS AccessKey/STS 不通过命令行参数或工作流日志传递。由发布 R
 
 - 读取/检查 `hepai-release` 中目标对象；
 - 创建当前版本的 `releases/v*/macos/*`（文件名必须包含架构）；
+- 覆盖唯一的 `channels/beta/macos/arm64/latest-mac.yml`；
 - 创建版本化 `channels/stable/macos/arm64/OpenDrSai-macOS-v*-arm64.zip`；
 - 创建 `channels/history/macos/arm64/v*/latest-mac.yml`；
 - 创建 `channels/rollback/macos/arm64/before-v*/latest-mac.yml`；
 - 覆盖唯一的 `channels/stable/macos/arm64/latest-mac.yml`；
 - 仅在首次发布回滚时删除上述唯一 stable key。
 
-历史版本、版本化 ZIP、DMG、history 和 rollback key 不允许覆盖或删除。Bucket 侧应使用 RAM Policy 进一步限制资源前缀；不能只依赖发布脚本中的 `stat` 检查。
+历史版本、版本化 ZIP、DMG、history 和 rollback key 不允许覆盖或删除。Beta 和 Stable 的 `latest-mac.yml` 是各自频道内仅有的可覆盖对象；发布身份还需具备对这两个清单精确 URL 的阿里云 CDN 刷新权限。Bucket 侧应使用 RAM Policy 进一步限制资源前缀；不能只依赖发布脚本中的 `stat` 检查。
 
 ## 4. Runner 预检
 
@@ -87,6 +88,56 @@ npm --prefix apps/desktop run preflight:release --workspace opendrsai-macos-desk
 12. 校验 stable OSS/CDN 与 `opendrsai-dev.ihep.ac.cn`；失败则自动恢复旧 stable 状态。
 
 首次发布没有旧 stable 时，快照状态记录 `previousExists=false`；若晋级后校验失败，只删除本次创建的 stable key，不删除任何版本资产。
+
+### 5.1 Beta 频道发布
+
+Beta 频道用于开发站和 Beta 客户端消费已经通过候选验收、但尚未晋级 Stable 的版本。权威资产位于不可变版本目录，频道只保存一个短缓存清单：
+
+```text
+releases/vX.Y.Z-beta.N/macos/OpenDrSai-macOS-vX.Y.Z-beta.N-arm64.dmg
+releases/vX.Y.Z-beta.N/macos/OpenDrSai-macOS-vX.Y.Z-beta.N-arm64.zip
+releases/vX.Y.Z-beta.N/macos/latest-mac.yml
+channels/beta/macos/arm64/latest-mac.yml
+```
+
+发布必须分成两个事务，不能在不可变资产尚未完成时提前暴露频道清单：
+
+1. 构建并验收本地 DMG、ZIP 和 `latest-mac.yml`，记录大小、SHA-256、SHA-512、Runtime SHA-256 和发布时间；
+2. 上传版本目录的 DMG、ZIP、清单，三个对象均使用一年 immutable 缓存且禁止覆盖；
+3. 通过公网严格 TLS 校验版本目录，要求清单和制品返回 200，DMG/ZIP Range 请求返回 206，完整下载字节与本地候选一致；
+4. 记录发布前 Stable 清单的版本、SHA-256、ETag 和 OSS Version ID；
+5. 重新 `stat` 三个不可变对象并核对 Content-Length；
+6. **最后**覆盖 `channels/beta/macos/arm64/latest-mac.yml`，缓存策略为 `public, max-age=30, must-revalidate`；
+7. 刷新该 Beta 清单的精确 CDN URL，不刷新目录或 Stable；
+8. 从公网严格 TLS 完整验收 Beta 清单、DMG 和 ZIP，并再次确认 Stable 基线完全未变。
+
+仓库命令（在 `apps/desktop` 执行；本机凭据包装器不会打印 AccessKey）：
+
+```bash
+# 阶段一：只发布不可变 Beta 版本目录
+/bin/bash macos/scripts/with-local-release-credentials.sh \
+  npm run publish:update:oss --workspace opendrsai-macos-desktop -- \
+  --beta --execute --release-dir /absolute/path/to/release
+
+npm run verify:update-published --workspace opendrsai-macos-desktop -- \
+  --beta --tag vX.Y.Z-beta.N --release-dir /absolute/path/to/release
+
+# 阶段二：三个不可变对象已验证后，最后发布频道清单
+/bin/bash macos/scripts/with-local-release-credentials.sh \
+  npm run publish:update:oss --workspace opendrsai-macos-desktop -- \
+  --beta --promote-metadata --execute --release-dir /absolute/path/to/release
+
+/bin/bash macos/scripts/with-local-release-credentials.sh \
+  npm run refresh:update:cdn --workspace opendrsai-macos-desktop -- \
+  --channel beta --execute
+
+npm run verify:update-published --workspace opendrsai-macos-desktop -- \
+  --beta-channel --tag vX.Y.Z-beta.N --release-dir /absolute/path/to/release
+```
+
+最终验收必须使用系统 `curl` 的 `--proto '=https' --tlsv1.2`，不能使用 `-k`、`--insecure` 或 HTTP 回退。`verify:update-published --beta-channel` 会检查清单版本、声明的 ZIP 大小和 SHA-512、Runtime 版本与 SHA-256，以及清单、DMG、ZIP 的 HEAD 200、Range 206、完整大小、SHA-512 和 SHA-256。若任一步失败，停止发布并保留当前 Stable；Beta 清单可以恢复到发布前快照，但不得覆盖版本目录资产。
+
+开发站若需要展示 Beta，部署环境必须显式设置 `OPENDRSAI_MACOS_RELEASE_CHANNEL=beta`；未设置时后端按设计继续读取 Stable。频道配置与制品发布是两个独立门禁，不能通过改写 Stable 来绕过部署配置。
 
 ## 6. Runtime 兼容规则
 

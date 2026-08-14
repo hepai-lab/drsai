@@ -78,8 +78,17 @@ function Invoke-Local([string]$Path) {
 }
 $health = Invoke-Local "/health"
 Add-Check "Gateway ready" ($health -and $health.status -eq "ok") ([string]$health.status) "gateway/gateway.log" "GATEWAY_NOT_READY"
-$gatewayListeners = @(Get-NetTCPConnection -State Listen -LocalPort 18642 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
-Add-Check "Single Gateway listener" ($gatewayListeners.Count -eq 1) ($gatewayListeners -join ",") "network/connections.json" "GATEWAY_PORT_CONFLICT"
+$gatewayListeners = @()
+for ($attempt = 0; $attempt -lt 10; $attempt++) {
+    $gatewayListeners = @(Get-NetTCPConnection -State Listen -LocalPort 18642 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
+    # During logout the desktop intentionally tears the gateway down. Both one
+    # listener (shutdown still in progress) and zero listeners (shutdown
+    # complete) are healthy here; only multiple owners prove a port conflict.
+    if ($gatewayListeners.Count -le 1) { break }
+    Start-Sleep -Milliseconds 500
+}
+$gatewayListenerDetail = if ($gatewayListeners.Count -eq 0) { "stopped after logout" } else { $gatewayListeners -join "," }
+Add-Check "No conflicting Gateway listener" ($gatewayListeners.Count -le 1) $gatewayListenerDetail "network/connections.json" "GATEWAY_PORT_CONFLICT"
 $agents = Invoke-Local "/v1/config/agents"
 Add-Check "Gateway resolves current Agent" ($agents -and $agents.current_agent -eq "opendrsai" -and @($agents.agents).Count -gt 0) ([string]$agents.current_agent) "gateway/gateway.log"
 $modelState = Invoke-Local "/v1/config/model-state"

@@ -1,16 +1,24 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const execute = process.argv.includes("--execute");
+const beta = process.argv.includes("--beta");
 const assetsOnly = process.argv.includes("--assets-only");
 const metadataOnly = process.argv.includes("--promote-metadata");
 const snapshotStable = process.argv.includes("--snapshot-stable");
 const rollbackMetadata = process.argv.includes("--rollback-metadata");
 const preflight = process.argv.includes("--preflight");
 assert.equal(assetsOnly && metadataOnly, false, "Choose either --assets-only or --promote-metadata.");
+if (beta) {
+  assert.equal(
+    assetsOnly || snapshotStable || rollbackMetadata || preflight,
+    false,
+    "--beta does not allow stable asset, snapshot, rollback, or preflight flags.",
+  );
+}
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const release = resolve(valueAfter("--release-dir") || join(root, "release"));
 const bucket = process.env.OPENDRSAI_OSS_BUCKET?.trim() || "hepai-release";
@@ -21,6 +29,7 @@ assert.ok(existsSync(metadata), `Missing ${metadata}`);
 const source = readFileSync(metadata, "utf8");
 const version = capture(source, /^version:\s*([^\s]+)\s*$/m, "version");
 assert.match(version, /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/);
+if (beta) assert.match(version, /-/, "--beta requires a prerelease version such as 1.5.8-beta.1.");
 const zipName = capture(source, /^path:\s*(.+?)\s*$/m, "path");
 assert.equal(zipName, `OpenDrSai-macOS-v${version}-arm64.zip`);
 const dmgName = `OpenDrSai-macOS-v${version}-arm64.dmg`;
@@ -28,8 +37,10 @@ for (const name of [zipName, dmgName]) assert.ok(existsSync(join(release, name))
 
 const versionPrefix = `releases/v${version}/macos`;
 const channelPrefix = "channels/stable/macos/arm64";
+const betaChannelPrefix = "channels/beta/macos/arm64";
 const historyKey = `channels/history/macos/arm64/v${version}/latest-mac.yml`;
 const stableTarget = `oss://${bucket}/${channelPrefix}/latest-mac.yml`;
+const betaTarget = `oss://${bucket}/${betaChannelPrefix}/latest-mac.yml`;
 const rollbackTarget = `oss://${bucket}/channels/rollback/macos/arm64/before-v${version}/latest-mac.yml`;
 const stateFile = valueAfter("--state-file");
 if (preflight) {
@@ -54,21 +65,54 @@ const allCommands = [
   upload(metadata, historyKey, "public, max-age=31536000, immutable"),
   upload(metadata, `${channelPrefix}/latest-mac.yml`, "public, max-age=30, must-revalidate"),
 ];
-const commands = assetsOnly ? allCommands.slice(0, -1) : metadataOnly ? allCommands.slice(-1) : allCommands;
+const betaCommands = [
+  upload(join(release, dmgName), `${versionPrefix}/${dmgName}`, "public, max-age=31536000, immutable"),
+  upload(join(release, zipName), `${versionPrefix}/${zipName}`, "public, max-age=31536000, immutable"),
+  upload(metadata, `${versionPrefix}/latest-mac.yml`, "public, max-age=31536000, immutable"),
+];
+const betaMetadataCommands = [
+  upload(metadata, `${betaChannelPrefix}/latest-mac.yml`, "public, max-age=30, must-revalidate"),
+];
+const commands = beta && metadataOnly
+  ? betaMetadataCommands
+  : beta
+    ? betaCommands
+    : assetsOnly
+      ? allCommands.slice(0, -1)
+      : metadataOnly
+        ? allCommands.slice(-1)
+        : allCommands;
 
-const plan = { schemaVersion: 1, platform: "darwin-arm64", version, bucket, execute, phase: assetsOnly ? "assets" : metadataOnly ? "stable-metadata" : "complete", metadataLast: true, commands: commands.map(({ display }) => display) };
+const plan = { schemaVersion: 1, platform: "darwin-arm64", version, bucket, execute, phase: beta && metadataOnly ? "beta-metadata" : beta ? "beta-candidate" : assetsOnly ? "assets" : metadataOnly ? "stable-metadata" : "complete", metadataLast: true, stableUnchanged: beta, commands: commands.map(({ display }) => display) };
 console.log(JSON.stringify(plan, null, 2));
 if (!execute) process.exit(0);
+if (beta && metadataOnly) assertBetaReleaseAssetsPresent();
 for (const command of commands) run(command);
-console.log(`Published macOS ${version} assets; stable metadata was uploaded last.`);
+console.log(beta && metadataOnly
+  ? `Published macOS ${version} beta channel metadata last; stable channel was not changed.`
+  : beta
+  ? `Published immutable macOS ${version} beta candidate; stable channel was not changed.`
+  : `Published macOS ${version} assets; stable metadata was uploaded last.`);
 
 function upload(local, key, cacheControl) {
   const target = `oss://${bucket}/${key}`;
-  const forbidOverwrite = key !== `${channelPrefix}/latest-mac.yml`;
+  const forbidOverwrite = target !== stableTarget && target !== betaTarget;
   return {
     args: ["cp", local, target, "--force", "--meta", `Cache-Control:${cacheControl}`],
     display: { operation: "upload", source: basename(local), target, cacheControl, forbidOverwrite },
   };
+}
+function assertBetaReleaseAssetsPresent() {
+  assertObjectSize(`oss://${bucket}/${versionPrefix}/${dmgName}`, statSync(join(release, dmgName)).size);
+  assertObjectSize(`oss://${bucket}/${versionPrefix}/${zipName}`, statSync(join(release, zipName)).size);
+  assertObjectSize(`oss://${bucket}/${versionPrefix}/latest-mac.yml`, statSync(metadata).size);
+}
+function assertObjectSize(target, expectedSize) {
+  const result = spawnSync(binary, withConfig(["stat", target]), { encoding: "utf8", timeout: 60_000 });
+  if (result.error || result.status !== 0) throw new Error(`Required immutable OSS object is unavailable: ${target}`);
+  const match = result.stdout.match(/^Content-Length\s*:\s*(\d+)\s*$/m);
+  assert.ok(match, `Unable to read Content-Length for ${target}`);
+  assert.equal(Number(match[1]), expectedSize, `OSS object size differs for ${target}`);
 }
 function run(command) {
   if (command.display.forbidOverwrite) assertObjectAbsent(command.display.target);

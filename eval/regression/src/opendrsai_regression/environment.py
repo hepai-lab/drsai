@@ -91,6 +91,9 @@ class EnvironmentProvisioner:
         refs: dict[str, str] = {}
         target = workspace / ".opendrsai" / "attachments" / "regression"
         target.mkdir(parents=True, exist_ok=True)
+        mapping = (case.data.get("environment") or {}).get("attachment_mapping") or {}
+        expose_as = str(mapping.get("expose_as") or "").strip()
+        hide_source_path = bool(mapping.get("hide_source_path"))
         index = 0
         for message in case.data["input"]["messages"]:
             for part in message["parts"]:
@@ -101,7 +104,14 @@ class EnvironmentProvisioner:
                 if digest != part.get("sha256"):
                     raise EnvironmentError(f"Attachment digest changed: {part['path']}")
                 index += 1
-                destination = target / f"{index:02d}-{source.name}"
+                if expose_as and index == 1:
+                    destination_name = Path(expose_as).name
+                elif hide_source_path:
+                    suffix = source.suffix or ".bin"
+                    destination_name = f"attachment-{index:02d}{suffix}"
+                else:
+                    destination_name = f"{index:02d}-{source.name}"
+                destination = target / destination_name
                 shutil.copy2(source, destination)
                 refs[str(part["path"])] = destination.relative_to(workspace).as_posix()
         return refs

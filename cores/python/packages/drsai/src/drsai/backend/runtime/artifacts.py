@@ -65,11 +65,15 @@ class RuntimeArtifactStore:
             "run_id": context.run_id, "relative_path": path.relative_to(root).as_posix(),
             "display_name": str(arguments.get("display_name") or path.name)[:240],
             "mime_type": str(arguments.get("mime_type") or mimetypes.guess_type(path.name)[0] or "application/octet-stream"),
-            "size": size, "sha256": digest.hexdigest(), "created_at": datetime.now(UTC).isoformat(),
+            "size": size,             "sha256": digest.hexdigest(), "created_at": datetime.now(UTC).isoformat(),
             # Runtime metadata/chunk handlers make every registered file locally
             # downloadable. Preview remains MIME-specific and is intentionally
             # not claimed for Office packages.
-            "artifact_type": "file", "name": path.name, "path": path.relative_to(root).as_posix(),
+            "artifact_type": (
+                "image" if str(arguments.get("mime_type") or mimetypes.guess_type(path.name)[0] or "").startswith("image/")
+                else "file"
+            ),
+            "name": path.name, "path": path.relative_to(root).as_posix(),
             "downloadable": True, "previewable": str(arguments.get("mime_type") or mimetypes.guess_type(path.name)[0] or "").startswith(("image/", "text/")),
         }
         with self._connect() as db:
@@ -108,7 +112,7 @@ class RuntimeArtifactStore:
             "size": len(content),
             "sha256": hashlib.sha256(content).hexdigest(),
             "created_at": datetime.now(UTC).isoformat(),
-            "artifact_type": "file",
+            "artifact_type": "image" if str(mime_type or "").startswith("image/") else "file",
             "name": str(display_name or "tool-output")[:240],
             "downloadable": True,
             "previewable": str(mime_type or "").startswith(("image/", "text/")),

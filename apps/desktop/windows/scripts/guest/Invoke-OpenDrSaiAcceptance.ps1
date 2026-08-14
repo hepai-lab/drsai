@@ -4,22 +4,30 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$input = Get-Content (Join-Path $PackageDir "acceptance-input.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-$runId = [string]$input.runId
+$acceptanceInput = Get-Content (Join-Path $PackageDir "acceptance-input.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+$runId = [string]$acceptanceInput.runId
 [IO.Directory]::CreateDirectory($EvidenceDir) | Out-Null
 
 function Write-JsonFile([string]$Path, $Value) {
     [IO.File]::WriteAllText($Path, (($Value | ConvertTo-Json -Depth 10) + "`n"), [Text.UTF8Encoding]::new($false))
 }
 
+function Set-AcceptanceInputField([string]$Name, $Value) {
+    $acceptanceInput | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+}
+
 function Resolve-OnlineInstaller([string]$Role) {
     $manifestPath = Join-Path $EvidenceDir "$Role-manifest.json"
-    $manifestResponse = Invoke-WebRequest -Uri ([string]$input.channelManifestUrl) -UseBasicParsing -TimeoutSec 30
+    $channelManifestUrl = [string]$acceptanceInput.channelManifestUrl
+    $releaseBaseUrl = ([string]$acceptanceInput.releaseBaseUrl).TrimEnd('/')
+    $manifestResponse = Invoke-WebRequest -Uri $channelManifestUrl -UseBasicParsing -TimeoutSec 30
     [IO.File]::WriteAllText($manifestPath, $manifestResponse.Content, [Text.UTF8Encoding]::new($false))
     $manifest = $manifestResponse.Content | ConvertFrom-Json
     $version = [string]$manifest.version
     if (-not $version) { throw "$Role channel manifest has no version." }
-    $msiUrl = "$([string]$input.releaseBaseUrl)/v$version/windows/OpenDrSai-Windows-Installer-x64.msi"
+    # Braces are required on both variables: slashes following a variable in an
+    # expandable PowerShell string can be parsed as a scoped variable reference.
+    $msiUrl = "${releaseBaseUrl}/v${version}/windows/OpenDrSai-Windows-Installer-x64.msi"
     $path = Join-Path $env:USERPROFILE "Downloads\$Role-OpenDrSai-Windows-Installer-x64.msi"
     [IO.Directory]::CreateDirectory((Split-Path -Parent $path)) | Out-Null
     Invoke-WebRequest -Uri $msiUrl -OutFile $path -UseBasicParsing -TimeoutSec 180
@@ -55,7 +63,7 @@ function Start-InstalledApp {
 }
 
 function Verify-InstalledBuildIdentity {
-    if (-not $input.expectedBuildId) { return }
+    if (-not $acceptanceInput.expectedBuildId) { return }
     $identityPath = "C:\Program Files\OpenDrSai\build-identity.json"
     $agentIdentityPath = "C:\Program Files\OpenDrSai\drsai-agent\build-identity.json"
     foreach ($path in @($identityPath, $agentIdentityPath)) {
@@ -63,14 +71,14 @@ function Verify-InstalledBuildIdentity {
     }
     $identity = Get-Content -LiteralPath $identityPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $agentIdentity = Get-Content -LiteralPath $agentIdentityPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($identity.buildId -ne $input.expectedBuildId -or $agentIdentity.buildId -ne $input.expectedBuildId) {
-        throw "Installed Runtime identity does not match the accepted candidate. expected=$($input.expectedBuildId) runtime=$($identity.buildId) agent=$($agentIdentity.buildId)"
+    if ($identity.buildId -ne $acceptanceInput.expectedBuildId -or $agentIdentity.buildId -ne $acceptanceInput.expectedBuildId) {
+        throw "Installed Runtime identity does not match the accepted candidate. expected=$($acceptanceInput.expectedBuildId) runtime=$($identity.buildId) agent=$($agentIdentity.buildId)"
     }
     Write-JsonFile (Join-Path $EvidenceDir "installed-build-identity.json") ([ordered]@{
-        expectedBuildId = [string]$input.expectedBuildId
+        expectedBuildId = [string]$acceptanceInput.expectedBuildId
         installedBuildId = [string]$identity.buildId
         agentBuildId = [string]$agentIdentity.buildId
-        expectedRuntimeSha256 = [string]$input.expectedRuntimeSha256
+        expectedRuntimeSha256 = [string]$acceptanceInput.expectedRuntimeSha256
         identityVerified = $true
         verifiedAt = [DateTime]::UtcNow.ToString("o")
     })
@@ -107,33 +115,33 @@ function Wait-ForCompletedChat([DateTimeOffset]$After, [int]$TimeoutSeconds = 12
 }
 
 try {
-    if ($input.mode -in @("online", "networkcandidate", "upgrade")) {
-        $online = Resolve-OnlineInstaller $(if ($input.mode -eq "upgrade") { "baseline" } else { "network" })
+    if ($acceptanceInput.mode -in @("online", "networkcandidate", "upgrade")) {
+        $online = Resolve-OnlineInstaller $(if ($acceptanceInput.mode -eq "upgrade") { "baseline" } else { "network" })
         $msiPath = $online.path
-        if ($input.mode -ne "upgrade") { $input.expectedVersion = $online.version }
-        $input.baselineVersion = $online.version
-        $input.runtimeUrl = $online.runtimeUrl
-        $input.installerUrl = $online.msiUrl
+        if ($acceptanceInput.mode -ne "upgrade") { Set-AcceptanceInputField "expectedVersion" $online.version }
+        Set-AcceptanceInputField "baselineVersion" $online.version
+        Set-AcceptanceInputField "runtimeUrl" $online.runtimeUrl
+        Set-AcceptanceInputField "installerUrl" $online.msiUrl
         $onlineEvidence = Write-DownloadEvidence $online.role $msiPath $online.msiUrl
-        if ($input.mode -ne "upgrade") { Write-JsonFile (Join-Path $EvidenceDir "download-evidence.json") $onlineEvidence }
-        $input.installerSize = $onlineEvidence.size
-        $input.installerSha256 = $onlineEvidence.sha256
+        if ($acceptanceInput.mode -ne "upgrade") { Write-JsonFile (Join-Path $EvidenceDir "download-evidence.json") $onlineEvidence }
+        Set-AcceptanceInputField "installerSize" $onlineEvidence.size
+        Set-AcceptanceInputField "installerSha256" $onlineEvidence.sha256
     } else {
         $msiPath = Join-Path $PackageDir "OpenDrSai-Windows-Installer-x64.msi"
         $candidateEvidence = Write-DownloadEvidence "candidate" $msiPath "file:///C:/OpenDrSaiPackage/OpenDrSai-Windows-Installer-x64.msi"
         Write-JsonFile (Join-Path $EvidenceDir "download-evidence.json") $candidateEvidence
     }
-    Write-JsonFile (Join-Path $EvidenceDir "resolved-input.json") $input
-    Install-Msi $msiPath $(if ($input.mode -eq "upgrade") { "msi-baseline-install.log" } else { "msi-install.log" }) ([bool]$input.automateInstaller)
-    if ($input.mode -ne "upgrade") { Verify-InstalledBuildIdentity }
+    Write-JsonFile (Join-Path $EvidenceDir "resolved-input.json") $acceptanceInput
+    Install-Msi $msiPath $(if ($acceptanceInput.mode -eq "upgrade") { "msi-baseline-install.log" } else { "msi-install.log" }) ([bool]$acceptanceInput.automateInstaller)
+    if ($acceptanceInput.mode -ne "upgrade") { Verify-InstalledBuildIdentity }
     $initialApp = Start-InstalledApp
     Start-Sleep -Seconds 8
-    Collect-Diagnostics $(if ($input.mode -eq "upgrade") { "baseline-pre-oidc" } else { "pre-oidc" })
+    Collect-Diagnostics $(if ($acceptanceInput.mode -eq "upgrade") { "baseline-pre-oidc" } else { "pre-oidc" })
 
     Add-Type -AssemblyName PresentationFramework
-    if ($input.mode -eq "upgrade") {
+    if ($acceptanceInput.mode -eq "upgrade") {
         $baselineStartedAt = [DateTimeOffset]$initialApp.StartTime
-        [Windows.MessageBox]::Show("Sign in on baseline $($input.baselineVersion), send one chat and confirm a reply. The candidate upgrade will continue automatically; do not click any CMD files.", "OpenDrSai upgrade acceptance - baseline") | Out-Null
+        [Windows.MessageBox]::Show("Sign in on baseline $($acceptanceInput.baselineVersion), send one chat and confirm a reply. The candidate upgrade will continue automatically; do not click any CMD files.", "OpenDrSai upgrade acceptance - baseline") | Out-Null
         Wait-ForCompletedChat $baselineStartedAt
         Get-Process OpenDrSai -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
@@ -146,7 +154,7 @@ try {
         Start-Sleep -Seconds 8
         Collect-Diagnostics "candidate-post-upgrade-pre-chat"
         Start-AcceptanceObserver $candidateApp.Id
-        [Windows.MessageBox]::Show("Candidate $($input.expectedVersion) is installed. Confirm login persisted; configure and test Tavily; chat; close/reopen from Start; chat again; then log out in OpenDrSai. Evidence and PASS/FAIL diagnostics are collected automatically; do not click any CMD files.", "OpenDrSai upgrade acceptance - candidate") | Out-Null
+        [Windows.MessageBox]::Show("Candidate $($acceptanceInput.expectedVersion) is installed. Confirm login persisted; configure and test Tavily; chat; close/reopen from Start; chat again; then log out in OpenDrSai. Evidence and PASS/FAIL diagnostics are collected automatically; do not click any CMD files.", "OpenDrSai upgrade acceptance - candidate") | Out-Null
         exit 0
     }
 
