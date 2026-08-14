@@ -304,7 +304,9 @@ def remote_browse_dirs(rid, params: dict) -> dict:
         else:
             cfg = SSHConfig.from_dict(params)
 
-        errs = cfg.validate()
+        # 浏览只需连接字段；编辑中的配置尚未保存、没有 name，
+        # 因此不能用完整的 cfg.validate()（它强制要求 name）。
+        errs = [e for e in cfg.validate() if e != "name 不能为空"]
         if errs:
             return _err(rid, -32000, "; ".join(errs))
 
