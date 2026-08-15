@@ -281,7 +281,7 @@ class SSHTunnelManager:
             f"{cwd_arg}"
             f"{env_str} "
             f"nohup {self._opendrsai} tui-gateway "
-            f"> {REMOTE_LOG_PATH} 2>&1 & "
+            f"< /dev/null > {REMOTE_LOG_PATH} 2>&1 & "
             f"echo $! > {REMOTE_PID_FILE}; cat {REMOTE_PID_FILE}"
         )
         stdout, stderr, code = self._exec_remote(start_cmd)

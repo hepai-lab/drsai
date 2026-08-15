@@ -162,7 +162,7 @@ def _log_exit(reason: str) -> None:
 # ── Main loop ────────────────────────────────────────────────────────
 
 
-def _setup_status() -> dict:
+def setup_status() -> dict:
     """Inspect config + env to see whether the user has done first-run setup.
 
     Returns a dict shipped in ``gateway.ready`` so the UI can show an
@@ -194,7 +194,8 @@ def _setup_status() -> dict:
 def main() -> None:
     # Optionally start WebSocket server for attach mode
     ws_url = None
-    if os.environ.get("DRSAI_TUI_ENABLE_WS") == "1":
+    ws_mode = os.environ.get("DRSAI_TUI_ENABLE_WS") == "1"
+    if ws_mode:
         try:
             from . import ws as ws_module
             port = int(os.environ.get("DRSAI_TUI_WS_PORT", "0"))
@@ -208,7 +209,7 @@ def main() -> None:
     if ws_url:
         skin["ws_attach_url"] = ws_url
 
-    setup = _setup_status()
+    setup = setup_status()
 
     if not write_json({
         "jsonrpc": "2.0",
@@ -218,49 +219,89 @@ def main() -> None:
             "payload": {"skin": skin, "setup": setup},
         },
     }):
-        _log_exit("startup write failed (broken stdout pipe before first event)")
-        sys.exit(0)
+        if ws_mode:
+            # In WS mode stdout may be a log file or closed; the ready event
+            # is not critical since the SSH tunnel detects readiness via port
+            # probing.  Log and continue.
+            logger.warning("gateway.ready write failed in WS mode; continuing")
+        else:
+            _log_exit("startup write failed (broken stdout pipe before first event)")
+            sys.exit(0)
 
-    for raw in sys.stdin:
-        line = raw.strip()
-        if not line:
-            continue
-
+    # ── stdin JSON-RPC loop ──────────────────────────────────────────
+    # In local mode the TUI drives the gateway through stdin/stdout pipes.
+    # In WebSocket (remote) mode the WS server is the communication channel;
+    # stdin may be /dev/null (nohup) and will immediately EOF.  We must keep
+    # the main thread alive so the WS daemon thread stays alive too.
+    if ws_mode:
+        # Process stdin lines if any arrive (hybrid mode), but never exit on EOF.
+        for raw in sys.stdin:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                req = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            try:
+                resp = dispatch(req)
+            except Exception as exc:
+                logger.exception("dispatch raised for method=%r", req.get("method"))
+                resp = {
+                    "jsonrpc": "2.0",
+                    "id": req.get("id") if isinstance(req, dict) else None,
+                    "error": {"code": -32000, "message": f"handler error: {exc}"},
+                }
+            if resp is not None:
+                write_json(resp)
+        # stdin EOF in WS mode — keep the process alive for the WS server.
+        logger.info("stdin EOF in WebSocket mode; keeping gateway alive for WS clients")
         try:
-            req = json.loads(line)
-        except json.JSONDecodeError:
-            if not write_json({
-                "jsonrpc": "2.0",
-                "error": {"code": -32700, "message": "parse error"},
-                "id": None,
-            }):
-                _log_exit("parse-error-response write failed (broken stdout pipe)")
-                sys.exit(0)
-            continue
+            import threading as _t
+            _t.Event().wait()  # block forever until signal kills the process
+        except (KeyboardInterrupt, SystemExit):
+            _log_exit("signal received in WS mode")
+    else:
+        for raw in sys.stdin:
+            line = raw.strip()
+            if not line:
+                continue
 
-        method_name = req.get("method") if isinstance(req, dict) else None
-        try:
-            resp = dispatch(req)
-        except Exception as exc:
-            # A single bad RPC (e.g. a provider returning an invalid model id)
-            # must never kill the gateway process — that surfaces to the TUI as
-            # "gateway not running" and takes down the whole session.  Log it
-            # for forensics and return a structured JSON-RPC error instead.
-            logger.exception("dispatch raised for method=%r", method_name)
-            resp = {
-                "jsonrpc": "2.0",
-                "id": req.get("id") if isinstance(req, dict) else None,
-                "error": {"code": -32000, "message": f"handler error: {exc}"},
-            }
-        if resp is not None:
-            if not write_json(resp):
-                _log_exit(
-                    f"response write failed for method={method_name!r} "
-                    "(broken stdout pipe)"
-                )
-                sys.exit(0)
+            try:
+                req = json.loads(line)
+            except json.JSONDecodeError:
+                if not write_json({
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "parse error"},
+                    "id": None,
+                }):
+                    _log_exit("parse-error-response write failed (broken stdout pipe)")
+                    sys.exit(0)
+                continue
 
-    _log_exit("stdin EOF (UI closed the command pipe)")
+            method_name = req.get("method") if isinstance(req, dict) else None
+            try:
+                resp = dispatch(req)
+            except Exception as exc:
+                # A single bad RPC (e.g. a provider returning an invalid model id)
+                # must never kill the gateway process — that surfaces to the TUI as
+                # "gateway not running" and takes down the whole session.  Log it
+                # for forensics and return a structured JSON-RPC error instead.
+                logger.exception("dispatch raised for method=%r", method_name)
+                resp = {
+                    "jsonrpc": "2.0",
+                    "id": req.get("id") if isinstance(req, dict) else None,
+                    "error": {"code": -32000, "message": f"handler error: {exc}"},
+                }
+            if resp is not None:
+                if not write_json(resp):
+                    _log_exit(
+                        f"response write failed for method={method_name!r} "
+                        "(broken stdout pipe)"
+                    )
+                    sys.exit(0)
+
+        _log_exit("stdin EOF (UI closed the command pipe)")
 
 
 if __name__ == "__main__":

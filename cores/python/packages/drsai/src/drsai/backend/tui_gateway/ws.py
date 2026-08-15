@@ -87,9 +87,16 @@ def _create_app() -> FastAPI:
         bind_transport(transport)
 
         try:
-            # Emit gateway.ready so the client knows the connection is live
+            # Emit gateway.ready with full skin + setup so the client UI
+            # gets the correct theme and first-run status — same payload
+            # as the stdio mode in entry.py:main().
             from . import server
-            server._emit("gateway.ready", None, {"skin": {}})
+            from .entry import setup_status
+            skin = server.resolve_skin()
+            server._emit("gateway.ready", None, {
+                "skin": skin,
+                "setup": setup_status(),
+            })
 
             # Read JSON-RPC frames from the client
             while True:

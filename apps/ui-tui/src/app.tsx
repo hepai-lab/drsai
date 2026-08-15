@@ -18,7 +18,7 @@ import { parseHistory } from './app/historyParser.js'
 import { disableMouseTracking, enableMouseTracking } from './app/terminalControl.js'
 import { TurnController } from './app/turnController.js'
 import { $current, $isStreaming, $transcript, setTranscript } from './app/turnStore.js'
-import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $memoryPreview, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
+import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $memoryPreview, $remoteHost, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
 import { SetupScreen } from './components/setupScreen.js'
 import type { GatewayClient } from './gatewayClient.js'
@@ -506,6 +506,7 @@ export function App({ gw }: AppProps) {
           void (async () => {
             try {
               await gw.switchToSubprocess()
+              $remoteHost.set('')
               await gw.ready_()
               // Re-resolve session
               const recent = await gw.request<{ session: SessionInfo | null; user_id?: string }>(

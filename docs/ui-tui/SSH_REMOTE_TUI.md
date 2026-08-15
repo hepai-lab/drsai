@@ -23,10 +23,11 @@
 **核心流程：**
 
 1. 本地 TUI 通过 SSH 连接远程服务器
-2. 在远程以 `nohup` 后台启动 `tui_gateway`（WebSocket 模式）
+2. 在远程以 `nohup` 后台启动 `tui_gateway`（WebSocket 模式，stdin 重定向到 `/dev/null`）
 3. 通过 paramiko `direct-tcpip` 建立本地端口 → 远程端口的转发
 4. 本地 `GatewayClient` 切换到 WebSocket attach 模式，连接隧道
-5. 之后所有对话、工具调用、文件操作都在远程服务器上执行
+5. **UI 状态切换**：清除本地 transcript/session，从远程 gateway 解析最近 session 并加载远程聊天历史
+6. 状态栏显示 `● SSH: {hostname}`，之后所有对话、工具调用、文件操作都在远程服务器上执行
 
 ---
 
@@ -40,6 +41,8 @@
 | `cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/remote.py` | 11 个 JSON-RPC 方法（`remote.connect` / `remote.disconnect` / `remote.status` / `remote.browse_dirs` 等） |
 | `cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/__init__.py` | 注册 `remote` handler 模块（已修改） |
 | `cores/python/packages/drsai/src/drsai/backend/tui_gateway/server.py` | 将 `remote.connect/test/exec/browse_dirs` 加入 `_LONG_HANDLERS`（已修改） |
+| `cores/python/packages/drsai/src/drsai/backend/tui_gateway/entry.py` | Gateway 入口：WS 模式下 stdin EOF 不退出（`threading.Event().wait()` 永久阻塞）；`setup_status()` 供 ws.py 导入（已修改） |
+| `cores/python/packages/drsai/src/drsai/backend/tui_gateway/ws.py` | WebSocket `/attach` 端点：`gateway.ready` 事件携带完整 skin + setup（已修改） |
 | `cores/python/packages/drsai/src/drsai/backend/cli/commands.py` | 注册 `/remote` 命令到 `COMMAND_REGISTRY`（已修改） |
 
 ### 前端 (TypeScript / React / Ink)
@@ -49,11 +52,11 @@
 | `apps/ui-tui/src/components/sshRemotePanel.tsx` | SSH 远程管理面板 UI（配置列表 / 编辑 / 目录浏览 / 状态查看） |
 | `apps/ui-tui/src/gatewayTypes.ts` | 新增 `SSHConfigEntry`、`RemoteConnectionResult`、`remote.lost` 事件等类型（已修改） |
 | `apps/ui-tui/src/gatewayClient.ts` | 新增 `switchToWebSocket()` / `switchToSubprocess()` / `handleRemoteLost()` 方法（已修改） |
-| `apps/ui-tui/src/components/composerPane.tsx` | 新增 `/remote` 命令 + `remote.panel` 事件 + 面板渲染（已修改） |
-| `apps/ui-tui/src/app.tsx` | 新增 `remote_lost` 断链提示界面（已修改） |
-| `apps/ui-tui/src/app/createGatewayEventHandler.ts` | 新增 `remote.lost` 事件处理（已修改） |
-| `apps/ui-tui/src/app/uiStore.ts` | 新增 `remote_lost` 连接状态（已修改） |
-| `apps/ui-tui/src/components/statusBar.tsx` | 新增 `remote lost` 状态指示器（已修改） |
+| `apps/ui-tui/src/components/composerPane.tsx` | `/remote` 命令 + `remote.panel` 事件 + 面板渲染 + `onRemoteConnect`/`onRemoteDisconnect` 回调（切换后清除本地状态、解析远程 session、加载远程历史）（已修改） |
+| `apps/ui-tui/src/app.tsx` | `remote_lost` 断链提示界面（已修改） |
+| `apps/ui-tui/src/app/createGatewayEventHandler.ts` | `remote.lost` 事件处理（清空 `$remoteHost`）（已修改） |
+| `apps/ui-tui/src/app/uiStore.ts` | `remote_lost` 连接状态 + `$remoteHost` atom（远程主机名，供状态栏显示）（已修改） |
+| `apps/ui-tui/src/components/statusBar.tsx` | 远程模式显示 `● SSH: {hostname}`，本地模式显示 `● connected`（已修改） |
 
 ### Demo (概念验证)
 
@@ -93,10 +96,8 @@ DRSAI_TUI_ENABLE_WS=1 DRSAI_TUI_WS_PORT=9999 opendrsai tui-gateway
 ### 2. 本地机器准备
 
 ```bash
-# 安装 Python 依赖（paramiko 用于 SSH 隧道）
-pip install paramiko
-
-# 构建 TUI 前端
+# paramiko 已包含在 drsai 主依赖中（pyproject.toml），无需单独安装
+# 只需构建 TUI 前端
 cd apps/ui-tui
 pnpm install   # 或 npm install
 pnpm build     # 或 npm run build
@@ -109,7 +110,7 @@ drsai chat     # 或 python -m drsai.backend.run_cli chat
 ### 3. 验证安装
 
 ```bash
-# 检查 paramiko
+# 检查 paramiko（已随 drsai 安装）
 python -c "import paramiko; print(f'paramiko {paramiko.__version__} OK')"
 
 # 检查 TUI 构建
@@ -150,8 +151,7 @@ SSH 远程管理面板包含 **4 个视图**，通过按键在不同视图间切
     ├── n → Edit (新建配置)
     ├── e → Edit (编辑配置)
     ├── Enter → 连接远程 → Status (连接状态)
-    ├── s → Status (连接状态)
-    └── b → Dirs (目录浏览, 需已连接)
+    └── s → Status (连接状态)
 
   Edit (配置编辑)
     ├── Enter (在 Workdir 字段) → Dirs (浏览远程目录)
@@ -162,11 +162,11 @@ SSH 远程管理面板包含 **4 个视图**，通过按键在不同视图间切
     ├── Enter → 进入子目录
     ├── s → 选定当前目录
     ├── Backspace → 返回上级目录
-    └── q → 返回来源视图 (List 或 Edit)
+    └── q/Esc → 返回来源视图 (List 或 Edit)
 
   Status (连接状态)
     ├── x → 断开连接
-    └── q → 返回 List
+    └── q/Esc → 返回 List
 ```
 
 ---
@@ -182,7 +182,7 @@ SSH 远程管理面板包含 **4 个视图**，通过按键在不同视图间切
 ▶ gpu-3090         192.168.32.192         xiongdb      22     /home/xiongdb/projects
   dev-server       10.0.1.100             admin        2222   ~
 
-↑↓ nav · Enter connect · e edit · t test · d delete · n new · s status · x disconnect · q quit
+↑↓ nav · Enter connect · e edit · t test · d delete · n new · s status · x disconnect · q/Esc quit
 ```
 
 | 按键 | 功能 | 说明 |
@@ -196,7 +196,6 @@ SSH 远程管理面板包含 **4 个视图**，通过按键在不同视图间切
 | `s` | **状态** | 查看当前连接状态（进入 Status 视图） |
 | `x` | **断开** | 断开当前连接（仅在已连接时可用） |
 | `r` | **刷新** | 重新加载配置列表 |
-| `b` | **浏览目录** | 浏览远程目录（需已连接，进入 Dirs 视图） |
 | `q` / `Esc` | **退出** | 关闭面板，返回 TUI 主界面 |
 
 ---
@@ -295,12 +294,9 @@ curl -fsSL <URL>/install_drsai.sh | bash
 
 浏览远程服务器的目录结构，用于选择工作目录。
 
-**两种打开方式：**
+**打开方式：**
 
-| 方式 | 前提 | 说明 |
-|------|------|------|
-| 编辑视图中在 Workdir 字段按 `Enter` | 已填写 Host + Username + 认证信息 | 通过**临时 SSH 连接**浏览，不需要已连接 |
-| 列表视图中按 `b`（已连接时） | 已连接远程服务器 | 通过**已有隧道**浏览，速度更快 |
+在编辑视图的 `Remote Workdir` 字段按 **`Enter`** 键，通过**临时 SSH 连接**浏览远程目录（不需要已连接），选中后自动填回。
 
 ```
 📁 Remote Directory: /home/xiongdb
@@ -312,7 +308,7 @@ curl -fsSL <URL>/install_drsai.sh | bash
   📄 .bashrc
   📄 .bash_profile
 
-↑↓ nav · Enter open dir · s select this dir · Backspace parent dir · q back
+↑↓ nav · Enter open dir · s select this dir · Backspace parent dir · q/Esc back
 ```
 
 | 按键 | 功能 | 说明 |
@@ -327,7 +323,7 @@ curl -fsSL <URL>/install_drsai.sh | bash
 
 1. 在编辑视图填好 Host、Username、Private Key Path
 2. 光标移到 `Remote Workdir` 字段
-3. 按 `b` → 等待几秒（临时建立 SSH 连接）
+3. 按 `Enter` → 等待几秒（临时建立 SSH 连接）
 4. 看到远程 home 目录 → `Enter` 进入 `projects` 子目录
 5. 按 `s` 选定 `/home/xiongdb/projects` 为工作目录
 6. 自动返回编辑视图，`Remote Workdir` 已填好
@@ -350,7 +346,7 @@ Remote Connection Status
   Python:        Python 3.12.3
   WS URL:        ws://127.0.0.1:51234/attach
 
-x disconnect · q back
+x disconnect · q/Esc back
 ```
 
 | 按键 | 功能 | 说明 |
@@ -396,13 +392,13 @@ Choose an action:
 ssh xiongdb@192.168.32.192
 
 # 检查 DrSai 已安装
-python3 -c "import drsai; print('OK')"
+opendrsai --version
 
 # 检查 API Key 已配置
 cat ~/.drsai/configs/cli_config.json | grep api_key
 
 # 如果没有配置，先配置
-drsai config
+opendrsai config
 ```
 
 #### Step 2: 本地启动 TUI
@@ -437,8 +433,13 @@ drsai chat
 
 1. 选中配置，按 `Enter`
 2. 等待显示：`✅ Connected to gpu-server (port XXXX→YYYY)`
-3. TUI 自动切换到远程 gateway
-4. 此时所有操作都在远程服务器上执行
+3. TUI 自动切换到远程 gateway，执行以下状态切换：
+   - **清除本地状态**：transcript、current session、sessionMeta、memoryPreview、lastUsage 全部重置
+   - **解析远程 session**：调用 `session.most_recent` 获取远程工作目录的最近 session
+   - **创建 session**：若无最近 session → `session.create` 新建
+   - **加载远程历史**：`switchSession(sid)` → `session.resume` → 加载远程聊天历史填入 transcript
+   - **设置状态栏**：显示 `● SSH: 192.168.32.192`
+4. 此时所有操作都在远程服务器上执行，聊天历史来自远程 session 数据库
 
 #### Step 6: 在远程进行 AI 对话
 
@@ -455,7 +456,11 @@ drsai chat
 
 1. 输入 `/remote`
 2. 按 `x` 断开
-3. TUI 自动切换回本地 gateway
+3. TUI 自动切换回本地 gateway，执行与连接时对称的状态切换：
+   - **清除远程状态**：transcript、current session 等全部重置
+   - **解析本地 session**：`session.most_recent` → `session.create`（如无）
+   - **加载本地历史**：`switchSession(sid)` → `session.resume` → 恢复本地聊天历史
+   - **状态栏恢复**：显示 `● connected`
 
 ---
 
@@ -466,7 +471,7 @@ drsai chat
 ```bash
 # 在本地机器上
 cd test/ssh_remote
-pip install paramiko
+# paramiko 已随 drsai 安装，无需单独安装
 python ssh_remote_demo.py
 ```
 
@@ -476,7 +481,7 @@ Demo 提供交互式 UI，可以：
 - 发送 JSON-RPC 请求
 - 查看远程响应
 
-> **Windows 用户：** 只需 `pip install paramiko && python ssh_remote_demo.py`
+> **Windows 用户：** 只需 `python ssh_remote_demo.py`（paramiko 已随 drsai 安装）
 
 ---
 
@@ -511,19 +516,76 @@ DRSAI_TUI_ENABLE_WS=1 \
 DRSAI_TUI_WS_PORT={port} \
 DRSAI_USER_CWD={remote_workdir} \
 nohup opendrsai tui-gateway \
-  > /tmp/drsai_ssh_tui/gateway.log 2>&1 &
+  < /dev/null > /tmp/drsai_ssh_tui/gateway.log 2>&1 &
 ```
 
 > `opendrsai tui-gateway` 是 `drsai` CLI 内置子命令，用于以独立进程启动
 > JSON-RPC TUI gateway。启动器脚本自身会导出 venv Python、`DRSAI_PYTHON_SRC_ROOT`
 > 等环境变量，因此不需要在 SSH 配置中填写任何 Python 路径。
+>
+> **stdin 重定向到 `/dev/null`**：远程 gateway 以 WebSocket 模式运行时，
+> stdin 不用于接收命令（命令通过 WS `/attach` 端点接收）。
+> 显式重定向 `< /dev/null` 避免 nohup 挂起，同时 gateway 在检测到 stdin EOF 后
+> 会调用 `threading.Event().wait()` 永久阻塞，保持进程存活以服务 WS 客户端。
 
 ### 断链检测机制
 
 1. **SSH keepalive**：`transport.set_keepalive(30)` 每 30 秒发送 keepalive 包，防止 NAT/防火墙断开空闲连接
 2. **WebSocket close 事件**：前端 `GatewayClient` 检测到 WebSocket 断开时，区分是远程 SSH 模式还是普通 attach 模式
-3. **远程 SSH 模式断链**：发出 `remote.lost` 事件，TUI 显示断链提示界面，不退出
+3. **远程 SSH 模式断链**：发出 `remote.lost` 事件，清空 `$remoteHost`，TUI 显示断链提示界面，不退出
 4. **普通 attach 模式断链**：发出 `gateway.exit` 事件，TUI 正常退出
+
+### 连接后的 UI 状态切换
+
+连接远程 gateway 成功后，TUI 执行完整的状态切换以提供与 VS Code Remote-SSH 一致的体验：
+
+```
+remote.connect 成功
+  ↓
+switchToWebSocket(ws://127.0.0.1:{local_port}/attach)
+  ↓
+gateway.ready 事件（携带完整 skin + setup 从远程返回）
+  ↓
+清除本地状态: transcript / current / sessionMeta / memoryPreview / lastUsage
+  ↓
+解析远程 session: session.most_recent → session.create（如无）
+  ↓
+switchSession(sid) → session.resume → 加载远程聊天历史
+  ↓
+$remoteHost.set(hostname) → 状态栏显示 ● SSH: {hostname}
+```
+
+断开连接时执行对称操作：`switchToSubprocess()` → 清除远程状态 → 解析本地 session → 加载本地历史 → `$remoteHost.set('')`。
+
+### WebSocket 模式下的 gateway 存活机制
+
+远程 gateway 以 WebSocket 模式运行时，命令通过 WS `/attach` 端点接收，不依赖 stdin。但 `nohup` 将 stdin 重定向到 `/dev/null`，导致 `for raw in sys.stdin` 循环立即收到 EOF。
+
+**修复方案**（`entry.py`）：
+
+```python
+ws_mode = os.environ.get("DRSAI_TUI_ENABLE_WS") == "1"
+# stdin 循环结束后...
+if ws_mode:
+    logger.info("stdin EOF in WebSocket mode; keeping gateway alive for WS clients")
+    threading.Event().wait()  # 永久阻塞，保持进程存活
+```
+
+同时，WS 模式下 `gateway.ready` 事件写入失败时只记录日志、不退出进程。
+
+### gateway.ready 事件 payload
+
+WS `/attach` 端点在客户端连接后发送 `gateway.ready` 事件，携带完整初始化数据：
+
+```python
+skin = server.resolve_skin()      # 完整主题（branding + colors）
+server._emit("gateway.ready", None, {
+    "skin": skin,
+    "setup": setup_status(),       # config_exists + has_api_key + setup_required
+})
+```
+
+确保远程连接后 UI 主题与远程配置一致，而非被重置为空。
 
 ### 配置存储
 
@@ -563,6 +625,8 @@ SSH 配置保存在 `~/.drsai/configs/ssh_configs.json`：
 | `remote.browse_dirs` | 临时 SSH 连接浏览远程目录 | 长（线程池） | 否 |
 
 > `remote.browse_dirs` 与 `remote.list_files` 的区别：`browse_dirs` 使用临时 SSH 连接，不需要已建立隧道，用于配置阶段选择 workdir；`list_files` 使用已有隧道，速度更快，用于已连接后浏览。
+>
+> **`name 不能为空` 校验**：`remote.browse_dirs` 在编辑视图调用时，配置尚未保存（无 name）。后端过滤掉 `name 不能为空` 校验项：`errs = [e for e in cfg.validate() if e != "name 不能为空"]`，只校验 Host、Username、认证信息等连接必需字段。
 
 ---
 
@@ -574,7 +638,7 @@ SSH 配置保存在 `~/.drsai/configs/ssh_configs.json`：
 ❌ paramiko 未安装。请运行: pip install paramiko
 ```
 
-**解决：** `pip install paramiko`
+**解决：** paramiko 已包含在 `pyproject.toml` 主依赖中，正常安装 drsai 后自动可用。若仍报错，手动安装：`pip install paramiko>=3.0`
 
 ### SSH 连接失败（空错误信息）
 
@@ -613,9 +677,11 @@ cat /tmp/drsai_ssh_tui/gateway.log
 # 1. opendrsai 未安装 → 在远程运行 install_drsai.sh 安装
 # 2. API Key 未配置 → 远程运行 opendrsai config
 # 3. opendrsai 不在 PATH → 确认 ~/.drsai/bin/opendrsai 存在
+# 4. gateway 因 stdin EOF 退出 → 已在 WS 模式下修复，gateway 会保持运行
+#    若仍出现，确认远程 opendrsai 版本为最新（entry.py WS 模式不退出）
 ```
 
-### 目录浏览失败（编辑视图按 b 无反应）
+### 目录浏览失败（编辑视图 Workdir 字段按 Enter 无反应）
 
 **可能原因：**
 1. Host 或 Username 未填写 — 先填写这两个字段
@@ -724,3 +790,5 @@ pnpm dev      # 开发模式（热重载）
 3. **远程进程清理：** 断开时自动 `kill` 远程 gateway 进程。异常退出时可能残留，需手动清理。
 4. **API Key 隔离：** 远程使用远程自己的 DrSai 配置和 API Key，与本地完全独立。
 5. **SSH Keepalive：** 默认每 30 秒发送 keepalive 包，防止 NAT/防火墙静默断开，同时也能更快检测到断链。
+6. **Session 隔离：** 远程 gateway 有独立的 session 数据库。切换到远程后，本地 transcript 被清除，聊天历史从远程 session 加载。断开时反向操作，恢复本地 session。
+7. **文件系统隔离：** 远程 gateway 进程在远程服务器上运行，`Path.cwd()` 天然指向远程工作目录。所有文件操作（读写、代码执行）都在远程执行，不存在本地/远程路径混淆。

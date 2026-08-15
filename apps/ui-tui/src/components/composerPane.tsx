@@ -11,10 +11,10 @@ import { useEffect, useRef, useState } from 'react'
 
 import { loadPromptHistory, savePromptHistory } from '../app/promptHistory.js'
 import { isTerminalFocusEvent } from '../app/focusEvents.js'
-import { $isStreaming } from '../app/turnStore.js'
+import { $isStreaming, $transcript, $current } from '../app/turnStore.js'
 import type { ImageAttachment, TurnController } from '../app/turnController.js'
-import { $activeOverlay, $showReasoning } from '../app/uiStore.js'
-import type { SessionInfo, SessionListResult } from '../gatewayTypes.js'
+import { $activeOverlay, $showReasoning, $userId, $sessionMeta, $memoryPreview, $lastUsage, $remoteHost } from '../app/uiStore.js'
+import type { SessionInfo, SessionListResult, SessionResumeResult, SessionCreateResult } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
 
 import { ModelEditor, type ModelEditorValues, type ModelProviderPreset } from './modelEditor.js'
@@ -31,6 +31,7 @@ import { GfsPanel } from './gfsPanel.js'
 import { SshRemotePanel } from './sshRemotePanel.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
 import { TextInput } from './textInput.js'
+import { parseHistory } from '../app/historyParser.js'
 
 function sessionSortTimestamp(session: SessionInfo): number {
   const raw = session.last_interaction_ts ?? session.updated_at ?? session.created_at ?? 0
@@ -1014,19 +1015,80 @@ For more info: https://github.com/yourusername/drsai
         gw={controller.gw}
         onDismiss={() => setRemotePanelOpen(false)}
         onRemoteConnect={async (result) => {
-          // Switch gateway client to WebSocket attach mode
+          // Switch gateway client to WebSocket attach mode, then resolve
+          // a session from the REMOTE gateway so the UI reflects the remote
+          // workspace — not stale local state.
           try {
             await controller.gw.switchToWebSocket(result.ws_attach_url)
-            showSlashOutput(`✅ Connected to ${result.remote_hostname} via SSH tunnel`, 3000)
+            $remoteHost.set(result.remote_hostname || '')
+
+            // Clear local session state — the remote gateway has its own
+            // session database; we must not show local chat history.
+            $transcript.set([])
+            $current.set(null)
+            $sessionMeta.set(null)
+            $memoryPreview.set('')
+            $lastUsage.set(null)
+
+            // Resolve session: most_recent for remote cwd → create new
+            const recent = await controller.gw.request<{
+              session: SessionInfo | null
+              user_id?: string
+            }>('session.most_recent', {})
+            if (recent.user_id) $userId.set(recent.user_id)
+
+            let sid: string | null = recent.session?.session_id ?? null
+            if (!sid) {
+              const created = await controller.gw.request<SessionCreateResult>('session.create', {})
+              sid = created.session?.session_id ?? null
+              if (created.user_id) $userId.set(created.user_id)
+            }
+
+            if (sid) {
+              await switchSession(sid)
+            }
+
+            showSlashOutput(
+              `✅ Connected to ${result.remote_hostname} via SSH tunnel` +
+              (result.remote_cwd ? `\n   Remote workdir: ${result.remote_cwd}` : ''),
+              4000,
+            )
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
             showSlashOutput(`❌ Failed to attach to remote gateway: ${msg}`, 5000)
           }
         }}
         onRemoteDisconnect={async () => {
-          // Switch back to local subprocess mode
+          // Switch back to local subprocess mode and resolve a local session.
           try {
             await controller.gw.switchToSubprocess()
+            $remoteHost.set('')
+
+            // Clear remote session state
+            $transcript.set([])
+            $current.set(null)
+            $sessionMeta.set(null)
+            $memoryPreview.set('')
+            $lastUsage.set(null)
+
+            // Resolve local session (same flow as startup)
+            const recent = await controller.gw.request<{
+              session: SessionInfo | null
+              user_id?: string
+            }>('session.most_recent', {})
+            if (recent.user_id) $userId.set(recent.user_id)
+
+            let sid: string | null = recent.session?.session_id ?? null
+            if (!sid) {
+              const created = await controller.gw.request<SessionCreateResult>('session.create', {})
+              sid = created.session?.session_id ?? null
+              if (created.user_id) $userId.set(created.user_id)
+            }
+
+            if (sid) {
+              await switchSession(sid)
+            }
+
             showSlashOutput('✅ Switched back to local gateway', 3000)
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)

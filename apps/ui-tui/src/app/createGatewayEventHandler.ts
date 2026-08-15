@@ -10,7 +10,7 @@ import type { GatewayEvent } from '../gatewayTypes.js'
 
 import { $approval, $clarify, $secret, $sudo } from './overlayStore.js'
 import type { TurnController } from './turnController.js'
-import { $connectionError, $connectionStatus, $lastUsage, $memoryPreview, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
+import { $connectionError, $connectionStatus, $lastUsage, $memoryPreview, $remoteHost, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
 import {
   applyToolComplete,
   MAX_TOOL_RESULT_CHARS,
@@ -138,6 +138,7 @@ export function createGatewayEventHandler(
         // Remote SSH connection dropped — update status but don't exit.
         // The App-level handler will transition to the remote_lost screen.
         $connectionStatus.set('remote_lost')
+        $remoteHost.set('')
         const payload = ev.payload as { reason?: string } | undefined
         $connectionError.set(payload?.reason || 'Remote connection lost')
         return
