@@ -310,6 +310,98 @@ def test_gateway_backend_skips_stale_workspace_artifacts_from_earlier_runs(tmp_p
     )
 
 
+def test_gateway_backend_warns_when_likely_deliverable_is_left_outside_artifacts(tmp_path: Path) -> None:
+    async def runner(**_kwargs):
+        (tmp_path / "undelivered.docx").write_bytes(b"not-published")
+        yield TextMessage(source="assistant", content="created")
+
+    services = RecordingServices()
+    asyncio.run(GatewayOpenDrSaiAgentBackend(runner).execute(
+        _context(tmp_path), _definition("zhizengzeng"), "create document", services,
+    ))
+
+    warnings = [payload for event_type, payload in services.events if event_type == "notice"]
+    assert warnings == [{
+        "id": "artifact_not_delivered",
+        "level": "warning",
+        "code": "artifact_not_delivered",
+        "message": (
+            "A likely user deliverable was created outside artifacts/ and was not delivered. "
+            "Publish it with deliver_artifact before presenting it as a result."
+        ),
+        "paths": ["undelivered.docx"],
+    }]
+
+
+def test_deliver_artifact_tool_uses_bound_runtime_context_and_emits_event(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    observed = {}
+    events = []
+
+    class ArtifactStore:
+        def deliver(self, received_context, arguments):
+            observed["context"] = received_context
+            observed["arguments"] = arguments
+            return {
+                "artifact_id": "artifact-docx", "workspace_id": received_context.workspace_id,
+                "session_id": received_context.session_id, "run_id": received_context.run_id,
+                "relative_path": "artifacts/短诗_静夜.docx", "path": "artifacts/短诗_静夜.docx",
+                "name": "短诗_静夜.docx", "display_name": "短诗《静夜》",
+                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "size": 12, "sha256": "a" * 64, "downloadable": True, "previewable": False,
+            }
+
+    monkeypatch.setattr(gateway, "_runtime_artifact_store", lambda: ArtifactStore())
+    monkeypatch.setattr(
+        gateway, "_runtime_engine",
+        lambda: SimpleNamespace(append_event=lambda run_id, event_type, payload: events.append((run_id, event_type, payload))),
+    )
+    token = gateway._runtime_image_context.set(context)
+    try:
+        delivered = asyncio.run(gateway.deliver_artifact(
+            "tmp/poem.docx", destination_name="短诗_静夜.docx", display_name="短诗《静夜》",
+            idempotency_key="call-docx-1",
+        ))
+    finally:
+        gateway._runtime_image_context.reset(token)
+
+    assert observed["context"] is context
+    assert observed["arguments"] == {
+        "source_path": "tmp/poem.docx",
+        "destination_name": "短诗_静夜.docx",
+        "display_name": "短诗《静夜》",
+        "idempotency_key": "call-docx-1",
+    }
+    assert delivered["artifact_id"] == "artifact-docx"
+    assert events == [(context.run_id, "artifact.created", delivered)]
+
+
+def test_deliver_artifact_idempotent_replay_does_not_emit_duplicate_event(tmp_path: Path, monkeypatch) -> None:
+    context = _context(tmp_path)
+    events = []
+    replay = {
+        "artifact_id": "artifact-docx", "workspace_id": context.workspace_id,
+        "session_id": context.session_id, "run_id": context.run_id,
+        "relative_path": "artifacts/poem.docx", "path": "artifacts/poem.docx",
+        "name": "poem.docx", "idempotent_replay": True,
+    }
+    monkeypatch.setattr(gateway, "_runtime_artifact_store", lambda: SimpleNamespace(deliver=lambda *_: replay))
+    monkeypatch.setattr(
+        gateway, "_runtime_engine",
+        lambda: SimpleNamespace(append_event=lambda *event: events.append(event)),
+    )
+    token = gateway._runtime_image_context.set(context)
+    try:
+        result = asyncio.run(gateway.deliver_artifact("tmp/poem.docx", idempotency_key="call-1"))
+    finally:
+        gateway._runtime_image_context.reset(token)
+
+    assert result is replay
+    assert events == []
+
+
 def test_gateway_backend_preserves_secret_free_failure_type(tmp_path: Path) -> None:
     async def runner(**_kwargs):
         raise TypeError("provider payload rejected")
@@ -528,7 +620,7 @@ def test_agent_manager_always_injects_native_image_tools(monkeypatch, tmp_path: 
     ))
 
     tools = captured["extra_tools"]
-    assert [tool.__name__ for tool in tools[:2]] == ["image_generation", "image_edit"]
+    assert [tool.__name__ for tool in tools[:3]] == ["deliver_artifact", "image_generation", "image_edit"]
 
 
 def test_agent_manager_applies_explicit_agent_tool_policy(monkeypatch, tmp_path: Path) -> None:
@@ -570,7 +662,7 @@ def test_agent_manager_applies_explicit_agent_tool_policy(monkeypatch, tmp_path:
 
     assert captured["tool_resource_ids"] == ["builtin.image_edit", "web.search"]
     assert [getattr(tool, "__name__", getattr(tool, "name", "")) for tool in captured["extra_tools"]] == [
-        "image_edit", "web.search",
+        "deliver_artifact", "image_edit", "web.search",
     ]
 
 

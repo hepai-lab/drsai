@@ -295,6 +295,7 @@ class RuntimeEngine:
         self.conversation_journal = RuntimeConversationJournal(
             self.database, self.identity.runtime_id, self.observability
         )
+        self.reconcile_channel_deliveries()
         self.experiments = RuntimeExperimentStore(
             self.database,
             self._checkpoint_cipher.encrypt,
@@ -351,9 +352,49 @@ class RuntimeEngine:
                   session_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, worktree_id TEXT, title TEXT NOT NULL,
                   archived INTEGER NOT NULL DEFAULT 0, lifecycle TEXT NOT NULL DEFAULT 'active',
                   revision INTEGER NOT NULL DEFAULT 1, agent_definition TEXT, backend_id TEXT,
-                  removed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                  removed_at TEXT, origin_kind TEXT, origin_provider TEXT, origin_binding_id TEXT,
+                  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_runtime_sessions_workspace ON runtime_sessions(workspace_id, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS runtime_channel_bindings (
+                  binding_id TEXT PRIMARY KEY,
+                  provider TEXT NOT NULL,
+                  account_fingerprint TEXT NOT NULL,
+                  provider_user_key TEXT NOT NULL,
+                  display_index INTEGER NOT NULL,
+                  active_session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  UNIQUE(provider,account_fingerprint,provider_user_key),
+                  UNIQUE(provider,account_fingerprint,display_index)
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_channel_bindings_session
+                  ON runtime_channel_bindings(active_session_id);
+                CREATE TABLE IF NOT EXISTS runtime_channel_deliveries (
+                  delivery_id TEXT PRIMARY KEY,
+                  session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
+                  item_id TEXT NOT NULL UNIQUE,
+                  provider TEXT NOT NULL,
+                  idempotency_key TEXT NOT NULL UNIQUE,
+                  request_digest TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  attempt_count INTEGER NOT NULL DEFAULT 0,
+                  error_code TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_channel_deliveries_session
+                  ON runtime_channel_deliveries(session_id,created_at);
+                CREATE TABLE IF NOT EXISTS runtime_channel_migrations (
+                  migration_id TEXT PRIMARY KEY,
+                  provider TEXT NOT NULL,
+                  source_version TEXT NOT NULL,
+                  source_digest TEXT NOT NULL,
+                  record_count INTEGER NOT NULL,
+                  status TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  UNIQUE(provider,source_digest)
+                );
                 CREATE TABLE IF NOT EXISTS runtime_runs (
                   run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
                   workspace_id TEXT NOT NULL, worktree_id TEXT, runtime_id TEXT NOT NULL, instance_id TEXT NOT NULL,
@@ -470,6 +511,18 @@ class RuntimeEngine:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN backend_id TEXT")
             if "removed_at" not in session_columns:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN removed_at TEXT")
+            if "origin_kind" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN origin_kind TEXT")
+            if "origin_provider" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN origin_provider TEXT")
+            if "origin_binding_id" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN origin_binding_id TEXT")
+            delivery_columns = {
+                str(row["name"])
+                for row in db.execute("PRAGMA table_info(runtime_channel_deliveries)").fetchall()
+            }
+            if "request_digest" not in delivery_columns:
+                db.execute("ALTER TABLE runtime_channel_deliveries ADD COLUMN request_digest TEXT NOT NULL DEFAULT ''")
             db.execute(
                 "UPDATE runtime_sessions SET lifecycle=CASE WHEN archived=0 THEN 'active' ELSE 'archived' END "
                 "WHERE lifecycle IS NULL OR lifecycle NOT IN ('active','archived','removed') "
@@ -760,6 +813,435 @@ class RuntimeEngine:
             db.commit()
         self.conversation_journal.notify_committed()
         return self.get_session(session_id)
+
+    def resolve_or_create_channel_session(
+        self,
+        workspace_id: str,
+        *,
+        provider: str,
+        account_fingerprint: str,
+        provider_user_key: str,
+        title_prefix: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Resolve a channel binding or atomically create its first Session.
+
+        Provider identifiers must be transformed before this boundary.  The
+        Runtime stores only installation-scoped opaque keys and never receives
+        the raw channel user identifier.
+        """
+        if not workspace_id or not self.workspace_exists(workspace_id):
+            raise KeyError("Unknown or closed Workspace")
+        if not all((provider, account_fingerprint, provider_user_key, title_prefix)):
+            raise ValueError("Channel binding fields are required")
+        now = _now()
+        worktree_id = self.worktree_for_workspace(workspace_id)
+        created = False
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT * FROM runtime_channel_bindings WHERE provider=? "
+                "AND account_fingerprint=? AND provider_user_key=?",
+                (provider, account_fingerprint, provider_user_key),
+            ).fetchone()
+            if binding is not None:
+                session_id = str(binding["active_session_id"])
+                row = db.execute(
+                    "SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)
+                ).fetchone()
+                if row is None:
+                    db.rollback()
+                    raise RuntimeError("Channel binding references a missing Session")
+                if str(row["lifecycle"]) == "removed":
+                    db.rollback()
+                    raise RuntimeError("Channel binding references a removed Session")
+                if str(row["lifecycle"]) == "archived":
+                    revision = int(row["revision"]) + 1
+                    db.execute(
+                        "UPDATE runtime_sessions SET archived=0,lifecycle='active',revision=?,updated_at=? "
+                        "WHERE session_id=?",
+                        (revision, now, session_id),
+                    )
+                    self.conversation_journal.append_event_in_transaction(
+                        db,
+                        session_id,
+                        "session.updated",
+                        {
+                            "title": str(row["title"]),
+                            "lifecycle": "active",
+                            "revision": revision,
+                            "origin": {"kind": "channel", "provider": provider},
+                        },
+                        dedupe_key=f"session-revision:{session_id}:{revision}",
+                        created_at=now,
+                    )
+                db.execute(
+                    "UPDATE runtime_channel_bindings SET updated_at=? WHERE binding_id=?",
+                    (now, str(binding["binding_id"])),
+                )
+                db.commit()
+            else:
+                display_index = int(db.execute(
+                    "SELECT COALESCE(MAX(display_index),0)+1 FROM runtime_channel_bindings "
+                    "WHERE provider=? AND account_fingerprint=?",
+                    (provider, account_fingerprint),
+                ).fetchone()[0])
+                binding_id = f"wcb-{uuid.uuid4()}"
+                session_id = f"session-{uuid.uuid4()}"
+                title = f"{title_prefix} {display_index}"[:240]
+                db.execute(
+                    "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
+                    "revision,agent_definition,backend_id,removed_at,origin_kind,origin_provider,origin_binding_id,"
+                    "created_at,updated_at) VALUES(?,?,?,?,0,'active',1,NULL,NULL,NULL,'channel',?,?,?,?)",
+                    (session_id, workspace_id, worktree_id, title, provider, binding_id, now, now),
+                )
+                db.execute(
+                    "INSERT INTO runtime_channel_bindings(binding_id,provider,account_fingerprint,"
+                    "provider_user_key,display_index,active_session_id,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (binding_id, provider, account_fingerprint, provider_user_key, display_index,
+                     session_id, now, now),
+                )
+                self.conversation_journal.append_event_in_transaction(
+                    db,
+                    session_id,
+                    "session.updated",
+                    {
+                        "title": title,
+                        "lifecycle": "active",
+                        "revision": 1,
+                        "origin": {"kind": "channel", "provider": provider},
+                    },
+                    dedupe_key=f"session-created:{session_id}",
+                    created_at=now,
+                )
+                db.commit()
+                created = True
+        self.conversation_journal.notify_committed()
+        return self.get_session(session_id), created
+
+    def rotate_channel_session(self, binding_id: str, *, title_prefix: str) -> dict[str, Any]:
+        """Create a fresh Session and atomically make it active for a binding."""
+        if not binding_id or not title_prefix:
+            raise ValueError("Channel binding and title prefix are required")
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT * FROM runtime_channel_bindings WHERE binding_id=?", (binding_id,)
+            ).fetchone()
+            if binding is None:
+                db.rollback()
+                raise KeyError("Channel binding not found")
+            previous = db.execute(
+                "SELECT * FROM runtime_sessions WHERE session_id=?",
+                (str(binding["active_session_id"]),),
+            ).fetchone()
+            if previous is None:
+                db.rollback()
+                raise RuntimeError("Channel binding references a missing Session")
+            display_index = int(db.execute(
+                "SELECT COALESCE(MAX(display_index),0)+1 FROM runtime_channel_bindings "
+                "WHERE provider=? AND account_fingerprint=?",
+                (str(binding["provider"]), str(binding["account_fingerprint"])),
+            ).fetchone()[0])
+            session_id = f"session-{uuid.uuid4()}"
+            title = f"{title_prefix} {display_index}"[:240]
+            db.execute(
+                "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
+                "revision,agent_definition,backend_id,removed_at,origin_kind,origin_provider,origin_binding_id,"
+                "created_at,updated_at) VALUES(?,?,?,?,0,'active',1,?,?,NULL,'channel',?,?,?,?)",
+                (session_id, str(previous["workspace_id"]), previous["worktree_id"], title,
+                 previous["agent_definition"], previous["backend_id"], str(binding["provider"]),
+                 binding_id, now, now),
+            )
+            db.execute(
+                "UPDATE runtime_channel_bindings SET active_session_id=?,display_index=?,updated_at=? "
+                "WHERE binding_id=?",
+                (session_id, display_index, now, binding_id),
+            )
+            self.conversation_journal.append_event_in_transaction(
+                db, session_id, "session.updated",
+                {"title": title, "lifecycle": "active", "revision": 1,
+                 "origin": {"kind": "channel", "provider": str(binding["provider"])}},
+                dedupe_key=f"session-created:{session_id}", created_at=now,
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_session(session_id)
+
+    def channel_binding_for_session(self, session_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT binding_id,provider,display_index,active_session_id,created_at,updated_at "
+                "FROM runtime_channel_bindings WHERE active_session_id=?", (session_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_channel_sessions(self, binding_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM runtime_sessions WHERE origin_kind='channel' AND origin_binding_id=? "
+                "AND lifecycle<>'removed' ORDER BY created_at,session_id",
+                (binding_id,),
+            ).fetchall()
+        return [self._session(row) for row in rows]
+
+    def channel_session_count(self, provider: str) -> int:
+        with self._connect() as db:
+            return int(db.execute(
+                "SELECT COUNT(*) FROM runtime_sessions WHERE origin_kind='channel' "
+                "AND origin_provider=? AND lifecycle<>'removed'", (provider,),
+            ).fetchone()[0])
+
+    def record_channel_migration(
+        self, *, provider: str, source_version: str, source_digest: str,
+        record_count: int, status: str,
+    ) -> dict[str, Any]:
+        if status not in {"no_records", "unable_to_correlate", "completed"}:
+            raise ValueError("Invalid channel migration status")
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM runtime_channel_migrations WHERE provider=? AND source_digest=?",
+                (provider, source_digest),
+            ).fetchone()
+            if existing is not None:
+                db.commit()
+                return dict(existing)
+            migration_id = f"migration-{uuid.uuid4()}"
+            db.execute(
+                "INSERT INTO runtime_channel_migrations(migration_id,provider,source_version,"
+                "source_digest,record_count,status,created_at) VALUES(?,?,?,?,?,?,?)",
+                (migration_id, provider, source_version[:80], source_digest[:128],
+                 max(0, record_count), status, now),
+            )
+            db.commit()
+        return {
+            "migration_id": migration_id, "provider": provider,
+            "source_version": source_version[:80], "source_digest": source_digest[:128],
+            "record_count": max(0, record_count), "status": status, "created_at": now,
+        }
+
+    def activate_channel_session(self, binding_id: str, session_id: str) -> dict[str, Any]:
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT * FROM runtime_channel_bindings WHERE binding_id=?", (binding_id,)
+            ).fetchone()
+            session = db.execute(
+                "SELECT * FROM runtime_sessions WHERE session_id=? AND origin_binding_id=?",
+                (session_id, binding_id),
+            ).fetchone()
+            if binding is None or session is None or str(session["lifecycle"]) == "removed":
+                db.rollback()
+                raise KeyError("Channel Session not found")
+            if str(session["lifecycle"]) == "archived":
+                revision = int(session["revision"]) + 1
+                db.execute(
+                    "UPDATE runtime_sessions SET archived=0,lifecycle='active',revision=?,updated_at=? "
+                    "WHERE session_id=?", (revision, now, session_id),
+                )
+                self.conversation_journal.append_event_in_transaction(
+                    db, session_id, "session.updated",
+                    {"title": str(session["title"]), "lifecycle": "active", "revision": revision,
+                     "origin": {"kind": "channel", "provider": str(binding["provider"])}},
+                    dedupe_key=f"session-revision:{session_id}:{revision}", created_at=now,
+                )
+            db.execute(
+                "UPDATE runtime_channel_bindings SET active_session_id=?,updated_at=? WHERE binding_id=?",
+                (session_id, now, binding_id),
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_session(session_id)
+
+    def begin_channel_delivery(
+        self, session_id: str, *, provider: str, idempotency_key: str, text: str
+    ) -> tuple[dict[str, Any], bool]:
+        if not idempotency_key or len(idempotency_key) > 200:
+            raise ValueError("A valid channel delivery Idempotency-Key is required")
+        if not text.strip() or len(text) > 20_000:
+            raise ValueError("Channel outbound text is invalid")
+        now = _now()
+        normalized_text = text.strip()
+        request_digest = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+        delivery_id = f"delivery-{uuid.uuid4()}"
+        item_id = f"channel-outbound-{uuid.uuid4()}"
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM runtime_channel_deliveries WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["session_id"]) != session_id
+                    or str(existing["provider"]) != provider
+                    or str(existing["request_digest"]) != request_digest
+                ):
+                    db.rollback()
+                    raise ValueError("Channel delivery Idempotency-Key identity conflict")
+                db.commit()
+                return dict(existing), False
+            session = db.execute(
+                "SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            if session is None or str(session["origin_provider"] or "") != provider:
+                db.rollback()
+                raise KeyError("Channel Session not found")
+            db.execute(
+                "INSERT INTO runtime_channel_deliveries(delivery_id,session_id,item_id,provider,"
+                "idempotency_key,request_digest,status,attempt_count,error_code,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,'pending',0,NULL,?,?)",
+                (delivery_id, session_id, item_id, provider, idempotency_key, request_digest, now, now),
+            )
+            self.conversation_journal.upsert_item_in_transaction(
+                db, session_id,
+                item_id=item_id, kind="message", role="assistant", revision=1,
+                source_client="windows", source_message_id=f"{provider}-outbound:{idempotency_key}",
+                payload={
+                    "text": normalized_text, "phase": "final", "author": "desktop",
+                    "channel_delivery": {"provider": provider, "status": "pending"},
+                },
+                event_kind="conversation.item.upsert", created_at=now, updated_at=now,
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_channel_delivery(delivery_id), True
+
+    def complete_channel_delivery(
+        self, delivery_id: str, *, status: str, error_code: str | None = None
+    ) -> dict[str, Any]:
+        if status not in {"sent", "failed", "unknown"}:
+            raise ValueError("Invalid channel delivery status")
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM runtime_channel_deliveries WHERE delivery_id=?", (delivery_id,)
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                raise KeyError("Channel delivery not found")
+            current = str(row["status"])
+            if current == "sent":
+                db.commit()
+                return dict(row)
+            if current not in {"pending", "failed", "unknown"}:
+                db.rollback()
+                raise ValueError("Channel delivery cannot transition")
+            db.execute(
+                "UPDATE runtime_channel_deliveries SET status=?,attempt_count=attempt_count+1,"
+                "error_code=?,updated_at=? WHERE delivery_id=?",
+                (status, error_code[:120] if error_code else None, now, delivery_id),
+            )
+            item_row = db.execute(
+                "SELECT * FROM runtime_conversation_items WHERE item_id=?", (str(row["item_id"]),)
+            ).fetchone()
+            item = dict(item_row) if item_row is not None else None
+            if item is not None:
+                payload = json.loads(str(item.get("payload_json") or "{}"))
+                # Agent-produced OAEP items are immutable after reaching a
+                # terminal state. Their provider delivery is authoritative in
+                # runtime_channel_deliveries; only the separate Desktop-authored
+                # outbound item carries a projected delivery status.
+                if payload.get("author") != "desktop":
+                    db.commit()
+                    return self.get_channel_delivery(delivery_id)
+                payload["channel_delivery"] = {
+                    "provider": str(row["provider"]), "status": status,
+                    **({"error_code": error_code[:120]} if error_code else {}),
+                }
+                self.conversation_journal.upsert_item_in_transaction(
+                    db, str(row["session_id"]), item_id=str(row["item_id"]), kind=str(item["item_kind"]),
+                    role=item["role"], revision=int(item["revision"]) + 1,
+                    source_client=str(item["source_client"]),
+                    run_id=item.get("run_id"),
+                    source_message_id=item.get("source_message_id"), payload=payload,
+                    event_kind="conversation.item.upsert", created_at=str(item["created_at"]),
+                    updated_at=now,
+                )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_channel_delivery(delivery_id)
+
+    def begin_existing_item_channel_delivery(
+        self,
+        session_id: str,
+        *,
+        item_id: str,
+        provider: str,
+        idempotency_key: str,
+        text: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Attach a provider delivery to an existing authoritative message Item."""
+        if not idempotency_key or len(idempotency_key) > 200:
+            raise ValueError("A valid channel delivery Idempotency-Key is required")
+        normalized_text = text.strip()
+        if not normalized_text or len(normalized_text) > 200_000:
+            raise ValueError("Channel delivery text is invalid")
+        request_digest = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM runtime_channel_deliveries WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["session_id"]) != session_id
+                    or str(existing["item_id"]) != item_id
+                    or str(existing["provider"]) != provider
+                    or str(existing["request_digest"]) != request_digest
+                ):
+                    db.rollback()
+                    raise ValueError("Channel delivery Idempotency-Key identity conflict")
+                db.commit()
+                return dict(existing), False
+            session = db.execute(
+                "SELECT origin_provider FROM runtime_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            item_row = db.execute(
+                "SELECT * FROM runtime_conversation_items WHERE item_id=? AND session_id=?",
+                (item_id, session_id),
+            ).fetchone()
+            if session is None or str(session["origin_provider"] or "") != provider or item_row is None:
+                db.rollback()
+                raise KeyError("Channel Session Item not found")
+            delivery_id = f"delivery-{uuid.uuid4()}"
+            db.execute(
+                "INSERT INTO runtime_channel_deliveries(delivery_id,session_id,item_id,provider,"
+                "idempotency_key,request_digest,status,attempt_count,error_code,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,'pending',0,NULL,?,?)",
+                (delivery_id, session_id, item_id, provider, idempotency_key, request_digest, now, now),
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_channel_delivery(delivery_id), True
+
+    def get_channel_delivery(self, delivery_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM runtime_channel_deliveries WHERE delivery_id=?", (delivery_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError("Channel delivery not found")
+        return dict(row)
+
+    def reconcile_channel_deliveries(self) -> int:
+        """Fail closed after restart: an interrupted send has an unknown outcome."""
+        with self._connect() as db:
+            pending = [str(row["delivery_id"]) for row in db.execute(
+                "SELECT delivery_id FROM runtime_channel_deliveries WHERE status='pending'"
+            ).fetchall()]
+        for delivery_id in pending:
+            self.complete_channel_delivery(
+                delivery_id, status="unknown", error_code="runtime_restarted_during_delivery"
+            )
+        return len(pending)
 
     def import_session(
         self,
@@ -4018,7 +4500,7 @@ class RuntimeEngine:
         lifecycle = str(row["lifecycle"]) if "lifecycle" in row.keys() else (
             "archived" if bool(row["archived"]) else "active"
         )
-        return {
+        result = {
             "session_id": row["session_id"], "workspace_id": row["workspace_id"],
             "worktree_id": row["worktree_id"], "title": row["title"],
             "archived": lifecycle != "active", "lifecycle": lifecycle,
@@ -4028,6 +4510,13 @@ class RuntimeEngine:
             "removed_at": row["removed_at"] if "removed_at" in row.keys() else None,
             "created_at": row["created_at"], "updated_at": row["updated_at"],
         }
+        if "origin_kind" in row.keys() and row["origin_kind"] is not None:
+            result["origin"] = {
+                "kind": str(row["origin_kind"]),
+                "provider": str(row["origin_provider"]),
+                "binding_id": str(row["origin_binding_id"]),
+            }
+        return result
 
     @staticmethod
     def _run(row: sqlite3.Row) -> dict[str, Any]:

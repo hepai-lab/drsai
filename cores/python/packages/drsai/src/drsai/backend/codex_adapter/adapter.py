@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Mapping, Protocol, Sequence
 
 from drsai.backend.runtime.agent import (
@@ -32,7 +33,9 @@ class CodexAppServerClient(Protocol):
     async def account_login_cancel(self, login_id: str) -> None: ...
     async def account_logout(self) -> None: ...
     async def restart_backend(self) -> Mapping[str, Any]: ...
-    async def discover_sessions(self, workspace_path: str) -> list[Mapping[str, Any]]: ...
+    async def discover_sessions(
+        self, workspace_path: str, *, include_archived: bool = True,
+    ) -> list[Mapping[str, Any]]: ...
     async def bind_imported_session(self, session_id: str, workspace_id: str, runtime_id: str, backend_session_id: str, *, backend_version: str | None = None, backend_updated_at: str | None = None) -> None: ...
     async def read_imported_session_history(self, session_id: str) -> list[Mapping[str, Any]]: ...
     def history_capability(self) -> Mapping[str, Any]: ...
@@ -111,8 +114,13 @@ class CodexAdapter:
     async def restart_backend(self) -> Mapping[str, Any]:
         return await self._require_client().restart_backend()
 
-    async def discover_sessions(self, workspace_path: str) -> list[Mapping[str, Any]]:
-        return await self._require_client().discover_sessions(workspace_path)
+    async def discover_sessions(
+        self, workspace_path: str, *, include_archived: bool = True,
+    ) -> list[Mapping[str, Any]]:
+        operation = self._require_client().discover_sessions
+        if "include_archived" in inspect.signature(operation).parameters:
+            return await operation(workspace_path, include_archived=include_archived)
+        return await operation(workspace_path)
 
     async def bind_imported_session(self, session_id: str, workspace_id: str, runtime_id: str, backend_session_id: str, *, backend_version: str | None = None, backend_updated_at: str | None = None) -> None:
         await self._require_client().bind_imported_session(

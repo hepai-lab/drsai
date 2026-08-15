@@ -606,7 +606,12 @@ def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
             f"  {cwd}\n"
             "Resolve relative file paths against this directory unless the "
             "user specifies otherwise. Treat it as the project root when "
-            "searching for code or config."
+            "searching for code or config.\n"
+            "Files requested as user deliverables must be written beneath "
+            "the `artifacts/` directory in this Workspace. Use private "
+            "temporary storage only for scripts, caches, and intermediate "
+            "files, and never report an internal storage path as a delivered "
+            "result."
         )
     extra = os.environ.get("DRSAI_SYSTEM_MESSAGE") or cli_cfg.get("system_message") or ""
     extra = str(extra).strip()

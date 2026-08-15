@@ -57,6 +57,8 @@ async def test_cancel_is_idempotent_when_turn_finished_before_interrupt(tmp_path
 @dataclass
 class _Binary:
     version: str = "0.142.5"
+    schema_digest: str = "sha256:7e164fed2c3d3de0e6c3520d42e6d53f1433937b41a950e1b44f72172a3d2086"
+    release_safe: bool = True
 
 
 class _Supervisor:
@@ -282,7 +284,9 @@ async def test_model_account_preflight_is_reviewed_content_free_and_blocks_befor
     assert health["installed"] is True
     assert health["contract_compatible"] is True
     assert "authenticated" not in health and "executable" not in health
-    assert health["readiness"]["account"] == {"state": "unknown", "reason": "not_probed"}
+    assert health["readiness"]["account"]["state"] == "unknown"
+    assert health["readiness"]["account"]["reason"] == "not_probed"
+    assert health["readiness"]["account"]["actions"] == ["refresh"]
     assert health["readiness"]["executable"]["state"] == "unknown"
     assert health["readiness"]["contract"]["state"] == "ready"
 
@@ -312,10 +316,19 @@ async def test_readiness_reports_independent_layers_without_fake_account_state(t
     assert ready["readiness"]["installed"]["state"] == "ready"
     assert ready["readiness"]["contract"]["state"] == "ready"
     assert ready["readiness"]["models"]["state"] == "ready"
-    assert ready["readiness"]["account"] == {"state": "unknown", "reason": "not_probed"}
-    assert ready["readiness"]["executable"]["reason"] == "account_not_probed"
+    assert ready["readiness"]["account"]["state"] == "unknown"
+    assert ready["readiness"]["account"]["reason"] == "not_probed"
+    assert ready["readiness"]["executable"]["reason"] == "backend_not_ready"
+    assert ready["readiness"]["executable"]["blockers"] == ["account"]
     assert ready["readiness"]["refreshed_at"]
     assert "authenticated" not in ready and "executable" not in ready
+
+    account = await client.account_status(refresh=True)
+    assert account["state"] == "signed_in"
+    executable = await client.health()
+    assert executable["readiness"]["account"]["state"] == "signed_in"
+    assert executable["readiness"]["executable"]["state"] == "ready"
+    assert executable["readiness"]["executable"]["blockers"] == []
 
     async def missing_health():
         return {"available": False, "reason": "codex_not_installed"}

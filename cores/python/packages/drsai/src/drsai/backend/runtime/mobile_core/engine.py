@@ -931,6 +931,9 @@ class DrSaiAgentKernel:
         reasoning_summary = command.payload.get("reasoning_summary", "")
         if not isinstance(reasoning_summary, str):
             raise ValueError("model_reasoning_summary_invalid")
+        provider_reasoning_content = command.payload.get("provider_reasoning_content", "")
+        if not isinstance(provider_reasoning_content, str) or len(provider_reasoning_content) > 262_144:
+            raise ValueError("model_provider_reasoning_content_invalid")
         reasoning_events = () if not reasoning_summary else (self._event(state, "reasoning.completed", {
             "item_id": f"{state.run_id}:reasoning", "segments": [
                 {"id": "summary-1", "text": reasoning_summary},
@@ -1253,12 +1256,16 @@ class DrSaiAgentKernel:
         if delegate_calls:
             if len(tool_calls) != 1:
                 raise ValueError("delegate_must_be_single")
-            return (*reasoning_events, decision_event, *self._start_subagents(state, delegate_calls[0], content))
+            return (*reasoning_events, decision_event, *self._start_subagents(
+                state, delegate_calls[0], content, provider_reasoning_content,
+            ))
         core_calls = [value for value in tool_calls if isinstance(value, Mapping) and value.get("name") in {"core.text_stats", "core.data_compute", "core.update_plan"}]
         if core_calls:
             if len(core_calls) != len(tool_calls):
                 raise ValueError("core_and_host_tools_cannot_mix")
-            return (*reasoning_events, decision_event, *self._execute_core_tools(state, core_calls, content))
+            return (*reasoning_events, decision_event, *self._execute_core_tools(
+                state, core_calls, content, provider_reasoning_content,
+            ))
         if content and not tool_calls:
             state.messages.append({"role": "assistant", "content": content})
         if not tool_calls:
@@ -1339,6 +1346,7 @@ class DrSaiAgentKernel:
                     *[dict(value) for value in state.pending_tool_calls.values()],
                     *deferred_tool_calls,
                 ],
+                **({"reasoning_content": provider_reasoning_content} if provider_reasoning_content else {}),
             }
         )
         for deferred in deferred_tool_calls:
@@ -1643,6 +1651,7 @@ class DrSaiAgentKernel:
 
     def _start_subagents(
         self, state: MobileRunState, raw_call: Mapping[str, Any], content: str,
+        provider_reasoning_content: str = "",
     ) -> Sequence[RuntimeEnvelope]:
         call_id = self._required_string(raw_call, "call_id")
         arguments = raw_call.get("arguments", {})
@@ -1732,7 +1741,10 @@ class DrSaiAgentKernel:
                 "child_run_id": child_run_id, "child_session_id": child_session_id,
                 "child_state": child.snapshot(child_run_id), "model_request": dict(child_model.payload),
             }
-        state.messages.append({"role": "assistant", "content": content, "tool_calls": [dict(raw_call)]})
+        state.messages.append({
+            "role": "assistant", "content": content, "tool_calls": [dict(raw_call)],
+            **({"reasoning_content": provider_reasoning_content} if provider_reasoning_content else {}),
+        })
         state.pending_subagents = pending
         state.subagent_results = {}
         state.delegate_call_id = call_id
@@ -1765,6 +1777,7 @@ class DrSaiAgentKernel:
 
     def _execute_core_tools(
         self, state: MobileRunState, calls: Sequence[Mapping[str, Any]], content: str,
+        provider_reasoning_content: str = "",
     ) -> Sequence[RuntimeEnvelope]:
         replies: list[RuntimeEnvelope] = []
         normalized = []
@@ -1797,7 +1810,10 @@ class DrSaiAgentKernel:
                 normalized.append({"call_id": call_id, "name": name, "arguments": plan})
             else:
                 raise ValueError("core_tool_unknown")
-        state.messages.append({"role": "assistant", "content": content, "tool_calls": normalized})
+        state.messages.append({
+            "role": "assistant", "content": content, "tool_calls": normalized,
+            **({"reasoning_content": provider_reasoning_content} if provider_reasoning_content else {}),
+        })
         for call in normalized:
             if call["name"] == "core.text_stats":
                 text = call["arguments"]["text"]
@@ -2042,6 +2058,10 @@ class DrSaiAgentKernel:
 
     def snapshot(self, run_id: str) -> dict[str, Any]:
         state = self._runs[run_id]
+        checkpoint_messages = [
+            {key: value for key, value in message.items() if key != "reasoning_content"}
+            for message in state.messages
+        ]
         return {
             "run_id": state.run_id,
             "session_id": state.session_id,
@@ -2049,7 +2069,7 @@ class DrSaiAgentKernel:
             "model_route_snapshot": dict(state.model_route_snapshot),
             "phase": state.phase.value,
             "outbound_sequence": state.outbound_sequence,
-            "messages": state.messages,
+            "messages": checkpoint_messages,
             "completed_side_effects": sorted(state.completed_side_effects),
             "pending_tool_calls": dict(state.pending_tool_calls),
             "pending_artifacts": dict(state.pending_artifacts),
@@ -2074,7 +2094,7 @@ class DrSaiAgentKernel:
             "memory_policy": dict(state.memory_policy),
             "memory_selection": dict(state.memory_selection),
             "conversation_context": validate_conversation_context(
-                state.messages, require_complete_tool_calls=not bool(
+                checkpoint_messages, require_complete_tool_calls=not bool(
                     state.pending_tool_calls or state.pending_subagents or state.delegate_call_id
                 ),
             ),

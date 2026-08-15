@@ -105,6 +105,9 @@ from typing import Annotated, Any, Iterable, Literal, Mapping, Optional
 
 from urllib.parse import unquote, urlparse
 
+_GATEWAY_INSTANCE_ID = os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_ID") or str(uuid.uuid4())
+_GATEWAY_STARTED_AT = datetime.now(timezone.utc).isoformat()
+
 
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -130,7 +133,7 @@ from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.runtime.input_resources import inspect_native_image_resources
 from drsai.oaep.generated import OAEP_PROFILE, OAEP_SCHEMA_SHA256, OAEP_VERSION
 from drsai.backend.runtime.image_operations import RuntimeImageOperationAdapter
-from drsai.backend.runtime.web_search import create_web_fetch_tool, create_web_search_tool, web_search
+from drsai.backend.runtime.web_search import create_web_fetch_tool, create_web_search_tool, web_fetch, web_search
 from drsai.backend.runtime.journal import SessionCursorExpired
 from drsai.backend.runtime.artifacts import RuntimeArtifactStore
 from drsai.backend.runtime.agent import (
@@ -165,6 +168,9 @@ from drsai.backend.runtime.security import (
     redact_sensitive,
 )
 from drsai.relay.security import redact_credentials
+from drsai.backend import gateway_wechat as _gateway_wechat
+from drsai.backend.feedback_service import create_router as _create_feedback_router, get_default_feedback_store
+from drsai.backend.feedback_worker import FeedbackWorker
 
 
 
@@ -286,6 +292,11 @@ from drsai.backend.runtime.capabilities import (
     CapabilityConfigurationRequest,
     classify_web_search_configuration,
     prompt_requires_current_web,
+)
+from drsai.backend.runtime.web_search.provider_policy import (
+    read_provider_mode,
+    resolve_web_search_provider,
+    write_provider_mode,
 )
 from drsai.config.schema import DrSaiConfig, ProviderInput
 from drsai.config.model_catalog import AgentModelPolicy, AgentModelSelection, ModelDescriptor as RuntimeModelDescriptor, ModelRef as RuntimeModelRef, build_runtime_model_catalog
@@ -632,6 +643,11 @@ class PerceptorRequest(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     config: dict[str, object] = Field(default_factory=dict)
     enabled: bool = True
+
+
+class WebSearchProviderPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["auto", "managed", "byok", "none"]
 
 
 class KnowledgeResourceRequest(BaseModel):
@@ -1368,13 +1384,18 @@ class AgentManager:
                     allow_thread_skill_override=runtime_policy.skills.allow_thread_override,
                     skill_policy_revision=skills_revision,
                 )
-                core_tools = []
+                # Artifact delivery is a host capability rather than an
+                # optional user resource.  Every ordinary OpenDrSai Agent can
+                # publish a file it created inside the Workspace without
+                # knowing whether the Host is Desktop, TUI, or a tenant-scoped
+                # server adapter.
+                core_tools = [deliver_artifact]
                 if "builtin.image_generation" in resolved_tools.enabled_ids:
                     core_tools.append(image_generation)
                 if "builtin.image_edit" in resolved_tools.enabled_ids:
                     core_tools.append(image_edit)
                 if "builtin.web-search" in resolved_tools.enabled_ids:
-                    tavily_config = _active_tavily_config(uid)
+                    tavily_config = _active_web_search_config(uid)
                     core_tools.append(create_web_search_tool(tavily_config))
                     core_tools.append(create_web_fetch_tool(tavily_config))
                 for remote_tool in remote_tools:
@@ -1853,6 +1874,8 @@ class AgentManager:
 
 
 manager = AgentManager()
+feedback_store = get_default_feedback_store()
+feedback_worker = FeedbackWorker(feedback_store)
 
 
 def _regression_control_enabled() -> bool:
@@ -1903,6 +1926,9 @@ async def lifespan(app: FastAPI):
 
     _restore_runtime_workspaces()
 
+    await _gateway_wechat.restore()
+    feedback_worker.start()
+
     logger.info(f"Database ready: {_DB_URI}")
 
     logger.info(f"Default user: {_get_user_id()}")
@@ -1919,6 +1945,9 @@ async def lifespan(app: FastAPI):
 
     if _terminal_provider_instance is not None:
         _terminal_provider_instance.close()
+
+    await _gateway_wechat.shutdown()
+    await feedback_worker.stop()
 
     if relay_stop is not None:
         relay_stop.set()
@@ -1949,6 +1978,9 @@ app = FastAPI(
     lifespan=lifespan,
 
 )
+
+app.include_router(_gateway_wechat.router())
+app.include_router(_create_feedback_router(worker_status=feedback_worker.status))
 
 _REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
 _remote_workspaces: dict[str, Path] = {}
@@ -2397,12 +2429,43 @@ async def image_edit(
     return await asyncio.to_thread(_runtime_image_adapter().edit, context, arguments, cancelled)
 
 
+async def deliver_artifact(
+    source_path: str,
+    destination_name: str | None = None,
+    display_name: str | None = None,
+    mime_type: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Deliver a Workspace file as a durable user-visible Artifact.
+
+    Use this for documents, spreadsheets, presentations, images, archives,
+    reports, and every other file requested as a user deliverable.  The source
+    must already exist inside the current Workspace.  The Host selects the
+    Workspace and storage namespace; never pass an internal Agent path.
+    """
+    context = _required_runtime_image_context()
+    arguments: dict[str, Any] = {"source_path": source_path}
+    if destination_name:
+        arguments["destination_name"] = destination_name
+    if display_name:
+        arguments["display_name"] = display_name
+    if mime_type:
+        arguments["mime_type"] = mime_type
+    if idempotency_key:
+        arguments["idempotency_key"] = idempotency_key
+    item = await asyncio.to_thread(_runtime_artifact_store().deliver, context, arguments)
+    if item.get("idempotent_replay") is not True:
+        _runtime_engine().append_event(context.run_id, "artifact.created", item)
+    return item
+
+
 def _runtime_tool_dispatcher() -> RuntimeToolDispatcher:
     global _runtime_tool_dispatcher_instance
     if _runtime_tool_dispatcher_instance is None:
         image_adapter = _runtime_image_adapter()
         tools = {
                 "artifact.publish": _publish_runtime_artifact,
+                "artifact.deliver": _deliver_runtime_artifact,
                 "workspace.inspect": _inspect_runtime_workspace,
                 "image_generation": image_adapter.generate,
                 "image_edit": image_adapter.edit,
@@ -2429,6 +2492,61 @@ def _publish_runtime_artifact(context: RuntimeRunContext, arguments: dict[str, A
     item = _runtime_artifact_store().publish(context, arguments)
     _runtime_engine().append_event(context.run_id, "artifact.created", item)
     return item
+
+
+def _deliver_runtime_artifact(context: RuntimeRunContext, arguments: dict[str, Any]) -> dict[str, Any]:
+    item = _runtime_artifact_store().deliver(context, arguments)
+    if item.get("idempotent_replay") is not True:
+        _runtime_engine().append_event(context.run_id, "artifact.created", item)
+    return item
+
+
+def _artifact_file_signature(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return int(stat.st_size), int(stat.st_mtime_ns)
+
+
+def _workspace_artifact_snapshot(workspace_path: Path) -> dict[str, tuple[int, int]]:
+    root = Path(workspace_path)
+    artifacts_root = root / "artifacts"
+    if not artifacts_root.is_dir():
+        return {}
+    snapshot: dict[str, tuple[int, int]] = {}
+    for path in artifacts_root.rglob("*"):
+        if not path.is_file():
+            continue
+        signature = _artifact_file_signature(path)
+        if signature is not None:
+            snapshot[path.relative_to(root).as_posix()] = signature
+    return snapshot
+
+
+_DELIVERABLE_EXTENSIONS = {
+    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".zip", ".tar", ".gz",
+}
+
+
+def _workspace_undelivered_snapshot(workspace_path: Path) -> dict[str, tuple[int, int]]:
+    """Bounded snapshot of likely user deliverables outside artifacts/."""
+    snapshot: dict[str, tuple[int, int]] = {}
+    for examined, path in enumerate(workspace_path.rglob("*")):
+        if examined >= 10_000:
+            break
+        if len(snapshot) >= 2000:
+            break
+        try:
+            relative = path.relative_to(workspace_path)
+            if not path.is_file() or not relative.parts or relative.parts[0] in {"artifacts", ".git"}:
+                continue
+            if path.suffix.lower() in _DELIVERABLE_EXTENSIONS:
+                snapshot[relative.as_posix()] = _artifact_file_signature(path)
+        except (OSError, ValueError):
+            continue
+    return snapshot
 
 
 def _inspect_runtime_workspace(context: RuntimeRunContext, arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -2654,6 +2772,8 @@ class GatewayOpenDrSaiAgentBackend:
         # Wall clock used to ignore leftover Workspace ``artifacts/`` files from
         # earlier tasks when this Run finishes (shared Desktop Workspace).
         run_started_at = time.time()
+        artifact_baseline = _workspace_artifact_snapshot(context.workspace_path)
+        undelivered_baseline = _workspace_undelivered_snapshot(context.workspace_path)
         try:
             run_stream = self._runner or manager.run_stream
             from drsai.backend.runtime.input_resources import autogen_input_task
@@ -2880,7 +3000,12 @@ class GatewayOpenDrSaiAgentBackend:
             # them would attach stale PNG/PPTX cards to unrelated later replies.
             artifacts_root = context.workspace_path / "artifacts"
             if artifacts_root.is_dir():
-                candidates = sorted(path for path in artifacts_root.rglob("*") if path.is_file())
+                candidates = sorted(
+                    path for path in artifacts_root.rglob("*")
+                    if path.is_file()
+                    and artifact_baseline.get(path.relative_to(context.workspace_path).as_posix())
+                    != _artifact_file_signature(path)
+                )
                 if len(candidates) > 32:
                     raise RuntimeExecutionError(
                         "artifact_output_limit_exceeded",
@@ -2904,6 +3029,21 @@ class GatewayOpenDrSaiAgentBackend:
                     descriptor = artifact_store.publish(context, {"path": relative})
                     services.emit(context, "artifact.created", descriptor)
                     existing.add(relative)
+            undelivered = [
+                relative for relative, signature in _workspace_undelivered_snapshot(context.workspace_path).items()
+                if undelivered_baseline.get(relative) != signature
+            ]
+            if undelivered:
+                services.emit(context, "notice", {
+                    "id": "artifact_not_delivered",
+                    "level": "warning",
+                    "code": "artifact_not_delivered",
+                    "message": (
+                        "A likely user deliverable was created outside artifacts/ and was not delivered. "
+                        "Publish it with deliver_artifact before presenting it as a result."
+                    ),
+                    "paths": undelivered[:8],
+                })
             services.emit(context, "agent.completed", {
                 "content": content,
                 **({"citations": citation_payloads} if citation_payloads else {}),
@@ -4088,6 +4228,8 @@ async def authenticate_desktop_gateway(request: Request, call_next):
                 },
                 headers={"X-Correlation-ID": correlation_id},
             )
+    if auth_context is not None:
+        _gateway_wechat.capture_platform_auth(auth_context)
     metric_operation = _runtime_metric_operation(request.method, request.url.path)
     metric_started = time.perf_counter()
     try:
@@ -4203,7 +4345,19 @@ async def health():
 
     """Health check endpoint. Desktop polls this to detect API readiness."""
 
-    return await manager.health()
+    payload = await manager.health()
+    return {
+        **payload,
+        "runtime_instance": {
+            "mode": "development" if os.environ.get("OPENDRSAI_DESKTOP_DEV") == "1" else "packaged",
+            "home": str(Path(os.environ.get("DRSAI_HOME") or Path.home() / ".drsai").resolve(strict=False)),
+            "port": int(os.environ.get("DRSAI_API_PORT") or 18642),
+            "pid": os.getpid(),
+            "instance_id": _GATEWAY_INSTANCE_ID,
+            "owner": "desktop-dev-watcher" if os.environ.get("DRSAI_GATEWAY_DEV_MANAGED") == "1" else "desktop-runtime",
+            "started_at": _GATEWAY_STARTED_AT,
+        },
+    }
 
 
 _RUNTIME_EVIDENCE_SOURCE_FILES = (
@@ -4632,9 +4786,13 @@ async def runtime_backend_restart(backend_id: str):
 
 
 @app.post("/v1/workspaces/{workspace_id}/agent-backends/{backend_id}/sessions/sync")
-async def runtime_backend_session_sync(workspace_id: str, backend_id: str):
+async def runtime_backend_session_sync(
+    workspace_id: str, backend_id: str, include_archived: bool = False,
+):
     try:
-        return await _runtime_agent_service().sync_backend_sessions(backend_id, workspace_id)
+        return await _runtime_agent_service().sync_backend_sessions(
+            backend_id, workspace_id, include_archived=include_archived,
+        )
     except RuntimeExecutionError as exc:
         raise _backend_account_http_error(exc) from exc
 
@@ -6471,7 +6629,7 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                     correlation_id=correlation_id,
                     source_client=(
                         str(metadata.get("source_client"))
-                        if metadata.get("source_client") in {"windows", "android"}
+                        if metadata.get("source_client") in {"windows", "android", "wechat"}
                         else "runtime"
                     ),
                     source_message_id=(
@@ -6516,9 +6674,34 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                     return False
                 return bool(str(resolved.get("api_key") or "").strip())
 
-            missing = classify_web_search_configuration(
-                perceptor_resources, credential_available=credential_available,
-            )
+            provider_mode = read_provider_mode(config_dir)
+            active_web_config = _active_web_search_config(request.user_id)
+            active_adapter = str(active_web_config.get("adapter") or "tavily") if active_web_config else ""
+            if active_adapter == "hai_managed_tavily":
+                managed_status = await _managed_tavily_public_resource_with_status()
+                if managed_status.get("status") != "available":
+                    code = str(managed_status.get("status") or "worker_unavailable")
+                    _runtime_engine().append_event(run_id, "trace.capability.discovery_failed", {
+                        "capability": "web.search", "provider": "hai_managed_tavily",
+                        "error_code": code[:80], "query_disclosed": False,
+                    })
+                    raise RuntimeExecutionError(
+                        code,
+                        "HAI-managed web search is not available for the current account. Retry after the service or account access is restored.",
+                        retryable=code in {"worker_unavailable", "provider_unavailable", "timeout", "rate_limited"},
+                    )
+                missing = None
+            elif active_web_config is not None:
+                missing = None
+            elif provider_mode == "none":
+                missing = None
+                _runtime_engine().append_event(run_id, "trace.capability.policy_denied", {
+                    "capability": "web.search", "provider_mode": "none", "query_disclosed": False,
+                })
+            else:
+                missing = classify_web_search_configuration(
+                    perceptor_resources, credential_available=credential_available,
+                )
             if missing is not None:
                 candidates = [
                     resource for resource in perceptor_resources
@@ -6566,7 +6749,7 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
             resuming_capability_configuration=resuming_capability_configuration,
             capability_resolution=capability_resolution,
         ):
-            tavily_config = _active_tavily_config(request.user_id)
+            tavily_config = _active_web_search_config(request.user_id)
             if tavily_config is not None:
                 capability_web_activation = (
                     "capability_configuration_resume"
@@ -6578,10 +6761,19 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                         display_prompt, tavily_config,
                     )
                 except Exception as exc:
+                    code = str(getattr(exc, "code", "web_search_unavailable"))
+                    provider = str(getattr(exc, "provider", tavily_config.get("adapter") or "tavily"))
+                    retryable = bool(getattr(exc, "retryable", True))
+                    request_id_value = str(getattr(exc, "request_id", ""))
+                    _runtime_engine().append_event(run_id, "trace.capability.prefetch_failed", {
+                        "capability": "web.search", "provider": provider[:80], "error_code": code[:80],
+                        "retryable": retryable, "request_id": request_id_value[:160] or None,
+                        "query_disclosed_with_active_configuration": True,
+                    })
                     raise RuntimeExecutionError(
-                        "web_search_unavailable",
-                        "The configured network search could not be completed. Retry this task or check the Perceptor connection.",
-                        retryable=True,
+                        code,
+                        "The configured network search could not be completed. Retry this task or check the Perceptor status.",
+                        retryable=retryable,
                     ) from exc
                 _runtime_engine().append_event(run_id, "trace.capability.prefetch_completed", {
                     "capability": "web.search",
@@ -7938,6 +8130,111 @@ async def list_models():
 
 _streaming_audio_adapter_factory = OpenAIStreamingTranscriptionAdapter
 _realtime_audio_adapter_factory = OpenAIRealtimeAudioAdapter
+_realtime_voice_probe_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_realtime_voice_probe_locks: dict[str, asyncio.Lock] = {}
+
+
+@app.post("/v1/config/agents/{agent_id}/realtime-voice-probe")
+async def probe_agent_realtime_voice(agent_id: str, force: bool = False):
+    """Run a bounded Provider handshake for the Agent's exact Realtime model."""
+    _require_local_opendrsai_agent(agent_id)
+    now = time.monotonic()
+    cached = _realtime_voice_probe_cache.get(agent_id)
+    if not force and cached is not None and cached[0] > now:
+        return cached[1]
+    probe_lock = _realtime_voice_probe_locks.setdefault(agent_id, asyncio.Lock())
+    await probe_lock.acquire()
+    now = time.monotonic()
+    cached = _realtime_voice_probe_cache.get(agent_id)
+    if not force and cached is not None and cached[0] > now:
+        probe_lock.release()
+        return cached[1]
+    adapter: OpenAIRealtimeAudioAdapter | None = None
+    checked_at = datetime.now(timezone.utc).isoformat()
+    try:
+        config = await asyncio.to_thread(load_model_provider_config)
+        snapshot = await asyncio.to_thread(load_agent_model_policy, agent_id)
+        selection = snapshot.policy.realtime_voice_model
+        if selection is None or selection.mode != "explicit" or selection.ref is None:
+            raise ModelOperationRoutingError("agent_model_unbound", "Agent realtime voice model must be explicit")
+        resolved = await asyncio.to_thread(
+            resolve_model_ref, config,
+            provider_id=selection.ref.provider_id,
+            model_id=selection.ref.model_id,
+            require_credentials=True,
+        )
+        adapter = _realtime_audio_adapter_factory()
+        await asyncio.wait_for(adapter.connect(resolved), timeout=12)
+        await adapter.send_json({
+            "type": "session.update",
+            "session": {
+                "type": "realtime",
+                "model": selection.ref.model_id,
+                "output_modalities": ["audio"],
+                "audio": {
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "transcription": {"model": "gpt-4o-mini-transcribe"},
+                        "turn_detection": {"type": "server_vad", "create_response": True, "interrupt_response": True},
+                    },
+                    "output": {"format": {"type": "audio/pcm", "rate": 24000}},
+                },
+                "tool_choice": "auto",
+                "tools": [{
+                    "type": "function", "name": "realtime_probe_noop",
+                    "description": "A no-op tool used only to verify Realtime session configuration.",
+                    "parameters": {"type": "object", "additionalProperties": False, "properties": {}},
+                }],
+            },
+        })
+        events = adapter.events().__aiter__()
+        accepted = None
+        for _ in range(4):
+            event = await asyncio.wait_for(events.__anext__(), timeout=8)
+            if event.get("type") == "error":
+                raise ModelProtocolError("capability_unverified", "Realtime Provider rejected the capability probe")
+            if event.get("type") in {"session.created", "session.updated"}:
+                accepted = event
+                if event.get("type") == "session.updated":
+                    break
+        if accepted is None:
+            raise ModelProtocolError("invalid_provider_response", "Realtime Provider did not confirm the session")
+        result = {
+            "status": "verified",
+            "provider_id": selection.ref.provider_id,
+            "model_id": selection.ref.model_id,
+            "checked_at": checked_at,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            "evidence_kind": "real_provider",
+            "capabilities": {
+                "input_transcription": True,
+                "output_transcription": True,
+                "server_vad": True,
+                "response_cancel": True,
+                "conversation_truncation": True,
+                "tool_calling": True,
+            },
+        }
+        _realtime_voice_probe_cache[agent_id] = (now + 300, result)
+        return result
+    except (ModelOperationRoutingError, ModelProviderConfigError, ModelProtocolError, asyncio.TimeoutError) as exc:
+        code = str(getattr(exc, "code", "provider_timeout" if isinstance(exc, asyncio.TimeoutError) else "capability_unverified"))
+        result = {
+            "status": "unavailable",
+            "provider_id": None,
+            "model_id": None,
+            "checked_at": checked_at,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=15)).isoformat(),
+            "evidence_kind": "real_provider",
+            "error_code": code,
+            "capabilities": {},
+        }
+        _realtime_voice_probe_cache[agent_id] = (now + 15, result)
+        return result
+    finally:
+        if adapter is not None:
+            await adapter.close()
+        probe_lock.release()
 
 
 @app.websocket("/v1/audio/duplex")
@@ -7952,7 +8249,7 @@ async def audio_duplex_stream(websocket: WebSocket):
             await websocket.close(code=4401); return
         if not isinstance(start, dict) or start.get("type") != "start" or not verify_gateway_instance(start.get("token")):
             await websocket.close(code=4401); return
-        if start.get("protocolVersion") != 1:
+        if start.get("protocolVersion") != 2:
             await websocket.close(code=4400, reason="Unsupported Duplex audio protocol"); return
         if not all(isinstance(start.get(key), str) and 0 < len(start[key]) <= 128 for key in ("sessionId", "providerId", "modelId")):
             await websocket.close(code=4400, reason="Invalid Duplex Session identity"); return
@@ -9687,7 +9984,32 @@ async def put_user_md(
 @app.get("/v1/config/perceptors")
 async def list_perceptors(user_id: str | None = Query(default=None)):
     resources = list_perceptor_resources(_get_config_dir(user_id))
-    return {"object": "list", "data": [public_perceptor_payload(item) for item in resources]}
+    data = [public_perceptor_payload(item) for item in resources]
+    if get_platform_auth() is not None:
+        data.insert(0, await _managed_tavily_public_resource_with_status())
+    return {"object": "list", "data": data}
+
+
+@app.get("/v1/config/perceptors/web-search/provider-policy")
+async def get_web_search_provider_policy(user_id: str | None = Query(default=None)):
+    config_dir = _get_config_dir(user_id)
+    selection = resolve_web_search_provider(
+        read_provider_mode(config_dir),
+        platform_authenticated=get_platform_auth() is not None,
+        byok_available=_active_tavily_config_for_dir(config_dir) is not None,
+    )
+    return selection.public_dict()
+
+
+@app.put("/v1/config/perceptors/web-search/provider-policy")
+async def update_web_search_provider_policy(req: WebSearchProviderPolicyRequest, user_id: str | None = Query(default=None)):
+    config_dir = _get_config_dir(user_id)
+    mode = write_provider_mode(config_dir, req.mode)
+    await manager.mark_user_config_stale(_effective_user_id(user_id))
+    return resolve_web_search_provider(
+        mode, platform_authenticated=get_platform_auth() is not None,
+        byok_available=_active_tavily_config_for_dir(config_dir) is not None,
+    ).public_dict()
 
 
 @app.post("/v1/config/perceptors")
@@ -9732,6 +10054,17 @@ async def test_perceptor(
 ):
     config_dir = _get_config_dir(user_id)
     try:
+        if perceptor_id == "hai-managed-web-search":
+            if get_platform_auth() is None:
+                return {"perceptor_id": perceptor_id, "ok": False, "status": "login_required", "error": "login_required"}
+            config = _managed_tavily_config()
+            if capability == "extract":
+                document = await web_fetch("https://www.hepix.org/", max_chars=2_000, provider_config=config)
+                ok = bool(document.get("content"))
+                return {**_managed_tavily_public_resource(), "ok": ok, "status": "available" if ok else "degraded", "tested": "extract", "provider": document.get("provider"), "final_url": document.get("final_url"), "content_chars": len(str(document.get("content") or "")), "receipt": document.get("receipt", {})}
+            raw = await web_search("OpenDrSai", 1, provider_config=config)
+            rows = raw.get("results") if isinstance(raw, Mapping) else None
+            return {**_managed_tavily_public_resource(), "ok": isinstance(rows, list), "status": "available", "tested": "search", "result_count": len(rows) if isinstance(rows, list) else 0, "provider": raw.get("provider") if isinstance(raw, Mapping) else None, "receipt": raw.get("receipt", {}) if isinstance(raw, Mapping) else {}}
         resource = get_perceptor_resource(config_dir, perceptor_id)
         config = resolve_perceptor_config(resource, config_dir)
         if resource.adapter != "tavily":
@@ -9749,12 +10082,17 @@ async def test_perceptor(
     except Exception as exc:
         code = str(getattr(exc, "code", "") or "runtime_unavailable")
         status = {
+            "login_required": "login_required",
+            "permission_denied": "permission_denied",
             "authentication_failed": "credential_invalid",
             "quota_exhausted": "quota_exhausted",
             "rate_limited": "quota_exhausted",
             "timeout": "provider_timeout",
             "network_error": "network_unavailable",
             "upstream_unavailable": "network_unavailable",
+            "worker_unavailable": "worker_unavailable",
+            "provider_unavailable": "provider_unavailable",
+            "invalid_request": "invalid_request",
         }.get(code, "runtime_unavailable")
         # The public response contains a stable category only; provider bodies,
         # request headers, and credentials remain outside the UI and telemetry.
@@ -9797,8 +10135,9 @@ def _builtin_web_search_resource() -> ToolResource:
 
 def _web_search_status(user_id: str | None = None) -> dict[str, object]:
     user_id = user_id if isinstance(user_id, str) else None
-    if _active_tavily_config(user_id) is not None:
-        return {"status": "available", "provider": "tavily", "error": None, "capabilities": ["web.search", "web.extract", "network.public_https"]}
+    active = _active_web_search_config(user_id)
+    if active is not None:
+        return {"status": "available", "provider": active.get("adapter", "tavily"), "error": None, "capabilities": ["web.search", "web.extract", "network.public_https"]}
     # P2 requires an explicit user-owned Perceptor. Host browser availability
     # must not bypass guided configuration or silently disclose a query.
     return {
@@ -9811,6 +10150,54 @@ def _web_search_status(user_id: str | None = None) -> dict[str, object]:
 
 def _active_tavily_config(user_id: str | None = None) -> dict[str, object] | None:
     return _active_tavily_config_for_dir(_get_config_dir(user_id))
+
+
+def _managed_tavily_config() -> dict[str, object]:
+    return {"adapter": "hai_managed_tavily", "model": "hepai/tavily-web-search-v1", "timeout_seconds": 20, "max_document_chars": 20_000}
+
+
+def _active_web_search_config(user_id: str | None = None) -> dict[str, object] | None:
+    config_dir = _get_config_dir(user_id)
+    byok = _active_tavily_config_for_dir(config_dir)
+    selection = resolve_web_search_provider(
+        read_provider_mode(config_dir),
+        platform_authenticated=get_platform_auth() is not None,
+        byok_available=byok is not None,
+    )
+    if selection.provider == "hai_managed_tavily": return _managed_tavily_config()
+    if selection.provider == "tavily": return byok
+    return None
+
+
+def _managed_tavily_public_resource() -> dict[str, object]:
+    return {
+        "perceptor_id": "hai-managed-web-search", "name": "HAI 托管网页搜索",
+        "kind": "public_web", "adapter": "hai_managed_tavily", "enabled": True,
+        "capabilities": ["web.search", "web.extract"],
+        "config": {"managed": True, "credential_source": "platform_session"},
+        "revision": "platform:hai-tavily-v1", "dynamic": True, "status": "available",
+    }
+
+
+async def _managed_tavily_public_resource_with_status() -> dict[str, object]:
+    resource = _managed_tavily_public_resource()
+    try:
+        from drsai.backend.runtime.web_search.hai_tavily import HaiTavilyClient, HaiTavilyConfig
+        discovered = await HaiTavilyClient(HaiTavilyConfig.from_mapping(_managed_tavily_config())).capabilities()
+        available = discovered.get("available") is True and discovered.get("enabled") is True
+        functions = discovered.get("functions") or discovered.get("capabilities")
+        return {
+            **resource, "enabled": discovered.get("enabled") is True,
+            "status": "available" if available else str(discovered.get("error") or "worker_unavailable"),
+            "platform": {
+                "available": discovered.get("available") is True,
+                "enabled": discovered.get("enabled") is True,
+                "functions": [str(item) for item in functions] if isinstance(functions, list) else [],
+            },
+        }
+    except Exception as exc:
+        code = str(getattr(exc, "code", "worker_unavailable"))
+        return {**resource, "enabled": False, "status": code, "platform": {"available": False, "enabled": False, "functions": []}}
 
 
 def _active_tavily_config_for_dir(config_dir: Path) -> dict[str, object] | None:

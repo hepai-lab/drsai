@@ -120,6 +120,7 @@ def test_contract_classifies_current_schema_and_blocks_unreviewed_versions() -> 
     assert compatibility_for_version("0.147.0-alpha.1.2") is CodexCompatibility.REVIEWED_COMPATIBLE
     assert compatibility_for_version("999.0.0") is CodexCompatibility.BLOCKED
     assert compatibility_for_identity(baseline, "sha256:7d79fe309dd7520843459070f3884ecf0e39cee2620c1c49aad6efb4eca76ecb") is CodexCompatibility.EXACT
+    assert compatibility_for_identity(baseline, None) is CodexCompatibility.BLOCKED
     assert compatibility_for_identity(baseline, "sha256:" + "0" * 64) is CodexCompatibility.BLOCKED
     assert compatibility_for_identity("0.144.5", "0da5949167c30a09e459d94559e1ada6910d6ca503a5b5f0e09c0f8eae5ae931") is CodexCompatibility.REVIEWED_COMPATIBLE
     assert classify_notification("thread/environment/connected") is NotificationClass.KNOWN_IGNORED

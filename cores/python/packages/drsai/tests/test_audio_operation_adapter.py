@@ -28,14 +28,17 @@ def _resolved(role, model, operation):
     return resolve_agent_operation(config, policy, role=role, operation=operation, require_credentials=False)
 
 
-def _resolved_hepai(role, model, operation):
-    config = parse_user_config({"model_providers": {"hepai": {
+def _resolved_hepai(role, model, operation, *, api_key=None):
+    provider = {
         "base_url": "https://configured.invalid/apiv2/v1", "requires_api_key": False,
         "models": {
             "tts-1": {"input_modalities": ["text"], "output_modalities": ["audio"], "capabilities": ["text_to_speech"]},
             "whisper-1": {"input_modalities": ["audio"], "output_modalities": ["text"], "capabilities": ["speech_to_text"]},
         },
-    }}})
+    }
+    if api_key is not None:
+        provider["api_key"] = api_key
+    config = parse_user_config({"model_providers": {"hepai": provider}})
     selection = AgentModelSelection("explicit", ModelRef("hepai", model))
     policy = AgentModelPolicy(
         agent_id="my-drsai",
@@ -110,6 +113,29 @@ def test_hepai_audio_uses_request_scoped_oidc(role, model, operation, path) -> N
             adapter.synthesize(_resolved_hepai(role, model, operation), text="hello")
 
     assert seen == {"path": path, "authorization": "Bearer oidc-audio-token"}
+
+
+@pytest.mark.parametrize("static_key", [None, "static-key-must-not-authorize-hepai"])
+def test_hepai_audio_without_oidc_fails_before_request(static_key) -> None:
+    requested = False
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal requested
+        requested = True
+        return httpx.Response(200, json={"text": "must not be reached"})
+
+    adapter = OpenAIAudioOperationAdapter(transport=httpx.MockTransport(handler))
+    with pytest.raises(ModelProtocolError) as raised:
+        adapter.transcribe(
+            _resolved_hepai(
+                "speech_to_text_model", "whisper-1", "speech_to_text",
+                api_key=static_key,
+            ),
+            audio=b"RIFFxxxxWAVEaudio",
+        )
+
+    assert raised.value.code == "credential_unavailable"
+    assert requested is False
 
 
 def test_tts_invalid_container_and_stt_empty_text_fail_closed() -> None:

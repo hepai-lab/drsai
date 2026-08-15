@@ -191,6 +191,16 @@ export interface ToolCompletePayload {
   duration_ms: number
 }
 
+export interface ArtifactCreatedPayload {
+  artifact_id: string
+  name: string
+  path?: string
+  mime?: string
+  size?: number
+  previewable?: boolean
+  downloadable?: boolean
+}
+
 // ── Approval / clarify / secret ──────────────────────────────────────
 
 export interface ApprovalRequestPayload {
@@ -243,6 +253,7 @@ export type GatewayEvent =
   | (BaseEvent & { type: 'tool.start'; payload: ToolStartPayload })
   | (BaseEvent & { type: 'tool.progress'; payload: { tool_id?: string; name?: string; preview?: string } })
   | (BaseEvent & { type: 'tool.complete'; payload: ToolCompletePayload })
+  | (BaseEvent & { type: 'artifact.created'; payload: ArtifactCreatedPayload })
   // Subagent
   | (BaseEvent & { type: 'subagent.spawn_requested'; payload: { source?: string; goal?: string } })
   | (BaseEvent & { type: 'subagent.start'; payload: { source?: string; goal?: string } })

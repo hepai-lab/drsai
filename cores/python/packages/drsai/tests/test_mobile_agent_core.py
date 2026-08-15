@@ -428,6 +428,27 @@ def test_tool_loop_returns_to_model_and_never_reexecutes_completed_call() -> Non
     assert core.snapshot("run-1")["completed_side_effects"] == ["call-1"]
 
 
+def test_provider_reasoning_continuation_is_replayed_once_but_never_checkpointed() -> None:
+    core = create_mobile_agent_core()
+    core.handle(command(MessageType.START_RUN, 0, {
+        "input": "time", "model_id": "model-1", "tools": [tool_schema("clock")],
+    }))
+    tool = core.handle(command(MessageType.MODEL_COMPLETED, 1, {
+        "provider_reasoning_content": "opaque-provider-continuation",
+        "tool_calls": [{"call_id": "call-1", "name": "clock", "arguments": {}}],
+    }))
+    checkpoint = next(item for item in tool if item.message_type is MessageType.CHECKPOINT_REQUEST)
+    assert "reasoning_content" not in str(checkpoint.payload)
+    assert "reasoning_content" not in str(core.snapshot("run-1"))
+
+    output = core.handle(command(MessageType.TOOL_RESULT, 2, {
+        "call_id": "call-1", "succeeded": True, "content": {"time": "12:00"},
+    }))
+    request = next(item for item in output if item.message_type is MessageType.MODEL_REQUEST)
+    assistant = next(message for message in request.payload["messages"] if message["role"] == "assistant")
+    assert assistant["reasoning_content"] == "opaque-provider-continuation"
+
+
 def test_tool_inspection_is_visible_in_event_but_excluded_from_model_context() -> None:
     core = create_mobile_agent_core()
     core.handle(command(MessageType.START_RUN, 0, {

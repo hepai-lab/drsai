@@ -52,7 +52,7 @@ CONVERSATION_ITEM_KINDS = {
     "error",
 }
 CONVERSATION_ROLES = {"user", "assistant", "system", "tool", None}
-SOURCE_CLIENTS = {"windows", "android", "runtime"}
+SOURCE_CLIENTS = {"windows", "android", "runtime", "wechat"}
 _SECRET_KEY = re.compile(
     r"(?i)^(?:authorization|cookie|token|secret|password|private_?key|api_?key|"
     r"access_?token|refresh_?token|id_?token|client_?secret|registration_?token|"

@@ -156,6 +156,7 @@ function estimatePartHeight(
     setCachedHeight(part.id, part.chunks.length, cols, rows)
     return rows
   }
+  if (part.kind === 'artifact') return 1
   // Tool part — find the referenced tool
   const tool = tools.find(t => t.id === part.toolId)
   if (!tool) return 1
@@ -374,6 +375,10 @@ export function StreamingAssistant() {
           const tool = cur.tools.find(t => t.id === part.toolId)
           if (!tool) return null
           return <ToolCallLine key={part.id} tool={tool} />
+        }
+        if (part.kind === 'artifact') {
+          const location = part.path || part.name
+          return <Text key={part.id} color={theme.primary}>{`📄 ${part.name} · ${location} · /artifact ${part.artifactId}`}</Text>
         }
         // Text part — clean and render as plain <Text> (no Markdown
         // during streaming, for performance).

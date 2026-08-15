@@ -352,7 +352,7 @@ class StructuredConversationProjector:
             "artifactType": artifact_type,
             "name": str(payload.get("name") or payload.get("title") or "Artifact"),
         }
-        for source_key, target_key in (("summary", "summary"), ("path", "path"), ("url", "url"), ("mime", "mime"), ("sha256", "sha256"), ("source_call_id", "sourceCallId")):
+        for source_key, target_key in (("summary", "summary"), ("path", "path"), ("url", "url"), ("mime", "mime"), ("mime_type", "mime"), ("sha256", "sha256"), ("source_call_id", "sourceCallId")):
             if payload.get(source_key):
                 part[target_key] = str(payload[source_key])
         if isinstance(payload.get("size"), int) and not isinstance(payload.get("size"), bool):

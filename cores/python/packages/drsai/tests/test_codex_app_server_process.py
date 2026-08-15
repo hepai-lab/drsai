@@ -58,6 +58,9 @@ async def test_runtime_shares_one_app_server_across_concurrent_callers(tmp_path:
         assert supervisor.start_count == 1 and supervisor.generation == 1
         health = await supervisor.health()
         assert health["available"] is True and health["pid"] == processes[0].pid
+        assert health["state"] == "initializing"
+        supervisor.mark_initialized(supervisor.generation)
+        assert (await supervisor.health())["state"] == "ready"
     finally:
         await supervisor.close()
     assert processes[0].returncode is not None
@@ -87,6 +90,7 @@ async def test_failure_backoff_circuit_breaker_and_controlled_restart(tmp_path: 
         with pytest.raises(RuntimeExecutionError) as caught:
             await supervisor.start()
         assert caught.value.code == "codex_app_server_restart_exhausted"
+        assert (await supervisor.health())["state"] == "circuit_open"
         assert supervisor.start_count == 3
         assert delays.count(0.01) == 1
         assert delays.count(0.02) == 1
@@ -105,6 +109,17 @@ async def test_failure_backoff_circuit_breaker_and_controlled_restart(tmp_path: 
         assert (await healthy.health())["recent_failures"] == 0
     finally:
         await healthy.close()
+
+
+def test_generation_diagnostics_are_bounded():
+    supervisor = CodexAppServerProcess(_development_provider(Path.cwd()), verify_binary=False)
+    supervisor.generation = 100_000
+    supervisor._failed_generations = set(range(100_000))
+    supervisor._controlled_generations = set(range(100_000))
+    supervisor._prune_generation_state()
+    assert len(supervisor._failed_generations) <= 32
+    assert len(supervisor._controlled_generations) <= 32
+    assert min(supervisor._failed_generations) >= supervisor.generation - 32
 
 
 @pytest.mark.anyio

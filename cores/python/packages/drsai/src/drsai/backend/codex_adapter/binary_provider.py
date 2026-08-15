@@ -67,6 +67,18 @@ class CodexBinary:
     source: str
     release_safe: bool
     manifest: Mapping[str, Any] | None = None
+    binary_digest: str | None = None
+
+    def identity(self) -> dict[str, Any]:
+        """Content-free identity shared by health, diagnostics and evidence."""
+        return {
+            "path": str(self.path),
+            "source": self.source,
+            "version": self.version,
+            "binary_digest": self.binary_digest,
+            "schema_digest": self.schema_digest,
+            "release_safe": self.release_safe,
+        }
 
 
 class CodexArtifactStore:
@@ -140,8 +152,11 @@ class CodexArtifactStore:
             raise RuntimeExecutionError("codex_artifact_not_installed", "No managed Codex artifact is installed.")
         directory = self.versions / selected
         manifest = self.verify(directory)
-        return CodexBinary(directory / manifest["executable"], manifest["version"],
-                           manifest["schema_digest"], "managed", True, manifest)
+        return CodexBinary(
+            directory / manifest["executable"], manifest["version"],
+            manifest["schema_digest"], "managed", True, manifest,
+            binary_digest=manifest["binary_digest"],
+        )
 
     def _read_pointer(self, name: str) -> str | None:
         try:
@@ -195,7 +210,11 @@ class CodexBinaryProvider:
             path = Path(override).resolve(strict=False)
             if not path.is_file():
                 raise RuntimeExecutionError("codex_development_override_invalid", "CODEX_BIN does not name a file.")
-            return CodexBinary(path, _probe_codex_version(path), None, "CODEX_BIN", False)
+            version = _probe_codex_version(path)
+            return CodexBinary(
+                path, version, _reviewed_schema_digest(version), "CODEX_BIN", False,
+                binary_digest=_sha256(path),
+            )
         try:
             return self.store.resolve()
         except RuntimeExecutionError as exc:
@@ -218,7 +237,21 @@ class CodexBinaryProvider:
                 "codex_binary_version_unreadable",
                 "The discovered Codex Desktop CLI could not be started by the Runtime.",
             )
-        return CodexBinary(discovered, version, None, "codex-desktop", True)
+        return CodexBinary(
+            discovered, version, _reviewed_schema_digest(version), "codex-desktop", True,
+            binary_digest=_sha256(discovered),
+        )
+
+
+def _reviewed_schema_digest(version: str | None) -> str | None:
+    if not version:
+        return None
+    # The signed Desktop executable does not expose Schema bytes at runtime.
+    # Bind its reported version to the exact reviewed Schema digest; the
+    # executable digest separately proves which signed bytes were launched.
+    from drsai.backend.codex_adapter.stable_contract import REVIEWED_SCHEMA_SHA256
+    value = REVIEWED_SCHEMA_SHA256.get(version)
+    return f"sha256:{value}" if value else None
 
 
 def discover_windows_codex_desktop(environ: Mapping[str, str] | None = None) -> Path | None:

@@ -1301,6 +1301,35 @@ def cmd_copy(ctx: SlashContext) -> dict:
     }
 
 
+def cmd_artifact(ctx: SlashContext) -> dict:
+    """Inspect or read a delivered Workspace Artifact by stable ID."""
+    if not ctx.session:
+        return {"output": "Error: no active session"}
+    parts = ctx.args.split()
+    if not parts:
+        return {"output": "Usage: /artifact <artifact-id> [read]"}
+    from drsai.backend.tui_gateway.handlers.artifact import _find
+
+    path, descriptor = _find(ctx.session.session_id, parts[0])
+    lines = [
+        f"Artifact: {descriptor['name']}",
+        f"ID: {descriptor['artifact_id']}",
+        f"Workspace path: {descriptor['path']}",
+        f"MIME: {descriptor['mime']}",
+        f"Size: {descriptor['size']} bytes",
+        f"SHA-256: {descriptor['sha256']}",
+    ]
+    if len(parts) > 1 and parts[1].lower() == "read":
+        if not descriptor["previewable"]:
+            lines.append("This binary Artifact is downloadable through artifact.chunk but is not rendered inline.")
+        else:
+            content = path.read_bytes()[:64 * 1024].decode("utf-8", errors="replace")
+            lines.extend(["", content, "" if path.stat().st_size <= 64 * 1024 else "[truncated at 64 KiB]"])
+    else:
+        lines.append(f"Read text: /artifact {descriptor['artifact_id']} read")
+    return {"output": "\n".join(lines)}
+
+
 def cmd_status(ctx: SlashContext) -> str:
     """Show agent and session status (compact)."""
     if not ctx.session:
@@ -1778,6 +1807,7 @@ SLASH_HANDLERS: dict[str, Any] = {
     "archive": cmd_archive,
     "resume": cmd_resume,
     "copy": cmd_copy,
+    "artifact": cmd_artifact,
     "status": cmd_status,
     "setup": cmd_setup,
     "env": cmd_setup,

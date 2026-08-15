@@ -57,6 +57,7 @@ function estimatePartHeight(
     const cleanText = stripTodoWriteArtifacts(stripThinkBlocks(part.text))
     return countVisualRows(cleanText, cols)
   }
+  if (part.kind === 'artifact') return 1
   const tool = tools.find(t => t.id === part.toolId)
   if (!tool) return 1
   if (toolDetail === 'compact') return 1
@@ -188,6 +189,8 @@ function renderTurn(
     if (part.kind === 'tool') {
       const tool = tools.find(t => t.id === part.toolId)
       if (tool) lines.push(...renderToolLine(tool))
+    } else if (part.kind === 'artifact') {
+      lines.push(`📄 ${part.name} · ${part.path || part.name}`)
     } else {
       const maxRows = idx === 0 ? firstPartMaxRows : 0
       lines.push(...renderTextSegment(part.text, maxRows, effectiveCols))

@@ -117,6 +117,9 @@ def test_development_provider_reports_cli_version(tmp_path: Path):
     binary = provider.resolve()
     assert binary.version == "0.144.5"
     assert binary.source == "CODEX_BIN" and binary.release_safe is False
+    assert binary.binary_digest == _digest(executable)
+    assert binary.schema_digest == "sha256:0da5949167c30a09e459d94559e1ada6910d6ca503a5b5f0e09c0f8eae5ae931"
+    assert binary.identity()["path"] == str(executable.resolve())
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Codex Desktop discovery is Windows-specific")
@@ -144,6 +147,7 @@ def test_product_discovers_latest_signed_codex_desktop_without_environment_overr
     assert binary.path == latest.resolve()
     assert binary.version == "0.146.0"
     assert binary.source == "codex-desktop" and binary.release_safe is True
+    assert binary.binary_digest == _digest(latest)
     with patch("drsai.backend.codex_adapter.binary_provider.subprocess.run") as run:
         run.return_value = type("Result", (), {"returncode": 0, "stdout": "codex-cli 0.146.0", "stderr": ""})()
         assert verify_codex_compatibility(binary) == "0.146.0"

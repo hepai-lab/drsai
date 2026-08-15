@@ -435,6 +435,18 @@ def phase_execute(
     if cancelled_run["status"] != "cancelled":
         raise RuntimeError(f"Cancel did not converge: {cancelled_run}; execute={cancel_result}")
 
+    # Refresh the TTL-bound catalog immediately before capturing readiness;
+    # a long 30-turn acceptance is expected to outlive the normal cache TTL.
+    client.call("GET", "/v1/agent-backends/codex/models?refresh=true")
+    capabilities = client.call("GET", "/v1/capabilities")
+    backend_capabilities = capabilities.get("agent_backends", {})
+    codex_capability = (
+        backend_capabilities.get("codex", {})
+        if isinstance(backend_capabilities, dict)
+        else next((row for row in backend_capabilities if row.get("backend_id") == "codex"), {})
+    )
+    if codex_capability.get("readiness", {}).get("executable", {}).get("state") != "ready":
+        raise RuntimeError(f"Codex was not executable at final readiness capture: {codex_capability.get('readiness')}")
     state = {
         "workspace_id": workspace_id,
         "runs": [*continuous_runs, resource_run["run_id"], approval["run_id"], cancelled["run_id"]],
@@ -447,6 +459,12 @@ def phase_execute(
         "input_resources": {"kinds": [item["kind"] for item in input_resources], "markers": expected_resource_markers,
                             "all_markers_observed": not missing_markers},
         "processing_order": processing_order,
+        "backend_identity": {
+            "pid": codex_capability.get("pid"),
+            "binary": codex_capability.get("binary_identity"),
+            "contract": codex_capability.get("contract"),
+            "readiness": codex_capability.get("readiness"),
+        },
         "multi_turn": {
             "session_id": completion_session_id,
             "thread_id": first_backend.get("thread_id"),

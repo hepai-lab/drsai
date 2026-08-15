@@ -95,6 +95,8 @@ class CodexAppServerProcess:
         self._failed_generations: set[int] = set()
         self._controlled_generations: set[int] = set()
         self._job_handles: dict[int, int] = {}
+        self._state = "stopped"
+        self._last_failure: dict[str, object] | None = None
 
     async def start(self) -> asyncio.subprocess.Process:
         async with self._lock:
@@ -106,6 +108,7 @@ class CodexAppServerProcess:
             now = self.clock()
             self._trim_failures(now)
             if len(self._failures) >= self.policy.max_failures:
+                self._state = "circuit_open"
                 raise RuntimeExecutionError(
                     "codex_app_server_restart_exhausted",
                     "Codex App Server exceeded its restart failure window.",
@@ -113,8 +116,11 @@ class CodexAppServerProcess:
                     detail={"failures": len(self._failures), "window_seconds": self.policy.failure_window},
                 )
             if self._failures:
+                self._state = "restarting"
                 delay = min(self.policy.max_delay, self.policy.base_delay * (2 ** (len(self._failures) - 1)))
                 await self.sleep(delay)
+            else:
+                self._state = "starting"
             binary = self.binary_provider.resolve()
             if self.verify_binary:
                 verify_codex_compatibility(binary)
@@ -130,6 +136,8 @@ class CodexAppServerProcess:
                 )
             except (OSError, ValueError) as exc:
                 self._record_failure()
+                self._state = "stopped"
+                self._last_failure = {"code": "codex_app_server_start_failed", "reason": type(exc).__name__}
                 raise RuntimeExecutionError(
                     "codex_app_server_start_failed", "Codex App Server could not start.", retryable=True,
                     detail={"reason": type(exc).__name__},
@@ -137,6 +145,8 @@ class CodexAppServerProcess:
             self.process = process
             self.binary = binary
             self.generation += 1
+            self._prune_generation_state()
+            self._state = "initializing"
             self.start_count += 1
             job_handle = self._create_windows_job(process)
             if job_handle:
@@ -150,13 +160,15 @@ class CodexAppServerProcess:
                 # small bounded settle window so an immediately crashing app-server is
                 # never returned to callers as healthy under scheduler load.
                 if process.returncode is None and self._wait_task:
-                    settle = min(0.05, max(0.01, self.policy.startup_grace))
+                    settle = min(0.2, max(0.05, self.policy.startup_grace * 2))
                     try:
                         await asyncio.wait_for(asyncio.shield(self._wait_task), timeout=settle)
                     except asyncio.TimeoutError:
                         pass
             if process.returncode is not None:
                 self._record_process_failure(self.generation)
+                self._state = "stopped"
+                self._last_failure = {"code": "codex_app_server_exited_early", "exit_code": process.returncode}
                 await self._release_process_streams(process)
                 raise RuntimeExecutionError(
                     "codex_app_server_exited_early", "Codex App Server exited during startup.", retryable=True,
@@ -165,8 +177,14 @@ class CodexAppServerProcess:
             return process
 
     async def restart(self) -> asyncio.subprocess.Process:
+        self._state = "restarting"
         await self.stop(record_failure=False)
         return await self.start()
+
+    def mark_initialized(self, generation: int) -> None:
+        if generation == self.generation and self.process and self.process.returncode is None:
+            self._state = "ready"
+            self._last_failure = None
 
     async def stop(self, *, record_failure: bool = False) -> None:
         async with self._lock:
@@ -180,12 +198,14 @@ class CodexAppServerProcess:
             await self._release_process_streams(process)
             if record_failure:
                 self._record_failure()
+            self._state = "stopped"
 
     async def close(self) -> None:
         async with self._lock:
             if self._closed:
                 return
             self._closed = True
+            self._state = "closed"
             process = self.process
             if process and process.returncode is None:
                 self._controlled_generations.add(self.generation)
@@ -218,8 +238,11 @@ class CodexAppServerProcess:
             "generation": self.generation,
             "start_count": self.start_count,
             "recent_failures": len(self._failures),
+            "state": self._state,
+            "last_failure": dict(self._last_failure) if self._last_failure else None,
             "version": self.binary.version if self.binary else None,
             "release_safe": self.binary.release_safe if self.binary else None,
+            "binary_identity": self.binary.identity() if self.binary else None,
             "stderr": self.stderr,
         }
 
@@ -241,6 +264,12 @@ class CodexAppServerProcess:
     def _trim_failures(self, now: float) -> None:
         while self._failures and now - self._failures[0] > self.policy.failure_window:
             self._failures.popleft()
+
+    def _prune_generation_state(self) -> None:
+        """Keep only a bounded diagnostic tail; old generations are inert."""
+        floor = max(0, self.generation - 32)
+        self._failed_generations = {value for value in self._failed_generations if value >= floor}
+        self._controlled_generations = {value for value in self._controlled_generations if value >= floor}
 
     def _observe_dead_process(self) -> None:
         if self.process and self.process.returncode is not None:
@@ -265,6 +294,8 @@ class CodexAppServerProcess:
             ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(handle)
         if not self._closed and generation == self.generation:
             self._record_process_failure(generation)
+            self._state = "stopped"
+            self._last_failure = {"code": "codex_app_server_exited", "exit_code": process.returncode}
 
     async def _terminate(self, process: asyncio.subprocess.Process) -> None:
         if process.returncode is not None:

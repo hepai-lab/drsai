@@ -590,7 +590,8 @@
           "enum": [
             "windows",
             "android",
-            "runtime"
+              "runtime",
+              "wechat"
           ]
         },
         "source_message_id": {

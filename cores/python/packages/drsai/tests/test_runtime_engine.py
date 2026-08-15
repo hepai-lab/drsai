@@ -44,6 +44,120 @@ def test_session_lifecycle_pagination_and_workspace_binding(engine: RuntimeEngin
         db.execute("UPDATE runtime_runs SET worktree_id=NULL WHERE run_id=?", (run["run_id"],))
 
 
+def test_channel_session_binding_is_atomic_private_and_visible(engine: RuntimeEngine) -> None:
+    def resolve(_: int):
+        return engine.resolve_or_create_channel_session(
+            "workspace-one",
+            provider="wechat",
+            account_fingerprint="wechat-account:opaque",
+            provider_user_key="wechat-user:opaque",
+            title_prefix="微信会话",
+        )
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        results = list(pool.map(resolve, range(10)))
+
+    session_ids = {session["session_id"] for session, _created in results}
+    assert len(session_ids) == 1
+    assert sum(created for _session, created in results) == 1
+    session = results[0][0]
+    assert session["title"] == "微信会话 1"
+    assert session["origin"]["kind"] == "channel"
+    assert session["origin"]["provider"] == "wechat"
+    assert engine.list_sessions("workspace-one")["data"][0]["session_id"] == session["session_id"]
+
+    with engine._connect() as db:
+        serialized = "\n".join(
+            str(value)
+            for table in ("runtime_sessions", "runtime_channel_bindings")
+            for row in db.execute(f"SELECT * FROM {table}").fetchall()
+            for value in row
+        )
+    assert "raw-wechat-user" not in serialized
+
+
+def test_channel_inbound_reactivates_archived_session(engine: RuntimeEngine) -> None:
+    session, _ = engine.resolve_or_create_channel_session(
+        "workspace-one", provider="wechat", account_fingerprint="account",
+        provider_user_key="user", title_prefix="微信会话",
+    )
+    engine.update_session(session["session_id"], archived=True)
+    restored, created = engine.resolve_or_create_channel_session(
+        "workspace-one", provider="wechat", account_fingerprint="account",
+        provider_user_key="user", title_prefix="微信会话",
+    )
+    assert created is False
+    assert restored["lifecycle"] == "active"
+
+
+def test_explicit_channel_delivery_is_visible_idempotent_and_statused(engine: RuntimeEngine) -> None:
+    session, _ = engine.resolve_or_create_channel_session(
+        "workspace-one", provider="wechat", account_fingerprint="account",
+        provider_user_key="user", title_prefix="微信会话",
+    )
+    pending, created = engine.begin_channel_delivery(
+        session["session_id"], provider="wechat", idempotency_key="desktop-outbound-0001",
+        text="explicit desktop reply",
+    )
+    repeated, repeated_created = engine.begin_channel_delivery(
+        session["session_id"], provider="wechat", idempotency_key="desktop-outbound-0001",
+        text="explicit desktop reply",
+    )
+    assert created is True and repeated_created is False
+    assert pending["delivery_id"] == repeated["delivery_id"]
+    sent = engine.complete_channel_delivery(pending["delivery_id"], status="sent")
+    assert sent["status"] == "sent" and sent["attempt_count"] == 1
+    item = engine.conversation_snapshot(session["session_id"])["items"][-1]
+    assert item["payload"]["text"] == "explicit desktop reply"
+    assert item["payload"]["author"] == "desktop"
+    assert item["payload"]["channel_delivery"]["status"] == "sent"
+    with pytest.raises(ValueError):
+        engine.begin_channel_delivery(
+            session["session_id"], provider="wechat", idempotency_key="desktop-outbound-0001",
+            text="different reply",
+        )
+
+
+def test_channel_migration_audit_is_idempotent_and_contains_no_legacy_identity(engine: RuntimeEngine) -> None:
+    first = engine.record_channel_migration(
+        provider="wechat", source_version="wechat_sessions_v2",
+        source_digest="a" * 64, record_count=2, status="unable_to_correlate",
+    )
+    repeated = engine.record_channel_migration(
+        provider="wechat", source_version="wechat_sessions_v2",
+        source_digest="a" * 64, record_count=2, status="unable_to_correlate",
+    )
+    assert first["migration_id"] == repeated["migration_id"]
+    with engine._connect() as db:
+        row = dict(db.execute("SELECT * FROM runtime_channel_migrations").fetchone())
+    assert row["record_count"] == 2 and row["status"] == "unable_to_correlate"
+    assert set(row) == {"migration_id", "provider", "source_version", "source_digest", "record_count", "status", "created_at"}
+
+
+def test_interrupted_channel_delivery_recovers_as_unknown_without_resend(tmp_path: Path) -> None:
+    database = tmp_path / "runtime.sqlite3"
+    first = RuntimeEngine(
+        database, RuntimeEngineIdentity("runtime-test", "instance-one"), lambda _: True,
+    )
+    session, _ = first.resolve_or_create_channel_session(
+        "workspace-one", provider="wechat", account_fingerprint="account",
+        provider_user_key="user", title_prefix="微信会话",
+    )
+    pending, _ = first.begin_channel_delivery(
+        session["session_id"], provider="wechat", idempotency_key="restart-outbound-1",
+        text="may have left the process",
+    )
+    restored = RuntimeEngine(
+        database, RuntimeEngineIdentity("runtime-test", "instance-one"), lambda _: True,
+    )
+    delivery = restored.get_channel_delivery(pending["delivery_id"])
+    assert delivery["status"] == "unknown"
+    assert delivery["attempt_count"] == 1
+    assert delivery["error_code"] == "runtime_restarted_during_delivery"
+    item = restored.conversation_snapshot(session["session_id"])["items"][-1]
+    assert item["payload"]["channel_delivery"]["status"] == "unknown"
+
+
 def test_imported_desktop_session_preserves_identity_and_refreshes_metadata(engine: RuntimeEngine) -> None:
     first, created = engine.import_session(
         "thread-desktop", "workspace-one", "Desktop title",

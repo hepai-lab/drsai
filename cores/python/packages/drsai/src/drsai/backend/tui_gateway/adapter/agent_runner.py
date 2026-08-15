@@ -19,7 +19,9 @@ created and used on the same event loop.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import mimetypes
 import os
 import threading
 import time
@@ -28,6 +30,67 @@ from concurrent.futures import Future
 from typing import Any, Callable, Mapping, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _artifact_snapshot(workdir: str) -> dict[str, tuple[int, int]]:
+    root = Path(workdir).resolve()
+    artifacts = root / "artifacts"
+    if not artifacts.is_dir():
+        return {}
+    snapshot: dict[str, tuple[int, int]] = {}
+    for path in artifacts.rglob("*"):
+        try:
+            if path.is_file():
+                stat = path.stat()
+                snapshot[path.relative_to(root).as_posix()] = (int(stat.st_size), int(stat.st_mtime_ns))
+        except OSError:
+            continue
+    return snapshot
+
+
+def _new_artifact_descriptors(
+    workdir: str, baseline: Mapping[str, tuple[int, int]], session_id: str,
+) -> list[dict[str, Any]]:
+    root = Path(workdir).resolve()
+    artifacts = root / "artifacts"
+    if not artifacts.is_dir():
+        return []
+    descriptors: list[dict[str, Any]] = []
+    for path in sorted(candidate for candidate in artifacts.rglob("*") if candidate.is_file()):
+        try:
+            stat = path.stat()
+            relative = path.relative_to(root).as_posix()
+            signature = (int(stat.st_size), int(stat.st_mtime_ns))
+            if baseline.get(relative) == signature:
+                continue
+            descriptors.append(_legacy_artifact_descriptor(root, path, session_id))
+            if len(descriptors) >= 32:
+                break
+        except (OSError, ValueError):
+            continue
+    return descriptors
+
+
+def _legacy_artifact_descriptor(root: Path, path: Path, session_id: str) -> dict[str, Any]:
+    """Build the legacy adapter's stable, path-private Artifact descriptor."""
+    resolved_root = root.resolve(strict=True)
+    resolved = path.resolve(strict=True)
+    resolved.relative_to(resolved_root / "artifacts")
+    digest = hashlib.sha256()
+    with resolved.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    sha256 = digest.hexdigest()
+    relative = resolved.relative_to(resolved_root).as_posix()
+    mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+    stable_id = hashlib.sha256(f"{session_id}|{relative}|{sha256}".encode("utf-8")).hexdigest()[:24]
+    return {
+        "artifact_id": f"artifact-{stable_id}", "artifact_type": "file",
+        "name": resolved.name, "path": relative, "mime": mime,
+        "size": int(resolved.stat().st_size), "sha256": sha256,
+        "previewable": mime.startswith(("image/", "text/")), "downloadable": True,
+        "source": "legacy-tui-local-adapter",
+    }
 
 
 class _FakeAgent:
@@ -178,6 +241,8 @@ class AgentSession:
 
         from drsai.backend.run_drsai_agent_factory import create_agent
 
+        meta_workdir = await self._load_thread_meta_workdir_async()
+        self._workdir = str(meta_workdir or os.getcwd())
         agent = create_agent(
             api_key=self.cli_cfg.get("api_key") or None,
             thread_id=self.session_id,
@@ -186,6 +251,7 @@ class AgentSession:
             defult_config_name=defult_config_name or self.cli_cfg.get("defult_config_name"),
             cli_cfg=self.cli_cfg,
             kernel_surface="tui",
+            work_dir=self._workdir,
         )
 
         if hasattr(agent, "lazy_init"):
@@ -207,8 +273,7 @@ class AgentSession:
         # The user-facing workdir is stored in ``Thread.meta['workdir']`` and
         # reflects where ``drsai`` was launched from. Prefer that, fall back
         # to the agent's path only if absent.
-        meta_workdir = await self._load_thread_meta_workdir_async()
-        self._workdir = str(meta_workdir or getattr(agent, "_work_dir", "") or "")
+        self._workdir = str(meta_workdir or self._workdir)
 
         # Emit memory summary so the TUI can display a compact banner on
         # startup (file path + entry count, not full content).
@@ -363,6 +428,7 @@ class AgentSession:
 
         state = TurnState()
         status = "complete"
+        artifact_baseline = _artifact_snapshot(self._workdir)
 
         try:
             on_event("message.start", {"role": "assistant"})
@@ -451,6 +517,11 @@ class AgentSession:
                     await self.agent.resume()
             except Exception:
                 pass
+            for artifact in _new_artifact_descriptors(self._workdir, artifact_baseline, self.session_id):
+                try:
+                    on_event("artifact.created", artifact)
+                except Exception:
+                    logger.exception("on_event Artifact delivery raised")
             ev_type, payload = finalize(state, status=status)
             try:
                 on_event(ev_type, payload)

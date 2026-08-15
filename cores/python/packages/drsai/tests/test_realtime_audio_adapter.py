@@ -10,6 +10,7 @@ def test_realtime_audio_url_uses_secure_openai_compatible_endpoint() -> None:
     assert realtime_audio_url("https://api.zhizengzeng.com/v1") == "wss://api.zhizengzeng.com/v1/realtime"
     assert realtime_audio_url("https://api.zhizengzeng.com") == "wss://api.zhizengzeng.com/v1/realtime"
     assert realtime_audio_url("http://127.0.0.1:9000/v1") == "ws://127.0.0.1:9000/v1/realtime"
+    assert realtime_audio_url("https://api.zhizengzeng.com/v1", "gpt-realtime-2") == "wss://api.zhizengzeng.com/v1/realtime?model=gpt-realtime-2"
 
 
 @pytest.mark.parametrize("url", [

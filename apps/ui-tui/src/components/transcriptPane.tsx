@@ -66,6 +66,9 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
             if (!tool) return null
             return <ToolCallLine key={part.id} tool={tool} />
           }
+          if (part.kind === 'artifact') {
+            return <Text key={part.id} color={theme.primary}>{formatArtifactLine(part)}</Text>
+          }
           // Text part
           const cleanText = stripTodoWriteArtifacts(getPartText(part))
           if (!cleanText) return null
@@ -116,6 +119,12 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
       )}
     </Box>
   )
+}
+
+function formatArtifactLine(part: import('../app/types.js').ArtifactContentPart): string {
+  const location = part.path || part.name
+  const size = typeof part.size === 'number' ? ` · ${part.size} bytes` : ''
+  return `  📄 ${part.name} · ${location}${size} · /artifact ${part.artifactId}`
 }
 
 /**

@@ -625,6 +625,7 @@ class CodexAgentBackendClient:
         )
         installed = bool(health.get("available"))
         model_catalog = self.models.capability(current_generation=self.rpc.generation)
+        account_readiness = self.accounts.capability(current_generation=self.rpc.generation)
         transport_state = "ready" if health.get("available") and health.get("reason") != "ready_not_started" else (
             "stopped" if health.get("reason") == "ready_not_started" else "fault"
         )
@@ -646,6 +647,12 @@ class CodexAgentBackendClient:
             blockers.append("contract")
         if model_state != "ready":
             blockers.append("models")
+        if account_readiness["state"] != "signed_in":
+            blockers.append("account")
+        executable_state = "ready" if not blockers else (
+            "blocked" if any(item in blockers for item in ("installed", "contract")) else "unknown"
+        )
+        refreshed_at = datetime.now(timezone.utc).isoformat()
         return {
             **health,
             "available": contract_available,
@@ -657,6 +664,10 @@ class CodexAgentBackendClient:
             "app_server_state": "running" if health.get("available") and health.get("reason") != "ready_not_started" else "stopped",
             "transport": str(health.get("transport") or "local-process"),
             "adapter_version": CODEX_ADAPTER_MAPPING_VERSION,
+            "binary_identity": (
+                active_binary.identity() if active_binary is not None and hasattr(active_binary, "identity")
+                else health.get("binary_identity")
+            ),
             "contract": {
                 "version": 2,
                 "digest": CONTRACT_DIGEST,
@@ -667,13 +678,32 @@ class CodexAgentBackendClient:
             },
             "model_catalog": model_catalog,
             "readiness": {
-                "refreshed_at": datetime.now(timezone.utc).isoformat(),
-                "transport": {"state": transport_state, "reason": health.get("reason")},
-                "installed": {"state": installed_state, "reason": health.get("reason") if installed_state != "ready" else None},
-                "contract": {"state": contract_state, "reason": None if contract_state == "ready" else "codex_contract_incompatible"},
-                "account": {"state": "unknown", "reason": "not_probed"},
-                "models": {"state": model_state, "reason": model_catalog.get("error")},
-                "executable": {"state": "unknown", "reason": "account_not_probed", "blockers": blockers},
+                "refreshed_at": refreshed_at,
+                "runtime": {"state": "ready", "reason": None, "observed_at": refreshed_at,
+                            "last_success_at": refreshed_at, "retryable": False, "actions": []},
+                "transport": {"state": transport_state, "reason": health.get("reason"),
+                              "observed_at": refreshed_at, "last_success_at": refreshed_at if transport_state != "fault" else None,
+                              "retryable": transport_state == "fault", "actions": ["reconnect"] if transport_state == "fault" else []},
+                "process": {"state": "ready" if transport_state == "ready" else transport_state,
+                            "reason": health.get("reason"), "observed_at": refreshed_at,
+                            "last_success_at": refreshed_at if transport_state == "ready" else None,
+                            "retryable": transport_state != "ready", "actions": ["restart"] if transport_state == "fault" else []},
+                "installed": {"state": installed_state, "reason": health.get("reason") if installed_state != "ready" else None,
+                              "observed_at": refreshed_at, "last_success_at": refreshed_at if installed_state == "ready" else None,
+                              "retryable": False, "actions": ["install"] if installed_state == "missing" else []},
+                "contract": {"state": contract_state, "reason": None if contract_state == "ready" else "codex_contract_incompatible",
+                             "observed_at": refreshed_at, "last_success_at": refreshed_at if contract_state == "ready" else None,
+                             "retryable": False, "actions": ["upgrade"] if contract_state != "ready" else []},
+                "account": account_readiness,
+                "models": {"state": model_state, "reason": model_catalog.get("error"),
+                           "observed_at": model_catalog.get("last_successful_at"),
+                           "last_success_at": model_catalog.get("last_successful_at"),
+                           "retryable": model_state != "ready", "actions": ["refresh"] if model_state != "ready" else []},
+                "executable": {"state": executable_state,
+                               "reason": None if executable_state == "ready" else "backend_not_ready",
+                               "observed_at": refreshed_at, "last_success_at": refreshed_at if executable_state == "ready" else None,
+                               "retryable": executable_state == "unknown", "actions": ["refresh"] if blockers else [],
+                               "blockers": blockers},
             },
             "run_finalizer": self.run_finalizer.diagnostics(),
             "turn_coordinator": self.turn_coordinator.diagnostics(),
@@ -754,11 +784,13 @@ class CodexAgentBackendClient:
             await self.models.refresh(generation=self.rpc.generation, force=refresh)
         return self.models.capability(current_generation=self.rpc.generation)
 
-    async def discover_sessions(self, workspace_path: str) -> list[Mapping[str, Any]]:
+    async def discover_sessions(
+        self, workspace_path: str, *, include_archived: bool = True,
+    ) -> list[Mapping[str, Any]]:
         await self.rpc.connect()
         expected = os.path.normcase(str(Path(workspace_path).resolve(strict=False)))
         discovered: dict[str, dict[str, Any]] = {}
-        for archived in (False, True):
+        for archived in ((False, True) if include_archived else (False,)):
             cursor: str | None = None
             for _ in range(100):
                 params: dict[str, Any] = {

@@ -3484,10 +3484,19 @@ class DrSaiAssistant(DrSaiAgent):
             sub_agent_type = sub_agent.get("type")
             if sub_agent_type == "CodeExecutorAgent":
                 venv_path = sub_agent.get("venv_path")
-                if venv_path:
-                    executor = create_local_venv(work_dir=venv_path)
-                else:
-                    executor = self._local_executor or create_local_venv(work_dir=self._user_profile_manager.tmp_dir)
+                # Keep dependencies and caches outside the user Workspace,
+                # including when a custom venv root is configured. Execute
+                # every relative output path against the Workspace bound to
+                # the current Run.
+                runtime_workspace = getattr(self, "_runtime_workspace_path", None)
+                if runtime_workspace is None:
+                    raise RuntimeError("workspace_execution_context_unavailable")
+                artifact_dir = Path(runtime_workspace) / "artifacts"
+                artifact_dir.mkdir(parents=True, exist_ok=True)
+                executor = self._local_executor or create_local_venv(
+                    work_dir=runtime_workspace,
+                    environment_dir=venv_path or self._user_profile_manager.tmp_dir,
+                )
                 subagent = CodeExecutorAgent(
                     name=sub_agent_name,
                     code_executor=executor,

@@ -55,6 +55,10 @@ for line in sys.stdin:
         for index in reversed(range(10)):
             send({'method':'turn/completed','params':{'threadId':f'thread-{index}','turn':{'id':f'turn-{index}','status':'completed'}}})
         send({'id':identity,'result':{'emitted':10}})
+    elif method=='emit_then_echo':
+        send({'method':'item/agentMessage/delta','params':{'threadId':'thread-slow','turnId':'turn-slow','delta':'1'}})
+        send({'method':'item/agentMessage/delta','params':{'threadId':'thread-slow','turnId':'turn-slow','delta':'2'}})
+        send({'id':identity,'result':{'reader':'unblocked'}})
     elif method=='ask':
         asking[900]=identity
         send({'id':900,'method':'item/commandExecution/requestApproval','params':{'reason':'test'}})
@@ -134,6 +138,33 @@ async def test_notifications_route_by_thread_turn_and_unknown_is_safe_summary(tm
 
 
 @pytest.mark.anyio
+async def test_slow_notification_handler_does_not_block_responses_and_preserves_turn_order(tmp_path: Path):
+    client, _ = _client(tmp_path)
+    release = asyncio.Event()
+    started = asyncio.Event()
+    received: list[str] = []
+
+    async def slow_handler(message):
+        started.set()
+        await release.wait()
+        received.append(message["params"]["delta"])
+
+    client.on_route(slow_handler, thread_id="thread-slow", turn_id="turn-slow")
+    try:
+        await client.connect()
+        response = await asyncio.wait_for(client.request("emit_then_echo"), timeout=0.2)
+        assert response == {"reader": "unblocked"}
+        await asyncio.wait_for(started.wait(), timeout=0.2)
+        assert received == []
+        release.set()
+        queue = client._dispatch_queues[("thread-slow", "turn-slow")]
+        await asyncio.wait_for(queue.join(), timeout=0.2)
+        assert received == ["1", "2"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
 async def test_server_requests_always_receive_result_or_method_not_found(tmp_path: Path):
     client, _ = _client(tmp_path)
     client.handle_server_request("item/commandExecution/requestApproval", lambda message: {"decision": "decline", "request": message["id"]})
@@ -165,6 +196,29 @@ async def test_invalid_json_and_eof_fail_all_pending_without_hanging(tmp_path: P
             assert observed == [expected]
         finally:
             await client.close()
+
+
+@pytest.mark.anyio
+async def test_eof_automatically_recovers_a_new_generation_without_user_retry(tmp_path: Path):
+    marker = tmp_path / "exited-once"
+    code = SERVER.replace(
+        "elif method=='exit': sys.exit(23)",
+        f"elif method=='exit':\n        p={str(marker)!r}\n        if not __import__('os').path.exists(p): open(p,'w').close(); sys.exit(23)\n        send({{'id':identity,'result':{{'recovered':True}}}})",
+    )
+    client, _ = _client(tmp_path, code, timeout=1)
+    try:
+        await client.connect()
+        original_generation = client.generation
+        with pytest.raises(RuntimeExecutionError):
+            await client.request("exit")
+        for _ in range(100):
+            if client.state == "ready" and client.generation > original_generation:
+                break
+            await asyncio.sleep(0.01)
+        assert client.state == "ready" and client.generation == original_generation + 1
+        assert await client.request("echo", {"same": "client"}) == {"same": "client"}
+    finally:
+        await client.close()
 
 
 @pytest.mark.anyio
