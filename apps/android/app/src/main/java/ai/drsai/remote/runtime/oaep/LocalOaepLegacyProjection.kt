@@ -19,6 +19,9 @@ import java.time.Instant
 class LocalOaepLegacyProjection(
     private val database: ChatDatabase,
     private val auditor: LegacyOaepShadowAuditor = LegacyOaepShadowAuditor(database),
+    private val presentationStrings: ai.drsai.remote.remote.model.OaepPresentationStrings =
+        ai.drsai.remote.remote.model.EnglishOaepPresentationStrings,
+    private val runtimeStatusStrings: LegacyRuntimeStatusStrings = EnglishLegacyRuntimeStatusStrings,
 ) {
     data class UiProjection(
         val entries: List<RemoteTranscriptMessage>,
@@ -108,20 +111,20 @@ class LocalOaepLegacyProjection(
             waitingReason !in setOf("approval", "side_effect_reconciliation", "legacy_migration_reconciliation")
         val errorMessage = latestEvents.lastOrNull { it.type == "event.run.failed" }?.data?.error?.message
         val runtimeStatus = when (latest?.status) {
-            "queued" -> "任务已进入队列"
-            "running" -> if (recovering) "正在恢复…" else null
+            "queued" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.QUEUED)
+            "running" -> if (recovering) runtimeStatusStrings.text(LegacyRuntimeStatusText.RECOVERING) else null
             "waiting" -> when (waitingReason) {
-                "approval" -> "等待审批"
-                "side_effect_reconciliation", "legacy_migration_reconciliation" -> "需要确认副作用结果"
-                else -> "任务已暂停，可继续"
+                "approval" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.WAITING_APPROVAL)
+                "side_effect_reconciliation", "legacy_migration_reconciliation" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.RECONCILING)
+                else -> runtimeStatusStrings.text(LegacyRuntimeStatusText.PAUSED)
             }
-            "failed" -> "任务失败"
-            "cancelled" -> "任务已取消"
+            "failed" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.FAILED)
+            "cancelled" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.CANCELLED)
             else -> null
         }
         return UiProjection(
             entries = projectOaepMessages(snapshot),
-            timeline = projectOaepPresentation(snapshot),
+            timeline = projectOaepPresentation(snapshot, presentationStrings),
             runStatus = latest?.status,
             activeRunId = latest?.id,
             snapshotSequence = snapshot.snapshotSequence,

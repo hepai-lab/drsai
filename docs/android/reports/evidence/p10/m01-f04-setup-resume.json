@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M01-F04",
+  "acceptance_run_id": "p10-round-008-setup-resume",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "covered_states": ["WELCOME", "MODEL_PROVIDER", "CONNECTION_CHECK", "RUNTIME_CHECK", "FIRST_TASK", "SKIPPED", "COMPLETE"],
+  "contracts": {
+    "rotation_owner": "activity-scoped AppViewModel",
+    "process_death_boundary": "SharedPreferencesSetupJourneyStore",
+    "safe_step_restore": true,
+    "provider_or_model_rewrite_from_reducer": false,
+    "api_key_persisted": false
+  },
+  "tests": {
+    "SetupJourneyTest": "7 passed",
+    "SetupJourneyStoreInstrumentedTest_API35": "2 passed"
+  }
+}

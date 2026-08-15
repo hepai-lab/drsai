@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F04",
+  "acceptance_run_id": "p10-round-042-background-power-constraints",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "doze_saver_background_restriction_timeout_covered": true,
+    "cannot_continue_transitions_to_recoverable_pause": true,
+    "same_run_preserved_for_resume": true,
+    "no_periodic_high_frequency_wakeup": true,
+    "foreground_service_reads_real_android_constraints": true
+  },
+  "tests": {
+    "BackgroundExecutionPolicyTest": "2 tests, 0 failures",
+    "testDebugUnitTest": "720 tests, 0 failures, 2 skipped"
+  }
+}

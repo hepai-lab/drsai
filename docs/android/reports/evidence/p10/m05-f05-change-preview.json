@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F05",
+  "acceptance_run_id": "p10-round-026-change-preview",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "fixtures": ["file_create", "file_update", "settings_update", "multi_file", "mcp"],
+  "invariants": {
+    "target_and_summary_visible_before_approval": true,
+    "preview_persists_across_process_reconstruction": true,
+    "raw_arguments_and_secrets_not_persisted": true,
+    "database_15_to_16_preserves_existing_approvals": true,
+    "receipt_path_and_mutation_token_match_approved_scope": true,
+    "scope_mismatch_fails_closed": true
+  },
+  "tests": {
+    "testDebugUnitTest": "685 tests, 0 failures, 2 skipped",
+    "migration_persistence_and_MainInterfaceTest_API35": "34 passed",
+    "receipt_binding_targeted_regression": "passed"
+  }
+}

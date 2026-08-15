@@ -1,163 +1,102 @@
 package ai.drsai.remote.remote.ui
 
+import ai.drsai.remote.R
 import ai.drsai.remote.remote.data.RemoteRecoveryAction
 import ai.drsai.remote.remote.model.RemoteConnectionState
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 
-/** User-facing host state. Transport and identity implementation details never enter this model. */
+enum class RemoteHostStatusKind { ONLINE, CONNECTING, DEGRADED, OFFLINE, PAUSED, AUTH_REQUIRED, INCOMPATIBLE }
+
 data class RemoteHostStatusPresentation(
     val title: String,
     val reason: String,
     val action: RemoteRecoveryAction = RemoteRecoveryAction.NONE,
     val actionLabel: String? = null,
-    val language: RemoteUiLanguage = RemoteUiLanguage.ZH,
-) {
-    val accessibilityDescription: String = buildString {
-        append(if (language == RemoteUiLanguage.ZH) "电脑状态：" else "Computer status: ")
-        append(title)
-        append(if (language == RemoteUiLanguage.ZH) "。" else ". ")
-        append(reason.trimEnd('。', '.'))
-        if (actionLabel == null) append(if (language == RemoteUiLanguage.ZH) "。" else ".") else {
-            append(if (language == RemoteUiLanguage.ZH) "。可执行：" else ". Action: ")
-            append(actionLabel)
-        }
-    }
+    val accessibilityDescription: String,
+)
+
+fun remoteHostStatusKind(state: RemoteConnectionState): RemoteHostStatusKind = when (state) {
+    RemoteConnectionState.ONLINE -> RemoteHostStatusKind.ONLINE
+    RemoteConnectionState.CONNECTING -> RemoteHostStatusKind.CONNECTING
+    RemoteConnectionState.DEGRADED -> RemoteHostStatusKind.DEGRADED
+    RemoteConnectionState.OFFLINE -> RemoteHostStatusKind.OFFLINE
+    RemoteConnectionState.PAUSED -> RemoteHostStatusKind.PAUSED
+    RemoteConnectionState.AUTH_REQUIRED -> RemoteHostStatusKind.AUTH_REQUIRED
+    RemoteConnectionState.INCOMPATIBLE -> RemoteHostStatusKind.INCOMPATIBLE
 }
 
+@Composable
 fun remoteHostStatusPresentation(
     state: RemoteConnectionState,
     lastSeenLabel: String = "",
-    language: RemoteUiLanguage = RemoteUiLanguage.ZH,
-): RemoteHostStatusPresentation = when (language) {
-    RemoteUiLanguage.ZH -> remoteHostStatusPresentationZh(state, lastSeenLabel)
-    RemoteUiLanguage.EN -> remoteHostStatusPresentationEn(state, lastSeenLabel)
-}
-
-private fun remoteHostStatusPresentationZh(
-    state: RemoteConnectionState,
-    lastSeenLabel: String,
-): RemoteHostStatusPresentation = when (state) {
-    RemoteConnectionState.ONLINE -> RemoteHostStatusPresentation(
-        title = "在线",
-        reason = "电脑可用，工作区与会话会保持同步。",
-    )
-    RemoteConnectionState.CONNECTING -> RemoteHostStatusPresentation(
-        title = "正在连接",
-        reason = "正在确认电脑是否可用，请稍候。",
-    )
-    RemoteConnectionState.DEGRADED -> RemoteHostStatusPresentation(
-        title = "连接不稳定",
-        reason = "当前显示上次同步的内容，恢复连接后会自动更新。",
-        action = RemoteRecoveryAction.RETRY,
-        actionLabel = "重试",
-    )
-    RemoteConnectionState.OFFLINE -> RemoteHostStatusPresentation(
-        title = "离线",
-        reason = lastSeenLabel.takeIf(String::isNotBlank)?.let { "暂时无法联系电脑；$it。" }
-            ?: "暂时无法联系电脑，请确认电脑已开机并联网。",
-        action = RemoteRecoveryAction.RETRY,
-        actionLabel = "重试",
-    )
-    RemoteConnectionState.PAUSED -> RemoteHostStatusPresentation(
-        title = "已暂停",
-        reason = "电脑端暂停了移动访问，现有授权仍保留。",
-        action = RemoteRecoveryAction.RESUME_ON_COMPUTER,
-        actionLabel = "恢复后重试",
-    )
-    RemoteConnectionState.AUTH_REQUIRED -> RemoteHostStatusPresentation(
-        title = "需要登录",
-        reason = "登录已过期，重新登录后可继续使用原有授权。",
-        action = RemoteRecoveryAction.SIGN_IN,
-        actionLabel = "重新登录",
-    )
-    RemoteConnectionState.INCOMPATIBLE -> RemoteHostStatusPresentation(
-        title = "需要更新",
-        reason = "手机或电脑端版本不兼容，更新后才能打开工作区。",
-        action = RemoteRecoveryAction.UPDATE_APP,
-        actionLabel = "检查更新",
+): RemoteHostStatusPresentation {
+    val kind = remoteHostStatusKind(state)
+    val title = stringResource(when (kind) {
+        RemoteHostStatusKind.ONLINE -> R.string.remote_status_online
+        RemoteHostStatusKind.CONNECTING -> R.string.remote_status_connecting
+        RemoteHostStatusKind.DEGRADED -> R.string.remote_status_degraded
+        RemoteHostStatusKind.OFFLINE -> R.string.remote_status_offline
+        RemoteHostStatusKind.PAUSED -> R.string.remote_status_paused
+        RemoteHostStatusKind.AUTH_REQUIRED -> R.string.remote_status_auth_required
+        RemoteHostStatusKind.INCOMPATIBLE -> R.string.remote_status_incompatible
+    })
+    val reason = when (kind) {
+        RemoteHostStatusKind.ONLINE -> stringResource(R.string.remote_reason_online)
+        RemoteHostStatusKind.CONNECTING -> stringResource(R.string.remote_reason_connecting)
+        RemoteHostStatusKind.DEGRADED -> stringResource(R.string.remote_reason_degraded)
+        RemoteHostStatusKind.OFFLINE -> if (lastSeenLabel.isBlank()) stringResource(R.string.remote_reason_offline)
+            else stringResource(R.string.remote_reason_offline_last_seen, lastSeenLabel)
+        RemoteHostStatusKind.PAUSED -> stringResource(R.string.remote_reason_paused)
+        RemoteHostStatusKind.AUTH_REQUIRED -> stringResource(R.string.remote_reason_auth_required)
+        RemoteHostStatusKind.INCOMPATIBLE -> stringResource(R.string.remote_reason_incompatible)
+    }
+    val action = when (kind) {
+        RemoteHostStatusKind.DEGRADED, RemoteHostStatusKind.OFFLINE -> RemoteRecoveryAction.RETRY
+        RemoteHostStatusKind.PAUSED -> RemoteRecoveryAction.RESUME_ON_COMPUTER
+        RemoteHostStatusKind.AUTH_REQUIRED -> RemoteRecoveryAction.SIGN_IN
+        RemoteHostStatusKind.INCOMPATIBLE -> RemoteRecoveryAction.UPDATE_APP
+        else -> RemoteRecoveryAction.NONE
+    }
+    val actionLabel = when (action) {
+        RemoteRecoveryAction.RETRY -> stringResource(R.string.retry)
+        RemoteRecoveryAction.RESUME_ON_COMPUTER -> stringResource(R.string.retry_after_resuming)
+        RemoteRecoveryAction.SIGN_IN -> stringResource(R.string.sign_in_again)
+        RemoteRecoveryAction.UPDATE_APP -> stringResource(R.string.check_for_updates)
+        else -> null
+    }
+    return RemoteHostStatusPresentation(
+        title, reason, action, actionLabel,
+        stringResource(R.string.remote_status_accessibility, title, reason.trimEnd('。', '.')) +
+            (actionLabel?.let { stringResource(R.string.remote_status_action_accessibility, it) } ?: ""),
     )
 }
 
-private fun remoteHostStatusPresentationEn(
-    state: RemoteConnectionState,
-    lastSeenLabel: String,
-): RemoteHostStatusPresentation = when (state) {
-    RemoteConnectionState.ONLINE -> RemoteHostStatusPresentation(
-        "Online", "This computer is available. Workspaces and sessions stay in sync.", language = RemoteUiLanguage.EN,
-    )
-    RemoteConnectionState.CONNECTING -> RemoteHostStatusPresentation(
-        "Connecting", "Checking whether this computer is available.", language = RemoteUiLanguage.EN,
-    )
-    RemoteConnectionState.DEGRADED -> RemoteHostStatusPresentation(
-        "Unstable connection", "Showing the last synced content. It will update automatically after reconnecting.",
-        RemoteRecoveryAction.RETRY, "Retry", RemoteUiLanguage.EN,
-    )
-    RemoteConnectionState.OFFLINE -> RemoteHostStatusPresentation(
-        "Offline",
-        lastSeenLabel.takeIf(String::isNotBlank)?.let { "This computer is unavailable; $it." }
-            ?: "This computer is unavailable. Make sure it is on and connected.",
-        RemoteRecoveryAction.RETRY, "Retry", RemoteUiLanguage.EN,
-    )
-    RemoteConnectionState.PAUSED -> RemoteHostStatusPresentation(
-        "Paused", "Mobile access is paused on the computer. Existing authorization is preserved.",
-        RemoteRecoveryAction.RESUME_ON_COMPUTER, "Retry after resuming", RemoteUiLanguage.EN,
-    )
-    RemoteConnectionState.AUTH_REQUIRED -> RemoteHostStatusPresentation(
-        "Sign-in required", "Your sign-in expired. Sign in again to keep using the existing authorization.",
-        RemoteRecoveryAction.SIGN_IN, "Sign in", RemoteUiLanguage.EN,
-    )
-    RemoteConnectionState.INCOMPATIBLE -> RemoteHostStatusPresentation(
-        "Update required", "The phone and computer versions are incompatible.",
-        RemoteRecoveryAction.UPDATE_APP, "Check for updates", RemoteUiLanguage.EN,
-    )
-}
+fun remoteNotificationKind(state: RemoteNotificationReadiness): RemoteNotificationReadiness? =
+    state.takeUnless { it == RemoteNotificationReadiness.READY }
 
-fun remoteNotificationPresentation(
-    state: RemoteNotificationReadiness,
-    language: RemoteUiLanguage = RemoteUiLanguage.ZH,
-): RemoteHostStatusPresentation? = if (language == RemoteUiLanguage.ZH) when (state) {
-    RemoteNotificationReadiness.READY -> null
-    RemoteNotificationReadiness.CHECKING -> RemoteHostStatusPresentation(
-        title = "正在确认后台通知",
-        reason = "正在检查通知服务；打开 App 后仍会自动同步最新进度。",
-    )
-    RemoteNotificationReadiness.PERMISSION_REQUIRED -> RemoteHostStatusPresentation(
-        title = "通知未启用",
-        reason = "允许系统通知后，应用关闭时也能收到任务结果和审批提醒。",
-        action = RemoteRecoveryAction.NONE,
-        actionLabel = "启用通知",
-    )
-    RemoteNotificationReadiness.PROVIDER_NOT_CONFIGURED -> RemoteHostStatusPresentation(
-        title = "后台通知不可用",
-        reason = "此安装包尚未配置后台通知；打开 App 后会自动同步最新进度。",
-    )
-    RemoteNotificationReadiness.PLAY_SERVICES_UNAVAILABLE -> RemoteHostStatusPresentation(
-        title = "后台通知不可用",
-        reason = "此设备缺少通知服务；打开 App 后会自动同步最新进度。",
-    )
-    RemoteNotificationReadiness.PLATFORM_UNAVAILABLE -> RemoteHostStatusPresentation(
-        title = "后台通知暂不可用",
-        reason = "通知服务尚未就绪；打开 App 后会自动同步最新进度。",
-    )
-} else when (state) {
-    RemoteNotificationReadiness.READY -> null
-    RemoteNotificationReadiness.CHECKING -> RemoteHostStatusPresentation(
-        "Checking background notifications", "Checking notification services. Opening the app still syncs the latest progress.",
-        language = RemoteUiLanguage.EN,
-    )
-    RemoteNotificationReadiness.PERMISSION_REQUIRED -> RemoteHostStatusPresentation(
-        "Notifications are off", "Allow notifications to receive task results and approval reminders while the app is closed.",
-        actionLabel = "Enable notifications", language = RemoteUiLanguage.EN,
-    )
-    RemoteNotificationReadiness.PROVIDER_NOT_CONFIGURED -> RemoteHostStatusPresentation(
-        "Background notifications unavailable", "This build has no background notification provider. Opening the app syncs the latest progress.",
-        language = RemoteUiLanguage.EN,
-    )
-    RemoteNotificationReadiness.PLAY_SERVICES_UNAVAILABLE -> RemoteHostStatusPresentation(
-        "Background notifications unavailable", "This device lacks the notification service. Opening the app syncs the latest progress.",
-        language = RemoteUiLanguage.EN,
-    )
-    RemoteNotificationReadiness.PLATFORM_UNAVAILABLE -> RemoteHostStatusPresentation(
-        "Background notifications temporarily unavailable", "The notification service is not ready. Opening the app syncs the latest progress.",
-        language = RemoteUiLanguage.EN,
+@Composable
+fun remoteNotificationPresentation(state: RemoteNotificationReadiness): RemoteHostStatusPresentation? {
+    remoteNotificationKind(state) ?: return null
+    val title = stringResource(when (state) {
+        RemoteNotificationReadiness.CHECKING -> R.string.notification_status_checking
+        RemoteNotificationReadiness.PERMISSION_REQUIRED -> R.string.notification_status_disabled
+        RemoteNotificationReadiness.PROVIDER_NOT_CONFIGURED, RemoteNotificationReadiness.PLAY_SERVICES_UNAVAILABLE -> R.string.notification_status_unavailable
+        RemoteNotificationReadiness.PLATFORM_UNAVAILABLE -> R.string.notification_status_temporarily_unavailable
+        RemoteNotificationReadiness.READY -> error("ready_has_no_presentation")
+    })
+    val reason = stringResource(when (state) {
+        RemoteNotificationReadiness.CHECKING -> R.string.notification_reason_checking
+        RemoteNotificationReadiness.PERMISSION_REQUIRED -> R.string.notification_reason_permission
+        RemoteNotificationReadiness.PROVIDER_NOT_CONFIGURED -> R.string.notification_reason_provider
+        RemoteNotificationReadiness.PLAY_SERVICES_UNAVAILABLE -> R.string.notification_reason_play_services
+        RemoteNotificationReadiness.PLATFORM_UNAVAILABLE -> R.string.notification_reason_platform
+        RemoteNotificationReadiness.READY -> error("ready_has_no_presentation")
+    })
+    val actionLabel = if (state == RemoteNotificationReadiness.PERMISSION_REQUIRED) stringResource(R.string.enable_notifications) else null
+    return RemoteHostStatusPresentation(
+        title, reason, actionLabel = actionLabel,
+        accessibilityDescription = stringResource(R.string.remote_status_accessibility, title, reason.trimEnd('。', '.')) +
+            (actionLabel?.let { stringResource(R.string.remote_status_action_accessibility, it) } ?: ""),
     )
 }

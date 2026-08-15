@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "feature_id": "M02-F03",
+  "acceptance_run_id": "p10-round-004-provider-connection",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "stages": ["DNS", "TLS", "AUTHORIZATION", "CATALOG", "CONFIGURED_MODEL", "CATALOG_VERIFIED"],
+  "covered_failures": [
+    "provider_dns_failed", "provider_tls_failed", "provider_timeout",
+    "provider_credentials_invalid", "provider_permission_denied",
+    "provider_quota_or_rate_limit", "provider_endpoint_not_found",
+    "provider_model_not_found", "provider_catalog_invalid", "provider_unavailable"
+  ],
+  "ui_contract": "failure title + plain-language summary + exactly one recommended next step + stable code",
+  "security": "API credentials are never included in the report or error presentation",
+  "tests": {
+    "ModelProviderDraftClientTest": "10 passed",
+    "UserFacingFailureTest": "4 passed",
+    "compileDebugAndroidTestKotlin": "passed"
+  }
+}

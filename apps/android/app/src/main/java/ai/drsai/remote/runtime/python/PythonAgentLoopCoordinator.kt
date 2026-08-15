@@ -26,6 +26,7 @@ private data class ModelHostOutcome(
     val errorMessage: String? = null,
     val errorRetryable: Boolean = false,
     val errorStatus: Int? = null,
+    val providerReasoningContent: String = "",
 )
 
 enum class PythonSideEffectFaultPoint {
@@ -149,6 +150,7 @@ class PythonAgentLoopCoordinator(
             var finishReason: String? = null
             var toolCalls = JSONArray()
             val reasoningSummaries = mutableListOf<String>()
+            val providerReasoningContent = StringBuilder()
             var errorCode: String? = null
             var errorMessage: String? = null
             var errorRetryable = false
@@ -159,6 +161,7 @@ class PythonAgentLoopCoordinator(
                     if (chunk.finishReason != null) finishReason = chunk.finishReason
                     if (chunk.toolCalls.length() > 0) toolCalls = chunk.toolCalls
                     if (chunk.reasoningSummary.isNotEmpty()) reasoningSummaries += chunk.reasoningSummary
+                    if (chunk.providerReasoningContent.isNotEmpty()) providerReasoningContent.append(chunk.providerReasoningContent)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -177,6 +180,7 @@ class PythonAgentLoopCoordinator(
             return ModelHostOutcome(
                 payload.optString("subagent_id").ifBlank { null }, deltas, finishReason, toolCalls,
                 reasoningSummaries, errorCode, errorMessage, errorRetryable, errorStatus,
+                providerReasoningContent.toString(),
             )
         }
 
@@ -219,6 +223,11 @@ class PythonAgentLoopCoordinator(
                         .put("finish_reason", outcome.finishReason)
                         .put("tool_calls", outcome.toolCalls)
                         .put("reasoning_summary", outcome.reasoningSummaries.joinToString(""))
+                        .apply {
+                            if (outcome.providerReasoningContent.isNotEmpty()) {
+                                put("provider_reasoning_content", outcome.providerReasoningContent)
+                            }
+                        }
                         .apply { if (outcome.subagentId != null) put("subagent_id", outcome.subagentId) },
                     "model_completed",
                 )

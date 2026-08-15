@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F01",
+  "acceptance_run_id": "p10-round-022-tool-human-presentation",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "host_owned_templates": true,
+    "production_tool_families_covered": true,
+    "running_success_failure_templates_present": true,
+    "unknown_tools_use_fixed_generic_copy": true,
+    "model_text_cannot_forge_tool_description": true,
+    "internal_tool_id_hidden_by_default": true
+  },
+  "tests": {
+    "testDebugUnitTest": "680 tests, 0 failures, 2 skipped",
+    "ToolHumanPresentationTest": "all passed",
+    "OaepToolVisibilityUiTest_API35": "2 passed"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F05",
+  "acceptance_run_id": "p10-round-037-handoff-wizard",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "desktop_need_and_transfer_scope_explained": true,
+    "all_eligible_targets_visible": true,
+    "offline_and_insufficient_targets_rejected": true,
+    "target_requires_explicit_user_choice": true,
+    "handoff_not_created_before_target_choice": true,
+    "remote_tools_still_require_approval": true
+  },
+  "tests": {
+    "testDebugUnitTest": "706 tests, 0 failures, 2 skipped",
+    "handoff_picker_UI_API35": "1 passed"
+  }
+}

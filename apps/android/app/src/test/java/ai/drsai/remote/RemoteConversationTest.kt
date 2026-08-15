@@ -6,7 +6,8 @@ import ai.drsai.remote.remote.ui.isTerminalRemoteRunStatus
 import ai.drsai.remote.remote.ui.isSafeMarkdownLink
 import ai.drsai.remote.remote.ui.parseRemoteMarkdown
 import ai.drsai.remote.remote.ui.remoteMarkdown
-import ai.drsai.remote.remote.ui.remoteRoleLabel
+import ai.drsai.remote.remote.ui.RemoteRoleLabelKey
+import ai.drsai.remote.remote.ui.remoteRoleLabelKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -91,11 +92,11 @@ class RemoteConversationTest {
             messages.map { it.role },
         )
         assertEquals(
-            listOf("先检查状态", "系统提示", "任务已完成", "可安全显示"),
+            listOf("先检查状态", "系统提示", "Task completed", "可安全显示"),
             messages.map { it.text },
         )
         assertFalse(messages.toString().contains("must-not-render"))
-        assertEquals("未知事件：future.kind", messages.last().progress)
+        assertEquals("Unknown event: future.kind", messages.last().progress)
     }
 
     @Test fun `conversation digest is stable but changes with projected content`() {
@@ -121,10 +122,10 @@ class RemoteConversationTest {
         val rendered = remoteMarkdown("**加粗**、*斜体*、~~删除~~ 与 `code`")
         assertEquals("加粗、斜体、删除 与 code", rendered.text)
         assertEquals(4, rendered.spanStyles.size)
-        assertEquals("你", remoteRoleLabel("user"))
-        assertEquals("系统", remoteRoleLabel("system"))
-        assertEquals("思考摘要", remoteRoleLabel("reasoning"))
-        assertEquals("OpenDrSai", remoteRoleLabel("future"))
+        assertEquals(RemoteRoleLabelKey.USER, remoteRoleLabelKey("user"))
+        assertEquals(RemoteRoleLabelKey.SYSTEM, remoteRoleLabelKey("system"))
+        assertEquals(RemoteRoleLabelKey.REASONING, remoteRoleLabelKey("reasoning"))
+        assertEquals(RemoteRoleLabelKey.ASSISTANT, remoteRoleLabelKey("future"))
     }
 
     @Test fun `gfm block parser handles headings lists quotes rules and fenced code`() {

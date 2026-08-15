@@ -468,12 +468,12 @@ class RelayDiscoveryClientTest {
     }
 
     @Test fun `association errors have stable user messages`() {
-        assertEquals("二维码已过期，请在电脑端刷新后重试", associationErrorMessage(RelayHttpException(400, "c", "access_grant_expired")))
-        assertEquals("二维码已使用，请在电脑端刷新后重试", associationErrorMessage(RelayHttpException(400, "c", "access_grant_consumed")))
-        assertEquals("二维码已撤销，请在电脑端刷新后重试", associationErrorMessage(RelayHttpException(400, "c", "access_grant_revoked")))
-        assertEquals("HepAI 登录已过期，请重新登录", associationErrorMessage(RelayHttpException(401, "c", "oidc_auth_invalid")))
-        assertEquals("操作过于频繁，请稍后重试", associationErrorMessage(RelayHttpException(429, "c")))
-        assertEquals("二维码环境与当前应用不一致", associationErrorMessage(IllegalArgumentException("access_grant_environment_mismatch")))
+        assertEquals("The QR code expired. Refresh it on the computer and try again", associationErrorMessage(RelayHttpException(400, "c", "access_grant_expired")))
+        assertEquals("The QR code was already used. Refresh it on the computer and try again", associationErrorMessage(RelayHttpException(400, "c", "access_grant_consumed")))
+        assertEquals("The QR code was revoked. Refresh it on the computer and try again", associationErrorMessage(RelayHttpException(400, "c", "access_grant_revoked")))
+        assertEquals("Your HepAI sign-in expired. Sign in again", associationErrorMessage(RelayHttpException(401, "c", "oidc_auth_invalid")))
+        assertEquals("Too many attempts. Try again later", associationErrorMessage(RelayHttpException(429, "c")))
+        assertEquals("This QR code belongs to a different environment", associationErrorMessage(IllegalArgumentException("access_grant_environment_mismatch")))
     }
 
     @Test fun `association reads structured relay error without exposing scanned payload`() = runTest {

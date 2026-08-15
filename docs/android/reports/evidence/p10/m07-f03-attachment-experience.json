@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F03",
+  "acceptance_run_id": "p10-round-035-attachment-experience",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "image_and_document_preview_before_send": true,
+    "drafts_are_independently_removable": true,
+    "failed_draft_can_retry_or_remove": true,
+    "successful_drafts_not_reuploaded": true,
+    "idempotency_key_stable_across_retry": true,
+    "compose_recreation_does_not_start_upload": true
+  },
+  "tests": {
+    "testDebugUnitTest": "704 tests, 0 failures, 2 skipped",
+    "MainInterfaceTest_API35_baseline": "34 passed",
+    "attachmentDraftsPreviewIndependentlyAndFailedDraftCanRetryOrBeRemoved_API35": "1 passed"
+  }
+}

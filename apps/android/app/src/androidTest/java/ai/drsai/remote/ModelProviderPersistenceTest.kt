@@ -15,6 +15,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
+import androidx.test.platform.app.InstrumentationRegistry
+import android.os.Process
 
 @RunWith(AndroidJUnit4::class)
 class ModelProviderPersistenceTest {
@@ -66,6 +68,35 @@ class ModelProviderPersistenceTest {
                     }
                 }
             }
+        } finally {
+            store.deleteApiKey(providerId)
+        }
+    }
+
+    @Test fun apiKeyCanaryNeverAppearsInLogsRoomOrBackupEligibleFiles() {
+        val providerId = "surface-scan-${System.nanoTime()}"
+        val secret = "sk-p10-surface-canary-${System.nanoTime()}"
+        val store = ModelProviderStore(context)
+        try {
+            store.saveApiKey(providerId, secret)
+
+            val roots = listOf(
+                context.getDatabasePath("opendrsai.db").parentFile,
+                java.io.File(context.applicationInfo.dataDir, "shared_prefs"),
+                context.filesDir,
+                context.noBackupFilesDir,
+            ).filterNotNull().filter(java.io.File::exists)
+            val serialized = roots.flatMap { it.walkTopDown().filter(java.io.File::isFile).toList() }
+                .joinToString("\n") { runCatching { it.readBytes().toString(Charsets.ISO_8859_1) }.getOrDefault("") }
+            assertFalse(serialized.contains(secret))
+
+            val logs = InstrumentationRegistry.getInstrumentation().uiAutomation
+                .executeShellCommand("logcat -d --pid=${Process.myPid()}")
+                .use { descriptor ->
+                    android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
+                }
+            assertFalse(logs.contains(secret))
+            assertFalse(context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP != 0)
         } finally {
             store.deleteApiKey(providerId)
         }

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F01",
+  "acceptance_run_id": "p10-round-002-product-contracts",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "contract": "AgentReadinessPolicy",
+  "states": ["READY", "CHECKING", "CONFIGURATION_REQUIRED", "PERMISSION_REQUIRED", "TEMPORARILY_UNAVAILABLE"],
+  "inputs": ["model", "credential", "provider", "model_tools", "runtime", "network", "workspace_permission"],
+  "tests": {"AgentReadinessTest": "3 passed"}
+}

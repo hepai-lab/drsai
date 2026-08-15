@@ -106,13 +106,13 @@ object AndroidModelProviderPresets {
         ModelProviderPreset("deepseek", "DeepSeek", "https://api.deepseek.com", "openai", suggestedModels = listOf("deepseek-chat", "deepseek-reasoner")),
         ModelProviderPreset(
             "zhizengzeng",
-            "智增增",
+            "\u667a\u589e\u589e",
             "https://api.zhizengzeng.com/v1",
             "openai",
             suggestedModels = listOf("deepseek-v4-flash", "deepseek-v4-pro"),
             toolCapableModels = setOf("deepseek-v4-flash", "deepseek-v4-pro"),
         ),
         ModelProviderPreset("ollama", "Ollama", "http://127.0.0.1:11434/v1", "openai", baseUrlEditable = true),
-        ModelProviderPreset("custom", "自定义", "", "openai", nameEditable = true, baseUrlEditable = true),
+        ModelProviderPreset("custom", "Custom", "", "openai", nameEditable = true, baseUrlEditable = true),
     )
 }

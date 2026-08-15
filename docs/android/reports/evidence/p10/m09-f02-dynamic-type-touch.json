@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "feature_id": "M09-F02",
+  "acceptance_run_id": "p10-round-046-dynamic-type-touch",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "font_scales_100_150_200_covered": true,
+    "small_screen_and_tablet_covered": true,
+    "core_content_not_clipped": true,
+    "horizontal_attachment_scroll_does_not_block_composer": true,
+    "primary_touch_targets_at_least_48dp": true
+  },
+  "tests": {
+    "MainInterfaceTest_API35": "small 200%, tablet 150%, existing 100% and touch suites passed",
+    "testDebugUnitTest": "723 tests, 0 failures, 2 skipped"
+  }
+}

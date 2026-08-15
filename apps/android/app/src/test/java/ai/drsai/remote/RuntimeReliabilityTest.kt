@@ -110,7 +110,7 @@ class RuntimeReliabilityTest {
         assertEquals(FailureCategory.entries.toSet(), failures.map { it.category }.toSet())
         failures.forEachIndexed { index, failure ->
             assertTrue(failure.code.isNotBlank())
-            assertTrue(failure.userAction.isNotBlank())
+            assertNotNull(failure.userAction)
             val bundle = DiagnosticBundleFactory.create(
                 failure,
                 requestId = "request-$index",

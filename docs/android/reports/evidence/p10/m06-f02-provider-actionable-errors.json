@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F02",
+  "acceptance_run_id": "p10-round-028-provider-actionable-errors",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "fixtures": ["401", "403", "402", "408", "429", "5xx", "stream_interrupted"],
+  "invariants": {
+    "credential_permission_billing_and_retry_actions_are_distinct": true,
+    "provider_failures_not_misattributed_to_android_runtime": true,
+    "real_provider_message_preserved": true,
+    "credentials_redacted_from_body": true,
+    "technical_detail_bounded": true,
+    "non_retryable_provider_failures_not_blind_retried": true
+  },
+  "tests": {
+    "testDebugUnitTest": "691 tests, 0 failures, 2 skipped",
+    "UserFacingFailureTest": "all passed",
+    "ModelProviderDraftClientTest": "all passed"
+  }
+}

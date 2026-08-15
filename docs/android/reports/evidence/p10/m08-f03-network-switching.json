@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F03",
+  "acceptance_run_id": "p10-round-041-network-switching",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "wifi_cellular_offline_recovery_restricted_fixtures": true,
+    "completed_sequence_never_regresses": true,
+    "same_run_id_preserved": true,
+    "reconnect_attempt_and_window_bounded": true,
+    "waiting_network_distinct_from_runtime_failure": true,
+    "android_connectivity_callback_integrated": true
+  },
+  "tests": {
+    "NetworkRunContinuityTest": "3 tests, 0 failures",
+    "testDebugUnitTest": "718 tests, 0 failures, 2 skipped"
+  }
+}

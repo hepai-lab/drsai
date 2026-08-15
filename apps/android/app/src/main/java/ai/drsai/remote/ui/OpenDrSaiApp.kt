@@ -6,6 +6,7 @@ import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
@@ -14,6 +15,7 @@ import android.os.Build
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.widget.Toast
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
@@ -47,6 +49,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -119,6 +122,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -127,12 +131,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.traversalIndex
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
@@ -143,8 +164,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -163,6 +184,7 @@ import ai.drsai.remote.R
 import ai.drsai.remote.data.AppDestination
 import ai.drsai.remote.data.AppState
 import ai.drsai.remote.data.ApprovalUiItem
+import ai.drsai.remote.data.ApprovalGrantUiItem
 import ai.drsai.remote.data.Agent
 import ai.drsai.remote.data.AttachmentDraft
 import ai.drsai.remote.data.AttachmentStatus
@@ -176,6 +198,7 @@ import ai.drsai.remote.data.AndroidUpdateSource
 import ai.drsai.remote.data.AndroidUpdateState
 import ai.drsai.remote.data.AndroidModelProviderPresets
 import ai.drsai.remote.data.ModelInfo
+import ai.drsai.remote.data.ModelConfigurationMessageKind
 import ai.drsai.remote.data.SkillUiItem
 import ai.drsai.remote.data.ConnectorUiItem
 import ai.drsai.remote.data.mergeDiscoveredModels
@@ -244,6 +267,15 @@ fun OpenDrSaiApp(viewModel: AppViewModel = viewModel()) {
     }
 }
 
+/** Lightweight first frame: keep cold start independent of database and Full Runtime bootstrap. */
+@Composable
+fun OpenDrSaiStartupFrame() {
+    val dark = isSystemInDarkTheme()
+    MaterialTheme(colorScheme = if (dark) OpenDrSaiDarkColorScheme else OpenDrSaiLightColorScheme) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { SplashScreen() }
+    }
+}
+
 @Composable
 private fun SplashScreen() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -252,7 +284,7 @@ private fun SplashScreen() {
             Spacer(Modifier.height(18.dp))
             Text("OpenDrSai", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Text("你的智能 Agent")
+            Text(stringResource(R.string.tagline))
             Spacer(Modifier.height(24.dp))
             CircularProgressIndicator()
         }
@@ -275,7 +307,7 @@ private fun LoginScreen(state: AppState, viewModel: AppViewModel) {
             Spacer(Modifier.height(18.dp))
             Text("OpenDrSai", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Text("登录后开始与智能 Agent 对话", style = MaterialTheme.typography.bodyLarge)
+            Text(stringResource(R.string.login_prompt), style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.height(42.dp))
             Button(
                 onClick = viewModel::login,
@@ -285,20 +317,20 @@ private fun LoginScreen(state: AppState, viewModel: AppViewModel) {
                 if (state.loading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 else Icon(Icons.AutoMirrored.Filled.Login, null)
                 Spacer(Modifier.width(8.dp))
-                Text(if (state.waitingForLogin) "等待浏览器授权" else "使用 HepAI 继续")
+                    Text(stringResource(if (state.waitingForLogin) R.string.waiting_browser_authorization else R.string.continue_with_hepai))
             }
             if (state.waitingForLogin) {
                 Spacer(Modifier.height(10.dp))
-                OutlinedButton(onClick = viewModel::cancelLogin, modifier = Modifier.fillMaxWidth()) { Text("取消登录") }
+                OutlinedButton(onClick = viewModel::cancelLogin, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.cancel_login)) }
                 Spacer(Modifier.height(8.dp))
-                Text("请在浏览器完成授权，然后返回 OpenDrSai", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.complete_browser_authorization), style = MaterialTheme.typography.bodySmall)
             }
             state.error?.let {
                 Spacer(Modifier.height(16.dp))
                 Text(it, color = MaterialTheme.colorScheme.error)
             }
             Spacer(Modifier.height(28.dp))
-            Text("登录即表示同意《用户协议》和《隐私政策》", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.login_legal_notice), style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -310,7 +342,7 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val localWorkspaceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let(viewModel::grantLocalWorkspace)
+        if (uri == null) viewModel.denyLocalWorkspaceRequest() else viewModel.grantLocalWorkspace(uri)
     }
     var mainRoutePath by rememberSaveable { mutableStateOf(AppRoute.Chat.path) }
     var remoteRuntimeName by rememberSaveable { mutableStateOf("") }
@@ -360,23 +392,26 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
     state.pendingDesktopHandoff?.let { handoff ->
         AlertDialog(
             onDismissRequest = { viewModel.decideDesktopHandoff(false) },
-            title = { Text("交给 Desktop Runtime？") },
+            title = { Text(stringResource(R.string.handoff_dialog_title)) },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(handoff.message)
+                HandoffTargetPicker(handoff, viewModel::selectDesktopHandoffTarget)
                 Text(
                     buildString {
-                        append("目标：${handoff.targetName}\n执行位置：${handoff.executionLocation}")
-                        handoff.transport?.let { append("\n传输：$it（Android 本地不执行）") }
+                    append(stringResource(R.string.handoff_target_location, handoff.targetName ?: stringResource(R.string.not_chosen), handoff.executionLocation))
+                    handoff.transport?.let { append(stringResource(R.string.handoff_transport, it)) }
                         handoff.resourceId?.let { append("\nMCP Server：$it") }
-                        append("\n能力：${handoff.requiredCapabilities.joinToString(" / ")}")
-                        if (handoff.transport == "stdio") append("\n确认仅创建 Handoff；远端工具调用仍需审批。")
+                        append(stringResource(R.string.handoff_capabilities, handoff.requiredCapabilities.joinToString(" / ")))
+                    if (handoff.transport == "stdio") append(stringResource(R.string.handoff_stdio_notice))
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } },
-            confirmButton = { TextButton(onClick = { viewModel.decideDesktopHandoff(true) }) { Text("打开远程 Runtime") } },
-            dismissButton = { TextButton(onClick = { viewModel.decideDesktopHandoff(false) }) { Text("取消") } },
+            confirmButton = { TextButton(
+                onClick = { viewModel.decideDesktopHandoff(true) }, enabled = handoff.targetRuntimeId != null,
+                    ) { Text(stringResource(R.string.create_handoff)) } },
+                dismissButton = { TextButton(onClick = { viewModel.decideDesktopHandoff(false) }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 
@@ -452,6 +487,7 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                 onRenameSession = viewModel::renameSession,
                 onSetSessionPinned = viewModel::setSessionPinned,
                 onArchiveSession = { viewModel.setSessionArchived(it, true) },
+                onDeleteSession = viewModel::deleteSession,
                 onSetSessionUnread = viewModel::setSessionUnread,
                 onLoadMoreSessions = viewModel::loadMoreWorkbenchSessions,
                 onGrantLocalWorkspace = { localWorkspaceLauncher.launch(null) },
@@ -517,8 +553,18 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                 } else if (mainRoute == AppRoute.Approvals) {
                     ApprovalsScreen(
                         approvals = state.pendingApprovals,
+                        grants = state.approvalGrants,
                         onBack = { mainRoutePath = AppRoute.Chat.path },
                         onDecision = viewModel::decideApproval,
+                        onRevokeGrant = viewModel::revokeApprovalGrant,
+                    )
+                } else if (mainRoute == AppRoute.Recovery) {
+                    RecoveryCenterScreen(
+                        runs = state.recoveryRuns,
+                        onBack = { mainRoutePath = AppRoute.Chat.path },
+                        onContinue = viewModel::continueRunFromNotification,
+                        onCancel = viewModel::cancelRunFromNotification,
+                        onArchive = viewModel::archiveRecoveryRun,
                     )
                 } else if (mainRoute == AppRoute.Archived) {
                     ArchivedSessionsScreen(
@@ -528,10 +574,10 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                     )
                 } else if (mainRoute == AppRoute.Scheduled) {
                     WorkbenchInfoScreen(
-                        title = "定时任务",
-                        description = "定时任务需要支持后台运行的远程 Runtime。连接工作区后，可在对应 Runtime 中创建和管理任务。",
+                title = stringResource(R.string.scheduled_tasks),
+                description = stringResource(R.string.scheduled_tasks_detail),
                         onBack = { mainRoutePath = AppRoute.Chat.path },
-                        actionLabel = if (remoteTargets.isEmpty()) "连接远程 Runtime" else "选择远程工作区",
+                actionLabel = stringResource(if (remoteTargets.isEmpty()) R.string.connect_remote_runtime else R.string.choose_remote_workspace),
                         onAction = { mainRoutePath = AppRoute.RemoteHome.path },
                     )
                 } else if (mainRoute == AppRoute.Results) {
@@ -540,6 +586,7 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                         onBack = { mainRoutePath = AppRoute.Chat.path },
                         onOpen = { viewModel.openWorkbenchArtifact(it.id, it.source) },
                         onShare = { viewModel.openWorkbenchArtifact(it.id, it.source, share = true) },
+                onRegenerate = { viewModel.send(context.getString(R.string.regenerate_result_prompt, it.name)) },
                     )
                 } else if (mainRoute == AppRoute.AgentsAndSkills) {
                     val skillImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -593,12 +640,12 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                                 .addOnSuccessListener { barcode ->
                                     barcode.rawValue?.let(remoteViewModel::associate) ?: run {
                                         remoteViewModel.cancelAssociationScan()
-                                        Toast.makeText(context, "二维码内容为空", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(R.string.empty_qr_code), Toast.LENGTH_SHORT).show()
                                     }
                                 }
                                 .addOnFailureListener { failure ->
                                     remoteViewModel.cancelAssociationScan()
-                                    Toast.makeText(context, failure.message ?: "无法启动扫码", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, failure.message ?: context.getString(R.string.scanner_start_failed), Toast.LENGTH_SHORT).show()
                                 }
                                 .addOnCanceledListener(remoteViewModel::cancelAssociationScan)
                         },
@@ -786,6 +833,7 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                             state.oaepSnapshotSequence,
                             state.attachmentDrafts.isNotEmpty(),
                             Modifier.fillMaxSize(),
+                            onRemedy = viewModel::send,
                         )
                     } else {
                         Messages(
@@ -817,9 +865,51 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
                                 onDecision = viewModel::decideApproval,
                             )
                         }
-                        state.error?.let { ErrorBar(it, state.diagnostic, viewModel::retry) }
+                        if (state.setupJourney.visible) {
+                            AgentSetupCard(
+                                state = state,
+                                onOpenModels = { mainRoutePath = AppRoute.ModelSettings.path },
+                                onRetryRuntime = viewModel::retryFullRuntimeBinding,
+                                onRunRuntimeCheck = viewModel::runFullRuntimeSmoke,
+                                onRunExample = viewModel::send,
+                                onSkip = viewModel::skipSetupJourney,
+                            )
+                        } else if (
+                            state.setupJourney.status == ai.drsai.remote.runtime.setup.SetupStatus.SKIPPED &&
+                            !state.agentReadiness.canStartAgentRun
+                        ) {
+                            DeferredSetupCard(
+                                onResume = viewModel::resumeSetupJourney,
+                            )
+                        }
+                        if (state.capabilityGuidance.isNotEmpty()) {
+                            CapabilityGuidanceCard(
+                                items = state.capabilityGuidance,
+                                onGrantWorkspace = viewModel::requestLocalWorkspaceForCurrentTask,
+                                onOpenDesktop = { mainRoutePath = AppRoute.RemoteHome.path },
+                                onOpenModels = { mainRoutePath = AppRoute.ModelSettings.path },
+                            )
+                        }
+                if (state.localWorkspaceGranted) WorkspaceScopeBanner(state.localWorkspaceName ?: stringResource(R.string.authorized_directory))
+                        if (state.recoveryRuns.isNotEmpty()) {
+                            RecoverySummaryCard(state.recoveryRuns.size) { mainRoutePath = AppRoute.Recovery.path }
+                        }
+                        state.error?.let {
+                            ErrorBar(
+                                it, state.diagnostic, state.capabilityRepair,
+                    retryLabel = stringResource(if (state.oaepRunStatus in setOf("failed", "cancelled", "completed")) R.string.retry_new_run else R.string.retry),
+                                retry = viewModel::retry,
+                            ) { action ->
+                                when (action) {
+                                    ai.drsai.remote.runtime.errors.CapabilityRepairAction.GRANT_WORKSPACE -> viewModel.requestLocalWorkspaceForCurrentTask()
+                                    ai.drsai.remote.runtime.errors.CapabilityRepairAction.OPEN_NETWORK_SETTINGS -> context.startActivity(android.content.Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS))
+                                    ai.drsai.remote.runtime.errors.CapabilityRepairAction.CHOOSE_MODEL -> mainRoutePath = AppRoute.ModelSettings.path
+                                    ai.drsai.remote.runtime.errors.CapabilityRepairAction.CONNECT_DESKTOP -> mainRoutePath = AppRoute.RemoteHome.path
+                                }
+                            }
+                        }
                         state.runtimeStatus?.let { RuntimeBar(it) }
-                        if (state.toolDowngraded) RuntimeBar("当前模型以纯对话模式运行，本地工具暂不可用")
+                if (state.toolDowngraded) RuntimeBar(stringResource(R.string.chat_only_model_notice))
                     }
 
                     Composer(
@@ -853,6 +943,211 @@ private fun ChatScreen(state: AppState, viewModel: AppViewModel) {
         }
     }
     if (state.profileOpen) ProfileSheet(state, viewModel)
+    if (state.workspaceAuthorization.visible) WorkspaceAuthorizationDialog(
+        onDismiss = viewModel::denyLocalWorkspaceRequest,
+        onChooseDirectory = {
+            viewModel.openLocalWorkspacePicker()
+            localWorkspaceLauncher.launch(null)
+        },
+    )
+}
+
+@Composable
+internal fun WorkspaceAuthorizationDialog(onDismiss: () -> Unit, onChooseDirectory: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.workspace_dialog_title)) },
+        text = { Text(stringResource(R.string.workspace_dialog_detail)) },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.not_now)) } },
+        confirmButton = {
+            Button(onClick = onChooseDirectory, modifier = Modifier.testTag("workspace-choose-directory")) { Text(stringResource(R.string.choose_directory)) }
+        },
+    )
+}
+
+@Composable
+internal fun CapabilityGuidanceCard(
+    items: List<ai.drsai.remote.runtime.readiness.CapabilityGuidanceItem>,
+    onGrantWorkspace: () -> Unit,
+    onOpenDesktop: () -> Unit,
+    onOpenModels: () -> Unit,
+) {
+    val context = LocalContext.current
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val grouped = items.groupBy { it.availability }
+    val localCount = grouped[ai.drsai.remote.runtime.readiness.CapabilityAvailability.LOCAL_AVAILABLE].orEmpty().size
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("capability-guidance-card"),
+        shape = RoundedCornerShape(14.dp),
+        tonalElevation = 2.dp,
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                Modifier.fillMaxWidth().clickable { expanded = !expanded }.testTag("capability-guidance-toggle"),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+            Text(stringResource(R.string.capability_title), fontWeight = FontWeight.SemiBold)
+            Text(pluralStringResource(R.plurals.direct_capability_count, localCount, localCount), style = MaterialTheme.typography.bodySmall)
+                }
+                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
+            }
+            if (expanded) {
+                        CapabilityGuidanceGroup(stringResource(R.string.capability_local_available), grouped[ai.drsai.remote.runtime.readiness.CapabilityAvailability.LOCAL_AVAILABLE].orEmpty())
+                        CapabilityGuidanceGroup(stringResource(R.string.capability_permission_required), grouped[ai.drsai.remote.runtime.readiness.CapabilityAvailability.PERMISSION_REQUIRED].orEmpty())
+                if (grouped[ai.drsai.remote.runtime.readiness.CapabilityAvailability.PERMISSION_REQUIRED].orEmpty().isNotEmpty()) {
+                            TextButton(onClick = onGrantWorkspace, modifier = Modifier.testTag("capability-grant-workspace")) { Text(stringResource(R.string.grant_local_workspace)) }
+                }
+                        CapabilityGuidanceGroup(stringResource(R.string.capability_desktop_required), grouped[ai.drsai.remote.runtime.readiness.CapabilityAvailability.DESKTOP_REQUIRED].orEmpty())
+                            TextButton(onClick = onOpenDesktop, modifier = Modifier.testTag("capability-open-desktop")) { Text(stringResource(R.string.connect_desktop_runtime)) }
+                        CapabilityGuidanceGroup(stringResource(R.string.capability_model_unsupported), grouped[ai.drsai.remote.runtime.readiness.CapabilityAvailability.UNSUPPORTED].orEmpty())
+                if (grouped[ai.drsai.remote.runtime.readiness.CapabilityAvailability.UNSUPPORTED].orEmpty().isNotEmpty()) {
+                            TextButton(onClick = onOpenModels, modifier = Modifier.testTag("capability-open-models")) { Text(stringResource(R.string.change_model)) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun HandoffTargetPicker(handoff: ai.drsai.remote.data.DesktopHandoffUi, onSelect: (String) -> Unit) {
+                        Text(stringResource(R.string.handoff_transfer_summary, handoff.transferSummary), style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.choose_execution_computer), fontWeight = FontWeight.Medium)
+    handoff.targets.forEach { target ->
+        OutlinedButton(
+            onClick = { onSelect(target.runtimeId) }, enabled = target.online,
+            modifier = Modifier.fillMaxWidth().testTag("handoff-target-${target.runtimeId}"),
+                            ) { Text(target.name + if (handoff.targetRuntimeId == target.runtimeId) stringResource(R.string.selected_suffix) else "") }
+    }
+}
+
+@Composable
+internal fun WorkspaceScopeBanner(name: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("workspace-scope-banner"),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.FolderOpen, null)
+            Spacer(Modifier.width(8.dp))
+            Column {
+                        Text(stringResource(R.string.current_workspace, name), fontWeight = FontWeight.Medium)
+                        Text(stringResource(R.string.workspace_relative_path_notice), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CapabilityGuidanceGroup(
+    title: String,
+    items: List<ai.drsai.remote.runtime.readiness.CapabilityGuidanceItem>,
+) {
+    if (items.isEmpty()) return
+    Text(title, style = MaterialTheme.typography.labelLarge)
+    items.groupBy { it.title }.entries.take(6).forEach { (itemTitle, values) ->
+                                    Text(stringResource(R.string.capability_guidance_item, itemTitle, values.first().guidance), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+internal fun AgentSetupCard(
+    state: AppState,
+    onOpenModels: () -> Unit,
+    onRetryRuntime: () -> Unit,
+    onRunRuntimeCheck: () -> Unit,
+    onRunExample: (String) -> Unit,
+    onSkip: () -> Unit,
+) {
+    val readiness = state.agentReadiness
+    val primary = when (readiness.primaryAction) {
+                    ai.drsai.remote.runtime.readiness.ReadinessAction.RETRY_RUNTIME -> stringResource(R.string.restart)
+                    ai.drsai.remote.runtime.readiness.ReadinessAction.RUN_RUNTIME_CHECK -> stringResource(R.string.check_agent_features)
+                    ai.drsai.remote.runtime.readiness.ReadinessAction.NONE -> stringResource(R.string.continue_action)
+                    else -> stringResource(R.string.complete_setup)
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("agent-setup-card"),
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 3.dp,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (
+                state.setupJourney.step == ai.drsai.remote.runtime.setup.SetupStep.FIRST_TASK &&
+                readiness.canStartAgentRun
+            ) {
+                FirstTaskExamplesContent(
+                    availableTools = state.fullRuntimeDiagnostic.availableTools,
+                    onRunExample = onRunExample,
+                    onSkip = onSkip,
+                )
+                return@Column
+            }
+            Text(readiness.title, fontWeight = FontWeight.SemiBold)
+            Text(readiness.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onSkip) { Text(stringResource(R.string.later)) }
+                Button(onClick = {
+                    when (readiness.primaryAction) {
+                        ai.drsai.remote.runtime.readiness.ReadinessAction.RETRY_RUNTIME -> onRetryRuntime()
+                        ai.drsai.remote.runtime.readiness.ReadinessAction.RUN_RUNTIME_CHECK -> onRunRuntimeCheck()
+                        else -> onOpenModels()
+                    }
+                }, enabled = readiness.primaryAction != ai.drsai.remote.runtime.readiness.ReadinessAction.NONE,
+                    modifier = Modifier.testTag("agent-setup-primary")) { Text(primary) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FirstTaskExamplesContent(
+    availableTools: Collection<String>,
+    onRunExample: (String) -> Unit,
+    onSkip: () -> Unit,
+) {
+            Text(stringResource(R.string.choose_first_example), fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.choose_example_detail), style = MaterialTheme.typography.bodySmall)
+    ai.drsai.remote.runtime.setup.FirstTaskExamples.available(availableTools).forEach { example ->
+        val prompt = stringResource(example.prompt)
+        OutlinedButton(
+            onClick = { onRunExample(prompt) },
+            modifier = Modifier.fillMaxWidth().testTag("first-task-${example.kind.name.lowercase()}"),
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                Text(stringResource(example.title), fontWeight = FontWeight.Medium)
+                Text(stringResource(example.description), style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onSkip) { Text(stringResource(R.string.later)) }
+    }
+}
+
+@Composable
+internal fun DeferredSetupCard(onResume: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("deferred-setup-card"),
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 2.dp,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.agent_not_ready), fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.agent_not_ready_detail), style = MaterialTheme.typography.bodySmall)
+            }
+            Button(onClick = onResume) { Text(stringResource(R.string.complete_model_configuration)) }
+        }
+    }
 }
 
 internal fun usesPermanentWorkbenchDrawer(width: androidx.compose.ui.unit.Dp): Boolean = width >= 840.dp
@@ -862,7 +1157,7 @@ internal fun shouldShowChatRightSidebar(wide: Boolean, isLandscape: Boolean): Bo
 @Composable
 private fun ChatRightSidebar(state: AppState) {
     var selectedTab by rememberSaveable { mutableStateOf(0) }
-    val tabs = listOf("诊断")
+    val tabs = listOf(stringResource(R.string.diagnostic_tab))
     Surface(
         modifier = Modifier.width(320.dp).fillMaxHeight().testTag("chat-right-sidebar"),
         color = MaterialTheme.colorScheme.surface,
@@ -899,43 +1194,43 @@ private fun ChatDiagnosticTab(state: AppState) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Text("当前会话", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.current_session), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
-            DiagnosticRow("执行路由", diagnostic.route)
-            DiagnosticRow("智能体", state.selectedAgent?.name ?: "未选择")
-            DiagnosticRow("模型", state.selectedModel?.name ?: "未选择")
-            DiagnosticRow("会话", state.currentConversation?.title ?: "新会话")
-            DiagnosticRow("Run", state.oaepActiveRunId?.takeLast(12) ?: "无")
-            DiagnosticRow("Run 状态", state.oaepRunStatus ?: if (state.streaming) "running" else "idle")
-            DiagnosticRow("OAEP 序列", state.oaepSnapshotSequence.toString())
+                DiagnosticRow(stringResource(R.string.diagnostic_route), diagnostic.route)
+                DiagnosticRow(stringResource(R.string.agent), state.selectedAgent?.name ?: stringResource(R.string.not_selected))
+                DiagnosticRow(stringResource(R.string.model), state.selectedModel?.name ?: stringResource(R.string.not_selected))
+                DiagnosticRow(stringResource(R.string.conversation), state.currentConversation?.title ?: stringResource(R.string.new_session))
+                DiagnosticRow("Run", state.oaepActiveRunId?.takeLast(12) ?: stringResource(R.string.none))
+                DiagnosticRow(stringResource(R.string.run_status), state.oaepRunStatus ?: if (state.streaming) "running" else "idle")
+                DiagnosticRow(stringResource(R.string.oaep_sequence), state.oaepSnapshotSequence.toString())
         }
         item {
             HorizontalDivider()
             Spacer(Modifier.height(14.dp))
-            Text("Runtime", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.runtime), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
-            DiagnosticRow("绑定", diagnostic.bindingState)
-            DiagnosticRow("健康状态", diagnostic.health)
-            DiagnosticRow("进程", diagnostic.process)
-            DiagnosticRow("绑定尝试", "${diagnostic.bindSuccesses}/${diagnostic.bindAttempts}")
-            DiagnosticRow("安全降级", diagnostic.safeFallbacks.toString())
-            DiagnosticRow("Kernel", diagnostic.kernelVersion ?: "未验证")
-            DiagnosticRow("Kernel digest", diagnostic.kernelSha256?.take(12) ?: "未验证")
-            DiagnosticRow("Prompt", diagnostic.promptVersion ?: "未验证")
-            DiagnosticRow("Tool manifest", diagnostic.toolManifestVersion ?: "未验证")
-            DiagnosticRow("Skill manifest", diagnostic.skillManifestVersion ?: "未验证")
-            DiagnosticRow("Skill digest", diagnostic.skillManifestSha256?.take(12) ?: "未验证")
-            DiagnosticRow("Capability", diagnostic.capabilityManifestVersion ?: "未验证")
-            DiagnosticRow("Host Port", diagnostic.hostPortProtocolVersion ?: "未验证")
-            DiagnosticRow("Model tools", diagnostic.modelToolSnapshotVersion ?: "未验证")
-            DiagnosticRow("工具", diagnostic.availableTools.size.toString())
-            DiagnosticRow("技能", diagnostic.availableSkills.size.toString())
+                DiagnosticRow(stringResource(R.string.binding), diagnostic.bindingState)
+                DiagnosticRow(stringResource(R.string.health_status), diagnostic.health)
+                DiagnosticRow(stringResource(R.string.process), diagnostic.process)
+                DiagnosticRow(stringResource(R.string.binding_attempts), "${diagnostic.bindSuccesses}/${diagnostic.bindAttempts}")
+                DiagnosticRow(stringResource(R.string.safe_fallbacks), diagnostic.safeFallbacks.toString())
+                DiagnosticRow("Kernel", diagnostic.kernelVersion ?: stringResource(R.string.not_verified))
+                DiagnosticRow("Kernel digest", diagnostic.kernelSha256?.take(12) ?: stringResource(R.string.not_verified))
+                DiagnosticRow("Prompt", diagnostic.promptVersion ?: stringResource(R.string.not_verified))
+                DiagnosticRow("Tool manifest", diagnostic.toolManifestVersion ?: stringResource(R.string.not_verified))
+                DiagnosticRow("Skill manifest", diagnostic.skillManifestVersion ?: stringResource(R.string.not_verified))
+                DiagnosticRow("Skill digest", diagnostic.skillManifestSha256?.take(12) ?: stringResource(R.string.not_verified))
+                DiagnosticRow("Capability", diagnostic.capabilityManifestVersion ?: stringResource(R.string.not_verified))
+                DiagnosticRow("Host Port", diagnostic.hostPortProtocolVersion ?: stringResource(R.string.not_verified))
+                DiagnosticRow("Model tools", diagnostic.modelToolSnapshotVersion ?: stringResource(R.string.not_verified))
+                DiagnosticRow(stringResource(R.string.tools), diagnostic.availableTools.size.toString())
+                DiagnosticRow(stringResource(R.string.skills), diagnostic.availableSkills.size.toString())
         }
         if (state.runtimeStatus != null || state.error != null || diagnostic.bindReason != null) {
             item {
                 HorizontalDivider()
                 Spacer(Modifier.height(14.dp))
-                Text("状态与错误", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.status_and_errors), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 state.runtimeStatus?.let { DiagnosticMessage(it, false) }
                 diagnostic.bindReason?.let { DiagnosticMessage(it, false) }
                 state.error?.let { DiagnosticMessage(it, true) }
@@ -944,10 +1239,10 @@ private fun ChatDiagnosticTab(state: AppState) {
         item {
             HorizontalDivider()
             Spacer(Modifier.height(14.dp))
-            Text("OAEP 原始事件", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.raw_oaep_events), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             if (state.oaepDiagnosticEvents.isEmpty()) {
-                Text("等待当前 Run 的第一个 OAEP 事件。", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.waiting_first_oaep_event), style = MaterialTheme.typography.bodySmall)
             } else {
                 state.oaepDiagnosticEvents.forEach { event ->
                     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -1007,22 +1302,22 @@ internal fun NewTaskTargetDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("选择任务运行位置") },
+        title = { Text(stringResource(R.string.choose_runtime_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Run 创建后会固定到所选 Runtime，不会静默切换。", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.runtime_pinned_notice), style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = onLocal, modifier = Modifier.fillMaxWidth()) {
-                    Text("Android 本地 · Full Agent Runtime")
+                    Text(stringResource(R.string.android_local_full_runtime))
                 }
                 remoteTargets.forEach { workspace ->
                     Button(onClick = { onRemote(workspace) }, modifier = Modifier.fillMaxWidth()) {
-                        Text("${workspace.displayName} · 远程 Runtime", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(stringResource(R.string.remote_runtime_label, workspace.displayName), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -1036,7 +1331,7 @@ internal fun FloatingHeader(
     val controlColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.60f)
         .compositeOver(MaterialTheme.colorScheme.background)
     Row(
-        modifier = modifier.fillMaxWidth().height(52.dp),
+        modifier = modifier.fillMaxWidth().height(52.dp).semantics { isTraversalGroup = true },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Surface(
@@ -1048,7 +1343,7 @@ internal fun FloatingHeader(
             shadowElevation = 5.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, "展开侧栏") }
+            IconButton(onClick = onOpenDrawer) { Icon(Icons.Default.Menu, stringResource(R.string.open_navigation)) }
         }
         Spacer(Modifier.width(6.dp))
         Surface(
@@ -1063,7 +1358,7 @@ internal fun FloatingHeader(
                 Modifier.height(52.dp).padding(horizontal = 16.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("OpenDrSai", fontWeight = FontWeight.SemiBold)
+                Text("OpenDrSai", Modifier.semantics { heading() }, fontWeight = FontWeight.SemiBold)
             }
         }
         Spacer(Modifier.weight(1f))
@@ -1077,7 +1372,7 @@ internal fun FloatingHeader(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             IconButton(onClick = onNewConversation, enabled = newConversationEnabled) {
-                Icon(Icons.Default.Add, "新对话")
+                Icon(Icons.Default.Add, stringResource(R.string.new_conversation))
             }
         }
     }
@@ -1117,12 +1412,12 @@ internal fun WorkbenchSearchScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back))
             }
             Column {
-                Text("搜索", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.search), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "会话、消息和智能体",
+                    stringResource(R.string.search_scope),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1138,20 +1433,20 @@ internal fun WorkbenchSearchScreen(
             if (normalizedQuery.isEmpty()) {
                 item {
                     Text(
-                        "输入关键词查找历史会话、消息内容或智能体。",
+                    stringResource(R.string.search_empty_guidance),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 10.dp),
                     )
                 }
                 if (recentSessions.isNotEmpty()) {
-                    item { SearchSectionTitle("最近会话") }
+                item { SearchSectionTitle(stringResource(R.string.recent_sessions)) }
                     items(recentSessions, key = { "recent:${it.runtimeId}:${it.workspaceId}:${it.sessionId}" }) { session ->
                         SearchSessionRow(session, null, null) { onOpenSession(session) }
                     }
                 }
                 if (matchingAgents.isNotEmpty()) {
-                    item { SearchSectionTitle("智能体") }
+                item { SearchSectionTitle(stringResource(R.string.agent)) }
                     items(matchingAgents, key = { "agent:${it.id}" }) { agent ->
                         SearchAgentRow(agent, state.selectedAgent?.id == agent.id) { onSelectAgent(agent.id) }
                     }
@@ -1160,14 +1455,14 @@ internal fun WorkbenchSearchScreen(
                 val resultCount = state.workbenchSearchResults.size + matchingAgents.size
                 item {
                     Text(
-                        if (resultCount == 0) "没有匹配结果" else "找到 $resultCount 项相关内容",
+                        if (resultCount == 0) stringResource(R.string.no_search_results) else pluralStringResource(R.plurals.search_result_count, resultCount, resultCount),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }
                 if (state.workbenchSearchResults.isNotEmpty()) {
-                    item { SearchSectionTitle("聊天") }
+                    item { SearchSectionTitle(stringResource(R.string.chat)) }
                     items(
                         state.workbenchSearchResults,
                         key = { "result:${it.messageMatch}:${it.session.runtimeId}:${it.session.workspaceId}:${it.session.sessionId}:${it.snippet.hashCode()}" },
@@ -1175,12 +1470,12 @@ internal fun WorkbenchSearchScreen(
                         SearchSessionRow(
                             session = result.session,
                             snippet = result.snippet,
-                            resultType = if (result.messageMatch) "消息" else "会话",
+                                resultType = stringResource(if (result.messageMatch) R.string.message else R.string.conversation),
                         ) { onOpenSession(result.session) }
                     }
                 }
                 if (matchingAgents.isNotEmpty()) {
-                    item { SearchSectionTitle("智能体") }
+                    item { SearchSectionTitle(stringResource(R.string.agent)) }
                     items(matchingAgents, key = { "matching-agent:${it.id}" }) { agent ->
                         SearchAgentRow(agent, state.selectedAgent?.id == agent.id) { onSelectAgent(agent.id) }
                     }
@@ -1210,11 +1505,11 @@ internal fun WorkbenchSearchScreen(
                             query = ""
                             onSearch("")
                         }) {
-                            Icon(Icons.Default.Close, "清除搜索")
+                        Icon(Icons.Default.Close, stringResource(R.string.clear_search))
                         }
                     }
                 },
-                placeholder = { Text("搜索会话、消息和智能体") },
+                    placeholder = { Text(stringResource(R.string.search_hint)) },
                 shape = RoundedCornerShape(24.dp),
             )
         }
@@ -1291,7 +1586,7 @@ private fun SearchAgentRow(agent: Agent, selected: Boolean, onClick: () -> Unit)
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (selected) Text("当前", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    if (selected) Text(stringResource(R.string.current), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -1318,12 +1613,14 @@ internal fun NavigationDrawer(
     onRenameSession: (String, String) -> Unit = { _, _ -> },
     onSetSessionPinned: (String, Boolean) -> Unit = { _, _ -> },
     onArchiveSession: (String) -> Unit = {},
+    onDeleteSession: (String) -> Unit = {},
     onSetSessionUnread: (String, Boolean) -> Unit = { _, _ -> },
     onLoadMoreSessions: (String) -> Unit = {},
     onGrantLocalWorkspace: () -> Unit = {},
     onClearLocalWorkspace: () -> Unit = {},
 ) {
     var renameTarget by remember { mutableStateOf<WorkbenchSessionItem?>(null) }
+    var deleteTarget by remember { mutableStateOf<WorkbenchSessionItem?>(null) }
     var renameText by remember { mutableStateOf("") }
     val visibleWorkspaces = state.workbenchWorkspaces
     val visibleSessions = visibleWorkspaces
@@ -1344,10 +1641,10 @@ internal fun NavigationDrawer(
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("OpenDrSai", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Android", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.android), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = onOpenSearch) {
-                    Icon(Icons.Default.Search, "搜索")
+                    Icon(Icons.Default.Search, stringResource(R.string.search))
                 }
             }
 
@@ -1359,25 +1656,25 @@ internal fun NavigationDrawer(
                 item(key = "new-conversation") {
                     CompactDrawerItem(
                         icon = Icons.Default.Add,
-                        label = "新对话",
+                label = stringResource(R.string.new_chat),
                         selected = newConversationSelected,
                         enabled = !state.streaming && !state.recovering,
                         onClick = onNewConversation,
                     )
                 }
                 item(key = "scheduled") {
-                    CompactDrawerItem(Icons.Default.Schedule, "已安排", onClick = onOpenScheduled)
+            CompactDrawerItem(Icons.Default.Schedule, stringResource(R.string.scheduled), onClick = onOpenScheduled)
                 }
                 item(key = "remote-workspaces") {
-                    CompactDrawerItem(Icons.Default.Computer, "远程工作区", onClick = onOpenRemoteWorkspaces)
+            CompactDrawerItem(Icons.Default.Computer, stringResource(R.string.remote_workspaces), onClick = onOpenRemoteWorkspaces)
                 }
                 item(key = "agents") {
-                    CompactDrawerItem(Icons.Default.SmartToy, "智能体", onClick = onOpenAgentsAndSkills)
+            CompactDrawerItem(Icons.Default.SmartToy, stringResource(R.string.agent), onClick = onOpenAgentsAndSkills)
                 }
 
                 item(key = "sessions-heading") {
                     Text(
-                        "会话",
+                stringResource(R.string.conversation),
                         modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 16.dp, bottom = 8.dp),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1385,7 +1682,15 @@ internal fun NavigationDrawer(
                     )
                 }
                 if (visibleSessions.isEmpty()) {
-                    item { Text("还没有会话", Modifier.padding(horizontal = 10.dp, vertical = 8.dp), style = MaterialTheme.typography.bodyMedium) }
+                    item {
+                        UserFriendlyEmptyStateCard(
+                            ai.drsai.remote.runtime.readiness.UserFriendlyEmptyStatePolicy.present(
+                                ai.drsai.remote.runtime.readiness.EmptyStateKind.NO_SESSIONS,
+                                state.selectedAgent?.capabilities.orEmpty().map(String::lowercase).toSet() + "chat",
+                            ),
+                            onNewConversation,
+                        )
+                    }
                 }
                 items(
                     visibleSessions,
@@ -1397,11 +1702,11 @@ internal fun NavigationDrawer(
                             label = { Text(session.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                             badge = {
                                 when {
-                                    session.runtimeStatus == "WAITING_APPROVAL" -> Text("待审批", style = MaterialTheme.typography.labelSmall)
-                                    session.runtimeStatus == "RUNNING" || session.runtimeStatus == "QUEUED" -> Text("运行中", style = MaterialTheme.typography.labelSmall)
-                                    session.runtimeStatus == "PAUSED" -> Text("已暂停", style = MaterialTheme.typography.labelSmall)
-                                    session.unread -> Text("未读", style = MaterialTheme.typography.labelSmall)
-                                    session.pinned -> Text("置顶", style = MaterialTheme.typography.labelSmall)
+                        session.runtimeStatus == "WAITING_APPROVAL" -> Text(stringResource(R.string.awaiting_approval), style = MaterialTheme.typography.labelSmall)
+                        session.runtimeStatus == "RUNNING" || session.runtimeStatus == "QUEUED" -> Text(stringResource(R.string.running), style = MaterialTheme.typography.labelSmall)
+                        session.runtimeStatus == "PAUSED" -> Text(stringResource(R.string.paused), style = MaterialTheme.typography.labelSmall)
+                        session.unread -> Text(stringResource(R.string.unread), style = MaterialTheme.typography.labelSmall)
+                        session.pinned -> Text(stringResource(R.string.pinned), style = MaterialTheme.typography.labelSmall)
                                 }
                             },
                             selected = session.local && state.currentConversation?.id == session.sessionId,
@@ -1416,20 +1721,23 @@ internal fun NavigationDrawer(
                                 onClick = { menuOpen = true },
                                 modifier = Modifier.size(48.dp).testTag("session-action-${session.sessionId}"),
                             ) {
-                                Icon(Icons.Default.MoreVert, "会话操作")
+                            Icon(Icons.Default.MoreVert, stringResource(R.string.session_actions))
                             }
                             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                DropdownMenuItem(text = { Text("重命名") }, onClick = {
+                    DropdownMenuItem(text = { Text(stringResource(R.string.rename)) }, onClick = {
                                     menuOpen = false; renameTarget = session; renameText = session.title
                                 })
-                                DropdownMenuItem(text = { Text(if (session.pinned) "取消置顶" else "置顶") }, onClick = {
+                    DropdownMenuItem(text = { Text(stringResource(if (session.pinned) R.string.unpin else R.string.pinned)) }, onClick = {
                                     menuOpen = false; onSetSessionPinned(session.sessionId, !session.pinned)
                                 })
-                                DropdownMenuItem(text = { Text(if (session.unread) "标为已读" else "标为未读") }, onClick = {
+                    DropdownMenuItem(text = { Text(stringResource(if (session.unread) R.string.mark_read else R.string.mark_unread)) }, onClick = {
                                     menuOpen = false; onSetSessionUnread(session.sessionId, !session.unread)
                                 })
-                                DropdownMenuItem(text = { Text("归档") }, onClick = {
+                    DropdownMenuItem(text = { Text(stringResource(R.string.archive)) }, onClick = {
                                     menuOpen = false; onArchiveSession(session.sessionId)
+                                })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }, onClick = {
+                                    menuOpen = false; deleteTarget = session
                                 })
                             }
                         }
@@ -1443,7 +1751,7 @@ internal fun NavigationDrawer(
                                     .forEach { onLoadMoreSessions(it.key) }
                             },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("加载更多会话") }
+            ) { Text(stringResource(R.string.load_more_sessions)) }
                     }
                 }
                 item(key = "secondary-divider") {
@@ -1452,7 +1760,7 @@ internal fun NavigationDrawer(
                 item(key = "archived") {
                     CompactDrawerItem(
                         Icons.Default.History,
-                        "已归档",
+                stringResource(R.string.archived),
                         badge = state.archivedSessions.size.takeIf { it > 0 }?.toString(),
                         onClick = onOpenArchived,
                     )
@@ -1469,7 +1777,7 @@ internal fun NavigationDrawer(
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
-                            state.user?.name ?: "个人中心",
+                    state.user?.name ?: stringResource(R.string.profile),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
@@ -1477,7 +1785,7 @@ internal fun NavigationDrawer(
                         )
                         Text(
                             if (state.selectedAgent?.source == "platform") state.selectedAgent.name
-                            else state.selectedModel?.name ?: "正在加载 HAI 模型",
+                else state.selectedModel?.name ?: stringResource(R.string.loading_hai_models),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1487,7 +1795,7 @@ internal fun NavigationDrawer(
                 }
               }
               IconButton(onClick = onOpenSettings, modifier = Modifier.size(56.dp).testTag("open-settings")) {
-                  Icon(Icons.Default.Settings, "设置")
+                    Icon(Icons.Default.Settings, stringResource(R.string.settings))
               }
             }
         }
@@ -1506,15 +1814,28 @@ internal fun NavigationDrawer(
     renameTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("重命名会话") },
+            title = { Text(stringResource(R.string.rename_session)) },
             text = { OutlinedTextField(renameText, { renameText = it.take(120) }, singleLine = true) },
             confirmButton = {
                 TextButton(onClick = {
                     if (renameText.isNotBlank()) onRenameSession(target.sessionId, renameText.trim())
                     renameTarget = null
-                }) { Text("保存") }
+                }) { Text(stringResource(R.string.save)) }
             },
-            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text(stringResource(R.string.delete_session_question)) },
+            text = { Text(stringResource(R.string.delete_session_detail, target.title)) },
+            confirmButton = {
+                TextButton(onClick = { onDeleteSession(target.sessionId); deleteTarget = null }) {
+                    Text(stringResource(R.string.confirm_delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -1595,19 +1916,20 @@ private fun DrawerSectionHeader(
         IconButton(onClick = onToggle) {
             Icon(
                 if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                "展开或收起$title",
+                stringResource(R.string.expand_collapse, title),
                 Modifier.size(20.dp),
             )
         }
     }
 }
 
+@Composable
 private fun agentStatus(agent: Agent): String = when {
-    !agent.available -> "当前不可用"
-    !agent.chatSupported -> "暂不支持对话"
-    agent.source == "local" -> "Android 本机运行"
-    agent.mode == "ddf" -> "HAI 平台运行"
-    else -> "远程智能体"
+        !agent.available -> stringResource(R.string.currently_unavailable)
+        !agent.chatSupported -> stringResource(R.string.chat_unsupported)
+        agent.source == "local" -> stringResource(R.string.runs_on_android)
+        agent.mode == "ddf" -> stringResource(R.string.runs_on_hai)
+        else -> stringResource(R.string.remote_agent)
 }
 
 @Composable
@@ -1618,20 +1940,20 @@ private fun ArchivedSessionsScreen(
 ) {
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
             Spacer(Modifier.width(8.dp))
-            Text("已归档会话", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.archived_sessions), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         }
         if (sessions.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有已归档会话") }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_archived_sessions)) }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(sessions, key = { it.sessionId }) { session ->
                     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
                         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(session.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            if (session.local) TextButton(onClick = { onRestore(session.sessionId) }) { Text("恢复") }
-                            else Text("在远程工作区恢复", style = MaterialTheme.typography.labelSmall)
+                        if (session.local) TextButton(onClick = { onRestore(session.sessionId) }) { Text(stringResource(R.string.restore)) }
+                        else Text(stringResource(R.string.restore_in_remote_workspace), style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -1650,7 +1972,7 @@ private fun WorkbenchInfoScreen(
 ) {
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
             Spacer(Modifier.width(8.dp))
             Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         }
@@ -1664,21 +1986,27 @@ private fun WorkbenchInfoScreen(
 }
 
 @Composable
-private fun WorkbenchResultsScreen(
+internal fun WorkbenchResultsScreen(
     artifacts: List<WorkbenchArtifactItem>,
     onBack: () -> Unit,
     onOpen: (WorkbenchArtifactItem) -> Unit,
     onShare: (WorkbenchArtifactItem) -> Unit,
+    onRegenerate: (WorkbenchArtifactItem) -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
             Spacer(Modifier.width(8.dp))
-            Text("结果", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.results_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         }
         if (artifacts.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("还没有附件或工具结果", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                UserFriendlyEmptyStateCard(
+                    ai.drsai.remote.runtime.readiness.UserFriendlyEmptyStatePolicy.present(
+                        ai.drsai.remote.runtime.readiness.EmptyStateKind.NO_RESULTS,
+                    ),
+                    onBack,
+                )
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1686,15 +2014,28 @@ private fun WorkbenchResultsScreen(
                     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
                         Column(Modifier.fillMaxWidth().padding(14.dp)) {
                             Text(artifact.name, fontWeight = FontWeight.Medium)
+                            val typeLabel = when {
+                                artifact.mimeType.startsWith("text/") -> stringResource(R.string.text_file)
+                                artifact.mimeType.startsWith("image/") -> stringResource(R.string.image_file)
+                                artifact.mimeType == "application/pdf" -> "PDF"
+                                else -> stringResource(R.string.binary_file)
+                            }
+                            val sourceLabel = stringResource(if (artifact.source == "tool") R.string.agent_tool_result else R.string.session_attachment)
                             Text(
-                                "${artifact.mimeType} · ${artifact.size} B · 会话 ${artifact.sessionId}" +
-                                    (artifact.runId?.let { " · Run $it" } ?: ""),
+                                stringResource(R.string.artifact_metadata, typeLabel, LocalizedFormatting.bytes(artifact.size, java.util.Locale.forLanguageTag(LocalConfiguration.current.locales[0].toLanguageTag())), sourceLabel, artifact.sessionId, artifact.runId?.let { " · Run $it" } ?: ""),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { onOpen(artifact) }) { Text("预览") }
-                                TextButton(onClick = { onShare(artifact) }) { Text("分享") }
+                            val failure = ai.drsai.remote.data.ArtifactAccessFailurePolicy.from(artifact.failureCode, ai.drsai.remote.data.AndroidArtifactAccessStrings(androidx.compose.ui.platform.LocalContext.current))
+                            if (failure != null) {
+                                Text(failure.title, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Medium)
+                                Text(failure.detail, style = MaterialTheme.typography.bodySmall)
+                        if (failure.canRegenerate) TextButton(onClick = { onRegenerate(artifact) }) { Text(stringResource(R.string.regenerate)) }
+                            } else {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { onOpen(artifact) }) { Text(stringResource(R.string.open)) }
+                    TextButton(onClick = { onShare(artifact) }) { Text(stringResource(R.string.share)) }
+                                }
                             }
                         }
                     }
@@ -1726,23 +2067,23 @@ private fun AgentsAndSkillsScreen(
     var mcpExpiryHours by remember { mutableStateOf("24") }
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
             Spacer(Modifier.width(8.dp))
-            Text("智能体", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-            IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "刷新智能体") }
+                Text(stringResource(R.string.agents), Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, stringResource(R.string.refresh_agents)) }
         }
         Spacer(Modifier.height(12.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Skill", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    OutlinedButton(onClick = onImportSkill) { Text("从文件导入") }
+                OutlinedButton(onClick = onImportSkill) { Text(stringResource(R.string.import_from_file)) }
                 }
             }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Streamable HTTP/SSE MCP", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    OutlinedButton(onClick = { showMcpDialog = true }) { Text("连接 MCP") }
+                OutlinedButton(onClick = { showMcpDialog = true }) { Text(stringResource(R.string.connect_mcp)) }
                 }
             }
             items(connectors, key = { "connector:${it.id}" }) { connector ->
@@ -1753,15 +2094,15 @@ private fun AgentsAndSkillsScreen(
                                 Text(connector.id, fontWeight = FontWeight.Medium)
                                 Text(connector.url, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            Text(if (connector.enabled) "已授权" else "已撤销或过期", style = MaterialTheme.typography.labelMedium)
+                            Text(stringResource(if (connector.enabled) R.string.authorized else R.string.revoked_or_expired), style = MaterialTheme.typography.labelMedium)
                         }
                         Text(
-                            "Scope: ${connector.scopes.joinToString()} · 到期时间戳: ${connector.expiresAtEpochMs ?: "长期"}",
+                            stringResource(R.string.connector_scope_expiry, connector.scopes.joinToString(), connector.expiresAtEpochMs?.toString() ?: stringResource(R.string.long_term)),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         if (connector.enabled) {
-                            TextButton(onClick = { onRevokeMcp(connector.id) }) { Text("撤销 Connector") }
+                            TextButton(onClick = { onRevokeMcp(connector.id) }) { Text(stringResource(R.string.revoke_connector)) }
                         }
                     }
                 }
@@ -1782,29 +2123,32 @@ private fun AgentsAndSkillsScreen(
                             }
                         }
                         Text(
-                            if (skill.enabled) skill.permissions else "已禁用；不会进入新任务，启用需要用户明确操作",
+                            if (skill.enabled) skill.permissions else stringResource(R.string.disabled_skill_notice),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         if (skill.userManaged) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { onRollbackSkill(skill.id) }) { Text("回滚") }
-                                TextButton(onClick = { onDeleteSkill(skill.id) }) { Text("删除") }
+                            TextButton(onClick = { onRollbackSkill(skill.id) }) { Text(stringResource(R.string.rollback)) }
+                            TextButton(onClick = { onDeleteSkill(skill.id) }) { Text(stringResource(R.string.delete)) }
                             }
                         }
                     }
                 }
             }
-            item { Text("智能体", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            item { Text(stringResource(R.string.agents), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
             items(agents, key = Agent::id) { agent ->
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
                         Text(agent.name, fontWeight = FontWeight.Medium)
                         Text(agentStatus(agent), style = MaterialTheme.typography.labelMedium)
                         Text(
-                            "来源：${if (agent.source == "local") "Android 内置" else "HepAI 平台"} · " +
-                                "运行位置：${if (agent.source == "local") (if (BuildConfig.DESKTOP_AGENT_PARITY_COMPLETE) "Full Local" else "Local Preview") else "Remote Platform"} · " +
-                                if (agent.available && agent.chatSupported) "可用" else "不可用",
+                            stringResource(
+                                R.string.agent_runtime_summary,
+                                stringResource(if (agent.source == "local") R.string.android_built_in else R.string.hepai_platform),
+                                if (agent.source == "local") (if (BuildConfig.DESKTOP_AGENT_PARITY_COMPLETE) "Full Local" else "Local Preview") else "Remote Platform",
+                                stringResource(if (agent.available && agent.chatSupported) R.string.available else R.string.unavailable),
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1818,7 +2162,7 @@ private fun AgentsAndSkillsScreen(
                             )
                         } else {
                             Text(
-                                if (agent.source == "local") "权限：安全设备信息、经授权的 SAF 文件与本地记忆" else "权限：由平台目录声明",
+                                stringResource(if (agent.source == "local") R.string.local_agent_permissions else R.string.platform_agent_permissions),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1831,26 +2175,26 @@ private fun AgentsAndSkillsScreen(
     if (showMcpDialog) {
         AlertDialog(
             onDismissRequest = { showMcpDialog = false; mcpToken = "" },
-            title = { Text("连接 HTTPS MCP") },
+            title = { Text(stringResource(R.string.connect_https_mcp)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(mcpId, { mcpId = it }, label = { Text("服务器 ID") }, singleLine = true)
+                    OutlinedTextField(mcpId, { mcpId = it }, label = { Text(stringResource(R.string.server_id)) }, singleLine = true)
                     OutlinedTextField(mcpUrl, { mcpUrl = it }, label = { Text("https://…/mcp") }, singleLine = true)
                     OutlinedTextField(
-                        mcpToken, { mcpToken = it }, label = { Text("Bearer Token（可选）") }, singleLine = true,
+                        mcpToken, { mcpToken = it }, label = { Text(stringResource(R.string.bearer_token_optional)) }, singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("允许可能修改外部数据的工具", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.allow_mutating_tools), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                         Switch(checked = mcpAllowWrite, onCheckedChange = { mcpAllowWrite = it })
                     }
                     OutlinedTextField(
                         mcpExpiryHours,
                         { mcpExpiryHours = it.filter(Char::isDigit).take(4) },
-                        label = { Text("授权有效期（小时，1–2160）") },
+                        label = { Text(stringResource(R.string.authorization_hours)) },
                         singleLine = true,
                     )
-                    Text("Token 仅保存在 Android 加密安全层，不会进入 Python、模型上下文或 OAEP。MCP 工具调用前需要审批。", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.mcp_token_security_notice), style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
@@ -1862,9 +2206,9 @@ private fun AgentsAndSkillsScreen(
                         mcpToken = ""
                         showMcpDialog = false
                     },
-                ) { Text("连接并发现工具") }
+                ) { Text(stringResource(R.string.connect_and_discover_tools)) }
             },
-            dismissButton = { TextButton(onClick = { showMcpDialog = false; mcpToken = "" }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { showMcpDialog = false; mcpToken = "" }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -1886,16 +2230,19 @@ internal fun PendingApprovalCard(
                 Icon(Icons.Default.PendingActions, null)
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(approval.operation, fontWeight = FontWeight.Medium)
-                    Text("${approval.scope} · $count 项待审批", style = MaterialTheme.typography.labelSmall)
+                    Text(approval.title, fontWeight = FontWeight.Medium)
+                    Text(approval.reason, style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.approval_object_risk, approval.objectLabel, approval.riskSummary), style = MaterialTheme.typography.labelSmall)
+                    Text(approval.changeSummary, style = MaterialTheme.typography.labelSmall, maxLines = 3)
+                Text(pluralStringResource(R.plurals.pending_approval_count, count, approval.reversibleLabel, count), style = MaterialTheme.typography.labelSmall)
                 }
-                TextButton(onClick = onOpenAll) { Text("全部") }
+            TextButton(onClick = onOpenAll) { Text(stringResource(R.string.all)) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { onDecision(approval.id, ApprovalDecision.DECLINE) }) { Text("拒绝") }
-                OutlinedButton(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_ONCE) }) { Text("允许一次") }
+            TextButton(onClick = { onDecision(approval.id, ApprovalDecision.DECLINE) }) { Text(stringResource(R.string.decline)) }
+            Button(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_ONCE) }) { Text(stringResource(R.string.allow_once)) }
                 if (approval.scope == "session") {
-                    Button(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_SESSION) }) { Text("本会话允许") }
+            OutlinedButton(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_SESSION) }) { Text(stringResource(R.string.allow_session)) }
                 }
             }
         }
@@ -1906,37 +2253,134 @@ internal fun PendingApprovalCard(
 internal fun ApprovalsScreen(
     approvals: List<ApprovalUiItem>,
     onBack: () -> Unit,
+    grants: List<ApprovalGrantUiItem> = emptyList(),
+    onRevokeGrant: (String) -> Unit = {},
     onDecision: (String, ApprovalDecision) -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
             Spacer(Modifier.width(8.dp))
-            Text("待审批", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.awaiting_approval), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         }
-        if (approvals.isEmpty()) {
+        if (approvals.isEmpty() && grants.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("没有等待审批的操作", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.no_pending_approvals), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(approvals, key = ApprovalUiItem::id) { approval ->
                     Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
                         Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                            Text(approval.operation, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "Runtime: ${approval.runtimeId} · 范围: ${approval.scope}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            var showAdvanced by rememberSaveable(approval.id) { mutableStateOf(false) }
+                            Text(approval.title, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.approval_reason, approval.reason), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.approval_object, approval.objectLabel), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.approval_change_summary, approval.changeSummary), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.approval_risk, approval.riskSummary), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.approval_reversible, approval.reversibleLabel), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(stringResource(if (showAdvanced) R.string.hide_advanced_details else R.string.advanced_details)) }
+                            if (showAdvanced && approval.advancedDetail.isNotBlank()) {
+                                Text(approval.advancedDetail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             Spacer(Modifier.height(10.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { onDecision(approval.id, ApprovalDecision.DECLINE) }) { Text("拒绝") }
-                                OutlinedButton(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_ONCE) }) { Text("允许一次") }
+                        TextButton(onClick = { onDecision(approval.id, ApprovalDecision.DECLINE) }) { Text(stringResource(R.string.decline)) }
+                        Button(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_ONCE) }) { Text(stringResource(R.string.allow_once)) }
                                 if (approval.scope == "session") {
-                                    Button(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_SESSION) }) { Text("本会话允许") }
+                        OutlinedButton(onClick = { onDecision(approval.id, ApprovalDecision.ALLOW_SESSION) }) { Text(stringResource(R.string.allow_session)) }
                                 }
                             }
+                        }
+                    }
+                }
+                if (grants.isNotEmpty()) {
+        item { Text(stringResource(R.string.session_grants), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+                    items(grants, key = ApprovalGrantUiItem::stableId) { grant ->
+                        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(grant.title, fontWeight = FontWeight.Medium)
+                                Text(stringResource(R.string.grant_object, grant.objectLabel), style = MaterialTheme.typography.bodySmall)
+                                }
+                                TextButton(onClick = { onRevokeGrant(grant.stableId) }) { Text(stringResource(R.string.revoke_grant)) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun UserFriendlyEmptyStateCard(
+    presentation: ai.drsai.remote.runtime.readiness.EmptyStatePresentation,
+    onPrimaryAction: () -> Unit,
+) {
+    val localized = when (presentation.kind) {
+        ai.drsai.remote.runtime.readiness.EmptyStateKind.NO_SESSIONS -> Triple(R.string.empty_no_sessions_title, R.string.empty_no_sessions_detail, R.string.new_conversation)
+        ai.drsai.remote.runtime.readiness.EmptyStateKind.NO_RESULTS -> Triple(R.string.empty_no_results_title, R.string.empty_no_results_detail, R.string.empty_primary_new_task)
+        ai.drsai.remote.runtime.readiness.EmptyStateKind.OFFLINE -> Triple(R.string.empty_offline_title, R.string.empty_offline_detail, R.string.empty_offline_action)
+        ai.drsai.remote.runtime.readiness.EmptyStateKind.NO_MODEL -> Triple(R.string.empty_no_model_title, R.string.empty_no_model_detail, R.string.empty_no_model_action)
+        ai.drsai.remote.runtime.readiness.EmptyStateKind.CAPABILITY_CHANGED -> Triple(R.string.empty_capability_title, R.string.empty_capability_detail, R.string.empty_capability_action)
+    }
+    Column(
+        Modifier.fillMaxWidth().padding(16.dp).testTag("user-friendly-empty-state"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(stringResource(localized.first), fontWeight = FontWeight.SemiBold)
+        Text(stringResource(localized.second), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        presentation.exampleIds.forEach { id ->
+            val resource = when (id) { "web" -> R.string.example_web; "workspace" -> R.string.example_workspace; else -> R.string.example_chat }
+            Text("• ${stringResource(resource)}", style = MaterialTheme.typography.labelMedium)
+        }
+        Button(onClick = onPrimaryAction) { Text(stringResource(localized.third)) }
+    }
+}
+
+@Composable
+internal fun RecoverySummaryCard(count: Int, onOpen: () -> Unit) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Refresh, null)
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(pluralStringResource(R.plurals.recoverable_task_count, count, count), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.recovery_summary_detail), style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = onOpen) { Text(stringResource(R.string.recovery_center)) }
+        }
+    }
+}
+
+@Composable
+internal fun RecoveryCenterScreen(
+    runs: List<ai.drsai.remote.runtime.reliability.RecoveryRunItem>,
+    onBack: () -> Unit,
+    onContinue: (String) -> Unit,
+    onCancel: (String) -> Unit,
+    onArchive: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxSize().padding(20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
+            Spacer(Modifier.width(8.dp))
+        Text(stringResource(R.string.recovery_center), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        }
+        if (runs.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_recoverable_tasks)) }
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(runs, key = ai.drsai.remote.runtime.reliability.RecoveryRunItem::runId) { run ->
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text(run.title, fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.recovery_run_status, run.status, run.sessionId), style = MaterialTheme.typography.bodySmall)
+                        run.failureCode?.let { Text(stringResource(R.string.reason_code, it), style = MaterialTheme.typography.labelSmall) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (run.canContinue) Button(onClick = { onContinue(run.runId) }) { Text(stringResource(R.string.continue_action)) }
+                        if (run.canCancel) OutlinedButton(onClick = { onCancel(run.runId) }) { Text(stringResource(R.string.cancel)) }
+                        TextButton(onClick = { onArchive(run.runId) }) { Text(stringResource(R.string.archive)) }
                         }
                     }
                 }
@@ -1958,33 +2402,34 @@ internal fun Welcome(agent: Agent?, modifier: Modifier) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             BrandLogo(132.dp)
             Spacer(Modifier.height(20.dp))
-            Text("你好，我是 ${agent?.name ?: "OpenDrSai"}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.agent_greeting, agent?.name ?: "OpenDrSai"), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(6.dp))
-            Text(agent?.description?.takeIf(String::isNotBlank) ?: "在下方输入你想完成的事情")
+            Text(agent?.description?.takeIf(String::isNotBlank) ?: stringResource(R.string.task_input_hint))
         }
     }
 }
 
 private data class SettingsEntry(val id: String, val label: String, val icon: ImageVector)
 
-private val settingsGroups = listOf(
-    "常规" to listOf(
-        SettingsEntry("general", "常规", Icons.Default.Settings),
-        SettingsEntry("voice", "语音", Icons.Default.Mic),
+@Composable
+private fun settingsGroups() = listOf(
+        stringResource(R.string.general) to listOf(
+            SettingsEntry("general", stringResource(R.string.general), Icons.Default.Settings),
+            SettingsEntry("voice", stringResource(R.string.voice), Icons.Default.Mic),
     ),
-    "智能体" to listOf(
-        SettingsEntry("defaults", "默认配置", Icons.Default.SmartToy),
-        SettingsEntry("tasks", "智能体任务", Icons.Default.Schedule),
-        SettingsEntry("approvals", "审批中心", Icons.Default.TaskAlt),
-        SettingsEntry("analytics", "使用分析", Icons.Default.History),
+        stringResource(R.string.agent) to listOf(
+            SettingsEntry("defaults", stringResource(R.string.default_configuration), Icons.Default.SmartToy),
+            SettingsEntry("tasks", stringResource(R.string.agent_tasks), Icons.Default.Schedule),
+            SettingsEntry("approvals", stringResource(R.string.approval_center), Icons.Default.TaskAlt),
+            SettingsEntry("analytics", stringResource(R.string.usage_analytics), Icons.Default.History),
     ),
-    "集成" to listOf(
-        SettingsEntry("integrations", "集成概览", Icons.Default.Extension),
-        SettingsEntry("remote", "远程工作区", Icons.Default.Computer),
-        SettingsEntry("channels", "频道", Icons.Default.Menu),
+        stringResource(R.string.integrations) to listOf(
+            SettingsEntry("integrations", stringResource(R.string.integration_overview), Icons.Default.Extension),
+            SettingsEntry("remote", stringResource(R.string.remote_workspaces), Icons.Default.Computer),
+            SettingsEntry("channels", stringResource(R.string.channels), Icons.Default.Menu),
     ),
-    "其他" to listOf(
-        SettingsEntry("system", "系统与路径", Icons.Default.FolderOpen),
+        stringResource(R.string.other) to listOf(
+            SettingsEntry("system", stringResource(R.string.system_paths), Icons.Default.FolderOpen),
     ),
 )
 
@@ -2029,13 +2474,14 @@ private fun SettingsNavigation(
     modifier: Modifier,
     compact: Boolean = false,
 ) {
+    val localizedSettingsGroups = settingsGroups()
     Column(modifier.testTag(if (compact) "settings-navigation-compact" else "settings-navigation-wide")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
-            Text("设置", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
+        Text(stringResource(R.string.settings), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
-            settingsGroups.forEach { (group, entries) ->
+            localizedSettingsGroups.forEach { (group, entries) ->
                 item("settings-group:$group") {
                     Text(group, Modifier.padding(start = 10.dp, top = 16.dp, bottom = 6.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
                 }
@@ -2057,22 +2503,22 @@ private fun SettingsNavigation(
 
 @Composable
 private fun SettingsDetail(selectedId: String, state: AppState, onOpenModels: () -> Unit, modifier: Modifier) {
-    val entry = settingsGroups.flatMap { it.second }.firstOrNull { it.id == selectedId }
+    val entry = settingsGroups().flatMap { it.second }.firstOrNull { it.id == selectedId }
     Column(modifier.testTag("settings-detail").verticalScroll(rememberScrollState()).padding(28.dp)) {
-        Text(entry?.label ?: "设置", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(entry?.label ?: stringResource(R.string.settings), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         if (selectedId == "defaults") {
-            Text("设置新会话默认使用的智能体和模型。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.settings_agent_model_detail), color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(22.dp))
             Surface(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp)) {
-                    SettingsValueRow("默认智能体", "会同步应用到聊天输入区。", state.selectedAgent?.name ?: "OpenDrSai") {}
+                SettingsValueRow(stringResource(R.string.default_agent), stringResource(R.string.default_agent_detail), state.selectedAgent?.name ?: "OpenDrSai") {}
                     HorizontalDivider()
-                    SettingsValueRow("默认模型", "选择模型提供方和新会话使用的模型。", state.selectedModel?.name ?: "未选择", onOpenModels)
+                SettingsValueRow(stringResource(R.string.default_model), stringResource(R.string.default_model_detail), state.selectedModel?.name ?: stringResource(R.string.not_selected), onOpenModels)
                 }
             }
         } else {
-            Text("此设置项将在 Android 端逐步与 Windows 版本保持一致。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.settings_desktop_parity_notice), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -2101,9 +2547,10 @@ internal fun ModelSettingsScreen(
     onDeleteProvider: (String) -> Unit,
     onSaveProvider: (String?, String?, String, String, String, String, List<ModelInfo>, Long?) -> Unit,
     onDiscoverModels: (String?, String, String, String) -> Unit,
-    onTestConnection: (String?, String, String, String) -> Unit,
+    onTestConnection: (String?, String, String, String, List<String>) -> Unit,
     onClearMessage: () -> Unit,
 ) {
+    val context = LocalContext.current
     val presets = remember { AndroidModelProviderPresets.all(BuildConfig.MODEL_BASE_URL) }
     var choosingPreset by remember { mutableStateOf(false) }
     var editorOpen by remember { mutableStateOf(false) }
@@ -2123,6 +2570,16 @@ internal fun ModelSettingsScreen(
     var apiKey by remember { mutableStateOf("") }
     var draftModels by remember { mutableStateOf<List<ModelInfo>>(emptyList()) }
     var discoverySummary by remember { mutableStateOf<String?>(null) }
+
+    fun clearCredentialDraftAndCloseEditor() {
+        apiKey = ""
+        editorOpen = false
+        dirty = false
+        discoverySummary = null
+        onClearMessage()
+    }
+
+    SecureCredentialEntryEffect(enabled = editorOpen)
 
     fun openPreset(id: String) {
         val preset = presets.first { it.id == id }
@@ -2168,14 +2625,14 @@ internal fun ModelSettingsScreen(
         if (state.discoveredProviderModels.isNotEmpty()) {
             val merge = mergeDiscoveredModels(draftModels, state.discoveredProviderModels)
             draftModels = merge.models
-            discoverySummary = "发现结果：新增 ${merge.added}，保留 ${merge.retained}，服务端未返回 ${merge.missing}（未自动删除）"
+            discoverySummary = context.getString(R.string.model_discovery_summary, merge.added, merge.retained, merge.missing)
             dirty = true
         }
     }
     LaunchedEffect(state.modelConfigurationMessage) {
-        if (awaitingSave && state.modelConfigurationMessage == "模型提供方已保存") {
+        if (awaitingSave && state.modelConfigurationMessageKind == ModelConfigurationMessageKind.SUCCESS) {
             awaitingSave = false
-            editorOpen = false
+            clearCredentialDraftAndCloseEditor()
         } else if (awaitingSave && !state.modelConfigurationBusy && state.modelConfigurationMessage != null) {
             awaitingSave = false
         }
@@ -2197,13 +2654,17 @@ internal fun ModelSettingsScreen(
             onModelsChange = { draftModels = it; dirty = true },
             busy = state.modelConfigurationBusy,
             message = discoverySummary ?: state.modelConfigurationMessage,
+            messageIsError = discoverySummary == null && state.modelConfigurationMessageKind == ModelConfigurationMessageKind.ERROR,
             hasSavedKey = editingProviderId?.let { id -> state.modelProviders.firstOrNull { it.id == id }?.hasApiKey } == true,
             nameEditable = presetId == "custom" || presetId == null,
             baseUrlEditable = presets.firstOrNull { it.id == presetId }?.baseUrlEditable != false,
             selectedModelId = state.selectedModel?.id,
-            onBack = { if (dirty) leaveConfirmation = true else { editorOpen = false; onClearMessage() } },
+            onBack = { if (dirty) leaveConfirmation = true else clearCredentialDraftAndCloseEditor() },
             onDiscover = { onDiscoverModels(editingProviderId, baseUrl, wireApi, apiKey) },
-            onTestConnection = { onTestConnection(editingProviderId, baseUrl, wireApi, apiKey) },
+            onTestConnection = { onTestConnection(
+                editingProviderId, baseUrl, wireApi, apiKey,
+                draftModels.filter(ModelInfo::enabled).map(ModelInfo::upstreamId),
+            ) },
             onSave = {
                 awaitingSave = true
                 onSaveProvider(editingProviderId, presetId, name, baseUrl, wireApi, apiKey, draftModels, expectedRevision)
@@ -2211,21 +2672,21 @@ internal fun ModelSettingsScreen(
         )
         if (leaveConfirmation) AlertDialog(
             onDismissRequest = { leaveConfirmation = false },
-            title = { Text("放弃未保存的修改？") },
-            text = { Text("提供方或模型配置已发生变化，返回后这些草稿会丢失。") },
-            confirmButton = { TextButton(onClick = { leaveConfirmation = false; editorOpen = false; dirty = false; onClearMessage() }) { Text("放弃修改", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { leaveConfirmation = false }) { Text("继续编辑") } },
+            title = { Text(stringResource(R.string.discard_unsaved_question)) },
+            text = { Text(stringResource(R.string.discard_unsaved_detail)) },
+            confirmButton = { TextButton(onClick = { leaveConfirmation = false; clearCredentialDraftAndCloseEditor() }) { Text(stringResource(R.string.discard_changes), color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { leaveConfirmation = false }) { Text(stringResource(R.string.continue_editing)) } },
         )
         return
     }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.testTag("model-settings-back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
-            Text("模型设置", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            IconButton(onClick = { choosingPreset = true }, modifier = Modifier.testTag("add-model-provider")) { Icon(Icons.Default.Add, "添加提供方") }
+            IconButton(onClick = onBack, modifier = Modifier.testTag("model-settings-back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
+            Text(stringResource(R.string.model_settings), Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            IconButton(onClick = { choosingPreset = true }, modifier = Modifier.testTag("add-model-provider")) { Icon(Icons.Default.Add, stringResource(R.string.add_provider)) }
         }
         state.modelConfigurationMessage?.let { message ->
-            Surface(color = if (message.contains("已保存")) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer, modifier = Modifier.testTag("model-configuration-status")) {
+            Surface(color = if (state.modelConfigurationMessageKind != ModelConfigurationMessageKind.ERROR) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer, modifier = Modifier.testTag("model-configuration-status")) {
                 Text(message, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp))
             }
         }
@@ -2242,33 +2703,33 @@ internal fun ModelSettingsScreen(
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     ) {
                         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (expanded) "收起" else "展开")
+                                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, stringResource(if (expanded) R.string.collapse else R.string.expand))
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(provider.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "${provider.modelIds.size} 个模型 · ${provider.baseUrl}",
+                                pluralStringResource(R.plurals.provider_model_count, provider.modelIds.size, provider.modelIds.size, provider.baseUrl),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 val statusLabel = when (provider.connectionStatus) {
-                                    "AVAILABLE" -> "连接正常"
-                                    "FAILED" -> "连接失败"
-                                    else -> "未检查连接"
+                                "AVAILABLE" -> stringResource(R.string.connection_ok)
+                                "FAILED" -> stringResource(R.string.connection_failed)
+                                else -> stringResource(R.string.connection_not_checked)
                                 }
                                 val checkedAtLabel = provider.lastCheckedAt?.let {
                                     " · ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(it))}"
                                 }.orEmpty()
                                 Text(
-                                    "$statusLabel$checkedAtLabel · 已启用 ${state.configuredProviderModels.count { it.providerId == provider.id && it.enabled }}",
+                                stringResource(R.string.enabled_model_count, statusLabel, checkedAtLabel, state.configuredProviderModels.count { it.providerId == provider.id && it.enabled }),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (provider.connectionStatus == "FAILED") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            IconButton(onClick = { editProvider(provider.id) }, modifier = Modifier.testTag("edit-model-provider-${provider.id}")) { Icon(Icons.Default.Edit, "编辑提供方") }
-                            if (!provider.builtIn) IconButton(onClick = { pendingDeletionId = provider.id }, modifier = Modifier.testTag("delete-model-provider-${provider.id}")) { Icon(Icons.Default.Delete, "删除提供方") }
+                            IconButton(onClick = { editProvider(provider.id) }, modifier = Modifier.testTag("edit-model-provider-${provider.id}")) { Icon(Icons.Default.Edit, stringResource(R.string.edit_provider)) }
+                            if (!provider.builtIn) IconButton(onClick = { pendingDeletionId = provider.id }, modifier = Modifier.testTag("delete-model-provider-${provider.id}")) { Icon(Icons.Default.Delete, stringResource(R.string.delete_provider)) }
                         }
                     }
                     if (expanded) {
@@ -2276,14 +2737,14 @@ internal fun ModelSettingsScreen(
                         val providerModels = if (provider.id == "hepai") state.models.filter { it.providerId == provider.id }
                             else state.configuredProviderModels.filter { it.providerId == provider.id }
                         if (providerModels.isEmpty()) {
-                            Text("还没有配置模型", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.no_models_configured), Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         providerModels.forEach { model ->
                             Surface(onClick = { onSelectModel(model.id) }, color = if (state.selectedModel?.id == model.id) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, shape = RoundedCornerShape(12.dp)) {
                                 Row(Modifier.fillMaxWidth().padding(start = 50.dp, end = 16.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(model.name, Modifier.weight(1f))
-                                    if (!model.enabled) Text("已停用", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-                                    if (state.selectedModel?.id == model.id) Text("当前", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                            if (!model.enabled) Text(stringResource(R.string.disabled), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+                            if (state.selectedModel?.id == model.id) Text(stringResource(R.string.current), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                                 }
                             }
                         }
@@ -2294,14 +2755,14 @@ internal fun ModelSettingsScreen(
     }
     if (choosingPreset) AlertDialog(
         onDismissRequest = { choosingPreset = false },
-        title = { Text("选择模型提供方") },
+            title = { Text(stringResource(R.string.choose_model_provider)) },
         text = {
             LazyColumn(Modifier.heightIn(max = 480.dp)) {
                 items(presets, key = { "preset:${it.id}" }) { preset ->
                     Surface(onClick = { openPreset(preset.id) }, color = Color.Transparent) {
                         Column(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
                             Text(preset.label, fontWeight = FontWeight.SemiBold)
-                            Text(if (preset.id == "custom") "自定义名称、主机和协议" else preset.baseUrl, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (preset.id == "custom") stringResource(R.string.custom_provider_detail) else preset.baseUrl, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     HorizontalDivider()
@@ -2309,18 +2770,34 @@ internal fun ModelSettingsScreen(
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = { choosingPreset = false }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { choosingPreset = false }) { Text(stringResource(R.string.cancel)) } },
     )
     pendingDeletionId?.let { id ->
         val provider = state.modelProviders.firstOrNull { it.id == id }
         val isDefault = state.selectedModel?.providerId == id
         AlertDialog(
             onDismissRequest = { pendingDeletionId = null },
-            title = { Text("删除 ${provider?.name ?: "提供方"}？") },
-            text = { Text("将删除 ${provider?.modelIds?.size ?: 0} 个模型及其安全凭据。${if (isDefault) "当前默认模型属于此提供方，删除后会自动切换到其他可用模型。" else ""}") },
-            confirmButton = { TextButton(onClick = { onDeleteProvider(id); pendingDeletionId = null }) { Text("删除", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { pendingDeletionId = null }) { Text("取消") } },
+            title = { Text(stringResource(R.string.delete_provider_question, provider?.name ?: stringResource(R.string.provider_fallback_name))) },
+            text = { val count = provider?.modelIds?.size ?: 0; Text(pluralStringResource(R.plurals.delete_provider_detail, count, count, if (isDefault) stringResource(R.string.delete_default_provider_impact) else "")) },
+            confirmButton = { TextButton(onClick = { onDeleteProvider(id); pendingDeletionId = null }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { pendingDeletionId = null }) { Text(stringResource(R.string.cancel)) } },
         )
+    }
+}
+
+@Composable
+private fun SecureCredentialEntryEffect(enabled: Boolean) {
+    val view = LocalView.current
+    DisposableEffect(view, enabled) {
+        val activity = generateSequence(view.context as Context?) { context ->
+            (context as? ContextWrapper)?.baseContext
+        }.filterIsInstance<Activity>().firstOrNull()
+        val window = activity?.window
+        val wasSecure = window?.attributes?.flags?.and(WindowManager.LayoutParams.FLAG_SECURE) != 0
+        if (enabled && !wasSecure) window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose {
+            if (enabled && !wasSecure) window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 }
 
@@ -2329,7 +2806,7 @@ internal fun ModelProviderEditorScreen(
     providerId: String?, presetId: String?, name: String, onNameChange: (String) -> Unit,
     baseUrl: String, onBaseUrlChange: (String) -> Unit, wireApi: String, onWireApiChange: (String) -> Unit,
     apiKey: String, onApiKeyChange: (String) -> Unit, models: List<ModelInfo>, onModelsChange: (List<ModelInfo>) -> Unit,
-    busy: Boolean, message: String?, hasSavedKey: Boolean, nameEditable: Boolean, baseUrlEditable: Boolean,
+    busy: Boolean, message: String?, messageIsError: Boolean = false, hasSavedKey: Boolean, nameEditable: Boolean, baseUrlEditable: Boolean,
     selectedModelId: String?, onBack: () -> Unit, onDiscover: () -> Unit, onTestConnection: () -> Unit, onSave: () -> Unit,
 ) {
     var clearConfirmation by remember { mutableStateOf(false) }
@@ -2351,36 +2828,36 @@ internal fun ModelProviderEditorScreen(
     }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.testTag("model-provider-editor-back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
-            Text(if (providerId == null) "添加提供方" else "编辑提供方", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            IconButton(onClick = onBack, modifier = Modifier.testTag("model-provider-editor-back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
+            Text(stringResource(if (providerId == null) R.string.add_provider else R.string.edit_provider), Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Button(onClick = ::requestSave, enabled = !busy, modifier = Modifier.testTag("model-provider-save")) {
-                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("保存")
+            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text(stringResource(R.string.save))
             }
         }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         message?.let { value ->
-            Surface(color = if (value.contains("失败") || value.contains("不能为空") || value.contains("conflict") || value.contains("无效")) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer) {
+            Surface(color = if (messageIsError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer) {
                 Text(value, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp))
             }
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("model-provider-editor-list"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item {
-                OutlinedTextField(name, onNameChange, Modifier.fillMaxWidth(), label = { Text("提供方名称") }, enabled = nameEditable, singleLine = true)
+        OutlinedTextField(name, onNameChange, Modifier.fillMaxWidth().testTag("provider-name"), label = { Text(stringResource(R.string.provider_name)) }, enabled = nameEditable, singleLine = true)
             }
             item {
                 OutlinedTextField(
-                    apiKey, onApiKeyChange, Modifier.fillMaxWidth(), label = { Text("API 密钥") },
-                    placeholder = { if (!hasSavedKey) Text("请输入 API Key") },
-                    supportingText = { if (hasSavedKey) Text("已安全保存；留空表示不修改") },
+            apiKey, onApiKeyChange, Modifier.fillMaxWidth().testTag("provider-api-key"), label = { Text(stringResource(R.string.api_key)) },
+            placeholder = { if (!hasSavedKey) Text(stringResource(R.string.enter_api_key)) },
+            supportingText = { if (hasSavedKey) Text(stringResource(R.string.saved_key_unchanged)) },
                     visualTransformation = if (apiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true,
-                    trailingIcon = { IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) { Icon(if (apiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (apiKeyVisible) "隐藏密钥" else "显示密钥") } },
+            trailingIcon = { IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) { Icon(if (apiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, stringResource(if (apiKeyVisible) R.string.hide_key else R.string.show_key)) } },
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onTestConnection, enabled = !busy && baseUrl.isNotBlank()) { Text("检查连接") }
+        TextButton(onClick = onTestConnection, enabled = !busy && baseUrl.isNotBlank()) { Text(stringResource(R.string.test_connection)) }
                 }
             }
             item {
-                OutlinedTextField(baseUrl, onBaseUrlChange, Modifier.fillMaxWidth(), label = { Text("API 主机") }, enabled = baseUrlEditable, placeholder = { Text("https://api.example.com/v1") }, singleLine = true)
+        OutlinedTextField(baseUrl, onBaseUrlChange, Modifier.fillMaxWidth().testTag("provider-base-url"), label = { Text(stringResource(R.string.api_host)) }, enabled = baseUrlEditable, placeholder = { Text("https://api.example.com/v1") }, singleLine = true)
                 if (baseUrl.isNotBlank()) Text("${baseUrl.trimEnd('/')}/${if (wireApi == "anthropic") "v1/messages" else "chat/completions"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (presetId == "custom" || presetId == null) item {
@@ -2391,18 +2868,18 @@ internal fun ModelProviderEditorScreen(
             }
             item {
                 Column {
-                    Text("模型（启用 ${models.count(ModelInfo::enabled)} / 共 ${models.size}）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.models_enabled_summary, models.count(ModelInfo::enabled), models.size), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { onModelsChange(models + ModelInfo("", "", upstreamId = "")) }) { Icon(Icons.Default.Add, null); Text("新建") }
-                        TextButton(onClick = onDiscover, enabled = !busy && baseUrl.isNotBlank()) { Icon(Icons.Default.Refresh, null); Text("获取") }
+            TextButton(onClick = { onModelsChange(models + ModelInfo("", "", upstreamId = "")) }) { Icon(Icons.Default.Add, null); Text(stringResource(R.string.new_item)) }
+            TextButton(onClick = onDiscover, enabled = !busy && baseUrl.isNotBlank()) { Icon(Icons.Default.Refresh, null); Text(stringResource(R.string.fetch)) }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { onModelsChange(models.map { it.copy(enabled = true) }) }, enabled = models.any { !it.enabled }) { Text("全部启用") }
-                        TextButton(onClick = { onModelsChange(models.map { it.copy(enabled = false) }) }, enabled = models.any(ModelInfo::enabled)) { Text("全部停用") }
+            TextButton(onClick = { onModelsChange(models.map { it.copy(enabled = true) }) }, enabled = models.any { !it.enabled }) { Text(stringResource(R.string.enable_all)) }
+            TextButton(onClick = { onModelsChange(models.map { it.copy(enabled = false) }) }, enabled = models.any(ModelInfo::enabled)) { Text(stringResource(R.string.disable_all)) }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { selectionMode = !selectionMode; selectedModelKeys = emptySet() }, modifier = Modifier.testTag("toggle-model-selection")) { Text(if (selectionMode) "退出多选" else "多选") }
-                        TextButton(onClick = { clearConfirmation = true }, enabled = models.isNotEmpty(), modifier = Modifier.testTag("clear-all-models")) { Text("清空", color = MaterialTheme.colorScheme.error) }
+            TextButton(onClick = { selectionMode = !selectionMode; selectedModelKeys = emptySet() }, modifier = Modifier.testTag("toggle-model-selection")) { Text(stringResource(if (selectionMode) R.string.exit_multi_select else R.string.multi_select)) }
+                TextButton(onClick = { clearConfirmation = true }, enabled = models.isNotEmpty(), modifier = Modifier.testTag("clear-all-models")) { Text(stringResource(R.string.clear), color = MaterialTheme.colorScheme.error) }
                     }
                         if (selectionMode) TextButton(
                             onClick = {
@@ -2412,13 +2889,13 @@ internal fun ModelProviderEditorScreen(
                             },
                             enabled = selectedModelKeys.isNotEmpty(),
                             modifier = Modifier.testTag("delete-selected-models"),
-                        ) { Text("删除已选(${selectedModelKeys.size})", color = MaterialTheme.colorScheme.error) }
+                ) { Text(stringResource(R.string.delete_selected, selectedModelKeys.size), color = MaterialTheme.colorScheme.error) }
                 }
             }
             item {
-                OutlinedTextField(modelQuery, { modelQuery = it }, Modifier.fillMaxWidth().testTag("model-search"), label = { Text("搜索模型") }, singleLine = true, leadingIcon = { Icon(Icons.Default.Search, null) })
+        OutlinedTextField(modelQuery, { modelQuery = it }, Modifier.fillMaxWidth().testTag("model-search"), label = { Text(stringResource(R.string.search_models)) }, singleLine = true, leadingIcon = { Icon(Icons.Default.Search, null) })
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    listOf("all" to "全部", "enabled" to "已启用", "disabled" to "已停用").forEach { (id, label) ->
+        listOf("all" to stringResource(R.string.all_filter), "enabled" to stringResource(R.string.enabled_filter), "disabled" to stringResource(R.string.disabled_filter)).forEach { (id, label) ->
                         TextButton(onClick = { modelFilter = id }, colors = ButtonDefaults.textButtonColors(containerColor = if (modelFilter == id) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) { Text(label) }
                     }
                 }
@@ -2437,21 +2914,21 @@ internal fun ModelProviderEditorScreen(
                                     modifier = Modifier.testTag("select-model-$index"),
                                 )
                             }
-                            Text("启用", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                            Text(stringResource(R.string.enabled), Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                             Switch(model.enabled, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(enabled = value) }) })
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(model.upstreamId, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(upstreamId = value, name = if (model.name == model.upstreamId) value else model.name) }) }, Modifier.weight(1f), label = { Text("模型 ID") }, singleLine = true)
-                            IconButton(onClick = { onModelsChange(models.filterIndexed { i, _ -> i != index }) }) { Icon(Icons.Default.Delete, "删除模型") }
+                        OutlinedTextField(model.upstreamId, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(upstreamId = value, name = if (model.name == model.upstreamId) value else model.name) }) }, Modifier.weight(1f), label = { Text(stringResource(R.string.model_id)) }, singleLine = true)
+                            IconButton(onClick = { onModelsChange(models.filterIndexed { i, _ -> i != index }) }) { Icon(Icons.Default.Delete, stringResource(R.string.delete_model)) }
                         }
-                        OutlinedTextField(model.name, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(name = value) }) }, Modifier.fillMaxWidth(), label = { Text("显示名称") }, singleLine = true)
+                    OutlinedTextField(model.name, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(name = value) }) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.display_name)) }, singleLine = true)
                         Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("视觉"); Switch(model.vision, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(vision = value) }) })
-                            Text("工具"); Switch(model.tools, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(tools = value) }) })
-                            Text("推理"); Switch(model.reasoning, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(reasoning = value) }) })
+                        Text(stringResource(R.string.vision)); Switch(model.vision, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(vision = value) }) })
+                        Text(stringResource(R.string.tools)); Switch(model.tools, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(tools = value) }) })
+                        Text(stringResource(R.string.reasoning)); Switch(model.reasoning, { value -> onModelsChange(models.toMutableList().also { it[index] = model.copy(reasoning = value) }) })
                         }
                         Text(
-                            when (model.source) { "PRESET" -> "来源：预设"; "DISCOVERED" -> "来源：服务端发现"; else -> "来源：手动" },
+                            stringResource(when (model.source) { "PRESET" -> R.string.source_preset; "DISCOVERED" -> R.string.source_discovered; else -> R.string.source_manual }),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -2463,8 +2940,8 @@ internal fun ModelProviderEditorScreen(
         undoModels?.let { previous ->
             Surface(color = MaterialTheme.colorScheme.inverseSurface) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("已从草稿删除所选模型", Modifier.weight(1f), color = MaterialTheme.colorScheme.inverseOnSurface)
-                    TextButton(onClick = { onModelsChange(previous); undoModels = null }) { Text("撤销") }
+                Text(stringResource(R.string.selected_models_removed), Modifier.weight(1f), color = MaterialTheme.colorScheme.inverseOnSurface)
+                TextButton(onClick = { onModelsChange(previous); undoModels = null }) { Text(stringResource(R.string.undo)) }
                 }
             }
         }
@@ -2472,48 +2949,98 @@ internal fun ModelProviderEditorScreen(
     if (clearConfirmation) AlertDialog(
         modifier = Modifier.testTag("clear-models-confirmation"),
         onDismissRequest = { clearConfirmation = false },
-        title = { Text("清空模型列表？") },
-        text = { Text("将从当前草稿一次性移除 ${models.size} 个模型。只有点击保存后才会真正写入。") },
-        confirmButton = { TextButton(onClick = { onModelsChange(emptyList()); clearConfirmation = false }) { Text("清空", color = MaterialTheme.colorScheme.error) } },
-        dismissButton = { TextButton(onClick = { clearConfirmation = false }) { Text("取消") } },
+            title = { Text(stringResource(R.string.clear_model_list_question)) },
+            text = { Text(pluralStringResource(R.plurals.clear_model_list_detail, models.size, models.size)) },
+            confirmButton = { TextButton(onClick = { onModelsChange(emptyList()); clearConfirmation = false }) { Text(stringResource(R.string.clear), color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { clearConfirmation = false }) { Text(stringResource(R.string.cancel)) } },
     )
     if (saveImpactConfirmation) AlertDialog(
         onDismissRequest = { saveImpactConfirmation = false },
-        title = { Text("当前默认模型将被停用") },
-        text = { Text("保存后，默认模型会自动切换到其他已启用模型。现有会话仍保留原模型引用。") },
-        confirmButton = { TextButton(onClick = { saveImpactConfirmation = false; onSave() }) { Text("继续保存") } },
-        dismissButton = { TextButton(onClick = { saveImpactConfirmation = false }) { Text("取消") } },
+            title = { Text(stringResource(R.string.default_model_will_disable)) },
+            text = { Text(stringResource(R.string.default_model_disable_detail)) },
+            confirmButton = { TextButton(onClick = { saveImpactConfirmation = false; onSave() }) { Text(stringResource(R.string.continue_saving)) } },
+            dismissButton = { TextButton(onClick = { saveImpactConfirmation = false }) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
 @Composable
-private fun OaepTimeline(
+internal fun OaepTimeline(
     entries: List<OaepTimelineEntry>,
     snapshotSequence: Long,
     composerExpanded: Boolean,
     modifier: Modifier,
+    onRemedy: (String) -> Unit = {},
 ) {
+    val context = LocalContext.current
     val listState = rememberLazyListState()
     val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+    var followLatest by rememberSaveable { mutableStateOf(true) }
+    var programmaticScroll by remember { mutableStateOf(false) }
+    var previousEntryCount by remember { mutableStateOf(entries.size) }
+    val userScrollObserver = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput) followLatest = false
+                return Offset.Zero
+            }
+        }
+    }
     val lastText = entries.lastOrNull().let { entry ->
         (entry as? OaepTimelineEntry.AssistantTurn)?.results?.lastOrNull()?.text
     }
-    LaunchedEffect(entries.size, lastText, snapshotSequence, imeBottom) {
-        if (entries.isNotEmpty()) {
-            if (imeBottom > 0) listState.scrollToItem(entries.lastIndex)
-            else listState.animateScrollToItem(entries.lastIndex)
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            ai.drsai.remote.remote.model.TimelineScrollPolicy.isAtBottom(lastVisible, info.totalItemsCount)
+        }.collect { atBottom ->
+            if (!programmaticScroll) followLatest = atBottom
         }
     }
-    LazyColumn(
-        modifier = modifier.fillMaxWidth(), state = listState,
-        contentPadding = PaddingValues(start = 16.dp, top = 94.dp, end = 16.dp, bottom = if (composerExpanded) 190.dp else 104.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        items(entries, key = OaepTimelineEntry::stableId) { entry ->
-            when (entry) {
-                is OaepTimelineEntry.UserMessage -> OaepUserMessage(entry)
-                is OaepTimelineEntry.AssistantTurn -> OaepAssistantTurn(entry)
+    LaunchedEffect(entries.size, lastText, snapshotSequence, imeBottom, followLatest) {
+        if (entries.isNotEmpty() && ai.drsai.remote.remote.model.TimelineScrollPolicy.shouldFollowLatest(followLatest, imeBottom > 0)) {
+            programmaticScroll = true
+            try {
+                kotlinx.coroutines.delay(32)
+                if (imeBottom > 0 || entries.size == previousEntryCount) listState.scrollToItem(entries.lastIndex)
+                else listState.animateScrollToItem(entries.lastIndex)
+                followLatest = true
+            } finally {
+                programmaticScroll = false
+                previousEntryCount = entries.size
             }
+        } else {
+            previousEntryCount = entries.size
+        }
+    }
+    Box(modifier.fillMaxWidth()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().nestedScroll(userScrollObserver).testTag("oaep-timeline-list"), state = listState,
+            contentPadding = PaddingValues(start = 16.dp, top = 94.dp, end = 16.dp, bottom = if (composerExpanded) 190.dp else 104.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            itemsIndexed(entries, key = { _, entry -> entry.stableId }) { index, entry ->
+                val outcomeLabel = (entry as? OaepTimelineEntry.AssistantTurn)?.let { userRunOutcomeLabel(it.outcome) }
+                Box(Modifier.semantics {
+                    traversalIndex = index.toFloat()
+                    contentDescription = when (entry) {
+                        is OaepTimelineEntry.UserMessage -> context.getString(R.string.a11y_user_message, entry.text.take(80))
+                        is OaepTimelineEntry.AssistantTurn -> context.getString(R.string.a11y_agent_reply, outcomeLabel.orEmpty())
+                    }
+                }) {
+                    when (entry) {
+                        is OaepTimelineEntry.UserMessage -> OaepUserMessage(entry)
+                        is OaepTimelineEntry.AssistantTurn -> OaepAssistantTurn(entry, onRemedy)
+                    }
+                }
+            }
+        }
+        if (!followLatest && entries.isNotEmpty()) {
+            Button(
+                onClick = { followLatest = true },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = if (composerExpanded) 198.dp else 112.dp)
+                    .testTag("timeline-return-latest"),
+                ) { Text(stringResource(R.string.back_to_latest)) }
         }
     }
 }
@@ -2521,7 +3048,7 @@ private fun OaepTimeline(
 @Composable
 private fun OaepUserMessage(message: OaepTimelineEntry.UserMessage) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
-        Text("你", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.you), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
         Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(18.dp), modifier = Modifier.widthIn(max = 620.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (message.resources.isNotEmpty()) message.resources.forEach { resource ->
@@ -2538,16 +3065,42 @@ private fun OaepUserMessage(message: OaepTimelineEntry.UserMessage) {
 }
 
 @Composable
-internal fun OaepAssistantTurn(turn: OaepTimelineEntry.AssistantTurn) {
-    val active = turn.status in setOf("queued", "running", "waiting")
-    var processOpen by rememberSaveable(turn.stableId) { mutableStateOf(active) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun userRunOutcomeLabel(outcome: ai.drsai.remote.remote.model.UserRunOutcome): String = stringResource(
+    when (outcome) {
+        ai.drsai.remote.remote.model.UserRunOutcome.QUEUED -> R.string.run_outcome_queued
+        ai.drsai.remote.remote.model.UserRunOutcome.RUNNING -> R.string.run_outcome_running
+        ai.drsai.remote.remote.model.UserRunOutcome.RECOVERABLE -> R.string.run_outcome_recoverable
+        ai.drsai.remote.remote.model.UserRunOutcome.COMPLETED -> R.string.run_outcome_completed
+        ai.drsai.remote.remote.model.UserRunOutcome.PARTIAL -> R.string.run_outcome_partial
+        ai.drsai.remote.remote.model.UserRunOutcome.FAILED -> R.string.run_outcome_failed
+        ai.drsai.remote.remote.model.UserRunOutcome.CANCELLED -> R.string.run_outcome_cancelled
+        ai.drsai.remote.remote.model.UserRunOutcome.PROCESSING -> R.string.run_outcome_processing
+    },
+)
+
+@Composable
+internal fun OaepAssistantTurn(turn: OaepTimelineEntry.AssistantTurn, onRemedy: (String) -> Unit = {}) {
+    val active = !turn.outcome.terminal && !turn.outcome.recoverable
+    val outcomeLabel = userRunOutcomeLabel(turn.outcome)
+    var processOpen by rememberSaveable(turn.stableId) { mutableStateOf(false) }
+    var advancedOpen by rememberSaveable(turn.stableId) { mutableStateOf(false) }
+    val expandedDescription = stringResource(R.string.expanded)
+    val collapsedDescription = stringResource(R.string.collapsed)
+    Column(Modifier.fillMaxWidth().semantics {
+        stateDescription = outcomeLabel
+        if (active) liveRegion = LiveRegionMode.Polite
+    }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BrandLogo(22.dp)
             Spacer(Modifier.width(8.dp))
             Text("OpenDrSai", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            Text(turnStatusLabel(turn.status), style = MaterialTheme.typography.labelSmall, color = if (turn.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                outcomeLabel,
+                modifier = Modifier.testTag("run-outcome-${turn.runId}"),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (turn.outcome in setOf(ai.drsai.remote.remote.model.UserRunOutcome.FAILED, ai.drsai.remote.remote.model.UserRunOutcome.PARTIAL)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (active) {
                 Spacer(Modifier.width(8.dp))
                 CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -2557,17 +3110,23 @@ internal fun OaepAssistantTurn(turn: OaepTimelineEntry.AssistantTurn) {
             Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Column {
                     Row(
-                        Modifier.fillMaxWidth().clickable { processOpen = !processOpen }.padding(horizontal = 12.dp, vertical = 10.dp),
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { processOpen = !processOpen }
+                            .semantics { role = Role.Button; stateDescription = if (processOpen) expandedDescription else collapsedDescription }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(if (active) "正在执行" else "执行过程", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                        Text("${turn.process.size} 项", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Icon(if (processOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (processOpen) "收起" else "展开")
+                        Text(stringResource(if (active) R.string.executing else R.string.execution_process), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    Text(pluralStringResource(R.plurals.process_item_count, turn.process.size, turn.process.size), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(if (processOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore, stringResource(if (processOpen) R.string.collapse else R.string.expand))
                     }
                     if (processOpen) {
                         HorizontalDivider()
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            turn.process.forEach { OaepProcessRow(it) }
+                            turn.process.forEach { OaepProcessRow(it, advancedOpen, onRemedy) }
+                            TextButton(
+                                onClick = { advancedOpen = !advancedOpen },
+                                modifier = Modifier.testTag("oaep-advanced-details"),
+                            ) { Text(stringResource(if (advancedOpen) R.string.hide_advanced else R.string.advanced_details)) }
                         }
                     }
                 }
@@ -2576,7 +3135,7 @@ internal fun OaepAssistantTurn(turn: OaepTimelineEntry.AssistantTurn) {
         turn.interactions.forEach { interaction ->
             Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.tertiaryContainer, border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary)) {
                 Column(Modifier.padding(14.dp)) {
-                    Text("需要你的操作 · ${interaction.title}", fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.action_required, interaction.title), fontWeight = FontWeight.Bold)
                     if (interaction.prompt.isNotBlank()) { Spacer(Modifier.height(6.dp)); RemoteMarkdownContent(interaction.prompt) }
                 }
             }
@@ -2588,7 +3147,7 @@ internal fun OaepAssistantTurn(turn: OaepTimelineEntry.AssistantTurn) {
             } else {
                 Surface(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     Column(Modifier.padding(14.dp)) {
-                        Text(result.title ?: "产物", fontWeight = FontWeight.Bold)
+                        Text(result.title ?: stringResource(R.string.artifact), fontWeight = FontWeight.Bold)
                         if (result.text.isNotBlank()) { Spacer(Modifier.height(6.dp)); RemoteMarkdownContent(result.text) }
                         OaepSourceLinks(result.sources)
                     }
@@ -2596,28 +3155,55 @@ internal fun OaepAssistantTurn(turn: OaepTimelineEntry.AssistantTurn) {
             }
         }
         if (turn.results.isEmpty() && active && turn.process.isEmpty()) {
-            Text("正在思考…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.thinking), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun OaepProcessRow(item: OaepProcessItem) {
+private fun OaepProcessRow(item: OaepProcessItem, advanced: Boolean, onRemedy: (String) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         if (item.status in setOf("pending", "running", "waiting")) CircularProgressIndicator(Modifier.padding(top = 3.dp).size(14.dp), strokeWidth = 2.dp)
         else Icon(Icons.Default.TaskAlt, null, Modifier.padding(top = 1.dp).size(18.dp), tint = if (item.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
         Spacer(Modifier.width(9.dp))
         Column(Modifier.weight(1f)) {
             Text(item.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            item.detail?.takeIf(String::isNotBlank)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    item.purpose?.takeIf(String::isNotBlank)?.let { Text(stringResource(R.string.purpose, it), style = MaterialTheme.typography.bodySmall) }
+                    item.inputSummary?.takeIf(String::isNotBlank)?.let { Text(stringResource(R.string.input_summary, it), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    item.durationMs?.let { Text(stringResource(R.string.duration_ms, it.toLong()), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item.taskProgress?.let { progress ->
+                        Text(stringResource(R.string.task_goal, progress.goal), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                Text(
+                    stringResource(R.string.task_progress_summary, progress.completed, progress.running, progress.waiting, progress.failed),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (progress.failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                        if (progress.partialFailure) Text(stringResource(R.string.partial_failure_notice), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                progress.steps.take(12).forEach { step ->
+                    Text("${taskStepMarker(step.status)} ${step.title}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
             item.executionLocation?.takeIf(String::isNotBlank)?.let {
-                Text("执行位置：$it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            Text(stringResource(R.string.execution_location, it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
             if (item.text.isNotBlank() && item.text != item.status) {
                 Spacer(Modifier.height(4.dp))
-                Text(item.text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (item.kind == "reasoning") 8 else 4, overflow = TextOverflow.Ellipsis)
+                        Text(stringResource(R.string.result_text, item.text), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (item.kind == "reasoning") 8 else 4, overflow = TextOverflow.Ellipsis)
+            }
+            item.operationOutcome?.let { outcome ->
+                        outcome.completed?.let { Text(stringResource(R.string.completed_summary, it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+                        outcome.notExecuted?.let { Text(stringResource(R.string.not_executed_summary, it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                outcome.irreversibleNotice?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
+                if (outcome.remedyLabel != null && outcome.remedyPrompt != null) {
+                    TextButton(onClick = { onRemedy(outcome.remedyPrompt) }, modifier = Modifier.testTag("tool-remedy-${item.id}")) {
+                        Text(outcome.remedyLabel)
+                    }
+                }
             }
             OaepSourceLinks(item.sources)
+            if (advanced) item.advancedDetail?.takeIf(String::isNotBlank)?.let {
+                        Text(stringResource(R.string.internal_detail, it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            }
         }
     }
 }
@@ -2627,13 +3213,19 @@ private fun OaepSourceLinks(sources: List<OaepSourceLink>) {
     if (sources.isEmpty()) return
     val context = LocalContext.current
     Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("来源", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.sources), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
         sources.forEach { source ->
+            val typeLabel = when (source.type) {
+                ai.drsai.remote.remote.model.OaepSourceType.WEB -> stringResource(R.string.source_web)
+                ai.drsai.remote.remote.model.OaepSourceType.LOCAL_DOCUMENT -> stringResource(R.string.source_local_document)
+                ai.drsai.remote.remote.model.OaepSourceType.ARTIFACT -> stringResource(R.string.source_artifact)
+            }
+            val display = "$typeLabel · ${source.label}${if (source.verified) stringResource(R.string.verified_suffix) else ""}"
             Text(
-                source.label,
-                modifier = Modifier.clickable {
-                    runCatching { CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(source.url)) }
-                },
+                display,
+                modifier = source.url?.let { url -> Modifier.clickable {
+                    runCatching { CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url)) }
+                } } ?: Modifier,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 2,
@@ -2641,16 +3233,6 @@ private fun OaepSourceLinks(sources: List<OaepSourceLink>) {
             )
         }
     }
-}
-
-private fun turnStatusLabel(status: String): String = when (status) {
-    "queued" -> "等待中"
-    "running" -> "执行中"
-    "waiting" -> "等待操作"
-    "completed" -> "已完成"
-    "failed" -> "执行失败"
-    "cancelled" -> "已取消"
-    else -> status
 }
 
 @Composable
@@ -2727,7 +3309,7 @@ private fun MessageBubble(message: ChatMessage, assistantName: String, retryAtta
     val isUser = message.role == "user"
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
-        Text(if (isUser) "你" else assistantName, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Text(if (isUser) stringResource(R.string.you) else assistantName, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
         val content: @Composable () -> Unit = {
             Column(Modifier.padding(if (isUser) 14.dp else 4.dp)) {
                 if (message.attachments.isNotEmpty()) {
@@ -2737,7 +3319,7 @@ private fun MessageBubble(message: ChatMessage, assistantName: String, retryAtta
                 if (message.text.isNotBlank()) {
                     RemoteMarkdownContent(message.text)
                 } else if (message.attachments.isEmpty()) {
-                    Text("正在思考…")
+        Text(stringResource(R.string.thinking))
                 }
                 if (!isUser && message.text.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
@@ -2746,18 +3328,18 @@ private fun MessageBubble(message: ChatMessage, assistantName: String, retryAtta
                             val safeText = ClipboardAccessPolicy.sanitizeForWrite(message.text, userInitiated = true)
                             (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
                                 .setPrimaryClip(ClipData.newPlainText("OpenDrSai", safeText))
-                            Toast.makeText(context, "已复制（敏感信息已隐藏）", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.copied_redacted), Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.size(48.dp),
-                    ) { Icon(Icons.Default.ContentCopy, "复制", Modifier.size(16.dp)) }
+        ) { Icon(Icons.Default.ContentCopy, stringResource(R.string.copy), Modifier.size(16.dp)) }
                 }
                 if (message.status != "complete" && message.status != "streaming") {
                     Spacer(Modifier.height(6.dp))
                     Text(
                         when (message.status) {
-                            "paused" -> "已暂停"
-                            "stopped" -> "已停止"
-                            "failed" -> "生成失败"
+        "paused" -> stringResource(R.string.paused)
+        "stopped" -> stringResource(R.string.stopped)
+        "failed" -> stringResource(R.string.generation_failed)
                             else -> message.status
                         },
                         style = MaterialTheme.typography.labelSmall,
@@ -2788,7 +3370,7 @@ private fun MessageAttachments(attachments: List<ai.drsai.remote.data.MessageAtt
         if (uri != null && source != null) {
             runCatching {
                 context.contentResolver.openOutputStream(uri, "wt")!!.use { output -> source.inputStream().use { it.copyTo(output) } }
-            }.onFailure { Toast.makeText(context, "保存文件失败", Toast.LENGTH_SHORT).show() }
+                    }.onFailure { Toast.makeText(context, context.getString(R.string.save_file_failed), Toast.LENGTH_SHORT).show() }
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2800,7 +3382,7 @@ private fun MessageAttachments(attachments: List<ai.drsai.remote.data.MessageAtt
                     val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, attachment.mimeType)
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     runCatching { context.startActivity(intent) }
-                        .onFailure { Toast.makeText(context, "没有可打开此文件的应用", Toast.LENGTH_SHORT).show() }
+                    .onFailure { Toast.makeText(context, context.getString(R.string.no_app_to_open_file), Toast.LENGTH_SHORT).show() }
                 } else Modifier,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -2816,13 +3398,13 @@ private fun MessageAttachments(attachments: List<ai.drsai.remote.data.MessageAtt
                 Column(Modifier.weight(1f)) {
                     Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        if (attachment.status == "download_failed") "下载失败" else formatBytes(attachment.size),
+                        if (attachment.status == "download_failed") stringResource(R.string.download_failed) else LocalizedFormatting.bytes(attachment.size, java.util.Locale.forLanguageTag(LocalConfiguration.current.locales[0].toLanguageTag())),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (attachment.status == "download_failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (attachment.status == "download_failed") {
-                    TextButton(onClick = { retry(attachment.id) }) { Text("重试") }
+                TextButton(onClick = { retry(attachment.id) }) { Text(stringResource(R.string.retry)) }
                 } else if (localFile != null) {
                     IconButton(onClick = {
                         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", localFile)
@@ -2830,12 +3412,12 @@ private fun MessageAttachments(attachments: List<ai.drsai.remote.data.MessageAtt
                             .putExtra(Intent.EXTRA_STREAM, uri)
                             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             .apply { clipData = ClipData.newRawUri(attachment.name, uri) }
-                        context.startActivity(Intent.createChooser(intent, "分享 ${attachment.name}"))
-                    }) { Icon(Icons.Default.Share, "分享附件") }
+                    context.startActivity(Intent.createChooser(intent, context.getString(R.string.share_named_item, attachment.name)))
+                }) { Icon(Icons.Default.Share, stringResource(R.string.share_attachment)) }
                     IconButton(onClick = {
                         pendingSave = localFile
                         saveLauncher.launch(attachment.name)
-                    }) { Icon(Icons.Default.Download, "保存附件") }
+                }) { Icon(Icons.Default.Download, stringResource(R.string.save_attachment)) }
                 }
             }
         }
@@ -2894,16 +3476,16 @@ internal fun Composer(
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "请说出要发送给 OpenDrSai 的内容")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, context.getString(R.string.voice_prompt))
         }
         runCatching { speechLauncher.launch(intent) }
-            .onFailure { Toast.makeText(context, "当前设备没有可用的语音识别服务", Toast.LENGTH_SHORT).show() }
+            .onFailure { Toast.makeText(context, context.getString(R.string.voice_service_unavailable), Toast.LENGTH_SHORT).show() }
         Unit
     }
 
     if (attachmentSheetOpen) {
         ModalBottomSheet(onDismissRequest = { attachmentSheetOpen = false }) {
-            AttachmentSourceButton(Icons.Default.CameraAlt, "拍照") {
+                AttachmentSourceButton(Icons.Default.CameraAlt, stringResource(R.string.take_photo)) {
                 attachmentSheetOpen = false
                 val directory = File(context.cacheDir, "attachments/camera").apply { mkdirs() }
                 val file = File(directory, "camera-${UUID.randomUUID()}.jpg")
@@ -2911,11 +3493,11 @@ internal fun Composer(
                 pendingCameraUri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                 cameraLauncher.launch(pendingCameraUri!!)
             }
-            AttachmentSourceButton(Icons.Default.Image, "从相册选择") {
+                AttachmentSourceButton(Icons.Default.Image, stringResource(R.string.choose_gallery)) {
                 attachmentSheetOpen = false
                 photoLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             }
-            AttachmentSourceButton(Icons.Default.AttachFile, "选择文件") {
+                AttachmentSourceButton(Icons.Default.AttachFile, stringResource(R.string.choose_file)) {
                 attachmentSheetOpen = false
                 fileLauncher.launch(ai.drsai.remote.data.AttachmentPolicy.acceptedDocumentMimeTypes)
             }
@@ -2952,13 +3534,21 @@ internal fun Composer(
                 Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                IconButton(onClick = { attachmentSheetOpen = true }, enabled = !busy) {
-                    Icon(Icons.Default.Add, "添加附件")
+                IconButton(onClick = { attachmentSheetOpen = true }, enabled = !busy, modifier = Modifier.requiredSize(48.dp)) {
+                    Icon(Icons.Default.Add, stringResource(R.string.add_attachment))
                 }
                 BasicTextField(
                 value = text,
                 onValueChange = { text = it },
-                modifier = Modifier.weight(1f).padding(vertical = 5.dp).testTag("runtime-composer-input"),
+                modifier = Modifier.weight(1f).padding(vertical = 5.dp).testTag("runtime-composer-input").semantics {
+            contentDescription = context.getString(R.string.message_to_agent, state.selectedAgent?.name ?: "OpenDrSai")
+                    stateDescription = when {
+                busy -> context.getString(R.string.run_busy_not_editable)
+                state.selectedAgent?.chatSupported != true -> context.getString(R.string.agent_chat_unsupported)
+                text.isBlank() -> context.getString(R.string.blank)
+                else -> context.resources.getQuantityString(R.plurals.entered_character_count, text.length, text.length)
+                    }
+                },
                 enabled = !busy && state.selectedAgent?.chatSupported == true,
                 maxLines = 5,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
@@ -2967,7 +3557,7 @@ internal fun Composer(
                 decorationBox = { innerTextField ->
                     Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.CenterStart) {
                         if (text.isEmpty()) Text(
-                            "给 ${state.selectedAgent?.name ?: "OpenDrSai"} 发消息",
+                stringResource(R.string.send_to_agent, state.selectedAgent?.name ?: "OpenDrSai"),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         innerTextField()
@@ -2975,15 +3565,16 @@ internal fun Composer(
                 },
                 )
                 when {
-                    busy -> FilledIconButton(onClick = onStop, modifier = Modifier.testTag("runtime-stop")) {
-                        Icon(Icons.Default.Stop, "停止")
+                    busy -> FilledIconButton(onClick = onStop, modifier = Modifier.requiredSize(48.dp).testTag("runtime-stop")) {
+                        Icon(Icons.Default.Stop, stringResource(R.string.stop_run))
                     }
                     text.isNotBlank() || state.attachmentDrafts.isNotEmpty() -> FilledIconButton(
                         onClick = send,
+                        modifier = Modifier.requiredSize(48.dp),
                         enabled = state.selectedAgent?.chatSupported == true && state.attachmentDrafts.none { it.status == AttachmentStatus.PREPARING },
-                    ) { Icon(Icons.Default.ArrowUpward, "发送") }
-                    else -> IconButton(onClick = startSpeechRecognition, enabled = state.selectedAgent?.chatSupported == true) {
-                        Icon(Icons.Default.Mic, "语音输入")
+                    ) { Icon(Icons.Default.ArrowUpward, stringResource(R.string.send_message)) }
+                    else -> IconButton(onClick = startSpeechRecognition, enabled = state.selectedAgent?.chatSupported == true, modifier = Modifier.requiredSize(48.dp)) {
+                        Icon(Icons.Default.Mic, stringResource(R.string.voice_input))
                     }
                 }
             }
@@ -3015,9 +3606,9 @@ private fun AttachmentDraftCard(draft: AttachmentDraft, remove: () -> Unit, retr
                 Text(draft.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
                 Text(
                     when (draft.status) {
-                        AttachmentStatus.UPLOADING -> "上传中 ${draft.progress}%"
-                        AttachmentStatus.FAILED -> draft.error ?: "上传失败"
-                        else -> formatBytes(draft.size)
+            AttachmentStatus.UPLOADING -> stringResource(R.string.uploading_progress, draft.progress)
+            AttachmentStatus.FAILED -> draft.error ?: stringResource(R.string.upload_failed)
+                        else -> LocalizedFormatting.bytes(draft.size, java.util.Locale.forLanguageTag(LocalConfiguration.current.locales[0].toLanguageTag()))
                     },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -3025,9 +3616,14 @@ private fun AttachmentDraftCard(draft: AttachmentDraft, remove: () -> Unit, retr
                     color = if (draft.status == AttachmentStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (draft.status == AttachmentStatus.FAILED) TextButton(onClick = retry) { Text("重试") }
-            else IconButton(onClick = remove, enabled = draft.status != AttachmentStatus.UPLOADING, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Default.Close, "移除附件", Modifier.size(17.dp))
+            if (draft.status == AttachmentStatus.FAILED) TextButton(
+                onClick = retry, modifier = Modifier.testTag("attachment-retry-${draft.id}"),
+        ) { Text(stringResource(R.string.retry)) }
+            IconButton(
+                onClick = remove, enabled = draft.status != AttachmentStatus.UPLOADING,
+                modifier = Modifier.size(48.dp).testTag("attachment-remove-${draft.id}"),
+            ) {
+            Icon(Icons.Default.Close, stringResource(R.string.remove_attachment, draft.name), Modifier.size(17.dp))
             }
         }
     }
@@ -3040,23 +3636,36 @@ private fun formatBytes(size: Long): String = when {
 }
 
 @Composable
-private fun ErrorBar(message: String, diagnostic: ai.drsai.remote.data.RuntimeDiagnosticUi?, retry: () -> Unit) {
+internal fun ErrorBar(
+    message: String,
+    diagnostic: ai.drsai.remote.data.RuntimeDiagnosticUi?,
+    repair: ai.drsai.remote.runtime.errors.CapabilityRepair?,
+    retryLabel: String? = null,
+    retry: () -> Unit,
+    onRepair: (ai.drsai.remote.runtime.errors.CapabilityRepairAction) -> Unit,
+) {
     val context = LocalContext.current
     Surface(color = MaterialTheme.colorScheme.errorContainer) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
-                diagnostic?.let { Text("错误码：${it.code}", style = MaterialTheme.typography.labelSmall) }
+                diagnostic?.let { Text(stringResource(R.string.error_code, it.code), style = MaterialTheme.typography.labelSmall) }
             }
             diagnostic?.let {
                 TextButton(onClick = {
                     val safe = ClipboardAccessPolicy.sanitizeForWrite(it.exportText(), userInitiated = true)
                     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
                         .setPrimaryClip(ClipData.newPlainText("OpenDrSai diagnostic", safe))
-                    Toast.makeText(context, "脱敏诊断已复制", Toast.LENGTH_SHORT).show()
-                }) { Text("诊断") }
+                    Toast.makeText(context, context.getString(R.string.diagnostic_copied), Toast.LENGTH_SHORT).show()
+                }) { Text(stringResource(R.string.diagnostics)) }
             }
-            TextButton(onClick = retry) { Text("重试") }
+            if (repair != null) {
+                TextButton(onClick = { onRepair(repair.action) }, modifier = Modifier.testTag("capability-repair-action")) {
+                    Text(repair.actionLabel)
+                }
+            } else {
+                TextButton(onClick = retry) { Text(retryLabel ?: stringResource(R.string.retry)) }
+            }
         }
     }
 }
@@ -3071,7 +3680,7 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
     var modelMenuOpen by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = { viewModel.toggleProfile(false) }) {
         Column(Modifier.fillMaxWidth().padding(22.dp)) {
-            Text("个人中心", style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.profile), style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 UserAvatar(state.user, Modifier.size(52.dp))
@@ -3084,7 +3693,7 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
             if (state.selectedAgent?.source == "local" && state.models.isNotEmpty()) {
                 Box {
                     OutlinedButton(onClick = { modelMenuOpen = true }) {
-                        Text("切换模型：${state.selectedModel?.name ?: "未选择"}")
+                        Text(stringResource(R.string.switch_model, state.selectedModel?.name ?: stringResource(R.string.not_selected)))
                     }
                     DropdownMenu(expanded = modelMenuOpen, onDismissRequest = { modelMenuOpen = false }) {
                         state.models.forEach { model ->
@@ -3100,9 +3709,9 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
                 }
             }
             state.selectedModel?.takeIf { state.selectedAgent?.source == "local" }
-                ?.let { Text("模型：${it.name}", style = MaterialTheme.typography.bodySmall) }
+                ?.let { Text(stringResource(R.string.model_label, it.name), style = MaterialTheme.typography.bodySmall) }
             Text(
-                "Runtime：${if (state.selectedAgent?.source == "platform") "HAI 平台" else "Android 本机"}",
+                stringResource(R.string.runtime_profile_summary, stringResource(if (state.selectedAgent?.source == "platform") R.string.hepai_platform else R.string.android_local)),
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.height(12.dp))
@@ -3111,17 +3720,40 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
                 versionCode = BuildConfig.VERSION_CODE,
                 buildType = BuildConfig.BUILD_TYPE,
             )
+            if (state.setupJourney.status != ai.drsai.remote.runtime.setup.SetupStatus.COMPLETE) {
+                OutlinedButton(
+                    onClick = {
+                        viewModel.resumeSetupJourney()
+                        viewModel.toggleProfile(false)
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("profile-resume-setup"),
+                ) { Text(stringResource(R.string.continue_agent_setup)) }
+            }
             Spacer(Modifier.height(12.dp))
             FullRuntimeDiagnosticSection(
-                diagnostic = state.fullRuntimeDiagnostic,
+                diagnostic = state.fullRuntimeDiagnostic.copy(
+                    activeRunId = state.oaepActiveRunId,
+                    errorId = state.diagnostic?.requestId ?: state.diagnostic?.code,
+                ),
                 policy = state.runtimePolicyDiagnostic,
                 onRetry = viewModel::retryFullRuntimeBinding,
+                feedbackBundle = ai.drsai.remote.runtime.reliability.DiagnosticFeedbackBundleFactory.create(
+                    ai.drsai.remote.runtime.reliability.DiagnosticFeedbackEnvironment(
+                        BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, BuildConfig.BUILD_TYPE,
+                        Build.MANUFACTURER, Build.MODEL, Build.VERSION.SDK_INT,
+                    ),
+                    stableCode = state.diagnostic?.code ?: state.fullRuntimeDiagnostic.health,
+                    runId = state.oaepActiveRunId,
+                    runStatus = state.oaepRunStatus,
+                    events = state.oaepDiagnosticEvents,
+                    runtime = state.fullRuntimeDiagnostic,
+                ),
             )
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("长期记忆", fontWeight = FontWeight.Medium)
-                    Text("按当前 HAI 账号隔离，可随时关闭或删除", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.long_term_memory), fontWeight = FontWeight.Medium)
+                    Text(stringResource(R.string.memory_account_notice), style = MaterialTheme.typography.bodySmall)
                 }
                 Switch(checked = state.memoryEnabled, onCheckedChange = viewModel::setMemoryEnabled)
             }
@@ -3131,7 +3763,7 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(memory.content, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                             IconButton(onClick = { viewModel.deleteMemory(memory.id) }) {
-                                Icon(Icons.Default.Delete, "删除记忆")
+                                Icon(Icons.Default.Delete, stringResource(R.string.delete_memory))
                             }
                         }
                     }
@@ -3139,17 +3771,17 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
             }
             Spacer(Modifier.height(12.dp))
             val updateLabel = when (val current = updateState) {
-                AndroidUpdateState.Idle -> "检查并更新"
-                AndroidUpdateState.Checking -> "正在检查…"
-                is AndroidUpdateState.Available -> "发现 ${current.update.version}，下载并安装"
-                is AndroidUpdateState.Downloading -> "取消下载 ${current.progress}%"
-                is AndroidUpdateState.Verifying -> "正在校验安装包…"
-                is AndroidUpdateState.Ready -> "立即安装 ${current.update.version}"
-                is AndroidUpdateState.PermissionRequired -> "允许安装后继续"
-                is AndroidUpdateState.Installing -> "正在等待系统安装…"
-                is AndroidUpdateState.Installed -> "已更新到 ${current.version}"
-                is AndroidUpdateState.Cancelled -> "重新检查更新"
-                is AndroidUpdateState.Failed -> "重试更新"
+                AndroidUpdateState.Idle -> stringResource(R.string.check_and_update)
+                AndroidUpdateState.Checking -> stringResource(R.string.checking_updates)
+                is AndroidUpdateState.Available -> stringResource(R.string.update_found, current.update.version)
+                is AndroidUpdateState.Downloading -> stringResource(R.string.cancel_download_progress, current.progress)
+                is AndroidUpdateState.Verifying -> stringResource(R.string.verifying_package)
+                is AndroidUpdateState.Ready -> stringResource(R.string.install_version_now, current.update.version)
+                is AndroidUpdateState.PermissionRequired -> stringResource(R.string.allow_install_continue)
+                is AndroidUpdateState.Installing -> stringResource(R.string.waiting_system_install)
+                is AndroidUpdateState.Installed -> stringResource(R.string.updated_to_version, current.version)
+                is AndroidUpdateState.Cancelled -> stringResource(R.string.check_updates_again)
+                is AndroidUpdateState.Failed -> stringResource(R.string.retry_update)
             }
             val updateBusy = updateState is AndroidUpdateState.Checking ||
                 updateState is AndroidUpdateState.Verifying ||
@@ -3187,15 +3819,15 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
             when (val current = updateState) {
                 is AndroidUpdateState.Failed -> Text(current.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 is AndroidUpdateState.Available -> Text(
-                    "可更新到 ${current.update.version} · ${current.update.source.displayName()}",
+                    stringResource(R.string.update_available_source, current.update.version, current.update.source.displayName()),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 is AndroidUpdateState.Ready -> Text(
-                    "安装包已通过完整性与签名校验 · ${current.update.source.displayName()}",
+                    stringResource(R.string.package_verified_source, current.update.source.displayName()),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 is AndroidUpdateState.PermissionRequired -> Text(
-                    "请在系统设置中允许 OpenDrSai 安装未知应用，返回后将自动继续",
+                    stringResource(R.string.allow_unknown_apps_notice),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 else -> Unit
@@ -3207,7 +3839,7 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
             ) {
                 Icon(Icons.AutoMirrored.Filled.Logout, null)
                 Spacer(Modifier.width(8.dp))
-                Text("退出登录")
+                Text(stringResource(R.string.sign_out))
             }
             Spacer(Modifier.height(20.dp))
         }
@@ -3217,13 +3849,13 @@ private fun ProfileSheet(state: AppState, viewModel: AppViewModel) {
 @Composable
 fun ProfileVersionInfo(versionName: String, versionCode: Int, buildType: String) {
     Column(Modifier.fillMaxWidth().testTag("profile-version-info")) {
-        Text("版本信息", fontWeight = FontWeight.Medium)
+        Text(stringResource(R.string.version_information), fontWeight = FontWeight.Medium)
         Text(
             "OpenDrSai $versionName ($versionCode)",
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "构建渠道：${buildType.toProfileChannelName()} · Android Agent Runtime · OAEP 1.0",
+            stringResource(R.string.build_channel_summary, buildType.toProfileChannelName()),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -3235,35 +3867,65 @@ fun FullRuntimeDiagnosticSection(
     diagnostic: ai.drsai.remote.data.FullRuntimeDiagnosticUi,
     policy: ai.drsai.remote.data.RuntimePolicyDiagnosticUi?,
     onRetry: () -> Unit,
+    feedbackBundle: ai.drsai.remote.runtime.reliability.DiagnosticFeedbackBundle =
+        ai.drsai.remote.runtime.reliability.DiagnosticFeedbackBundleFactory.create(
+            ai.drsai.remote.runtime.reliability.DiagnosticFeedbackEnvironment(
+                BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, BuildConfig.BUILD_TYPE,
+                Build.MANUFACTURER, Build.MODEL, Build.VERSION.SDK_INT,
+            ),
+            stableCode = diagnostic.errorId ?: diagnostic.health,
+            runId = diagnostic.activeRunId,
+            runStatus = diagnostic.health,
+            events = emptyList(),
+            runtime = diagnostic,
+        ),
 ) {
     val context = LocalContext.current
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Column(
         Modifier.fillMaxWidth().testTag("full-runtime-diagnostic"),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        Text(
+            stringResource(R.string.advanced_diagnostics),
+            fontWeight = FontWeight.Medium,
+        )
+        Text(
+            stringResource(R.string.diagnostic_route_binding_health, diagnostic.route, diagnostic.bindingState, diagnostic.health),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        TextButton(
+            onClick = { expanded = !expanded },
+            modifier = Modifier.testTag("toggle-full-runtime-diagnostic"),
+        ) { Text(stringResource(if (expanded) R.string.hide_details else R.string.show_details)) }
+        if (!expanded) return@Column
         Text(
             if (diagnostic.desktopParityComplete) "Android Full Agent Runtime · Desktop Parity"
             else "Android Agent Runtime Preview · Desktop parity incomplete",
             fontWeight = FontWeight.Medium,
         )
         Text(
-            "路由 ${diagnostic.route} · 绑定 ${diagnostic.bindingState} · 健康 ${diagnostic.health}",
+            stringResource(R.string.diagnostic_build_process, diagnostic.buildEnabled, diagnostic.process),
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "Build enabled=${diagnostic.buildEnabled} · 进程 ${diagnostic.process}",
+            stringResource(R.string.diagnostic_kernel, diagnostic.kernelVersion ?: stringResource(R.string.not_verified), diagnostic.kernelSha256?.take(12) ?: stringResource(R.string.no_digest)),
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "Kernel ${diagnostic.kernelVersion ?: "未验证"} · ${diagnostic.kernelSha256?.take(12) ?: "无 digest"}",
+            stringResource(R.string.diagnostic_prompt_tool, diagnostic.promptVersion ?: stringResource(R.string.not_verified), diagnostic.toolManifestVersion ?: stringResource(R.string.not_verified)),
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "Prompt ${diagnostic.promptVersion ?: "未验证"} · Tool ${diagnostic.toolManifestVersion ?: "未验证"}",
+            stringResource(R.string.diagnostic_skill, diagnostic.skillManifestVersion ?: stringResource(R.string.not_verified), diagnostic.skillManifestSha256?.take(12) ?: stringResource(R.string.no_digest)),
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "Skill ${diagnostic.skillManifestVersion ?: "未验证"} · ${diagnostic.skillManifestSha256?.take(12) ?: "无 digest"}",
+            stringResource(R.string.diagnostic_capability, diagnostic.capabilityManifestVersion ?: stringResource(R.string.not_verified), diagnostic.capabilityManifestSha256?.take(12) ?: stringResource(R.string.no_digest)),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            stringResource(R.string.diagnostic_run_error, diagnostic.activeRunId ?: stringResource(R.string.none), diagnostic.errorId ?: stringResource(R.string.none)),
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
@@ -3288,35 +3950,70 @@ fun FullRuntimeDiagnosticSection(
                 modifier = Modifier.testTag("runtime-policy-diagnostic"),
             )
         }
-        Text("可用工具：${diagnostic.availableTools.joinToString().ifBlank { "无" }}", style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.available_tools, diagnostic.availableTools.joinToString().ifBlank { stringResource(R.string.none) }), style = MaterialTheme.typography.bodySmall)
         Text(
-            "缺权限工具：${diagnostic.permissionRequiredTools.joinToString().ifBlank { "无" }}",
+            stringResource(R.string.permission_required_tools, diagnostic.permissionRequiredTools.joinToString().ifBlank { stringResource(R.string.none) }),
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "模型不支持工具：${diagnostic.modelUnsupportedTools.joinToString().ifBlank { "无" }}",
+            stringResource(R.string.model_unsupported_tools, diagnostic.modelUnsupportedTools.joinToString().ifBlank { stringResource(R.string.none) }),
             style = MaterialTheme.typography.bodySmall,
         )
-        Text("可用 Skill：${diagnostic.availableSkills.joinToString().ifBlank { "无" }}", style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.available_skills, diagnostic.availableSkills.joinToString().ifBlank { stringResource(R.string.none) }), style = MaterialTheme.typography.bodySmall)
         Text(
-            "缺权限 Skill：${diagnostic.permissionRequiredSkills.joinToString().ifBlank { "无" }}",
+            stringResource(R.string.permission_required_skills, diagnostic.permissionRequiredSkills.joinToString().ifBlank { stringResource(R.string.none) }),
             style = MaterialTheme.typography.bodySmall,
         )
         diagnostic.bindReason?.let {
-            Text("不可用原因：$it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.unavailable_reason, it), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
         Row {
             if (diagnostic.health != "READY") {
-                TextButton(onClick = onRetry) { Text("重试绑定") }
+                TextButton(onClick = onRetry) { Text(stringResource(R.string.retry_binding)) }
             }
             TextButton(onClick = {
-                val safe = ClipboardAccessPolicy.sanitizeForWrite(diagnostic.exportText(), userInitiated = true)
+                check(feedbackBundle.secretScanPassed) { "diagnostic_feedback_secret_scan_failed" }
+                val safe = ClipboardAccessPolicy.sanitizeForWrite(feedbackBundle.text, userInitiated = true)
                 (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                    .setPrimaryClip(ClipData.newPlainText("OpenDrSai Full Runtime diagnostic", safe))
-                Toast.makeText(context, "Full Runtime 脱敏诊断已复制", Toast.LENGTH_SHORT).show()
-            }) { Text("导出诊断") }
+                    .setPrimaryClip(ClipData.newPlainText("OpenDrSai diagnostic feedback", safe))
+                Toast.makeText(context, context.getString(R.string.feedback_bundle_copied), Toast.LENGTH_SHORT).show()
+            }, modifier = Modifier.testTag("copy-full-runtime-diagnostic")) { Text(stringResource(R.string.copy_diagnostics)) }
+            TextButton(onClick = {
+                check(feedbackBundle.secretScanPassed) { "diagnostic_feedback_secret_scan_failed" }
+                context.startActivity(Intent.createChooser(
+                    diagnosticFeedbackShareIntent(feedbackBundle), context.getString(R.string.share_feedback_bundle),
+                ))
+            }, modifier = Modifier.testTag("share-full-runtime-diagnostic")) { Text(stringResource(R.string.share_diagnostics)) }
         }
     }
+}
+
+private fun taskStepMarker(status: String): String = when (status) {
+    "completed" -> "✓"
+    "running" -> "●"
+    "failed" -> "!"
+    "cancelled" -> "×"
+    else -> "○"
+}
+
+internal fun fullRuntimeDiagnosticShareIntent(
+    diagnostic: ai.drsai.remote.data.FullRuntimeDiagnosticUi,
+): Intent = diagnosticFeedbackShareIntent(
+    ai.drsai.remote.runtime.reliability.DiagnosticFeedbackBundleFactory.create(
+        ai.drsai.remote.runtime.reliability.DiagnosticFeedbackEnvironment(
+            BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, BuildConfig.BUILD_TYPE,
+            Build.MANUFACTURER, Build.MODEL, Build.VERSION.SDK_INT,
+        ), diagnostic.errorId ?: diagnostic.health, diagnostic.activeRunId, diagnostic.health, emptyList(), diagnostic,
+    ),
+)
+
+internal fun diagnosticFeedbackShareIntent(
+    bundle: ai.drsai.remote.runtime.reliability.DiagnosticFeedbackBundle,
+): Intent = Intent(Intent.ACTION_SEND).apply {
+    check(bundle.secretScanPassed) { "diagnostic_feedback_secret_scan_failed" }
+    type = "text/plain"
+    putExtra(Intent.EXTRA_SUBJECT, "OpenDrSai Android diagnostic feedback")
+    putExtra(Intent.EXTRA_TEXT, ClipboardAccessPolicy.sanitizeForWrite(bundle.text, userInitiated = true))
 }
 
 internal fun String.toProfileChannelName(): String = when (lowercase()) {
@@ -3327,8 +4024,9 @@ internal fun String.toProfileChannelName(): String = when (lowercase()) {
     else -> ifBlank { "Unknown" }
 }
 
+@Composable
 private fun AndroidUpdateSource.displayName(): String = when (this) {
     AndroidUpdateSource.CDN -> "OpenDrSai CDN"
-    AndroidUpdateSource.GITHUB -> "GitHub 备用源"
-    AndroidUpdateSource.TEST -> "测试更新源"
+    AndroidUpdateSource.GITHUB -> stringResource(R.string.github_fallback_source)
+    AndroidUpdateSource.TEST -> stringResource(R.string.test_update_source)
 }

@@ -121,7 +121,7 @@ class RemoteSessionUiTest {
             runtimeName = "开发机", workspaceName = "项目", entries = listOf(entry), loading = false,
             error = null, onBack = {}, onRefresh = {},
         ) } }
-        rule.onNodeWithText(remoteAuditActionLabel(entry.action)).assertIsDisplayed()
+        rule.onNodeWithText("批准操作").assertIsDisplayed()
         rule.onNodeWithText("操作方：alice").assertIsDisplayed()
         rule.onNodeWithText("工作区：项目").assertIsDisplayed()
         rule.onAllNodesWithText("corr-123", substring = true).assertCountEquals(0)

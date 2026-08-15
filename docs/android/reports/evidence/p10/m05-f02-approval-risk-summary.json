@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F02",
+  "acceptance_run_id": "p10-round-023-approval-risk-summary",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "fixtures": ["read", "write", "sensitive", "mcp", "desktop_handoff", "unknown"],
+  "invariants": {
+    "host_owned_risk_copy": true,
+    "reason_object_risk_and_reversibility_visible": true,
+    "unknown_operation_fails_closed": true,
+    "internal_ids_advanced_only": true,
+    "decision_contract_unchanged": true
+  },
+  "tests": {
+    "testDebugUnitTest": "682 tests, 0 failures, 2 skipped",
+    "ApprovalRiskSummaryPolicyTest": "all passed",
+    "MainInterfaceTest_API35": "29 passed"
+  }
+}

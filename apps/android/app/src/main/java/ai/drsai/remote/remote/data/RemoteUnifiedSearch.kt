@@ -5,13 +5,12 @@ import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.SessionId
 import ai.drsai.remote.remote.model.WorkspaceId
 
-enum class RemoteSearchSource(val label: String) { ONLINE("在线"), CACHE("本机缓存") }
+enum class RemoteSearchSource { ONLINE, CACHE }
 enum class RemoteSearchKind { HOST, WORKSPACE, SESSION, MESSAGE }
 
 data class RemoteSearchResult(
     val kind: RemoteSearchKind,
     val title: String,
-    val context: String,
     val source: RemoteSearchSource,
     val runtimeId: RuntimeId,
     val workspaceId: WorkspaceId? = null,
@@ -28,17 +27,17 @@ class RemoteUnifiedSearch(private val database: ChatDatabase) {
         val sessionByScope = sessions.associateBy { Triple(it.runtimeId, it.workspaceId, it.sessionId) }
         val workspaceResults = workspaces.asSequence()
             .filter { it.displayName.contains(normalized, ignoreCase = true) }
-            .map { RemoteSearchResult(RemoteSearchKind.WORKSPACE, it.displayName, "工作区",
+            .map { RemoteSearchResult(RemoteSearchKind.WORKSPACE, it.displayName,
                 RemoteSearchSource.CACHE, RuntimeId(it.runtimeId), WorkspaceId(it.workspaceId)) }
         val sessionResults = sessions.asSequence()
             .filter { it.title.contains(normalized, ignoreCase = true) }
-            .map { RemoteSearchResult(RemoteSearchKind.SESSION, it.title, "会话",
+            .map { RemoteSearchResult(RemoteSearchKind.SESSION, it.title,
                 RemoteSearchSource.CACHE, RuntimeId(it.runtimeId), WorkspaceId(it.workspaceId), SessionId(it.sessionId)) }
         val messageResults = dao.recentSubjectOaepItems(subject, "", 5_000).asSequence()
             .filter { it.contentJson.contains(normalized, ignoreCase = true) }
             .mapNotNull { item ->
                 val session = sessionByScope[Triple(item.runtimeId, item.workspaceId, item.sessionId)] ?: return@mapNotNull null
-                RemoteSearchResult(RemoteSearchKind.MESSAGE, session.title, "缓存消息中有匹配内容",
+                RemoteSearchResult(RemoteSearchKind.MESSAGE, session.title,
                     RemoteSearchSource.CACHE, RuntimeId(item.runtimeId), WorkspaceId(item.workspaceId), SessionId(item.sessionId))
             }
         return (workspaceResults + sessionResults + messageResults)

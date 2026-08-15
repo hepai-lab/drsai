@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "feature_id": "M09-F04",
+  "acceptance_run_id": "p10-round-101-localization-formatting",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "chinese_and_english_core_journey_resources_complete": true,
+    "kotlin_user_copy_localization_debt_zero": true,
+    "resource_name_parity_en_and_default": true,
+    "plural_resources_verified": true,
+    "locale_aware_dates_sizes_and_counts_verified": true,
+    "rtl_layout_direction_verified": true,
+    "long_copy_fixture_has_no_placeholder_key": true
+  },
+  "tests": {
+    "LocalizationInstrumentedTest_API35": "2 tests, 0 failures",
+    "LocalizationResourceGateTest": "zero-tolerance code literal and resource parity gate passed",
+    "LocalizedFormattingTest": "2 tests, 0 failures",
+    "testDebugUnitTest": "728 tests, 0 failures, 2 skipped"
+  }
+}

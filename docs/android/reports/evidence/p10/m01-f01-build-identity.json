@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "feature_id": "M01-F01",
+  "acceptance_run_id": "p10-round-001-s0",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "application_id": "ai.drsai.remote.debug",
+  "version_name": "1.5.7",
+  "version_code": 10507,
+  "apk": "apps/android/app/build/outputs/apk/debug/OpenDrSai-Android-v1.5.7.apk",
+  "apk_sha256": "500417316992f35b771531e2f156861f6e25005c7f9e630a8bce803671bacc53",
+  "tests": {
+    "P10BuildIdentityContractTest": "passed",
+    "assembleDebug": "passed",
+    "aapt_badging": "passed"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F05",
+  "acceptance_run_id": "p10-round-043-session-management",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "account_scoped_search_rename_archive_continue": true,
+    "delete_requires_explicit_confirmation": true,
+    "delete_cleans_local_session_history_and_preserves_other_accounts": true,
+    "active_run_blocks_delete": true,
+    "model_switch_only_changes_next_run": true,
+    "historical_replay_remains_pinned": true
+  },
+  "tests": {
+    "LocalStoreTest_API35": "session management scenario passed",
+    "MainInterfaceTest_API35": "delete confirmation scenario passed",
+    "SessionModelSwitchPolicyTest": "1 test, 0 failures",
+    "testDebugUnitTest": "721 tests, 0 failures, 2 skipped"
+  }
+}

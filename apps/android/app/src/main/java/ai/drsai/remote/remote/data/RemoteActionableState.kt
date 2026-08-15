@@ -6,11 +6,17 @@ enum class RemoteRecoveryAction {
     NONE, RETRY, SIGN_IN, UPDATE_APP, REASSOCIATE, CONTACT_ADMIN, RESUME_ON_COMPUTER,
 }
 
+enum class RemoteActionableKind {
+    CUSTOM, PAUSED, LOADING, STALE, OFFLINE, AUTH_REQUIRED, REVOKED, INCOMPATIBLE,
+    RETRY_FAILURE, SIGN_IN_FAILURE, REASSOCIATE_FAILURE, UPDATE_FAILURE, CONTACT_ADMIN_FAILURE,
+}
+
 data class RemoteActionableState(
     val title: String,
     val reason: String,
     val action: RemoteRecoveryAction,
     val actionLabel: String?,
+    val kind: RemoteActionableKind = RemoteActionableKind.CUSTOM,
 )
 
 /** Stable, user-facing recovery state. Never accepts or exposes raw exception text. */
@@ -18,45 +24,46 @@ fun remoteActionableState(
     lifecycle: RemoteLifecycleState,
     paused: Boolean = false,
 ): RemoteActionableState? = when {
-    paused -> RemoteActionableState("此电脑已暂停", "电脑端暂停了移动访问。已有授权仍然保留。",
-        RemoteRecoveryAction.RESUME_ON_COMPUTER, "在电脑端恢复后重试")
+    paused -> RemoteActionableState("", "", RemoteRecoveryAction.RESUME_ON_COMPUTER, null,
+        RemoteActionableKind.PAUSED)
     lifecycle == RemoteLifecycleState.LOADING ->
-        RemoteActionableState("正在连接", "正在读取远程工作区。", RemoteRecoveryAction.NONE, null)
+        RemoteActionableState("", "", RemoteRecoveryAction.NONE, null, RemoteActionableKind.LOADING)
     lifecycle == RemoteLifecycleState.STALE ->
-        RemoteActionableState("当前显示缓存内容", "连接暂时不可用，历史内容仍可查看。",
-            RemoteRecoveryAction.RETRY, "重试")
+        RemoteActionableState("", "", RemoteRecoveryAction.RETRY, null, RemoteActionableKind.STALE)
     lifecycle == RemoteLifecycleState.OFFLINE ->
-        RemoteActionableState("无法连接远程电脑", "请检查手机和电脑网络，然后重试。",
-            RemoteRecoveryAction.RETRY, "重试")
+        RemoteActionableState("", "", RemoteRecoveryAction.RETRY, null, RemoteActionableKind.OFFLINE)
     lifecycle == RemoteLifecycleState.AUTH_REQUIRED ->
-        RemoteActionableState("登录已过期", "重新登录后可继续使用原有设备授权。",
-            RemoteRecoveryAction.SIGN_IN, "重新登录")
+        RemoteActionableState("", "", RemoteRecoveryAction.SIGN_IN, null, RemoteActionableKind.AUTH_REQUIRED)
     lifecycle == RemoteLifecycleState.REVOKED ->
-        RemoteActionableState("此设备已解除关联", "请在电脑端生成新的二维码。",
-            RemoteRecoveryAction.REASSOCIATE, "重新扫码")
+        RemoteActionableState("", "", RemoteRecoveryAction.REASSOCIATE, null, RemoteActionableKind.REVOKED)
     lifecycle == RemoteLifecycleState.INCOMPATIBLE ->
-        RemoteActionableState("版本不兼容", "请先更新 OpenDrSai Android。",
-            RemoteRecoveryAction.UPDATE_APP, "检查更新")
+        RemoteActionableState("", "", RemoteRecoveryAction.UPDATE_APP, null, RemoteActionableKind.INCOMPATIBLE)
     else -> null
 }
 
-fun safeRemoteFailureMessage(failure: Throwable): String = when {
-    failure is RelayHttpException && failure.status == 401 -> "登录已过期"
-    failure is RelayHttpException && failure.status == 403 -> "此设备已无权访问"
-    failure is RelayHttpException && failure.errorCode == "runtime_paused" -> "此电脑已暂停"
-    failure is RelayHttpException && failure.errorCode == "protocol_incompatible" -> "版本不兼容"
-    failure is java.net.SocketTimeoutException -> "连接超时"
-    failure is java.io.IOException -> "网络连接失败"
-    else -> "远程操作失败"
+enum class RemoteFailureMessageKind {
+    AUTH_EXPIRED, ACCESS_REVOKED, RUNTIME_PAUSED, PROTOCOL_INCOMPATIBLE, TIMEOUT,
+    NETWORK_FAILED, RUNTIME_OFFLINE, TEMPORARILY_UNAVAILABLE, OPERATION_FAILED,
 }
 
-fun safeRemoteFailureMessage(failure: OwopResult.Failure): String = when (failure.code) {
-    "auth_required", "invalid_token" -> "登录已过期"
-    "permission_denied", "association_required", "insufficient_scope" -> "此设备已无权访问"
-    "runtime_paused" -> "此电脑已暂停"
-    "runtime_offline", "runtime_owner_unavailable" -> "远程电脑离线"
-    "timeout", "gateway_timeout" -> "连接超时"
-    else -> if (failure.retryable) "远程操作暂时不可用" else "远程操作失败"
+fun safeRemoteFailureKind(failure: Throwable): RemoteFailureMessageKind = when {
+    failure is RelayHttpException && failure.status == 401 -> RemoteFailureMessageKind.AUTH_EXPIRED
+    failure is RelayHttpException && failure.status == 403 -> RemoteFailureMessageKind.ACCESS_REVOKED
+    failure is RelayHttpException && failure.errorCode == "runtime_paused" -> RemoteFailureMessageKind.RUNTIME_PAUSED
+    failure is RelayHttpException && failure.errorCode == "protocol_incompatible" -> RemoteFailureMessageKind.PROTOCOL_INCOMPATIBLE
+    failure is java.net.SocketTimeoutException -> RemoteFailureMessageKind.TIMEOUT
+    failure is java.io.IOException -> RemoteFailureMessageKind.NETWORK_FAILED
+    else -> RemoteFailureMessageKind.OPERATION_FAILED
+}
+
+fun safeRemoteFailureKind(failure: OwopResult.Failure): RemoteFailureMessageKind = when (failure.code) {
+    "auth_required", "invalid_token" -> RemoteFailureMessageKind.AUTH_EXPIRED
+    "permission_denied", "association_required", "insufficient_scope" -> RemoteFailureMessageKind.ACCESS_REVOKED
+    "runtime_paused" -> RemoteFailureMessageKind.RUNTIME_PAUSED
+    "runtime_offline", "runtime_owner_unavailable" -> RemoteFailureMessageKind.RUNTIME_OFFLINE
+    "timeout", "gateway_timeout" -> RemoteFailureMessageKind.TIMEOUT
+    else -> if (failure.retryable) RemoteFailureMessageKind.TEMPORARILY_UNAVAILABLE
+        else RemoteFailureMessageKind.OPERATION_FAILED
 }
 
 fun remoteRecoveryAction(code: String?, retryable: Boolean = false, status: Int? = null): RemoteRecoveryAction {
@@ -89,20 +96,10 @@ fun remoteActionableFailure(failure: OwopResult.Failure): RemoteActionableState 
     remoteActionableFailure(remoteRecoveryAction(failure.code, failure.retryable))
 
 private fun remoteActionableFailure(action: RemoteRecoveryAction): RemoteActionableState = when (action) {
-    RemoteRecoveryAction.RETRY -> RemoteActionableState(
-        "暂时无法连接", "请检查网络后重试；已同步的内容仍可查看。", action, "重试",
-    )
-    RemoteRecoveryAction.SIGN_IN -> RemoteActionableState(
-        "登录已过期", "重新登录后可继续使用原有设备授权。", action, "重新登录",
-    )
-    RemoteRecoveryAction.REASSOCIATE -> RemoteActionableState(
-        "需要重新连接电脑", "请在电脑端生成新的二维码。", action, "重新扫码",
-    )
-    RemoteRecoveryAction.UPDATE_APP -> RemoteActionableState(
-        "版本不兼容", "请先更新 OpenDrSai，再重新连接。", action, "检查更新",
-    )
-    RemoteRecoveryAction.CONTACT_ADMIN -> RemoteActionableState(
-        "暂时无法完成操作", "重试仍失败时，请联系管理员并提供关联编号。", action, "联系管理员",
-    )
+    RemoteRecoveryAction.RETRY -> RemoteActionableState("", "", action, null, RemoteActionableKind.RETRY_FAILURE)
+    RemoteRecoveryAction.SIGN_IN -> RemoteActionableState("", "", action, null, RemoteActionableKind.SIGN_IN_FAILURE)
+    RemoteRecoveryAction.REASSOCIATE -> RemoteActionableState("", "", action, null, RemoteActionableKind.REASSOCIATE_FAILURE)
+    RemoteRecoveryAction.UPDATE_APP -> RemoteActionableState("", "", action, null, RemoteActionableKind.UPDATE_FAILURE)
+    RemoteRecoveryAction.CONTACT_ADMIN -> RemoteActionableState("", "", action, null, RemoteActionableKind.CONTACT_ADMIN_FAILURE)
     else -> error("remote_error_action_invalid")
 }

@@ -32,6 +32,7 @@ class AttachmentRepository(
     private val auth: AccessTokenCoordinator,
     private val baseUrl: String = BuildConfig.HAI_BASE_URL,
     private val http: OkHttpClient = platformHttpClient(readTimeoutSeconds = 180),
+    private val strings: AttachmentStrings = EnglishAttachmentStrings,
 ) : AttachmentContextGateway {
     suspend fun upload(
         draft: AttachmentDraft,
@@ -41,7 +42,7 @@ class AttachmentRepository(
         onProgress: (Int) -> Unit,
     ): RemoteAttachment = withContext(Dispatchers.IO) {
         val file = File(draft.localPath)
-        if (!file.isFile) throw ApiException(400, "附件缓存已失效", false)
+        if (!file.isFile) throw ApiException(400, strings.text(AttachmentText.CACHE_EXPIRED), false)
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("thread_id", threadId)
             .addFormDataPart("run_id", runId)
@@ -77,7 +78,7 @@ class AttachmentRepository(
             val expected = it.body?.contentLength()?.takeIf { size -> size > 0 } ?: 0
             var received = 0L
             try {
-                val source = it.body?.byteStream() ?: throw ApiException(502, "结果文件内容为空")
+                val source = it.body?.byteStream() ?: throw ApiException(502, strings.text(AttachmentText.RESULT_EMPTY))
                 source.use { input ->
                     FileOutputStream(target).use { output ->
                         val buffer = ByteArray(64 * 1024)
@@ -85,13 +86,13 @@ class AttachmentRepository(
                             val count = input.read(buffer)
                             if (count < 0) break
                             received += count
-                            if (received > MAX_ATTACHMENT_BYTES) throw ApiException(413, "结果文件超过 10 MB 限制", false)
+                            if (received > MAX_ATTACHMENT_BYTES) throw ApiException(413, strings.text(AttachmentText.RESULT_TOO_LARGE), false)
                             output.write(buffer, 0, count)
                             if (expected > 0) onProgress(((received * 100) / expected).toInt().coerceIn(0, 100))
                         }
                     }
                 }
-                if (received == 0L) throw ApiException(502, "结果文件内容为空")
+                if (received == 0L) throw ApiException(502, strings.text(AttachmentText.RESULT_EMPTY))
                 onProgress(100)
                 target
             } catch (error: Throwable) {
@@ -124,7 +125,7 @@ class AttachmentRepository(
             val code = nativeErrorCode(raw)
             response.close()
             if (code != "token_expired") throw nativeApiError(401, raw)
-            val refreshed = auth.refreshAfter(initial) ?: throw ApiException(401, "HAI 登录已过期，请重新登录", false)
+            val refreshed = auth.refreshAfter(initial) ?: throw ApiException(401, strings.text(AttachmentText.LOGIN_EXPIRED), false)
             response = execute(factory(refreshed))
         }
         return response
@@ -136,8 +137,8 @@ class AttachmentRepository(
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, error: IOException) {
                 if (!continuation.isActive) return
-                if (call.isCanceled()) continuation.resumeWithException(CancellationException("附件任务已取消"))
-                else continuation.resumeWithException(ApiException(0, error.message ?: "附件上传连接中断"))
+                if (call.isCanceled()) continuation.resumeWithException(CancellationException(strings.text(AttachmentText.CANCELLED)))
+                else continuation.resumeWithException(ApiException(0, error.message ?: strings.text(AttachmentText.CONNECTION_INTERRUPTED)))
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -151,7 +152,7 @@ class AttachmentRepository(
         val raw = response.body?.string().orEmpty()
         if (!response.isSuccessful) throw nativeApiError(response.code, raw)
         val data = runCatching { JSONObject(raw).getJSONObject("data") }
-            .getOrElse { throw ApiException(502, "附件服务返回了无效数据") }
+            .getOrElse { throw ApiException(502, strings.text(AttachmentText.INVALID_SERVICE_DATA)) }
         return RemoteAttachment(
             id = data.getString("id"), name = data.getString("name"), kind = data.getString("kind"),
             mimeType = data.getString("mime_type"), size = data.getLong("size"), sha256 = data.getString("sha256"),

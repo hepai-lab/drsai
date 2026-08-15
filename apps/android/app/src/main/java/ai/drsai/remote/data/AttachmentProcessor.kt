@@ -47,6 +47,7 @@ object AttachmentPolicy {
 }
 
 class AttachmentProcessor(private val context: Context) {
+    private val strings: AttachmentStrings = AndroidAttachmentStrings(context)
     private val root = File(context.cacheDir, "attachments")
     private val prepared = File(root, "prepared")
     private val thumbnails = File(root, "thumbnails")
@@ -64,15 +65,15 @@ class AttachmentProcessor(private val context: Context) {
         val metadata = queryMetadata(uri)
         val originalName = AttachmentPolicy.sanitizeName(metadata.first ?: fallbackName ?: "attachment")
         val extension = AttachmentPolicy.extension(originalName)
-        if (extension !in AttachmentPolicy.supportedExtensions) throw ApiException(400, "不支持的附件格式", false)
-        if (metadata.second != null && metadata.second!! > MAX_ATTACHMENT_BYTES) throw ApiException(413, "单个附件不能超过 10 MB", false)
+        if (extension !in AttachmentPolicy.supportedExtensions) throw ApiException(400, strings.text(AttachmentText.UNSUPPORTED_FORMAT), false)
+        if (metadata.second != null && metadata.second!! > MAX_ATTACHMENT_BYTES) throw ApiException(413, strings.text(AttachmentText.FILE_TOO_LARGE), false)
         val draftId = UUID.randomUUID().toString()
         val source = File(prepared, "$draftId.$extension")
         copyLimited(uri, source)
         val head = FileInputStream(source).use { input -> ByteArray(512).let { bytes -> bytes.copyOf(input.read(bytes).coerceAtLeast(0)) } }
         if (!AttachmentPolicy.validateSignature(extension, head)) {
             source.delete()
-            throw ApiException(422, "附件内容与文件类型不一致", false)
+            throw ApiException(422, strings.text(AttachmentText.TYPE_MISMATCH), false)
         }
         val declaredMime = context.contentResolver.getType(uri)
         if (extension in setOf("jpg", "jpeg", "png", "webp")) {
@@ -132,7 +133,7 @@ class AttachmentProcessor(private val context: Context) {
     }
 
     private fun copyLimited(uri: Uri, target: File) {
-        val input = context.contentResolver.openInputStream(uri) ?: throw ApiException(400, "无法读取附件", false)
+        val input = context.contentResolver.openInputStream(uri) ?: throw ApiException(400, strings.text(AttachmentText.CANNOT_READ), false)
         var total = 0L
         try {
             input.use { source ->
@@ -142,12 +143,12 @@ class AttachmentProcessor(private val context: Context) {
                         val count = source.read(buffer)
                         if (count < 0) break
                         total += count
-                        if (total > MAX_ATTACHMENT_BYTES) throw ApiException(413, "单个附件不能超过 10 MB", false)
+                        if (total > MAX_ATTACHMENT_BYTES) throw ApiException(413, strings.text(AttachmentText.FILE_TOO_LARGE), false)
                         output.write(buffer, 0, count)
                     }
                 }
             }
-            if (total == 0L) throw ApiException(422, "附件内容为空", false)
+            if (total == 0L) throw ApiException(422, strings.text(AttachmentText.CONTENT_EMPTY), false)
         } catch (error: Throwable) {
             target.delete()
             throw error
@@ -157,11 +158,11 @@ class AttachmentProcessor(private val context: Context) {
     private fun prepareImage(id: String, originalName: String, source: File): AttachmentDraft {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(source.absolutePath, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw ApiException(422, "无法解码图片", false)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw ApiException(422, strings.text(AttachmentText.IMAGE_DECODE), false)
         var sample = 1
         while (bounds.outWidth / sample > MAX_IMAGE_DIMENSION * 2 || bounds.outHeight / sample > MAX_IMAGE_DIMENSION * 2) sample *= 2
         val bitmap = BitmapFactory.decodeFile(source.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
-            ?: throw ApiException(422, "无法解码图片", false)
+            ?: throw ApiException(422, strings.text(AttachmentText.IMAGE_DECODE), false)
         val rotated = rotate(bitmap, source)
         val scale = minOf(1f, MAX_IMAGE_DIMENSION.toFloat() / maxOf(rotated.width, rotated.height))
         val normalized = if (scale < 1f) Bitmap.createScaledBitmap(rotated, (rotated.width * scale).toInt(), (rotated.height * scale).toInt(), true) else rotated

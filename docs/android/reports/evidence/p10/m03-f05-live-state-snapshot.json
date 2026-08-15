@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F05",
+  "acceptance_run_id": "p10-round-014-live-state-snapshot",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "live_sources": ["validated network", "SAF grant", "model configuration", "runtime binding"],
+  "new_run_behavior": "capability guidance and schemas refresh from current state",
+  "active_run_behavior": "RunEnvironmentSnapshot freezes tools, skills and host capabilities by value",
+  "ui_behavior": "capability refresh preserves active Run and error state; no synthetic intermediate failure",
+  "tests": {
+    "testDebugUnitTest": "668 tests, 0 failures, 2 skipped",
+    "RunEnvironmentSnapshotTest": "2 passed",
+    "MainInterfaceTest_API35": "29 passed"
+  }
+}

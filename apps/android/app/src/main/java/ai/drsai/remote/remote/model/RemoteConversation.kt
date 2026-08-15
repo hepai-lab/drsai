@@ -122,7 +122,10 @@ fun sanitizeRemoteTranscriptText(value: String): String =
         .replace(Regex("\\b[A-Za-z]:[\\\\/][^\\s`'\"<>]+"), "[path]")
         .take(20_000)
 
-fun projectConversationMessages(items: List<RemoteConversationItem>): List<RemoteTranscriptMessage> {
+fun projectConversationMessages(
+    items: List<RemoteConversationItem>,
+    strings: RemoteConversationStrings = EnglishRemoteConversationStrings,
+): List<RemoteTranscriptMessage> {
     val ordered = items.distinctBy { it.eventId }.sortedBy { it.sequence }
     require(ordered.zipWithNext().all { (left, right) -> left.sequence < right.sequence }) {
         "conversation_sequence_not_strictly_increasing"
@@ -167,9 +170,9 @@ fun projectConversationMessages(items: List<RemoteConversationItem>): List<Remot
             }
             "run.completed", "run.failed", "run.cancelled" -> {
                 val fallback = when (item.kind) {
-                    "run.completed" -> "任务已完成"
-                    "run.failed" -> "任务执行失败"
-                    else -> "任务已取消"
+                    "run.completed" -> strings.text(RemoteConversationText.COMPLETED)
+                    "run.failed" -> strings.text(RemoteConversationText.FAILED)
+                    else -> strings.text(RemoteConversationText.CANCELLED)
                 }
                 val detail = (
                     item.payload["message"] ?: item.payload["summary"]
@@ -190,7 +193,7 @@ fun projectConversationMessages(items: List<RemoteConversationItem>): List<Remot
                 )?.toString().orEmpty().take(20_000)
                 if (safeText.isNotBlank()) {
                     messages += RemoteTranscriptMessage(
-                        item.eventId, "system", safeText, "未知事件：${item.kind.take(80)}",
+                        item.eventId, "system", safeText, strings.text(RemoteConversationText.UNKNOWN_EVENT, item.kind.take(80)),
                     )
                 }
             }

@@ -120,6 +120,20 @@ class AttachmentRepositoryTest {
         assertEquals(0, lifecycle.refreshes)
         assertEquals(1, server.requestCount)
     }
+
+    @Test fun retryUsesTheSameDraftIdempotencyKeyAndDoesNotReuploadAcceptedDrafts() = runTest {
+        val body = """{"status":true,"data":{"id":"att-stable","name":"x.txt","kind":"file","mime_type":"text/plain","size":1,"sha256":"h","processing_status":"ready"}}"""
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setBody(body))
+        val file = temporary.newFile("stable.txt").apply { writeText("x") }
+        val draft = AttachmentDraft("stable-draft", "x.txt", "text/plain", 1, "file", file.absolutePath)
+        val repository = AttachmentRepository(AccessTokenCoordinator(FakeAttachmentTokens(), FakeAttachmentLifecycle()), server.url("/").toString())
+        runCatching { repository.upload(draft, "thread", "run-a", draft.id, {}) }
+        val accepted = repository.upload(draft, "thread", "run-b", draft.id, {})
+        assertEquals("att-stable", accepted.id)
+        assertEquals("android-attachment-stable-draft", server.takeRequest().getHeader("Idempotency-Key"))
+        assertEquals("android-attachment-stable-draft", server.takeRequest().getHeader("Idempotency-Key"))
+    }
 }
 
 private class FakeAttachmentTokens : AuthTokenStore {

@@ -1,5 +1,7 @@
 package ai.drsai.remote.remote.ui
 
+import ai.drsai.remote.R
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -191,9 +194,10 @@ private fun splitTableRow(line: String): List<String> {
     return cells
 }
 
-fun remoteMarkdown(value: String): AnnotatedString = remoteMarkdownInline(value.take(MAX_MARKDOWN_CHARS))
+fun remoteMarkdown(value: String, fallbackImageLabel: String = "Image"): AnnotatedString =
+    remoteMarkdownInline(value.take(MAX_MARKDOWN_CHARS), fallbackImageLabel)
 
-fun remoteMarkdownInline(value: String): AnnotatedString = buildAnnotatedString {
+fun remoteMarkdownInline(value: String, fallbackImageLabel: String = "Image"): AnnotatedString = buildAnnotatedString {
     var index = 0
     fun appendStyled(text: String, style: SpanStyle? = null) {
         if (style == null) append(text) else withStyle(style) { append(text) }
@@ -205,7 +209,7 @@ fun remoteMarkdownInline(value: String): AnnotatedString = buildAnnotatedString 
             ?.takeIf { it.range.first == index }
         when {
             image != null -> {
-                val label = image.groupValues[1].ifBlank { "图片" }
+            val label = image.groupValues[1].ifBlank { fallbackImageLabel }
                 val url = image.groupValues[2]
                 val start = length
                 append("🖼 $label")
@@ -340,7 +344,8 @@ private fun MarkdownText(
     onOpenLink: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val annotated = remember(value) { remoteMarkdownInline(value) }
+    val fallbackImageLabel = stringResource(R.string.image)
+    val annotated = remember(value, fallbackImageLabel) { remoteMarkdownInline(value, fallbackImageLabel) }
     ClickableText(
         text = annotated,
         style = style.copy(color = MaterialTheme.colorScheme.onSurface),
@@ -371,7 +376,7 @@ private fun RemoteCodeBlock(block: RemoteMarkdownBlock.Code) {
                     copied = true
                 }) {
                     Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
-                        contentDescription = if (copied) "已复制" else "复制代码")
+                contentDescription = stringResource(if (copied) R.string.copied else R.string.copy_code))
                 }
             }
             if (block.language.equals("diff", ignoreCase = true)) {
@@ -423,7 +428,7 @@ private fun RemoteMarkdownTable(block: RemoteMarkdownBlock.Table, onOpenLink: (S
                 }) {
                     Icon(
                         if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
-                        contentDescription = if (copied) "已复制表格" else "复制表格",
+                contentDescription = stringResource(if (copied) R.string.table_copied else R.string.copy_table),
                     )
                 }
             }
@@ -456,9 +461,19 @@ private fun RemoteMarkdownTable(block: RemoteMarkdownBlock.Table, onOpenLink: (S
     }
 }
 
-fun remoteRoleLabel(role: String): String = when (role) {
-    "user" -> "你"
-    "system" -> "系统"
-    "reasoning" -> "思考摘要"
-    else -> "OpenDrSai"
+enum class RemoteRoleLabelKey { USER, SYSTEM, REASONING, ASSISTANT }
+
+fun remoteRoleLabelKey(role: String): RemoteRoleLabelKey = when (role) {
+    "user" -> RemoteRoleLabelKey.USER
+    "system" -> RemoteRoleLabelKey.SYSTEM
+    "reasoning" -> RemoteRoleLabelKey.REASONING
+    else -> RemoteRoleLabelKey.ASSISTANT
+}
+
+@Composable
+fun remoteRoleLabel(role: String): String = when (remoteRoleLabelKey(role)) {
+    RemoteRoleLabelKey.USER -> stringResource(R.string.you)
+    RemoteRoleLabelKey.SYSTEM -> stringResource(R.string.system)
+    RemoteRoleLabelKey.REASONING -> stringResource(R.string.reasoning_summary)
+    RemoteRoleLabelKey.ASSISTANT -> "OpenDrSai"
 }

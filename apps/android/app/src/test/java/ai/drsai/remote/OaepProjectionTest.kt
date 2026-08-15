@@ -4,6 +4,11 @@ import ai.drsai.remote.remote.generated.*
 import ai.drsai.remote.remote.model.projectOaepMessages
 import ai.drsai.remote.remote.model.projectOaepPresentation
 import ai.drsai.remote.remote.model.OaepTimelineEntry
+import ai.drsai.remote.remote.model.OaepSourceType
+import ai.drsai.remote.remote.model.UserRunOutcome
+import ai.drsai.remote.remote.model.OaepProcessItem
+import ai.drsai.remote.remote.model.OaepTaskProgress
+import ai.drsai.remote.remote.model.OaepTaskStep
 import ai.drsai.remote.remote.model.sanitizeRemoteTranscriptText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -149,10 +154,146 @@ class OaepProjectionTest {
         )
 
         val turn = projectOaepPresentation(snapshot).single() as OaepTimelineEntry.AssistantTurn
-        assertEquals("正在搜索网页", turn.process[0].title)
+        assertEquals("Working: search public web pages", turn.process[0].title)
         assertEquals("Android Agent Runtime · Android Host", turn.process[0].executionLocation)
         assertEquals("https://www.hepix.org/", turn.process[0].sources.single().url)
         assertEquals("failed", turn.process[1].status)
         assertEquals("HEPiX source", turn.results.single().sources.single().label)
+    }
+
+    @Test
+    fun `all OAEP fixture families map to deterministic user task steps and unknown notice is safe`() {
+        val source = OaepSource("android", runtimeId = "android-local")
+        val run = OaepRun("run", "session", null, 1, source, "running", "now", "later", null)
+        fun item(id: String, sequence: Long, content: OaepItemContent) = OaepItem(
+            id, "session", "run", id, "running", sequence, "now", "later", source, content,
+        )
+        val items = listOf(
+            item("message", 1, OaepMessageContent("assistant", "working", "commentary")),
+            item("web", 2, OaepToolCallContent("host", "web.search", "call", emptyMap(), null)),
+            item("file", 3, OaepFileChangeContent(emptyList(), "changed config")),
+            item("plan", 4, OaepPlanContent("two steps", emptyList())),
+            item("subtask", 5, OaepSubtaskContent("research", "delegated")),
+            item("artifact", 6, OaepArtifactContent("a", "report", "Report", "ready")),
+            item("unknown", 7, OaepNoticeContent("info", "future.oaep.event", "still working")),
+        )
+        val snapshot = OaepSnapshot(
+            "1.0", OaepSession("session", "workspace", "Title", "active", "android", "now", "later"),
+            listOf(run), items, 7,
+        )
+
+        val first = projectOaepPresentation(snapshot).single() as OaepTimelineEntry.AssistantTurn
+        val second = projectOaepPresentation(snapshot).single() as OaepTimelineEntry.AssistantTurn
+        assertEquals(first, second)
+        assertEquals(
+            listOf("progress", "tool", "file", "plan", "subtask", "notice"),
+            first.process.map { it.kind },
+        )
+        assertEquals("Processing", first.process.last().title)
+        assertTrue(first.process.last().advancedDetail.orEmpty().contains("future.oaep.event"))
+        assertEquals("Report", first.results.single().title)
+        assertTrue(first.process.none { it.title.contains("思考过程") })
+    }
+
+    @Test
+    fun `sources validate deduplicate and distinguish web local document and artifact`() {
+        val source = OaepSource("android", runtimeId = "android-local")
+        val run = OaepRun("run", "session", null, 1, source, "completed", "now", "later", "later")
+        fun item(id: String, sequence: Long, content: OaepItemContent) = OaepItem(
+            id, "session", "run", id, "completed", sequence, "now", "later", source, content,
+        )
+        val resource = OaepResourceRef(
+            workspaceId = "local", resourceType = "file", resourceId = "doc-1", label = "notes.md",
+        )
+        val snapshot = OaepSnapshot(
+            "1.0", OaepSession("session", "workspace", "Title", "active", "android", "now", "later"),
+            listOf(run), listOf(
+                item("final", 1, OaepMessageContent(
+                    "assistant", "answer", "final",
+                    citations = listOf(
+                        mapOf("title" to "Valid", "url" to "https://example.com/a"),
+                        mapOf("title" to "Duplicate", "url" to "https://EXAMPLE.com/a"),
+                        mapOf("title" to "Invalid", "url" to "javascript:alert(1)"),
+                        mapOf("title" to "Credentials", "url" to "https://user:pass@example.com/private"),
+                    ),
+                    resourceRefs = listOf(resource),
+                )),
+                item("artifact", 2, OaepArtifactContent("artifact-1", "report", "report.pdf", "ready")),
+            ), 2,
+        )
+
+        val turn = projectOaepPresentation(snapshot).single() as OaepTimelineEntry.AssistantTurn
+        val answerSources = turn.results.first().sources
+        assertEquals(2, answerSources.size)
+        assertEquals(setOf(OaepSourceType.WEB, OaepSourceType.LOCAL_DOCUMENT), answerSources.map { it.type }.toSet())
+        assertTrue(answerSources.single { it.type == OaepSourceType.WEB }.verified.not())
+        assertTrue(turn.results.last().sources.single().type == OaepSourceType.ARTIFACT)
+        assertTrue(turn.results.last().sources.single().verified)
+    }
+
+    @Test
+    fun `plan and parallel subtasks expose goal status counts and partial failure without reasoning text`() {
+        val source = OaepSource("android")
+        val run = OaepRun("run", "session", null, 1, source, "running", "now", "later", null)
+        fun item(id: String, sequence: Long, status: String, content: OaepItemContent) = OaepItem(
+            id, "session", "run", id, status, sequence, "now", "later", source, content,
+        )
+        val snapshot = OaepSnapshot(
+            "1.0", OaepSession("session", "workspace", "Title", "active", "android", "now", "later"),
+            listOf(run), listOf(
+                item("reasoning", 1, "completed", OaepReasoningContent(listOf(mapOf("text" to "private chain of thought")))),
+                item("plan", 2, "running", OaepPlanContent("调研并形成报告", listOf(
+                    mapOf("title" to "检索资料", "status" to "completed"),
+                    mapOf("title" to "核对来源", "status" to "running"),
+                    mapOf("title" to "整理附件", "status" to "pending"),
+                    mapOf("title" to "生成图表", "status" to "failed"),
+                ))),
+                item("subtask-a", 3, "running", OaepSubtaskContent("核对会议日期", "working", "researcher")),
+                item("subtask-b", 4, "failed", OaepSubtaskContent("下载附件", "failed", "reader")),
+            ), 4,
+        )
+
+        val turn = projectOaepPresentation(snapshot).single() as OaepTimelineEntry.AssistantTurn
+        val plan = turn.process.single { it.kind == "plan" }.taskProgress ?: error("missing plan progress")
+        assertEquals("调研并形成报告", plan.goal)
+        assertEquals(listOf(1, 1, 1, 1), listOf(plan.completed, plan.running, plan.waiting, plan.failed))
+        assertTrue(plan.partialFailure)
+        assertEquals(listOf("running", "failed"), turn.process.filter { it.kind == "subtask" }.map { it.taskProgress!!.steps.single().status })
+        assertTrue(turn.process.none { it.text.contains("private chain of thought") })
+    }
+
+    @Test
+    fun `each OAEP run projects exactly one snapshot-consistent user outcome`() {
+        val source = OaepSource("android")
+        val statuses = listOf("completed", "failed", "cancelled", "waiting")
+        statuses.forEachIndexed { index, status ->
+            val run = OaepRun("run-$status", "session", null, index.toLong(), source, status, "now", "later", if (status in setOf("completed", "failed", "cancelled")) "later" else null)
+            val item = OaepItem(
+                "notice-$status", "session", run.id, "notice", if (status == "waiting") "waiting" else "completed", 1,
+                "now", "later", source, OaepNoticeContent("info", "status", "status"),
+            )
+            val snapshot = OaepSnapshot(
+                "1.0", OaepSession("session", "workspace", "Title", "active", "android", "now", "later"),
+                listOf(run), listOf(item), 1,
+            )
+            val turns = projectOaepPresentation(snapshot).filterIsInstance<OaepTimelineEntry.AssistantTurn>()
+            assertEquals(1, turns.size)
+            assertEquals(
+                when (status) {
+                    "completed" -> UserRunOutcome.COMPLETED
+                    "failed" -> UserRunOutcome.FAILED
+                    "cancelled" -> UserRunOutcome.CANCELLED
+                    else -> UserRunOutcome.RECOVERABLE
+                },
+                turns.single().outcome,
+            )
+        }
+        val partial = UserRunOutcome.derive(
+            "completed",
+            listOf(OaepProcessItem("step", "plan", "Plan", "", "completed", taskProgress = OaepTaskProgress(
+                "goal", listOf(OaepTaskStep("done", "completed"), OaepTaskStep("bad", "failed")),
+            ))),
+        )
+        assertEquals(UserRunOutcome.PARTIAL, partial)
     }
 }

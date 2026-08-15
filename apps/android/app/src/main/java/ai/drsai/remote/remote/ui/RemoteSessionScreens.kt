@@ -1,5 +1,11 @@
 package ai.drsai.remote.remote.ui
 
+import ai.drsai.remote.R
+import ai.drsai.remote.ui.LocalizedText
+import ai.drsai.remote.ui.resolve
+import ai.drsai.remote.ui.localizedBytes
+import ai.drsai.remote.ui.localizedDateTime
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,6 +17,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -24,7 +32,7 @@ import ai.drsai.remote.remote.data.RemoteRunControlState
 import ai.drsai.remote.remote.data.RemoteSessionUiAuthorityState
 import ai.drsai.remote.remote.data.reduceRemoteTimelineUpdate
 import ai.drsai.remote.remote.data.remoteActionableState
-import ai.drsai.remote.remote.data.userLabel
+import ai.drsai.remote.remote.data.labelResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.launch
@@ -69,6 +77,8 @@ data class WorkspaceSessionsUiState(
     val creating: Boolean = false,
     val error: String? = null,
     val showArchived: Boolean = false,
+    val instructionStatusText: LocalizedText? = null,
+    val errorText: LocalizedText? = null,
 )
 
 @Composable
@@ -90,31 +100,31 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
     LifecycleEventEffect(Lifecycle.Event.ON_START) { onResume() }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("返回") }
+            TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
             Column(Modifier.weight(1f)) {
                 Text(state.workspaceName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(state.runtimeName, style = MaterialTheme.typography.labelSmall)
             }
-            TextButton(onClick = onRefresh) { Text("刷新") }
-            TextButton(onClick = onToggleArchived) { Text(if (state.showArchived) "活动会话" else "已归档") }
+            TextButton(onClick = onRefresh) { Text(stringResource(R.string.refresh)) }
+            TextButton(onClick = onToggleArchived) { Text(stringResource(if (state.showArchived) R.string.active_sessions else R.string.archived)) }
             Button(onClick = { agentPickerOpen = true }, enabled = !state.creating && state.agentDefinitions.isNotEmpty() && !state.instructionRefreshRequired) {
-                Text(if (state.creating) "创建中" else "新会话")
+                Text(stringResource(if (state.creating) R.string.creating else R.string.new_session))
             }
         }
-        OutlinedTextField(state.query, onSearch, Modifier.fillMaxWidth(), placeholder = { Text("搜索会话") })
+        OutlinedTextField(state.query, onSearch, Modifier.fillMaxWidth(), placeholder = { Text(stringResource(R.string.search_sessions)) })
         if (state.pendingApprovalCount > 0) {
-            Text("待确认 ${state.pendingApprovalCount}", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+            Text(pluralStringResource(R.plurals.pending_confirmation_count, state.pendingApprovalCount, state.pendingApprovalCount), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             state.capabilities.forEach { AssistChip(onClick = { onOpenCapability(it.name) }, enabled = it.available,
                 label = { Text(it.name) }) }
         }
         Text(
-            "文件写入、命令和 Git 修改只能在远程会话中发起，并需要逐项审批；Android 不会在设备上静默执行。",
+            stringResource(R.string.remote_execution_safety_notice),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        state.instructionStatus?.let { status ->
+        (state.instructionStatusText?.resolve() ?: state.instructionStatus)?.let { status ->
             Text(
                 status + state.instructionVersions.values.firstOrNull()?.let { " · ${it.take(12)}" }.orEmpty(),
                 style = MaterialTheme.typography.labelSmall,
@@ -123,10 +133,10 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
         }
         if (state.instructionRefreshRequired) {
             OutlinedButton(onClick = onConfirmInstructions, modifier = Modifier.fillMaxWidth()) {
-                Text("确认使用最新项目指令")
+                    Text(stringResource(R.string.confirm_latest_project_instructions))
             }
         }
-        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        (state.errorText?.resolve() ?: state.error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(activeSessions, key = { it.reference.sessionId.value }) { session ->
@@ -134,27 +144,27 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
                     Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(session.reference.title, fontWeight = FontWeight.SemiBold)
-                            Text("${session.reference.backendId} · ${session.lastRunStatus ?: "尚未运行"} · ${session.updatedAtLabel}",
+                    Text(stringResource(R.string.remote_session_summary, session.reference.backendId, session.lastRunStatus ?: stringResource(R.string.never_run), localizedDateTime(session.updatedAtLabel)),
                                 style = MaterialTheme.typography.bodySmall)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (session.unreadTurns > 0) Text("未读 ${session.unreadTurns}", color = MaterialTheme.colorScheme.primary)
-                                if (session.pendingApprovals > 0) Text("待确认 ${session.pendingApprovals}", color = MaterialTheme.colorScheme.error)
-                                if (session.runningRuns > 0) Text("运行中 ${session.runningRuns}", color = MaterialTheme.colorScheme.tertiary)
+                        if (session.unreadTurns > 0) Text(pluralStringResource(R.plurals.unread_count, session.unreadTurns, session.unreadTurns), color = MaterialTheme.colorScheme.primary)
+                        if (session.pendingApprovals > 0) Text(pluralStringResource(R.plurals.pending_confirmation_count, session.pendingApprovals, session.pendingApprovals), color = MaterialTheme.colorScheme.error)
+                        if (session.runningRuns > 0) Text(pluralStringResource(R.plurals.running_count, session.runningRuns, session.runningRuns), color = MaterialTheme.colorScheme.tertiary)
                             }
                         }
                         Box {
-                            TextButton(onClick = { sessionMenu = session.reference }) { Text("管理") }
+                    TextButton(onClick = { sessionMenu = session.reference }) { Text(stringResource(R.string.manage)) }
                             DropdownMenu(
                                 expanded = sessionMenu?.sessionId == session.reference.sessionId,
                                 onDismissRequest = { sessionMenu = null },
                             ) {
-                                DropdownMenuItem(text = { Text("重命名") }, onClick = {
+                        DropdownMenuItem(text = { Text(stringResource(R.string.rename)) }, onClick = {
                                     sessionMenu = null
                                     renameTarget = session.reference
                                     renameText = session.reference.title
                                 })
                                 DropdownMenuItem(
-                                    text = { Text(if (state.showArchived) "取消归档" else "归档") },
+                                    text = { Text(stringResource(if (state.showArchived) R.string.unarchive else R.string.archive)) },
                                     onClick = { sessionMenu = null; onSetArchived(session.reference, !state.showArchived) },
                                 )
                             }
@@ -167,7 +177,7 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
     if (agentPickerOpen) {
         AlertDialog(
             onDismissRequest = { agentPickerOpen = false },
-            title = { Text("选择远程智能体") },
+            title = { Text(stringResource(R.string.choose_remote_agent)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     state.agentDefinitions.forEach { definition ->
@@ -178,38 +188,50 @@ fun WorkspaceSessionsScreen(state: WorkspaceSessionsUiState, onBack: () -> Unit,
                         ) {
                             Column(Modifier.fillMaxWidth()) {
                                 Text(definition.name)
-                                Text("${definition.backendId} · ${definition.version}", style = MaterialTheme.typography.labelSmall)
+                                Text(stringResource(R.string.backend_version, definition.backendId, definition.version), style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { agentPickerOpen = false }) { Text("取消") } },
+            confirmButton = { TextButton(onClick = { agentPickerOpen = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
     renameTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("重命名会话") },
+            title = { Text(stringResource(R.string.rename_session)) },
             text = { OutlinedTextField(renameText, { renameText = it },
-                Modifier.testTag("session-rename-input"), singleLine = true, label = { Text("会话名称") }) },
+                    Modifier.testTag("session-rename-input"), singleLine = true, label = { Text(stringResource(R.string.session_name)) }) },
             confirmButton = { TextButton(onClick = {
                 if (renameText.trim().isNotEmpty()) onRename(target, renameText.trim())
                 renameTarget = null
-            }) { Text("保存") } },
-            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } },
+                }) { Text(stringResource(R.string.save)) } },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
 
-fun remoteAuditActionLabel(action: String): String = when (action) {
-    "run.created" -> "开始任务"
-    "run.cancelled" -> "停止任务"
-    "approval.requested" -> "请求审批"
-    "approval.approved" -> "批准操作"
-    "approval.denied" -> "拒绝操作"
-    else -> "更新任务"
+enum class RemoteAuditActionKind { RUN_CREATED, RUN_CANCELLED, APPROVAL_REQUESTED, APPROVAL_APPROVED, APPROVAL_DENIED, UPDATED }
+
+fun remoteAuditActionKind(action: String): RemoteAuditActionKind = when (action) {
+    "run.created" -> RemoteAuditActionKind.RUN_CREATED
+    "run.cancelled" -> RemoteAuditActionKind.RUN_CANCELLED
+    "approval.requested" -> RemoteAuditActionKind.APPROVAL_REQUESTED
+    "approval.approved" -> RemoteAuditActionKind.APPROVAL_APPROVED
+    "approval.denied" -> RemoteAuditActionKind.APPROVAL_DENIED
+    else -> RemoteAuditActionKind.UPDATED
 }
+
+@Composable
+fun remoteAuditActionLabel(action: String): String = stringResource(when (remoteAuditActionKind(action)) {
+    RemoteAuditActionKind.RUN_CREATED -> R.string.audit_run_created
+    RemoteAuditActionKind.RUN_CANCELLED -> R.string.audit_run_cancelled
+    RemoteAuditActionKind.APPROVAL_REQUESTED -> R.string.audit_approval_requested
+    RemoteAuditActionKind.APPROVAL_APPROVED -> R.string.audit_approval_approved
+    RemoteAuditActionKind.APPROVAL_DENIED -> R.string.audit_approval_denied
+    RemoteAuditActionKind.UPDATED -> R.string.audit_updated
+})
 
 @Composable
 fun RemoteAuditScreen(
@@ -223,23 +245,23 @@ fun RemoteAuditScreen(
 ) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("返回") }
+            TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
             Column(Modifier.weight(1f)) {
-                Text("审计记录", fontWeight = FontWeight.Bold)
-                Text("$runtimeName · $workspaceName", style = MaterialTheme.typography.labelSmall)
+            Text(stringResource(R.string.audit_log), fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.runtime_workspace, runtimeName, workspaceName), style = MaterialTheme.typography.labelSmall)
             }
-            TextButton(onClick = onRefresh) { Text("刷新") }
+            TextButton(onClick = onRefresh) { Text(stringResource(R.string.refresh)) }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (!loading && entries.isEmpty()) Text("暂无审计记录")
+        if (!loading && entries.isEmpty()) Text(stringResource(R.string.no_audit_entries))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(entries, key = { it.auditId }) { entry ->
                 Card {
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(remoteAuditActionLabel(entry.action), fontWeight = FontWeight.SemiBold)
-                        Text("操作方：${entry.actorLabel}", style = MaterialTheme.typography.bodySmall)
-                        Text("工作区：$workspaceName", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.audit_actor, entry.actorLabel), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.workspace_label, workspaceName), style = MaterialTheme.typography.bodySmall)
                         Text(entry.timestamp, style = MaterialTheme.typography.bodySmall)
                     }
                 }
@@ -260,10 +282,20 @@ data class RemoteMessageUi(
     val phase: String? = null,
     val resources: List<RemoteTranscriptResource> = emptyList(),
     val deliveryState: RemoteDeliveryState? = null,
+    val localizedText: LocalizedText? = null,
 )
 data class RemoteArtifactUi(val artifactId: String, val name: String, val mimeType: String, val size: Long,
-                            val sha256: String, val downloading: Boolean = false, val error: String? = null)
-enum class RemoteTranscriptFilter(val label: String) { ALL("全部"), RUN("运行"), TOOL("工具"), FILE("文件") }
+                            val sha256: String, val downloading: Boolean = false, val error: String? = null,
+                            val errorText: LocalizedText? = null)
+enum class RemoteTranscriptFilter { ALL, RUN, TOOL, FILE }
+
+@Composable
+fun remoteTranscriptFilterLabel(filter: RemoteTranscriptFilter): String = stringResource(when (filter) {
+    RemoteTranscriptFilter.ALL -> R.string.all_filter
+    RemoteTranscriptFilter.RUN -> R.string.run_filter
+    RemoteTranscriptFilter.TOOL -> R.string.tool_filter
+    RemoteTranscriptFilter.FILE -> R.string.file_filter
+})
 enum class RemoteFocusItemState { IDLE, LOADING, FOUND, NOT_FOUND }
 
 fun filterRemoteTranscript(
@@ -275,7 +307,7 @@ fun filterRemoteTranscript(
     RemoteTranscriptFilter.TOOL -> messages.filter { "tool" in it.kind.lowercase() }
     RemoteTranscriptFilter.FILE -> messages.filter { message ->
         message.resources.isNotEmpty() || listOf(message.kind, message.title.orEmpty(), message.detail.orEmpty())
-            .any { value -> "file" in value.lowercase() || "文件" in value }
+            .any { value -> "file" in value.lowercase() }
     }
 }
 data class RemoteChatUiState(
@@ -303,6 +335,9 @@ data class RemoteChatUiState(
     val transcriptSearching: Boolean = false,
     val transcriptSearchTruncated: Boolean = false,
     val focusItemState: RemoteFocusItemState = RemoteFocusItemState.IDLE,
+    val approvalOutcomeText: LocalizedText? = null,
+    val runControlOutcomeText: LocalizedText? = null,
+    val historyErrorText: LocalizedText? = null,
 ) {
     val running: Boolean get() = authority.running
     val online: Boolean get() = authority.online
@@ -338,10 +373,10 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
     if (state.pendingArtifactConfirmation != null) {
         AlertDialog(
             onDismissRequest = { onConfirmArtifact(false) },
-            title = { Text("使用移动网络下载？") },
-            text = { Text("这是较大的文件，继续下载可能消耗较多流量。") },
-            confirmButton = { TextButton(onClick = { onConfirmArtifact(true) }) { Text("继续下载") } },
-            dismissButton = { TextButton(onClick = { onConfirmArtifact(false) }) { Text("取消") } },
+            title = { Text(stringResource(R.string.cellular_download_question)) },
+            text = { Text(stringResource(R.string.cellular_download_detail)) },
+            confirmButton = { TextButton(onClick = { onConfirmArtifact(true) }) { Text(stringResource(R.string.continue_download)) } },
+            dismissButton = { TextButton(onClick = { onConfirmArtifact(false) }) { Text(stringResource(R.string.cancel)) } },
         )
     }
     val uiScope = rememberCoroutineScope()
@@ -402,14 +437,14 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
     }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("返回") }
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
             Column(Modifier.weight(1f)) {
                 Text(state.sessionTitle, fontWeight = FontWeight.Bold)
-                Text("${state.runtimeName} · ${state.workspaceName}", style = MaterialTheme.typography.labelSmall)
+                    Text(stringResource(R.string.runtime_workspace, state.runtimeName, state.workspaceName), style = MaterialTheme.typography.labelSmall)
             }
-            state.correlationId?.let { TextButton(onClick = onOpenAudit) { Text("审计") } }
+                state.correlationId?.let { TextButton(onClick = onOpenAudit) { Text(stringResource(R.string.audit)) } }
         }
-        if (!state.online) Text("连接已中断，任务可能仍在运行", color = MaterialTheme.colorScheme.error)
+            if (!state.online) Text(stringResource(R.string.connection_interrupted), color = MaterialTheme.colorScheme.error)
         if (state.connectionState == RemoteConnectionState.AUTH_REQUIRED) {
             RemoteActionableStateCard(
                 requireNotNull(remoteActionableState(state.lifecycleState)),
@@ -417,14 +452,14 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             )
         }
         when (state.focusItemState) {
-            RemoteFocusItemState.LOADING -> Text("正在定位通知对应的内容…")
+                RemoteFocusItemState.LOADING -> Text(stringResource(R.string.locating_notification_content))
             RemoteFocusItemState.NOT_FOUND -> Text(
-                "通知对应的内容暂时无法读取；重新登录或恢复连接后会继续定位。",
+                stringResource(R.string.notification_content_unavailable),
                 color = MaterialTheme.colorScheme.error,
             )
             else -> Unit
         }
-        state.runControlOutcome?.let {
+        (state.runControlOutcomeText?.resolve() ?: state.runControlOutcome)?.let {
             Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
         }
         OutlinedTextField(
@@ -432,20 +467,20 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             onValueChange = onSearchTranscript,
             modifier = Modifier.fillMaxWidth().testTag("remote-transcript-search"),
             singleLine = true,
-            label = { Text("搜索已缓存会话") },
+                        label = { Text(stringResource(R.string.search_cached_sessions)) },
             trailingIcon = {
                 if (state.transcriptSearching) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             },
         )
         if (state.transcriptSearchTruncated) {
-            Text("仅显示前 200 条结果，请缩小搜索范围", style = MaterialTheme.typography.labelSmall)
+                    Text(stringResource(R.string.search_limit_notice), style = MaterialTheme.typography.labelSmall)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             RemoteTranscriptFilter.entries.forEach { filter ->
                 FilterChip(
                     selected = transcriptFilter == filter,
                     onClick = { transcriptFilter = filter },
-                    label = { Text(filter.label) },
+                    label = { Text(remoteTranscriptFilterLabel(filter)) },
                 )
             }
         }
@@ -460,9 +495,9 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                 },
                 enabled = !state.loadingHistory,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (state.loadingHistory) "正在加载历史…" else "加载更早内容") }
+            ) { Text(stringResource(if (state.loadingHistory) R.string.loading_history else R.string.load_older_content)) }
         }
-        state.historyError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        (state.historyErrorText?.resolve() ?: state.historyError)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         LazyColumn(
             Modifier.weight(1f).testTag("remote-transcript"),
             state = transcriptListState,
@@ -471,7 +506,7 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
             if (transcriptSearchActive && !state.transcriptSearching && visibleMessages.isEmpty()) {
                 item("remote-transcript-search-empty") {
                     Text(
-                        "未在已同步的会话内容中找到结果",
+                        stringResource(R.string.no_synced_transcript_results),
                         modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -482,14 +517,14 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                 val rawIndex = rawMessageIndices[message.id]
                 if (!transcriptSearchActive && unreadStart != null && rawIndex == unreadStart) {
                     HorizontalDivider()
-                    Text("以下是新内容", color = MaterialTheme.colorScheme.primary,
+                                Text(stringResource(R.string.new_content_below), color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.labelMedium)
                 }
                 OaepSemanticItem(
-                    message.role, message.text, message.progress, message.kind, message.title,
+                    message.role, message.localizedText?.resolve() ?: message.text, message.progress, message.kind, message.title,
                     message.detail, message.phase, message.resources,
                 )
-                message.deliveryState?.let { Text(it.userLabel(), style = MaterialTheme.typography.labelSmall,
+                message.deliveryState?.let { Text(stringResource(it.labelResource()), style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary) }
             }
             if (!transcriptSearchActive) items(state.artifacts, key = { "artifact-${it.artifactId}" }) { artifact ->
@@ -497,11 +532,11 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(artifact.name, fontWeight = FontWeight.SemiBold)
-                            Text("${artifact.mimeType} · ${artifact.size} B", style = MaterialTheme.typography.bodySmall)
-                            artifact.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                                Text(stringResource(R.string.artifact_mime_size, artifact.mimeType, localizedBytes(artifact.size)), style = MaterialTheme.typography.bodySmall)
+                            (artifact.errorText?.resolve() ?: artifact.error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         }
                         Button(onClick = { onOpenArtifact(artifact.artifactId) }, enabled = state.online && !artifact.downloading) {
-                            Text(if (artifact.downloading) "下载中" else "下载并打开")
+                            Text(stringResource(if (artifact.downloading) R.string.downloading else R.string.download_and_open))
                         }
                     }
                 }
@@ -511,7 +546,7 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                 state.approvalDecisionState, onApproval,
             ) } }
         }
-        state.approvalOutcome?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+        (state.approvalOutcomeText?.resolve() ?: state.approvalOutcome)?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
         if (!transcriptSearchActive) unreadStart?.let { start ->
             val count = (state.messages.size - start).coerceAtLeast(0)
             OutlinedButton(
@@ -524,30 +559,30 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("跳到最新（$count）") }
+                ) { Text(pluralStringResource(R.plurals.jump_latest_count, count, count)) }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(input, { value -> input = value; onDraftChange(value) }, Modifier.weight(1f), enabled = state.online && !state.running,
-                placeholder = { Text(if (state.online) "发送消息" else "离线时只能查看历史") })
+                placeholder = { Text(stringResource(if (state.online) R.string.send_message else R.string.offline_history_only)) })
             Spacer(Modifier.width(8.dp))
             if (state.running) Button(onClick = onCancelRun,
                 enabled = state.online && state.runControlState == RemoteRunControlState.IDLE) {
                 Text(when (state.runControlState) {
-                    RemoteRunControlState.CANCELLING -> "停止中"
-                    RemoteRunControlState.RECONCILING -> "确认状态中"
-                    else -> "停止"
+                    RemoteRunControlState.CANCELLING -> stringResource(R.string.stopping)
+                    RemoteRunControlState.RECONCILING -> stringResource(R.string.confirming_status)
+                    else -> stringResource(R.string.stop)
                 })
             }
-            else Button(onClick = { onSend(input) }, enabled = state.online && input.isNotBlank()) { Text("发送") }
+                else Button(onClick = { onSend(input) }, enabled = state.online && input.isNotBlank()) { Text(stringResource(R.string.send_message)) }
         }
         if (state.canRetry && !state.running) {
             OutlinedButton(onClick = onRetryRun,
                 enabled = state.online && state.runControlState == RemoteRunControlState.IDLE,
                 modifier = Modifier.fillMaxWidth()) {
                 Text(when (state.runControlState) {
-                    RemoteRunControlState.RETRYING -> "重试中"
-                    RemoteRunControlState.RECONCILING -> "确认状态中"
-                    else -> "重试上次运行"
+                    RemoteRunControlState.RETRYING -> stringResource(R.string.retrying)
+                    RemoteRunControlState.RECONCILING -> stringResource(R.string.confirming_status)
+                    else -> stringResource(R.string.retry_last_run)
                 })
             }
         }
@@ -606,14 +641,14 @@ private fun ApprovalCard(card: RemoteApprovalCard, enabled: Boolean, decisionSta
                          onDecision: (String, String) -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text("需要你的确认", fontWeight = FontWeight.Bold)
-            Text("${card.runtimeName} · ${card.workspaceName} · ${card.agentName} · ${card.identity.backendId}")
-            Text(card.operation); Text(card.safeSummary); Text("范围：${card.safeScope}"); Text("过期：${card.expiresAt}")
-            if (decisionState == RemoteApprovalDecisionState.DECIDING) Text("正在提交决定…")
+            Text(stringResource(R.string.confirmation_required), fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.approval_identity_summary, card.runtimeName, card.workspaceName, card.agentName, card.identity.backendId))
+            Text(card.operation); Text(card.safeSummary); Text(stringResource(R.string.scope_label, card.safeScope)); Text(stringResource(R.string.expires_label, card.expiresAt))
+            if (decisionState == RemoteApprovalDecisionState.DECIDING) Text(stringResource(R.string.submitting_decision))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onDecision(card.approvalId.value, "approve") }, enabled = enabled) { Text("同意") }
-                OutlinedButton(onClick = { onDecision(card.approvalId.value, "deny") }, enabled = enabled) { Text("拒绝") }
-                TextButton(onClick = { onDecision(card.approvalId.value, "cancel") }, enabled = enabled) { Text("取消") }
+                Button(onClick = { onDecision(card.approvalId.value, "approve") }, enabled = enabled) { Text(stringResource(R.string.approve)) }
+                OutlinedButton(onClick = { onDecision(card.approvalId.value, "deny") }, enabled = enabled) { Text(stringResource(R.string.decline)) }
+                TextButton(onClick = { onDecision(card.approvalId.value, "cancel") }, enabled = enabled) { Text(stringResource(R.string.cancel)) }
             }
         }
     }

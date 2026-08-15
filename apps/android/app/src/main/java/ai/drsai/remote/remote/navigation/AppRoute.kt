@@ -36,6 +36,8 @@ sealed interface AppRoute {
         override val path: String = "workbench/approvals"
     }
 
+    data object Recovery : AppRoute { override val path: String = "workbench/recovery" }
+
     data object Archived : AppRoute {
         override val path: String = "workbench/archived"
     }
@@ -92,6 +94,7 @@ sealed interface AppRoute {
             if (path == Results.path) return Results
             if (path == AgentsAndSkills.path) return AgentsAndSkills
             if (path == Approvals.path) return Approvals
+            if (path == Recovery.path) return Recovery
             if (path == Archived.path) return Archived
             if (path == Settings.path) return Settings
             if (path == ModelSettings.path) return ModelSettings

@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import ai.drsai.remote.remote.data.AndroidDevicePresence
+import ai.drsai.remote.remote.data.AndroidAssociationStrings
 import ai.drsai.remote.remote.data.RemoteWorkspaceContainer
 import ai.drsai.remote.remote.data.RemoteDirectoryEntry
 import ai.drsai.remote.remote.data.RemoteDirectoryLoader
@@ -30,6 +31,8 @@ import ai.drsai.remote.remote.device.RemotePushProviderStatus
 import ai.drsai.remote.remote.device.RemotePushRegistrationScheduler
 import ai.drsai.remote.remote.device.AndroidRemoteBackgroundSync
 import ai.drsai.remote.BuildConfig
+import ai.drsai.remote.R
+import ai.drsai.remote.ui.LocalizedText
 import ai.drsai.remote.remote.model.RemoteWorkspaceRef
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +47,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
 
 class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
+    private val associationStrings = AndroidAssociationStrings(app)
     private val container = RemoteWorkspaceContainer.get(app)
     private val time = container.time
     private val tokenStore = container.boundaries.auth.tokens
@@ -74,7 +78,8 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
             connectivity.online.drop(1).collect { online ->
                 lifecycleCoordinator.networkChanged()
                 if (online) refresh() else mutableState.update {
-                    it.copy(stale = it.computers.isNotEmpty(), error = "网络已断开")
+                    it.copy(stale = it.computers.isNotEmpty(), error = null,
+                        errorText = LocalizedText(R.string.remote_error_network_disconnected))
                 }
             }
         }
@@ -154,6 +159,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                 loading = it.computers.isEmpty(),
                 refreshing = it.computers.isNotEmpty(),
                 error = null,
+                errorText = null,
                 actionableError = null,
             )
         }
@@ -184,9 +190,9 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                     computers = result.entries.toUiComputers(),
                     query = normalizedQuery,
                     stale = result.stale,
-                    error = when (result.warning) {
-                        "remote_access_revoked" -> "部分远程访问授权已撤销"
-                        "workspace_catalog_unavailable" -> "部分工作区暂时无法刷新，当前显示缓存"
+                    errorText = when (result.warning) {
+                        "remote_access_revoked" -> LocalizedText(R.string.remote_error_partial_access_revoked)
+                        "workspace_catalog_unavailable" -> LocalizedText(R.string.remote_error_partial_catalog_cached)
                         else -> null
                     },
                     actionableError = null,
@@ -204,11 +210,12 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                         loading = false,
                         refreshing = false,
                         stale = !forbidden && it.computers.isNotEmpty(),
-                        error = when {
-                            forbidden -> "当前设备的远程访问授权已撤销"
+                        error = null,
+                        errorText = when {
+                            forbidden -> LocalizedText(R.string.remote_error_device_access_revoked)
                             failure is RelayHttpException && failure.status == 401 ->
-                                "HepAI 登录已过期，请重新登录"
-                            else -> "远程目录刷新失败，当前显示上次同步内容"
+                                LocalizedText(R.string.remote_error_sign_in_expired)
+                            else -> LocalizedText(R.string.remote_error_directory_refresh_cached)
                         },
                         actionableError = remoteActionableFailure(failure),
                     )
@@ -232,7 +239,8 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { associations.rotateDeviceKey(runtimeId) }
                 .onFailure {
                     mutableState.update { state ->
-                        state.copy(error = "设备安全密钥暂时无法更新，将自动重试")
+                        state.copy(error = null,
+                            errorText = LocalizedText(R.string.remote_error_key_rotation_retry))
                     }
                 }
             keyRotationInFlight.set(false)
@@ -262,12 +270,13 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
             displayName = runtime.reference.displayName,
             state = state,
             version = runtime.version,
-            lastSeenLabel = when {
+            lastSeenLabel = "",
+            lastSeenText = when {
                 cached && entry.lastSyncedAt != null ->
-                    "缓存 · 上次同步 ${formatSyncTime(entry.lastSyncedAt)}"
-                runtime.state == RemoteConnectionState.PAUSED -> "此电脑已暂停"
-                runtime.state == RemoteConnectionState.OFFLINE -> "离线"
-                else -> "刚刚连接"
+                    null
+                runtime.state == RemoteConnectionState.PAUSED -> LocalizedText(R.string.remote_computer_paused)
+                runtime.state == RemoteConnectionState.OFFLINE -> LocalizedText(R.string.remote_status_offline)
+                else -> LocalizedText(R.string.remote_just_connected)
             },
             workspaces = entry.workspaces,
             workspacesCached = cached,
@@ -282,10 +291,6 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
         .thenByDescending { it.unreadTurnCount }
         .thenByDescending { it.lastActivityAt }
         .thenBy { it.displayName })
-
-    private fun formatSyncTime(timestamp: Long): String =
-        java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
-            .format(java.util.Date(timestamp))
 
     fun updateQuery(query: String) {
         refreshGeneration.incrementAndGet()
@@ -320,6 +325,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     refreshingRuntimeIds = it.refreshingRuntimeIds + runtimeId,
                     error = null,
+                    errorText = null,
                     computers = it.computers.map { computer ->
                         if (computer.runtimeId == runtimeId) {
                             computer.copy(workspaceSyncStatus = null, workspaceSyncFailed = false)
@@ -352,7 +358,11 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                                     workspaces = visible,
                                     workspacesCached = false,
                                     lastSyncedAtMillis = syncedAtMillis,
-                                    workspaceSyncStatus = "已同步 ${formatSyncTime(syncedAtMillis)}",
+                                    workspaceSyncStatus = null,
+                                    workspaceSyncText = LocalizedText(
+                                        R.string.remote_synced_at,
+                                    ),
+                                    workspaceSyncSucceeded = true,
                                     workspaceSyncFailed = false,
                                 )
                             },
@@ -373,7 +383,8 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                                 state.computers.map { computer ->
                                     if (computer.runtimeId == runtimeId) {
                                         computer.copy(
-                                            workspaceSyncStatus = workspaceCatalogSyncErrorMessage(failure),
+                                            workspaceSyncStatus = null,
+                                            workspaceSyncText = workspaceCatalogSyncErrorMessage(failure),
                                             workspaceSyncFailed = true,
                                         )
                                     } else {
@@ -382,7 +393,10 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                                 }
                             },
                             refreshingRuntimeIds = state.refreshingRuntimeIds - runtimeId,
-                            error = if (forbidden) "这台远程电脑的访问授权已撤销" else null,
+                            error = null,
+                            errorText = if (forbidden) {
+                                LocalizedText(R.string.remote_error_computer_access_revoked)
+                            } else null,
                         )
                     }
                 }
@@ -417,7 +431,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                 val actionable = remoteActionableFailure(failure)
                 state.copy(
                     refreshing = false,
-                    error = associationErrorMessage(failure),
+                    error = associationErrorMessage(failure, associationStrings),
                     actionableError = actionable,
                     pairing = pairingReducer.reduce(
                         state.pairing,
@@ -435,7 +449,7 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun revokeAssociation(runtimeId: ai.drsai.remote.remote.model.RuntimeId, clearLocalCache: Boolean = false) =
         viewModelScope.launch(Dispatchers.IO) {
-            mutableState.update { it.copy(refreshing = true, error = null) }
+            mutableState.update { it.copy(refreshing = true, error = null, errorText = null) }
             runCatching { associations.revokeAssociation(runtimeId) }
                 .onSuccess {
                     tokenStore.user()?.let { user ->
@@ -460,8 +474,9 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                                 ?.takeUnless { it == runtimeId },
                             refreshing = false,
                             stale = false,
-                            error = cleanupFailure?.let {
-                                "访问已解除，但本机缓存未能完全清除，请重试清理"
+                            error = null,
+                            errorText = cleanupFailure?.let {
+                                LocalizedText(R.string.remote_error_cache_cleanup_incomplete)
                             },
                         )
                     }
@@ -471,12 +486,13 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
                     mutableState.update {
                         it.copy(
                             refreshing = false,
-                            error = if (failure is ai.drsai.remote.remote.data.RelayHttpException &&
+                            error = null,
+                            errorText = if (failure is ai.drsai.remote.remote.data.RelayHttpException &&
                                 failure.status == 401
                             ) {
-                                "HepAI 登录已过期，请重新登录"
+                                LocalizedText(R.string.remote_error_sign_in_expired)
                             } else {
-                                "解除关联失败，请重试"
+                                LocalizedText(R.string.remote_error_unlink_failed)
                             },
                         )
                     }
@@ -493,11 +509,11 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
             buildList {
                 val runtime = entry.runtime.reference
                 if (runtime.displayName.contains(query, ignoreCase = true)) {
-                    add(RemoteSearchResult(RemoteSearchKind.HOST, runtime.displayName, "计算机",
+                    add(RemoteSearchResult(RemoteSearchKind.HOST, runtime.displayName,
                         RemoteSearchSource.ONLINE, runtime.runtimeId))
                 }
                 entry.workspaces.filter { it.displayName.contains(query, ignoreCase = true) }.forEach { workspace ->
-                    add(RemoteSearchResult(RemoteSearchKind.WORKSPACE, workspace.displayName, "工作区",
+                    add(RemoteSearchResult(RemoteSearchKind.WORKSPACE, workspace.displayName,
                         RemoteSearchSource.ONLINE, workspace.runtimeId, workspace.workspaceId))
                 }
             }
@@ -505,21 +521,21 @@ class RemoteHomeViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-internal fun workspaceCatalogSyncErrorMessage(failure: Throwable): String = when {
+internal fun workspaceCatalogSyncErrorMessage(failure: Throwable): LocalizedText = when {
     failure is RelayHttpException && failure.status == 401 ->
-        "HepAI 登录已过期，请重新登录"
+        LocalizedText(R.string.remote_error_sign_in_expired)
     failure is java.net.SocketTimeoutException ||
         failure is RelayHttpException && (
             failure.errorCode == "catalog_sync_timeout" ||
                 failure.status == 504
             ) ->
-        "同步超时；继续显示上次内容"
+        LocalizedText(R.string.remote_sync_timeout_cached)
     failure is RelayHttpException && failure.errorCode == "host_offline" ->
-        "远程电脑离线，未同步；继续显示上次内容"
+        LocalizedText(R.string.remote_sync_offline_cached)
     failure is RelayHttpException && failure.errorCode == "stale_runtime_generation" ->
-        "远程电脑刚刚重连，请稍后重试；继续显示上次内容"
+        LocalizedText(R.string.remote_sync_reconnected_cached)
     failure is java.io.IOException ->
-        "网络连接失败，未同步；继续显示上次内容"
+        LocalizedText(R.string.remote_sync_network_failed_cached)
     else ->
-        "工作区同步失败；继续显示上次内容"
+        LocalizedText(R.string.remote_sync_failed_cached)
 }

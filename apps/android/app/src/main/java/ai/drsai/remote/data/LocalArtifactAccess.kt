@@ -11,6 +11,19 @@ import kotlinx.coroutines.withContext
 
 enum class ArtifactPreviewKind { TEXT, IMAGE, PDF, EXTERNAL, TOO_LARGE }
 
+data class ArtifactAccessFailure(val title: String, val detail: String, val canRegenerate: Boolean)
+
+object ArtifactAccessFailurePolicy {
+    fun from(code: String?, strings: ArtifactAccessStrings = EnglishArtifactAccessStrings): ArtifactAccessFailure? = when (code) {
+        "artifact_digest_mismatch" -> ArtifactAccessFailure(strings.text(ArtifactAccessText.DIGEST_TITLE), strings.text(ArtifactAccessText.DIGEST_DETAIL), true)
+        "artifact_size_mismatch", "artifact_size_limit" -> ArtifactAccessFailure(strings.text(ArtifactAccessText.SIZE_TITLE), strings.text(ArtifactAccessText.SIZE_DETAIL), true)
+        "artifact_not_found", "artifact_local_content_unavailable" -> ArtifactAccessFailure(strings.text(ArtifactAccessText.EXPIRED_TITLE), strings.text(ArtifactAccessText.EXPIRED_DETAIL), true)
+        "artifact_path_outside_app_storage", "artifact_internal_uri_invalid" -> ArtifactAccessFailure(strings.text(ArtifactAccessText.INACCESSIBLE_TITLE), strings.text(ArtifactAccessText.INACCESSIBLE_DETAIL), true)
+        null -> null
+        else -> ArtifactAccessFailure(strings.text(ArtifactAccessText.UNKNOWN_TITLE), strings.text(ArtifactAccessText.UNKNOWN_DETAIL, code), false)
+    }
+}
+
 data class LocalArtifactHandle(
     val artifactId: String,
     val displayName: String,

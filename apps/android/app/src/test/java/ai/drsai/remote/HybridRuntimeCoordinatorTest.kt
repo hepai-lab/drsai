@@ -44,7 +44,7 @@ class HybridRuntimeCoordinatorTest {
         )
         val unavailable = DesktopHandoffPlanner.plan("运行 PowerShell", emptyList())
         assertEquals(DesktopHandoffState.UNAVAILABLE, unavailable.state)
-        assertTrue(unavailable.message.contains("尚未执行任何命令"))
+        assertTrue(unavailable.message.contains("no command was executed"))
 
         val incapable = descriptor(RuntimeAuthority.REMOTE_RUNTIME, RuntimeCapability.CHAT, RuntimeCapability.GIT)
         assertEquals(DesktopHandoffState.UNAVAILABLE, DesktopHandoffPlanner.plan("运行 PowerShell", listOf(incapable)).state)
@@ -55,7 +55,7 @@ class HybridRuntimeCoordinatorTest {
         val offered = DesktopHandoffPlanner.plan("运行 PowerShell", listOf(capable))
         assertEquals(DesktopHandoffState.OFFER, offered.state)
         assertEquals(capable.binding.runtimeId, offered.target?.binding?.runtimeId)
-        assertTrue(offered.message.contains("Android 尚未执行任何命令"))
+        assertTrue(offered.message.contains("Android has not executed a command"))
         assertEquals(DesktopHandoffState.NOT_REQUIRED, DesktopHandoffPlanner.plan("解释 Kotlin 协程", listOf(capable)).state)
     }
 
