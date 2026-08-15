@@ -82,6 +82,15 @@ assert.equal(
   "C:/Users/tester/.drsai/drsai-agent/venv/Scripts/python.exe",
   "developer source and managed Runtime root must remain independent",
 );
+const packagedWindowsPaths = createDesktopPathService({
+  platform: "windows",
+  userHome: "C:/Users/tester",
+  resourcesPath: "C:/Program Files/OpenDrSai/resources",
+  defaultApp: false,
+  environment: { DRSAI_HOME: "C:/Users/tester/.drsai" },
+});
+assert.equal(packagedWindowsPaths.layout.repository.replaceAll("\\", "/"), "C:/Program Files/OpenDrSai/drsai-agent", "packaged Windows Runtime must resolve inside the application directory");
+assert.equal(packagedWindowsPaths.layout.pythonExecutable.replaceAll("\\", "/"), "C:/Program Files/OpenDrSai/drsai-agent/venv/Scripts/python.exe");
 
 const macosPaths = createDesktopPathService({
   platform: "macos",

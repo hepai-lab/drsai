@@ -6,6 +6,7 @@ const root = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "
 const read = (path) => readFileSync(join(root, path), "utf8");
 const api = read("../shared/api/desktopApi.ts");
 const app = read("../shared/renderer/src/App.tsx");
+const codexSettings = read("../shared/renderer/src/components/CodexIntegrationSettings.tsx");
 const chatUi = read("../shared/renderer/src/components/ChatWorkspace.tsx");
 const structured = read("../shared/renderer/src/components/StructuredMessageParts.tsx");
 const errors = read("../shared/renderer/src/userFacingErrors.ts");
@@ -31,7 +32,7 @@ const checks = [
   ["M2-F01 runtime identity", gateway.includes('"dev_managed"') && runtimeClient.includes("interface RuntimeIdentity")],
   ["M2-F02 layered Codex status", api.includes("appServerState") && api.includes("adapterVersion")],
   ["M2-F03 source gateway identity", dev.includes("Test-DevManagedGateway") && dev.includes("Replacing non-development Gateway")],
-  ["M2-F04 status overview", app.includes("codex-health-layers") && app.includes("连接方式")],
+  ["M2-F04 status overview", codexSettings.includes("codex-health-layers") && codexSettings.includes("连接方式") && codexSettings.includes("Workspace connection")],
   ["M2-F05 detect and repair", app.includes("onCodexRefresh") && app.includes("onCodexRepair") && app.includes("onCodexRestart")],
   ["M2-F06 reconnect without duplicates", subscription.includes("OaepEventGap") && syncState.includes("advanceCursor")],
 
@@ -65,8 +66,8 @@ const checks = [
 
   ["M7-F01 user-facing errors", errors.includes("describeUserFacingError") && errors.includes("操作没有完成")],
   ["M7-F02 retry and detail actions", chatUi.includes('"same_session"') && chatUi.includes('"new_session"') && app.includes("onOpenDebug")],
-  ["M7-F03 one-click redacted report", app.includes("copy-codex-diagnostic") && app.includes("复制脱敏诊断")],
-  ["M7-F04 report compatibility fields", app.includes("adapterVersion: codexStatus.adapterVersion") && app.includes("transport: codexStatus.transport")],
+  ["M7-F03 one-click redacted report", codexSettings.includes("copy-codex-diagnostic") && codexSettings.includes("复制脱敏诊断")],
+  ["M7-F04 report compatibility fields", codexSettings.includes("adapterVersion: status.adapterVersion") && codexSettings.includes("transport: status.transport")],
   ["M7-F05 unknown item fallback", decoder.includes("codex_item_unknown") && projection.includes('item.type === "notice"')],
 
   ["M8-F01 status contract tests", existsSync(join(root, "scripts/verify-codex-desktop-integration.mjs"))],

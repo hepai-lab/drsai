@@ -2094,7 +2094,10 @@ assert(view.includes('aria-label="Channel connector configuration"'), "Channels 
 assert(view.includes('aria-label="Imported channel context"'), "Channels view does not label imported context results");
 assert(view.includes("Approval required"), "Channels view does not expose approval boundary");
 assert(view.includes('aria-label="Channel adapter summary"'), "Channels view summary is not labelled");
-assert(view.includes('aria-label="Connector channel adapters"'), "Channels connector group is not labelled");
+assert(view.includes('aria-label="Data perceptor connectors"'), "Data-perceptor connector group is not labelled");
+assert(view.includes('if (adapter.id === "mobile-chat") continue'), "Legacy Mobile chat handoff still appears as a user-facing channel");
+assert(!view.includes('aria-label="Input channel adapters"'), "Input methods still appear as Channel integrations");
+assert(view.includes('mode?: "channels" | "data"'), "Channels and data perceptors are not separated by product mode");
 
 assert(mock.includes("mockChannelAdapters"), "mock bridge omits channel adapter data");
 assert(mock.includes("listChannelAdapters"), "mock bridge omits listChannelAdapters");

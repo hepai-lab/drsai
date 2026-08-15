@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_OPENDRSAI_LAUNCH_MODE?: "development" | "production";
+  readonly VITE_OPENDRSAI_OIDC_ONLY?: "0" | "1";
 }
 
 declare module "jszip" {

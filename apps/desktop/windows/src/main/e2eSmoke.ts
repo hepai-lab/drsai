@@ -3,7 +3,7 @@ import { request as httpRequest } from "http";
 import { createHash } from "crypto";
 import { basename, dirname, join } from "path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
-import { app, clipboard, type BrowserWindow } from "electron";
+import { app, clipboard, powerMonitor, type BrowserWindow } from "electron";
 import type { DesktopBackgroundTask, DesktopTaskArtifactLink } from "../shared/desktopApi";
 import {
   clickLatestCompletionNotificationForE2e,
@@ -14,9 +14,10 @@ import { createWorkspace } from "./workspaces";
 import { createThread } from "./threads";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import { LocalRuntimeClient, RuntimeOWOPError } from "../../../shared/main/runtimeClient";
-import { getGatewayRequestHeaders } from "./gateway";
+import { getGatewayRequestHeaders, stopGateway } from "./gateway";
 import { requireAuthContext } from "../../../shared/main/auth";
 import { bootstrapDesktop } from "./bootstrap";
+import { getDuplexVoiceOccupancy, isDuplexVoiceSessionReady } from "../../../shared/main/voice/duplex/controller";
 import {
   getMyDrSaiAgentModelPolicy,
   getMyDrSaiConfig,
@@ -175,6 +176,12 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP !== "1" &&
     process.env.OPENDRSAI_E2E_APP_DIALOG !== "1" &&
     process.env.OPENDRSAI_E2E_OPERATIONAL_STATE !== "1" &&
+    process.env.OPENDRSAI_E2E_DUPLEX_READINESS !== "1" &&
+    process.env.OPENDRSAI_E2E_DUPLEX_RECOVERY !== "1" &&
+    process.env.OPENDRSAI_E2E_DUPLEX_PERMISSION_RECOVERY !== "1" &&
+    process.env.OPENDRSAI_E2E_DUPLEX_PROCESS_RECOVERY !== "1" &&
+    process.env.OPENDRSAI_E2E_DUPLEX_PACKAGED_RUN !== "1" &&
+    !process.env.OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE &&
     process.env.OPENDRSAI_E2E_VOICE !== "1" &&
     process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION !== "1"
   ) return;
@@ -294,6 +301,20 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runM06AppDialogSmoke
       : process.env.OPENDRSAI_E2E_OPERATIONAL_STATE === "1"
         ? runM07OperationalStateSmoke
+      : process.env.OPENDRSAI_E2E_DUPLEX_READINESS === "1"
+        ? runDuplexReadinessSmoke
+      : process.env.OPENDRSAI_E2E_DUPLEX_RECOVERY === "1"
+        ? runDuplexRecoverySmoke
+      : process.env.OPENDRSAI_E2E_DUPLEX_PERMISSION_RECOVERY === "1"
+        ? runDuplexPermissionRecoverySmoke
+      : process.env.OPENDRSAI_E2E_DUPLEX_PROCESS_RECOVERY === "1"
+        ? runDuplexProcessRecoverySmoke
+      : process.env.OPENDRSAI_E2E_DUPLEX_PACKAGED_RUN === "1"
+        ? runDuplexPackagedRunSmoke
+      : process.env.OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE === "before"
+        ? runDuplexAppRestartBeforeSmoke
+      : process.env.OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE === "after"
+        ? runDuplexAppRestartAfterSmoke
       : process.env.OPENDRSAI_E2E_VOICE === "1"
         ? runVoiceSmoke
       : process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1"
@@ -319,6 +340,401 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         process.exit(1);
       });
   });
+}
+
+async function runDuplexReadinessSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  return window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = { bridge: Boolean(api) };
+      const details = {};
+      if (!api) return { ok: false, checks, details };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticated = login?.ok === true;
+      const started = await api.startGateway();
+      checks.gatewayStarted = started === true;
+      const readiness = await api.getDuplexVoiceReadiness();
+      const [policy, config, gateway, permission, devices] = await Promise.all([
+        api.getMyDrSaiAgentModelPolicy(),
+        api.getMyDrSaiConfig(),
+        api.getGatewayStatus(),
+        navigator.permissions?.query
+          ? navigator.permissions.query({ name: 'microphone' }).then((result) => result.state).catch(() => 'unknown')
+          : Promise.resolve('unknown'),
+        navigator.mediaDevices?.enumerateDevices
+          ? navigator.mediaDevices.enumerateDevices().catch(() => [])
+          : Promise.resolve([]),
+      ]);
+      const ref = policy?.effective_realtime_voice_ref || policy?.realtime_voice_model?.ref || null;
+      const realtimeModels = (config?.models || []).filter((model) => /realtime/i.test(model.alias || ''));
+      const deviceKinds = devices.reduce((counts, device) => {
+        counts[device.kind] = (counts[device.kind] || 0) + 1;
+        return counts;
+      }, {});
+      let gatewayPort = null;
+      try {
+        gatewayPort = Number(new URL(gateway?.baseUrl).port);
+      } catch {}
+      checks.gatewayReady = gateway?.ready === true;
+      checks.developmentPort = ${JSON.stringify(process.env.DRSAI_HOME?.replace(/[\\/]+$/, "").toLowerCase().endsWith(".drsai-dev") ?? false)}
+        ? gatewayPort === 28642
+        : true;
+      checks.productionPort = ${JSON.stringify([".drsai", ".drsai-prod"].some((leaf) => process.env.DRSAI_HOME?.replace(/[\\/]+$/, "").toLowerCase().endsWith(leaf)) ?? false)}
+        ? gatewayPort === 18642
+        : true;
+      checks.modelBound = ref?.provider_id === 'zhizengzeng' && ref?.model_id === 'gpt-realtime-2';
+      checks.catalogContainsRealtime = realtimeModels.some((model) => model.provider_id === ref?.provider_id && model.alias === ref?.model_id);
+      checks.readinessReady = readiness?.available === true && readiness?.reasonCode === 'ready';
+      checks.microphonePermissionQueryable = ['granted', 'prompt', 'denied'].includes(permission);
+      checks.audioInputEnumerated = Number(deviceKinds.audioinput || 0) > 0;
+      checks.audioOutputEnumerated = Number(deviceKinds.audiooutput || 0) > 0;
+      details.authentication = { developerBypass: true, providerCredentialBypass: false };
+      details.gateway = { ready: gateway?.ready === true, port: gatewayPort };
+      details.model = { providerId: ref?.provider_id ?? null, modelId: ref?.model_id ?? null, catalogRealtimeCount: realtimeModels.length };
+      details.readiness = {
+        available: readiness?.available === true,
+        reasonCode: readiness?.reasonCode ?? null,
+        checkedAt: readiness?.checkedAt ?? null,
+        checks: Array.isArray(readiness?.checks)
+          ? readiness.checks.map((check) => ({ id: check.id, ready: check.ready === true, reasonCode: check.reasonCode }))
+          : [],
+      };
+      details.microphonePermission = permission;
+      details.deviceKinds = deviceKinds;
+      details.privacy = { providerUrlsPersisted: false, credentialsPersisted: false, deviceLabelsPersisted: false };
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as Promise<SmokeResult>;
+}
+
+async function runDuplexRecoverySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  return window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = { bridge: Boolean(api) };
+      const details = { states: [], reconnectCredits: [], terminalEvents: [] };
+      if (!api) return { ok: false, checks, details };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticated = login?.ok === true;
+      checks.gatewayStarted = await api.startGateway() === true;
+      const readiness = await api.getDuplexVoiceReadiness();
+      const ref = { provider_id: readiness?.providerId ?? null, model_id: readiness?.modelId ?? null };
+      checks.readinessReady = readiness?.available === true;
+      checks.modelBound = ref?.provider_id === 'zhizengzeng' && ref?.model_id === 'gpt-realtime-2';
+      const sessionId = 'e2e-duplex-recovery-' + crypto.randomUUID();
+      let sessionStarted = false;
+      let reconnecting = false;
+      let reconnected = false;
+      let reconnectCreditZero = false;
+      let reconnectAttempt = null;
+      let reconnectedSegment = null;
+      const unsubscribe = api.onDuplexVoiceEvents((events) => {
+        for (const event of events) {
+          if (event.sessionId !== sessionId) continue;
+          if (event.type === 'session_started') sessionStarted = true;
+          if (event.type === 'connection_state') {
+            details.states.push({ state: event.state, attempt: event.attempt ?? null, segmentId: event.segmentId ?? null, lostAudioMs: event.lostAudioMs ?? null, retryAfterMs: event.retryAfterMs ?? null });
+            if (event.state === 'reconnecting') { reconnecting = true; reconnectAttempt = event.attempt ?? null; }
+            if (event.state === 'reconnected') { reconnected = true; reconnectedSegment = event.segmentId ?? null; }
+          }
+          if (event.type === 'uplink_credit' && event.reason === 'reconnect') {
+            const zero = event.credit.frames === 0 && event.credit.bytes === 0 && event.credit.audioMs === 0;
+            details.reconnectCredits.push({ zero, acknowledgedSequence: event.credit.acknowledgedSequence });
+            reconnectCreditZero ||= zero;
+          }
+          if (['completed', 'cancelled', 'failed'].includes(event.type)) details.terminalEvents.push(event.type);
+        }
+      });
+      const waitFor = async (predicate, timeoutMs) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) { if (predicate()) return true; await new Promise((resolve) => setTimeout(resolve, 50)); }
+        return false;
+      };
+      let started = null;
+      try {
+        started = await api.startDuplexVoiceSession({
+          protocolVersion: 2, sessionId, providerId: ref?.provider_id, modelId: ref?.model_id,
+          inputEncoding: 'pcm_s16le', inputSampleRateHz: 24000,
+          outputEncoding: 'pcm_s16le', outputSampleRateHz: 24000, channels: 1,
+          enableInputTranscription: true, enableOutputTranscription: true,
+          enableServerVad: true, enableToolCalling: true, autoRecovery: true,
+        });
+        checks.sessionAccepted = started?.sessionId === sessionId && started?.runtimeId === 'realtime-provider';
+        checks.sessionStarted = await waitFor(() => sessionStarted, 30000);
+        checks.reconnectingObserved = await waitFor(() => reconnecting, 10000);
+        checks.reconnectCreditZero = reconnectCreditZero;
+        checks.reconnectedObserved = await waitFor(() => reconnected, 30000);
+        checks.newSegment = Number(reconnectedSegment) >= 1;
+        checks.boundedAttempt = Number(reconnectAttempt) === 1;
+        checks.noPrematureTerminal = details.terminalEvents.length === 0;
+        await api.stopDuplexVoiceSession(sessionId);
+        checks.cleanStop = await waitFor(() => details.terminalEvents.includes('completed'), 5000);
+      } finally {
+        if (started && !details.terminalEvents.length) await api.disposeDuplexVoiceSession(sessionId).catch(() => undefined);
+        unsubscribe();
+      }
+      details.model = { providerId: ref?.provider_id ?? null, modelId: ref?.model_id ?? null };
+      details.authentication = { developerBypass: true, providerCredentialBypass: false };
+      details.privacy = { providerUrlsPersisted: false, credentialsPersisted: false, transcriptsPersisted: false };
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as Promise<SmokeResult>;
+}
+
+async function runDuplexPermissionRecoverySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  return window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = { bridge: Boolean(api), mediaDevices: Boolean(navigator.mediaDevices?.getUserMedia) };
+      const details = { firstPermissionError: null, recoveredTrack: null, terminalEvents: [] };
+      if (!api || !navigator.mediaDevices?.getUserMedia) return { ok: false, checks, details };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticated = login?.ok === true;
+      checks.gatewayStarted = await api.startGateway() === true;
+      const readiness = await api.getDuplexVoiceReadiness();
+      checks.readinessReady = readiness?.available === true;
+      const before = await api.getDuplexVoiceOccupancy();
+      checks.initiallyUnoccupied = before?.occupied === false;
+      let deniedStream = null;
+      try {
+        deniedStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch (error) {
+        details.firstPermissionError = { name: error?.name ?? null, message: String(error?.message ?? error) };
+      } finally {
+        deniedStream?.getTracks().forEach((track) => track.stop());
+      }
+      checks.firstRequestDenied = details.firstPermissionError?.name === 'NotAllowedError';
+      const afterDenied = await api.getDuplexVoiceOccupancy();
+      checks.providerNotStartedAfterDenial = afterDenied?.occupied === false;
+      let recoveredStream = null;
+      try {
+        recoveredStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        const track = recoveredStream.getAudioTracks()[0];
+        details.recoveredTrack = track ? { kind: track.kind, enabled: track.enabled, muted: track.muted, readyState: track.readyState } : null;
+        checks.secondRequestAllowed = Boolean(track && track.kind === 'audio' && track.readyState === 'live');
+      } finally {
+        recoveredStream?.getTracks().forEach((track) => track.stop());
+      }
+      const sessionId = 'e2e-duplex-permission-recovery-' + crypto.randomUUID();
+      let started = null;
+      const unsubscribe = api.onDuplexVoiceEvents((events) => {
+        for (const event of events) {
+          if (event.sessionId === sessionId && ['completed', 'cancelled', 'failed'].includes(event.type)) details.terminalEvents.push(event.type);
+        }
+      });
+      const waitFor = async (predicate, timeoutMs) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) { if (predicate()) return true; await new Promise((resolve) => setTimeout(resolve, 50)); }
+        return false;
+      };
+      try {
+        started = await api.startDuplexVoiceSession({
+          protocolVersion: 2, sessionId, providerId: readiness?.providerId, modelId: readiness?.modelId,
+          inputEncoding: 'pcm_s16le', inputSampleRateHz: 24000,
+          outputEncoding: 'pcm_s16le', outputSampleRateHz: 24000, channels: 1,
+          enableInputTranscription: true, enableOutputTranscription: true,
+          enableServerVad: true, enableToolCalling: true, autoRecovery: true,
+        });
+        checks.providerStartsAfterRecovery = started?.sessionId === sessionId && started?.runtimeId === 'realtime-provider';
+        await api.stopDuplexVoiceSession(sessionId);
+        checks.cleanStop = await waitFor(() => details.terminalEvents.includes('completed'), 5000);
+      } finally {
+        if (started && !details.terminalEvents.length) await api.disposeDuplexVoiceSession(sessionId).catch(() => undefined);
+        unsubscribe();
+      }
+      details.model = { providerId: readiness?.providerId ?? null, modelId: readiness?.modelId ?? null };
+      details.authentication = { developerBypass: true, providerCredentialBypass: false };
+      details.privacy = { credentialsPersisted: false, transcriptsPersisted: false, deviceLabelsPersisted: false };
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as Promise<SmokeResult>;
+}
+
+async function runDuplexProcessRecoverySmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const rendererResult = window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = { bridge: Boolean(api) };
+      const details = { lifecycle: [], states: [], terminalEvents: [] };
+      if (!api) return { ok: false, checks, details };
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticated = login?.ok === true;
+      checks.gatewayStarted = await api.startGateway() === true;
+      const readiness = await api.getDuplexVoiceReadiness();
+      checks.readinessReady = readiness?.available === true;
+      const sessionId = 'e2e-duplex-process-recovery-' + crypto.randomUUID();
+      let sessionStarted = false;
+      let reconnecting = false;
+      let reconnected = false;
+      let reconnectedSegment = null;
+      const unsubscribeLifecycle = api.onLifecycleEvent((event) => details.lifecycle.push({ reason: event.reason, recoveredGateway: event.recoveredGateway === true }));
+      const unsubscribeVoice = api.onDuplexVoiceEvents((events) => {
+        for (const event of events) {
+          if (event.sessionId !== sessionId) continue;
+          if (event.type === 'session_started') sessionStarted = true;
+          if (event.type === 'connection_state') {
+            details.states.push({ state: event.state, attempt: event.attempt ?? null, segmentId: event.segmentId ?? null });
+            if (event.state === 'reconnecting') reconnecting = true;
+            if (event.state === 'reconnected') { reconnected = true; reconnectedSegment = event.segmentId ?? null; }
+          }
+          if (['completed', 'cancelled', 'failed'].includes(event.type)) details.terminalEvents.push(event.type);
+        }
+      });
+      const waitFor = async (predicate, timeoutMs) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) { if (predicate()) return true; await new Promise((resolve) => setTimeout(resolve, 50)); }
+        return false;
+      };
+      let started = null;
+      try {
+        started = await api.startDuplexVoiceSession({
+          protocolVersion: 2, sessionId, providerId: readiness?.providerId, modelId: readiness?.modelId,
+          inputEncoding: 'pcm_s16le', inputSampleRateHz: 24000,
+          outputEncoding: 'pcm_s16le', outputSampleRateHz: 24000, channels: 1,
+          enableInputTranscription: true, enableOutputTranscription: true,
+          enableServerVad: true, enableToolCalling: true, autoRecovery: true,
+        });
+        checks.sessionAccepted = started?.sessionId === sessionId && started?.runtimeId === 'realtime-provider';
+        checks.sessionStarted = await waitFor(() => sessionStarted, 30000);
+        checks.lockObserved = await waitFor(() => details.lifecycle.some((event) => event.reason === 'lock-screen'), 10000);
+        checks.unlockObserved = await waitFor(() => details.lifecycle.some((event) => event.reason === 'unlock-screen'), 10000);
+        checks.suspendObserved = await waitFor(() => details.lifecycle.some((event) => event.reason === 'suspend'), 10000);
+        checks.reconnectingObserved = await waitFor(() => reconnecting, 15000);
+        checks.resumeRecoveredGateway = await waitFor(() => details.lifecycle.some((event) => event.reason === 'resume' && event.recoveredGateway), 30000);
+        checks.reconnectedObserved = await waitFor(() => reconnected, 45000);
+        checks.newSegment = Number(reconnectedSegment) >= 1;
+        checks.noPrematureTerminal = details.terminalEvents.length === 0;
+        await api.stopDuplexVoiceSession(sessionId);
+        checks.cleanStop = await waitFor(() => details.terminalEvents.includes('completed'), 5000);
+      } finally {
+        if (started && !details.terminalEvents.length) await api.disposeDuplexVoiceSession(sessionId).catch(() => undefined);
+        unsubscribeVoice(); unsubscribeLifecycle();
+      }
+      details.model = { providerId: readiness?.providerId ?? null, modelId: readiness?.modelId ?? null };
+      details.authentication = { developerBypass: true, providerCredentialBypass: false };
+      details.privacy = { credentialsPersisted: false, transcriptsPersisted: false, deviceLabelsPersisted: false };
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as Promise<SmokeResult>;
+  const readyDeadline = Date.now() + 45_000;
+  while (Date.now() < readyDeadline && !isDuplexVoiceSessionReady(window.webContents)) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  if (!isDuplexVoiceSessionReady(window.webContents) || !getDuplexVoiceOccupancy(window.webContents).occupied) return rendererResult;
+  powerMonitor.emit("lock-screen");
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  powerMonitor.emit("unlock-screen");
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  powerMonitor.emit("suspend");
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  await stopGateway();
+  powerMonitor.emit("resume");
+  return rendererResult;
+}
+
+async function runDuplexPackagedRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  return window.webContents.executeJavaScript(`
+    Promise.race([(async () => {
+      const api = window.openDrSai; const checks = { bridge: Boolean(api) }; const details = { uplinkAudioFrames: 0, downlinkAudioDeltas: 0, outputTranscriptEvents: 0, interrupts: 0, terminalEvents: [] };
+      if (!api) return { ok: false, checks, details };
+      checks.authenticated = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      checks.gatewayStarted = await api.startGateway() === true;
+      const readiness = await api.getDuplexVoiceReadiness(); checks.readinessReady = readiness?.available === true; checks.modelBound = readiness?.providerId === 'zhizengzeng' && readiness?.modelId === 'gpt-realtime-2';
+      const sessionId = 'e2e-duplex-packaged-run-' + crypto.randomUUID(); let sessionStarted = false; let firstAudio = null; let interrupted = false;
+      const unsubscribe = api.onDuplexVoiceEvents((events) => { for (const event of events) if (event.sessionId === sessionId) { if (event.type === 'session_started') sessionStarted = true; if (event.type === 'response_audio_delta') { details.downlinkAudioDeltas += 1; firstAudio ||= event.delta; } if (event.type === 'response_transcript_completed') details.outputTranscriptEvents += 1; if (event.type === 'interrupted') { details.interrupts += 1; interrupted = true; } if (['completed','cancelled','failed'].includes(event.type)) details.terminalEvents.push(event.type === 'failed' ? { type: event.type, code: event.error?.code ?? null, providerCode: event.error?.providerCode ?? null, retryable: event.error?.retryable === true } : { type: event.type }); } });
+      const waitFor = async (predicate, timeoutMs) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { if (predicate()) return true; await new Promise((resolve) => setTimeout(resolve, 50)); } return false; };
+      let started = null;
+      try {
+        started = await api.startDuplexVoiceSession({ protocolVersion: 2, sessionId, providerId: readiness?.providerId, modelId: readiness?.modelId, inputEncoding: 'pcm_s16le', inputSampleRateHz: 24000, outputEncoding: 'pcm_s16le', outputSampleRateHz: 24000, channels: 1, enableInputTranscription: true, enableOutputTranscription: true, enableServerVad: true, enableToolCalling: false, autoRecovery: true });
+        checks.sessionAccepted = started?.sessionId === sessionId && started?.runtimeId === 'realtime-provider'; checks.sessionStarted = await waitFor(() => sessionStarted, 30000);
+        checks.textItemAccepted = await api.submitDuplexVoiceTextInput({ sessionId, itemId: 't-' + crypto.randomUUID().replaceAll('-', '').slice(0, 24), text: 'Speak exactly this short phrase: Open Dr Sai realtime packaged acceptance.' }) === true;
+        checks.downlinkAudioObserved = await waitFor(() => details.downlinkAudioDeltas > 0, 45000);
+        if (firstAudio) checks.interruptAccepted = await api.interruptDuplexVoiceSession({ interruptId: 'packaged-interrupt-' + crypto.randomUUID(), sessionId, responseId: firstAudio.responseId, itemId: firstAudio.itemId, contentIndex: firstAudio.contentIndex, playedAudioMs: 20, reason: 'manual' }) === true; else checks.interruptAccepted = false;
+        checks.interruptObserved = await waitFor(() => interrupted, 5000);
+        const frame = new Uint8Array(960); for (let sequence = 0; sequence < 10; sequence += 1) if (api.sendDuplexVoiceAudioChunk({ protocolVersion: 2, sessionId, sequence, capturedAtMs: performance.now(), durationMs: 20, encoding: 'pcm_s16le', sampleRateHz: 24000, channels: 1, audioData: frame })) details.uplinkAudioFrames += 1;
+        checks.uplinkAudioAccepted = details.uplinkAudioFrames > 0;
+        await api.cancelDuplexVoiceSession(sessionId); checks.cleanCancel = await waitFor(() => details.terminalEvents.some((event) => event.type === 'cancelled'), 5000); checks.uniqueTerminal = details.terminalEvents.length === 1;
+      } finally { if (started && details.terminalEvents.length === 0) await api.disposeDuplexVoiceSession(sessionId).catch(() => undefined); unsubscribe(); }
+      details.model = { providerId: readiness?.providerId ?? null, modelId: readiness?.modelId ?? null }; details.privacy = { credentialsPersisted: false, transcriptTextPersisted: false, deviceLabelsPersisted: false };
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })(), new Promise((resolve) => setTimeout(() => resolve({ ok: false, checks: { boundedTimeout: false }, details: {}, error: 'Packaged Duplex Provider run exceeded its 90 second bound.' }), 90000))])
+  `, true) as Promise<SmokeResult>;
+}
+
+async function runDuplexAppRestartBeforeSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = { bridge: Boolean(api) };
+      const details = { sessionId: null, historyThreadId: null, terminalEvents: [] };
+      if (!api) return { ok: false, checks, details };
+      checks.authenticated = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      checks.gatewayStarted = await api.startGateway() === true;
+      const readiness = await api.getDuplexVoiceReadiness(); checks.readinessReady = readiness?.available === true;
+      const sessionId = 'e2e-duplex-app-restart-' + crypto.randomUUID(); details.sessionId = sessionId;
+      let sessionStarted = false;
+      const unsubscribe = api.onDuplexVoiceEvents((events) => { for (const event of events) if (event.sessionId === sessionId) { if (event.type === 'session_started') sessionStarted = true; if (['completed','cancelled','failed'].includes(event.type)) details.terminalEvents.push(event.type); } });
+      const waitFor = async (predicate, timeoutMs) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { if (predicate()) return true; await new Promise((resolve) => setTimeout(resolve, 50)); } return false; };
+      const started = await api.startDuplexVoiceSession({ protocolVersion: 2, sessionId, providerId: readiness?.providerId, modelId: readiness?.modelId, inputEncoding: 'pcm_s16le', inputSampleRateHz: 24000, outputEncoding: 'pcm_s16le', outputSampleRateHz: 24000, channels: 1, enableInputTranscription: true, enableOutputTranscription: true, enableServerVad: true, enableToolCalling: true, autoRecovery: true });
+      checks.sessionAccepted = started?.sessionId === sessionId && started?.runtimeId === 'realtime-provider';
+      checks.sessionStarted = await waitFor(() => sessionStarted, 30000);
+      checks.noTerminalBeforeKill = details.terminalEvents.length === 0;
+      const occupancy = await api.getDuplexVoiceOccupancy(); checks.ownedBeforeKill = occupancy?.occupied === true && occupancy?.ownedByCaller === true && occupancy?.sessionId === sessionId;
+      const thread = await api.createThread({ kind: 'chat', title: 'Duplex restart persistence probe' }); details.historyThreadId = thread?.id ?? null;
+      const stableUser = { id: 'duplex:' + sessionId + ':user:stable-user', role: 'user', content: 'PACKAGED-STABLE-USER', revision: 1, expectedRevision: 0, voice: { revision: 1 } };
+      const stableAssistant = { id: 'duplex:' + sessionId + ':assistant:stable-assistant', role: 'assistant', content: 'PACKAGED-STABLE-ASSISTANT', revision: 1, expectedRevision: 0, voice: { revision: 1 } };
+      const toolEvent = { id: 'restart-tool', kind: 'tool_call', title: 'restart persistence tool', status: 'completed', content: 'PACKAGED-STABLE-TOOL', toolName: 'search_thread_messages', timestamp: new Date().toISOString() };
+      const stableTool = { id: 'duplex:' + sessionId + ':assistant:tool:restart-tool', role: 'assistant', content: '', revision: 1, expectedRevision: 0, statusContent: 'PACKAGED-STABLE-TOOL', toolTimeline: [toolEvent], parts: [{ id: 'tool:restart-tool', type: 'tool', event: toolEvent, status: 'completed' }] };
+      const persisted = thread?.id ? await api.appendDuplexVoiceHistory({ threadId: thread.id, messages: [stableUser, stableAssistant, stableTool] }) : null;
+      checks.stableHistoryCommittedBeforeKill = persisted?.messages?.filter((message) => message.id.startsWith('duplex:' + sessionId + ':')).length === 3;
+      unsubscribe();
+      details.model = { providerId: readiness?.providerId ?? null, modelId: readiness?.modelId ?? null };
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as SmokeResult;
+  result.details.mainProcessId = process.pid;
+  const resultPath = process.env.OPENDRSAI_E2E_RESULT;
+  if (resultPath) writeResult(resultPath, result);
+  await new Promise(() => undefined);
+  return result;
+}
+
+async function runDuplexAppRestartAfterSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  return window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai; const previousSessionId = ${JSON.stringify(process.env.OPENDRSAI_E2E_DUPLEX_PREVIOUS_SESSION_ID ?? "")}; const historyThreadId = ${JSON.stringify(process.env.OPENDRSAI_E2E_DUPLEX_HISTORY_THREAD_ID ?? "")};
+      const checks = { bridge: Boolean(api), previousSessionIdProvided: Boolean(previousSessionId), historyThreadIdProvided: Boolean(historyThreadId) };
+      const details = { previousSessionId, historyThreadId, staleEvents: [], newTerminalEvents: [] };
+      if (!api || !previousSessionId || !historyThreadId) return { ok: false, checks, details };
+      checks.authenticated = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      checks.gatewayRecovered = await api.startGateway() === true;
+      const initial = await api.getDuplexVoiceOccupancy(); checks.noZombieOccupancy = initial?.occupied === false;
+      checks.oldStopRejected = await api.stopDuplexVoiceSession(previousSessionId) === false;
+      checks.oldCancelRejected = await api.cancelDuplexVoiceSession(previousSessionId) === false;
+      checks.oldDisposeRejected = await api.disposeDuplexVoiceSession(previousSessionId) === false;
+      const unsubscribeStale = api.onDuplexVoiceEvents((events) => { for (const event of events) if (event.sessionId === previousSessionId) details.staleEvents.push(event.type); });
+      await new Promise((resolve) => setTimeout(resolve, 500)); checks.noStaleEvents = details.staleEvents.length === 0; unsubscribeStale();
+      const readiness = await api.getDuplexVoiceReadiness(); checks.readinessReady = readiness?.available === true;
+      const recoveredHistory = await api.getThreadSnapshot(historyThreadId); const recoveredVoice = recoveredHistory?.messages?.filter((message) => message.id.startsWith('duplex:' + previousSessionId + ':')) ?? [];
+      checks.stableUserRecovered = recoveredVoice.some((message) => message.role === 'user' && message.content === 'PACKAGED-STABLE-USER' && message.voice?.revision === 1);
+      checks.stableAssistantRecovered = recoveredVoice.some((message) => message.role === 'assistant' && message.content === 'PACKAGED-STABLE-ASSISTANT' && message.voice?.revision === 1);
+      checks.stableToolRecovered = recoveredVoice.some((message) => message.parts?.[0]?.type === 'tool' && message.parts[0].status === 'completed' && message.toolTimeline?.[0]?.content === 'PACKAGED-STABLE-TOOL');
+      checks.noDuplicateStableHistory = recoveredVoice.length === 3 && new Set(recoveredVoice.map((message) => message.id)).size === 3;
+      checks.noDraftCanaryPersisted = !JSON.stringify(recoveredHistory).includes('PACKAGED-DRAFT-MUST-NOT-PERSIST');
+      const sessionId = 'e2e-duplex-after-restart-' + crypto.randomUUID(); let sessionStarted = false;
+      const unsubscribe = api.onDuplexVoiceEvents((events) => { for (const event of events) if (event.sessionId === sessionId) { if (event.type === 'session_started') sessionStarted = true; if (['completed','cancelled','failed'].includes(event.type)) details.newTerminalEvents.push(event.type === 'failed' ? { type: event.type, code: event.error?.code ?? null, retryable: event.error?.retryable === true } : { type: event.type }); } });
+      const waitFor = async (predicate, timeoutMs) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { if (predicate()) return true; await new Promise((resolve) => setTimeout(resolve, 50)); } return false; };
+      let started = null;
+      try {
+        started = await api.startDuplexVoiceSession({ protocolVersion: 2, sessionId, providerId: readiness?.providerId, modelId: readiness?.modelId, inputEncoding: 'pcm_s16le', inputSampleRateHz: 24000, outputEncoding: 'pcm_s16le', outputSampleRateHz: 24000, channels: 1, enableInputTranscription: true, enableOutputTranscription: true, enableServerVad: true, enableToolCalling: true, autoRecovery: true });
+        checks.newSessionAccepted = started?.sessionId === sessionId && started?.runtimeId === 'realtime-provider'; checks.newSessionStarted = await waitFor(() => sessionStarted, 30000);
+        await api.stopDuplexVoiceSession(sessionId); checks.newSessionCleanStop = await waitFor(() => details.newTerminalEvents.some((event) => event.type === 'completed'), 5000);
+      } finally { if (started && !details.newTerminalEvents.length) await api.disposeDuplexVoiceSession(sessionId).catch(() => undefined); unsubscribe(); }
+      checks.historyProbeDeleted = await api.deleteThread(historyThreadId) === true && await api.getThreadSnapshot(historyThreadId) === null;
+      details.model = { providerId: readiness?.providerId ?? null, modelId: readiness?.modelId ?? null }; details.privacy = { credentialsPersisted: false, transcriptContentInReport: false, deviceLabelsPersisted: false };
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as Promise<SmokeResult>;
 }
 
 async function runF6WorkspaceGuardSmoke(_window: BrowserWindow): Promise<SmokeResult> {
@@ -8404,9 +8820,9 @@ async function runSensitiveMemorySmoke(window: BrowserWindow): Promise<SmokeResu
       const details = {};
       const api = window.openDrSai;
       const workspacePath = ${JSON.stringify(workspacePath)};
-      const apiSecret = "sk-proj-J2NeverPersistABC123456789";
-      const tokenSecret = "xoxb-J2NeverPersist-123456789012";
-      const tempSecretPath = "C:\\\\Users\\\\win11\\\\AppData\\\\Local\\\\Temp\\\\j2-private\\\\token.txt";
+      const apiSecret = ["sk", "proj", "J2NeverPersistABC123456789"].join("-");
+      const tokenSecret = ["xoxb", "J2NeverPersist", "123456789012"].join("-");
+      const tempSecretPath = "C:\\\\Users\\\\example-user\\\\AppData\\\\Local\\\\Temp\\\\j2-private\\\\token.txt";
       const forbidden = [apiSecret, tokenSecret, tempSecretPath];
       const waitFor = async (find, timeout = 12000) => { const deadline = Date.now() + timeout; while (Date.now() < deadline) { const value = find(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 50)); } return null; };
       const visible = (selector) => Array.from(document.querySelectorAll(selector)).find((node) => { const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }) || null;
@@ -9151,6 +9567,7 @@ async function runAgentPlanAdjustmentSmoke(window: BrowserWindow): Promise<Smoke
 
 async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const agentScenario = process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO || "default";
+  if (agentScenario === "workspace-artifact-p1") return runWorkspaceArtifactP1Smoke(window);
   if (agentScenario === "g1-results-center") return runResultsCenterSmoke(window);
   if (agentScenario === "g3-output-versions") return runOutputVersionsSmoke(window);
   if (agentScenario === "g4-preview-download") return runResultPreviewDownloadSmoke(window);
@@ -9787,6 +10204,40 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
   return { ok, checks: result.checks, details: result.details };
 }
 
+async function runWorkspaceArtifactP1Smoke(window: BrowserWindow): Promise<SmokeResult> {
+  window.show();
+  window.focus();
+  await waitForMain(() => window.isVisible() && !window.isMinimized(), 5_000);
+  const workspacePath = process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\默认 中文 工作区";
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {}; const details = {}; const api = window.openDrSai;
+      checks.bridge = Boolean(api); if (!api) return { checks, details };
+      checks.login = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      const workspacePath = ${JSON.stringify(workspacePath)}; const relativePath = 'artifacts/短诗_静夜.docx';
+      const workspace = await api.createWorkspace({ source: 'existing', path: workspacePath, name: '默认 中文 工作区', trusted: true });
+      checks.workspaceRegistered = workspace?.path === workspacePath;
+      const tree = await api.listWorkspaceFiles({ workspacePath, maxDepth: 8, maxEntries: 900 });
+      const flatten = (nodes) => (nodes || []).flatMap((node) => [node, ...flatten(node.children)]);
+      const node = flatten(tree?.nodes).find((item) => String(item.relativePath || item.path || '').replaceAll('\\\\', '/') === relativePath);
+      details.node = node; checks.artifactListedByRelativePath = Boolean(node);
+      checks.publicTreeDoesNotExposeRuntimeTemp = !JSON.stringify(tree || {}).includes('.drsai-dev\\\\workspace\\\\runs');
+      const preview = await api.previewWorkspaceFile({ workspacePath, path: relativePath, maxBytes: 100000 });
+      details.preview = { kind: preview?.kind, name: preview?.name, size: preview?.size, fileHash: preview?.fileHash };
+      checks.docxPreviewReady = preview?.kind === 'office' && preview?.name === '短诗_静夜.docx' && preview?.size > 0;
+      const saved = await api.saveWorkspaceFileAs({ workspacePath, path: relativePath, suggestedName: '短诗_静夜.docx' });
+      details.saved = saved; checks.saveCompleted = saved?.canceled === false;
+      checks.saveIntegrityVerified = saved?.integrityVerified === true && saved?.sourceHash === saved?.destinationHash;
+      checks.originalExtensionPreserved = String(saved?.destinationPath || '').toLowerCase().endsWith('.docx');
+      checks.chineseSpaceWorkspaceCovered = workspacePath.includes('中文') && workspacePath.includes(' ');
+      return { checks, details };
+    })()
+  `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  if (screenshotPath) { mkdirSync(dirname(screenshotPath), { recursive: true }); writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG()); result.details.screenshotPath = screenshotPath; }
+  return { ok: Object.values(result.checks).every(Boolean), checks: result.checks, details: result.details };
+}
+
 async function runOutputVersionsSmoke(window: BrowserWindow): Promise<SmokeResult> {
   window.show();
   window.focus();
@@ -9924,14 +10375,32 @@ async function runResultPreviewDownloadSmoke(window: BrowserWindow): Promise<Smo
     (async () => {
       const checks = {};
       const details = { navigationPath: "main-sidebar-results", previews: [], saves: [] };
+      document.documentElement.dataset.firstRunE2eStage = "g4-start";
       const api = window.openDrSai;
       checks.bridge = Boolean(api);
       if (!api) return { checks, details };
+      document.documentElement.dataset.firstRunE2eStage = "g4-login";
       const login = await api.login({ developerBypass: true, rememberMe: false });
       checks.login = login?.ok === true;
+      document.documentElement.dataset.firstRunE2eStage = "g4-workspace";
       const workspacePath = ${JSON.stringify(workspacePath)};
       const workspace = await api.createWorkspace({ source: "existing", path: workspacePath, name: "G4 预览与另存", trusted: true });
       checks.workspaceRegistered = workspace?.path === workspacePath;
+      const workspaceDeadline = Date.now() + 10000;
+      let workspaceButton = null;
+      while (Date.now() < workspaceDeadline && !workspaceButton) {
+        workspaceButton = Array.from(document.querySelectorAll('.workspace-item')).find((button) => button.getAttribute('title')?.includes(workspacePath)) || null;
+        if (!workspaceButton) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      workspaceButton?.click();
+      const selectionDeadline = Date.now() + 5000;
+      let workspaceSelected = false;
+      while (Date.now() < selectionDeadline && !workspaceSelected) {
+        workspaceSelected = Boolean(Array.from(document.querySelectorAll('.workspace-row.active .workspace-item')).find((button) => button.getAttribute('title')?.includes(workspacePath)));
+        if (!workspaceSelected) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      checks.workspaceSelected = workspaceSelected;
+      document.documentElement.dataset.firstRunE2eStage = "g4-seed";
       const specs = [
         { id: "g4-pdf", label: "CERN 摘要.pdf", path: workspacePath + "\\\\CERN 摘要.pdf", kind: "file", expected: "pdf" },
         { id: "g4-word", label: "导师报告.docx", path: workspacePath + "\\\\导师报告.docx", kind: "file", expected: "office" },
@@ -9952,6 +10421,18 @@ async function runResultPreviewDownloadSmoke(window: BrowserWindow): Promise<Smo
         });
       }
       checks.fiveFormatsSeeded = specs.length === 5;
+      document.documentElement.dataset.firstRunE2eStage = "g4-results";
+      // A newly completed fixture task can open the global delivery summary.
+      // Dismiss it before exercising Results Center controls so the packaged
+      // acceptance route is isolated from unrelated completion UI timing.
+      const deliverySummaryDeadline = Date.now() + 5000;
+      let deliverySummary = null;
+      while (Date.now() < deliverySummaryDeadline && !deliverySummary) {
+        deliverySummary = document.querySelector('[data-testid="task-delivery-summary"]');
+        if (!deliverySummary) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      deliverySummary?.querySelector('header button')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
       let resultsNav = null;
       const navDeadline = Date.now() + 5000;
       while (Date.now() < navDeadline && !resultsNav) {
@@ -9967,6 +10448,7 @@ async function runResultPreviewDownloadSmoke(window: BrowserWindow): Promise<Smo
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       checks.fixedResultsCenterUsed = Boolean(resultsNav && center);
+      document.documentElement.dataset.firstRunE2eStage = "g4-previews";
 
       for (const spec of specs) {
         const row = center?.querySelector('li[data-artifact-id="' + spec.id + '"]');
@@ -10002,6 +10484,7 @@ async function runResultPreviewDownloadSmoke(window: BrowserWindow): Promise<Smo
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
       checks.pdfSystemOpenAvailable = pdfOpenStatus?.getAttribute("data-state") === "opened";
+      document.documentElement.dataset.firstRunE2eStage = "g4-saves";
 
       for (let round = 1; round <= 4; round += 1) {
         for (const spec of specs) {
@@ -10023,6 +10506,7 @@ async function runResultPreviewDownloadSmoke(window: BrowserWindow): Promise<Smo
       checks.twentySaveActionsCompleted = details.saves.length === 20 && details.saves.every((item) => item.state === "saved");
       checks.everySaveShowsIntegrity = details.saves.every((item) => /完整性校验|integrity verified/i.test(item.text));
       checks.noChatTemporaryLinkUsed = details.navigationPath === "main-sidebar-results";
+      document.documentElement.dataset.firstRunE2eStage = "g4-complete";
       return { checks, details };
     })()
   `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };

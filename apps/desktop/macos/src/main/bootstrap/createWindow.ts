@@ -1,6 +1,7 @@
 import { BrowserWindow, screen, shell, type RenderProcessGoneDetails, type WebContents } from "electron";
 import { assertAllowedExternalUrl } from "../../../../shared/main/desktopPathPolicy";
 import { isAllowedRendererNavigation } from "../rendererNavigationPolicy";
+import { recordCrashIncident } from "../../../../shared/main/crashFeedback";
 
 export interface MacosMainWindowOptions {
   preloadPath: string;
@@ -40,6 +41,7 @@ export function createMacosMainWindow(options: MacosMainWindowOptions): BrowserW
     cancelUpdateHealthConfirmation = options.onDidFinishLoad(window);
   });
   window.webContents.on("render-process-gone", (_event, details) => {
+    void recordCrashIncident({ process_type: "renderer", reason: details.reason, exit_code: details.exitCode });
     cancelUpdateHealthConfirmation();
     options.onRendererGone(window, details);
   });

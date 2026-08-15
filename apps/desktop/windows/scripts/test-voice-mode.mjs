@@ -12,7 +12,7 @@ const {
 
 assert.equal(DEFAULT_VOICE_MODE, "serial");
 assert.equal(normalizeVoiceInteractionMode("serial"), "serial");
-assert.equal(normalizeVoiceInteractionMode("streaming"), "streaming");
+assert.equal(normalizeVoiceInteractionMode("streaming"), "serial");
 assert.equal(normalizeVoiceInteractionMode("duplex"), "duplex");
 assert.equal(normalizeVoiceInteractionMode("future-mode"), "serial");
 assert.equal(normalizeVoiceInteractionMode(null), "serial");
@@ -64,7 +64,7 @@ assert.equal(negotiatedCapabilities.streamingStt, true, "negotiated streaming su
 assert.equal(negotiatedCapabilities.streamingTts, true);
 assert.equal(negotiatedCapabilities.duplex, false);
 const duplexProviderCapabilities = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   inputAudioEncodings: ["pcm_s16le"],
   outputAudioEncodings: ["pcm_s16le"],
   inputSampleRatesHz: [24_000],
@@ -105,11 +105,7 @@ for (const phase of ["requesting_permission", "recording", "transcribing", "revi
   assert.equal(canSwitchVoiceMode(phase), false, phase);
 }
 
-assert.deepEqual(resolveVoiceModeSelection("streaming", "serial", "idle", streamingCapabilities), {
-  accepted: true,
-  mode: "streaming",
-  reason: null,
-});
+assert.equal(normalizeVoiceInteractionMode("streaming"), "serial", "legacy streaming selections migrate to single voice input");
 assert.deepEqual(resolveVoiceModeSelection("duplex", "serial", "idle", duplexCapabilities), {
   accepted: true,
   mode: "duplex",

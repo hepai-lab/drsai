@@ -2,7 +2,6 @@ import type { DesktopAgent, PlatformAgentStatus } from "../api/desktopApi";
 import type { PlatformAgentExecutionDescriptor } from "./agentCatalog";
 
 const AGENTS_PATH = "/api/native/v1/agents";
-const HEPAI_AGENTS_PATH = "/agents/list_agents";
 
 export interface PlatformAgentAuthProvider {
   getAccessToken(): Promise<string>;
@@ -13,7 +12,7 @@ export interface PlatformAgentAuthProvider {
 export interface PlatformAgentClientOptions {
   /** Portal Native API root, used for chat and preference mutations. */
   baseUrl: string;
-  /** HepAI API root, used to discover the active platform's agents. */
+  /** HepAI/DDF API root, used only for DDF runtime operations. */
   catalogBaseUrl?: string;
   auth: PlatformAgentAuthProvider;
   fetchImpl?: typeof fetch;
@@ -66,8 +65,11 @@ export async function fetchPlatformAgents(
   let accessToken: string;
   try {
     accessToken = await options.auth.getAccessToken();
-  } catch {
-    return emptyResult("requires_login", "Sign in with HepAI to load platform agents.", checkedAt);
+  } catch (error) {
+    const message = error instanceof Error && /not a HepAI OIDC session/i.test(error.message)
+      ? "The current Desktop session is not a HepAI OIDC session. Sign in with HepAI to load platform agents."
+      : "Sign in with HepAI to load platform agents.";
+    return emptyResult("requires_login", message, checkedAt);
   }
 
   let response = await requestAgents(fetchImpl, options, accessToken);
@@ -80,8 +82,15 @@ export async function fetchPlatformAgents(
     }
     response = await requestAgents(fetchImpl, options, accessToken);
     if (response.status === 401) {
-      options.auth.invalidate();
-      return emptyResult("requires_login", "The refreshed HepAI session was rejected. Sign in again.", checkedAt);
+      // A single downstream service rejecting a freshly issued token does not
+      // prove that the Desktop OIDC session is invalid. Keep the global login
+      // intact and report the catalog-specific failure. Only a failed token
+      // refresh above is authoritative enough to invalidate the session.
+      return emptyResult(
+        "error",
+        "The HAI agent catalog rejected a freshly refreshed session (HTTP 401). Your Desktop sign-in remains active.",
+        checkedAt,
+      );
     }
   }
 
@@ -207,8 +216,12 @@ async function requestAgents(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
   try {
-    const directCatalog = Boolean(options.catalogBaseUrl);
-    const url = new URL(joinUrl(options.catalogBaseUrl || options.baseUrl, directCatalog ? HEPAI_AGENTS_PATH : AGENTS_PATH));
+    // Discovery belongs to the Portal Native API. The Portal maps the OIDC
+    // subject to the user's complete, visibility-filtered catalog and keeps
+    // DDF credentials server-side. Calling /apiv2/agents/list_agents directly
+    // both loses remote/custom aggregation and makes a DDF 401 look like a
+    // Desktop login failure.
+    const url = new URL(joinUrl(options.baseUrl, AGENTS_PATH));
     url.searchParams.set("refresh", options.refresh ? "true" : "false");
     return await fetchImpl(url.toString(), {
       method: "GET",

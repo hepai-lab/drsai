@@ -8,10 +8,8 @@ import {
   GitBranch,
   KeyRound,
   MessageSquare,
-  Mic,
   RefreshCw,
   Send,
-  Smartphone,
   XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -28,12 +26,15 @@ import type {
   DesktopChannelSnapshotSyncResult,
   DesktopExternalConnectionReadiness,
   DesktopExternalConnectionReadinessResult,
+  DesktopWeChatChannelStatus,
 } from "@shared/desktopApi";
 import type { AppLanguage } from "../navigation";
 import { desktopApi } from "../desktopApi";
+import { WeChatChannelCard } from "./WeChatChannelCard";
 
 const providerIcons: Record<DesktopChannelAdapterProvider, LucideIcon> = {
-  mobile: Smartphone,
+  mobile: MessageSquare,
+  wechat: MessageSquare,
   slack: MessageSquare,
   github: GitBranch,
   docs: FileText,
@@ -41,16 +42,18 @@ const providerIcons: Record<DesktopChannelAdapterProvider, LucideIcon> = {
   database: Database,
   telegram: MessageSquare,
   discord: MessageSquare,
-  voice: Mic,
+  voice: MessageSquare,
   file_upload: FileText,
 };
 
 export function ChannelsView({
   language,
+  mode = "channels",
   onAttachImportedContext,
   workspacePath,
 }: {
   language: AppLanguage;
+  mode?: "channels" | "data";
   onAttachImportedContext?: (result: DesktopChannelContextImportResult) => void;
   workspacePath: string;
 }): React.JSX.Element {
@@ -63,11 +66,10 @@ export function ChannelsView({
     useState<DesktopChannelOutboundDraftResult | null>(null);
   const [snapshotSyncResult, setSnapshotSyncResult] =
     useState<DesktopChannelSnapshotSyncResult | null>(null);
-  const [externalReadiness, setExternalReadiness] =
+  const [externalReadiness] =
     useState<DesktopExternalConnectionReadinessResult | null>(null);
-  const [outboundDeliveries, setOutboundDeliveries] = useState<
-    DesktopChannelOutboundDelivery[]
-  >([]);
+  const [wechatStatus, setWeChatStatus] = useState<DesktopWeChatChannelStatus | null>(null);
+  const [outboundDeliveries, setOutboundDeliveries] = useState<DesktopChannelOutboundDelivery[]>([]);
   const [inboundEvents, setInboundEvents] = useState<DesktopChannelInboundEvent[]>([]);
   const [configureResult, setConfigureResult] =
     useState<DesktopChannelAdapterConfigureResult | null>(null);
@@ -88,21 +90,56 @@ export function ChannelsView({
   const [calendarId, setCalendarId] = useState("primary");
   const [draftingAdapterId, setDraftingAdapterId] = useState<string | null>(null);
   const [routingEventId, setRoutingEventId] = useState<string | null>(null);
+  const showDiagnostics = false;
+
+  function applyWeChatStatus(current: DesktopWeChatChannelStatus): void {
+    setWeChatStatus(current);
+    setResult((previous) => {
+      if (!previous) return previous;
+      const adapters = previous.adapters.map((adapter) => adapter.id === "wechat-chat" ? {
+        ...adapter,
+        configured: current.configured,
+        status: current.configured ? "available" as const : "config_required" as const,
+        authMode: current.configured ? "ilink_qr" as const : "not_configured" as const,
+        accountLabel: current.accountLabel,
+        credentialState: current.credentialState === "valid" ? "configured" as const : current.credentialState === "expired" ? "expired" as const : "missing" as const,
+        sessionExpiresAt: current.expiresAt,
+      } : adapter);
+      return {
+        ...previous,
+        adapters,
+        configuredCount: adapters.filter((adapter) => adapter.configured).length,
+        availableCount: adapters.filter((adapter) => adapter.status === "available").length,
+      };
+    });
+  }
 
   async function loadAdapters(): Promise<void> {
     setLoading(true);
     setError(null);
     try {
-      const [adapters, deliveries, inbound, readiness] = await Promise.all([
+      const [adapters, currentWeChatStatus] = await Promise.all([
         desktopApi.listChannelAdapters(workspacePath),
-        desktopApi.listChannelOutboundDeliveries({ workspacePath, limit: 6 }),
-        desktopApi.listChannelInboundEvents({ workspacePath, limit: 6 }),
-        desktopApi.listExternalConnectionReadiness(workspacePath),
+        mode === "channels" ? desktopApi.getWeChatChannelStatus().catch(() => null) : Promise.resolve(null),
       ]);
-      setResult(adapters);
-      setOutboundDeliveries(deliveries);
-      setInboundEvents(inbound);
-      setExternalReadiness(readiness);
+      if (currentWeChatStatus) {
+        const mergedAdapters = adapters.adapters.map((adapter) => adapter.id === "wechat-chat" ? {
+          ...adapter,
+          configured: currentWeChatStatus.configured,
+          status: currentWeChatStatus.configured ? "available" as const : "config_required" as const,
+          authMode: currentWeChatStatus.configured ? "ilink_qr" as const : "not_configured" as const,
+          accountLabel: currentWeChatStatus.accountLabel,
+          credentialState: currentWeChatStatus.credentialState === "valid" ? "configured" as const : currentWeChatStatus.credentialState === "expired" ? "expired" as const : "missing" as const,
+          sessionExpiresAt: currentWeChatStatus.expiresAt,
+        } : adapter);
+        setResult({
+          ...adapters,
+          adapters: mergedAdapters,
+          configuredCount: mergedAdapters.filter((adapter) => adapter.configured).length,
+          availableCount: mergedAdapters.filter((adapter) => adapter.status === "available").length,
+        });
+        setWeChatStatus(currentWeChatStatus);
+      } else setResult(adapters);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load channel adapters.");
     } finally {
@@ -112,7 +149,7 @@ export function ChannelsView({
 
   useEffect(() => {
     void loadAdapters();
-  }, [workspacePath]);
+  }, [workspacePath, mode]);
 
   async function configureAdapter(adapter: DesktopChannelAdapter): Promise<void> {
     setConfiguringAdapterId(adapter.id);
@@ -357,6 +394,7 @@ export function ChannelsView({
       input: [],
     };
     for (const adapter of result?.adapters ?? []) {
+      if (adapter.id === "mobile-chat") continue;
       groups[adapter.kind].push(adapter);
     }
     return groups;
@@ -366,18 +404,19 @@ export function ChannelsView({
     <div className="channels-view">
       <header className="channels-header">
         <div>
-          <span>{zh ? "跨渠道适配器" : "Cross-channel adapters"}</span>
-          <h2>{zh ? "渠道入口" : "Channels"}</h2>
+          <span>{mode === "data" ? (zh ? "外部数据资源" : "External data resources") : (zh ? "消息接入" : "Messaging")}</span>
+          <h2>{mode === "data" ? (zh ? "数据感知器" : "Data perceptors") : (zh ? "消息频道" : "Message channels")}</h2>
+          <p>{mode === "data" ? (zh ? "连接只读外部数据，导入后由智能体按需引用。" : "Connect read-only external data and make reviewed context available to agents.") : (zh ? "管理真正接收或发送消息的第三方频道。" : "Manage third-party channels that actually receive or send messages.")}</p>
         </div>
         <div className="channels-header-actions">
-          <button
+          {showDiagnostics && <button
             type="button"
             onClick={() => void syncSnapshots()}
             disabled={syncingSnapshots}
           >
             <FileSearch size={15} />
             {syncingSnapshots ? "Syncing" : "Sync snapshots"}
-          </button>
+          </button>}
           <button type="button" onClick={() => void loadAdapters()} disabled={loading}>
             <RefreshCw size={15} />
             {loading ? (zh ? "刷新中" : "Refreshing") : zh ? "刷新" : "Refresh"}
@@ -385,7 +424,7 @@ export function ChannelsView({
         </div>
       </header>
 
-      {result && (
+      {showDiagnostics && result && (
         <dl className="channels-summary-grid" aria-label="Channel adapter summary">
           <div>
             <dt>{zh ? "适配器" : "Adapters"}</dt>
@@ -402,7 +441,7 @@ export function ChannelsView({
         </dl>
       )}
 
-      {externalReadiness && (
+      {showDiagnostics && externalReadiness && (
         <section
           className="external-readiness-panel"
           aria-label="External connection readiness"
@@ -438,7 +477,7 @@ export function ChannelsView({
 
       {error && <div className="channels-error">{error}</div>}
       {importError && <div className="channels-error">{importError}</div>}
-      {snapshotSyncResult && (
+      {showDiagnostics && snapshotSyncResult && (
         <section className="channels-sync-result" aria-label="Connector snapshot sync">
           <span>Snapshot sync</span>
           <h3>{snapshotSyncResult.message}</h3>
@@ -466,7 +505,7 @@ export function ChannelsView({
           )}
         </section>
       )}
-      {outboundDeliveries.length > 0 && (
+      {showDiagnostics && outboundDeliveries.length > 0 && (
         <section className="channels-delivery-ledger" aria-label="Recent outbound delivery results">
           <div>
             <span>Connector delivery results</span>
@@ -511,7 +550,7 @@ export function ChannelsView({
           )}
         </section>
       )}
-      {inboundEvents.length > 0 && (
+      {showDiagnostics && inboundEvents.length > 0 && (
         <section className="channels-inbound-events" aria-label="Inbound channel event queue">
           <div>
             <span>Inbound event routing</span>
@@ -578,10 +617,11 @@ export function ChannelsView({
         </section>
       )}
 
-      <section className="channels-section" aria-label="Chat channel adapters">
+      {mode === "channels" && <section className="channels-section" aria-label="Chat channel adapters">
         <h3>{zh ? "聊天入口" : "Chat Entries"}</h3>
         <div className="channels-grid">
           {groupedAdapters.chat.map((adapter) => (
+            adapter.id === "wechat-chat" ? <WeChatChannelCard key={adapter.id} language={language} initialStatus={wechatStatus} onStatusChange={applyWeChatStatus} /> :
             <ChannelAdapterCard
               key={adapter.id}
               adapter={adapter}
@@ -621,15 +661,16 @@ export function ChannelsView({
             />
           ))}
         </div>
-      </section>
+      </section>}
 
-      <section className="channels-section" aria-label="Connector channel adapters">
-        <h3>{zh ? "连接器" : "Connectors"}</h3>
+      {mode === "data" && <section className="channels-section" aria-label="Data perceptor connectors">
+        <h3>{zh ? "外部数据连接" : "External data connections"}</h3>
         <div className="channels-grid">
           {groupedAdapters.connector.map((adapter) => (
             <ChannelAdapterCard
               key={adapter.id}
               adapter={adapter}
+              readOnly
               importing={importingAdapterId === adapter.id}
               configuring={configuringAdapterId === adapter.id}
               authStarting={authStartingAdapterId === adapter.id}
@@ -666,52 +707,8 @@ export function ChannelsView({
             />
           ))}
         </div>
-      </section>
+      </section>}
 
-      <section className="channels-section" aria-label="Input channel adapters">
-        <h3>{zh ? "输入方式" : "Inputs"}</h3>
-        <div className="channels-grid">
-          {groupedAdapters.input.map((adapter) => (
-            <ChannelAdapterCard
-              key={adapter.id}
-              adapter={adapter}
-              importing={importingAdapterId === adapter.id}
-              configuring={configuringAdapterId === adapter.id}
-              authStarting={authStartingAdapterId === adapter.id}
-              drafting={draftingAdapterId === adapter.id}
-              language={language}
-              onConfigure={configureAdapter}
-              onStartAuth={startAdapterAuth}
-              onPollAuth={pollAdapterAuth}
-              onRevokeAuth={revokeAdapterAuth}
-              authOperationId={authResult?.adapterId === adapter.id ? authResult.operationId : adapter.authOperationId}
-              liveRepository={liveRepository}
-              onLiveRepositoryChange={setLiveRepository}
-              slackToken={slackToken}
-              slackChannel={slackChannel}
-              onSlackTokenChange={setSlackToken}
-              onSlackChannelChange={setSlackChannel}
-              onConfigureSlackToken={configureSlackToken}
-              outboundTarget={outboundTarget}
-              onOutboundTargetChange={setOutboundTarget}
-              docsToken={docsToken}
-              docsDocumentId={docsDocumentId}
-              onDocsTokenChange={setDocsToken}
-              onDocsDocumentIdChange={setDocsDocumentId}
-              onConfigureDocsToken={configureDocsToken}
-              calendarToken={calendarToken}
-              calendarId={calendarId}
-              onCalendarTokenChange={setCalendarToken}
-              onCalendarIdChange={setCalendarId}
-              onConfigureCalendarToken={configureCalendarToken}
-              onLiveSync={syncLiveProvider}
-              onImport={importContext}
-              onPickFiles={pickFileContext}
-              onQueueOutboundDraft={queueOutboundDraft}
-            />
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
@@ -799,6 +796,7 @@ function formatExternalStatus(
 
 function ChannelAdapterCard({
   adapter,
+  readOnly = false,
   importing,
   configuring,
   authStarting,
@@ -834,6 +832,7 @@ function ChannelAdapterCard({
   onQueueOutboundDraft,
 }: {
   adapter: DesktopChannelAdapter;
+  readOnly?: boolean;
   importing: boolean;
   configuring: boolean;
   authStarting: boolean;
@@ -886,6 +885,7 @@ function ChannelAdapterCard({
     adapter.id === "voice-input" ||
     (adapter.id === "github-connector" && adapter.status === "available" && adapter.configured);
   const canQueueOutboundDraft =
+    !readOnly &&
     adapter.id !== "file-input" &&
     adapter.requiresApproval &&
     adapter.direction !== "inbound";
@@ -905,7 +905,7 @@ function ChannelAdapterCard({
       <p>{adapter.description}</p>
       <div className="channel-adapter-meta">
         <span>{adapter.configured ? (zh ? "已验证配置" : "Verified configuration") : adapter.authPreparedAt ? (zh ? "授权尚未完成" : "Authorization incomplete") : zh ? "未配置" : "Not configured"}</span>
-        <span>{adapter.requiresApproval ? (zh ? "需要审批" : "Approval required") : zh ? "无需审批" : "No approval gate"}</span>
+        <span>{readOnly ? (zh ? "只读数据" : "Read-only data") : adapter.requiresApproval ? (zh ? "需要审批" : "Approval required") : zh ? "无需审批" : "No approval gate"}</span>
         {adapter.authMode && adapter.authMode !== "not_configured" && (
           <span>{adapter.authMode}</span>
         )}

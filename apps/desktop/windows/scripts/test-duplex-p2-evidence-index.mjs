@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+
+const root = resolve(import.meta.dirname, "..");
+const sourceIndex = JSON.parse(readFileSync(resolve(root, "../../../docs/voice/duplex-voice-p2-evidence-index.json"), "utf8"));
+const sourceRelease = resolve(root, "release/duplex-voice");
+const verifier = resolve(root, "scripts/verify-duplex-p2-evidence-index.mjs");
+const run = (index, mutateReport) => {
+  const directory = mkdtempSync(join(tmpdir(), "duplex-p2-index-"));
+  const release = join(directory, "release");
+  cpSync(sourceRelease, release, { recursive: true });
+  const indexPath = join(directory, "index.json");
+  writeFileSync(indexPath, JSON.stringify(index));
+  if (mutateReport) mutateReport(release);
+  return spawnSync(process.execPath, [verifier, "--index", indexPath, "--release-dir", release], { encoding: "utf8" });
+};
+assert.equal(run(sourceIndex).status, 0, "Current evidence index must pass.");
+const duplicate = structuredClone(sourceIndex); duplicate.features[51].id = duplicate.features[0].id;
+assert.notEqual(run(duplicate).status, 0, "Duplicate IDs must fail.");
+const missing = structuredClone(sourceIndex); missing.features.pop();
+assert.notEqual(run(missing).status, 0, "Missing IDs must fail.");
+const drifted = structuredClone(sourceIndex); drifted.features[0].acceptanceCriteria = "weaker substituted acceptance";
+assert.notEqual(run(drifted).status, 0, "Plan acceptance semantic drift must fail.");
+const missingSuite = structuredClone(sourceIndex); missingSuite.features[0].automation.suites = ["test:voice:does-not-exist"];
+assert.notEqual(run(missingSuite).status, 0, "Missing automation suite references must fail.");
+assert.notEqual(run(sourceIndex, (release) => { const p = join(release, "live-report.json"); const v = JSON.parse(readFileSync(p)); v.ok = true; writeFileSync(p, JSON.stringify(v)); }).status, 0, "Unsigned pending evidence must not claim ok=true.");
+assert.notEqual(run(sourceIndex, (release) => { const p = join(release, "packaged-report.json"); const v = JSON.parse(readFileSync(p)); v.artifacts.executable.sha256 = "0".repeat(64); writeFileSync(p, JSON.stringify(v)); }).status, 0, "Stale candidate hashes must fail.");
+console.log("Duplex Voice P2 evidence index negative gates passed (duplicate, missing, semantic drift, missing suite, false success, stale hash). ");

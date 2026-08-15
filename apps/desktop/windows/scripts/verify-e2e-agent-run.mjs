@@ -18,7 +18,7 @@ const pythonSrc = join(repoRoot, "cores", "python", "packages", "drsai", "src");
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const scenarioIndex = process.argv.indexOf("--scenario");
 const scenario = scenarioIndex >= 0 ? process.argv[scenarioIndex + 1] : "default";
-if (!["default", "background-close", "minimized-notification", "network-recovery", "business-progress", "completion-criteria", "continuous-task", "d1-plan-g2", "d1-plan-g3", "d1-plan-g4", "d2-edit-plan", "d3-depth", "d5-plan-adjustment", "g1-results-center", "g2-deliverable-report", "g3-output-versions", "g4-preview-download", "g5-local-edit", "g6-chart-consistency", "i4-analysis-routes", "i5-route-comparison", "i6-external-conflict"].includes(scenario)) {
+if (!["default", "background-close", "minimized-notification", "network-recovery", "business-progress", "completion-criteria", "continuous-task", "d1-plan-g2", "d1-plan-g3", "d1-plan-g4", "d2-edit-plan", "d3-depth", "d5-plan-adjustment", "g1-results-center", "g2-deliverable-report", "g3-output-versions", "g4-preview-download", "workspace-artifact-p1", "g5-local-edit", "g6-chart-consistency", "i4-analysis-routes", "i5-route-comparison", "i6-external-conflict"].includes(scenario)) {
   throw new Error(`Unknown Agent run scenario: ${scenario}`);
 }
 const isAnalysisRouteScenario = scenario === "i4-analysis-routes" || scenario === "i5-route-comparison";
@@ -41,7 +41,7 @@ if (!existsSync(exePath)) {
 
 const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-e2e-agent-run-"));
 const appHome = join(tempDir, "drsai-home");
-const workspacePath = join(tempDir, "workspace");
+const workspacePath = join(tempDir, scenario === "workspace-artifact-p1" ? "默认 中文 工作区" : "workspace");
 const userData = join(tempDir, "electron-user-data");
 const resultPath = join(tempDir, "result.json");
 const pythonUserProfile = join(tempDir, "python-user");
@@ -49,7 +49,9 @@ const evidenceDir = join(
   root,
   "release",
   "product-evidence",
-  scenario === "background-close"
+  scenario === "workspace-artifact-p1"
+    ? "p1-workspace-artifact"
+    : scenario === "background-close"
     ? "agent-background-close"
     : scenario === "network-recovery"
       ? "agent-network-recovery"
@@ -87,7 +89,9 @@ const evidenceDir = join(
                                       ? "i6-external-conflict"
         : "agent-completion-notifications",
 );
-const evidenceStem = scenario === "background-close"
+const evidenceStem = scenario === "workspace-artifact-p1"
+  ? "packaged-workspace-artifact-p1"
+  : scenario === "background-close"
     ? "packaged-agent-background-close"
   : scenario === "minimized-notification"
     ? "packaged-agent-minimized-notification"
@@ -128,12 +132,14 @@ const evidenceStem = scenario === "background-close"
         : "packaged-agent-foreground-notification";
 const evidenceResult = join(evidenceDir, `${evidenceStem}-result.json`);
 const evidenceScreenshot = join(evidenceDir, `${evidenceStem}.png`);
+const p1SaveDirectory = join(tempDir, "下载结果", "工作区成果");
 const g4SaveDirectory = join(tempDir, "下载结果", "导师版本");
 const i6SaveDirectory = join(tempDir, "冲突保留副本");
 mkdirSync(appHome, { recursive: true });
 mkdirSync(workspacePath, { recursive: true });
 mkdirSync(userData, { recursive: true });
 mkdirSync(evidenceDir, { recursive: true });
+mkdirSync(p1SaveDirectory, { recursive: true });
 mkdirSync(g4SaveDirectory, { recursive: true });
 mkdirSync(i6SaveDirectory, { recursive: true });
 writeFileSync(join(workspacePath, "user-work.txt"), "user work before agent\n", "utf8");
@@ -200,6 +206,7 @@ if (scenario === "g3-output-versions") {
   ].join("\n"), "utf8");
 }
 if (scenario === "g4-preview-download") writeG4PreviewFixtures(workspacePath);
+if (scenario === "workspace-artifact-p1") writeWorkspaceArtifactP1Fixture(workspacePath);
 if (scenario === "g5-local-edit") writeG5LocalEditFixtures(workspacePath);
 if (scenario === "g6-chart-consistency") writeG6ChartFixtures(workspacePath);
 if (isAnalysisRouteScenario) writeI4AnalysisRouteFixtures(workspacePath);
@@ -257,7 +264,9 @@ try {
   if (!result.ok) {
     throw new Error(`E2E agent run failed:\n${JSON.stringify(result, null, 2)}`);
   }
-  if (scenario === "d2-edit-plan") {
+  if (scenario === "workspace-artifact-p1") {
+    if (!result.checks?.artifactListedByRelativePath || !result.checks?.docxPreviewReady || !result.checks?.saveIntegrityVerified) throw new Error("P1 workspace artifact diagnostics are incomplete.");
+  } else if (scenario === "d2-edit-plan") {
     assertD2EditPlanDiagnostics(result);
   } else if (scenario === "d3-depth") {
     assertD3TaskDepthDiagnostics(result);
@@ -1403,6 +1412,14 @@ function writeG4PreviewFixtures(targetWorkspace) {
   writeFileSync(join(targetWorkspace, "研究总结.md"), "# G4 Markdown preview\n\n样本量从 100 增至 160，平均值从 42 增至 47。\n", "utf8");
 }
 
+function writeWorkspaceArtifactP1Fixture(targetWorkspace) {
+  const artifactDir = join(targetWorkspace, "artifacts");
+  mkdirSync(artifactDir, { recursive: true });
+  writeFileSync(join(artifactDir, "短诗_静夜.docx"), Buffer.concat([
+    zipLocalEntry("word/document.xml", '<w:document><w:body><w:p><w:r><w:rPr><w:rFonts w:eastAsia="SimSun"/></w:rPr><w:t>月照松间雪，风摇竹外灯。</w:t></w:r></w:p></w:body></w:document>'),
+  ]));
+}
+
 function writeG5LocalEditFixtures(targetWorkspace) {
   writeFileSync(join(targetWorkspace, "局部修改报告.md"), g5SourceReport(), "utf8");
   writeFileSync(join(targetWorkspace, "排序数据.csv"), g5SourceCsv(), "utf8");
@@ -1486,9 +1503,9 @@ function runPackagedApp({ appHome, resultPath, workspacePath }) {
         OPENDRSAI_E2E_SCREENSHOT: evidenceScreenshot,
         OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN: "1",
         OPENDRSAI_E2E_WORKSPACE_PATH: workspacePath,
-        OPENDRSAI_E2E_G4_SAVE_DIR: scenario === "g4-preview-download" ? g4SaveDirectory : undefined,
+        OPENDRSAI_E2E_G4_SAVE_DIR: scenario === "workspace-artifact-p1" ? p1SaveDirectory : scenario === "g4-preview-download" ? g4SaveDirectory : undefined,
         OPENDRSAI_E2E_I6_SAVE_DIR: scenario === "i6-external-conflict" ? i6SaveDirectory : undefined,
-        OPENDRSAI_E2E_TIMEOUT_MS: scenario === "network-recovery" ? "120000" : scenario === "i6-external-conflict" ? "90000" : "45000",
+        OPENDRSAI_E2E_TIMEOUT_MS: scenario === "network-recovery" ? "120000" : scenario === "i6-external-conflict" ? "90000" : scenario === "g4-preview-download" ? "180000" : "45000",
         OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS: scenario === "network-recovery" ? "90000" : undefined,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -1501,7 +1518,7 @@ function runPackagedApp({ appHome, resultPath, workspacePath }) {
       settled = true;
       killProcessTree(child.pid);
       reject(new Error(`E2E agent run timed out.\n${stdout}\n${stderr}`));
-    }, scenario === "network-recovery" ? 140_000 : scenario === "i6-external-conflict" ? 105_000 : 60_000);
+    }, scenario === "network-recovery" ? 140_000 : scenario === "i6-external-conflict" ? 105_000 : scenario === "g4-preview-download" ? 195_000 : 60_000);
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });

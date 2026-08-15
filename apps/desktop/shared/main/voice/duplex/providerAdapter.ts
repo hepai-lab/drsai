@@ -37,5 +37,7 @@ export interface DuplexRealtimeProviderAdapter {
   createResponseCancel(responseId?: string): Record<string, unknown>;
   createConversationTruncate(itemId: string, contentIndex: number, audioEndMs: number): Record<string, unknown>;
   createToolResult(callId: string, output: string): Record<string, unknown>;
+  createTextInput(itemId: string, text: string): Record<string, unknown>;
+  createResponse(): Record<string, unknown>;
   decodeEvent(raw: string): DuplexProviderEvent[];
 }

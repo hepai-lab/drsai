@@ -2,6 +2,7 @@ import { app, type IpcMain, type WebContents } from "electron";
 import { getAgentCatalogSnapshot, getPlatformAgentStatus, listAgents, recordAgentUsage, setDefaultAgent } from "../../../../shared/main/agents";
 import type { MobilePairingController } from "../../../../shared/main/mobilePairingController";
 import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../../shared/main/myDrSaiConfig";
+import { getWebSearchProviderPolicy, updateWebSearchProviderPolicy } from "../../../../shared/main/myDrSaiConfig";
 import { appendDuplexVoiceHistory, createThread, deleteThread, getThreadSnapshot, listThreads, searchThreadMessages, updateThread, updateThreadSnapshot } from "../../../../shared/main/threads";
 import { getRuntimeThreadSnapshot, getRuntimeThreadSnapshotEnvelope, isRuntimeGenerationInvalidated } from "../../../../shared/main/threadRuntimeSubscription";
 import { createDefaultWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../../../../shared/main/workspaces";
@@ -36,7 +37,10 @@ export function registerMacosCatalogIpc(
     scope: import("../../../../shared/api/desktopApi").DesktopMobilePairingScope | undefined,
   ) => dependencies.mobilePairingControllerFor(event.sender).shrinkAssociation(associationId, permissions, scope));
   ipcMain.handle("desktop:mobile-enrollment-revoke", (event) => dependencies.mobilePairingControllerFor(event.sender).revokeEnrollment());
-  ipcMain.handle("desktop:list-threads", () => listThreads());
+  ipcMain.handle("desktop:list-threads", async (event) => {
+    await macosThreadSnapshotController.ensureWorkspaceCatalogs(event.sender).catch(() => undefined);
+    return listThreads();
+  });
   ipcMain.handle("desktop:list-agents", (_event, options) => listAgents(options && typeof options === "object" ? {
     ...((options as { refresh?: unknown }).refresh === true ? { refresh: true } : {}),
     ...((options as { preferCache?: unknown }).preferCache === true ? { preferCache: true } : {}),
@@ -151,6 +155,8 @@ export function registerMacosCatalogIpc(
   ipcMain.handle("desktop:migrate-my-drsai-agent-model-policy", (_event, agentId, legacyModel, expectedRevision) => migrateMyDrSaiAgentModelPolicy(agentId, legacyModel, expectedRevision));
   ipcMain.handle("desktop:delete-my-drsai-model-provider", (_event, provider, deleteCredential) => deleteMyDrSaiModelProvider(provider, deleteCredential));
   ipcMain.handle("desktop:list-perceptors", () => listPerceptors());
+  ipcMain.handle("desktop:get-web-search-provider-policy", () => getWebSearchProviderPolicy());
+  ipcMain.handle("desktop:update-web-search-provider-policy", (_event, mode: import("../../../../shared/api/desktopApi").WebSearchProviderMode) => updateWebSearchProviderPolicy(mode));
   ipcMain.handle("desktop:save-perceptor", (_event, request) => savePerceptor(request));
   ipcMain.handle("desktop:update-perceptor", (_event, perceptorId, request) => updatePerceptor(perceptorId, request));
   ipcMain.handle("desktop:test-perceptor", (_event, perceptorId, capability) => testPerceptor(perceptorId, capability));

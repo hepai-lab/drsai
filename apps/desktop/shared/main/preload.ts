@@ -80,6 +80,16 @@ import type {
   DesktopChannelProviderTokenConfigureRequest,
   DesktopChannelProviderTokenConfigureResult,
   DesktopChannelAdapterListResult,
+  DesktopWeChatChannelStatus,
+  DesktopWeChatLoginStartResult,
+  DesktopWeChatLoginPollRequest,
+  DesktopWeChatLoginPollResult,
+  DesktopWeChatLoginCancelResult,
+  DesktopWeChatSessionSummary,
+  DesktopWeChatReplyCapability,
+  DesktopWeChatReplyCapabilityRequest,
+  DesktopWeChatOutboundRequest,
+  DesktopWeChatOutboundResult,
   DesktopChannelContextImportRequest,
   DesktopChannelContextImportResult,
   DesktopChannelLiveSyncRequest,
@@ -368,6 +378,17 @@ const api: DesktopApi = {
   previewDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-preview"),
   exportProductionDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-export"),
   importProductionDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-import"),
+  previewFeedback: (draft) => ipcRenderer.invoke("desktop:feedback-preview", draft),
+  submitFeedback: (draft) => ipcRenderer.invoke("desktop:feedback-submit", draft),
+  listPendingFeedback: () => ipcRenderer.invoke("desktop:feedback-pending-list"),
+  retryPendingFeedback: () => ipcRenderer.invoke("desktop:feedback-pending-retry"),
+  deletePendingFeedback: (clientFeedbackId) => ipcRenderer.invoke("desktop:feedback-pending-delete", clientFeedbackId),
+  getPendingCrashFeedback: () => ipcRenderer.invoke("desktop:feedback-crash-pending"),
+  clearPendingCrashFeedback: (incidentId) => ipcRenderer.invoke("desktop:feedback-crash-clear", incidentId),
+  captureFeedbackScreenshot: () => ipcRenderer.invoke("desktop:feedback-screenshot-capture"),
+  listFeedbackAdmin: (status) => ipcRenderer.invoke("desktop:feedback-admin-list", status),
+  updateFeedbackAdmin: (feedbackId, update) => ipcRenderer.invoke("desktop:feedback-admin-update", feedbackId, update),
+  deleteFeedbackAdmin: (feedbackId) => ipcRenderer.invoke("desktop:feedback-admin-delete", feedbackId),
   getAuthSession: (): Promise<AuthSession> =>
     ipcRenderer.invoke("desktop:get-auth-session"),
   onAuthSessionInvalidated: (callback: () => void): (() => void) => {
@@ -567,7 +588,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:update-workspace", request),
   deleteWorkspace: (id: string) =>
     ipcRenderer.invoke("desktop:delete-workspace", id),
-  listThreads: () => ipcRenderer.invoke("desktop:list-threads"),
+  listThreads: (request) => ipcRenderer.invoke("desktop:list-threads", request),
   listAgents: (options) => ipcRenderer.invoke("desktop:list-agents", options),
   getAgentCatalogSnapshot: (options) => ipcRenderer.invoke("desktop:get-agent-catalog-snapshot", options),
   setDefaultAgent: (agentId) => ipcRenderer.invoke("desktop:set-default-agent", agentId),
@@ -592,6 +613,8 @@ const api: DesktopApi = {
   searchKnowledgeBase: (knowledgeId, query) => ipcRenderer.invoke("desktop:search-knowledge-base", knowledgeId, query),
   listKnowledgeBases: () => ipcRenderer.invoke("desktop:list-knowledge-bases"),
   listPerceptors: () => ipcRenderer.invoke("desktop:list-perceptors"),
+  getWebSearchProviderPolicy: () => ipcRenderer.invoke("desktop:get-web-search-provider-policy"),
+  updateWebSearchProviderPolicy: (mode) => ipcRenderer.invoke("desktop:update-web-search-provider-policy", mode),
   savePerceptor: (request) => ipcRenderer.invoke("desktop:save-perceptor", request),
   updatePerceptor: (perceptorId, request) => ipcRenderer.invoke("desktop:update-perceptor", perceptorId, request),
   testPerceptor: (perceptorId, capability) => ipcRenderer.invoke("desktop:test-perceptor", perceptorId, capability),
@@ -815,8 +838,17 @@ const api: DesktopApi = {
   getStreamingVoiceCapabilities: (): Promise<DesktopStreamingVoiceCapabilities> =>
     ipcRenderer.invoke("desktop:voice-streaming-capabilities"),
   getDuplexVoiceCapabilities: () => ipcRenderer.invoke("desktop:voice-duplex-capabilities"),
+  getDuplexVoiceReadiness: () => ipcRenderer.invoke("desktop:voice-duplex-readiness"),
+  getDuplexVoiceOccupancy: () => ipcRenderer.invoke("desktop:voice-duplex-occupancy"),
   startDuplexVoiceSession: async (request) => {
     const result = await ipcRenderer.invoke("desktop:voice-duplex-start", request);
+    const channel = new MessageChannel();
+    duplexVoicePorts.set(result.sessionId, channel.port2);
+    ipcRenderer.postMessage("desktop:voice-duplex-audio-port", { sessionId: result.sessionId }, [channel.port1]);
+    return result;
+  },
+  takeOverDuplexVoiceSession: async (request) => {
+    const result = await ipcRenderer.invoke("desktop:voice-duplex-takeover", request);
     const channel = new MessageChannel();
     duplexVoicePorts.set(result.sessionId, channel.port2);
     ipcRenderer.postMessage("desktop:voice-duplex-audio-port", { sessionId: result.sessionId }, [channel.port1]);
@@ -828,10 +860,19 @@ const api: DesktopApi = {
     port.postMessage({ ...chunk, audioData: new Uint8Array(chunk.audioData) });
     return true;
   },
+  sendDuplexVoicePlaybackAck: (ack) => {
+    const port = duplexVoicePorts.get(ack.sessionId);
+    if (!port) return false;
+    port.postMessage({ ...ack, type: "playback_ack" });
+    return true;
+  },
   updateDuplexVoiceSession: (request) => ipcRenderer.invoke("desktop:voice-duplex-update", request),
   interruptDuplexVoiceSession: (request) => ipcRenderer.invoke("desktop:voice-duplex-interrupt", request),
   submitDuplexVoiceToolResult: (request) => ipcRenderer.invoke("desktop:voice-duplex-tool-result", request),
+  requestDuplexVoiceToolApproval: (request) => ipcRenderer.invoke("desktop:voice-duplex-tool-approval", request),
+  submitDuplexVoiceTextInput: (request) => ipcRenderer.invoke("desktop:voice-duplex-text-input", request),
   stopDuplexVoiceSession: (sessionId) => ipcRenderer.invoke("desktop:voice-duplex-stop", sessionId),
+  finishDuplexVoiceTurn: (sessionId) => ipcRenderer.invoke("desktop:voice-duplex-finish-turn", sessionId),
   cancelDuplexVoiceSession: async (sessionId) => {
     const result = await ipcRenderer.invoke("desktop:voice-duplex-cancel", sessionId);
     if (result) { duplexVoicePorts.get(sessionId)?.close(); duplexVoicePorts.delete(sessionId); }
@@ -1220,6 +1261,26 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:shared-artifact-download", request),
   listChannelAdapters: (workspacePath?: string): Promise<DesktopChannelAdapterListResult> =>
     ipcRenderer.invoke("desktop:channel-adapters-list", workspacePath),
+  getWeChatChannelStatus: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-status"),
+  startWeChatLogin: (): Promise<DesktopWeChatLoginStartResult> =>
+    ipcRenderer.invoke("desktop:wechat-login-start"),
+  pollWeChatLogin: (request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginPollResult> =>
+    ipcRenderer.invoke("desktop:wechat-login-poll", request),
+  cancelWeChatLogin: (request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginCancelResult> =>
+    ipcRenderer.invoke("desktop:wechat-login-cancel", request),
+  startWeChatChannel: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-start"),
+  stopWeChatChannel: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-stop"),
+  logoutWeChatChannel: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-logout"),
+  getWeChatSessionSummary: (): Promise<DesktopWeChatSessionSummary> =>
+    ipcRenderer.invoke("desktop:wechat-sessions-summary"),
+  getWeChatReplyCapability: (request: DesktopWeChatReplyCapabilityRequest): Promise<DesktopWeChatReplyCapability> =>
+    ipcRenderer.invoke("desktop:wechat-reply-capability", request),
+  sendToWeChat: (request: DesktopWeChatOutboundRequest): Promise<DesktopWeChatOutboundResult> =>
+    ipcRenderer.invoke("desktop:wechat-send-outbound", request),
   configureChannelAdapter: (
     request: DesktopChannelAdapterConfigureRequest,
   ): Promise<DesktopChannelAdapterConfigureResult> =>
@@ -1394,6 +1455,11 @@ const api: DesktopApi = {
     };
     ipcRenderer.on("desktop:voice-duplex-events", listener);
     return () => ipcRenderer.removeListener("desktop:voice-duplex-events", listener);
+  },
+  onDuplexVoiceToolApprovalDecision: (callback) => {
+    const listener = (_event: IpcRendererEvent, decision: import("../api/desktopApi").DesktopDuplexVoiceToolApprovalDecision): void => callback(decision);
+    ipcRenderer.on("desktop:voice-duplex-tool-approval-decision", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-duplex-tool-approval-decision", listener);
   },
   onVoiceSynthesisEvent: (
     callback: (event: DesktopVoiceSynthesisEvent) => void,

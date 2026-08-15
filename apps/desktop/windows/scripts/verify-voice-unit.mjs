@@ -60,4 +60,26 @@ assert.equal(
   "auth_required",
 );
 
-console.log(`Voice unit verification passed (${checks.length + 3} checks).`);
+const hepaiFetcher = async (url) => url.endsWith("/models")
+  ? response({ effective_speech_to_text_ref: { provider_id: "hepai", model_id: "whisper-1" } })
+  : response({ providers: [{ name: "hepai", requires_api_key: false, has_api_key: false }] });
+assert.equal(
+  (await getVoiceProviderReadiness("http://127.0.0.1:28642", {}, "speech_to_text", hepaiFetcher)).state,
+  "auth_required",
+);
+assert.equal(
+  (await getVoiceProviderReadiness("http://127.0.0.1:28642", {
+    Authorization: "Bearer oidc-token",
+    "X-OpenDrSai-Auth-Mode": "oidc",
+  }, "speech_to_text", hepaiFetcher)).state,
+  "ready",
+);
+const hepaiStaticKeyFetcher = async (url) => url.endsWith("/models")
+  ? hepaiFetcher(url)
+  : response({ providers: [{ name: "hepai", requires_api_key: false, has_api_key: true }] });
+assert.equal(
+  (await getVoiceProviderReadiness("http://127.0.0.1:28642", {}, "speech_to_text", hepaiStaticKeyFetcher)).state,
+  "auth_required",
+);
+
+console.log(`Voice unit verification passed (${checks.length + 6} checks).`);

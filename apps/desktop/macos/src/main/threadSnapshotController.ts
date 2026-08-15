@@ -2,6 +2,12 @@ import type { WebContents } from "electron";
 import { getRuntimeThreadSnapshot, subscribeRuntimeThreadSnapshot } from "../../../shared/main/threadRuntimeSubscription";
 import type { SessionConversationSubscription } from "../../../shared/main/sessionConversationSubscription";
 import { listThreads, updateThread } from "../../../shared/main/threads";
+import { upsertThreadFromRun } from "../../../shared/main/threads";
+import { listWorkspaces } from "../../../shared/main/workspaces";
+import { LocalRuntimeClient } from "../../../shared/main/runtimeClient";
+import type { RuntimeSession } from "../../../shared/main/runtimeClient";
+import { bootstrapRuntimeSessionCatalog } from "../../../shared/main/runtimeSessionCatalogBootstrap";
+import { consumeWorkspaceSessionCatalogStream, WorkspaceSessionCatalogGate } from "../../../shared/main/workspaceSessionCatalog";
 
 export interface MacosThreadSnapshotControllerDependencies {
   listThreads: typeof listThreads;
@@ -14,6 +20,7 @@ export class MacosThreadSnapshotController {
   readonly #subscriptions = new Map<string, SessionConversationSubscription>();
   readonly #catalogTimers = new Map<number, NodeJS.Timeout>();
   readonly #catalogBusy = new Set<number>();
+  readonly #workspaceCatalogs = new Map<string, AbortController>();
   readonly #dependencies: MacosThreadSnapshotControllerDependencies;
 
   constructor(dependencies: MacosThreadSnapshotControllerDependencies = { listThreads, updateThread, getRuntimeThreadSnapshot, subscribeRuntimeThreadSnapshot }) {
@@ -38,6 +45,58 @@ export class MacosThreadSnapshotController {
     return true;
   }
 
+  async ensureWorkspaceCatalogs(target: WebContents): Promise<void> {
+    if (target.isDestroyed()) return;
+    const client = await LocalRuntimeClient.connect();
+    for (const workspace of (await client.listWorkspaces(false))) {
+      const key = `${target.id}:${workspace.workspace_id}`;
+      if (this.#workspaceCatalogs.has(key)) continue;
+      const controller = new AbortController();
+      this.#workspaceCatalogs.set(key, controller);
+      const gate = new WorkspaceSessionCatalogGate();
+      void (async () => {
+        while (!controller.signal.aborted && !target.isDestroyed()) {
+          try {
+            const client = await LocalRuntimeClient.connect();
+            const stream = await client.openWorkspaceSessionCatalogStream(workspace.workspace_id, controller.signal);
+            await bootstrapRuntimeSessionCatalog(client, workspace.workspace_id, async (runtime) => {
+              await this.#applyWorkspaceCatalogSession(target, runtime);
+            });
+            await consumeWorkspaceSessionCatalogStream(stream.events, async (event) => {
+              if (gate.accept(event) !== "apply" || target.isDestroyed()) return;
+              const runtime = await (await LocalRuntimeClient.connect()).getSession(event.session_id);
+              await this.#applyWorkspaceCatalogSession(target, runtime);
+            });
+          } catch {
+            if (controller.signal.aborted || target.isDestroyed()) break;
+            await new Promise((resolve) => setTimeout(resolve, 1_000));
+          }
+        }
+      })().finally(() => { if (this.#workspaceCatalogs.get(key) === controller) this.#workspaceCatalogs.delete(key); });
+      target.once("destroyed", () => this.stopForTarget(target.id));
+    }
+  }
+
+  async #applyWorkspaceCatalogSession(target: WebContents, runtime: RuntimeSession): Promise<void> {
+    if (target.isDestroyed()) return;
+    const localWorkspace = (await listWorkspaces()).find((item) => item.id === runtime.workspace_id);
+    if (!localWorkspace) return;
+    const thread = await upsertThreadFromRun({
+      id: runtime.session_id, kind: "chat", title: runtime.title,
+      workspacePath: localWorkspace.path, runtimeSessionId: runtime.session_id,
+      sourceChannel: runtime.origin?.provider === "wechat" ? "wechat" : undefined,
+      status: "idle", messageCount: runtime.message_count ?? 0,
+    });
+    const updated = await updateThread({
+      id: thread.id,
+      archived: runtime.archived === true || runtime.lifecycle === "archived" || runtime.lifecycle === "removed",
+      archiveSource: runtime.archived === true || runtime.lifecycle === "archived" ? "opendrsai" : undefined,
+    });
+    if (!target.isDestroyed()) {
+      target.send("desktop:thread-catalog", { thread: updated, source: "runtime-session" });
+    }
+  }
+
   unsubscribe(targetId: number, threadId: string): boolean {
     if (!validThreadId(threadId)) return false;
     const key = subscriptionKey(targetId, threadId);
@@ -56,6 +115,11 @@ export class MacosThreadSnapshotController {
     if (timer) clearInterval(timer);
     this.#catalogTimers.delete(targetId);
     this.#catalogBusy.delete(targetId);
+    for (const [key, controller] of this.#workspaceCatalogs) {
+      if (!key.startsWith(`${targetId}:`)) continue;
+      controller.abort();
+      this.#workspaceCatalogs.delete(key);
+    }
   }
 
   stopAll(): void {
@@ -64,6 +128,8 @@ export class MacosThreadSnapshotController {
     for (const timer of this.#catalogTimers.values()) clearInterval(timer);
     this.#catalogTimers.clear();
     this.#catalogBusy.clear();
+    for (const controller of this.#workspaceCatalogs.values()) controller.abort();
+    this.#workspaceCatalogs.clear();
   }
 
   #startCatalogSync(target: WebContents, activeThreadId: string): void {

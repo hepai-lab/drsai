@@ -346,11 +346,16 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
   if (item.type === "reasoning") {
     const visibleSegments = item.content.segments.filter((segment) => !segment.visibility || segment.visibility === "user");
     if (!visibleSegments.length && !includeEmpty) return { parts: [], activities: [] };
+    const summary = [...visibleSegments]
+      .reverse()
+      .find((segment) => segment.kind === "summary" && typeof segment.text === "string" && segment.text.trim())
+      ?.text.trim();
     return { parts: [{
       id: item.id, kind: "reasoning", status,
+      ...(summary ? { summary } : {}),
       segments: visibleSegments.flatMap((segment, index) => {
         const text = segment && typeof segment.text === "string" ? segment.text : "";
-        return text ? [{
+        return text && segment.kind !== "summary" ? [{
           id: String(segment.id || `${item.id}:${index + 1}`), text, status,
           reasoningKind: segment.kind,
           visibility: segment.visibility,

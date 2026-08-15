@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { projectAcceptance } from "./duplex-p2-acceptance-projection.mjs";
+
+const root = resolve(import.meta.dirname, ".."); const indexPath = resolve(root, "../../../docs/voice/duplex-voice-p2-evidence-index.json"); const indexBytes = readFileSync(indexPath); const index = JSON.parse(indexBytes);
+const verifier = resolve(import.meta.dirname, "verify-duplex-p2-acceptance-status.mjs"); const directory = mkdtempSync(join(tmpdir(), "duplex-p2-final-gate-"));
+const sourceIndexSha256 = createHash("sha256").update(indexBytes).digest("hex");
+const signed = (name) => ({ reportPath: `${name}.json`, reportSha256: "a".repeat(64), signer: "Release QA", signedAt: "2026-08-14T00:00:00.000Z" });
+const provenance = { automation: { sourceIndexSha256, reportPath: "automation.json", reportSha256: "b".repeat(64), completedAt: "2026-08-14T00:00:00.000Z", source: { fileCount: 1, sha256: "c".repeat(64) }, suites: ["npm run test:voice:duplex", "npm run test:voice:serial"] }, packaged_named_review: signed("packaged"), live_named_listening: signed("live"), hardware_physical: signed("hardware"), stable_release_cycle: signed("stable") };
+const write = (name, statuses) => { const features = projectAcceptance(index.features, statuses, provenance); const payload = { schemaVersion: 1, sourceIndexSha256, counts: { total: 52, implemented: 52, strictAccepted: features.filter((item) => item.strictAcceptance === "accepted").length }, evidenceStatus: statuses, evidenceProvenance: provenance, features }; const report = { ...payload, integrity: { algorithm: "sha256", digest: createHash("sha256").update(JSON.stringify(payload)).digest("hex") } }; const path = join(directory, name); writeFileSync(path, JSON.stringify(report)); return path; };
+const all = { automation: true, packaged_named_review: true, live_named_listening: true, hardware_physical: true, stable_release_cycle: true };
+assert.equal(spawnSync(process.execPath, [verifier, write("complete.json", all), indexPath]).status, 0);
+assert.notEqual(spawnSync(process.execPath, [verifier, write("pending.json", { ...all, live_named_listening: false }), indexPath]).status, 0, "Missing Live evidence must fail the final 52/52 gate.");
+const stale = JSON.parse(readFileSync(write("stale.json", all))); stale.sourceIndexSha256 = "0".repeat(64); const { integrity: _old, ...stalePayload } = stale; stale.integrity = { algorithm: "sha256", digest: createHash("sha256").update(JSON.stringify(stalePayload)).digest("hex") }; const stalePath = join(directory, "stale.json"); writeFileSync(stalePath, JSON.stringify(stale));
+assert.notEqual(spawnSync(process.execPath, [verifier, stalePath, indexPath]).status, 0, "A stale source index must fail.");
+console.log("Duplex Voice P2 final acceptance gate verified (complete, missing evidence, and stale index). ");

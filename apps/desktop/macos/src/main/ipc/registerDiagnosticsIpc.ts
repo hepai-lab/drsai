@@ -11,6 +11,8 @@ import { getIdeContext } from "../../../../shared/main/ideContext";
 import type { InteractiveDebugPolicyStore } from "../../../../shared/main/interactiveDebugPolicy";
 import type { InteractiveDebuggerService } from "../../../../shared/main/interactiveDebugger";
 import { productionDiagnostics } from "../../../../shared/main/productionDiagnostics";
+import { desktopFeedback } from "../../../../shared/main/feedback";
+import { clearPendingCrashFeedback, getPendingCrashFeedback } from "../../../../shared/main/crashFeedback";
 import type { DiagnosticSourceNavigator } from "../../../../shared/main/sourceNavigation";
 import type { MacosServiceContainer } from "../serviceContainer";
 
@@ -73,6 +75,23 @@ export function registerMacosDiagnosticsIpc(
     return productionDiagnostics.exportPackage(await desktopDiagnostics.serializeExport(), selected.filePath);
   });
   ipcMain.handle("desktop:production-diagnostics-import", async () => { const selected = await dialog.showOpenDialog({ title: "Open OpenDrSai diagnostic package", properties: ["openFile"], filters: [{ name: "OpenDrSai diagnostics", extensions: ["oddiag"] }] }); return selected.canceled || !selected.filePaths[0] ? null : productionDiagnostics.importPackage(selected.filePaths[0]); });
+  ipcMain.handle("desktop:feedback-preview", (_event, draft) => desktopFeedback.preview(draft));
+  ipcMain.handle("desktop:feedback-submit", (_event, draft) => desktopFeedback.submit(draft));
+  ipcMain.handle("desktop:feedback-pending-list", () => desktopFeedback.listPending());
+  ipcMain.handle("desktop:feedback-pending-retry", () => desktopFeedback.flush());
+  ipcMain.handle("desktop:feedback-pending-delete", (_event, clientFeedbackId) => desktopFeedback.deletePending(clientFeedbackId));
+  ipcMain.handle("desktop:feedback-crash-pending", () => getPendingCrashFeedback());
+  ipcMain.handle("desktop:feedback-crash-clear", (_event, incidentId) => clearPendingCrashFeedback(incidentId));
+  ipcMain.handle("desktop:feedback-screenshot-capture", async (event) => {
+    const image = await event.sender.capturePage();
+    const size = image.getSize();
+    const dataUrl = image.toDataURL();
+    if (Buffer.byteLength(dataUrl) > 7_000_000) throw new Error("Screenshot exceeds the feedback size limit.");
+    return { data_url: dataUrl, width: size.width, height: size.height, byte_length: Buffer.byteLength(dataUrl) };
+  });
+  ipcMain.handle("desktop:feedback-admin-list", (_event, status) => desktopFeedback.listAdmin(status));
+  ipcMain.handle("desktop:feedback-admin-update", (_event, feedbackId, update) => desktopFeedback.updateAdmin(feedbackId, update));
+  ipcMain.handle("desktop:feedback-admin-delete", (_event, feedbackId) => desktopFeedback.deleteAdmin(feedbackId));
   ipcMain.handle("desktop:interactive-debug-targets", () => interactiveDebugger.listTargets());
   ipcMain.handle("desktop:interactive-debug-policy", () => interactiveDebugPolicy.get());
   ipcMain.handle("desktop:interactive-debug-policy-update", async (_event, request) => { const policy = await interactiveDebugPolicy.update(request); if (!policy.enabled) await interactiveDebugger.shutdown(); return policy; });

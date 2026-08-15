@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const path = resolve(process.argv[2] ?? resolve(import.meta.dirname, "../release/duplex-voice/stable-release-cycle-report.json"));
+const report = JSON.parse(readFileSync(path, "utf8")); const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const verify = (item, label) => { let path; try { path = fileURLToPath(item?.uri); } catch { throw new Error(`${label} must be a local file URI.`); } assert.equal(digest(readFileSync(path)), item.sha256, `${label} digest mismatch.`); };
+assert.equal(report.schemaVersion, 1); assert.equal(report.kind, "stable-release-cycle"); assert.equal(report.mode, "duplex"); assert.equal(report.ok, true);
+assert.equal(report.releaseChannel, "stable"); assert.ok(typeof report.releaseVersion === "string" && report.releaseVersion.trim());
+assert.ok(Number.isFinite(Date.parse(report.startedAt)) && Number.isFinite(Date.parse(report.endedAt)) && Date.parse(report.endedAt) > Date.parse(report.startedAt));
+assert.equal(report.published, true); assert.equal(report.observedFullReleaseCycle, true);
+assert.deepEqual(report.telemetry, { newStreamingConfigReferences: 0, migrationFailures: 0, serialRegressions: 0 });
+assert.ok(typeof report.approver?.name === "string" && report.approver.name.trim().length >= 2 && Number.isFinite(Date.parse(report.approver?.signedAt)) && report.approver?.attestation?.length >= 20);
+assert.deepEqual(Object.keys(report.candidate ?? {}).sort(), ["appAsar", "executable"]); Object.entries(report.candidate).forEach(([name, item]) => verify(item, `candidate ${name}`));
+assert.ok(Array.isArray(report.attachments) && report.attachments.length >= 3); report.attachments.forEach((item, i) => verify(item, `attachment ${i}`));
+assert.ok(new Set(report.attachments.map(({ sha256 }) => sha256)).size >= 3, "Publication, telemetry, and workbook attachments must be distinct.");
+const { integrity, ...payload } = report; assert.equal(integrity?.algorithm, "sha256"); assert.equal(integrity?.digest, digest(JSON.stringify(payload)));
+console.log("Duplex stable release-cycle evidence passed (publication, full cycle, telemetry, attachments, candidate, and attestation). ");

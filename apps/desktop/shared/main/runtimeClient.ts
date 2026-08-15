@@ -119,13 +119,23 @@ export interface AgentBackendCapability {
   adapter_version?: string;
   readiness?: {
     refreshed_at: string;
+    runtime?: BackendReadinessFacet;
     transport: BackendReadinessFacet;
+    process?: BackendReadinessFacet;
     installed: BackendReadinessFacet;
     contract: BackendReadinessFacet;
     account: BackendReadinessFacet;
     models: BackendReadinessFacet;
     executable: BackendReadinessFacet & { blockers?: string[] };
   };
+  binary_identity?: {
+    path?: string | null;
+    source?: string | null;
+    version?: string | null;
+    binary_digest?: string | null;
+    schema_digest?: string | null;
+    release_safe?: boolean | null;
+  } | null;
   model_catalog?: {
     generation?: number | null;
     stale?: boolean;
@@ -223,8 +233,9 @@ export interface RuntimeWorkspaceEvent {
 
 export interface RuntimeSessionList {
   object: "list";
-  data: unknown[];
+  data: RuntimeSession[];
   total: number;
+  offset?: number;
 }
 
 export interface RuntimeWorkspaceSessionCatalogEvent {
@@ -239,7 +250,21 @@ export interface RuntimeWorkspaceSessionCatalogStream {
   events: ReadableStream<Uint8Array>;
 }
 
-export interface RuntimeSession { session_id: string; workspace_id: string; title: string; archived?: boolean; lifecycle?: string; created_at?: string; updated_at?: string; message_count?: number; }
+export interface RuntimeSession {
+  session_id: string;
+  workspace_id: string;
+  title: string;
+  archived?: boolean;
+  lifecycle?: string;
+  origin?: {
+    kind: "channel";
+    provider: "wechat" | string;
+    binding_id: string;
+  };
+  created_at?: string;
+  updated_at?: string;
+  message_count?: number;
+}
 export interface RuntimeBackendSessionSyncResult {
   backend_id: string; workspace_id: string; discovered: number; active: number; archived: number;
   created: number; updated: number; skipped: number; conflicts?: number; sessions: RuntimeSession[];
@@ -248,6 +273,11 @@ export interface RuntimeBackendSessionSyncResult {
 export interface BackendReadinessFacet {
   state: "ready" | "stopped" | "fault" | "missing" | "blocked" | "stale" | "empty" | "signed_in" | "signed_out" | "unavailable" | "unknown";
   reason?: string | null;
+  observed_at?: string | null;
+  last_success_at?: string | null;
+  retryable?: boolean;
+  actions?: string[];
+  stale?: boolean;
 }
 export interface RuntimeBackendSessionBindingStatus {
   session_id: string;
@@ -340,7 +370,7 @@ export interface RuntimeConversationItem {
   role: "user" | "assistant" | "system" | "tool" | null;
   revision: number;
   session_sequence: number;
-  source_client: "windows" | "android" | "runtime";
+  source_client: "windows" | "android" | "runtime" | "wechat";
   source_message_id: string | null;
   created_at: string;
   updated_at: string;
@@ -414,7 +444,7 @@ export interface RuntimeClient {
   getBackendAccount(backendId: string, refresh?: boolean): Promise<BackendAccountStatus>;
   getBackendModels(backendId: string, refresh?: boolean): Promise<BackendModelCatalog>;
   restartBackend(backendId: string): Promise<Record<string, unknown>>;
-  syncBackendSessions(workspaceId: string, backendId: string, signal?: AbortSignal): Promise<RuntimeBackendSessionSyncResult>;
+  syncBackendSessions(workspaceId: string, backendId: string, signal?: AbortSignal, includeArchived?: boolean): Promise<RuntimeBackendSessionSyncResult>;
   syncBackendSessionHistory(sessionId: string, signal?: AbortSignal, repair?: boolean, cursor?: string, limit?: number): Promise<{ session_id: string; backend_id: string; imported: number; total: number; runs?: number; warnings?: number; mapping_version?: string; next_cursor?: string | null; estimated_total?: number; truncated?: boolean; loaded_runs?: number }>;
   getBackendSessionBinding(sessionId: string): Promise<RuntimeBackendSessionBindingStatus>;
   startBackendLogin(backendId: string, type?: "chatgpt" | "chatgptDeviceCode"): Promise<BackendLoginStart>;
@@ -432,7 +462,7 @@ export interface RuntimeClient {
   mergeWorktree(workspaceId: string, worktreeId: string, idempotencyKey: string, expectedHead?: string): Promise<RuntimeWorktree>;
   archiveWorktree(workspaceId: string, worktreeId: string, idempotencyKey: string): Promise<RuntimeWorktree>;
   removeWorktree(workspaceId: string, worktreeId: string, expectedStatus: "merged" | "archived", idempotencyKey: string): Promise<RuntimeWorktree>;
-  listSessions(workspaceId: string): Promise<RuntimeSessionList>;
+  listSessions(workspaceId: string, offset?: number, limit?: number): Promise<RuntimeSessionList>;
   getSession(sessionId: string): Promise<RuntimeSession>;
   openWorkspaceSessionCatalogStream(workspaceId: string, signal: AbortSignal): Promise<RuntimeWorkspaceSessionCatalogStream>;
   createSession(workspaceId: string, title?: string): Promise<RuntimeSession>;
@@ -727,8 +757,12 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return result.worktree;
   }
 
-  listSessions(workspaceId: string): Promise<RuntimeSessionList> {
-    return this.requestJson(`/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}&limit=100`);
+  listSessions(workspaceId: string, offset = 0, limit = 100): Promise<RuntimeSessionList> {
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    return this.requestJson(
+      `/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}&offset=${safeOffset}&limit=${safeLimit}`,
+    );
   }
 
   getSession(sessionId: string): Promise<RuntimeSession> {
@@ -802,9 +836,9 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return this.requestJson(`/v1/agent-backends/${this.backendId(backendId)}/restart`, { method: "POST" });
   }
 
-  syncBackendSessions(workspaceId: string, backendId: string, signal?: AbortSignal): Promise<RuntimeBackendSessionSyncResult> {
+  syncBackendSessions(workspaceId: string, backendId: string, signal?: AbortSignal, includeArchived = false): Promise<RuntimeBackendSessionSyncResult> {
     this.assertResourceId("Workspace", workspaceId);
-    return this.requestJson(`/v1/workspaces/${encodeURIComponent(workspaceId)}/agent-backends/${this.backendId(backendId)}/sessions/sync`, { method: "POST", signal });
+    return this.requestJson(`/v1/workspaces/${encodeURIComponent(workspaceId)}/agent-backends/${this.backendId(backendId)}/sessions/sync?include_archived=${includeArchived ? "true" : "false"}`, { method: "POST", signal });
   }
 
   syncBackendSessionHistory(sessionId: string, signal?: AbortSignal, repair = false, cursor?: string, limit = 100): Promise<{ session_id: string; backend_id: string; imported: number; total: number; runs?: number; warnings?: number; mapping_version?: string; next_cursor?: string | null; estimated_total?: number; truncated?: boolean; loaded_runs?: number }> {

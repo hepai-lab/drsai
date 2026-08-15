@@ -1,66 +1,39 @@
-import type { DesktopDuplexVoiceAudioDelta, DesktopDuplexVoiceEvent } from "../../../../api/desktopApi";
+import type { DesktopDuplexVoiceAudioDelta, DesktopDuplexVoiceEvent, DesktopDuplexVoiceHistoryAppendRequest, DesktopVoiceMessageMetadata } from "../../../../api/desktopApi";
 
-export interface DuplexHistoryMessage { id: string; role: "user" | "assistant"; content: string; providerItemId: string; responseId?: string; heardContent?: string; interrupted?: boolean }
+export interface DuplexHistoryMessage { id: string; role: "user" | "assistant"; content: string; providerItemId: string; responseId?: string; revision: number; voice: DesktopVoiceMessageMetadata; heardContent?: string; interrupted?: boolean }
 export interface DuplexContextProjection { summary: string; recent: DuplexHistoryMessage[]; totalMessages: number; truncated: boolean }
 
 export class DuplexTranscriptProjection {
-  readonly #sessionId: string;
-  readonly #messages = new Map<string, DuplexHistoryMessage>();
-  readonly #order: string[] = [];
-  readonly #outputDrafts = new Map<string, string>();
-  readonly #responseAudioMs = new Map<string, number>();
-  readonly #seenEventSequences = new Set<number>();
-  #inputDraft = "";
-  #manualQueue: string[] = [];
+  readonly #sessionId: string; readonly #messages = new Map<string, DuplexHistoryMessage>(); readonly #order: string[] = [];
+  readonly #inputDrafts = new Map<string, string>(); readonly #outputDrafts = new Map<string, string>(); readonly #responseAudioMs = new Map<string, number>(); readonly #seenEventSequences = new Set<number>(); readonly #seenOrder: number[] = [];
+  readonly #dirty = new Map<string, number>();
   constructor(sessionId: string) { this.#sessionId = sessionId; }
-
   apply(event: DesktopDuplexVoiceEvent): boolean {
-    if (event.sessionId !== this.#sessionId) return false;
-    if (this.#seenEventSequences.has(event.sequence)) return false;
-    this.#seenEventSequences.add(event.sequence);
-    if (event.type === "input_transcript_delta") { this.#inputDraft += event.delta.text; return true; }
-    if (event.type === "input_transcript_completed") { this.#commit({ id: this.#id("user", event.itemId), role: "user", content: sanitizeTranscript(event.text), providerItemId: event.itemId }); this.#inputDraft = ""; return true; }
-    if (event.type === "response_transcript_delta") { const key = event.delta.responseId ?? event.delta.itemId; this.#outputDrafts.set(key, (this.#outputDrafts.get(key) ?? "") + event.delta.text); return true; }
+    if (event.sessionId !== this.#sessionId || !isProjectionEvent(event) || this.#seenEventSequences.has(event.sequence)) return false; this.#remember(event.sequence);
+    if (event.type === "input_transcript_delta") { const key = draftKey(event.delta.itemId, event.delta.contentIndex); this.#appendDraft(this.#inputDrafts, key, event.delta.text); return true; }
+    if (event.type === "input_transcript_completed") { this.#commit({ id: this.#id("user", event.itemId), role: "user", content: sanitizeTranscript(event.text), providerItemId: event.itemId }); this.#deleteItemDrafts(this.#inputDrafts, event.itemId); return true; }
+    if (event.type === "response_transcript_delta") { const key = outputDraftKey(event.delta.responseId ?? "", event.delta.itemId, event.delta.contentIndex); this.#appendDraft(this.#outputDrafts, key, event.delta.text); return true; }
     if (event.type === "response_audio_delta") { this.#responseAudioMs.set(event.delta.responseId, (this.#responseAudioMs.get(event.delta.responseId) ?? 0) + audioDurationMs(event.delta)); return true; }
-    if (event.type === "response_transcript_completed") { this.#commit({ id: this.#id("assistant", event.itemId), role: "assistant", content: sanitizeTranscript(event.text), providerItemId: event.itemId, responseId: event.responseId }); this.#outputDrafts.delete(event.responseId); return true; }
-    if (event.type === "interrupted") { this.#markInterrupted(event.responseId, event.playedAudioMs); return true; }
-    return false;
+    if (event.type === "response_transcript_completed") { this.#commit({ id: this.#id("assistant", event.itemId), role: "assistant", content: sanitizeTranscript(event.text), providerItemId: event.itemId, responseId: event.responseId }); for (const key of this.#outputDrafts.keys()) if (key.startsWith(`${event.responseId}\u0000${event.itemId}\u0000`)) this.#outputDrafts.delete(key); return true; }
+    if (event.type === "interrupted") { this.#markInterrupted(event.responseId, event.playedAudioMs); return true; } return false;
   }
-
-  queueManualText(text: string, sessionActive: boolean): "queued" | "empty" {
-    const value = text.trim(); if (!value) return "empty";
-    if (sessionActive) this.#manualQueue.push(value); else this.#manualQueue.unshift(value);
-    return "queued";
-  }
-  drainManualText(): string[] { const values = [...this.#manualQueue]; this.#manualQueue = []; return values; }
-  get inputDraft(): string { return this.#inputDraft; }
+  get inputDraft(): string { return [...this.#inputDrafts.values()].join(""); }
+  get inputDrafts(): ReadonlyMap<string, string> { return this.#inputDrafts; }
   get outputDrafts(): ReadonlyMap<string, string> { return this.#outputDrafts; }
   get messages(): DuplexHistoryMessage[] { return this.#order.map((id) => this.#messages.get(id)!).filter(Boolean); }
-
-  context(maxChars = 8_000, recentCount = 12): DuplexContextProjection {
-    const messages = this.messages; const recent = messages.slice(-recentCount); const older = messages.slice(0, -recent.length);
-    let summary = older.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n");
-    const truncated = summary.length > maxChars; if (truncated) summary = `…${summary.slice(-(maxChars - 1))}`;
-    return { summary, recent, totalMessages: messages.length, truncated };
-  }
-
+  pendingStableRevisions(): DesktopDuplexVoiceHistoryAppendRequest["messages"] { return [...this.#dirty].flatMap(([id, expectedRevision]) => { const message = this.#messages.get(id); if (!message) return []; const statusContent = message.interrupted ? (message.heardContent ? `Playback was interrupted. Heard: ${message.heardContent}` : `Playback was interrupted after ${Math.round(message.voice.playedAudioMs ?? 0)} ms; exact heard text is unavailable.`) : undefined; return [{ id: message.id, role: message.role, content: message.content, revision: message.revision, expectedRevision, ...(statusContent ? { statusContent } : {}), voice: message.voice }]; }); }
+  acknowledgeStableRevisions(messages: DesktopDuplexVoiceHistoryAppendRequest["messages"]): void { for (const message of messages) if (this.#messages.get(message.id)?.revision === message.revision) this.#dirty.delete(message.id); }
+  context(maxChars = 8_000, recentCount = 12): DuplexContextProjection { const messages = this.messages; const recent = messages.slice(-recentCount).filter((message) => !message.interrupted || Boolean(message.heardContent)).map((message) => message.interrupted ? { ...message, content: message.heardContent! } : message); const older = messages.slice(0, -Math.min(messages.length, recentCount)); let summary = older.flatMap((message) => message.interrupted ? (message.heardContent ? [`Assistant: ${message.heardContent}`] : []) : [`${message.role === "user" ? "User" : "Assistant"}: ${message.content}`]).join("\n"); const truncated = summary.length > maxChars; if (truncated) summary = `…${summary.slice(-(maxChars - 1))}`; return { summary, recent, totalMessages: messages.length, truncated }; }
   #id(role: "user" | "assistant", itemId: string): string { return `duplex:${this.#sessionId}:${role}:${itemId}`; }
-  #commit(message: DuplexHistoryMessage): void {
-    if (!message.content) return;
-    const existing = this.#messages.get(message.id);
-    this.#messages.set(message.id, existing ? { ...existing, ...message } : message);
-    if (!existing) this.#order.push(message.id);
-  }
-  #markInterrupted(responseId: string, playedAudioMs: number): void {
-    const message = this.messages.find((candidate) => candidate.responseId === responseId); if (!message) return;
-    const generatedMs = this.#responseAudioMs.get(responseId) ?? 0;
-    const ratio = generatedMs > 0 ? Math.max(0, Math.min(1, playedAudioMs / generatedMs)) : 0;
-    const heardLength = Math.min(message.content.length, Math.floor(message.content.length * ratio));
-    this.#messages.set(message.id, { ...message, interrupted: true, heardContent: message.content.slice(0, heardLength) });
-  }
+  #appendDraft(drafts: Map<string, string>, key: string, text: string): void { if (!drafts.has(key) && drafts.size >= 64) drafts.delete(drafts.keys().next().value!); drafts.set(key, ((drafts.get(key) ?? "") + text).slice(-20_000)); }
+  #remember(sequence: number): void { this.#seenEventSequences.add(sequence); this.#seenOrder.push(sequence); if (this.#seenOrder.length > 4_096) this.#seenEventSequences.delete(this.#seenOrder.shift()!); }
+  #deleteItemDrafts(drafts: Map<string, string>, itemId: string): void { for (const key of drafts.keys()) if (key.startsWith(`${itemId}\u0000`)) drafts.delete(key); }
+  #commit(message: Omit<DuplexHistoryMessage, "revision" | "voice">): void { if (!message.content) return; const existing = this.#messages.get(message.id); if (existing?.content === message.content) return; const revision = (existing?.revision ?? 0) + 1; const next = { ...existing, ...message, revision, voice: { ...(existing?.voice ?? {}), revision } }; this.#messages.set(message.id, next); this.#dirty.set(message.id, revision - 1); if (!existing) this.#order.push(message.id); }
+  #markInterrupted(responseId: string, playedAudioMs: number): void { const message = this.messages.find((candidate) => candidate.responseId === responseId); if (!message) return; const generatedAudioMs = this.#responseAudioMs.get(responseId) ?? 0; const revision = message.revision + 1; const voice: DesktopVoiceMessageMetadata = { revision, generatedAudioMs, playedAudioMs: Math.max(0, playedAudioMs), interruptedAt: Date.now(), alignmentConfidence: "none" }; this.#messages.set(message.id, { ...message, revision, voice, interrupted: true, heardContent: undefined }); this.#dirty.set(message.id, message.revision); }
 }
-
+function draftKey(itemId: string, contentIndex: number): string { return `${itemId}\u0000${contentIndex}`; }
+function outputDraftKey(responseId: string, itemId: string, contentIndex: number): string { return `${responseId}\u0000${itemId}\u0000${contentIndex}`; }
+function isProjectionEvent(event: DesktopDuplexVoiceEvent): boolean { return event.type === "input_transcript_delta" || event.type === "input_transcript_completed" || event.type === "response_transcript_delta" || event.type === "response_transcript_completed" || event.type === "response_audio_delta" || event.type === "interrupted"; }
 function audioDurationMs(delta: DesktopDuplexVoiceAudioDelta): number { return delta.audioData.byteLength / 2 / delta.sampleRateHz * 1_000; }
-export function sanitizeTranscript(value: string): string {
-  return value.replace(/\0/g, "").replace(/(authorization|api[_ -]?key|token)\s*[:=]\s*\S+/giu, "$1=[redacted]").replace(/\s+/g, " ").trim().slice(0, 20_000);
-}
+export function sanitizeTranscript(value: string): string { return value.replace(/\0/g, "").replace(/(authorization|api[_ -]?key|token)\s*[:=]\s*\S+/giu, "$1=[redacted]").replace(/\s+/g, " ").trim().slice(0, 20_000); }
+export function alignHeardTranscript(text: string, playedAudioMs: number, words?: Array<{ word: string; endMs: number }>): { heardContent?: string; confidence: "none" | "word_timing" } { if (!words?.length) return { confidence: "none" }; const heard = words.filter((word) => Number.isFinite(word.endMs) && word.endMs <= playedAudioMs).map((word) => word.word).join(""); return { ...(heard ? { heardContent: sanitizeTranscript(heard) } : {}), confidence: "word_timing" }; }

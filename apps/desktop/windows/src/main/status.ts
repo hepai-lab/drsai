@@ -18,7 +18,7 @@ import {
   DRSAI_SCRIPT,
   getEnhancedPath,
 } from "./paths";
-import { getGatewaySnapshot, getGatewayStatus } from "./gateway";
+import { getGatewayStatus } from "./gateway";
 import { getUpdateStatus } from "./updates";
 import { readBackendSourceVersion, readInstalledRuntimeVersion } from "./versionInfo";
 
@@ -62,7 +62,10 @@ export async function getInstallStatus(): Promise<InstallStatus> {
 
 export async function getDesktopHealth(): Promise<DesktopHealth> {
   const install = getStartupInstallStatus();
-  const gateway = getGatewaySnapshot();
+  // This is the centralized 2s health poll. It performs a real, singleflight
+  // liveness observation instead of repeatedly returning a potentially failed
+  // cached snapshot. Gateway hysteresis keeps transient busy periods usable.
+  const gateway = await getGatewayStatus();
   return {
     installed: install.installed,
     gatewayReady: gateway.ready,

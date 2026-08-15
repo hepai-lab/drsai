@@ -39,6 +39,7 @@ import {
   type AgentFileTraceEvent,
 } from "./AgentFileActivityPanel";
 import { ArtifactsPanel } from "./ArtifactsPanel";
+import { findWorkspaceNodeByArtifactPath, normalizeWorkspaceArtifactPath } from "./artifactWorkspaceLink";
 import { ContextBasket } from "./ContextBasket";
 import {
   ContextSnapshotPanel,
@@ -116,6 +117,7 @@ export function FilesContextPanel({
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [previewState, setPreviewState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [unavailableFocusPath, setUnavailableFocusPath] = useState<string | null>(null);
   const [managerPresentationProgress, setManagerPresentationProgress] =
     useState<ManagerPresentationProgressEvent | null>(null);
   const [managerPresentationResult, setManagerPresentationResult] =
@@ -135,6 +137,7 @@ export function FilesContextPanel({
     viewerUrl?: string;
   } | null>(null);
   const previewRequestPathRef = useRef<string | null>(null);
+  const focusRefreshPathRef = useRef<string | null>(null);
   const managerPresentationRequestRef = useRef<string | null>(null);
   const managerPresentationCancelRequestedRef = useRef<string | null>(null);
 
@@ -142,7 +145,7 @@ export function FilesContextPanel({
     ? basket.some((item) => item.path === selectedNode.path)
     : false;
   const selectedContextNodes = Array.from(selectedForContext)
-    .map((path) => findNodeByPath(nodes, path))
+    .map((path) => findWorkspaceNodeByArtifactPath(nodes, path))
     .filter(Boolean) as WorkspaceFileNode[];
   const changedCount = overview?.stats.changedFileCount ?? 0;
   const instructionCount = overview?.stats.instructionCount ?? 0;
@@ -205,10 +208,23 @@ export function FilesContextPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if (!focusPath || !nodes.length || selectedNode?.path === focusPath) return;
-    const target = findNodeByPath(nodes, focusPath);
-    if (target) void selectNode(target);
-  }, [focusPath, nodes, selectedNode?.path]);
+    if (!focusPath || selectedNode?.path === focusPath || selectedNode?.relativePath === normalizeWorkspaceArtifactPath(focusPath)) return;
+    const target = findWorkspaceNodeByArtifactPath(nodes, focusPath);
+    if (target) {
+      focusRefreshPathRef.current = null;
+      setUnavailableFocusPath(null);
+      void selectNode(target);
+      return;
+    }
+    // Artifact events can arrive before the filesystem watcher refreshes the
+    // tree. Refresh once for this focus request so clicking a result card is
+    // deterministic rather than dependent on watcher timing.
+    if (focusRefreshPathRef.current !== focusPath) {
+      focusRefreshPathRef.current = focusPath;
+      setUnavailableFocusPath(null);
+      void refresh().then(() => setUnavailableFocusPath(focusPath));
+    }
+  }, [focusPath, nodes, refresh, selectedNode?.path, selectedNode?.relativePath]);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -909,6 +925,11 @@ export function FilesContextPanel({
       </header>
 
       {error ? <p className="files-context-error">{error}</p> : null}
+      {unavailableFocusPath === focusPath && !findWorkspaceNodeByArtifactPath(nodes, focusPath || "") ? (
+        <p className="files-context-error" role="status" data-testid="artifact-unavailable">
+          {zh ? "成果文件已移动、删除或暂时不可用。可刷新工作区后重试。" : "The result file was moved, deleted, or is temporarily unavailable. Refresh the workspace and try again."}
+        </p>
+      ) : null}
       {pendingAgentCheckpoint ? (
         <div className="files-agent-change-review" role="status" data-testid="agent-change-review">
           <span>{zh ? "智能体变更等待确认" : "Agent changes are ready for review"}</span>
@@ -1340,7 +1361,6 @@ function collectFileNodes(node: WorkspaceFileNode): WorkspaceFileNode[] {
   if (node.type === "file") return [node];
   return (node.children ?? []).flatMap((child) => collectFileNodes(child));
 }
-
 function findNodeByPath(
   nodes: WorkspaceFileNode[],
   path: string,

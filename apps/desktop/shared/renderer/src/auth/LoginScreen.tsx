@@ -29,6 +29,12 @@ export function LoginScreen(): React.JSX.Element {
   const authGuide = getAvailabilityGuide("auth_required", zh);
   const latestLoginEvent = loginEvents[loginEvents.length - 1] ?? null;
   const activeDeviceEvent = [...loginEvents].reverse().find((event) => event.stage === "device-code-ready");
+  const fixtureDeveloperBypass = new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1"
+    || new URLSearchParams(window.location.search).get("developerBypassFixture") === "1";
+  const showDeveloperBypass = fixtureDeveloperBypass
+    || (import.meta.env.DEV
+      && import.meta.env.VITE_OPENDRSAI_LAUNCH_MODE !== "production"
+      && import.meta.env.VITE_OPENDRSAI_OIDC_ONLY !== "1");
   const loginDebugTitle = zh ? "登录调试" : "Login Debug";
   const currentStepLabel = useMemo(() => {
     if (!latestLoginEvent) return zh ? "尚未开始" : "Not started";
@@ -174,9 +180,7 @@ export function LoginScreen(): React.JSX.Element {
           </div>
         )}
 
-        {((import.meta.env.DEV && import.meta.env.VITE_OPENDRSAI_LAUNCH_MODE !== "production")
-          || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1"
-          || new URLSearchParams(window.location.search).get("developerBypassFixture") === "1") && (
+        {showDeveloperBypass && (
           <button
             className="developer-bypass"
             data-testid="developer-workspace-login"

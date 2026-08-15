@@ -89,7 +89,7 @@ async function getGatewayVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus
     message: state === "ready"
       ? "Voice transcription runtime is ready."
       : state === "auth_required"
-        ? "Configure a transcription provider API key."
+        ? "Sign in to HepAI to use the selected transcription model."
         : status.ready
           ? "Assign a speech-to-text model in Agent settings."
           : "Start the local gateway and configure a transcription provider.",
@@ -335,7 +335,14 @@ async function readBoundedJson(response: Response): Promise<Record<string, unkno
 }
 
 function providerHttpError(status: number, body: Record<string, unknown>): DesktopVoiceError {
-  const detail = typeof body.detail === "string" ? body.detail : `Voice provider failed with HTTP ${status}.`;
+  const structuredDetail = body.detail && typeof body.detail === "object"
+    ? body.detail as Record<string, unknown>
+    : undefined;
+  const detail = typeof body.detail === "string"
+    ? body.detail
+    : typeof structuredDetail?.message === "string"
+      ? structuredDetail.message
+      : `Voice provider failed with HTTP ${status}.`;
   if (status === 401 || status === 403) return voiceFailure("auth_required", detail, false);
   if (status === 413) return voiceFailure("audio_too_large", detail, false);
   if (status === 429) return voiceFailure("rate_limited", detail, true);

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "../../../..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
 const app = read("apps/desktop/shared/renderer/src/App.tsx");
+const codexSettings = read("apps/desktop/shared/renderer/src/components/CodexIntegrationSettings.tsx");
 const workspace = read("apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx");
 const runtimeClient = read("apps/desktop/shared/main/runtimeClient.ts");
 const chatMain = read("apps/desktop/shared/main/chat.ts");
@@ -16,7 +17,7 @@ const checks = [
   ["M08-F02 shared OAEP reducer cursor and approval model", chatMain.includes("listOaepEvents") && runtimeClient.includes("oaep-events?after_sequence") && runtimeClient.includes("respondAgentApproval")],
   ["M08-F03 capability negotiation disables unsupported UI", app.includes("platformDescriptor?.capabilities.features") && app.includes("!== true ? false")],
   ["M08-F04 explicit local-to-remote migration safety", workspace.includes("remote-session-migration-notice") && workspace.includes("never auto-bound to the remote Runtime")],
-  ["M08-F05 remote failures stay distinguishable", remote.includes("failureCategory") && remote.includes("authentication") && remote.includes("reconnecting") && app.includes("Codex Agent Runtime")],
+  ["M08-F05 remote failures stay distinguishable", remote.includes("failureCategory") && remote.includes("authentication") && remote.includes("reconnecting") && codexSettings.includes("Remote SSH") && codexSettings.includes("Connection issue")],
   ["M09-F01 clean Windows product-mode live runner", binary.includes("discover_windows_codex_desktop") && live.includes("/v1/agent-backends/codex/account")],
   ["M09-F02 upgrade preserves state and bindings", factory.includes("bindings.sqlite3") && packageJson.includes("verify:update-policy") && packageJson.includes("verify:e2e-update")],
   ["M09-F03 real historical project import runner", app.includes("syncCodexWorkspaceSessions") && packageJson.includes("verify:codex-v3-p2")],

@@ -46,6 +46,7 @@ import {
   // Zap,
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
+import { OpenAiBrandIcon } from "./OpenAiBrandIcon";
 import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
 import { isTextCompositionEvent, shouldSubmitTextInput } from "../imeKeyboardPolicy";
 import type {
@@ -58,6 +59,7 @@ import type {
   DesktopVoiceRuntimeStatus,
   DesktopStreamingVoiceCapabilities,
   DesktopDuplexVoiceCapabilities,
+  DesktopDuplexVoiceReadiness,
   DesktopThreadHistoryState,
   DesktopVoiceTranscriptionResult,
   ChatToolTimelineEvent,
@@ -83,6 +85,7 @@ import type { AppLanguage } from "../navigation";
 import { supportsFullAgentPrimaryRuntime } from "../modelCatalogRecovery";
 import { getAgentEmptyChatPrompts, parseCatalogAgentExamples } from "../agentExamplePrompts";
 import { desktopApi, hasDesktopApi } from "../desktopApi";
+import { decideWeChatComposerSubmit } from "../wechatComposerPolicy";
 import { copyTextSafely } from "../clipboard";
 import {
   resolveTurnRailNavigationIndex,
@@ -117,6 +120,10 @@ import {
 import { useVoiceCapture } from "../voice/useVoiceCapture";
 import { useStreamingVoiceInput } from "../voice/streaming/useStreamingVoiceInput";
 import { useDuplexVoiceInput } from "../voice/duplex/useDuplexVoiceInput";
+import type { DuplexCaptureQualityIssue } from "../voice/duplex/captureQuality";
+import { getDuplexVoiceReadinessActions, type DuplexVoiceReadinessActionId } from "../voice/duplex/readinessActions";
+import { interruptedVoiceStatus } from "../voice/duplex/sessionContext";
+import { deriveDuplexHudState, duplexHudLabel, getDuplexErrorRecovery, getDuplexShortcutAction, realtimeDisclosureFingerprint } from "../voice/duplex/duplexUiModel";
 import { canSubmitStreamingVoiceTurn } from "../voice/streaming/streamingVoiceTurnReducer";
 import { useAssistantSpeechSegments } from "../voice/streaming/assistantSpeechStream";
 import { useStreamingVoiceOutput } from "../voice/streaming/useStreamingVoiceOutput";
@@ -201,6 +208,20 @@ function voiceCaptureErrorCode(error: unknown): string {
   if (error instanceof DOMException && error.name) return `capture_${error.name.toLowerCase()}`;
   if (error instanceof Error && error.name && error.name !== "Error") return `capture_${error.name.toLowerCase()}`;
   return "capture_error";
+}
+
+function duplexCaptureQualityMessage(issue: DuplexCaptureQualityIssue, zh: boolean): string {
+  const messages: Record<DuplexCaptureQualityIssue, [string, string]> = {
+    input_too_quiet: ["麦克风声音太小，请靠近麦克风或检查输入音量。", "Microphone input is too quiet. Move closer or check its input level."],
+    clipping: ["麦克风声音过大并出现削波，请降低输入音量。", "Microphone input is clipping. Reduce its input level."],
+    dc_offset: ["麦克风信号存在异常偏移，建议重新连接设备。", "The microphone signal has an unusual offset. Try reconnecting it."],
+    sample_rate_degraded: ["麦克风采样率低于实时语音要求。", "The microphone sample rate is below the Realtime voice requirement."],
+    aec_unavailable: ["回声消除未生效，建议佩戴耳机。", "Echo cancellation is unavailable. Headphones are recommended."],
+    noise_suppression_unavailable: ["降噪未生效，环境噪声可能影响识别。", "Noise suppression is unavailable; background noise may affect recognition."],
+    agc_unavailable: ["自动增益未生效，请手动调整麦克风音量。", "Automatic gain control is unavailable. Adjust the microphone level manually."],
+    channel_count_degraded: ["麦克风未提供单声道输入，已自动混音。", "The microphone did not provide mono input; channels are being mixed."],
+  };
+  return messages[issue][zh ? 0 : 1];
 }
 
 type ComposerAttachment = ChatAttachment & {
@@ -292,6 +313,8 @@ interface ChatWorkspaceProps {
   conversationId: string;
   conversationTitle?: string;
   conversationSource?: "opendrsai" | "codex";
+  channelSource?: "wechat";
+  runtimeSessionId?: string;
   conversationHistoryPending?: boolean;
   conversationHistory?: DesktopThreadHistoryState;
   operationalStateControl?: React.ReactNode;
@@ -329,6 +352,7 @@ interface ChatWorkspaceProps {
   onSelectModel?: (model: string, providerId?: string) => void;
   onOpenExternal: (url: string) => void;
   onOpenDebug?: (runId?: string, view?: "activity" | "app-errors") => void;
+  onOpenAgentSettings?: () => void;
   onOpenRun?: (runId: string, itemId?: string) => void;
   onCreateRunExperiment?: (runId: string, itemId?: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
@@ -345,6 +369,7 @@ interface ChatWorkspaceProps {
   onAttachIdeCurrentSelection?: () => void;
   onRefreshIdeContext?: () => void;
   onRetryMessage?: (assistantMessageId: string, mode: "same_session" | "new_session") => void | Promise<void>;
+  onReportFeedback?: (context: { source: "error" | "message" | "tool"; errorCode?: string; errorType?: string; runId?: string }) => void;
   onRecoveryAction?: (assistantMessageId: string, action: UserFacingRecoveryAction["id"]) => void | Promise<void>;
   onLoadEarlierHistory?: () => void | Promise<void>;
   onSubmit: (
@@ -362,6 +387,8 @@ function ChatWorkspaceImpl({
   conversationId,
   conversationTitle,
   conversationSource = "opendrsai",
+  channelSource,
+  runtimeSessionId,
   conversationHistoryPending = false,
   conversationHistory,
   operationalStateControl,
@@ -398,6 +425,7 @@ function ChatWorkspaceImpl({
   onSelectModel,
   onOpenExternal,
   onOpenDebug,
+  onOpenAgentSettings,
   onOpenRun,
   onCreateRunExperiment,
   onOpenPreviewBrowser,
@@ -411,11 +439,16 @@ function ChatWorkspaceImpl({
   onAttachIdeCurrentSelection,
   onRefreshIdeContext,
   onRetryMessage,
+  onReportFeedback,
   onRecoveryAction,
   onLoadEarlierHistory,
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [wechatCapability, setWechatCapability] = useState<{ available: boolean; reason?: string } | null>(null);
+  const [wechatConfirmationPending, setWechatConfirmationPending] = useState(false);
+  const [wechatSending, setWechatSending] = useState(false);
+  const [wechatSendStatus, setWechatSendStatus] = useState<string | null>(null);
   const [runReproducibility, setRunReproducibility] = useState<Record<string, RunReproducibilityLevel>>({});
   const runtimeRunIdsKey = useMemo(() => {
     const runIds = [...new Set(messages
@@ -425,6 +458,24 @@ function ChatWorkspaceImpl({
     return runIds.join("\n");
   }, [messages]);
   const chatStreaming = messages.some((message) => message.streaming);
+
+  useEffect(() => {
+    setWechatConfirmationPending(false);
+    setWechatSendStatus(null);
+    if (channelSource !== "wechat" || !runtimeSessionId) {
+      setWechatCapability(null);
+      return;
+    }
+    let cancelled = false;
+    void desktopApi.getWeChatReplyCapability({ sessionId: runtimeSessionId })
+      .then((value) => { if (!cancelled) setWechatCapability(value); })
+      .catch(() => { if (!cancelled) setWechatCapability({ available: false, reason: "channel_not_running" }); });
+    return () => { cancelled = true; };
+  }, [channelSource, runtimeSessionId]);
+
+  useEffect(() => {
+    setWechatConfirmationPending(false);
+  }, [input]);
 
   useEffect(() => {
     if (!workspacePath || typeof desktopApi.getRunReproductionManifest !== "function") return;
@@ -489,8 +540,10 @@ function ChatWorkspaceImpl({
   const [voiceRuntimeStatus, setVoiceRuntimeStatus] = useState<DesktopVoiceRuntimeStatus | null>(null);
   const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
   const [duplexVoiceCapabilities, setDuplexVoiceCapabilities] = useState<DesktopDuplexVoiceCapabilities | null>(null);
+  const [duplexVoiceReadiness, setDuplexVoiceReadiness] = useState<DesktopDuplexVoiceReadiness | null>(null);
   const [duplexPrivacyDisclosure, setDuplexPrivacyDisclosure] = useState("Realtime voice sends microphone audio to the configured remote Provider.");
   const [duplexPrivacyConfirmed, setDuplexPrivacyConfirmed] = useState(false);
+  const [duplexTextStrategy, setDuplexTextStrategy] = useState<"after_response" | "interrupt_now">("after_response");
   const [voiceConsentRequired, setVoiceConsentRequired] = useState(false);
   const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
   const [voiceTurnState, dispatchVoiceTurnBase] = useReducer(reduceVoiceTurn, initialVoiceTurnState);
@@ -521,8 +574,8 @@ function ChatWorkspaceImpl({
     }
     dispatchVoiceTurnBase(event);
   }, []);
-  const voiceLanguage = voicePreferences.inputLanguage;
-  const voiceDeviceId = voicePreferences.inputDeviceId;
+  const voiceLanguage = voicePreferences.interactionMode === "duplex" ? voicePreferences.realtimeLanguage : voicePreferences.inputLanguage;
+  const voiceDeviceId = voicePreferences.interactionMode === "duplex" ? voicePreferences.realtimeInputDeviceId : voicePreferences.inputDeviceId;
   const voiceModeCapabilities = deriveVoiceModeCapabilities(voiceRuntimeStatus, {
     audioWorklet: typeof AudioWorkletNode !== "undefined",
     serialTts: "speechSynthesis" in window,
@@ -532,7 +585,21 @@ function ChatWorkspaceImpl({
     duplexEnabled: Boolean(duplexVoiceCapabilities),
   });
   const streamingVoiceAvailability = getVoiceModeAvailability("streaming", voiceModeCapabilities);
-  const duplexVoiceAvailability = getVoiceModeAvailability("duplex", voiceModeCapabilities);
+  const negotiatedDuplexVoiceAvailability = getVoiceModeAvailability("duplex", voiceModeCapabilities);
+  const duplexVoiceAvailability = !negotiatedDuplexVoiceAvailability.available
+    ? negotiatedDuplexVoiceAvailability
+    : duplexVoiceReadiness?.available
+      ? { available: true, reason: null }
+      : { available: false, reason: duplexVoiceReadiness?.message ?? "Checking Realtime voice readiness…" };
+  const duplexReadinessReasonCode = duplexVoiceReadiness?.reasonCode
+    ?? (typeof AudioWorkletNode === "undefined" ? "audio_worklet_unavailable"
+      : !navigator.mediaDevices?.getUserMedia ? "media_devices_unavailable" : "internal");
+  const duplexReadinessActions = getDuplexVoiceReadinessActions(duplexReadinessReasonCode);
+  const runDuplexReadinessAction = (action: DuplexVoiceReadinessActionId): void => {
+    if (action === "open_agent_settings") onOpenAgentSettings?.();
+    else if (action === "switch_to_serial") { updateVoicePreferences({ interactionMode: "serial" }); setVoiceError(null); }
+    else void desktopApi.getDuplexVoiceReadiness().then((readiness) => { setDuplexVoiceReadiness(readiness); if (readiness.available) setVoiceError(null); else setVoiceError(readiness.message); }).catch(() => setVoiceError(zh ? "无法重新检查实时对话状态。" : "Realtime conversation readiness could not be checked."));
+  };
   const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
   const voicePlayback = useSystemVoicePlayback();
@@ -590,10 +657,14 @@ function ChatWorkspaceImpl({
     },
   });
   const duplexVoiceInput = useDuplexVoiceInput({
-    threadId: conversationId,
+    threadId: voicePreferences.realtimeTranscriptPolicy === "stable" ? conversationId : undefined,
     deviceId: voiceDeviceId,
+    outputDeviceId: voicePreferences.realtimeOutputDeviceId,
+    volume: voicePreferences.realtimeVolume,
+    autoRecovery: voicePreferences.realtimeAutoRecovery,
+    onOutputDeviceFallback: () => updateVoicePreferences({ realtimeOutputDeviceId: "" }),
     languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
-    voice: voicePreferences.voiceName,
+    voice: voicePreferences.realtimeVoiceName || undefined,
     instructions: "Respond naturally and concisely in a realtime voice conversation.",
     enableToolCalling: true,
     toolExecutor: {
@@ -608,6 +679,10 @@ function ChatWorkspaceImpl({
       },
     },
   });
+  const duplexDisclosureFingerprint = realtimeDisclosureFingerprint(duplexVoiceReadiness?.providerId, duplexVoiceReadiness?.modelId);
+  const duplexDisclosureAcknowledged = Boolean(duplexDisclosureFingerprint && voicePreferences.realtimeDisclosureFingerprint === duplexDisclosureFingerprint) || duplexPrivacyConfirmed;
+  const duplexHudState = deriveDuplexHudState({ phase: duplexVoiceInput.phase, turnPhase: duplexVoiceInput.turn.phase, microphonePaused: duplexVoiceInput.microphonePaused, speechCandidate: Boolean(duplexVoiceInput.vad?.speechCandidate), playbackStarted: duplexVoiceInput.playback.started });
+  const duplexFailureRecovery = duplexVoiceInput.failure ? getDuplexErrorRecovery(duplexVoiceInput.failure.code) : null;
   useEffect(() => {
     if (!streamingTranscriptRepair?.candidate || streamingVoiceInput.turnState.phase !== "review") return;
     streamingVoiceInput.beginRepair();
@@ -776,6 +851,8 @@ function ChatWorkspaceImpl({
     return () => { (form as any).__drsaiDropOff?.(); };
   }, []);
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const duplexStartButtonRef = useRef<HTMLButtonElement | null>(null);
+  const duplexWasRunningRef = useRef(false);
   const toolsMenuRef = useRef<HTMLDivElement | null>(null);
   const introPickerRef = useRef<HTMLDivElement | null>(null);
 
@@ -1039,6 +1116,7 @@ function ChatWorkspaceImpl({
     statusContent: message.interrupted
       ? (zh ? `已听到：${message.heardContent || "（未完整播放）"}` : `Heard: ${message.heardContent || "(not fully played)"}`)
       : undefined,
+    ...(message.interrupted ? { statusContent: zh ? (message.heardContent ? `播放已中断，已听到：${message.heardContent}` : `播放在约 ${Math.round(message.voice.playedAudioMs ?? 0)} 毫秒处中断；无法确定精确听到的文字。`) : interruptedVoiceStatus(message.voice) } : {}),
   })), [duplexVoiceInput.history, zh]);
   const visibleMessages = useMemo(() => {
     const existing = new Set(conversationMessages.map((message) => message.id));
@@ -1056,7 +1134,8 @@ function ChatWorkspaceImpl({
   const emptyChatPreferenceNotice = emptyChat
     ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
     : "";
-  const activeAgentName = selectedAgentName?.trim() || "OpenDrSai";
+  const activeAgent = agentOptions.find((agent) => agent.id === selectedAgentId);
+  const activeAgentName = selectedAgentName?.trim() || activeAgent?.name || "OpenDrSai";
   const isLocalOpenDrSaiAgent = agentOptions.some(
     (agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex",
   );
@@ -1838,6 +1917,25 @@ function ChatWorkspaceImpl({
   }, [openSearch]);
 
   useEffect(() => {
+    function handleDuplexShortcut(event: KeyboardEvent): void {
+      const action = getDuplexShortcutAction({ key: event.key, altKey: event.altKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, enabled: voicePreferences.interactionMode === "duplex", phase: duplexVoiceInput.phase }); if (!action) return;
+      event.preventDefault();
+      if (action === "toggle_start") void toggleVoiceRecording();
+      else if (action === "toggle_pause") void (duplexVoiceInput.microphonePaused ? duplexVoiceInput.resumeMicrophone() : duplexVoiceInput.pauseMicrophone());
+      else if (action === "stop") void duplexVoiceInput.stop();
+      else void duplexVoiceInput.interrupt("manual");
+    }
+    window.addEventListener("keydown", handleDuplexShortcut);
+    return () => window.removeEventListener("keydown", handleDuplexShortcut);
+  }, [duplexVoiceInput.phase, duplexVoiceInput.microphonePaused, voicePreferences.interactionMode]);
+
+  useEffect(() => {
+    const running = ["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase);
+    if (duplexWasRunningRef.current && !running) duplexStartButtonRef.current?.focus();
+    duplexWasRunningRef.current = running;
+  }, [duplexVoiceInput.phase]);
+
+  useEffect(() => {
     if (!hasDesktopApi() || typeof desktopApi.getVoiceRuntimeStatus !== "function") return;
     void desktopApi.getVoiceRuntimeStatus().then((runtime) => {
       setVoiceRuntimeStatus(runtime);
@@ -1850,6 +1948,9 @@ function ChatWorkspaceImpl({
     void desktopApi.getDuplexVoiceCapabilities()
       .then(setDuplexVoiceCapabilities)
       .catch(() => setDuplexVoiceCapabilities(null));
+    void desktopApi.getDuplexVoiceReadiness()
+      .then(setDuplexVoiceReadiness)
+      .catch(() => setDuplexVoiceReadiness(null));
     void desktopApi.getMyDrSaiAgentModelPolicy().then((policy) => {
       const ref = policy.effective_realtime_voice_ref ?? policy.realtime_voice_model?.ref;
       setDuplexPrivacyDisclosure(ref
@@ -1858,20 +1959,56 @@ function ChatWorkspaceImpl({
     }).catch(() => undefined);
   }, []);
 
-  useEffect(() => { setDuplexPrivacyConfirmed(false); }, [duplexPrivacyDisclosure, conversationId]);
+  useEffect(() => { setDuplexPrivacyConfirmed(false); }, [duplexDisclosureFingerprint]);
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault();
-    if (["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
-      setVoiceError(zh ? "实时语音会话期间暂不发送文字；草稿已保留，请先结束会话。" : "Text sending is paused during a Realtime voice session. Your draft is preserved; end the session first.");
+    if (channelSource === "wechat") {
+      const decision = decideWeChatComposerSubmit({
+        channelSource, trigger: "button", available: wechatCapability?.available === true,
+        confirmed: wechatConfirmationPending, sending: wechatSending, hasText: Boolean(input.trim()),
+      });
+      if (decision === "blocked" || !runtimeSessionId) return;
+      if (decision === "request_confirmation") {
+        setWechatConfirmationPending(true);
+        setWechatSendStatus(null);
+        return;
+      }
+      setWechatSending(true);
+      const idempotencyKey = `wechat-desktop:${crypto.randomUUID()}`;
+      void desktopApi.sendToWeChat({
+        sessionId: runtimeSessionId,
+        text: input.trim(),
+        idempotencyKey,
+        confirmExternalSend: true,
+      }).then((result) => {
+        setWechatSendStatus(result.status === "sent" ? (zh ? "已发送到微信" : "Sent to WeChat") : (zh ? "发送结果未知，请勿立即重复发送" : "Delivery outcome is unknown; do not resend immediately"));
+        if (result.status === "sent") onInputChange("");
+      }).catch((error) => {
+        setWechatSendStatus(error instanceof Error ? error.message : String(error));
+      }).finally(() => {
+        setWechatSending(false);
+        setWechatConfirmationPending(false);
+      });
+      return;
+    }
+    if (duplexVoiceInput.phase === "active") { void submitDuplexText(); return; }
+    if (["starting", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
+      setVoiceError(zh ? "实时语音正在连接、恢复或结束；文字草稿已保留，请稍后重试。" : "Realtime voice is connecting, recovering, or ending. Your text draft is preserved; retry shortly.");
       return;
     }
     void submitWithAttachments();
   }
 
+  async function submitDuplexText(): Promise<void> { if (attachments.length || externalAttachments.length || inlineMentionAttachments.length) { setVoiceError(zh ? "实时语音中的文字消息暂不支持附件；请先移除附件。" : "Text messages inside Realtime voice do not support attachments yet. Remove attachments first."); return; } const value = input.trim(); if (!value) return; const submitted = await duplexVoiceInput.sendText(value, duplexTextStrategy); if (submitted) { onInputChange(""); setVoiceError(null); } else setVoiceError(zh ? "文字未发送。可能已有一条待发送消息，或实时连接不可用。" : "Text was not sent. Another message may already be pending, or Realtime is unavailable."); }
+
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
     if (!shouldSubmitTextInput(event.nativeEvent)) return;
     event.preventDefault();
+    if (decideWeChatComposerSubmit({
+      channelSource, trigger: "keyboard", available: wechatCapability?.available === true,
+      confirmed: wechatConfirmationPending, sending: wechatSending, hasText: Boolean(input.trim()),
+    }) === "blocked") return;
     void submitWithAttachments();
   }
 
@@ -1890,8 +2027,9 @@ function ChatWorkspaceImpl({
   }
 
   async function submitWithAttachments(): Promise<void> {
-    if (["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
-      setVoiceError(zh ? "实时语音会话期间暂不发送文字；草稿已保留，请先结束会话。" : "Text sending is paused during a Realtime voice session. Your draft is preserved; end the session first.");
+    if (duplexVoiceInput.phase === "active") { await submitDuplexText(); return; }
+    if (["starting", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
+      setVoiceError(zh ? "实时语音正在连接、恢复或结束；文字草稿已保留，请稍后重试。" : "Realtime voice is connecting, recovering, or ending. Your text draft is preserved; retry shortly.");
       return;
     }
     if (showStreamingVoiceCaptureBar || streamingVoiceInput.turnState.phase === "repairing") {
@@ -2026,8 +2164,12 @@ function ChatWorkspaceImpl({
   }
 
   async function startDuplexVoiceRecording(privacyAlreadyConfirmed: boolean): Promise<void> {
-    if (!duplexVoiceAvailability.available) { setVoiceError(duplexVoiceAvailability.reason ?? "Realtime voice is unavailable."); return; }
-    if (!privacyAlreadyConfirmed && !duplexPrivacyConfirmed) { setVoiceError(duplexPrivacyDisclosure); return; }
+    const readiness = await desktopApi.getDuplexVoiceReadiness().catch(() => null);
+    setDuplexVoiceReadiness(readiness);
+    const browserReady = typeof AudioWorkletNode !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+    if (!browserReady) { setVoiceError(zh ? "实时语音需要 AudioWorklet 和麦克风设备支持。" : "Realtime voice requires AudioWorklet and microphone device support."); return; }
+    if (!readiness?.available) { setVoiceError(readiness?.message ?? duplexVoiceAvailability.reason ?? "Realtime voice is unavailable."); return; }
+    if (!privacyAlreadyConfirmed && !duplexDisclosureAcknowledged) { setVoiceError(duplexPrivacyDisclosure); return; }
     voicePlayback.stop(); streamingVoiceOutput.stop(); setVoiceError(null); await duplexVoiceInput.start();
   }
 
@@ -2747,6 +2889,11 @@ function ChatWorkspaceImpl({
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
   });
 
+  const downloadStructuredArtifact = useEventCallback((part: ArtifactPart): void => {
+    if (!part.path || !workspacePath || part.downloadable !== true) return;
+    void desktopApi.saveWorkspaceFileAs({ workspacePath, path: part.path, suggestedName: part.name });
+  });
+
   const openStructuredCitation = useEventCallback((part: CitationPart): void => {
     if (part.url && isSafeWebUrl(part.url)) {
       openPreviewBrowser(part.url);
@@ -2950,6 +3097,7 @@ function ChatWorkspaceImpl({
                     <button type="button" onClick={() => void onRetryMessage(message.id, "same_session")}>{zh ? "在当前会话重试" : "Retry in this session"}</button>
                     <button type="button" onClick={() => void onRetryMessage(message.id, "new_session")}>{zh ? "分支到新会话" : "Branch to a new session"}</button>
                   </span> : null}
+                  {onReportFeedback ? <button type="button" data-testid={`message-feedback-${message.id}`} onClick={() => onReportFeedback({ source: "error", errorCode: message.replyFailed ? "reply_incomplete" : "chat_error", errorType: "assistant_message_failure", runId: message.runtimeRunId })}>{zh ? "反馈这个问题" : "Report this problem"}</button> : null}
                 </div>
               ) : message.content && message.role === "user" ? (
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
@@ -2964,6 +3112,7 @@ function ChatWorkspaceImpl({
                     configuredCapabilityRequestIds={configuredCapabilityRequests}
                     onOpenLink={handleMarkdownLink}
                     onOpenArtifact={openStructuredArtifact}
+                    onDownloadArtifact={downloadStructuredArtifact}
                     onOpenCitation={openStructuredCitation}
                     onRespondInteraction={(part, response) => respondToStructuredInteraction(message.structuredTurn!.turnId, part, response)}
                     onRequestTextInteraction={(part) => requestStructuredTextInput(message.structuredTurn!.turnId, part)}
@@ -3070,7 +3219,7 @@ function ChatWorkspaceImpl({
         </div>
       )}
       {emptyChat && !conversationHistoryPending && (
-        <div className="empty-chat-intro" role="group" aria-label={zh ? "新建会话" : "New conversation"}>
+        <div className={`empty-chat-intro${introMenuOpen ? " menu-open" : ""}`} role="group" aria-label={zh ? "新建会话" : "New conversation"}>
           <img className="empty-chat-logo" src={drsaiLogo} alt="OpenDrSai" />
           <h1>
             <span>
@@ -3149,7 +3298,7 @@ function ChatWorkspaceImpl({
                           className={agent.id === selectedAgentId ? "active" : ""}
                           onClick={() => selectAgent(agent.id)}
                         >
-                          <Bot size={16} />
+                          <AgentInlineIcon agent={agent} size={16} />
                           <span><b>{agent.name}</b><small>{getAgentOptionMeta(agent, zh)}</small></span>
                           {agent.id === selectedAgentId ? <Check size={16} aria-label={zh ? "当前智能体" : "Current agent"} /> : null}
                         </button>
@@ -3197,6 +3346,15 @@ function ChatWorkspaceImpl({
         onSubmit={handleSubmit}
       >
         <div className="composer-shell">
+          {channelSource === "wechat" ? (
+            <div className="wechat-outbound-notice" data-testid="wechat-outbound-notice" role="status">
+              <strong>{zh ? "微信会话" : "WeChat conversation"}</strong>
+              <span>{wechatCapability?.available
+                ? (wechatConfirmationPending ? (zh ? "再次点击“确认发送到微信”才会外发。" : "Click “Confirm send to WeChat” to send externally.") : (zh ? "普通 Desktop 消息不会外发；请使用明确的发送到微信操作。" : "Ordinary Desktop messages are not sent externally; use the explicit WeChat action."))
+                : (zh ? "当前无法回复：等待对方先发消息，或启动微信频道。" : "Reply unavailable: wait for an inbound message or start the WeChat channel.")}</span>
+              {wechatSendStatus ? <small>{wechatSendStatus}</small> : null}
+            </div>
+          ) : null}
           {externalAttachments.some((attachment) => attachment.kind === "terminal") && (
             <div className="composer-terminal-cards">
               {externalAttachments.map((attachment, index) =>
@@ -3726,14 +3884,52 @@ function ChatWorkspaceImpl({
                   ) : null}
                 </div>
               ) : showDuplexVoiceCaptureBar ? (
-                <div className="composer-voice-status" data-testid="duplex-voice-status" aria-live="polite">
-                  <span>{zh ? "实时语音" : "Realtime voice"}: {duplexVoiceInput.turn.phase}</span>
+                <div className="composer-voice-status" data-testid="duplex-voice-status" data-state={duplexHudState}>
+                  <strong role="status" aria-live="polite" aria-atomic="true">{zh ? "实时语音" : "Realtime voice"}: {duplexHudLabel(duplexHudState, zh)}</strong>
+                  <label><span>{zh ? "输入音量" : "Input level"}</span><progress aria-label={zh ? "实时语音输入音量" : "Realtime voice input level"} value={Math.min(1, duplexVoiceInput.vad?.level ?? 0)} max="1" /></label>
+                  <small>{zh ? `输出：${duplexVoiceInput.playback.outputState === "running" ? "正常" : "已暂停"}` : `Output: ${duplexVoiceInput.playback.outputState}`}</small>
                   {duplexVoiceInput.inputTranscript ? <small>{duplexVoiceInput.inputTranscript}</small> : null}
                   {duplexVoiceInput.outputTranscript ? <small>{duplexVoiceInput.outputTranscript}</small> : null}
                   {duplexVoiceInput.flowControl.paused ? <small>{zh ? "音频上行暂缓" : "Audio uplink paused"}</small> : null}
+                  <label>
+                    <span>{zh ? "麦克风" : "Microphone"}</span>
+                    <select aria-label={zh ? "实时语音麦克风" : "Realtime voice microphone"} value={duplexVoiceInput.constraints?.requestedDeviceId ?? ""} disabled={duplexVoiceInput.deviceSwitching} onChange={(event) => void duplexVoiceInput.switchInputDevice(event.target.value)}>
+                      <option value="">{zh ? "系统默认" : "System default"}</option>
+                      {duplexVoiceInput.devices.filter((device) => device.deviceId).map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || (zh ? "麦克风" : "Microphone")}</option>)}
+                    </select>
+                  </label>
+                  {duplexVoiceInput.deviceSwitching ? <small>{zh ? "正在切换麦克风…" : "Switching microphone…"}</small> : null}
+                  {duplexVoiceInput.deviceSwitchError ? <small role="alert">{zh ? `麦克风切换失败：${duplexVoiceInput.deviceSwitchError}` : `Microphone switch failed: ${duplexVoiceInput.deviceSwitchError}`}</small> : null}
+                  <label>
+                    <span>{zh ? "扬声器" : "Output"}</span>
+                    <select aria-label={zh ? "实时语音输出设备" : "Realtime voice output device"} value={voicePreferences.realtimeOutputDeviceId} disabled={duplexVoiceInput.outputDeviceSwitching} onChange={(event) => { const sinkId = event.target.value; void duplexVoiceInput.switchOutputDevice(sinkId).then((switched) => { if (switched) updateVoicePreferences({ realtimeOutputDeviceId: sinkId }); }); }}>
+                      <option value="">{zh ? "系统默认" : "System default"}</option>
+                      {duplexVoiceInput.outputDevices.filter((device) => device.deviceId).map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || (zh ? "音频输出" : "Audio output")}</option>)}
+                    </select>
+                  </label>
+                  <label><span>{zh ? "语音音量" : "Voice volume"}</span><input aria-label={zh ? "实时语音音量" : "Realtime voice volume"} type="range" min="0" max="1" step="0.05" value={voicePreferences.realtimeVolume} onChange={(event) => { const volume = Number(event.target.value); duplexVoiceInput.setVolume(volume); updateVoicePreferences({ realtimeVolume: volume }); }} /></label>
+                  {duplexVoiceInput.outputDeviceError ? <small role="alert">{duplexVoiceInput.outputDeviceError}</small> : null}
+                  {duplexVoiceInput.playbackRecovery ? <small role="alert">{duplexVoiceInput.playbackRecovery} <button type="button" onClick={() => void duplexVoiceInput.retryPlayback()}>{zh ? "重试" : "Retry"}</button></small> : null}
+                  {duplexVoiceInput.playbackDegradation ? <small role="status">{zh ? "网络抖动导致一小段音频缺失，播放已自动继续。" : duplexVoiceInput.playbackDegradation}</small> : null}
+                  {duplexVoiceInput.connectionNotice ? <small role="status">{duplexVoiceInput.connectionNotice}</small> : null}
+                  {duplexVoiceInput.reconnectCountdownSeconds > 0 ? <small role="timer">{zh ? `${duplexVoiceInput.reconnectCountdownSeconds} 秒后重试连接` : `Retrying connection in ${duplexVoiceInput.reconnectCountdownSeconds}s`}</small> : null}
+                  {duplexVoiceInput.playbackFlowControl.paused ? <small>{zh ? "正在按播放速度接收语音…" : "Receiving voice at playback speed…"}</small> : null}
+                  {duplexVoiceInput.playback.networkQuality !== "stable" ? <small role="status">{zh ? `网络波动，语音缓冲已调整为 ${duplexVoiceInput.playback.jitterBufferTargetMs} 毫秒。` : `Network is ${duplexVoiceInput.playback.networkQuality}; voice buffer adjusted to ${duplexVoiceInput.playback.jitterBufferTargetMs} ms.`}</small> : null}
+                  {duplexVoiceInput.quality?.issues.map((issue) => <small key={issue} role="status">{duplexCaptureQualityMessage(issue, zh)}</small>)}
                   {duplexVoiceInput.usageWarning ? <small>{duplexVoiceInput.usageWarning}</small> : null}
+                  <small data-testid="duplex-voice-slo">TTFA {duplexVoiceInput.slo.ttfaMs === null ? "—" : `${Math.round(duplexVoiceInput.slo.ttfaMs)} ms`} · Stop {duplexVoiceInput.slo.stopLatencyMs === null ? "—" : `${Math.round(duplexVoiceInput.slo.stopLatencyMs)} ms`} · Interrupt {duplexVoiceInput.slo.interruptAccuracy === null ? "—" : `${Math.round(duplexVoiceInput.slo.interruptAccuracy * 100)}%`} · Underruns {duplexVoiceInput.slo.underruns} · Reconnects {duplexVoiceInput.slo.reconnects} · Audio {duplexVoiceInput.slo.inputAudioSeconds.toFixed(1)}/{duplexVoiceInput.slo.outputAudioSeconds.toFixed(1)}s · Cost {duplexVoiceInput.slo.estimatedCostUsd === null ? "unavailable" : `$${duplexVoiceInput.slo.estimatedCostUsd.toFixed(4)}`}</small>
+                  <span data-testid="duplex-temporary-diagnostics">
+                    {duplexVoiceInput.temporaryDiagnosticsExpiresAt ? <><small>Temporary numeric diagnostics active until {new Date(duplexVoiceInput.temporaryDiagnosticsExpiresAt).toLocaleTimeString()}.</small><button type="button" onClick={duplexVoiceInput.disableTemporaryDiagnostics}>Disable and erase</button></> : <button type="button" onClick={() => duplexVoiceInput.enableTemporaryDiagnostics()}>Enable temporary diagnostics (10 min)</button>}
+                  </span>
+                  <label><span>{zh ? "文字发送" : "Text timing"}</span><select aria-label={zh ? "实时语音文字发送时机" : "Realtime text send timing"} value={duplexTextStrategy} onChange={(event) => setDuplexTextStrategy(event.target.value as "after_response" | "interrupt_now")}><option value="after_response">{zh ? "当前回答后发送" : "Send after current answer"}</option><option value="interrupt_now">{zh ? "立即打断并发送" : "Interrupt and send now"}</option></select></label>
+                  {duplexVoiceInput.pendingText ? <small role="status">{zh ? "文字将在当前回答结束后发送。" : "Text will be sent after the current answer."} <button type="button" onClick={() => { const restored = duplexVoiceInput.cancelPendingText(); if (restored) onInputChange(restored); }}>{zh ? "取消并恢复草稿" : "Cancel and restore draft"}</button></small> : null}
                   {Object.values(duplexVoiceInput.toolStatuses).slice(-1).map((tool, index) => <small key={`${tool.status}-${index}`}>{tool.detail ?? tool.status}</small>)}
-                  <button type="button" onClick={() => void duplexVoiceInput.stop()}>{zh ? "结束" : "Stop"}</button>
+                  <button type="button" onClick={() => void duplexVoiceInput.finishTurn()} disabled={duplexVoiceInput.microphonePaused}>{zh ? "结束本轮发言" : "Finish turn"}</button>
+                  <button type="button" aria-keyshortcuts="Alt+Shift+P" aria-pressed={duplexVoiceInput.microphonePaused} onClick={() => void (duplexVoiceInput.microphonePaused ? duplexVoiceInput.resumeMicrophone() : duplexVoiceInput.pauseMicrophone())}>{duplexVoiceInput.microphonePaused ? (zh ? "继续麦克风" : "Resume microphone") : (zh ? "暂停麦克风" : "Pause microphone")}</button>
+                  {duplexVoiceInput.microphonePaused ? <strong role="status">{zh ? "麦克风已暂停；实时会话和工具仍保持连接。" : "Microphone paused; the Realtime Session and tools remain connected."}</strong> : null}
+                  <button type="button" aria-keyshortcuts="Alt+Shift+I" onClick={() => void duplexVoiceInput.interrupt("manual")}>{zh ? "立即打断" : "Interrupt now"}</button>
+                  <button type="button" aria-keyshortcuts="Alt+Shift+S" onClick={() => void duplexVoiceInput.stop()}>{zh ? "结束会话" : "End session"}</button>
+                  <button type="button" onClick={() => void duplexVoiceInput.cancel()}>{zh ? "立即取消" : "Cancel now"}</button>
                 </div>
               ) : showStreamingVoiceCaptureBar && streamingComposerProjection ? (
                 <StreamingComposerProjectionEditor
@@ -3785,7 +3981,9 @@ function ChatWorkspaceImpl({
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
                     placeholder={
-                      canChat
+                      channelSource === "wechat"
+                        ? (zh ? "输入要明确发送到微信的回复…" : "Type a reply to explicitly send to WeChat…")
+                        : canChat
                         ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
                         : chatUnavailableReason ?? (zh ? "请稍候，当前任务正在处理..." : "Please wait while the current task is running...")
                     }
@@ -3833,12 +4031,28 @@ function ChatWorkspaceImpl({
                     </button>
                   </span>
                 ) : null}
-                {voicePreferences.interactionMode === "duplex" && !duplexPrivacyConfirmed && voiceError === duplexPrivacyDisclosure ? (
+                {voicePreferences.interactionMode === "duplex" && !duplexDisclosureAcknowledged && voiceError === duplexPrivacyDisclosure ? (
                   <span className="composer-voice-error-actions" aria-label="Realtime voice privacy confirmation">
-                    <button type="button" onClick={() => { setDuplexPrivacyConfirmed(true); void startDuplexVoiceRecording(true); }}>{zh ? "了解并开始实时语音" : "I understand—start Realtime voice"}</button>
+                    <button type="button" onClick={() => { updateVoicePreferences({ realtimeDisclosureFingerprint: duplexDisclosureFingerprint }); setDuplexPrivacyConfirmed(true); void startDuplexVoiceRecording(true); }}>{zh ? "了解并开始实时语音" : "I understand—start Realtime voice"}</button>
                     <button type="button" onClick={() => setVoiceError(null)}>{zh ? "暂不使用" : "Not now"}</button>
                   </span>
                 ) : null}
+                {duplexVoiceInput.occupancy?.occupied && !duplexVoiceInput.occupancy.ownedByCaller ? (
+                  <span className="composer-voice-error-actions" aria-label={zh ? "实时对话占用处理" : "Realtime conversation occupancy actions"} data-testid="duplex-voice-occupancy">
+                    <small>{zh ? `${duplexVoiceInput.occupancy.ownerLabel ?? "另一个窗口"} 从 ${duplexVoiceInput.occupancy.startedAt ? new Date(duplexVoiceInput.occupancy.startedAt).toLocaleTimeString() : "未知时间"} 开始占用实时对话。` : `${duplexVoiceInput.occupancy.ownerLabel ?? "Another window"} has owned the Realtime conversation since ${duplexVoiceInput.occupancy.startedAt ? new Date(duplexVoiceInput.occupancy.startedAt).toLocaleTimeString() : "an unknown time"}.`}</small>
+                    <button type="button" onClick={() => void duplexVoiceInput.takeOver()}>{zh ? "结束原会话并接管" : "End it and take over"}</button>
+                    <button type="button" onClick={() => { duplexVoiceInput.declineTakeOver(); updateVoicePreferences({ interactionMode: "serial" }); setVoiceError(null); }}>{zh ? "使用单次输入" : "Use single input"}</button>
+                  </span>
+                ) : null}
+                {voicePreferences.interactionMode === "duplex" && duplexVoiceInput.failure && duplexFailureRecovery ? <section className="composer-voice-recovery" role="alert" data-testid="duplex-runtime-recovery" data-reason-code={duplexVoiceInput.failure.code}>
+                  <strong>{zh ? "实时语音需要处理" : "Realtime voice needs attention"}</strong>
+                  <small>{duplexVoiceInput.failure.message}</small>
+                  <small>{zh ? `原因代码：${duplexVoiceInput.failure.code}` : `Reason code: ${duplexVoiceInput.failure.code}`}{duplexVoiceInput.failure.requestId ? ` · Trace: ${duplexVoiceInput.failure.requestId}` : ""}</small>
+                  <span className="composer-voice-error-actions">
+                    <button type="button" onClick={() => { if (duplexFailureRecovery.primary === "open_agent_settings") onOpenAgentSettings?.(); else if (duplexFailureRecovery.primary === "switch_to_serial") updateVoicePreferences({ interactionMode: "serial" }); else void startDuplexVoiceRecording(false); }}>{duplexFailureRecovery.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexFailureRecovery.primary === "switch_to_serial" ? (zh ? "使用单次输入" : "Use single input") : (zh ? "重试" : "Retry")}</button>
+                    {duplexFailureRecovery.fallback ? <button type="button" onClick={() => updateVoicePreferences({ interactionMode: "serial" })}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
+                  </span>
+                </section> : null}
                 {voiceError && voiceRetryBlobRef.current && !voiceConsentRequired ? (
                   <span className="composer-voice-error-actions">
                     <button type="button" onClick={() => void retryVoiceTranscription()}>Retry</button>
@@ -3912,7 +4126,7 @@ function ChatWorkspaceImpl({
                   onClick={() => toggleMetaMenu("configuration")}
                   title={zh ? "智能体、模型、推理强度和任务模式" : "Agent, model, reasoning effort, and task mode"}
                 >
-                  <Bot size={14} />
+                  <AgentInlineIcon agent={activeAgent} size={14} />
                   <span>{composerConfigurationSummary}</span>
                   <ChevronDown size={13} />
                 </button>
@@ -3936,7 +4150,8 @@ function ChatWorkspaceImpl({
                     {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "agent" ? (zh ? "选择智能体" : "Choose agent") : configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择任务模式" : "Choose task mode")}>
                       <div className="composer-configuration-options">
                         {configurationSection === "agent" ? agentOptions.map((agent) => (
-                          <button key={agent.id} type="button" role="menuitemradio" aria-checked={agent.id === selectedAgentId} className={agent.id === selectedAgentId ? "active" : ""} onClick={() => selectAgent(agent.id)}>
+                          <button key={agent.id} type="button" role="menuitemradio" aria-checked={agent.id === selectedAgentId} className={`composer-agent-option${agent.id === selectedAgentId ? " active" : ""}`} onClick={() => selectAgent(agent.id)}>
+                            <AgentInlineIcon agent={agent} size={16} />
                             <span><strong>{agent.name}</strong><small>{getAgentOptionMeta(agent, zh)}</small></span>
                             {agent.id === selectedAgentId ? <Check size={14} aria-hidden /> : null}
                           </button>
@@ -4022,15 +4237,30 @@ function ChatWorkspaceImpl({
                   aria-label={zh ? "语音交互模式" : "Voice interaction mode"}
                   title={streamingVoiceAvailability.reason ?? voiceRuntimeDisclosure ?? voiceRuntimeLabel}
                 >
-                  <option value="serial">{zh ? "串行" : "Serial"}</option>
-                  <option value="streaming" disabled={!streamingVoiceAvailability.available}>{zh ? "流式" : "Streaming"}</option>
-                  <option value="duplex" disabled={!duplexVoiceAvailability.available}>{zh ? "实时" : "Realtime"}</option>
+                  <option value="serial">{zh ? "单次语音输入" : "Single voice input"}</option>
+                  <option value="duplex" disabled={!duplexVoiceAvailability.available}>{zh ? "实时对话" : "Realtime conversation"}</option>
                 </select>
+                {voicePreferences.interactionMode === "duplex" && duplexVoiceAvailability.available && ["idle", "failed"].includes(duplexVoiceInput.phase) && !duplexDisclosureAcknowledged ? <section className="composer-voice-preflight" data-testid="duplex-voice-preflight" aria-labelledby="duplex-preflight-title">
+                  <strong id="duplex-preflight-title">{zh ? "开始实时语音前" : "Before Realtime voice starts"}</strong>
+                  <ul>
+                    <li>{zh ? `服务：${duplexVoiceReadiness?.providerId ?? "未知"} / ${duplexVoiceReadiness?.modelId ?? "未知"}` : `Provider/model: ${duplexVoiceReadiness?.providerId ?? "unknown"} / ${duplexVoiceReadiness?.modelId ?? "unknown"}`}</li>
+                    <li>{zh ? "发送：会话期间麦克风音频会流式发送给该服务。" : "Sending: microphone audio is streamed to this Provider while the Session is active."}</li>
+                    <li>{zh ? "保存：稳定的文字转录会保存到当前任务；不保存原始音频。" : "Saving: stable transcripts are saved to this task; raw audio is not saved."}</li>
+                    <li>{duplexVoiceCapabilities?.supportsToolCalling ? (zh ? "工具：读取类工具可直接运行；写入类工具必须在审批中心点击批准。" : "Tools: reads may run directly; writes require a click in Approval Center.") : (zh ? "工具：当前模型不会调用工具。" : "Tools: this model will not call tools.")}</li>
+                  </ul>
+                  <button type="button" onClick={() => { updateVoicePreferences({ realtimeDisclosureFingerprint: duplexDisclosureFingerprint }); setDuplexPrivacyConfirmed(true); setVoiceError(null); void startDuplexVoiceRecording(true); }}>{zh ? "确认并开始" : "Confirm and start"}</button>
+                  <button type="button" onClick={() => updateVoicePreferences({ interactionMode: "serial" })}>{zh ? "改用单次输入" : "Use single input"}</button>
+                </section> : null}
+                {voicePreferences.interactionMode === "duplex" && !duplexVoiceAvailability.available ? <div className="composer-voice-recovery" role="alert" data-testid="duplex-voice-recovery">
+                  <small>{duplexVoiceAvailability.reason}</small>
+                  <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.primary)}>{duplexReadinessActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexReadinessActions.primary === "switch_to_serial" ? (zh ? "使用单次输入" : "Use single input") : (zh ? "重新检查" : "Check again")}</button>
+                  {duplexReadinessActions.fallback ? <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.fallback!)}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
+                </div> : null}
                 {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).length > 1 ? (
                   <select
                     className="composer-voice-device"
                     value={voiceDeviceId}
-                    onChange={(event) => updateVoicePreferences({ inputDeviceId: event.target.value })}
+                    onChange={(event) => updateVoicePreferences(voicePreferences.interactionMode === "duplex" ? { realtimeInputDeviceId: event.target.value } : { inputDeviceId: event.target.value })}
                     disabled={showAnyVoiceCaptureBar}
                     aria-label="Microphone device"
                     title="Microphone device"
@@ -4067,10 +4297,12 @@ function ChatWorkspaceImpl({
                   </button>
                 ) : null}
                 <button
+                  ref={duplexStartButtonRef}
                   type="button"
                   className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
                   disabled={voiceState === "requesting_permission" || voiceState === "processing" || duplexVoiceInput.phase === "starting" || duplexVoiceInput.phase === "stopping"}
                   aria-pressed={voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active"}
+                  aria-keyshortcuts={voicePreferences.interactionMode === "duplex" ? "Alt+Shift+V" : undefined}
                   aria-label={
                     voiceState === "processing"
                       ? "Transcribing voice input"
@@ -4112,9 +4344,11 @@ function ChatWorkspaceImpl({
                     </button>
                   </>
                 ) : (
-                  <button className="composer-submit" type="submit" disabled={!input.trim() || (!canChat && !materialSuggestionRuntimeReady && !canSaveLocalPreference && !canAnswerMaterialInventoryLocally && !canAnswerMaterialQuestionLocally)}>
+                  <button className="composer-submit" data-testid={channelSource === "wechat" ? "send-to-wechat" : undefined} type="submit" disabled={!input.trim() || wechatSending || (channelSource === "wechat" ? !wechatCapability?.available : (!canChat && !materialSuggestionRuntimeReady && !canSaveLocalPreference && !canAnswerMaterialInventoryLocally && !canAnswerMaterialQuestionLocally))}>
                     <Send size={16} />
-                    {zh ? "发送" : "Send"}
+                    {channelSource === "wechat"
+                      ? wechatSending ? (zh ? "正在发送…" : "Sending…") : wechatConfirmationPending ? (zh ? "确认发送到微信" : "Confirm send to WeChat") : (zh ? "发送到微信" : "Send to WeChat")
+                      : (zh ? "发送" : "Send")}
                   </button>
                 )}
               </div>
@@ -5421,6 +5655,17 @@ function getAgentOptionMeta(agent: DesktopAgent, zh: boolean): string {
         ? zh ? "未启动" : "Stopped"
         : zh ? "不可达" : "Unreachable";
   return `${source} · ${status}`;
+}
+
+function AgentInlineIcon({ agent, size }: { agent?: DesktopAgent; size: number }): React.JSX.Element {
+  const isCodex = agent?.id === "my-codex";
+  const logo = agent?.source === "local" ? drsaiLogo : agent?.logo;
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [logo]);
+  if (isCodex) return <OpenAiBrandIcon size={size} className="agent-inline-icon" />;
+  return logo && !failed
+    ? <img className="agent-inline-icon" src={logo} alt="" width={size} height={size} onError={() => setFailed(true)} />
+    : <Bot size={size} aria-hidden />;
 }
 
 function getThinkingEffortLabel(effort: ThinkingEffort, zh: boolean): string {

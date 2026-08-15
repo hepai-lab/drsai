@@ -53,6 +53,33 @@ export function listExternalConnectionReadiness(
         "Covered by verify:external-connections and verify:channel-adapters without mobile device or push-provider access.",
     },
     {
+      id: "wechat",
+      name: "WeChat",
+      status: "partial",
+      configured: false,
+      readOnly: false,
+      capabilitySources: [
+        "wechat-chat",
+        "Runtime-owned ilink QR authorization",
+        "AgentSession user isolation",
+        "bounded text replies",
+      ],
+      evidence: [
+        "Desktop exposes typed status, login, start, stop and logout operations",
+        "Provider credentials and traffic stay in the authenticated local Runtime",
+        "Outbound high-risk Agent actions retain the Runtime approval boundary",
+      ],
+      gaps: [
+        "Real-account packaged acceptance",
+        "System credential-store migration",
+        "Non-text message support",
+      ],
+      approvalBoundary:
+        "WeChat text may enter an isolated Agent session; protected tools fail closed unless the existing Runtime approval policy allows execution.",
+      verification:
+        "Covered by fake-provider authorization, lifecycle and Desktop IPC contracts; real WeChat access is reserved for manual packaged acceptance.",
+    },
+    {
       id: "github",
       name: "GitHub",
       status: githubAdapter?.configured ? "available" : "partial",
@@ -366,6 +393,7 @@ function buildReconnectPolicy(
   ];
   const providerLabel = {
     mobile: "mobile pairing",
+    wechat: "WeChat ilink",
     github: "GitHub OAuth/API",
     chrome: "browser profile",
     latex: "TeX toolchain",

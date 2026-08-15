@@ -73,7 +73,7 @@ import type {
   DesktopIdeContextSnapshot,
   DesktopVoiceInteractionMode,
   DesktopVoiceRuntimeStatus,
-  DesktopStreamingVoiceCapabilities,
+  DesktopDuplexVoiceReadiness,
   DesktopMcpContextResult,
   DesktopMobileAssociation,
   DesktopMobileRemoteDiagnostics,
@@ -113,7 +113,7 @@ import { PerceptorSettingsPanel } from "./components/PerceptorSettingsPanel";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
 import { userFacingBusinessText, userFacingFailureMessage } from "./userFacingLanguage";
 import { isSelectableModelAvailability, modelCatalogRecoveryCopy, supportsFullAgentPrimaryRuntime } from "./modelCatalogRecovery";
-
+import { knownVoiceModelCapabilities, mergeKnownVoiceModalities } from "./modelVoiceCapabilities";
 import { normalizeRuntimeErrorEnvelope } from "../../api/errorEnvelope";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
@@ -125,6 +125,8 @@ import { ChannelsView } from "./components/ChannelsView";
 import { ChatWorkspace, type ThinkingEffort } from "./components/ChatWorkspace";
 import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
+import { OpenAiBrandIcon, openAiLogo } from "./components/OpenAiBrandIcon";
+import { CodexIntegrationSettings } from "./components/CodexIntegrationSettings";
 import { BackgroundTaskQueue } from "./components/SkillSquareView";
 // Temporarily hide Skills management UI — keep for later reuse.
 // import { SkillSquareView } from "./components/SkillSquareView";
@@ -133,6 +135,8 @@ import { BackgroundTaskQueue } from "./components/SkillSquareView";
 // import { GfsView } from "./components/GfsView";
 import { TaskCenterView } from "./components/TaskCenterView";
 import { MobilePairingDialog, mobilePairingErrorText } from "./components/MobilePairingDialog";
+import { FeedbackDialog } from "./components/FeedbackDialog";
+import { FeedbackAdminDialog } from "./components/FeedbackAdminDialog";
 import {
   mobileAssociationScopeEditorState,
   type MobileAssociationScopeEditorState,
@@ -176,7 +180,7 @@ import {
   indexBackgroundTasksByThread,
 } from "./threadActivity";
 import { resolveAvailableVoiceName, useVoicePreferences } from "./voice/useVoicePreferences";
-import { deriveVoiceModeCapabilities, getVoiceModeAvailability } from "./voice/voiceMode";
+import { getDuplexVoiceReadinessActions, type DuplexVoiceReadinessActionId } from "./voice/duplex/readinessActions";
 import {
   MENU_IDS,
   getNavItems,
@@ -329,6 +333,8 @@ function AuthenticatedApp({
   const [activeNav, setActiveNav] = useState<NavId>(MENU_IDS.currentSession);
   const [composerFocusRequest, setComposerFocusRequest] = useState(0);
   const [mobilePairingOpen, setMobilePairingOpen] = useState(false);
+  const [feedbackRequest, setFeedbackRequest] = useState<null | { source: "global" | "error" | "message" | "tool" | "recovery"; errorCode?: string; errorType?: string; runId?: string; crashIncidentId?: string }>(null);
+  const [feedbackAdminOpen, setFeedbackAdminOpen] = useState(false);
   const [mobilePairingRefreshToken, setMobilePairingRefreshToken] = useState(0);
   const [awaySummary, setAwaySummary] = useState<AwaySummary | null>(null);
   const [deliveryTask, setDeliveryTask] = useState<DesktopBackgroundTask | null>(null);
@@ -420,6 +426,12 @@ function AuthenticatedApp({
   const [remoteShowHidden, setRemoteShowHidden] = useState(false);
   const [remoteRecentPaths, setRemoteRecentPaths] = useState<string[]>(() => loadRemoteRecentPaths());
   const [threads, setThreads] = useState<DesktopThread[]>([]);
+  const archivedThreadOffsetRef = useRef(0);
+  const [archivedThreadsHasMore, setArchivedThreadsHasMore] = useState(true);
+  const [archivedThreadsLoading, setArchivedThreadsLoading] = useState(false);
+  const workspaceThreadOffsetRef = useRef(0);
+  const [workspaceThreadsHasMore, setWorkspaceThreadsHasMore] = useState(true);
+  const [workspaceThreadsLoading, setWorkspaceThreadsLoading] = useState(false);
   const [threadBackgroundTasks, setThreadBackgroundTasks] = useState<DesktopBackgroundTask[]>([]);
   const [operationalE2eFacts, setOperationalE2eFacts] = useState<OperationalStateFacts | null>(null);
   const [threadsLoaded, setThreadsLoaded] = useState(false);
@@ -467,6 +479,32 @@ function AuthenticatedApp({
     source_ledger_sha256: null,
     reason: "release_gate_resource_missing",
   });
+
+  useEffect(() => {
+    const openFeedback = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setFeedbackRequest({ source: "global" });
+      }
+    };
+    window.addEventListener("keydown", openFeedback);
+    return () => window.removeEventListener("keydown", openFeedback);
+  }, []);
+
+  useEffect(() => {
+    if (sessionRestoring || !user) return;
+    let active = true;
+    void desktopApi.retryPendingFeedback().catch(() => undefined);
+    void desktopApi.getPendingCrashFeedback().then((incident) => {
+      if (active && incident) setFeedbackRequest({
+        source: "recovery",
+        errorCode: String(incident.exit_code ?? "crash"),
+        errorType: `${incident.process_type}:${incident.reason}`,
+        crashIncidentId: incident.incident_id,
+      });
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [sessionRestoring, user]);
 
   useEffect(() => {
     let disposed = false;
@@ -571,15 +609,17 @@ function AuthenticatedApp({
     (language === "zh" ? "当前会话" : "Chat");
   const { health } = desktop;
   const [codexStatus, setCodexStatus] = useState<CodexBackendStatus | null>(null);
+  const codexBackendEnabled = platformDescriptor?.capabilities.features.codexBackend;
   useEffect(() => {
-    if (!health?.gatewayReady || platformDescriptor?.capabilities.features.codexBackend !== true) { setCodexStatus(null); return; }
+    if (codexBackendEnabled === false) { setCodexStatus(null); return; }
+    if (codexBackendEnabled !== true || !health) return;
     let active = true;
     void desktopApi.getCodexBackendStatus().then((status) => { if (active) setCodexStatus(status); }).catch(() => {
       if (active) setCodexStatus({ backendId: "codex", state: "fault", available: false, version: null,
         loggedIn: false, authMode: null, accountLabel: null, reason: "runtime_unavailable", retryable: true, action: "restart" });
     });
     return () => { active = false; };
-  }, [health?.gatewayReady, platformDescriptor]);
+  }, [codexBackendEnabled, health?.gateway.liveness?.generation, health?.gateway.liveness?.state]);
   const workspaces = storedWorkspaces;
   const sortedWorkspaces = sortWorkspacesForSidebar(workspaces, workspaceSortMode);
   const activeWorkspace =
@@ -688,7 +728,9 @@ function AuthenticatedApp({
       snapshot: thread.id === activeThreadId ? activeThreadSnapshot ?? undefined : undefined,
       backgroundTask: backgroundTaskByThreadId.get(thread.id),
     }),
-    source: workspaces.find((workspace) => getComparablePath(workspace.path) === getComparablePath(thread.workspacePath || ""))?.location === "remote"
+    source: thread.sourceChannel === "wechat"
+      ? "wechat"
+      : workspaces.find((workspace) => getComparablePath(workspace.path) === getComparablePath(thread.workspacePath || ""))?.location === "remote"
       ? "remote"
       : thread.archiveSource === "codex" || thread.boundAgentId === "my-codex" ? "codex" : "opendrsai",
   });
@@ -949,11 +991,16 @@ function AuthenticatedApp({
   }, []);
   useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
     if (deletedThreadIdsRef.current.has(event.thread.id)) return;
-    setThreads((current) => sortThreadsForSidebar([
-      event.thread,
-      ...current.filter((item) => item.id !== event.thread.id),
-    ]));
-  }), []);
+    setThreads((current) => boundThreadCatalogForRenderer(
+      [event.thread, ...current.filter((item) => item.id !== event.thread.id)],
+      {
+        activeThreadId: activeThreadIdRef.current,
+        activeLimit: Math.max(50, workspaceThreadOffsetRef.current),
+        archivedLimit: Math.max(sessionScope === "all" ? 50 : 0, archivedThreadOffsetRef.current),
+        workspacePath: sessionScope === "workspace" ? activeWorkspace.path : undefined,
+      },
+    ));
+  }), [activeWorkspace.path, sessionScope]);
   useEffect(() => {
     let disposed = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1135,8 +1182,9 @@ function AuthenticatedApp({
   }, [activeWorkspaceId, restoreLastWorkspace]);
 
   useEffect(() => {
+    if (!workspacesLoaded || !activeWorkspace.id) return;
     void refreshThreads();
-  }, []);
+  }, [activeWorkspace.id, activeWorkspace.path, health?.gatewayReady, sessionScope, workspacesLoaded]);
 
   // One-shot: drop restored localStorage ghosts that are not in the thread catalog.
   const restoredSessionValidatedRef = useRef(false);
@@ -1201,7 +1249,7 @@ function AuthenticatedApp({
     return () => {
       window.removeEventListener("drsai:threads-updated", handleThreadsUpdated);
     };
-  }, []);
+  }, [activeThreadId, activeWorkspace.id, activeWorkspace.path, sessionScope]);
 
   useEffect(() => {
     if (!workspacesLoaded || health?.gatewayReady) return undefined;
@@ -2354,10 +2402,59 @@ function AuthenticatedApp({
 
   async function refreshThreads(): Promise<void> {
     try {
-      const listed = await desktopApi.listThreads();
-      setThreads(listed.filter((thread) => !deletedThreadIdsRef.current.has(thread.id)));
+      const catalog = await desktopApi.listThreads({
+        ...(sessionScope === "workspace" && activeWorkspace.path
+          ? { workspacePath: activeWorkspace.path }
+          : {}),
+        limit: 50,
+        includeArchived: sessionScope === "all",
+        requiredThreadIds: activeThreadId ? [activeThreadId] : [],
+        ...(activeWorkspace.id ? { runtimeWorkspaceId: activeWorkspace.id } : {}),
+      });
+      const protectedIds = new Set(catalog.filter((thread) => !thread.archived && (
+        thread.id === activeThreadId || thread.pinned || thread.status === "running"
+      )).map((thread) => thread.id));
+      workspaceThreadOffsetRef.current = 50;
+      setWorkspaceThreadsHasMore(catalog.filter((thread) => !thread.archived && !protectedIds.has(thread.id)).length === 50);
+      setThreads(catalog.filter((thread) => !deletedThreadIdsRef.current.has(thread.id)));
     } finally {
       setThreadsLoaded(true);
+    }
+  }
+
+  async function loadMoreWorkspaceThreads(): Promise<void> {
+    if (workspaceThreadsLoading || !activeWorkspace.path) return;
+    setWorkspaceThreadsLoading(true);
+    try {
+      const offset = workspaceThreadOffsetRef.current;
+      const page = await desktopApi.listThreads({ workspacePath: activeWorkspace.path, limit: 50, offset });
+      const active = page.filter((thread) => !thread.archived);
+      workspaceThreadOffsetRef.current = offset + active.length;
+      setWorkspaceThreadsHasMore(active.length === 50);
+      setThreads((current) => sortThreadsForSidebar([
+        ...active,
+        ...current.filter((thread) => !active.some((item) => item.id === thread.id)),
+      ]));
+    } finally {
+      setWorkspaceThreadsLoading(false);
+    }
+  }
+
+  async function loadArchivedThreads(reset = false): Promise<void> {
+    if (archivedThreadsLoading) return;
+    setArchivedThreadsLoading(true);
+    try {
+      const offset = reset ? 0 : archivedThreadOffsetRef.current;
+      const page = await desktopApi.listThreads({ limit: 50, offset, includeArchived: true });
+      const archived = page.filter((thread) => thread.archived);
+      archivedThreadOffsetRef.current = offset + archived.length;
+      setArchivedThreadsHasMore(archived.length === 50);
+      setThreads((current) => sortThreadsForSidebar([
+        ...archived,
+        ...current.filter((thread) => !archived.some((item) => item.id === thread.id)),
+      ]));
+    } finally {
+      setArchivedThreadsLoading(false);
     }
   }
 
@@ -2654,6 +2751,8 @@ function AuthenticatedApp({
           conversationId={activeThreadId}
           conversationTitle={activeThread?.title}
           conversationSource={activeThread?.boundAgentId === "my-codex" || activeThread?.archiveSource === "codex" ? "codex" : "opendrsai"}
+          channelSource={activeThread?.sourceChannel}
+          runtimeSessionId={activeThread?.runtimeSessionId}
           conversationHistoryPending={Boolean(
             hydratingThreadId === activeThreadId
             || ((activeThread?.messageCount ?? 0) > 0 && !activeThreadSnapshot),
@@ -2739,6 +2838,10 @@ function AuthenticatedApp({
             setActiveRightTab("debug");
             setRightPanelCollapsed(false);
           }}
+          onOpenAgentSettings={() => {
+            setRequestedSettingsPane("agent-defaults");
+            navigateTo(MENU_IDS.profile);
+          }}
           onOpenRun={platformDescriptor?.capabilities.features.runtime !== true ? undefined : (runId, itemId) => {
             setRunInspectionRequest({
               workspacePath: effectiveWorkspacePath,
@@ -2771,6 +2874,7 @@ function AuthenticatedApp({
             if (mode === "new_session") await handleNewChat();
             chat.setInput(originalInput);
           }}
+          onReportFeedback={(request) => setFeedbackRequest(request)}
           onRecoveryAction={handleChatRecoveryAction}
           onOpenPreviewBrowser={platformDescriptor?.capabilities.features.browser !== true ? undefined : openPreviewBrowser}
           onOpenWorkspaceArtifact={(path) => {
@@ -2968,6 +3072,14 @@ function AuthenticatedApp({
             workspacePath={effectiveWorkspacePath}
           />
         )}
+        dataPerceptorsPanel={(
+          platformDescriptor?.capabilities.features.channels !== true ? null : <ChannelsView
+            language={language}
+            mode="data"
+            onAttachImportedContext={attachImportedChannelContext}
+            workspacePath={effectiveWorkspacePath}
+          />
+        )}
         featureCapabilities={platformDescriptor?.capabilities.features}
         completionNotifications={completionNotifications}
         defaultThinkingEffort={defaultThinkingEffort}
@@ -2983,6 +3095,17 @@ function AuthenticatedApp({
         onCodexRepair={() => desktop.startInstall(false)}
         onCodexLogin={async (type) => desktopApi.startCodexBackendLogin(type)}
         onCodexLogout={async () => { await desktopApi.logoutCodexBackend(); setCodexStatus(await desktopApi.getCodexBackendStatus(true)); }}
+        onUseCodex={async () => {
+          const codexAgent = availableChatAgents.find((agent) => agent.id === "my-codex");
+          if (!codexAgent) {
+            setChatChoicesRefreshNonce((current) => current + 1);
+            throw new Error(language === "zh" ? "Codex 智能体目录正在刷新，请稍后重试。" : "The Codex agent catalog is refreshing. Try again shortly.");
+          }
+          if (await selectChatAgent(codexAgent.id, { agent: codexAgent })) {
+            navigateTo(MENU_IDS.currentSession);
+            setComposerFocusRequest((current) => current + 1);
+          }
+        }}
         onAppearanceChange={setAppearance}
         onCompletionNotificationsChange={(enabled) => {
           setCompletionNotifications(enabled);
@@ -3026,6 +3149,9 @@ function AuthenticatedApp({
         onSessionScopeChange={setSessionScope}
         threads={threads}
         onArchiveThread={(threadId, archived) => handleThreadUpdate(threadId, { archived })}
+        archivedThreadsHasMore={archivedThreadsHasMore}
+        archivedThreadsLoading={archivedThreadsLoading}
+        onLoadArchivedThreads={loadArchivedThreads}
         workspaces={sortedWorkspaces}
         onSyncWorkspaceSessions={syncWorkspaceSessions}
         onSidebarComponentsChange={setSidebarComponents}
@@ -3498,6 +3624,8 @@ function AuthenticatedApp({
       user={user}
       workspaceSortMode={workspaceSortMode}
       workspaceThreads={workspaceThreads}
+      workspaceThreadsHasMore={workspaceThreadsHasMore}
+      workspaceThreadsLoading={workspaceThreadsLoading}
       workspaces={sortedWorkspaces}
       onCreateWorkspace={handleCreateWorkspace}
       onGoBack={goBack}
@@ -3505,6 +3633,7 @@ function AuthenticatedApp({
       onAddWorkspace={handleAddWorkspace}
       onLanguageChange={setLanguage}
       onLoadForkConflictContent={loadForkConflictContent}
+      onLoadMoreWorkspaceThreads={loadMoreWorkspaceThreads}
       onListWorktrees={(request) => desktopApi.listWorktrees(request)}
       onListWorktreeEvents={(request) => desktopApi.listWorktreeEvents(request)}
       onGetWorktreeMigrationDiagnostics={(request) => desktopApi.getWorktreeMigrationDiagnostics(request)}
@@ -3514,6 +3643,8 @@ function AuthenticatedApp({
       onLogout={() => {
         void handleLogout();
       }}
+      onOpenFeedback={() => setFeedbackRequest({ source: "global" })}
+      onOpenFeedbackAdmin={() => setFeedbackAdminOpen(true)}
       onNavChange={navigateTo}
       onNewChat={() => {
         void handleNewChat();
@@ -3546,6 +3677,28 @@ function AuthenticatedApp({
     </div> : null}
     <AppDecisionDialogHost language={language} />
     {mobilePairingOpen ? <MobilePairingDialog language={language} onClose={() => setMobilePairingOpen(false)} onConnected={() => setMobilePairingRefreshToken((value) => value + 1)} /> : null}
+    {feedbackRequest ? <FeedbackDialog
+      language={language}
+      initialCategory="bug"
+      initialSource={feedbackRequest.source}
+      context={{
+        module: activeNav,
+        page: activeNav,
+        app_version: health?.version ?? "unknown",
+        runtime_version: health?.install?.expectedVersion ?? "unknown",
+        platform: platformDescriptor?.id ?? nativePlatformId,
+        locale: language === "zh" ? "zh-CN" : "en-US",
+        workspace_id: effectiveRuntimeWorkspaceId,
+        thread_id: activeThreadId || undefined,
+        run_id: feedbackRequest.runId,
+        error_code: feedbackRequest.errorCode,
+        error_type: feedbackRequest.errorType,
+        breadcrumbs: [],
+      }}
+      onSubmitted={() => { if (feedbackRequest.crashIncidentId) void desktopApi.clearPendingCrashFeedback(feedbackRequest.crashIncidentId); }}
+      onClose={() => setFeedbackRequest(null)}
+    /> : null}
+    {feedbackAdminOpen ? <FeedbackAdminDialog language={language} onClose={() => setFeedbackAdminOpen(false)} /> : null}
     {remoteDialogOpen ? (
       <div className="workspace-create-overlay" role="presentation" onMouseDown={closeWorkspaceCreate}>
         <section className="workspace-create-modal workspace-location-modal" data-testid="workspace-create-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-create-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -4034,6 +4187,25 @@ function sortThreadsForSidebar(threads: DesktopThread[]): DesktopThread[] {
     }
     return right.updatedAt.localeCompare(left.updatedAt);
   });
+}
+
+function boundThreadCatalogForRenderer(
+  threads: DesktopThread[],
+  options: { activeThreadId: string; activeLimit: number; archivedLimit: number; workspacePath?: string },
+): DesktopThread[] {
+  const workspaceKey = options.workspacePath ? getComparablePath(options.workspacePath) : null;
+  const scoped = workspaceKey
+    ? threads.filter((thread) => thread.id === options.activeThreadId
+      || !thread.workspacePath
+      || getComparablePath(thread.workspacePath) === workspaceKey)
+    : threads;
+  const sorted = sortThreadsForSidebar(scoped);
+  const protectedThreads = sorted.filter((thread) => !thread.archived && (
+    thread.id === options.activeThreadId || thread.pinned || thread.status === "running"));
+  const protectedIds = new Set(protectedThreads.map((thread) => thread.id));
+  const active = sorted.filter((thread) => !thread.archived && !protectedIds.has(thread.id)).slice(0, options.activeLimit);
+  const archived = sorted.filter((thread) => thread.archived).slice(0, options.archivedLimit);
+  return sortThreadsForSidebar([...protectedThreads, ...active, ...archived]);
 }
 
 function createLocalThreadId(): string {
@@ -6403,97 +6575,6 @@ function TaskDeliverySummaryPanel({
   );
 }
 
-function CodexRuntimeSettings({
-  busy,
-  health,
-  language,
-  status,
-  onRefresh,
-  onRestart,
-  onRepair,
-  onLogin,
-  onLogout,
-}: {
-  busy: boolean;
-  health: DesktopHealth | null;
-  language: AppLanguage;
-  status: CodexBackendStatus | null;
-  onRefresh: () => void | Promise<void>;
-  onRestart: () => void | Promise<void>;
-  onRepair: () => void | Promise<void>;
-  onLogin: (type: "chatgpt" | "chatgptDeviceCode") => Promise<CodexBackendLogin>;
-  onLogout: () => void | Promise<void>;
-}): React.JSX.Element {
-  const zh = language === "zh";
-  const [login, setLogin] = useState<CodexBackendLogin | null>(null);
-  const [diagnosticCopied, setDiagnosticCopied] = useState(false);
-
-  async function copyDiagnostic(): Promise<void> {
-    await copyTextSafely(JSON.stringify({
-      product: "OpenDrSai Desktop",
-      desktopVersion: health?.update.currentVersion ?? "unknown",
-      runtimeReady: health?.gatewayReady ?? false,
-      runtimeMode: health?.mode ?? "local",
-      codex: status ? {
-        state: status.state,
-        version: status.version,
-        loggedIn: status.loggedIn,
-        appServerState: status.appServerState,
-        connectionState: status.connectionState,
-        transport: status.transport,
-        adapterVersion: status.adapterVersion,
-        retryable: status.retryable,
-      } : null,
-      generatedAt: new Date().toISOString(),
-    }, null, 2));
-    setDiagnosticCopied(true);
-    window.setTimeout(() => setDiagnosticCopied(false), 2_000);
-  }
-
-  return <section className="settings-section" data-testid="codex-runtime-settings">
-    <div>
-      <h2>Codex Agent Runtime</h2>
-      <p>{zh ? "管理 Codex 运行时连接、账户、修复操作和脱敏诊断信息。" : "Manage the Codex runtime connection, account, repair actions, and redacted diagnostics."}</p>
-    </div>
-    <div className="about-section-title" data-testid="codex-backend-status">
-      <strong>{zh ? "运行状态" : "Runtime status"}</strong>
-      <span data-testid={`codex-state-${status?.state ?? "loading"}`}>{status ? `${status.state}${status.version ? ` · ${status.version}` : ""}` : (zh ? "正在读取 Runtime 能力" : "Reading Runtime capability")}</span>
-    </div>
-    <dl className="codex-health-layers" data-testid="codex-health-layers">
-      <div><dt>Desktop → Runtime</dt><dd>{health?.gatewayReady ? (zh ? "已连接" : "Connected") : (zh ? "未连接" : "Disconnected")}</dd></div>
-      <div><dt>Runtime → Codex</dt><dd>{status?.available ? (zh ? "可用" : "Available") : (status?.reason || (zh ? "不可用" : "Unavailable"))}</dd></div>
-      <div><dt>{zh ? "Codex → 账户/模型" : "Codex → account/model"}</dt><dd>{status?.loggedIn && status.state === "available" ? (zh ? "账户已登录，模型可用" : "Signed in; models available") : (zh ? "需要检查账户或模型" : "Account or model check required")}</dd></div>
-      <div><dt>App Server</dt><dd>{status?.appServerState === "running" ? (zh ? "运行中" : "Running") : (zh ? "按需启动" : "Starts on demand")}</dd></div>
-      <div><dt>{zh ? "连接方式" : "Transport"}</dt><dd>{status?.transport === "ssh" ? (zh ? "远程 SSH" : "Remote SSH") : (zh ? "本机进程" : "Local process")}</dd></div>
-      <div><dt>{zh ? "适配器" : "Adapter"}</dt><dd>{status?.adapterVersion || (zh ? "等待检测" : "Pending check")}</dd></div>
-    </dl>
-    <div className="about-action-grid">
-      <button type="button" onClick={() => void onRefresh()}>{zh ? "刷新 Codex" : "Refresh Codex"}</button>
-      {status?.action === "login" && <button type="button" data-testid="codex-login" onClick={() => void onLogin("chatgptDeviceCode").then(setLogin)}>{zh ? "登录 ChatGPT" : "Sign in to ChatGPT"}</button>}
-      {status?.loggedIn && <button type="button" data-testid="codex-logout" onClick={() => void onLogout()}>{zh ? "退出 Codex" : "Sign out of Codex"}</button>}
-      {status?.action === "install" && <button type="button" disabled={busy} data-testid="codex-install-action" onClick={() => void onRepair()}>{zh ? "安装并修复 Codex" : "Install and repair Codex"}</button>}
-      {status?.action === "upgrade" && <button type="button" disabled={busy} data-testid="codex-upgrade-action" onClick={() => void onRepair()}>{zh ? "升级 Codex Runtime" : "Upgrade Codex Runtime"}</button>}
-      {status?.action === "restart" && <button type="button" data-testid="codex-restart-action" onClick={() => void onRestart()}>{zh ? "重启 Codex Runtime" : "Restart Codex Runtime"}</button>}
-      <button type="button" data-testid="copy-codex-diagnostic" onClick={() => void copyDiagnostic()}>{diagnosticCopied ? (zh ? "已复制" : "Copied") : (zh ? "复制脱敏诊断" : "Copy redacted diagnostics")}</button>
-    </div>
-    <ol className="codex-setup-steps" data-testid="codex-setup-steps" aria-label={zh ? "Codex 首次使用向导" : "Codex first-use setup"}>
-      <li data-state={status?.state === "not_installed" ? "current" : "complete"}>
-        <strong>{zh ? "1. 检查或安装 Codex" : "1. Check or install Codex"}</strong>
-        <span>{status?.version ? `${zh ? "已找到版本" : "Found version"} ${status.version}` : (zh ? "等待检查" : "Waiting for check")}</span>
-      </li>
-      <li data-state={status?.loggedIn ? "complete" : status?.available ? "current" : "pending"}>
-        <strong>{zh ? "2. 登录 ChatGPT" : "2. Sign in to ChatGPT"}</strong>
-        <span>{status?.loggedIn ? (status.accountLabel || (zh ? "已登录" : "Signed in")) : (zh ? "需要登录后才能对话" : "Sign in before chatting")}</span>
-      </li>
-      <li data-state={status?.state === "available" ? "complete" : "pending"}>
-        <strong>{zh ? "3. 新建 Codex 会话" : "3. Start a Codex conversation"}</strong>
-        <span>{status?.state === "available" ? (zh ? "已就绪，可返回工作区新建会话" : "Ready; return to a workspace and start a conversation") : (zh ? "完成前两步后自动就绪" : "Ready automatically after the first two steps")}</span>
-      </li>
-    </ol>
-    {login?.userCode && <div role="status" data-testid="codex-device-code">{zh ? "设备码" : "Device code"}: {login.userCode}</div>}
-  </section>;
-}
-
 function DesktopStatusPanel({
   actionMessage,
   busy,
@@ -6845,7 +6926,7 @@ function androidRelativeTime(raw: string | null | undefined, language: AppLangua
 
 const bundledModelProviderLogos: Record<string, string> = {
   deepseek: new URL("../../../legacy/drsai-desktop/src/renderer/src/assets/logos/deepseek-color.svg", import.meta.url).href,
-  openai: new URL("../../../legacy/drsai-desktop/src/renderer/src/assets/logos/openai.svg", import.meta.url).href,
+  openai: openAiLogo,
   gemini: new URL("../../../legacy/drsai-desktop/src/renderer/src/assets/logos/gemini-color.svg", import.meta.url).href,
   openrouter: new URL("../../../legacy/drsai-desktop/src/renderer/src/assets/logos/openrouter.svg", import.meta.url).href,
 };
@@ -6924,24 +7005,33 @@ function providerModelConfigFor(
       ...(capabilities.includes("text_to_speech") ? ["audio" as const] : []),
       ...(capabilities.includes("video_generation") ? ["video" as const] : []),
     ] : configured.output_modalities;
+    const voiceModalities = mergeKnownVoiceModalities(
+      modelId,
+      configured.input_modalities ?? legacy ?? ["text"],
+      output?.length ? [...new Set(output)] : ["text"],
+    );
+    const knownVoice = knownVoiceModelCapabilities(modelId);
     return {
       ...configured,
-      input_modalities: configured.input_modalities ?? legacy ?? ["text"],
-      output_modalities: output?.length ? [...new Set(output)] : ["text"],
+      input_modalities: voiceModalities.input,
+      output_modalities: voiceModalities.output,
+      capabilities: [...new Set([...capabilities, ...(knownVoice?.capabilities ?? [])])],
       api_protocol: (configured.api_protocol as string) === "google" ? "gemini" : configured.api_protocol,
     };
   }
+
   const operations = provider?.model_operations?.[modelId] ?? [];
   const normalizedId = modelId.toLowerCase().split("/").at(-1);
   const speechToText = normalizedId === "whisper-1";
   const textToSpeech = normalizedId === "tts-1";
+  const knownVoice = knownVoiceModelCapabilities(modelId);
   return {
     ...(provider?.model_aliases?.[modelId] ? { alias: provider.model_aliases[modelId] } : {}),
-    input_modalities: speechToText ? ["audio"] : operations.includes("image_edit") ? ["text", "image"] : ["text"],
-    output_modalities: speechToText ? ["text"] : textToSpeech ? ["audio"] : operations.some((operation) => operation === "image_generation" || operation === "image_edit") ? ["image"] : ["text"],
+    input_modalities: knownVoice?.inputModalities ?? (speechToText ? ["audio"] : operations.includes("image_edit") ? ["text", "image"] : ["text"]),
+    output_modalities: knownVoice?.outputModalities ?? (speechToText ? ["text"] : textToSpeech ? ["audio"] : operations.some((operation) => operation === "image_generation" || operation === "image_edit") ? ["image"] : ["text"]),
     api_protocol: provider?.wire_api ?? "openai",
     enabled: true,
-    capabilities: speechToText ? ["speech_to_text"] : textToSpeech ? ["text_to_speech"] : [...new Set([...defaultTextModelCapabilities(modelId), ...operations])],
+    capabilities: knownVoice?.capabilities ?? (speechToText ? ["speech_to_text"] : textToSpeech ? ["text_to_speech"] : [...new Set([...defaultTextModelCapabilities(modelId), ...operations])]),
   };
 }
 
@@ -6973,6 +7063,9 @@ function providerModelModalities(
   const output = new Set<ProviderModelModality>();
   for (const modality of descriptor?.input_modalities ?? []) if (["text", "image", "audio", "video"].includes(modality)) input.add(modality as ProviderModelModality);
   for (const modality of descriptor?.output_modalities ?? []) if (["text", "image", "audio", "video"].includes(modality)) output.add(modality as ProviderModelModality);
+  const knownVoice = knownVoiceModelCapabilities(modelId);
+  for (const modality of knownVoice?.inputModalities ?? []) input.add(modality);
+  for (const modality of knownVoice?.outputModalities ?? []) output.add(modality);
   if (descriptor?.vision) input.add("image");
   if (declaredOperations.includes("image_edit")) input.add("image");
   if (declaredOperations.some((operation) => operation === "image_generation" || operation === "image_edit")) output.add("image");
@@ -7135,7 +7228,7 @@ function AgentResourcesSettings({ agentId, zh, onManagePerceptors }: { agentId: 
       </div>
       {perceptors.map((perceptor) => <div className="settings-row" key={perceptor.perceptor_id} data-testid={`perceptor-${perceptor.perceptor_id}`}>
         <span><strong>{perceptor.name || perceptor.perceptor_id}</strong><small>{perceptor.adapter} · {perceptor.capabilities.join(", ")}</small><span className="perceptor-runtime-status">
-          <em className={perceptor.config.api_key ? "ok" : "warning"}>{perceptor.config.api_key ? (zh ? "已配置" : "Configured") : (zh ? "缺少凭据" : "Credential required")}</em>
+          <em className={perceptor.adapter === "hai_managed_tavily" || perceptor.config.api_key ? "ok" : "warning"}>{perceptor.adapter === "hai_managed_tavily" ? (zh ? "平台托管" : "Platform managed") : perceptor.config.api_key ? (zh ? "已配置" : "Configured") : (zh ? "缺少凭据" : "Credential required")}</em>
           <em className={perceptor.enabled ? "ok" : "muted"}>{perceptor.enabled ? (zh ? "已启用" : "Enabled") : (zh ? "已禁用" : "Disabled")}</em>
           <em className={(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "builtin.web-search" && tool.selected) ? "ok" : "warning"}>{(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "builtin.web-search" && tool.selected) ? (zh ? "当前智能体已加载" : "Loaded by this Agent") : (zh ? "当前智能体未加载" : "Not loaded by this Agent")}</em>
         </span></span>
@@ -7197,6 +7290,7 @@ function SettingsPanel({
   codexStatus,
   approvalCenterPanel,
   channelsPanel,
+  dataPerceptorsPanel,
   featureCapabilities,
   completionNotifications,
   defaultThinkingEffort,
@@ -7216,6 +7310,7 @@ function SettingsPanel({
   onCodexRepair,
   onCodexLogin,
   onCodexLogout,
+  onUseCodex,
   onAppearanceChange,
   onCompletionNotificationsChange,
   onCopyDiagnostics,
@@ -7236,6 +7331,9 @@ function SettingsPanel({
   onRefreshAgentModels,
   onSessionScopeChange,
   onArchiveThread,
+  archivedThreadsHasMore,
+  archivedThreadsLoading,
+  onLoadArchivedThreads,
   workspaces,
   onSyncWorkspaceSessions,
   onSidebarComponentsChange,
@@ -7263,6 +7361,7 @@ function SettingsPanel({
   codexStatus: CodexBackendStatus | null;
   approvalCenterPanel: React.ReactNode;
   channelsPanel: React.ReactNode;
+  dataPerceptorsPanel: React.ReactNode;
   featureCapabilities?: DesktopPlatformDescriptor["capabilities"]["features"];
   completionNotifications: boolean;
   defaultThinkingEffort: ThinkingEffort;
@@ -7282,6 +7381,7 @@ function SettingsPanel({
   onCodexRepair: () => void | Promise<void>;
   onCodexLogin: (type: "chatgpt" | "chatgptDeviceCode") => Promise<CodexBackendLogin>;
   onCodexLogout: () => void | Promise<void>;
+  onUseCodex: () => void | Promise<void>;
   onAppearanceChange: (appearance: AppearanceMode) => void;
   onCompletionNotificationsChange: (enabled: boolean) => void;
   onCopyDiagnostics: () => void;
@@ -7302,6 +7402,9 @@ function SettingsPanel({
   onRefreshAgentModels: () => void;
   onSessionScopeChange: (scope: "workspace" | "all") => void;
   onArchiveThread: (threadId: string, archived: boolean) => void | Promise<void>;
+  archivedThreadsHasMore: boolean;
+  archivedThreadsLoading: boolean;
+  onLoadArchivedThreads: (reset?: boolean) => Promise<void>;
   workspaces: WorkspaceProject[];
   onSyncWorkspaceSessions: (workspace: WorkspaceProject) => void | Promise<void>;
   onSidebarComponentsChange: React.Dispatch<React.SetStateAction<SidebarComponentVisibility>>;
@@ -7447,8 +7550,10 @@ function SettingsPanel({
   const [voiceIntegrationState, setVoiceIntegrationState] = useState<string | null>(null);
   const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
   const [voiceRuntimeStatus, setVoiceRuntimeStatus] = useState<DesktopVoiceRuntimeStatus | null>(null);
-  const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
+  const [duplexVoiceReadiness, setDuplexVoiceReadiness] = useState<DesktopDuplexVoiceReadiness | null>(null);
+  const [duplexVoiceReadinessBusy, setDuplexVoiceReadinessBusy] = useState(false);
   const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [realtimeAudioDevices, setRealtimeAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [remoteHostCount, setRemoteHostCount] = useState<number | null>(null);
   const [mobilePairingReadiness, setMobilePairingReadiness] = useState<DesktopMobilePairingReadiness | null>(null);
   const [mobileAssociations, setMobileAssociations] = useState<DesktopMobileAssociation[]>([]);
@@ -7494,6 +7599,12 @@ function SettingsPanel({
   const archivedThreads = threads.filter((thread) => thread.archived).filter((thread) =>
     thread.title.toLocaleLowerCase().includes(archiveSearch.trim().toLocaleLowerCase()),
   );
+  const archivedInitialLoadRequestedRef = useRef(false);
+  useEffect(() => {
+    if (activePane !== "archived-sessions" || archivedInitialLoadRequestedRef.current) return;
+    archivedInitialLoadRequestedRef.current = true;
+    void onLoadArchivedThreads(true).catch(() => { archivedInitialLoadRequestedRef.current = false; });
+  }, [activePane]);
 
   const modelConnectionRevision = myDrSaiConfig?.modelConnection?.revision;
   const configuredModelProvider = myDrSaiConfig?.modelConnection?.model_provider;
@@ -7568,7 +7679,7 @@ function SettingsPanel({
     setProviderModelsDraft(preset.default_model ? [preset.default_model] : []);
     setProviderModelAliasesDraft({});
     setProviderModelOperationsDraft({});
-    setProviderModelConfigsDraft(preset.default_model ? { [preset.default_model]: { input_modalities: ["text"], output_modalities: ["text"], api_protocol: preset.wire_api, enabled: true, capabilities: defaultTextModelCapabilities(preset.default_model) } } : {});
+    setProviderModelConfigsDraft(preset.default_model ? { [preset.default_model]: providerModelConfigFor(preset.default_model, { wire_api: preset.wire_api }) } : {});
     setProviderDraft(preset.id.startsWith("custom-") ? "custom" : preset.id);
     setBaseUrlDraft(preset.base_url);
     setAnthropicBaseUrlDraft(preset.anthropic_base_url ?? "");
@@ -7672,7 +7783,7 @@ function SettingsPanel({
       return;
     }
     setProviderModelsDraft((current) => [...current, value]);
-    setProviderModelConfigsDraft((current) => ({ ...current, [value]: { input_modalities: ["text"], output_modalities: ["text"], api_protocol: wireApiDraft, enabled: true, capabilities: defaultTextModelCapabilities(value) } }));
+    setProviderModelConfigsDraft((current) => ({ ...current, [value]: providerModelConfigFor(value, { wire_api: wireApiDraft }) }));
     setModelDraft(value);
     setNewProviderModelDraft(null);
     setModelConfigMessage(null);
@@ -7833,7 +7944,7 @@ function SettingsPanel({
     setProviderModelsDraft(next);
     setProviderModelAliasesDraft({});
     setProviderModelOperationsDraft({});
-    setProviderModelConfigsDraft(next[0] ? { [next[0]]: { input_modalities: ["text"], output_modalities: ["text"], api_protocol: preset?.wire_api ?? "openai", enabled: true, capabilities: defaultTextModelCapabilities(next[0]) } } : {});
+    setProviderModelConfigsDraft(next[0] ? { [next[0]]: providerModelConfigFor(next[0], { wire_api: preset?.wire_api ?? "openai" }) } : {});
     setModelDraft(next[0] ?? "");
     setDiscoveredModels([]);
     setNewProviderModelDraft(null);
@@ -7856,7 +7967,7 @@ function SettingsPanel({
         setProviderModelsDraft(result.models);
         setProviderModelAliasesDraft((current) => Object.fromEntries(Object.entries(current).filter(([model]) => result.models.includes(model))));
         setProviderModelOperationsDraft((current) => Object.fromEntries(Object.entries(current).filter(([model]) => result.models.includes(model))));
-        setProviderModelConfigsDraft((current) => Object.fromEntries(result.models.map((model) => [model, current[model] ?? { input_modalities: ["text"], output_modalities: ["text"], api_protocol: wireApiDraft, enabled: true, capabilities: defaultTextModelCapabilities(model) }])));
+        setProviderModelConfigsDraft((current) => Object.fromEntries(result.models.map((model) => [model, current[model] ?? providerModelConfigFor(model, { wire_api: wireApiDraft })])));
         setNewProviderModelDraft(null);
         if (!result.models.includes(modelDraft.trim())) setModelDraft(result.models[0]);
       }
@@ -8377,27 +8488,56 @@ function SettingsPanel({
     return () => window.speechSynthesis.removeEventListener("voiceschanged", refreshVoices);
   }, [activePane]);
 
-  useEffect(() => {
-    if (activePane !== "voice") return;
-    let cancelled = false;
-    void Promise.all([
-      desktopApi.getVoiceRuntimeStatus().catch(() => null),
-      featureCapabilities?.streamingVoice === false ? Promise.resolve(null) : desktopApi.getStreamingVoiceCapabilities().catch(() => null),
-    ]).then(([status, capabilities]) => {
-      if (cancelled) return;
+  const refreshDuplexVoiceReadiness = useCallback(async () => {
+    setDuplexVoiceReadinessBusy(true);
+    try {
+      const [status, readiness] = await Promise.all([
+        desktopApi.getVoiceRuntimeStatus().catch(() => null),
+        desktopApi.getDuplexVoiceReadiness().catch(() => null),
+      ]);
       setVoiceRuntimeStatus(status);
-      setStreamingVoiceCapabilities(capabilities);
-    });
-    return () => { cancelled = true; };
-  }, [activePane, featureCapabilities]);
+      setDuplexVoiceReadiness(readiness ?? {
+        available: false,
+        reasonCode: "internal",
+        message: zh ? "无法检查实时对话状态。" : "Realtime conversation readiness could not be checked.",
+        providerId: null,
+        modelId: null,
+        checkedAt: new Date().toISOString(),
+        checks: [],
+        capabilities: null,
+      });
+    } finally {
+      setDuplexVoiceReadinessBusy(false);
+    }
+  }, [zh]);
+  useEffect(() => {
+    if (activePane === "voice") void refreshDuplexVoiceReadiness();
+  }, [activePane, refreshDuplexVoiceReadiness]);
+  useEffect(() => {
+    if (activePane !== "voice" || !navigator.mediaDevices?.enumerateDevices) return;
+    const refresh = (): void => { void navigator.mediaDevices.enumerateDevices().then(setRealtimeAudioDevices).catch(() => setRealtimeAudioDevices([])); };
+    refresh(); navigator.mediaDevices.addEventListener?.("devicechange", refresh);
+    return () => navigator.mediaDevices.removeEventListener?.("devicechange", refresh);
+  }, [activePane]);
 
-  const voiceModeCapabilities = deriveVoiceModeCapabilities(voiceRuntimeStatus, {
-    audioWorklet: typeof AudioWorkletNode !== "undefined",
-    serialTts: "speechSynthesis" in window,
-    streamingTts: false,
-    streamingCapabilities: streamingVoiceCapabilities,
-  });
-  const streamingVoiceAvailability = getVoiceModeAvailability("streaming", voiceModeCapabilities);
+  const duplexVoiceAvailable = duplexVoiceReadiness?.available === true
+    && typeof AudioWorkletNode !== "undefined"
+    && Boolean(navigator.mediaDevices?.getUserMedia);
+  const duplexVoiceReason = duplexVoiceReadiness?.available === true && !duplexVoiceAvailable
+    ? (typeof AudioWorkletNode === "undefined"
+      ? (zh ? "当前环境不支持低延迟音频处理。" : "Low-latency audio processing is unavailable in this environment.")
+      : (zh ? "当前环境无法访问麦克风设备。" : "Microphone devices are unavailable in this environment."))
+    : duplexVoiceReadiness?.message ?? (zh ? "正在检查实时对话状态…" : "Checking Realtime conversation readiness…");
+  const duplexVoiceActions = getDuplexVoiceReadinessActions(
+    duplexVoiceReadiness?.available === true && !duplexVoiceAvailable
+      ? (typeof AudioWorkletNode === "undefined" ? "audio_worklet_unavailable" : "media_devices_unavailable")
+      : duplexVoiceReadiness?.reasonCode ?? "internal",
+  );
+  const runDuplexVoiceReadinessAction = (action: DuplexVoiceReadinessActionId): void => {
+    if (action === "open_agent_settings") setActivePane("agent-defaults");
+    else if (action === "switch_to_serial") updateVoicePreferences({ interactionMode: "serial" });
+    else void refreshDuplexVoiceReadiness();
+  };
 
   useEffect(() => {
     if (activePane !== "voice" || !systemVoices.length || !voicePreferences.voiceName) return;
@@ -8409,7 +8549,7 @@ function SettingsPanel({
   }, [activePane, systemVoices, updateVoicePreferences, voicePreferences.voiceName]);
   const groups: Array<{
     label: string;
-    items: Array<{ id: SettingsPane; label: string; icon: LucideIcon }>;
+    items: Array<{ id: SettingsPane; label: string; icon: LucideIcon | typeof OpenAiBrandIcon }>;
   }> = [
     {
       label: zh ? "常规" : "General",
@@ -8435,7 +8575,7 @@ function SettingsPanel({
       label: zh ? "集成" : "Integrations",
       items: [
         { id: "integrations", label: zh ? "集成概览" : "Overview", icon: Plug },
-        { id: "codex", label: "Codex", icon: Bot },
+        { id: "codex", label: "Codex", icon: OpenAiBrandIcon },
         { id: "remote-workspace", label: zh ? "远程工作区" : "Remote Workspace", icon: TerminalIcon },
         { id: "channels", label: zh ? "频道" : "Channels", icon: MessageSquare },
       ],
@@ -8909,27 +9049,42 @@ function SettingsPanel({
             <section className="settings-section">
               <div>
                 <h2>{zh ? "交互模式" : "Interaction mode"}</h2>
-                <p>{zh ? "串行模式保持为可靠默认路径；流式模式在运行时能力和验收门禁完成后开放。" : "Serial remains the reliable default; streaming becomes available after runtime capabilities and release gates are complete."}</p>
+                <p>{zh ? "单次语音输入适合录完后确认；实时对话支持连续听说和随时打断。" : "Single voice input lets you review after recording; Realtime conversation supports continuous listening, speaking, and interruption."}</p>
               </div>
               <div className="settings-row">
                 <span>
                   <strong>{zh ? "语音模式" : "Voice mode"}</strong>
-                  <small data-testid="voice-mode-status">{voicePreferences.interactionMode === "streaming" ? (zh ? "低延迟流式处理" : "Low-latency streaming") : (zh ? "完整录音与审核" : "Complete recording and review")}</small>
+                  <small data-testid="voice-mode-status">{voicePreferences.interactionMode === "duplex" ? (zh ? "连续听说，可随时打断" : "Continuous conversation with interruption") : (zh ? "录制一次，确认后发送" : "Record once, then review and send")}</small>
                 </span>
                 <select
                   data-testid="voice-interaction-mode"
                   value={voicePreferences.interactionMode}
                   onChange={(event) => updateVoicePreferences({ interactionMode: event.target.value as DesktopVoiceInteractionMode })}
-                  aria-describedby="voice-streaming-availability"
+                  aria-describedby="voice-duplex-availability"
                 >
-                  <option value="serial">{zh ? "串行（可靠）" : "Serial (reliable)"}</option>
-                  <option value="streaming" disabled={!streamingVoiceAvailability.available}>{zh ? "流式（低延迟）" : "Streaming (low latency)"}</option>
+                  <option value="serial">{zh ? "单次语音输入" : "Single voice input"}</option>
+                  <option value="duplex" disabled={!duplexVoiceAvailable}>{zh ? "实时对话" : "Realtime conversation"}</option>
                 </select>
               </div>
-              <div id="voice-streaming-availability" className="settings-privacy-note" role="note">
-                <strong>{zh ? "流式模式状态" : "Streaming mode status"}</strong>
-                <p>{streamingVoiceAvailability.available ? (zh ? "当前环境支持流式输入与输出。" : "The current environment supports streaming input and output.") : (zh ? "流式运行链路尚未完成；串行模式继续正常可用。" : "The streaming runtime path is not complete yet; serial mode remains fully available.")}</p>
+              <div id="voice-duplex-availability" className="settings-privacy-note" role="note" data-testid="voice-duplex-readiness">
+                <strong>{zh ? "实时对话状态" : "Realtime conversation status"}</strong>
+                <p>{duplexVoiceAvailable ? (zh ? "已就绪，可开始实时对话。" : "Ready to start a Realtime conversation.") : duplexVoiceReason}</p>
+                {!duplexVoiceAvailable && <div className="settings-actions">
+                  <button type="button" disabled={duplexVoiceReadinessBusy} onClick={() => runDuplexVoiceReadinessAction(duplexVoiceActions.primary)}>{duplexVoiceActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexVoiceActions.primary === "switch_to_serial" ? (zh ? "使用单次语音输入" : "Use single voice input") : duplexVoiceReadinessBusy ? (zh ? "检查中…" : "Checking…") : (zh ? "重新检查" : "Check again")}</button>
+                  {duplexVoiceActions.fallback && <button type="button" onClick={() => runDuplexVoiceReadinessAction(duplexVoiceActions.fallback!)}>{zh ? "使用单次语音输入" : "Use single voice input"}</button>}
+                </div>}
               </div>
+            </section>
+            <section className="settings-section" data-testid="realtime-voice-settings">
+              <div><h2>{zh ? "实时对话" : "Realtime conversation"}</h2><p>{zh ? "这些设置只影响全双工实时会话，并直接映射到下一次 Session。" : "These settings affect only full-duplex Realtime Sessions and map directly to the next Session payload."}</p></div>
+              <div className="settings-row"><span><strong>{zh ? "实时模型" : "Realtime model"}</strong><small>{zh ? "模型在智能体配置中独立绑定；切换模型需要重启会话。" : "Bound independently in Agent configuration; changing it requires a new Session."}</small></span><button type="button" onClick={() => setActivePane("agent-defaults")}>{duplexVoiceReadiness?.providerId && duplexVoiceReadiness?.modelId ? `${duplexVoiceReadiness.providerId} / ${duplexVoiceReadiness.modelId}` : (zh ? "打开智能体配置" : "Open Agent configuration")}</button></div>
+              <div className="settings-row"><span><strong>Provider voice</strong><small>{zh ? "留空使用 Provider 默认声音；变更后下一次会话生效。" : "Leave blank for the Provider default; changes apply to the next Session."}</small></span><input data-testid="realtime-voice-name" value={voicePreferences.realtimeVoiceName} maxLength={80} placeholder={zh ? "默认" : "Default"} onChange={(event) => updateVoicePreferences({ realtimeVoiceName: event.target.value })} /></div>
+              <div className="settings-row"><span><strong>{zh ? "实时识别语言" : "Realtime language"}</strong><small>{zh ? "独立于单次语音输入。" : "Independent from single voice input."}</small></span><select data-testid="realtime-voice-language" value={voicePreferences.realtimeLanguage} onChange={(event) => updateVoicePreferences({ realtimeLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}><option value="auto">{zh ? "自动检测" : "Automatic"}</option><option value="zh-CN">中文</option><option value="en-US">English</option></select></div>
+              <div className="settings-row"><span><strong>{zh ? "实时麦克风" : "Realtime microphone"}</strong><small>{zh ? "会话中也可无缝切换。" : "Can also be switched during a Session."}</small></span><select data-testid="realtime-input-device" value={voicePreferences.realtimeInputDeviceId} onChange={(event) => updateVoicePreferences({ realtimeInputDeviceId: event.target.value })}><option value="">{zh ? "系统默认" : "System default"}</option>{realtimeAudioDevices.filter((device) => device.kind === "audioinput" && device.deviceId).map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `${zh ? "麦克风" : "Microphone"} ${index + 1}`}</option>)}</select></div>
+              <div className="settings-row"><span><strong>{zh ? "实时扬声器" : "Realtime output"}</strong><small>{zh ? "仅支持当前系统可用的输出设备。" : "Uses an output currently available to the system."}</small></span><select data-testid="realtime-output-device" value={voicePreferences.realtimeOutputDeviceId} onChange={(event) => updateVoicePreferences({ realtimeOutputDeviceId: event.target.value })}><option value="">{zh ? "系统默认" : "System default"}</option>{realtimeAudioDevices.filter((device) => device.kind === "audiooutput" && device.deviceId).map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `${zh ? "扬声器" : "Output"} ${index + 1}`}</option>)}</select></div>
+              <label className="settings-toggle"><span><strong>{zh ? "自动恢复连接" : "Automatically recover connection"}</strong><small>{zh ? "断线后最多进行三次有界重连；关闭后立即报告网络错误。" : "Attempts up to three bounded reconnects; when off, reports a network error immediately."}</small></span><input data-testid="realtime-auto-recovery" type="checkbox" checked={voicePreferences.realtimeAutoRecovery} onChange={(event) => updateVoicePreferences({ realtimeAutoRecovery: event.target.checked })} /></label>
+              <div className="settings-row"><span><strong>{zh ? "转录保存" : "Transcript saving"}</strong><small>{zh ? "不保存时仍可显示会话内临时字幕，结束后不会写入任务。" : "Temporary captions remain visible but are not written to the task."}</small></span><select data-testid="realtime-transcript-policy" value={voicePreferences.realtimeTranscriptPolicy} onChange={(event) => updateVoicePreferences({ realtimeTranscriptPolicy: event.target.value as "stable" | "none" })}><option value="stable">{zh ? "保存稳定转录" : "Save stable transcripts"}</option><option value="none">{zh ? "不保存" : "Do not save"}</option></select></div>
+              <div className="settings-privacy-note" role="note"><strong>{zh ? "会话更新规则" : "Session update rules"}</strong><p>{zh ? "音量和输入/输出设备可立即生效；instruction 可经 ACK 热更新；模型、Provider voice、语言、自动恢复和保存策略需要新会话。" : "Volume and input/output devices apply immediately; instructions can hot-update with an ACK. Model, Provider voice, language, recovery, and saving policy require a new Session."}</p></div>
             </section>
             <section className="settings-section">
               <div>
@@ -9199,7 +9354,7 @@ function SettingsPanel({
           </>
         )}
 
-        {activePane === "perceptors" && <PerceptorSettingsPanel language={language} />}
+        {activePane === "perceptors" && <><PerceptorSettingsPanel language={language} />{dataPerceptorsPanel ? <div className="settings-embedded-view settings-data-perceptors">{dataPerceptorsPanel}</div> : null}</>}
 
         {activePane === "executors" && (
           <>
@@ -9236,7 +9391,7 @@ function SettingsPanel({
         {activePane === "analytics" && <div className="settings-embedded-view">{usageAnalyticsPanel}</div>}
         {activePane === "channels" && <div className="settings-embedded-view">{channelsPanel}</div>}
 
-        {activePane === "codex" && <CodexRuntimeSettings
+        {activePane === "codex" && <CodexIntegrationSettings
           busy={updateBusy}
           health={health}
           language={language}
@@ -9246,6 +9401,7 @@ function SettingsPanel({
           onRepair={onCodexRepair}
           onLogin={onCodexLogin}
           onLogout={onCodexLogout}
+          onUseCodex={onUseCodex}
         />}
 
         {activePane === "integrations" && (
@@ -9386,6 +9542,7 @@ function SettingsPanel({
                 {archivedThreads.length === 0 ? <small>{zh ? "没有匹配的已归档会话。" : "No archived sessions match."}</small> : archivedThreads.map((thread) => (
                   <div className="settings-row" key={thread.id}><span><strong>{thread.title}</strong><small>{thread.archiveSource === "codex" ? "Codex" : "OpenDrSai"}</small></span><button type="button" onClick={() => void Promise.resolve(onArchiveThread(thread.id, false)).catch(() => showAppNotice({ id: "unarchive-failed", title: zh ? "无法恢复会话" : "Conversation could not be restored", description: zh ? "取消归档失败，请重试。" : "Unarchive failed. Please retry." }))}>{zh ? "取消归档" : "Unarchive"}</button></div>
                 ))}
+                {archivedThreadsHasMore && !archiveSearch.trim() ? <button type="button" disabled={archivedThreadsLoading} onClick={() => void onLoadArchivedThreads()}>{archivedThreadsLoading ? (zh ? "正在加载…" : "Loading…") : (zh ? "加载更多" : "Load more")}</button> : null}
               </div>
             </section>
           </>

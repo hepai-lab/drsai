@@ -17,6 +17,8 @@ const chatAdapter = read("apps/desktop/windows/../shared/renderer/src/adapters/u
 const userFacingErrors = read("apps/desktop/shared/renderer/src/userFacingErrors.ts");
 const errorEnvelope = read("apps/desktop/shared/api/errorEnvelope.ts");
 const authProvider = read("apps/desktop/windows/../shared/renderer/src/auth/AuthProvider.tsx");
+const desktopAuth = read("apps/desktop/shared/main/auth.ts");
+const loginScreen = read("apps/desktop/shared/renderer/src/auth/LoginScreen.tsx");
 const myDrSaiConfig = read("apps/desktop/shared/main/myDrSaiConfig.ts");
 const modelFactory = read("cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py");
 const mainProcess = read("apps/desktop/windows/src/main/index.ts");
@@ -38,6 +40,8 @@ for (const [name, passed] of [
   ["renderer structured auth errors", chatAdapter.includes("describeUserFacingError") && userFacingErrors.includes("normalizeRuntimeErrorEnvelope") && errorEnvelope.includes('return "auth"') && errorEnvelope.includes('return "model"')],
   ["OIDC install status does not require API key", !status.includes('prerequisites.apiKeyConfigured ? null : "api-key"') && !status.includes('apiKeyConfigured ? null : "HEPAI_API_KEY is not configured."')],
   ["desktop development disables static credential fallback", devLauncher.includes('$env:OPENDRSAI_OIDC_ONLY = "1"') && devLauncher.includes("Env:HEPAI_API_KEY")],
+  ["OIDC-only mode reaches the renderer", devLauncher.includes('$env:VITE_OPENDRSAI_OIDC_ONLY = "1"') && loginScreen.includes('VITE_OPENDRSAI_OIDC_ONLY !== "1"')],
+  ["OIDC-only mode rejects legacy offline sessions", desktopAuth.includes("isDisallowedOfflineSession(stored)") && desktopAuth.includes('session.authMode === "offline"') && desktopAuth.includes('process.env.OPENDRSAI_OIDC_ONLY === "1"')],
   ["desktop model picker uses the authenticated available-model catalog", myDrSaiConfig.includes('"/v1/config/runtime-models", undefined, await oidcGatewayHeaders()') && myDrSaiConfig.includes("runtimeCatalog.models.map")],
   ["model discovery preserves failure semantics", desktopGateway.includes("GatewayModelDiscoveryResult") && desktopGateway.includes('state: "forbidden"') && desktopGateway.includes('state: "unavailable"')],
   ["bootstrap retries transient model discovery", mainProcess.includes("bootstrapDesktop") && read("apps/desktop/windows/src/main/bootstrap.ts").includes("discoverModelsWithRecovery") && read("apps/desktop/windows/src/main/bootstrap.ts").includes("[0, 250, 750, 1_500]")],

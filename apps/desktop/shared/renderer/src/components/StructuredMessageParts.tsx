@@ -17,11 +17,15 @@ import {
   Table2,
   TriangleAlert,
 } from "lucide-react";
-import { userFacingBusinessText } from "../userFacingLanguage";
-import { formatWebSearchActivitySummary } from "../webSearchPresentation";
 import { stripTrailingSourceList } from "../sourceListPresentation";
 import type { InlineCitationLink } from "../citationMarkerPlugin";
 import { boundedProcessWindow, PROCESS_ACTIVITY_WINDOW_SIZE, PROCESS_PART_WINDOW_SIZE } from "../boundedProcessWindow";
+import {
+  buildStructuredProcessPresentation,
+  formatActivitySummary,
+  type ProcessActivityGroup,
+  type ProcessProgressGroup,
+} from "../structuredProcessPresentation";
 import type {
   ArtifactPart,
   CitationPart,
@@ -51,6 +55,7 @@ interface StructuredMessagePartsProps {
   configuredCapabilityRequestIds: ReadonlySet<string>;
   onOpenLink: (href: string | undefined) => void;
   onOpenArtifact: (part: ArtifactPart) => void;
+  onDownloadArtifact?: (part: ArtifactPart) => void;
   onOpenCitation: (part: CitationPart) => void;
   onRespondInteraction: (part: InteractionPart, response: InteractionResponse) => void;
   onRequestTextInteraction: (part: InteractionPart) => void;
@@ -80,6 +85,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   configuredCapabilityRequestIds,
   onOpenLink,
   onOpenArtifact,
+  onDownloadArtifact,
   onOpenCitation,
   onRespondInteraction,
   onRequestTextInteraction,
@@ -94,7 +100,8 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const relationTimerRef = useRef<number | null>(null);
   const [focusedPartId, setFocusedPartId] = useState<string | null>(null);
-  const [processOpen, setProcessOpen] = useState(turn.status === "running" || turn.status === "error");
+  const [processOpen, setProcessOpen] = useState(turn.status === "error");
+  const previousTurnStatusRef = useRef(turn.status);
   const citationParts = turn.parts.filter((part): part is CitationPart => part.kind === "citation");
   const progressParts = turn.parts.filter((part) => part.kind === "progress");
   const reasoningParts = turn.parts.filter((part) => part.kind === "reasoning");
@@ -116,7 +123,10 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     title: [part.path ?? part.url ?? part.title, part.locator].filter(Boolean).join(" · "),
   })), [citationParts]);
   const noticeParts = turn.parts.filter((part): part is NoticePart => part.kind === "notice");
+  const importantNoticeParts = noticeParts.filter((part) => part.level === "warning" || part.level === "error");
+  const backgroundNoticeParts = noticeParts.filter((part) => part.level !== "warning" && part.level !== "error");
   const publicSources = useMemo(() => extractPublicSources(turn), [turn]);
+  const processPresentation = useMemo(() => buildStructuredProcessPresentation(turn, language), [language, turn]);
   const hasUserWarning = noticeParts.some((part) => part.level === "warning") || turn.parts.some((part) => part.kind === "markdown" && /could not be fully verified|citation_evidence_incomplete/i.test(part.markdown));
   const hasProcess = progressParts.length > 0 || reasoningParts.length > 0 || subtaskParts.length > 0 || turn.activities.length > 0 || noticeParts.length > 0;
   const waitingApproval = turn.parts.some((part) => part.kind === "interaction" && part.interactionType === "approval" && (part.status === "pending" || part.status === "running"));
@@ -139,24 +149,19 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   const durationLabel = durationMs === undefined ? "" : formatRunDuration(durationMs, language);
   const backendLabel = formatBackendLabel(turn.meta?.backend);
   const statusMeta = ["OpenDrSai", backendLabel, turn.meta?.workspaceLabel].filter(Boolean).join(" · ");
-  const commandCount = turn.activities.filter((activity) => activity.kind === "tool" && /command|shell|terminal|exec/i.test(activity.toolName)).length;
-  const runCounts = [
-    [language === "zh" ? "工具" : "Tools", turn.activities.filter((activity) => activity.kind === "tool").length - commandCount],
-    [language === "zh" ? "命令" : "Commands", commandCount],
-    [language === "zh" ? "文件" : "Files", turn.activities.filter((activity) => activity.kind === "file_change").length],
-    [language === "zh" ? "审批" : "Approvals", turn.parts.filter((part) => part.kind === "interaction" && part.interactionType === "approval").length],
-    [language === "zh" ? "子任务" : "Subtasks", turn.activities.filter((activity) => activity.kind === "subtask").length + turn.parts.filter((part) => part.kind === "subtask").length],
-    [language === "zh" ? "产物" : "Artifacts", turn.parts.filter((part) => part.kind === "artifact").length],
-  ].filter((entry): entry is [string, number] => Number(entry[1]) > 0);
+  const runCounts = processPresentation.counts;
+  const activeProgress = [...progressParts].reverse().find((part) => part.status === "pending" || part.status === "running");
+  const currentProcessLabel = processPresentation.currentActivity ?? activeProgress?.summary;
+  const statusContext = [formatRunContext(turn.meta?.backend), turn.meta?.workspaceLabel, turn.status === "running" ? currentProcessLabel : undefined].filter(Boolean).join(" · ");
 
   useEffect(() => () => {
     if (relationTimerRef.current !== null) window.clearTimeout(relationTimerRef.current);
   }, []);
 
   useEffect(() => {
-    if (turn.status === "running" || turn.status === "error") setProcessOpen(true);
-    else if (turn.status === "completed") setProcessOpen(hasUserWarning);
-  }, [hasUserWarning, turn.status]);
+    if (turn.status === "error" && previousTurnStatusRef.current !== "error") setProcessOpen(true);
+    previousTurnStatusRef.current = turn.status;
+  }, [turn.status]);
 
   function focusPart(partId: string): void {
     setFocusedPartId(partId);
@@ -188,7 +193,8 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
             {part.citationIds.map((citationId) => {
               const citation = citationParts.find((candidate) => candidate.citationId === citationId);
               if (!citation) return null;
-              return <button type="button" key={citationId} onClick={() => focusPart(citation.id)} title={[citation.path ?? citation.url ?? citation.title, citation.locator].filter(Boolean).join(" · ")} aria-label={`${language === "zh" ? "定位引用" : "Go to citation"}: ${citation.title}`}>{citationFileName(citation)}</button>;
+              const openCitation = citation.url?.startsWith("https://") ? () => onOpenCitation(citation) : () => focusPart(citation.id);
+              return <button type="button" key={citationId} onClick={openCitation} title={[citation.path ?? citation.url ?? citation.title, citation.locator].filter(Boolean).join(" · ")} aria-label={`${language === "zh" ? "打开引用" : "Open citation"}: ${citation.title}`}>{citationFileName(citation)}</button>;
             })}
           </div> : null}
         </div>
@@ -200,7 +206,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       <ChatMessageContent content={part.summary} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
       {part.total !== undefined && part.completed !== undefined ? <small>{part.completed}/{part.total}</small> : null}
     </div>;
-    if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} workspacePath={workspacePath} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} />;
+    if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} workspacePath={workspacePath} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} onDownload={onDownloadArtifact && part.downloadable ? () => onDownloadArtifact(part) : undefined} />;
     if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
     if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} capabilityConfigured={configuredCapabilityRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} onOpenLink={onOpenLink} />;
     if (part.kind === "subtask") return <div className={`structured-subtask ${part.status}`} key={part.id}><ListChecks size={14} aria-hidden="true" /><span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span></div>;
@@ -211,44 +217,41 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     <div ref={containerRef} className="structured-message-parts" data-turn-id={turn.turnId} data-turn-status={turn.status}>
       {hasProcess ? <details className="structured-process" open={processOpen} onToggle={(event) => setProcessOpen(event.currentTarget.open)}>
         <summary className="structured-run-status" title={statusMeta}>
-          <span className="structured-run-context">{statusMeta}</span>
+          <span className="structured-run-context">{statusContext}</span>
           <span className="structured-run-actions">
             <span className={`structured-turn-status status-${turn.status}`}>{turnStatusLabel}{durationLabel ? ` · ${durationLabel}` : ""}</span>
-            {runCounts.length ? <span className="structured-run-counts" aria-label={language === "zh" ? "运行步骤计数" : "Run step counts"}>{runCounts.map(([label, count]) => <small key={label}>{label} {count}</small>)}</span> : null}
-            {reproducibilityLevel ? <span className={`structured-reproducibility level-${reproducibilityLevel}`}>{reproducibilitySummaryLabel(reproducibilityLevel, language)}</span> : null}
-            <span className="structured-process-label">{language === "zh" ? "处理过程" : "Process"}</span>
+            {runCounts.length ? <span className="structured-run-counts" aria-label={language === "zh" ? "运行步骤计数" : "Run step counts"}>{runCounts.map((item) => <small key={item.key}>{item.label} {item.count}</small>)}</span> : null}
+            {reproducibilityLevel === "partial" || reproducibilityLevel === "unavailable" ? <span className={`structured-reproducibility level-${reproducibilityLevel}`}>{reproducibilitySummaryLabel(reproducibilityLevel, language)}</span> : null}
+            <span className="structured-process-label">{language === "zh" ? "过程" : "Process"}</span>
             <ChevronDown size={14} aria-hidden="true" />
           </span>
         </summary>
         {processOpen ? <div className="structured-process-content" data-testid="structured-process-content">
-          {onOpenRun && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onOpenRun(runId)}>{language === "zh" ? "查看运行" : "View run"}<ArrowUpRight size={13} aria-hidden /></button> : null}
-          {onCreateRunExperiment && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onCreateRunExperiment(runId)}>{language === "zh" ? "创建实验" : "Create experiment"}<FlaskConical size={13} aria-hidden /></button> : null}
           <RetrievalStageSummary turn={turn} language={language} />
-          <StructuredActivityTimeline turn={turn} language={language} onOpenDebug={onOpenDebug} />
-          <BoundedProcessSection title={language === "zh" ? "过程记录" : "Progress"} items={progressParts} language={language} renderPart={renderPart} />
-          <BoundedProcessSection title={language === "zh" ? "分析摘要" : "Analysis summary"} items={reasoningParts} language={language} renderPart={renderPart} />
-          {turn.activities.length ? <section className="structured-process-section"><h4>{language === "zh" ? "操作与变更" : "Actions and changes"}</h4><StructuredActivityDetails turn={turn} language={language} onOpenDebug={onOpenDebug} onOpenRun={onOpenRun && runId ? (itemId) => onOpenRun(runId, itemId) : undefined} onCreateExperiment={onCreateRunExperiment && runId ? (itemId) => onCreateRunExperiment(runId, itemId) : undefined} /></section> : null}
+          {processPresentation.completionSummary ? <div className="structured-process-overview"><CheckCircle2 size={15} aria-hidden="true" /><span>{processPresentation.completionSummary}</span></div> : null}
+          <CompactProgressSection groups={processPresentation.progressGroups} language={language} />
+          <ReasoningDisclosure parts={reasoningParts} language={language} renderPart={renderPart} />
+          <AggregatedActivityDetails groups={processPresentation.activityGroups} language={language} />
           <BoundedProcessSection title={language === "zh" ? "子任务" : "Subtasks"} items={subtaskParts} language={language} renderPart={renderPart} />
-          <BoundedProcessSection title={language === "zh" ? "运行信息" : "Run information"} items={noticeParts} language={language} renderPart={renderPart} />
-          <StructuredActivitySummary turn={turn} language={language} now={now} startedAt={startedAt} onOpenDebug={onOpenDebug} />
+          <BoundedProcessSection title={language === "zh" ? "运行信息" : "Run information"} items={backgroundNoticeParts} language={language} renderPart={renderPart} />
+          <div className="structured-process-footer">
+            {onOpenRun && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onOpenRun(runId)}>{language === "zh" ? "查看完整运行" : "View full run"}<ArrowUpRight size={13} aria-hidden /></button> : null}
+            {onCreateRunExperiment && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onCreateRunExperiment(runId)}>{language === "zh" ? "创建实验" : "Create experiment"}<FlaskConical size={13} aria-hidden /></button> : null}
+            {onOpenDebug ? <button type="button" className="structured-debug-link" onClick={onOpenDebug}>{language === "zh" ? "技术诊断" : "Technical diagnostics"}</button> : null}
+          </div>
         </div> : null}
       </details> : <header className="structured-run-status" title={statusMeta}>
-        <span className="structured-run-context">{statusMeta}</span>
+        <span className="structured-run-context">{statusContext}</span>
         <span className={`structured-turn-status status-${turn.status}`}>{turnStatusLabel}{durationLabel ? ` · ${durationLabel}` : ""}</span>
-        {runCounts.length ? <span className="structured-run-counts" aria-label={language === "zh" ? "运行步骤计数" : "Run step counts"}>{runCounts.map(([label, count]) => <small key={label}>{label} {count}</small>)}</span> : null}
-        {reproducibilityLevel ? <span className={`structured-reproducibility level-${reproducibilityLevel}`}>{reproducibilitySummaryLabel(reproducibilityLevel, language)}</span> : null}
+        {runCounts.length ? <span className="structured-run-counts" aria-label={language === "zh" ? "运行步骤计数" : "Run step counts"}>{runCounts.map((item) => <small key={item.key}>{item.label} {item.count}</small>)}</span> : null}
+        {reproducibilityLevel === "partial" || reproducibilityLevel === "unavailable" ? <span className={`structured-reproducibility level-${reproducibilityLevel}`}>{reproducibilitySummaryLabel(reproducibilityLevel, language)}</span> : null}
         {onOpenRun && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onOpenRun(runId)}>{language === "zh" ? "查看运行" : "View run"}<ArrowUpRight size={13} aria-hidden /></button> : null}
         {onCreateRunExperiment && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onCreateRunExperiment(runId)}>{language === "zh" ? "创建实验" : "Create experiment"}<FlaskConical size={13} aria-hidden /></button> : null}
       </header>}
+      {importantNoticeParts.length ? <section className="structured-important-notices">{importantNoticeParts.map(renderPart)}</section> : null}
       {interactionParts.length ? <section className="structured-interaction-layer" aria-label={language === "zh" ? "待用户交互" : "User action required"}>{interactionParts.map(renderPart)}</section> : null}
-      {resultParts.length ? <section className="structured-result-layer"><h3>{language === "zh" ? "最终回答" : "Final answer"}</h3>{resultParts.map(renderPart)}</section> : null}
-      {publicSources.length ? <section className="structured-source-list" aria-label={language === "zh" ? "回答来源" : "Answer sources"}>
-        <h3>{language === "zh" ? `来源 · ${publicSources.length}` : `Sources · ${publicSources.length}`}</h3>
-        {publicSources.map((source, index) => <button type="button" key={source.url} onClick={() => onOpenLink(source.url)}>
-          <span><small>{index + 1}</small><strong>{source.label}</strong></span>
-          <em>{language === "zh" ? "已获取" : "Retrieved"}</em><ArrowUpRight size={13} aria-hidden />
-        </button>)}
-      </section> : null}
+      {resultParts.length ? <section className="structured-result-layer"><h3>{language === "zh" ? "回答" : "Answer"}</h3>{resultParts.map(renderPart)}</section> : null}
+      <PublicSourcesDisclosure sources={publicSources} language={language} onOpenLink={onOpenLink} />
     </div>
   );
 });
@@ -260,10 +263,36 @@ function extractPublicSources(turn: StructuredTurnState): Array<{ url: string; l
     if (part.kind !== "markdown") continue;
     urls.push(...(part.markdown.match(/https:\/\/[^\s<>\]\[(){}"']+/g) ?? []).map((url) => url.replace(/[.,;:!?]+$/, "")));
   }
-  return [...new Set(urls)].slice(0, 8).map((url) => {
+  return [...new Set(urls)].map((url) => {
     try { return { url, label: new URL(url).hostname.replace(/^www\./, "") }; }
     catch { return { url, label: url }; }
   });
+}
+
+function PublicSourcesDisclosure({
+  sources,
+  language,
+  onOpenLink,
+}: {
+  sources: Array<{ url: string; label: string }>;
+  language: "en" | "zh";
+  onOpenLink: (href: string | undefined) => void;
+}): React.JSX.Element | null {
+  const [open, setOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  const window = boundedProcessWindow(sources.length, page, PROCESS_PART_WINDOW_SIZE);
+  useEffect(() => setPage((current) => boundedProcessWindow(sources.length, current, PROCESS_PART_WINDOW_SIZE).page), [sources.length]);
+  if (!sources.length) return null;
+  return <details className="structured-source-list" open={open} onToggle={(event) => setOpen(event.currentTarget.open)} aria-label={language === "zh" ? "回答来源" : "Answer sources"}>
+    <summary>{language === "zh" ? `来源 · ${sources.length}` : `Sources · ${sources.length}`}<ChevronDown size={14} aria-hidden="true" /></summary>
+    {open ? <div>
+      {sources.slice(window.start, window.end).map((source, index) => <button type="button" key={source.url} onClick={() => onOpenLink(source.url)}>
+        <span><small>{window.start + index + 1}</small><strong>{source.label}</strong></span>
+        <em>{language === "zh" ? "已获取" : "Retrieved"}</em><ArrowUpRight size={13} aria-hidden />
+      </button>)}
+      <ProcessWindowNavigation window={window} total={sources.length} language={language} onPage={setPage} />
+    </div> : null}
+  </details>;
 }
 
 function RetrievalStageSummary({ turn, language }: { turn: StructuredTurnState; language: "en" | "zh" }): React.JSX.Element | null {
@@ -354,84 +383,82 @@ function formatBackendLabel(backend: string | undefined): string {
   return backend;
 }
 
-function summarizeProcess(turn: StructuredTurnState, language: "en" | "zh"): string {
-  const files = new Set(turn.activities.filter((activity) => activity.kind === "file_change").map((activity) => activity.kind === "file_change" ? activity.path : "")).size;
-  const tools = turn.activities.filter((activity) => activity.kind === "tool").length;
-  const tasks = turn.parts.filter((part) => part.kind === "subtask").length;
-  const chunks = language === "zh"
-    ? [files ? `${files} 个文件` : "", tools ? `${tools} 项操作` : "", tasks ? `${tasks} 个子任务` : ""]
-    : [files ? `${files} file${files === 1 ? "" : "s"}` : "", tools ? `${tools} operation${tools === 1 ? "" : "s"}` : "", tasks ? `${tasks} subtask${tasks === 1 ? "" : "s"}` : ""];
-  return chunks.filter(Boolean).join(" · ");
+function formatRunContext(backend: string | undefined): string {
+  if (!backend || /runtime|opendrsai|drsai/i.test(backend)) return "OpenDrSai";
+  if (/codex/i.test(backend)) return "Codex";
+  return backend;
 }
 
-function StructuredActivityTimeline({
-  turn,
+function CompactProgressSection({
+  groups,
   language,
-  onOpenDebug,
 }: {
-  turn: StructuredTurnState;
+  groups: ProcessProgressGroup[];
   language: "en" | "zh";
-  onOpenDebug?: () => void;
 }): React.JSX.Element | null {
-  if (!turn.activities.length) return null;
-  const failedActivities = turn.activities.filter((activity) => activity.status === "error");
-  const failed = failedActivities.length;
-  const active = turn.activities.filter(
-    (activity) => activity.status === "pending" || activity.status === "running",
-  ).length;
-  const changedFiles = new Set(turn.activities
-    .filter((activity) => activity.kind === "file_change")
-    .map((activity) => activity.kind === "file_change" ? activity.path : ""));
-  const toolCount = turn.activities.filter((activity) => activity.kind === "tool").length;
-  const aggregateStatus: StructuredActivityEvent["status"] = failed
-    ? "error"
-    : active
-      ? "running"
-      : "completed";
-  const aggregateLabel = failed
-    ? language === "zh"
-      ? `工具操作有 ${failed} 项失败`
-      : `${failed} tool operation${failed === 1 ? "" : "s"} failed`
-    : active
-      ? language === "zh"
-        ? "正在执行工具操作"
-        : "Running tool operations"
-      : language === "zh"
-        ? changedFiles.size
-          ? `已修改 ${changedFiles.size} 个文件${toolCount ? `，执行 ${toolCount} 项工具操作` : ""}`
-          : `处理过程已完成${toolCount ? ` · ${toolCount} 项工具操作` : ""}`
-        : changedFiles.size
-          ? `Changed ${changedFiles.size} file${changedFiles.size === 1 ? "" : "s"}${toolCount ? ` · ${toolCount} tool operation${toolCount === 1 ? "" : "s"}` : ""}`
-          : `Work completed${toolCount ? ` · ${toolCount} tool operation${toolCount === 1 ? "" : "s"}` : ""}`;
-  const failedTitle = failedActivities[0]?.title?.replace(/\s+response$/i, "").trim();
-  const label = failed && failedTitle
-    ? language === "zh"
-      ? `步骤失败：${failedTitle}`
-      : `Step failed: ${failedTitle}`
-    : aggregateLabel;
-  const content = (
-    <>
-      <ActivityStatusIcon status={aggregateStatus} />
-      <span>{label}</span>
-      {onOpenDebug ? <small>{language === "zh" ? "在调试中查看详情" : "View details in Debug"}</small> : null}
-    </>
-  );
-  return (
-    <section
-      className="structured-activity-timeline"
-      aria-label={language === "zh" ? "工具活动摘要" : "Tool activity summary"}
-      data-activity-count={turn.activities.length}
-      data-activity-status={aggregateStatus}
-    >
-      {onOpenDebug ? (
-        <button type="button" className="structured-activity-compact" onClick={onOpenDebug}>
-          {content}
-        </button>
-      ) : (
-        <div className="structured-activity-compact">{content}</div>
-      )}
-    </section>
-  );
+  const [page, setPage] = useState(0);
+  const window = boundedProcessWindow(groups.length, page, PROCESS_PART_WINDOW_SIZE);
+  useEffect(() => setPage((current) => boundedProcessWindow(groups.length, current, PROCESS_PART_WINDOW_SIZE).page), [groups.length]);
+  if (!groups.length) return null;
+  return <section className="structured-process-section structured-progress-groups" data-progress-group-total={groups.length}>
+    <h4>{language === "zh" ? "进度与计划" : "Progress and plan"}</h4>
+    <div className="structured-process-window">
+      {groups.slice(window.start, window.end).map((group) => <div className={`structured-progress-group ${group.status}`} key={group.id}>
+        <ActivityStatusIcon status={group.status} />
+        <span>{group.summary}</span>
+        {group.count > 1 ? <small>×{group.count}</small> : null}
+        {group.total !== undefined && group.completed !== undefined ? <small>{group.completed}/{group.total}</small> : null}
+      </div>)}
+    </div>
+    <ProcessWindowNavigation window={window} total={groups.length} language={language} onPage={setPage} />
+  </section>;
+}
+
+function ReasoningDisclosure({
+  parts,
+  language,
+  renderPart,
+}: {
+  parts: Array<Extract<StructuredAssistantPart, { kind: "reasoning" }>>;
+  language: "en" | "zh";
+  renderPart: (part: StructuredAssistantPart) => React.JSX.Element | null;
+}): React.JSX.Element | null {
+  const [open, setOpen] = useState(false);
+  if (!parts.length) return null;
+  const latestSummary = [...parts].reverse().map((part) => part.summary?.trim()).find(Boolean);
+  return <details className="structured-analysis-disclosure" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>
+      <span><strong>{language === "zh" ? "分析说明" : "Analysis notes"}</strong>{latestSummary ? <small>{latestSummary}</small> : <small>{language === "zh" ? `${parts.length} 条记录` : `${parts.length} record${parts.length === 1 ? "" : "s"}`}</small>}</span>
+      <ChevronDown size={14} aria-hidden="true" />
+    </summary>
+    {open ? <div className="structured-analysis-content">{parts.map(renderPart)}</div> : null}
+  </details>;
+}
+
+function AggregatedActivityDetails({
+  groups,
+  language,
+}: {
+  groups: ProcessActivityGroup[];
+  language: "en" | "zh";
+}): React.JSX.Element | null {
+  const [page, setPage] = useState(0);
+  const window = boundedProcessWindow(groups.length, page, PROCESS_ACTIVITY_WINDOW_SIZE);
+  useEffect(() => setPage((current) => boundedProcessWindow(groups.length, current, PROCESS_ACTIVITY_WINDOW_SIZE).page), [groups.length]);
+  if (!groups.length) return null;
+  return <section className="structured-process-section structured-activity-groups" data-activity-group-total={groups.length}>
+    <h4>{language === "zh" ? "操作与文件" : "Actions and files"}</h4>
+    <div className="structured-activity-window" data-activity-window-start={window.start} data-activity-window-end={window.end}>
+      {groups.slice(window.start, window.end).map((group) => <div className={`structured-activity-group ${group.status}`} key={group.id}>
+        <ActivityStatusIcon status={group.status} />
+        <span>{group.label}</span>
+        {group.count > 1 ? <small>×{group.count}</small> : null}
+        {group.fileNames.length ? <small className="structured-activity-files">{group.fileNames.slice(0, 3).join("、")}{group.fileNames.length > 3 ? ` +${group.fileNames.length - 3}` : ""}</small> : null}
+        {group.durationMs !== undefined && (group.durationMs >= 1000 || group.status === "error") ? <time>{formatRunDuration(group.durationMs, language)}</time> : null}
+      </div>)}
+    </div>
+    <ProcessWindowNavigation window={window} total={groups.length} language={language} onPage={setPage} />
+  </section>;
 }
 
 function ActivityStatusIcon({
@@ -444,81 +471,6 @@ function ActivityStatusIcon({
   return <CircleEllipsis size={16} aria-hidden="true" />;
 }
 
-function StructuredActivityDetails({
-  turn,
-  language,
-  onOpenDebug,
-  onOpenRun,
-  onCreateExperiment,
-}: {
-  turn: StructuredTurnState;
-  language: "en" | "zh";
-  onOpenDebug?: () => void;
-  onOpenRun?: (itemId: string) => void;
-  onCreateExperiment?: (itemId: string) => void;
-}): React.JSX.Element {
-  const [page, setPage] = useState(0);
-  const window = boundedProcessWindow(turn.activities.length, page, PROCESS_ACTIVITY_WINDOW_SIZE);
-  useEffect(() => setPage((current) => boundedProcessWindow(turn.activities.length, current, PROCESS_ACTIVITY_WINDOW_SIZE).page), [turn.activities.length]);
-  return <div className="structured-activity-details">
-    <div className="structured-activity-window" data-activity-window-start={window.start} data-activity-window-end={window.end}>
-    {turn.activities.slice(window.start, window.end).map((activity) => <div className={`structured-activity-row ${activity.status}`} key={activity.id}>
-      <ActivityStatusIcon status={activity.status} />
-      <span>{formatActivitySummary(activity, language)}</span>
-      {activity.kind === "file_change" ? <small>{activity.action}</small> : null}
-      {activity.kind === "tool" ? <small>{language === "zh" ? "执行记录已保存" : "Execution record saved"}</small> : null}
-      {activity.kind === "tool" && activity.toolName !== "web_search" && activity.durationMs !== undefined
-        ? <time>{formatRunDuration(activity.durationMs, language)}</time>
-        : null}
-      {onOpenRun && activity.oaepItemId ? <button type="button" className="structured-activity-inspect" onClick={() => onOpenRun(activity.oaepItemId!)} aria-label={`${language === "zh" ? "查看运行项目" : "Inspect run item"}: ${activity.title}`}><ArrowUpRight size={12} /></button> : null}
-      {onCreateExperiment && activity.oaepItemId ? <button type="button" className="structured-activity-inspect" onClick={() => onCreateExperiment(activity.oaepItemId!)} aria-label={`${language === "zh" ? "从运行项目创建实验" : "Create experiment from run item"}: ${activity.title}`}><FlaskConical size={12} /></button> : null}
-    </div>)}
-    </div>
-    <ProcessWindowNavigation window={window} total={turn.activities.length} language={language} onPage={setPage} />
-    {onOpenDebug ? <button type="button" className="structured-debug-link" onClick={onOpenDebug}>{language === "zh" ? "查看技术详情" : "View technical details"}</button> : null}
-  </div>;
-}
-
-function StructuredActivitySummary({
-  turn,
-  language,
-  now,
-  startedAt,
-  onOpenDebug,
-}: {
-  turn: StructuredTurnState;
-  language: "en" | "zh";
-  now: number;
-  startedAt?: number;
-  onOpenDebug?: () => void;
-}): React.JSX.Element | null {
-  if (turn.status !== "pending" && turn.status !== "running") return null;
-  const active = [...turn.activities]
-    .reverse()
-    .find((activity) => activity.status === "pending" || activity.status === "running");
-  const label = active
-    ? formatActivitySummary(active, language)
-    : language === "zh" ? "正在处理" : "Working";
-  const elapsed = formatRunDuration(Math.max(0, now - (startedAt ?? now)), language);
-  const activityContent = <><span className="structured-activity-dot" aria-hidden="true" /><span>{label}</span></>;
-
-  return (
-    <div className="structured-activity-summary">
-      {onOpenDebug && active ? (
-        <button
-          type="button"
-          className="structured-activity-detail"
-          onClick={onOpenDebug}
-          title={language === "zh" ? "在调试面板查看活动详情" : "View activity details in Debug"}
-        >
-          {activityContent}
-        </button>
-      ) : <span className="structured-activity-detail">{activityContent}</span>}
-      <time>{language === "zh" ? `已执行 ${elapsed}` : `Running ${elapsed}`}</time>
-    </div>
-  );
-}
-
 function formatRunDuration(durationMs: number, language: "en" | "zh"): string {
   if (durationMs < 1000) return language === "zh" ? "少于 1 秒" : "<1s";
   const totalSeconds = Math.floor(durationMs / 1000);
@@ -526,25 +478,6 @@ function formatRunDuration(durationMs: number, language: "en" | "zh"): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-export function formatActivitySummary(activity: StructuredActivityEvent, language: "en" | "zh"): string {
-  if (activity.kind === "tool") {
-    if (activity.toolName === "web_search") return formatWebSearchActivitySummary(activity, language);
-    return userFacingBusinessText(activity.toolName, language === "zh" ? "执行任务步骤" : "Run task step");
-  }
-  if (activity.kind === "model") return language === "zh" ? "正在生成" : "Generating";
-  if (activity.kind === "retry") {
-    return language === "zh"
-      ? `正在重试 ${activity.attempt}/${activity.limit}`
-      : `Retrying ${activity.attempt}/${activity.limit}`;
-  }
-  if (activity.kind === "file_change") {
-    const name = activity.path.split(/[\\/]/).filter(Boolean).pop() || activity.path;
-    return language === "zh" ? `正在处理 ${name}` : `Working on ${name}`;
-  }
-  if (activity.kind === "subtask") return activity.agentName || activity.title;
-  return activity.title || (language === "zh" ? "正在处理" : "Working");
 }
 
 function StructuredReasoning({
@@ -592,12 +525,14 @@ function ArtifactItem({
   workspacePath,
   focused,
   onOpen,
+  onDownload,
 }: {
   part: ArtifactPart;
   language: "en" | "zh";
   workspacePath?: string;
   focused: boolean;
   onOpen: () => void;
+  onDownload?: () => void;
 }): React.JSX.Element {
   const Icon = part.artifactType === "image"
     ? Image
@@ -664,6 +599,7 @@ function ArtifactItem({
         <em>{formatPartStatus(part.status, language)}</em>
         <ArrowUpRight size={14} aria-hidden="true" />
       </button>
+      {onDownload ? <button type="button" className="structured-artifact-download" onClick={onDownload}>{language === "zh" ? "下载 / 另存为" : "Download / Save as"}</button> : null}
     </div>
   );
 }
@@ -784,6 +720,7 @@ function InteractionItem({
   const [configurationWarning, setConfigurationWarning] = useState("");
   const [savingConfiguration, setSavingConfiguration] = useState(false);
   const [configurationSaved, setConfigurationSaved] = useState(false);
+  const [showByokConfiguration, setShowByokConfiguration] = useState(false);
   const [goalDraft, setGoalDraft] = useState(() => ({
     objective: goalLines.goal || "",
     materials: goalLines.materials === "None supplied" ? "" : goalLines.materials || "",
@@ -872,6 +809,22 @@ function InteractionItem({
         setSavingConfiguration(false);
       }
     };
+    const signInAndContinue = async () => {
+      setSavingConfiguration(true);
+      setConfigurationError("");
+      try {
+        const result = await desktopApi.startOidcLogin({ rememberMe: true });
+        if (!result.ok || !result.session?.authenticated) throw new Error(result.message || "sign_in_failed");
+        setConfigurationSaved(true);
+        onRespond(part, { decision: "accept", capabilityAction: "configured" });
+      } catch (error) {
+        setConfigurationError(zh
+          ? `登录未完成：${error instanceof Error ? error.message : String(error)}`
+          : `Sign-in did not complete: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        setSavingConfiguration(false);
+      }
+    };
     if (configurationSaved || capabilityConfigured) {
       return <section className="chat-agent-input-request structured-interaction capability-configuration-card capability-configuration-complete" data-testid="capability-configuration-card" data-state="configured" aria-label={zh ? "网络感知器已配置" : "Network perceptor configured"} role="status">
         <div className="capability-configuration-title">
@@ -888,14 +841,18 @@ function InteractionItem({
     return <section className="chat-agent-input-request structured-interaction capability-configuration-card" data-testid="capability-configuration-card" data-state="required" aria-label={zh ? "配置网页搜索" : "Configure web search"}>
       <div className="capability-configuration-title"><Globe2 size={18} aria-hidden="true" /><strong>{zh ? "需要网络感知器" : "A network perceptor is needed"}</strong></div>
       <p>{capabilityPrompt}</p>
-      <p>{zh ? "你也可以稍后在“设置 → 感知器配置”中管理 Tavily。" : "You can also manage Tavily later in Settings → Perceptors."}</p>
-      <p className="capability-configuration-privacy">{zh ? "隐私说明：保存并验证之前，不会把本次问题发送给 Tavily。API Key 将安全保存在本机。" : "Privacy: this query is not sent to Tavily before you save and verify the configuration. The API key is stored securely on this device."}</p>
-      <label>{zh ? "Tavily API Key" : "Tavily API key"}<input data-testid="capability-api-key" type="password" autoComplete="off" value={apiKey} disabled={responded || savingConfiguration} onChange={(event) => setApiKey(event.target.value)} placeholder="tvly-…" /></label>
-      <button type="button" className="link-button" onClick={() => onOpenLink?.("https://app.tavily.com/home")}>{zh ? "如何获取 API Key" : "How to get an API key"}<ArrowUpRight size={13} aria-hidden="true" /></button>
+      <p>{zh ? "登录 HAI 后可直接使用平台托管网页搜索，无需配置 Tavily Key。也可选择使用自己的 Key。" : "Sign in to HAI to use platform-managed web search without a Tavily key, or use your own key."}</p>
+      <p>{zh ? "你也可以稍后在“设置 → 感知器配置”中查看托管状态或管理自己的 Tavily 配置。" : "You can also review managed status or manage your own Tavily configuration later in Settings → Perceptors."}</p>
+      <p className="capability-configuration-privacy">{zh ? "隐私说明：完成选择之前不会发送本次问题；使用托管搜索时，Key 不会下发到本机。" : "Privacy: this query is not sent before you choose. Managed provider credentials never reach this device."}</p>
+      {showByokConfiguration ? <>
+        <label>{zh ? "Tavily API Key" : "Tavily API key"}<input data-testid="capability-api-key" type="password" autoComplete="off" value={apiKey} disabled={responded || savingConfiguration} onChange={(event) => setApiKey(event.target.value)} placeholder="tvly-…" /></label>
+        <button type="button" className="link-button" onClick={() => onOpenLink?.("https://app.tavily.com/home")}>{zh ? "如何获取 API Key" : "How to get an API key"}<ArrowUpRight size={13} aria-hidden="true" /></button>
+      </> : null}
       {configurationError ? <p className="capability-configuration-error" role="alert">{configurationError}</p> : null}
       <div>
         <button type="button" disabled={responded || savingConfiguration} onClick={() => onRespond(part, { decision: "decline", capabilityAction: "answer_without_network" })}>{zh ? "暂不联网，继续回答" : "Continue without web"}</button>
-        <button type="button" data-testid="capability-save-and-continue" disabled={responded || savingConfiguration || !apiKey.trim()} onClick={() => void configure()}>{savingConfiguration ? (zh ? "正在验证…" : "Verifying…") : (zh ? "保存并继续" : "Save and continue")}</button>
+        <button type="button" data-testid="capability-use-byok" disabled={responded || savingConfiguration} onClick={() => setShowByokConfiguration(true)}>{zh ? "使用自己的 Tavily Key" : "Use my Tavily key"}</button>
+        {showByokConfiguration ? <button type="button" data-testid="capability-save-and-continue" disabled={responded || savingConfiguration || !apiKey.trim()} onClick={() => void configure()}>{savingConfiguration ? (zh ? "正在验证…" : "Verifying…") : (zh ? "保存并继续" : "Save and continue")}</button> : <button type="button" className="primary" data-testid="capability-sign-in-and-continue" disabled={responded || savingConfiguration} onClick={() => void signInAndContinue()}>{savingConfiguration ? (zh ? "正在登录…" : "Signing in…") : (zh ? "登录并继续" : "Sign in and continue")}</button>}
       </div>
     </section>;
   }

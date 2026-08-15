@@ -51,6 +51,8 @@ import {
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
 import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
+import type { RuntimeSession } from "../../../shared/main/runtimeClient";
+import { bootstrapRuntimeSessionCatalog } from "../../../shared/main/runtimeSessionCatalogBootstrap";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import type {
   RunInspectionOpenRequest,
@@ -99,14 +101,18 @@ import {
 import { RemoteProtocolError } from "../../../shared/api/remoteSshProtocol";
 import { desktopDiagnostics } from "./diagnostics";
 import { productionDiagnostics } from "../../../shared/main/productionDiagnostics";
+import { desktopFeedback } from "../../../shared/main/feedback";
+import { clearPendingCrashFeedback, getPendingCrashFeedback, initializeLocalCrashReporter, recordCrashIncident } from "../../../shared/main/crashFeedback";
 import { DiagnosticSourceNavigator } from "../../../shared/main/sourceNavigation";
 import { extractDiagnosticContext, runWithDiagnosticContext } from "../../../shared/main/diagnosticContext";
 import { isTrustedDesktopIpcSender } from "../../../shared/main/secureIpc";
 import { InteractiveDebuggerService } from "./interactiveDebugger";
 import { InteractiveDebugPolicyStore } from "../../../shared/main/interactiveDebugPolicy";
 import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../../../shared/api/diagnostics";
+import type { FeedbackDraft, FeedbackStatus } from "../../../shared/api/feedback";
 
 process.setSourceMapsEnabled?.(true);
+initializeLocalCrashReporter();
 let experimentReleaseGatePromise: ReturnType<typeof readExperimentReleaseGate> | null = null;
 function getExperimentReleaseGate() {
   experimentReleaseGatePromise ??= readExperimentReleaseGate([
@@ -180,6 +186,7 @@ import {
   prepareForkWorktree,
 } from "./forkWorktrees";
 import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
+import { getWebSearchProviderPolicy, updateWebSearchProviderPolicy } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
@@ -194,6 +201,8 @@ import {
   updateThread,
   updateThreadSnapshot,
   upsertThreadFromRun,
+  upsertThreadFromRuntimeCatalog,
+  upsertThreadsFromRuntimeCatalog,
 } from "./threads";
 import {
   createThreadShare,
@@ -301,6 +310,18 @@ import {
   syncChannelSnapshots,
   syncLiveChannelContext,
 } from "./channelAdapters";
+import {
+  cancelWeChatLogin,
+  getWeChatChannelStatus,
+  getWeChatSessionSummary,
+  getWeChatReplyCapability,
+  logoutWeChatChannel,
+  pollWeChatLogin,
+  startWeChatChannel,
+  startWeChatLogin,
+  stopWeChatChannel,
+  sendToWeChat,
+} from "../../../shared/main/wechatChannel";
 import { WINDOWS_CREDENTIAL_SERVICE } from "./platformCredentials";
 import { importMcpContext } from "./mcpContext";
 import { decideMcpAtMostOnce, recoverAmbiguousMcpApproval } from "./mcpApprovalRecovery";
@@ -427,10 +448,15 @@ import {
   disposeDuplexVoiceSession,
   disposeAllDuplexVoiceSessions,
   getDuplexVoiceCapabilities,
+  getDuplexVoiceOccupancy,
+  getDuplexVoiceReadiness,
+  finishDuplexVoiceTurn,
   interruptDuplexVoiceSession,
   startDuplexVoiceSession,
   stopDuplexVoiceSession,
   submitDuplexVoiceToolResult,
+  submitDuplexVoiceTextInput,
+  takeOverDuplexVoiceSession,
   updateDuplexVoiceSession,
 } from "./voice/duplex";
 import {
@@ -490,6 +516,9 @@ import type {
   DesktopChannelOutboundDraftRequest,
   DesktopChannelOutboundDraftResult,
   DesktopChannelSnapshotSyncRequest,
+  DesktopWeChatLoginPollRequest,
+  DesktopWeChatReplyCapabilityRequest,
+  DesktopWeChatOutboundRequest,
   DesktopForkLifecycleAction,
   DesktopForkLifecycleApprovalRequest,
   DesktopForkLifecycleApprovalResult,
@@ -529,6 +558,7 @@ import type {
   DesktopThread,
   DesktopThreadContentSearchRequest,
   DesktopThreadForkMetadata,
+  DesktopThreadListRequest,
   DesktopWorktreeListRequest,
   DesktopWorktreeEventRequest,
   DesktopVoiceTranscriptHandoffRequest,
@@ -536,8 +566,12 @@ import type {
   DesktopStreamingVoiceStartRequest,
   DesktopDuplexVoiceSessionStartRequest,
   DesktopDuplexVoiceInterruptRequest,
+  DesktopDuplexVoiceTakeoverRequest,
   DesktopDuplexVoiceHistoryAppendRequest,
   DesktopDuplexVoiceToolResultRequest,
+  DesktopDuplexVoiceToolApprovalRequest,
+  DesktopDuplexVoiceToolApprovalDecision,
+  DesktopDuplexVoiceTextInputRequest,
   DesktopVoiceSynthesisRequest,
   DesktopBootstrapBlockerKind,
   WorkspaceCheckpointRestoreRequest,
@@ -604,18 +638,17 @@ function runtimeWorkspaceCatalogKey(webContents: WebContents, workspaceId: strin
 async function applyRuntimeWorkspaceCatalogEvent(
   webContents: WebContents,
   workspaceId: string,
+  workspacePath: string,
   sessionId: string,
+  knownSession?: RuntimeSession,
 ): Promise<void> {
   if (webContents.isDestroyed()) return;
   const client = await LocalRuntimeClient.connect();
-  const [session, workspaces, existingThreads] = await Promise.all([
-    client.getSession(sessionId),
-    listWorkspaces(),
+  const [session, existingThreads] = await Promise.all([
+    knownSession ?? client.getSession(sessionId),
     listThreads(),
   ]);
   if (session.workspace_id !== workspaceId) throw new Error("session_catalog_workspace_mismatch");
-  const workspace = workspaces.find((item) => item.id === workspaceId);
-  if (!workspace) return;
   // Desktop chat already owns a thread-* row bound to this Runtime Session.
   // Never materialize a second sidebar entry keyed by session_id, and never
   // overwrite execution status/messageCount from catalog events — those belong
@@ -623,29 +656,19 @@ async function applyRuntimeWorkspaceCatalogEvent(
   // "running" after the Run has already settled to idle.
   const boundDesktop = existingThreads.find((thread) =>
     thread.runtimeSessionId === session.session_id && thread.id !== session.session_id);
-  const catalogId = boundDesktop?.id ?? session.session_id;
-  const thread = await upsertThreadFromRun({
-    id: catalogId,
-    kind: boundDesktop?.kind ?? "chat",
-    title: session.title || boundDesktop?.title,
-    workspacePath: workspace.path,
-    boundAgentId: boundDesktop?.boundAgentId,
-    boundAgentName: boundDesktop?.boundAgentName,
+  const result = await upsertThreadFromRuntimeCatalog({
+    id: boundDesktop?.id ?? session.session_id,
+    title: session.title || boundDesktop?.title || "New chat",
+    workspacePath,
     runtimeSessionId: session.session_id,
-    ...(boundDesktop
-      ? {}
-      : {
-          status: "idle" as const,
-          messageCount: typeof session.message_count === "number" ? session.message_count : 0,
-        }),
-  });
-  const updated = await updateThread({
-    id: thread.id,
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
     archived: session.archived === true || session.lifecycle === "archived" || session.lifecycle === "removed",
-    archiveSource: session.archived === true || session.lifecycle === "archived" ? "opendrsai" : undefined,
+    sourceChannel: session.origin?.provider === "wechat" ? "wechat" : undefined,
+    messageCount: typeof session.message_count === "number" ? session.message_count : 0,
   });
-  if (!webContents.isDestroyed()) webContents.send("desktop:thread-catalog", {
-    thread: updated,
+  if (result.changed && !webContents.isDestroyed()) webContents.send("desktop:thread-catalog", {
+    thread: result.thread,
     source: "runtime-session",
   });
 }
@@ -653,6 +676,7 @@ async function applyRuntimeWorkspaceCatalogEvent(
 function startRuntimeWorkspaceCatalogSubscription(
   webContents: WebContents,
   workspaceId: string,
+  workspacePath: string,
 ): void {
   const key = runtimeWorkspaceCatalogKey(webContents, workspaceId);
   if (runtimeWorkspaceCatalogSubscriptions.has(key)) return;
@@ -663,12 +687,33 @@ function startRuntimeWorkspaceCatalogSubscription(
     let retryMillis = 500;
     while (!controller.signal.aborted && !webContents.isDestroyed()) {
       try {
-        const stream = await (await LocalRuntimeClient.connect())
-          .openWorkspaceSessionCatalogStream(workspaceId, controller.signal);
+        const client = await LocalRuntimeClient.connect();
+        const stream = await client.openWorkspaceSessionCatalogStream(workspaceId, controller.signal);
         retryMillis = 500;
+        const bootstrapSessions: RuntimeSession[] = [];
+        await bootstrapRuntimeSessionCatalog(client, workspaceId, async (session) => {
+          bootstrapSessions.push(session);
+        });
+        const bootstrapResults = await upsertThreadsFromRuntimeCatalog(bootstrapSessions.map((session) => ({
+          id: session.session_id,
+          title: session.title,
+          workspacePath,
+          runtimeSessionId: session.session_id,
+          createdAt: session.created_at,
+          updatedAt: session.updated_at,
+          archived: session.archived === true || session.lifecycle === "archived" || session.lifecycle === "removed",
+          sourceChannel: session.origin?.provider === "wechat" ? "wechat" as const : undefined,
+          messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+        })));
+        for (const result of bootstrapResults) {
+          if (result.changed && !webContents.isDestroyed()) webContents.send("desktop:thread-catalog", {
+            thread: result.thread,
+            source: "runtime-session",
+          });
+        }
         await consumeWorkspaceSessionCatalogStream(stream.events, async (event) => {
           if (gate.accept(event) !== "apply") return;
-          await applyRuntimeWorkspaceCatalogEvent(webContents, workspaceId, event.session_id);
+          await applyRuntimeWorkspaceCatalogEvent(webContents, workspaceId, workspacePath, event.session_id);
         });
       } catch {
         if (controller.signal.aborted) break;
@@ -683,10 +728,26 @@ function startRuntimeWorkspaceCatalogSubscription(
   });
 }
 
-async function ensureRuntimeWorkspaceCatalogSubscriptions(webContents: WebContents): Promise<void> {
+async function ensureRuntimeWorkspaceCatalogSubscription(
+  webContents: WebContents,
+  workspaceId: string,
+): Promise<void> {
   if (webContents.isDestroyed()) return;
-  const workspaces = await (await LocalRuntimeClient.connect()).listWorkspaces(false);
-  for (const workspace of workspaces) startRuntimeWorkspaceCatalogSubscription(webContents, workspace.workspace_id);
+  const [runtimeWorkspaces, desktopWorkspaces] = await Promise.all([
+    (await LocalRuntimeClient.connect()).listWorkspaces(false),
+    listWorkspaces(),
+  ]);
+  if (!runtimeWorkspaces.some((workspace) => workspace.workspace_id === workspaceId)) return;
+  const workspace = desktopWorkspaces.find((item) => item.id === workspaceId);
+  if (!workspace) return;
+  const keepKey = runtimeWorkspaceCatalogKey(webContents, workspaceId);
+  for (const [key, controller] of runtimeWorkspaceCatalogSubscriptions) {
+    if (key.startsWith(`${webContents.id}:`) && key !== keepKey) {
+      controller.abort(new DOMException("Active Workspace changed.", "AbortError"));
+      runtimeWorkspaceCatalogSubscriptions.delete(key);
+    }
+  }
+  startRuntimeWorkspaceCatalogSubscription(webContents, workspaceId, workspace.path);
   ensureRuntimeThreadCleanup(webContents);
 }
 
@@ -996,8 +1057,12 @@ const isE2eSmokeProcess =
   process.env.OPENDRSAI_E2E_M8_RECOVERY === "1" ||
   process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP === "1" ||
   process.env.OPENDRSAI_E2E_APP_DIALOG === "1" ||
-  process.env.OPENDRSAI_E2E_OPERATIONAL_STATE === "1" ||
-  process.env.OPENDRSAI_E2E_VOICE === "1" ||
+    process.env.OPENDRSAI_E2E_OPERATIONAL_STATE === "1" ||
+    process.env.OPENDRSAI_E2E_DUPLEX_PERMISSION_RECOVERY === "1" ||
+    process.env.OPENDRSAI_E2E_DUPLEX_PROCESS_RECOVERY === "1" ||
+    process.env.OPENDRSAI_E2E_DUPLEX_PACKAGED_RUN === "1" ||
+    Boolean(process.env.OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE) ||
+    process.env.OPENDRSAI_E2E_VOICE === "1" ||
   process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1" ||
   process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1";
 if (isE2eSmokeProcess) {
@@ -1115,6 +1180,7 @@ const pendingMcpToolExecutions = new Map<
   string,
   DesktopMcpToolExecutionApprovalRequest
 >();
+const pendingDuplexToolApprovals = new Map<string, { sender: WebContents; sessionId: string; callId: string }>();
 function restoreDesktopApprovalPayloadOwner(payload: DesktopApprovalPayload): void {
   const { approvalId } = payload;
   let value = payload.value;
@@ -1725,6 +1791,17 @@ async function proposeDesktopApproval(
     blocked: false,
     reason: decision.reason,
   };
+}
+
+async function requestDuplexToolApproval(event: IpcMainInvokeEvent, raw: unknown): Promise<DesktopApprovalProposalResult> {
+  if (!raw || typeof raw !== "object") return blockedApprovalProposal("Realtime tool approval request is invalid.");
+  const request = raw as Partial<DesktopDuplexVoiceToolApprovalRequest>;
+  const sessionId = typeof request.sessionId === "string" ? request.sessionId.trim() : ""; const callId = typeof request.callId === "string" ? request.callId.trim() : ""; const name = typeof request.name === "string" ? request.name.trim() : "";
+  if (!/^voice-duplex-[a-zA-Z0-9-]{8,160}$/.test(sessionId) || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(callId) || !/^[a-zA-Z0-9_.:-]{1,160}$/.test(name)) return blockedApprovalProposal("Realtime tool approval identifiers are invalid.");
+  const argumentSummary = typeof request.argumentsSummary === "string" ? request.argumentsSummary.replace(/\0/g, "").slice(0, 1_200) : "{}";
+  const proposal = await proposeDesktopApproval({ source: "connector", actionKind: "external.service", title: `Realtime tool: ${name}`, detail: `Approve this tool requested by the active Realtime voice Session.\nTool: ${name}\nArguments: ${argumentSummary}`, businessAction: name, businessObject: "Realtime voice tool call", target: sessionId, scope: typeof request.scope === "string" ? request.scope.slice(0, 240) : "Current Realtime voice Session", impact: "The tool executes once and its redacted result is returned to the active Realtime Session.", risk: request.risk ?? "high", idempotencyKey: `duplex-tool:${sessionId}:${callId}` });
+  if (proposal.queued && proposal.approval) pendingDuplexToolApprovals.set(proposal.approval.id, { sender: event.sender, sessionId, callId });
+  return proposal;
 }
 
 function blockedApprovalProposal(reason: string): DesktopApprovalProposalResult {
@@ -2907,6 +2984,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 app.on("child-process-gone", (_event, details) => {
+  if (details.reason !== "clean-exit") void recordCrashIncident({ process_type: details.type === "GPU" ? "gpu" : "utility", reason: details.reason, exit_code: details.exitCode });
   void desktopDiagnostics.record({
     module: "desktop",
     component: details.type || "child-process",
@@ -3045,6 +3123,7 @@ function createWindow(): void {
     void startDeferredStartupTasks();
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    void recordCrashIncident({ process_type: "renderer", reason: details.reason, exit_code: details.exitCode });
     recordE2eStartupTrace("createWindow:render-process-gone", { ...details });
     void desktopDiagnostics.record({
       module: "desktop",
@@ -3391,17 +3470,27 @@ function configureBrowserSessionPolicy(session: Session): void {
 
 function configureMainWindowPermissionPolicy(window: BrowserWindow): void {
   const allowedWebContentsId = window.webContents.id;
+  let deniedDuplexPermissionRequests = 0;
   window.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) => {
     const mediaTypes =
       "mediaTypes" in details && Array.isArray(details.mediaTypes)
         ? details.mediaTypes
         : [];
-    callback(
+    const allowedAudioRequest =
       permission === "media" &&
-        contents.id === allowedWebContentsId &&
-        mediaTypes.includes("audio") &&
-        !mediaTypes.includes("video"),
-    );
+      contents.id === allowedWebContentsId &&
+      mediaTypes.includes("audio") &&
+      !mediaTypes.includes("video");
+    if (
+      allowedAudioRequest &&
+      process.env.OPENDRSAI_E2E_DUPLEX_PERMISSION_RECOVERY === "1" &&
+      deniedDuplexPermissionRequests === 0
+    ) {
+      deniedDuplexPermissionRequests += 1;
+      callback(false);
+      return;
+    }
+    callback(allowedAudioRequest);
   });
 }
 
@@ -4009,7 +4098,7 @@ async function saveWorkspaceFileAs(request: WorkspaceFileSaveAsRequest): Promise
   const suggestedName = ensureOriginalExtension(requestedName, sourceExtension);
   let destinationPath: string | undefined;
 
-  const automatedSaveDirectory = isE2eSmokeProcess && process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO === "g4-preview-download"
+  const automatedSaveDirectory = isE2eSmokeProcess && ["g4-preview-download", "workspace-artifact-p1"].includes(process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO || "")
     ? process.env.OPENDRSAI_E2E_G4_SAVE_DIR
     : undefined;
   if (automatedSaveDirectory) {
@@ -4508,6 +4597,23 @@ function registerIpc(): void {
     if (selected.canceled || !selected.filePaths[0]) return null;
     return productionDiagnostics.importPackage(selected.filePaths[0]);
   });
+  secureHandle("desktop:feedback-preview", (_event, draft: FeedbackDraft) => desktopFeedback.preview(draft));
+  secureHandle("desktop:feedback-submit", (_event, draft: FeedbackDraft) => desktopFeedback.submit(draft));
+  secureHandle("desktop:feedback-pending-list", () => desktopFeedback.listPending());
+  secureHandle("desktop:feedback-pending-retry", () => desktopFeedback.flush());
+  secureHandle("desktop:feedback-pending-delete", (_event, clientFeedbackId: string) => desktopFeedback.deletePending(clientFeedbackId));
+  secureHandle("desktop:feedback-crash-pending", () => getPendingCrashFeedback());
+  secureHandle("desktop:feedback-crash-clear", (_event, incidentId: string) => clearPendingCrashFeedback(incidentId));
+  secureHandle("desktop:feedback-screenshot-capture", async (event) => {
+    const image = await event.sender.capturePage();
+    const size = image.getSize();
+    const dataUrl = image.toDataURL();
+    if (Buffer.byteLength(dataUrl) > 7_000_000) throw new Error("Screenshot exceeds the feedback size limit.");
+    return { data_url: dataUrl, width: size.width, height: size.height, byte_length: Buffer.byteLength(dataUrl) };
+  });
+  secureHandle("desktop:feedback-admin-list", (_event, status: FeedbackStatus | undefined) => desktopFeedback.listAdmin(status));
+  secureHandle("desktop:feedback-admin-update", (_event, feedbackId: string, update: { status: FeedbackStatus; fixed_in_version?: string; recommended_owner?: string; note?: string }) => desktopFeedback.updateAdmin(feedbackId, update));
+  secureHandle("desktop:feedback-admin-delete", (_event, feedbackId: string) => desktopFeedback.deleteAdmin(feedbackId));
   secureHandle("desktop:get-auth-session", () => getAuthSession());
   secureHandle("desktop:e2e-a5-service-guidance-scenario", () =>
     getA5ServiceGuidanceScenario(),
@@ -4578,13 +4684,15 @@ function registerIpc(): void {
     try {
       const client = await LocalRuntimeClient.connect();
       let capability = (await client.getCapabilities()).agent_backends?.codex;
+      let account;
       if (capability?.available) {
         await client.getBackendModels("codex", refresh);
+        account = await client.getBackendAccount("codex", refresh);
         capability = (await client.getCapabilities()).agent_backends?.codex;
       }
       status = !capability?.available
         ? presentCodexBackendStatus(capability)
-        : presentCodexBackendStatus(capability, await client.getBackendAccount("codex", refresh));
+        : presentCodexBackendStatus(capability, account);
     } catch (error) {
       if (!isLocalRuntimeUnavailableError(error)) throw error;
       status = presentCodexBackendStatus({
@@ -5328,9 +5436,26 @@ function registerIpc(): void {
   secureHandle("desktop:fork-conflict-draft-write", async (_event, request) =>
     requestForkConflictDraftWrite(request),
   );
-  secureHandle("desktop:list-threads", async (event) => {
-    void ensureRuntimeWorkspaceCatalogSubscriptions(event.sender).catch(() => undefined);
-    return listThreads();
+  secureHandle("desktop:list-threads", async (event, rawRequest?: DesktopThreadListRequest) => {
+    const value = rawRequest && typeof rawRequest === "object" ? rawRequest : undefined;
+    const request = value ? {
+      ...(typeof value.workspacePath === "string" && value.workspacePath.length <= 2048 && !/[\r\n\0]/.test(value.workspacePath)
+        ? { workspacePath: value.workspacePath }
+        : {}),
+      limit: Number.isFinite(value.limit) ? Math.max(1, Math.min(200, Math.trunc(value.limit!))) : 50,
+      offset: Number.isFinite(value.offset) ? Math.max(0, Math.trunc(value.offset!)) : 0,
+      includeArchived: value.includeArchived === true,
+      requiredThreadIds: Array.isArray(value.requiredThreadIds)
+        ? value.requiredThreadIds.filter((id) => typeof id === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(id)).slice(0, 20)
+        : [],
+      ...(typeof value.runtimeWorkspaceId === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(value.runtimeWorkspaceId)
+        ? { runtimeWorkspaceId: value.runtimeWorkspaceId }
+        : {}),
+    } : undefined;
+    if (request?.runtimeWorkspaceId) {
+      void ensureRuntimeWorkspaceCatalogSubscription(event.sender, request.runtimeWorkspaceId).catch(() => undefined);
+    }
+    return listThreads(request);
   });
   secureHandle("desktop:list-agents", (_event, options) => listAgents(
     options && typeof options === "object"
@@ -5434,6 +5559,8 @@ function registerIpc(): void {
   secureHandle("desktop:search-knowledge-base", (_event, knowledgeId: string, query: string) => searchKnowledgeBase(knowledgeId, query));
   secureHandle("desktop:list-knowledge-bases", () => listKnowledgeBases());
   secureHandle("desktop:list-perceptors", () => listPerceptors());
+  secureHandle("desktop:get-web-search-provider-policy", () => getWebSearchProviderPolicy());
+  secureHandle("desktop:update-web-search-provider-policy", (_event, mode: import("../../../shared/api/desktopApi").WebSearchProviderMode) => updateWebSearchProviderPolicy(mode));
   secureHandle("desktop:save-perceptor", (_event, request) => savePerceptor(request));
   secureHandle("desktop:update-perceptor", (_event, perceptorId, request) => updatePerceptor(perceptorId, request));
   secureHandle("desktop:test-perceptor", (_event, perceptorId, capability) => testPerceptor(perceptorId, capability));
@@ -5734,6 +5861,16 @@ function registerIpc(): void {
   secureHandle("desktop:channel-adapters-list", (_event, workspacePath?: string) =>
     listChannelAdapters(workspacePath),
   );
+  secureHandle("desktop:wechat-channel-status", () => getWeChatChannelStatus());
+  secureHandle("desktop:wechat-login-start", () => startWeChatLogin());
+  secureHandle("desktop:wechat-login-poll", (_event, request: DesktopWeChatLoginPollRequest) => pollWeChatLogin(request));
+  secureHandle("desktop:wechat-login-cancel", (_event, request: DesktopWeChatLoginPollRequest) => cancelWeChatLogin(request));
+  secureHandle("desktop:wechat-channel-start", () => startWeChatChannel());
+  secureHandle("desktop:wechat-channel-stop", () => stopWeChatChannel());
+  secureHandle("desktop:wechat-channel-logout", () => logoutWeChatChannel());
+  secureHandle("desktop:wechat-sessions-summary", () => getWeChatSessionSummary());
+  secureHandle("desktop:wechat-reply-capability", (_event, request: DesktopWeChatReplyCapabilityRequest) => getWeChatReplyCapability(request));
+  secureHandle("desktop:wechat-send-outbound", (_event, request: DesktopWeChatOutboundRequest) => sendToWeChat(request));
   secureHandle(
     "desktop:channel-adapter-configure",
     (_event, request: DesktopChannelAdapterConfigureRequest) =>
@@ -6075,11 +6212,17 @@ function registerIpc(): void {
     () => getStreamingVoiceCapabilities(),
   );
   secureHandle("desktop:voice-duplex-capabilities", () => getDuplexVoiceCapabilities());
+  secureHandle("desktop:voice-duplex-readiness", () => getDuplexVoiceReadiness());
+  secureHandle("desktop:voice-duplex-occupancy", (event) => getDuplexVoiceOccupancy(event.sender));
   secureHandle("desktop:voice-duplex-start", (event, request: DesktopDuplexVoiceSessionStartRequest) => startDuplexVoiceSession(event.sender, request));
+  secureHandle("desktop:voice-duplex-takeover", (event, request: DesktopDuplexVoiceTakeoverRequest) => takeOverDuplexVoiceSession(event.sender, request));
   secureHandle("desktop:voice-duplex-update", (event, request: DesktopDuplexVoiceSessionStartRequest) => updateDuplexVoiceSession(event.sender, request));
   secureHandle("desktop:voice-duplex-interrupt", (event, request: DesktopDuplexVoiceInterruptRequest) => interruptDuplexVoiceSession(event.sender, request));
   secureHandle("desktop:voice-duplex-tool-result", (event, request: DesktopDuplexVoiceToolResultRequest) => submitDuplexVoiceToolResult(event.sender, request));
+  secureHandle("desktop:voice-duplex-tool-approval", (event, request: DesktopDuplexVoiceToolApprovalRequest) => requestDuplexToolApproval(event, request));
+  secureHandle("desktop:voice-duplex-text-input", (event, request: DesktopDuplexVoiceTextInputRequest) => submitDuplexVoiceTextInput(event.sender, request));
   secureHandle("desktop:voice-duplex-stop", (event, sessionId: string) => stopDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
+  secureHandle("desktop:voice-duplex-finish-turn", (event, sessionId: string) => finishDuplexVoiceTurn(event.sender, typeof sessionId === "string" ? sessionId : ""));
   secureHandle("desktop:voice-duplex-cancel", (event, sessionId: string) => cancelDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
   secureHandle("desktop:voice-duplex-dispose", (event, sessionId: string) => disposeDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
   secureHandle(
@@ -6324,6 +6467,7 @@ async function decidePendingDesktopApprovalUnlocked(
   const pendingChannelOutboundDraft = pendingChannelOutboundDrafts.get(typed.id);
   const pendingMcpLiveEnumeration = pendingMcpLiveEnumerations.get(typed.id);
   const pendingMcpToolExecution = pendingMcpToolExecutions.get(typed.id);
+  const pendingDuplexToolApproval = pendingDuplexToolApprovals.get(typed.id);
   const pendingF2ApprovalEffect = pendingF2ApprovalEffects.get(typed.id);
   const pendingF3ApprovalEffect = pendingF3ApprovalEffects.get(typed.id);
   let decided: boolean;
@@ -6449,6 +6593,12 @@ async function decidePendingDesktopApprovalUnlocked(
     await executeMcpToolAfterApproval(pendingMcpToolExecution, typed.id);
     return true;
   }
+  if (pendingDuplexToolApproval) {
+    if (typed.approved) { executedDesktopApprovalIds.add(typed.id); await assertExecutionAllowed("external.service", { approved: true }); }
+    const decision: DesktopDuplexVoiceToolApprovalDecision = { sessionId: pendingDuplexToolApproval.sessionId, callId: pendingDuplexToolApproval.callId, decision: typed.approved ? "allow" : decisionReason };
+    if (!pendingDuplexToolApproval.sender.isDestroyed()) pendingDuplexToolApproval.sender.send("desktop:voice-duplex-tool-approval-decision", decision);
+    return true;
+  }
   if (pendingF2ApprovalEffect) {
     if (!typed.approved) return true;
     executedDesktopApprovalIds.add(typed.id);
@@ -6492,6 +6642,7 @@ async function decidePendingDesktopApprovalUnlocked(
   pendingChannelOutboundDrafts.delete(typed.id);
   pendingMcpLiveEnumerations.delete(typed.id);
   pendingMcpToolExecutions.delete(typed.id);
+  pendingDuplexToolApprovals.delete(typed.id);
   pendingF2ApprovalEffects.delete(typed.id);
   pendingF3ApprovalEffects.delete(typed.id);
   deleteDesktopApprovalPayloads(typed.id);
@@ -6618,14 +6769,25 @@ app.whenReady().then(async () => {
     });
   });
   registerIpc();
-  const publishLifecycle = (reason: import("../../../shared/api/desktopApi").DesktopLifecycleEvent["reason"]): void => {
-    const event = { reason, recoveredGateway: false, at: new Date().toISOString() };
+  let lifecycleGatewayRecovery: Promise<boolean> | null = null;
+  const recoverLifecycleGateway = async (): Promise<boolean> => {
+    const before = await getGatewayStatus().catch(() => ({ ready: false }));
+    if (before.ready) return false;
+    lifecycleGatewayRecovery ??= startGateway().finally(() => { lifecycleGatewayRecovery = null; });
+    if (!await lifecycleGatewayRecovery) return false;
+    return (await getGatewayStatus().catch(() => ({ ready: false }))).ready;
+  };
+  const publishLifecycle = async (reason: import("../../../shared/api/desktopApi").DesktopLifecycleEvent["reason"]): Promise<void> => {
+    const recoveredGateway = reason === "resume" || reason === "unlock-screen"
+      ? await recoverLifecycleGateway()
+      : false;
+    const event = { reason, recoveredGateway, at: new Date().toISOString() };
     for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:lifecycle-event", event);
   };
-  powerMonitor.on("suspend", () => { disposeAllDuplexVoiceSessions(); publishLifecycle("suspend"); });
-  powerMonitor.on("lock-screen", () => { disposeAllDuplexVoiceSessions(); publishLifecycle("lock-screen"); });
-  powerMonitor.on("resume", () => publishLifecycle("resume"));
-  powerMonitor.on("unlock-screen", () => publishLifecycle("unlock-screen"));
+  powerMonitor.on("suspend", () => { void publishLifecycle("suspend"); });
+  powerMonitor.on("lock-screen", () => { void publishLifecycle("lock-screen"); });
+  powerMonitor.on("resume", () => { void publishLifecycle("resume"); });
+  powerMonitor.on("unlock-screen", () => { void publishLifecycle("unlock-screen"); });
   setRemoteWorkspaceStatusPublisher((status) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-workspace-status-event", status);
     desktopDiagnostics.registerHealth({
@@ -6953,6 +7115,7 @@ let gatewayShutdownStarted = false;
 
 app.on("before-quit", (event) => {
   appQuitRequested = true;
+  disposeAllDuplexVoiceSessions();
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
     cancelVoiceTranscriptionsForSender(mainWindow.webContents);
     cancelVoiceSynthesisForSender(mainWindow.webContents);

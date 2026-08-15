@@ -15,7 +15,10 @@ export function createDesktopPathService(options: CreateDesktopPathServiceOption
   const path = windows ? win32 : posix;
   const { dirname, join } = path;
   const home = environment.DRSAI_HOME?.trim() || join(options.userHome, ".drsai");
-  const packagedInstallRoot = options.resourcesPath ? dirname(dirname(options.resourcesPath)) : "";
+  // Electron resources live directly below the application directory on
+  // Windows (OpenDrSai/resources). The managed Runtime is its sibling at
+  // OpenDrSai/drsai-agent, not a sibling of the application directory.
+  const packagedInstallRoot = options.resourcesPath ? dirname(options.resourcesPath) : "";
   const packagedRepository = packagedInstallRoot ? join(packagedInstallRoot, "drsai-agent") : "";
   const usePackagedRepository = windows && !options.defaultApp && Boolean(packagedRepository);
   const repository = environment.DRSAI_REPO?.trim()

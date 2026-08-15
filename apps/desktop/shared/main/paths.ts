@@ -4,7 +4,7 @@ import { dirname, join } from "path";
 import { createDesktopPathService } from "./desktopPaths";
 
 const PACKAGED_INSTALL_ROOT = process.resourcesPath
-  ? dirname(dirname(process.resourcesPath))
+  ? dirname(process.resourcesPath)
   : "";
 const PACKAGED_DRSAI_REPO = PACKAGED_INSTALL_ROOT
   ? join(PACKAGED_INSTALL_ROOT, "drsai-agent")

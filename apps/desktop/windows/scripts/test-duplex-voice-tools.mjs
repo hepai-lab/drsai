@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { DuplexToolBridge, parseToolArguments, requiresApproval, serializeToolResult } from "../../shared/renderer/src/voice/duplex/toolBridge.ts";
+import { DuplexToolBridge, parseToolArguments, requiresApproval, serializeToolResult, summarizeToolArguments } from "../../shared/renderer/src/voice/duplex/toolBridge.ts";
 
 assert.deepEqual(parseToolArguments('{"query":"voice","limit":3}'), { query: "voice", limit: 3 });
 assert.throws(() => parseToolArguments("[]"), /JSON object/);
@@ -7,6 +7,7 @@ assert.throws(() => parseToolArguments(`{"x":"${"a".repeat(32_001)}"}`), /safe l
 assert.equal(requiresApproval("search_thread_messages"), false);
 assert.equal(requiresApproval("delete_workspace_file"), true);
 assert.doesNotMatch(serializeToolResult({ token: "secret", nested: { api_key: "key", value: "ok" } }), /secret|"key"/);
+assert.doesNotMatch(summarizeToolArguments({ password: "hidden", path: "notes.txt" }), /hidden/);
 
 let executions = 0; let approvals = 0; const submitted = []; const statuses = [];
 const bridge = new DuplexToolBridge({
@@ -14,7 +15,7 @@ const bridge = new DuplexToolBridge({
   approval: { decide: async () => { approvals += 1; return "allow"; } },
   isSessionActive: () => true,
   submitResult: async (callId, output) => { submitted.push({ callId, output }); return true; },
-  onStatus: (callId, status) => statuses.push(`${callId}:${status}`),
+  onStatus: (call, status) => statuses.push(`${call.callId}:${status}`),
 });
 const query = { callId: "c1", itemId: "i1", name: "search_thread_messages", argumentsJson: '{"query":"duplex"}' };
 const [first, replay] = await Promise.all([bridge.handle(query), bridge.handle(query)]);

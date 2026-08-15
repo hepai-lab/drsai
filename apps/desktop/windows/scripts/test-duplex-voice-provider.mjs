@@ -23,7 +23,7 @@ assert.equal(JSON.stringify(connection).includes(secret), true, "the secret exis
 assert.throws(() => adapter.resolveConnection("https://api.zhizengzeng.com/v1", "Basic bad"), /authorization/i);
 
 const startRequest = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   sessionId: "session-1",
   providerId: "zhizengzeng",
   modelId: "gpt-realtime-2",
@@ -63,13 +63,15 @@ assert.equal(legacySession.input_audio_format, "pcm16");
 assert.equal(legacySession.turn_detection.type, "server_vad");
 
 const audio = new Uint8Array([0, 1, 2, 253, 254, 255]);
-const append = adapter.createInputAudioAppend({ protocolVersion: 1, sessionId: "session-1", sequence: 0, capturedAtMs: 1, durationMs: 20, encoding: "pcm_s16le", sampleRateHz: 24_000, channels: 1, audioData: audio });
+const append = adapter.createInputAudioAppend({ protocolVersion: 2, sessionId: "session-1", sequence: 0, capturedAtMs: 1, durationMs: 20, encoding: "pcm_s16le", sampleRateHz: 24_000, channels: 1, audioData: audio });
 assert.deepEqual(new Uint8Array(Buffer.from(append.audio, "base64")), audio);
 assert.deepEqual(adapter.createInputAudioCommit(), { type: "input_audio_buffer.commit" });
 assert.deepEqual(adapter.createInputAudioClear(), { type: "input_audio_buffer.clear" });
 assert.deepEqual(adapter.createResponseCancel("response-1"), { type: "response.cancel", response_id: "response-1" });
 assert.deepEqual(adapter.createConversationTruncate("item-1", 0, 640), { type: "conversation.item.truncate", item_id: "item-1", content_index: 0, audio_end_ms: 640 });
 assert.deepEqual(adapter.createToolResult("call-1", '{"ok":true}'), { type: "conversation.item.create", item: { type: "function_call_output", call_id: "call-1", output: '{"ok":true}' } });
+assert.deepEqual(adapter.createTextInput("text-1", "hello"), { type: "conversation.item.create", item: { id: "text-1", type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] } }); assert.deepEqual(adapter.createResponse(), { type: "response.create" });
+assert.doesNotThrow(() => adapter.createTextInput(`text-${"a".repeat(36)}`, "production scheduler identity"), "the production text-UUID must not be expanded into an oversized Provider event_id");
 
 const encode = (value) => JSON.stringify(value);
 const fixtures = [
@@ -77,6 +79,7 @@ const fixtures = [
   { raw: { type: "input_audio_buffer.committed", sequence: 7 }, expected: "input_audio_ack" },
   { raw: { type: "input_audio_buffer.speech_started", item_id: "user-1", audio_start_ms: 10 }, expected: "input_speech_started" },
   { raw: { type: "input_audio_buffer.speech_stopped", item_id: "user-1", audio_end_ms: 500 }, expected: "input_speech_stopped" },
+  { raw: { type: "conversation.item.created", item: { id: "text-1", role: "user", content: [{ type: "input_text", text: "typed message" }] } }, expected: "input_transcript_completed" },
   { raw: { type: "conversation.item.input_audio_transcription.delta", item_id: "user-1", content_index: 0, delta: "你" }, expected: "input_transcript_delta" },
   { raw: { type: "conversation.item.input_audio_transcription.completed", item_id: "user-1", transcript: "你好" }, expected: "input_transcript_completed" },
   { raw: { type: "response.created", response: { id: "response-1" } }, expected: "response_started" },

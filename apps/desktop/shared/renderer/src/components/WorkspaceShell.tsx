@@ -101,7 +101,7 @@ export interface WorkspaceThread {
   archived?: boolean;
   unread?: boolean;
   activity: ThreadActivityState;
-  source?: "codex" | "opendrsai" | "remote";
+  source?: "codex" | "opendrsai" | "remote" | "wechat";
 }
 
 export interface ForkConflictFile {
@@ -163,6 +163,8 @@ interface WorkspaceShellProps {
   user: AuthUser | null;
   workspaceSortMode: "recent" | "name" | "created";
   workspaceThreads: WorkspaceThread[];
+  workspaceThreadsHasMore: boolean;
+  workspaceThreadsLoading: boolean;
   workspaces: WorkspaceProject[];
   onGoBack: () => void;
   onGoForward: () => void;
@@ -171,10 +173,13 @@ interface WorkspaceShellProps {
   onPickWorkspaceFolder: () => Promise<string | null>;
   onLanguageChange: (language: AppLanguage) => void;
   onLogout: () => void;
+  onOpenFeedback: () => void;
+  onOpenFeedbackAdmin: () => void;
   onLoadForkConflictContent: (
     thread: WorkspaceThread,
     file: ForkConflictFile,
   ) => Promise<ForkConflictContentPreviewResult>;
+  onLoadMoreWorkspaceThreads: () => void | Promise<void>;
   onNavChange: (id: NavId) => void;
   onListWorktrees: (request: DesktopWorktreeListRequest) => Promise<DesktopWorktreeSummary[]>;
   onListWorktreeEvents: (request: DesktopWorktreeEventRequest) => Promise<DesktopWorktreeEventBatch>;
@@ -257,6 +262,8 @@ export function WorkspaceShell({
   user,
   workspaceSortMode,
   workspaceThreads,
+  workspaceThreadsHasMore,
+  workspaceThreadsLoading,
   workspaces,
   onGoBack,
   onGoForward,
@@ -265,7 +272,10 @@ export function WorkspaceShell({
   onPickWorkspaceFolder,
   onLanguageChange,
   onLogout,
+  onOpenFeedback,
+  onOpenFeedbackAdmin,
   onLoadForkConflictContent,
+  onLoadMoreWorkspaceThreads,
   onListWorktrees,
   onListWorktreeEvents,
   onGetWorktreeMigrationDiagnostics,
@@ -1384,7 +1394,7 @@ export function WorkspaceShell({
           )}
           {thread.title}
           <small className={`thread-source-label source-${thread.source ?? "opendrsai"}`}>
-            {thread.source === "codex" ? "Codex" : thread.source === "remote" ? (zh ? "远程" : "Remote") : "OpenDrSai"}
+            {thread.source === "codex" ? "Codex" : thread.source === "remote" ? (zh ? "远程" : "Remote") : thread.source === "wechat" ? (zh ? "微信" : "WeChat") : "OpenDrSai"}
           </small>
         </span>
         <span className="thread-item-status">
@@ -2314,6 +2324,14 @@ export function WorkspaceShell({
                 <Settings size={15} />
                 {zh ? "设置" : "Settings"}
               </button>
+              <button type="button" role="menuitem" data-testid="user-menu-feedback" onClick={() => { setUserMenuOpen(false); onOpenFeedback(); }}>
+                <HelpCircle size={15} />
+                {zh ? "反馈与建议" : "Feedback"}
+              </button>
+              {user?.role === "admin" ? <button type="button" role="menuitem" data-testid="user-menu-feedback-admin" onClick={() => { setUserMenuOpen(false); onOpenFeedbackAdmin(); }}>
+                <FileText size={15} />
+                {zh ? "反馈处理台" : "Feedback console"}
+              </button> : null}
               <div className="titlebar-language-row">
                 <span className="titlebar-language-label">
                   <Languages size={15} aria-hidden />
@@ -2591,6 +2609,11 @@ export function WorkspaceShell({
                               {showAll
                                 ? (zh ? "收起" : "Show less")
                                 : (zh ? `显示全部 ${threadsForWorkspace.length} 个任务` : `Show all ${threadsForWorkspace.length} tasks`)}
+                            </button>
+                          )}
+                          {showAll && workspace.id === activeWorkspaceId && workspaceThreadsHasMore && (
+                            <button className="workspace-thread-more" type="button" disabled={workspaceThreadsLoading} onClick={() => void onLoadMoreWorkspaceThreads()}>
+                              {workspaceThreadsLoading ? (zh ? "正在加载…" : "Loading…") : (zh ? "加载更多" : "Load more")}
                             </button>
                           )}
                         </div>

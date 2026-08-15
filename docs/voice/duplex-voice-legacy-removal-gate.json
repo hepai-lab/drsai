@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "legacyRoute": "streaming_voice",
+  "uiExposed": false,
+  "newConfigAllowed": false,
+  "codeRemovalRequested": false,
+  "stableReleaseCyclesCompleted": 0,
+  "migrationTelemetry": {
+    "windowStartedAt": null,
+    "windowEndedAt": null,
+    "sampleSize": 0,
+    "legacySelectionRate": null,
+    "complete": false
+  },
+  "rollbackAssets": [
+    "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
+    "apps/desktop/windows/scripts/test-streaming-voice-main.mjs",
+    "apps/desktop/windows/scripts/test-voice-mode.mjs"
+  ],
+  "removalEligibility": {
+    "minimumStableReleaseCycles": 1,
+    "minimumTelemetrySampleSize": 100,
+    "maximumLegacySelectionRate": 0.001
+  }
+}

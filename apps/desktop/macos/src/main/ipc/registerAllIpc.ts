@@ -27,7 +27,7 @@ export interface MacosDesktopIpcDependencies {
   allowedDesktopRoots: Parameters<typeof registerMacosPlatformIpc>[0]["allowedDesktopRoots"];
   diagnostics: Parameters<typeof registerMacosDiagnosticsIpc>[2];
   trust: Parameters<typeof registerMacosTrustIpc>[2];
-  voice: Parameters<typeof registerMacosVoiceIpc>[2];
+  voice: Omit<Parameters<typeof registerMacosVoiceIpc>[2], "approvals">;
   runtimeServices: Parameters<typeof registerMacosRuntimeServicesIpc>[2];
   catalog: Parameters<typeof registerMacosCatalogIpc>[2];
 }
@@ -38,7 +38,7 @@ export function registerMacosDesktopIpc(dependencies: MacosDesktopIpcDependencie
   registerMacosDiagnosticsIpc(ipcMain, services, dependencies.diagnostics);
   registerMacosTrustIpc(ipcMain, services, dependencies.trust);
   registerMacosTerminalIpc(ipcMain, services);
-  registerMacosVoiceIpc(ipcMain, rawIpcMain, dependencies.voice);
+  registerMacosVoiceIpc(ipcMain, rawIpcMain, { ...dependencies.voice, approvals: services.approvals });
   registerMacosRuntimeServicesIpc(ipcMain, services, dependencies.runtimeServices);
   registerMacosRunInspectionIpc(ipcMain);
   registerMacosCatalogIpc(ipcMain, services, dependencies.catalog);

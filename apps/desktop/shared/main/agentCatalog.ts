@@ -113,6 +113,7 @@ function toCacheSafeAgent(agent: DesktopAgent): DesktopAgent {
     capabilities: agent.capabilities ? [...agent.capabilities] : undefined,
     lastUsedAt: agent.lastUsedAt,
     catalogGroup: agent.catalogGroup,
+    catalogVisibility: agent.catalogVisibility,
     model: agent.model,
     models: agent.models ? [...agent.models] : undefined,
     logo: agent.logo,

@@ -36,6 +36,7 @@ const evidence = {
   schema: "opendrsai.codex-adapter-p9.live.v1", passed: first.passed === true && second.passed === true && second.recovered === true,
   observedAt: new Date().toISOString(), host: hostname(), platform: process.platform, architecture: process.arch,
   runtime: { restartVerified: second.recovered === true },
+  backendIdentity: first.backend_identity,
   multiTurn: { threadId: second.multi_turn?.thread_id, turnCount: second.multi_turn?.turn_count,
     threadIdStable: second.thread_id === second.multi_turn?.thread_id,
     turnIdsUnique: second.multi_turn?.turn_ids_unique === true, contextRetained: second.context_retained === true },

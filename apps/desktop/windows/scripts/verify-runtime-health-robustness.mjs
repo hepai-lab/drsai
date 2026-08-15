@@ -202,8 +202,9 @@ try {
   assert.equal(busyStatus.ready, false, "Slow managed Gateway unexpectedly reported ready");
   assert.equal(busyStatus.managed, true, "Slow managed Gateway lost its ownership state");
   assert.equal(busyStatus.externalConflict, false, "Slow managed Gateway was misclassified as an external conflict");
-  assert.equal(busyStatus.diagnosticCode, "gateway_probe_timeout", "Slow managed Gateway did not preserve timeout diagnostics");
-  assert.match(busyStatus.diagnosticMessage, /managed OpenDrSai Runtime is busy/i, "Managed timeout did not expose recovery guidance");
+  assert.equal(busyStatus.diagnosticCode, "gateway_reconnecting", "Slow managed Gateway did not enter retryable liveness state");
+  assert.equal(busyStatus.liveness?.state, "reconnecting", "First observation without last-known-good must remain reconnecting");
+  assert.match(busyStatus.diagnosticMessage, /Runtime is busy/i, "Managed timeout did not expose automatic recovery guidance");
 
   setTimeout(() => { managedDelayMs = 0; }, 100);
   const recoveredClient = await managedRuntime.LocalRuntimeClient.connect();

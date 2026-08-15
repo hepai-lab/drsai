@@ -21,6 +21,14 @@ interface ProviderPayload {
   has_api_key?: unknown;
 }
 
+function hasOidcGatewayAuth(headers: Record<string, string>): boolean {
+  const normalized = Object.fromEntries(
+    Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]),
+  );
+  return normalized["x-opendrsai-auth-mode"]?.toLowerCase() === "oidc"
+    && normalized.authorization?.toLowerCase().startsWith("bearer ") === true;
+}
+
 export async function getVoiceProviderReadiness(
   gatewayBaseUrl: string,
   headers: Record<string, string>,
@@ -45,6 +53,11 @@ export async function getVoiceProviderReadiness(
 
   const provider = providers.providers?.find((item) => item.name === providerId);
   if (!provider) return { state: "unconfigured" };
+  // HepAI is a platform Provider: only the request-scoped OIDC session may
+  // authorize it. A saved static key must never make this route look ready.
+  if (providerId === "hepai" && !hasOidcGatewayAuth(headers)) {
+    return { state: "auth_required", providerId, modelId };
+  }
   if (provider.requires_api_key === true && provider.has_api_key !== true) {
     return { state: "auth_required", providerId, modelId };
   }

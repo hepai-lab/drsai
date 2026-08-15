@@ -18,7 +18,7 @@ export interface VoiceModeAvailability {
 export const DEFAULT_VOICE_MODE: DesktopVoiceInteractionMode = "serial";
 
 export function normalizeVoiceInteractionMode(value: unknown): DesktopVoiceInteractionMode {
-  return value === "streaming" || value === "duplex" ? value : DEFAULT_VOICE_MODE;
+  return value === "duplex" ? value : DEFAULT_VOICE_MODE;
 }
 
 export function deriveVoiceModeCapabilities(

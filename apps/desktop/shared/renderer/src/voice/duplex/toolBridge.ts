@@ -7,7 +7,7 @@ export interface DuplexToolApprovalGate { decide(call: { callId: string; name: s
 export interface DuplexToolBridgeOptions {
   executor: DuplexToolExecutor; approval: DuplexToolApprovalGate;
   isSessionActive: () => boolean; submitResult: (callId: string, output: string) => Promise<boolean>;
-  onStatus?: (callId: string, status: DuplexToolStatus, detail?: string) => void;
+  onStatus?: (call: { callId: string; name: string; arguments: Record<string, unknown> }, status: DuplexToolStatus, detail?: string) => void;
 }
 
 export class DuplexToolBridge {
@@ -24,27 +24,33 @@ export class DuplexToolBridge {
 
   async #run(call: DesktopDuplexVoiceToolCall): Promise<DuplexToolStatus> {
     let args: Record<string, unknown>;
-    try { args = parseToolArguments(call.argumentsJson); } catch (error) { return this.#terminal(call.callId, "failed", error instanceof Error ? error.message : String(error)); }
+    try { args = parseToolArguments(call.argumentsJson); } catch (error) { return this.#terminal({ callId: call.callId, name: call.name, arguments: {} }, "failed", error instanceof Error ? error.message : String(error)); }
+    const context = { callId: call.callId, name: call.name, arguments: args };
     if (requiresApproval(call.name)) {
-      this.#status(call.callId, "waiting_approval", "Waiting for keyboard or pointer approval.");
-      const decision = await this.#options.approval.decide({ callId: call.callId, name: call.name, arguments: args });
-      if (decision !== "allow") return this.#terminal(call.callId, decision === "reject" ? "rejected" : "cancelled", `Tool approval ${decision}.`);
+      this.#status(context, "waiting_approval", "Waiting for keyboard or pointer approval.");
+      const decision = await this.#options.approval.decide(context);
+      if (decision !== "allow") return this.#terminal(context, decision === "reject" ? "rejected" : "cancelled", `Tool approval ${decision}.`);
     }
-    this.#status(call.callId, "running", "Tool is running.");
+    this.#status(context, "running", "Tool is running.");
     try {
       const result = await this.#options.executor.execute({ callId: call.callId, name: call.name, arguments: args });
-      if (this.#detached || !this.#options.isSessionActive()) return this.#finish(call.callId, "detached", result.sideEffectCommitted ? "Tool completed after voice detached; its side effect was not undone." : "Late result was isolated from the inactive voice Session.");
+      if (this.#detached || !this.#options.isSessionActive()) return this.#finish(context, "detached", result.sideEffectCommitted ? "Tool completed after voice detached; its side effect was not undone." : "Late result was isolated from the inactive voice Session.");
       const submitted = await this.#options.submitResult(call.callId, serializeToolResult(result.output));
-      return this.#finish(call.callId, submitted ? "completed" : "detached", submitted ? "Tool result returned to Realtime." : "Tool result target was no longer active.");
-    } catch (error) { return this.#terminal(call.callId, "failed", error instanceof Error ? error.message : String(error)); }
+      return this.#finish(context, submitted ? "completed" : "detached", submitted ? "Tool result returned to Realtime." : "Tool result target was no longer active.");
+    } catch (error) { return this.#terminal(context, "failed", error instanceof Error ? error.message : String(error)); }
   }
-  async #terminal(callId: string, status: Exclude<DuplexToolStatus, "completed" | "running" | "waiting_approval" | "detached">, detail: string): Promise<DuplexToolStatus> {
-    this.#status(callId, status, detail);
-    if (!this.#detached && this.#options.isSessionActive()) await this.#options.submitResult(callId, serializeToolResult({ status, error: detail })).catch(() => false);
+  async #terminal(call: { callId: string; name: string; arguments: Record<string, unknown> }, status: Exclude<DuplexToolStatus, "completed" | "running" | "waiting_approval" | "detached">, detail: string): Promise<DuplexToolStatus> {
+    this.#status(call, status, detail);
+    if (!this.#detached && this.#options.isSessionActive()) await this.#options.submitResult(call.callId, serializeToolResult({ status, error: detail })).catch(() => false);
     return status;
   }
-  #finish(callId: string, status: DuplexToolStatus, detail: string): DuplexToolStatus { this.#status(callId, status, detail); return status; }
-  #status(callId: string, status: DuplexToolStatus, detail?: string): void { this.#options.onStatus?.(callId, status, detail); }
+  #finish(call: { callId: string; name: string; arguments: Record<string, unknown> }, status: DuplexToolStatus, detail: string): DuplexToolStatus { this.#status(call, status, detail); return status; }
+  #status(call: { callId: string; name: string; arguments: Record<string, unknown> }, status: DuplexToolStatus, detail?: string): void { this.#options.onStatus?.(call, status, detail); }
+}
+
+export function summarizeToolArguments(value: Record<string, unknown>): string {
+  const redacted = serializeToolResult(value);
+  return redacted.length <= 600 ? redacted : `${redacted.slice(0, 580)}…[truncated]`;
 }
 
 export function parseToolArguments(value: string): Record<string, unknown> {

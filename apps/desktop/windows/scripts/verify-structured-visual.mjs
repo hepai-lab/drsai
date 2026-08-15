@@ -57,6 +57,33 @@ try {
   await page.getByRole("button", { name: /进入开发者工作区|Enter developer workspace/ }).click();
   const composer = page.getByTestId("composer-input");
   await composer.waitFor({ state: "visible" });
+  const bannerGeometry = await page.evaluate(() => {
+    const panel = document.querySelector(".conversation-panel");
+    const composerElement = document.querySelector(".composer");
+    if (!panel || !composerElement) return null;
+    const before = composerElement.getBoundingClientRect();
+    const banner = document.createElement("div");
+    banner.className = "conversation-history-error";
+    banner.setAttribute("role", "alert");
+    banner.innerHTML = "<span>OpenDrSai did not complete the operation. Retry if safe.</span><button type=\"button\">Retry</button>";
+    panel.prepend(banner);
+    const after = composerElement.getBoundingClientRect();
+    const bannerRect = banner.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const position = getComputedStyle(banner).position;
+    return {
+      beforeTop: before.top,
+      afterTop: after.top,
+      position,
+      contained: bannerRect.left >= panelRect.left && bannerRect.right <= panelRect.right,
+    };
+  });
+  assert.ok(bannerGeometry, "The conversation panel and composer must be available for banner geometry verification.");
+  assert.equal(bannerGeometry.position, "absolute", "A history failure banner must float above chat content.");
+  assert.ok(Math.abs(bannerGeometry.beforeTop - bannerGeometry.afterTop) < 0.5, "A floating failure banner must not move the Composer.");
+  assert.equal(bannerGeometry.contained, true, "The floating failure banner must stay within the conversation panel.");
+  await page.screenshot({ path: join(evidenceDir, "floating-history-error.png"), fullPage: false });
+  await page.evaluate(() => document.querySelector(".conversation-history-error")?.remove());
   await composer.fill("__STRUCTURED_VISUAL_FIXTURE__");
   const composerForm = composer.locator("xpath=ancestor::form[1]");
   const submit = composerForm.locator('button.composer-submit:not(.stop)').first();
@@ -79,15 +106,19 @@ try {
   assert.equal(await process.locator("summary.structured-run-status").count(), 1, "Process disclosure must be the run status row, not a second row.");
   assert.equal(await statusRow.locator(".structured-process-label").count(), 1, "The merged status row must expose the process label.");
   assert.equal(await process.evaluate((node) => node.hasAttribute("open")), false, "A completed process must be collapsed by default.");
-  assert.match(await resultLayer.innerText(), /Final answer|最终回答/, "The final answer must remain visible outside process details.");
+  assert.match(await resultLayer.innerText(), /Answer|回答/, "The answer must remain visible outside process details.");
   await process.locator("summary").click();
   assert.equal(await process.evaluate((node) => node.hasAttribute("open")), true, "The completed process must be expandable.");
   await process.locator(".structured-process-content").waitFor({ state: "visible" });
   const processText = await process.innerText();
-  assert.match(processText, /Analysis summary|分析摘要/, "Reasoning must be labeled as an analysis summary.");
+  assert.match(processText, /Analysis notes|分析说明/, "Reasoning must be represented by a concise expandable analysis disclosure.");
   assert.match(processText, /Result ready/, "Completed progress commentary must remain available in history.");
-  assert.match(processText, /Actions and changes|操作与变更/, "Tool and file activity must be available inside the process layer.");
-  const processSummary = process.locator("summary");
+  assert.match(processText, /Actions and files|操作与文件/, "Grouped tool and file activity must be available inside the process layer.");
+  const analysis = process.locator(".structured-analysis-disclosure");
+  assert.equal(await analysis.evaluate((node) => node.hasAttribute("open")), false, "Raw analysis details must remain collapsed by default.");
+  await analysis.locator("summary").click();
+  assert.equal(await analysis.evaluate((node) => node.hasAttribute("open")), true, "Analysis evidence must remain expandable.");
+  const processSummary = process.locator("summary.structured-run-status");
   await processSummary.focus();
   await page.keyboard.press("Enter");
   assert.equal(await process.evaluate((node) => node.hasAttribute("open")), false,

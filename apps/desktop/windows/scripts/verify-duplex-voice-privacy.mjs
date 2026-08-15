@@ -8,9 +8,9 @@ const [workspace, hook, runtime] = await Promise.all([
   readFile(resolve(root, "shared/main/voice/duplex/runtime.ts"), "utf8"),
 ]);
 assert.match(workspace, /remote Provider \$\{ref\.provider_id\}, model \$\{ref\.model_id\}/);
-assert.match(workspace, /if \(!privacyAlreadyConfirmed && !duplexPrivacyConfirmed\)[\s\S]{0,180}return/);
+assert.match(workspace, /if \(!privacyAlreadyConfirmed && !duplexDisclosureAcknowledged\)[\s\S]{0,180}return/);
 assert.match(workspace, /I understand—start Realtime voice/);
-const gateIndex = workspace.indexOf("!privacyAlreadyConfirmed && !duplexPrivacyConfirmed");
+const gateIndex = workspace.indexOf("!privacyAlreadyConfirmed && !duplexDisclosureAcknowledged");
 const startIndex = workspace.indexOf("duplexVoiceInput.start()", gateIndex);
 assert.ok(gateIndex >= 0 && startIndex > gateIndex, "privacy confirmation must precede microphone/Session start");
 assert.match(hook, /message: "Realtime voice Session metrics"[\s\S]{0,200}attributes: event\.metrics/);

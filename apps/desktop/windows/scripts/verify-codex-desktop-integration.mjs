@@ -39,6 +39,7 @@ try {
   assert.deepEqual(presentation.backendRetryIdentity("pending", "safe-key"), { reuseKey: true, idempotencyKey: "safe-key" });
 
   const app = await readFile(join(root, "../shared/renderer/src/App.tsx"), "utf8");
+  const codexSettings = await readFile(join(root, "../shared/renderer/src/components/CodexIntegrationSettings.tsx"), "utf8");
   const windowsMain = await readFile(join(root, "src/main/index.ts"), "utf8");
   for (const phase of ["discovered", "read", "projected", "persisted", "cancelled"]) {
     assert(windowsMain.includes(`emit(\"${phase}\"`), `Workspace sync must report the ${phase} phase`);
@@ -83,7 +84,7 @@ try {
   assert.equal(detailedStatus.appServerState, "running");
   assert.equal(detailedStatus.transport, "local-process");
   assert.equal(detailedStatus.adapterVersion, "oaep-codex/2.0");
-  assert(app.includes("codex-backend-status") && app.includes("codex-login") && app.includes("codex-logout"));
+  assert(codexSettings.includes("codex-backend-status") && codexSettings.includes("codex-login") && codexSettings.includes("codex-logout"));
   assert(app.includes("conversationHistory=") && app.includes("continuesExistingTask="), "Codex history trust and continuation state must reach the chat UI");
   const errorsBundle = join(temp, "user-facing-errors.mjs");
   await build({ entryPoints: [join(root, "../shared/renderer/src/userFacingErrors.ts")], outfile: errorsBundle, bundle: true, platform: "node", format: "esm", target: "node22" });
@@ -98,8 +99,9 @@ try {
   const gateway = await readFile(join(root, "../shared/main/gateway.ts"), "utf8");
   assert(gateway.includes("getLocalCodexDevelopmentEnv") && gateway.includes('DRSAI_CODEX_DEVELOPMENT: "1"'));
   assert(gateway.includes("desktopAppRuntime.isPackaged") && gateway.includes("return {}"), "packaged releases must leave Codex discovery and signature verification to the product Runtime provider");
-  assert(gateway.includes('"node_modules", ".bin", "codex.cmd"'), "development must prefer the project-owned standalone CLI");
-  assert(gateway.includes('/\\\\WindowsApps\\\\/i'), "inaccessible Windows Store package members must not be advertised as available");
+  assert(!gateway.includes('"node_modules", ".bin", "codex.cmd"'), "development must not silently prefer a project CLI over the reviewed Desktop binary");
+  const binaryProvider = await readFile(join(root, "../../../cores/python/packages/drsai/src/drsai/backend/codex_adapter/binary_provider.py"), "utf8");
+  assert(binaryProvider.includes("never the WindowsApps execution alias") && binaryProvider.includes("codex_windowsapps_alias_inaccessible"), "inaccessible Windows Store aliases must not be advertised as available");
 
   const runtimeClient = await readFile(join(root, "../shared/main/runtimeClient.ts"), "utf8");
   for (const method of ["createSession", "updateSession", "getAgentRun", "createAgentRun", "executeAgentRun", "cancelAgentRun", "listAgentRunEvents", "respondAgentApproval"]) assert(runtimeClient.includes(method));

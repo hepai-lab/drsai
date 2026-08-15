@@ -164,8 +164,8 @@ function harness(responses, { refreshFails = false } = {}) {
   test.options.catalogBaseUrl = "https://ai-dev.ihep.ac.cn/apiv2";
   test.options.refresh = true;
   const result = await fetchPlatformAgents(test.options);
-  assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/apiv2/agents/list_agents?refresh=true");
-  assert.equal(test.calls.length, 1, "HAI discovery must not wait for a second Portal Native metadata request");
+  assert.equal(test.calls[0].url, "https://ai-dev.ihep.ac.cn/api/native/v1/agents?refresh=true");
+  assert.equal(test.calls.length, 1, "HAI discovery must use one Portal Native request");
   assert.deepEqual(result.agents.map((agent) => agent.id), ["platform:drsai_v3_test"]);
   assert.equal(result.agents[0].owner, "zdzhang@ihep.ac.cn", "authenticated catalog owner must remain distinct");
   assert.equal(result.agents[0].author, "Agent Research Team", "declared author must be preserved separately");
@@ -210,10 +210,10 @@ function harness(responses, { refreshFails = false } = {}) {
 {
   const test = harness([response(401), response(401)]);
   const result = await fetchPlatformAgents(test.options);
-  assert.equal(result.status.state, "requires_login");
+  assert.equal(result.status.state, "error");
   assert.equal(test.refreshes, 1);
   assert.equal(test.calls.length, 2);
-  assert.equal(test.invalidations, 1);
+  assert.equal(test.invalidations, 0, "a downstream 401 must not invalidate the global OIDC session");
 }
 
 {
@@ -237,4 +237,4 @@ assert(agentsSource.includes("requireAuthContext()"), "platform catalog must use
 assert(authSource.includes("refreshAuthContextAfterUnauthorized"), "strict post-401 refresh entrypoint is missing");
 assert(!source.includes("console."), "platform client must not log tokens or request payloads");
 
-console.log("Agent square platform contract verification passed (OIDC, one 401 retry, one-request HAI discovery, safe DTO and DDF input routing).");
+console.log("Agent square platform contract verification passed (Portal Native discovery, OIDC retry isolation, safe DTO and DDF input routing).");

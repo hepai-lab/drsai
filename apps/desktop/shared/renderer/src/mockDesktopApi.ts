@@ -15,6 +15,7 @@ import type {
   DesktopChannelOutboundDelivery,
   DesktopChannelOutboundDraftResult,
   DesktopChannelSnapshotSyncResult,
+  DesktopWeChatChannelStatus,
   DesktopExternalConnectionReadinessResult,
   DiagnosticEvent,
   DesktopApi,
@@ -179,6 +180,19 @@ const anonymousSession: AuthSession = {
   authMode: null,
 };
 
+let mockWeChatStatus: DesktopWeChatChannelStatus = {
+  configured: false,
+  credentialState: "missing" as const,
+  runtimeState: "stopped" as const,
+  modelPolicy: {
+    primary: { providerId: "hepai", modelId: "deepseek-v4-flash" },
+    imageUnderstanding: { providerId: "hepai", modelId: "gpt-5.6-luna" },
+    imageGeneration: { providerId: "hepai", modelId: "gemini-3.1-flash-lite-image" },
+  },
+  mediaCapabilities: { imageUnderstanding: true, imageGeneration: true },
+};
+let mockWeChatPolls = 0;
+
 const mockChannelAdapters: DesktopChannelAdapterListResult = {
   generatedAt: new Date().toISOString(),
   configuredCount: 5,
@@ -202,6 +216,19 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
       description: "Mobile entry contract for reviewed phone-originated messages and approval-aware outbound drafts.",
       setupHint:
         "Use the dedicated Mobile Pairing flow for device authorization; reviewed .drsai/mobile-context.json remains the Channel handoff contract.",
+    },
+    {
+      id: "wechat-chat",
+      name: "WeChat",
+      provider: "wechat",
+      kind: "chat",
+      status: "config_required",
+      direction: "bidirectional",
+      configured: false,
+      requiresApproval: true,
+      capabilities: ["QR login", "Receive text messages", "Isolated Agent sessions", "Bounded text replies"],
+      description: "Runtime-owned WeChat ilink Bot connection with QR login and isolated Agent sessions.",
+      setupHint: "Connect and explicitly enable WeChat. Provider credentials stay inside the trusted Runtime.",
     },
     {
       id: "slack-chat",
@@ -364,7 +391,7 @@ const mockExternalConnectionReadiness: DesktopExternalConnectionReadinessResult 
   workspacePath: "C:\\Users\\Demo\\Project",
   generatedAt: new Date().toISOString(),
   readyCount: 1,
-  partialCount: 9,
+  partialCount: 10,
   plannedCount: 0,
   message: "External connection readiness was assembled from local desktop contracts.",
   verification:
@@ -381,6 +408,18 @@ const mockExternalConnectionReadiness: DesktopExternalConnectionReadinessResult 
       gaps: ["Live mobile device pairing", "Push notification routing"],
       approvalBoundary: "Mobile readiness starts no device session, push service, or remote send.",
       verification: "Mock readiness performs no mobile device or push-provider access.",
+    },
+    {
+      id: "wechat",
+      name: "WeChat",
+      status: "partial",
+      configured: false,
+      readOnly: false,
+      capabilitySources: ["wechat-chat", "Runtime-owned QR authorization", "isolated Agent sessions"],
+      evidence: ["Typed Desktop bridge is available", "Provider credentials stay in the Runtime"],
+      gaps: ["Real-account packaged acceptance", "Non-text messages"],
+      approvalBoundary: "Protected Agent actions keep the Runtime approval boundary.",
+      verification: "Mock readiness performs no provider request and stores no QR or credential.",
     },
     {
       id: "github",
@@ -1358,6 +1397,8 @@ export function installMockDesktopApi(): void {
 
   const api: DesktopApi = {
     listPerceptors: async () => [],
+    getWebSearchProviderPolicy: async () => ({ mode: "auto", provider: null, available: false, error: "configuration_required" }),
+    updateWebSearchProviderPolicy: async (mode) => ({ mode, provider: mode === "managed" ? "hai_managed_tavily" : mode === "byok" ? "tavily" : null, available: mode !== "none", error: null }),
     savePerceptor: async (request) => ({ ...request, revision: "sha256:mock" }),
     updatePerceptor: async (_perceptorId, request) => ({ ...request, revision: "sha256:mock-updated" }),
     testPerceptor: async (perceptorId, capability = "search") => ({ ok: true, perceptor_id: perceptorId, status: "available", tested: capability, result_count: capability === "search" ? 3 : undefined }),
@@ -1443,6 +1484,29 @@ export function installMockDesktopApi(): void {
     previewDiagnosticPackage: async () => ({ formatVersion: 1, encrypted: true, eventCount: diagnosticEvents.length, byteLength: 0, sensitiveMatchesRemoved: 0, sections: ["manifest", "snapshot"], integritySha256: "mock-sha256", warnings: [] }),
     exportProductionDiagnosticPackage: async () => ({ ok: false, preview: await api.previewDiagnosticPackage(), message: "Mock package export is not written to disk." }),
     importProductionDiagnosticPackage: async () => null,
+    previewFeedback: async (draft) => ({
+      client_feedback_id: draft.client_feedback_id,
+      category: draft.category,
+      source: draft.source,
+      data_categories: ["feedback", "app_environment", "correlation_ids", ...(draft.consent.diagnostics ? ["redacted_diagnostics"] : [])],
+      attachment_manifest: [],
+      estimated_byte_length: 0,
+      sensitive_matches_removed: 0,
+      retention_days: 30,
+      includes_screenshot: draft.consent.screenshot,
+      includes_conversation_context: draft.consent.conversation_context,
+      warnings: [],
+    }),
+    submitFeedback: async (draft) => ({ client_feedback_id: draft.client_feedback_id, feedback_id: `FB-MOCK-${Date.now()}`, status: "received", queued: false, idempotent_replay: false, message: "Feedback received. Thank you." }),
+    listPendingFeedback: async () => [],
+    retryPendingFeedback: async () => ({ sent: 0, remaining: 0 }),
+    deletePendingFeedback: async () => false,
+    getPendingCrashFeedback: async () => null,
+    clearPendingCrashFeedback: async () => false,
+    captureFeedbackScreenshot: async () => ({ data_url: "data:image/png;base64,iVBORw0KGgo=", width: 1, height: 1, byte_length: 8 }),
+    listFeedbackAdmin: async () => [],
+    updateFeedbackAdmin: async (feedbackId, update) => ({ feedback_id: feedbackId, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), category: "bug", source: "global", user_description: "", context: { module: "mock", page: "mock", app_version: "mock", runtime_version: "mock", electron_version: "mock", platform: "mock", locale: "en", breadcrumbs: [] }, diagnostics: { attached: false, byte_length: 0, sensitive_matches_removed: 0 }, status: update.status, contact_allowed: false }),
+    deleteFeedbackAdmin: async () => true,
     getDiagnosticSourceContext: async (request) => {
       const highlightLine = Math.max(1, request.source.line ?? 2);
       const startLine = Math.max(1, highlightLine - 1);
@@ -2110,7 +2174,25 @@ export function installMockDesktopApi(): void {
       workspaces = next;
       return deleted;
     },
-    listThreads: async () => threads,
+    listThreads: async (request) => {
+      const pathKey = (value?: string): string => (value ?? "").replace(/[\\/]+/g, "/").toLocaleLowerCase();
+      const scoped = request?.workspacePath
+        ? threads.filter((thread) => pathKey(thread.workspacePath) === pathKey(request.workspacePath))
+        : threads;
+      if (!request) return scoped;
+      const limit = Math.max(1, Math.min(200, Math.trunc(request.limit ?? 50)));
+      const offset = Math.max(0, Math.trunc(request.offset ?? 0));
+      const required = new Set(request.requiredThreadIds ?? []);
+      const allProtectedThreads = scoped.filter((thread) => !thread.archived
+        && (required.has(thread.id) || thread.pinned || thread.status === "running"));
+      const protectedThreads = offset === 0 ? allProtectedThreads : [];
+      const protectedIds = new Set(allProtectedThreads.map((thread) => thread.id));
+      const active = scoped.filter((thread) => !thread.archived && !protectedIds.has(thread.id)).slice(offset, offset + limit);
+      const archived = request.includeArchived
+        ? scoped.filter((thread) => thread.archived).slice(offset, offset + limit)
+        : [];
+      return [...new Map([...protectedThreads, ...active, ...archived].map((thread) => [thread.id, thread])).values()];
+    },
     listAgents: async (): Promise<DesktopAgent[]> => [
       {
         id: "opendrsai",
@@ -2868,7 +2950,7 @@ export function installMockDesktopApi(): void {
     appendDuplexVoiceHistory: async (request) => {
       const current = threadSnapshots[request.threadId] ?? { threadId: request.threadId, title: request.threadId, messages: [], updatedAt: Date.now(), messageCount: 0 };
       const merged = new Map(current.messages.map((message) => [message.id, message]));
-      for (const message of request.messages) merged.set(message.id, { ...merged.get(message.id), ...message });
+      for (const message of request.messages) { const existing = merged.get(message.id); const currentRevision = existing?.voice?.revision ?? 0; if (message.revision === currentRevision) continue; if (message.expectedRevision !== currentRevision || message.revision !== currentRevision + 1) throw new Error("Duplex voice history revision conflict."); const { expectedRevision: _expectedRevision, ...value } = message; merged.set(message.id, { ...existing, ...value, voice: { ...message.voice, revision: message.revision } }); }
       const messages = [...merged.values()];
       const next = { ...current, messages, messageCount: messages.length, updatedAt: Date.now() };
       threadSnapshots = { ...threadSnapshots, [request.threadId]: next };
@@ -2993,19 +3075,30 @@ export function installMockDesktopApi(): void {
       maxBufferedAudioMs: 2_000,
     }),
     getDuplexVoiceCapabilities: async () => ({
-      protocolVersion: 1, inputAudioEncodings: ["pcm_s16le"], outputAudioEncodings: ["pcm_s16le"],
+      protocolVersion: 2, inputAudioEncodings: ["pcm_s16le"], outputAudioEncodings: ["pcm_s16le"],
       inputSampleRatesHz: [24_000], outputSampleRatesHz: [24_000], supportsInputTranscription: true,
       supportsOutputTranscription: true, supportsServerVad: true, supportsResponseCancel: true,
       supportsConversationTruncation: true, supportsToolCalling: true, supportsSessionResume: false,
       maxUplinkBufferedAudioMs: 2_000, maxPlaybackBufferedAudioMs: 3_000, maxSessionDurationSeconds: 1_800,
     }),
-    startDuplexVoiceSession: async (request) => ({ sessionId: request.sessionId, acceptedAt: new Date().toISOString(), runtimeId: "mock-local", providerId: request.providerId, modelId: request.modelId, capabilities: await api.getDuplexVoiceCapabilities() }),
-    sendDuplexVoiceAudioChunk: (chunk) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId: chunk.sessionId, sequence: chunk.sequence, type: "input_audio_ack", acknowledgedSequence: chunk.sequence, bufferedAudioMs: 0 }]); return true; },
+    getDuplexVoiceReadiness: async () => ({
+      available: true, reasonCode: "ready", message: "Realtime voice is ready.", providerId: "zhizengzeng", modelId: "gpt-realtime-2", checkedAt: new Date().toISOString(),
+      checks: (["rollout", "gateway", "credential", "model", "provider", "capability"] as const).map((id) => ({ id, ready: true, reasonCode: "ready", message: `${id} is ready.` })),
+      capabilities: await api.getDuplexVoiceCapabilities(),
+    }),
+    getDuplexVoiceOccupancy: async () => ({ occupied: false, sessionId: null, ownerWindowId: null, ownerLabel: null, startedAt: null, ownedByCaller: false }),
+    startDuplexVoiceSession: async (request) => ({ sessionId: request.sessionId, acceptedAt: new Date().toISOString(), runtimeId: "mock-local", providerId: request.providerId, modelId: request.modelId, capabilities: await api.getDuplexVoiceCapabilities(), uplinkCredit: { frames: 100, bytes: 96_000, audioMs: 2_000, acknowledgedSequence: -1 } }),
+    takeOverDuplexVoiceSession: async (request) => ({ sessionId: request.session.sessionId, acceptedAt: new Date().toISOString(), runtimeId: "mock-local", providerId: request.session.providerId, modelId: request.session.modelId, capabilities: await api.getDuplexVoiceCapabilities(), uplinkCredit: { frames: 100, bytes: 96_000, audioMs: 2_000, acknowledgedSequence: -1 } }),
+    sendDuplexVoiceAudioChunk: (chunk) => { emit(duplexVoiceListeners, [{ protocolVersion: 2, sessionId: chunk.sessionId, sequence: chunk.sequence, type: "input_audio_ack", acknowledgedSequence: chunk.sequence, bufferedAudioMs: 0 }, { protocolVersion: 2, sessionId: chunk.sessionId, sequence: chunk.sequence + 1, type: "uplink_credit", credit: { frames: 100, bytes: 96_000, audioMs: 2_000, acknowledgedSequence: chunk.sequence }, reason: "ack" }]); return true; },
+    sendDuplexVoicePlaybackAck: () => true,
     updateDuplexVoiceSession: async () => true,
-    interruptDuplexVoiceSession: async (request) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId: request.sessionId, sequence: 0, type: "interrupted", responseId: request.responseId, playedAudioMs: request.playedAudioMs, reason: request.reason }]); return true; },
+    interruptDuplexVoiceSession: async (request) => { emit(duplexVoiceListeners, [{ protocolVersion: 2, sessionId: request.sessionId, sequence: 0, type: "interrupted", interruptId: request.interruptId, responseId: request.responseId, playedAudioMs: request.playedAudioMs, reason: request.reason }]); return true; },
     submitDuplexVoiceToolResult: async () => true,
-    stopDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId, sequence: 0, type: "completed", terminal: "completed" }]); return true; },
-    cancelDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId, sequence: 0, type: "cancelled", terminal: "cancelled" }]); return true; },
+    requestDuplexVoiceToolApproval: async (request) => ({ queued: true, approval: { id: `approval:${request.callId}`, source: "connector", actionKind: "external.service", title: request.name, detail: request.argumentsSummary, createdAt: new Date().toISOString(), risk: request.risk ?? "high" }, allowed: true, requiresApproval: true, blocked: false, reason: "Mock approval queued." }),
+    submitDuplexVoiceTextInput: async () => true,
+    stopDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 2, sessionId, sequence: 0, type: "completed", terminal: "completed" }]); return true; },
+    finishDuplexVoiceTurn: async () => true,
+    cancelDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 2, sessionId, sequence: 0, type: "cancelled", terminal: "cancelled" }]); return true; },
     disposeDuplexVoiceSession: async () => true,
     startStreamingVoiceTranscription: async (request) => {
       const sessionId = `fixture-streaming-${Date.now()}`;
@@ -5087,6 +5180,40 @@ export function installMockDesktopApi(): void {
       return result;
     },
     getScheduledTaskWorkerStatus: async () => ({ ...mockScheduledWorkerStatus }),
+    getWeChatChannelStatus: async () => ({ ...mockWeChatStatus }),
+    startWeChatLogin: async () => {
+      mockWeChatPolls = 0;
+      return {
+        operationId: "wechat-login:mock_operation_1234567890",
+        qrContent: "https://qr.example/mock-wechat-login",
+        status: "waiting" as const,
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+        pollIntervalSeconds: 1,
+      };
+    },
+    pollWeChatLogin: async (request) => {
+      mockWeChatPolls += 1;
+      if (mockWeChatPolls < 2) return { operationId: request.operationId, status: "scanned" as const, pollIntervalSeconds: 1 };
+      mockWeChatStatus = { configured: true, credentialState: "valid" as const, runtimeState: "stopped" as const };
+      return { operationId: request.operationId, status: "confirmed" as const, accountLabel: "bot…456" };
+    },
+    cancelWeChatLogin: async (request) => ({ operationId: request.operationId, status: "cancelled" as const, cancelled: true }),
+    startWeChatChannel: async () => {
+      if (!mockWeChatStatus.configured) throw new Error("WeChat login is required.");
+      mockWeChatStatus = { configured: true, credentialState: "valid" as const, runtimeState: "running" as const };
+      return { ...mockWeChatStatus, accountLabel: "bot…456", startedAt: new Date().toISOString() };
+    },
+    stopWeChatChannel: async () => {
+      mockWeChatStatus = { ...mockWeChatStatus, runtimeState: "stopped" as const };
+      return { ...mockWeChatStatus };
+    },
+    logoutWeChatChannel: async () => {
+      mockWeChatStatus = { configured: false, credentialState: "missing" as const, runtimeState: "stopped" as const };
+      return { ...mockWeChatStatus };
+    },
+    getWeChatSessionSummary: async () => ({ count: mockWeChatStatus.configured ? 1 : 0 }),
+    getWeChatReplyCapability: async () => ({ available: mockWeChatStatus.runtimeState === "running", ...(mockWeChatStatus.runtimeState === "running" ? {} : { reason: "channel_not_running" as const }) }),
+    sendToWeChat: async (request) => ({ deliveryId: `mock-wechat-${request.idempotencyKey}`, sessionId: request.sessionId, status: "sent", attemptCount: 1 }),
     listChannelAdapters: async (_workspacePath?: string) => ({
       ...mockChannelAdapters,
       generatedAt: new Date().toISOString(),
@@ -6368,6 +6495,7 @@ export function installMockDesktopApi(): void {
     onVoiceTranscriptionEvent: (callback) => subscribe(voiceTranscriptionListeners, callback),
     onStreamingVoiceTranscriptionEvent: (callback) => subscribe(streamingVoiceTranscriptionListeners, callback),
     onDuplexVoiceEvents: (callback) => subscribe(duplexVoiceListeners, callback),
+    onDuplexVoiceToolApprovalDecision: () => () => undefined,
     onVoiceSynthesisEvent: (callback) => subscribe(voiceSynthesisListeners, callback),
     onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
     onUpdateStatus: (callback) => subscribe(updateListeners, callback),

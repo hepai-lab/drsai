@@ -94,7 +94,7 @@ assert(app.includes('data-testid="voice-interaction-mode"'), "voice settings omi
 assert(voiceMode.includes('DEFAULT_VOICE_MODE: DesktopVoiceInteractionMode = "serial"'), "serial is not the explicit default voice mode");
 assert(voiceMode.includes("canSwitchVoiceMode"), "voice mode switching omits active-turn protection");
 assert(voiceMode.includes("getVoiceModeAvailability"), "voice mode switching omits runtime capability gating");
-assert(voicePreferences.includes("VOICE_PREFERENCES_SCHEMA_VERSION = 5"), "voice preferences schema was not advanced for transcript confirmation by default");
+assert(voicePreferences.includes("VOICE_PREFERENCES_SCHEMA_VERSION = 9"), "voice preferences schema does not include current Serial confirmation and Realtime settings migrations");
 assert(voicePreferences.includes('interactionMode: "serial"'), "voice preferences do not default to serial");
 assert(voicePreferences.includes("confirmBeforeSend: true"), "serial voice does not default to transcript confirmation");
 

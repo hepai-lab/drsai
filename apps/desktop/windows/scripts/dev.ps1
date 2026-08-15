@@ -704,6 +704,7 @@ $env:VITE_OPENDRSAI_LAUNCH_MODE = $LaunchModeName
 $env:OPENDRSAI_DESKTOP_DEV = if ($IsProductionLaunch) { "0" } else { "1" }
 $env:OPENDRSAI_ACTIVE_PLATFORM = if ($IsProductionLaunch) { "production" } else { "development" }
 $env:OPENDRSAI_OIDC_ONLY = "1"
+$env:VITE_OPENDRSAI_OIDC_ONLY = "1"
 $PlatformPortalUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn" } else { "https://ai-dev.ihep.ac.cn" }
 $PlatformModelBaseUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn/apiv2/v1" } else { "https://ai-dev.ihep.ac.cn/apiv2/v1" }
 $env:OPENDRSAI_PLATFORM_BASE_URL = $PlatformPortalUrl

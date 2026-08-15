@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 const directory = resolve(import.meta.dirname, "../release/duplex-voice"); mkdirSync(directory, { recursive: true });
 const base = { schemaVersion: 1, mode: "duplex", ok: false, generatedAt: new Date().toISOString(), tester: null, attachments: [] };
 const reports = {
-  packaged: { ...base, kind: "packaged", packagedApp: true, featureFlag: "OPENDRSAI_ENABLE_DUPLEX_VOICE=1", observed: { uplinkAudioFrames: 0, downlinkAudioDeltas: 0, interrupts: 0, terminalCount: 0 } },
+  packaged: { ...base, kind: "packaged", packagedApp: true, featureFlag: "OPENDRSAI_ENABLE_DUPLEX_VOICE=1", serialRegression: { passed: false, suite: "npm run test:voice:serial", reportSha256: null }, observed: { uplinkAudioFrames: 0, downlinkAudioDeltas: 0, interrupts: 0, terminalCount: 0 } },
   live: { ...base, kind: "live", providerId: "zhizengzeng", modelId: "gpt-realtime-2", observed: { sessionReady: false, inputAudio: false, inputTranscript: false, outputAudio: false, outputTranscript: false, interruption: false, toolRoundTrip: false } },
   hardware: { ...base, kind: "hardware", runs: [] },
 };

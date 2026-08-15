@@ -33,6 +33,16 @@ export function registerMacosConnectionsIpc(
   const optionalWorkspace = async (path: unknown) => { if (path !== undefined) await services.workspace.assertPath(path); };
 
   ipcMain.handle("desktop:channel-adapters-list", async (_event, workspacePath) => { await optionalWorkspace(workspacePath); return (await import("../../../../shared/main/channelAdapters")).listChannelAdapters(workspacePath); });
+  ipcMain.handle("desktop:wechat-channel-status", async () => (await import("../../../../shared/main/wechatChannel")).getWeChatChannelStatus());
+  ipcMain.handle("desktop:wechat-login-start", async () => (await import("../../../../shared/main/wechatChannel")).startWeChatLogin());
+  ipcMain.handle("desktop:wechat-login-poll", async (_event, request) => (await import("../../../../shared/main/wechatChannel")).pollWeChatLogin(request));
+  ipcMain.handle("desktop:wechat-login-cancel", async (_event, request) => (await import("../../../../shared/main/wechatChannel")).cancelWeChatLogin(request));
+  ipcMain.handle("desktop:wechat-channel-start", async () => (await import("../../../../shared/main/wechatChannel")).startWeChatChannel());
+  ipcMain.handle("desktop:wechat-channel-stop", async () => (await import("../../../../shared/main/wechatChannel")).stopWeChatChannel());
+  ipcMain.handle("desktop:wechat-channel-logout", async () => (await import("../../../../shared/main/wechatChannel")).logoutWeChatChannel());
+  ipcMain.handle("desktop:wechat-sessions-summary", async () => (await import("../../../../shared/main/wechatChannel")).getWeChatSessionSummary());
+  ipcMain.handle("desktop:wechat-reply-capability", async (_event, request) => (await import("../../../../shared/main/wechatChannel")).getWeChatReplyCapability(request));
+  ipcMain.handle("desktop:wechat-send-outbound", async (_event, request) => (await import("../../../../shared/main/wechatChannel")).sendToWeChat(request));
   ipcMain.handle("desktop:channel-adapter-configure", async (_event, request) => { await requireWorkspace(request); return (await import("../../../../shared/main/channelAdapters")).configureChannelAdapter(request); });
   ipcMain.handle("desktop:channel-adapter-auth-start", async (_event, request) => { await requireWorkspace(request); return (await import("../../../../shared/main/channelAdapters")).startChannelAdapterAuth(request); });
   ipcMain.handle("desktop:channel-adapter-auth-poll", async (_event, request) => { await requireWorkspace(request); return (await import("../../../../shared/main/channelAdapters")).pollChannelAdapterAuth(request); });

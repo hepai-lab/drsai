@@ -21,27 +21,42 @@ export function floatToPcm16(input: Float32Array): Int16Array {
   return result;
 }
 
-export class DuplexLinearResampler {
+/**
+ * Stateful band-limited resampler. The windowed-sinc kernel removes frequencies
+ * above the destination Nyquist limit before decimation and the fractional input
+ * cursor is retained across pushes, so worklet block boundaries cannot reset phase.
+ */
+export class DuplexSincResampler {
   readonly inputRate: number; readonly outputRate: number;
-  #buffer: number[] = []; #position = 0;
-  constructor(inputRate: number, outputRate: number) {
+  readonly halfWidth: number;
+  #buffer: number[] = []; #position: number;
+  constructor(inputRate: number, outputRate: number, halfWidth = 24) {
     if (!Number.isInteger(inputRate) || inputRate <= 0 || !Number.isInteger(outputRate) || outputRate <= 0) throw new Error("Duplex PCM sample rates are invalid.");
-    this.inputRate = inputRate; this.outputRate = outputRate;
+    if (!Number.isInteger(halfWidth) || halfWidth < 8 || halfWidth > 64) throw new Error("Duplex resampler kernel width is invalid.");
+    this.inputRate = inputRate; this.outputRate = outputRate; this.halfWidth = halfWidth; this.#position = halfWidth;
+    this.#buffer = Array.from({ length: halfWidth }, () => 0);
   }
   push(input: Float32Array): Float32Array {
     for (const value of input) this.#buffer.push(Number.isFinite(value) ? value : 0);
-    if (this.#buffer.length < 2) return new Float32Array();
     const ratio = this.inputRate / this.outputRate; const output: number[] = [];
-    while (this.#position + 1 < this.#buffer.length) {
-      const lower = Math.floor(this.#position); const fraction = this.#position - lower;
-      output.push(this.#buffer[lower] + (this.#buffer[lower + 1] - this.#buffer[lower]) * fraction);
+    const cutoff = Math.min(1, this.outputRate / this.inputRate) * 0.94;
+    while (this.#position + this.halfWidth < this.#buffer.length) {
+      const center = Math.floor(this.#position); let sum = 0; let weightSum = 0;
+      for (let index = center - this.halfWidth + 1; index <= center + this.halfWidth; index += 1) {
+        const distance = this.#position - index;
+        const window = 0.5 + 0.5 * Math.cos(Math.PI * distance / this.halfWidth);
+        const x = Math.PI * cutoff * distance;
+        const weight = cutoff * (Math.abs(x) < 1e-12 ? 1 : Math.sin(x) / x) * window;
+        sum += this.#buffer[index] * weight; weightSum += weight;
+      }
+      output.push(weightSum === 0 ? 0 : sum / weightSum);
       this.#position += ratio;
     }
-    const consumed = Math.min(Math.floor(this.#position), this.#buffer.length - 1);
+    const consumed = Math.max(0, Math.floor(this.#position) - this.halfWidth);
     if (consumed > 0) { this.#buffer.splice(0, consumed); this.#position -= consumed; }
     return Float32Array.from(output);
   }
-  reset(): void { this.#buffer = []; this.#position = 0; }
+  reset(): void { this.#buffer = Array.from({ length: this.halfWidth }, () => 0); this.#position = this.halfWidth; }
 }
 
 export class DuplexPcmBatcher {

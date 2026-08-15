@@ -1,4 +1,4 @@
-import type { DesktopDuplexVoiceEvent, DesktopDuplexVoiceSessionStartRequest, DesktopDuplexVoiceSessionStartResult } from "../../../api/desktopApi";
+import type { DesktopDuplexVoiceEvent, DesktopDuplexVoiceOccupancy, DesktopDuplexVoiceSessionStartRequest, DesktopDuplexVoiceSessionStartResult } from "../../../api/desktopApi";
 import type { DuplexVoiceRuntime } from "./runtime";
 
 export interface DuplexSessionRegistryOptions {
@@ -8,6 +8,7 @@ export interface DuplexSessionRegistryOptions {
   scheduleFlush?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   cancelFlush?: (timer: ReturnType<typeof setTimeout>) => void;
   onRemoved?: (ownerId: string, sessionId: string) => void;
+  getCapabilities?: (ownerId: string, request: DesktopDuplexVoiceSessionStartRequest) => DesktopDuplexVoiceSessionStartResult["capabilities"] | undefined;
 }
 
 interface RegistryEntry {
@@ -47,13 +48,37 @@ export class DuplexSessionRegistry {
       runtimeId: "realtime-provider",
       providerId: request.providerId,
       modelId: request.modelId,
-      capabilities: runtime.options.adapter.capabilities,
+      capabilities: this.options.getCapabilities?.(ownerId, request) ?? runtime.options.adapter.capabilities,
+      uplinkCredit: runtime.uplinkCredit,
     };
     entry = { ownerId, request, runtime, events: [], eventBytes: 0, flushTimer: null, result };
     this.#bySession.set(request.sessionId, entry);
     this.#byOwner.set(ownerId, request.sessionId);
     runtime.start();
     return result;
+  }
+
+  occupancy(ownerId: string): DesktopDuplexVoiceOccupancy {
+    const entry = this.#bySession.values().next().value as RegistryEntry | undefined;
+    if (!entry) return { occupied: false, sessionId: null, ownerWindowId: null, ownerLabel: null, startedAt: null, ownedByCaller: false };
+    const numericOwner = Number(entry.ownerId);
+    return {
+      occupied: true,
+      sessionId: entry.request.sessionId,
+      ownerWindowId: Number.isSafeInteger(numericOwner) ? numericOwner : null,
+      ownerLabel: Number.isSafeInteger(numericOwner) ? `Window ${numericOwner}` : "Another window",
+      startedAt: entry.result.acceptedAt,
+      ownedByCaller: entry.ownerId === ownerId,
+    };
+  }
+
+  takeOver(ownerId: string, expectedSessionId: string, request: DesktopDuplexVoiceSessionStartRequest): DesktopDuplexVoiceSessionStartResult {
+    if (!expectedSessionId || expectedSessionId === request.sessionId) throw new Error("Realtime voice takeover request is invalid.");
+    const occupied = this.#bySession.get(expectedSessionId);
+    if (!occupied || occupied.ownerId === ownerId) throw new Error("Realtime voice occupancy changed. Check again before taking over.");
+    occupied.runtime.cancel();
+    if (this.#bySession.has(expectedSessionId)) this.disposeSession(expectedSessionId, occupied.ownerId);
+    return this.start(ownerId, request);
   }
 
   get(sessionId: string, ownerId: string): DuplexVoiceRuntime | undefined {

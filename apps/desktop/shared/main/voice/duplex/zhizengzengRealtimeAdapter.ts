@@ -11,7 +11,7 @@ const MAX_AUDIO_DELTA_BYTES = 2 * 1024 * 1024;
 const MAX_TOOL_ARGUMENT_BYTES = 256 * 1024;
 
 export const ZHIZENGZENG_REALTIME_CAPABILITIES = Object.freeze({
-  protocolVersion: 1,
+  protocolVersion: 2,
   inputAudioEncodings: ["pcm_s16le"],
   outputAudioEncodings: ["pcm_s16le"],
   inputSampleRatesHz: [24_000],
@@ -135,6 +135,8 @@ export class ZhizengzengRealtimeAdapter implements DuplexRealtimeProviderAdapter
       },
     };
   }
+  createTextInput(itemId: string, text: string): Record<string, unknown> { return { type: "conversation.item.create", item: { id: providerId(itemId, "item ID"), type: "message", role: "user", content: [{ type: "input_text", text: boundedText(text, 20_000, "text input") }] } }; }
+  createResponse(): Record<string, unknown> { return { type: "response.create" }; }
 
   decodeEvent(raw: string): DuplexProviderEvent[] {
     if (typeof raw !== "string" || byteLength(raw) > MAX_PROVIDER_EVENT_BYTES) return [providerFailure("protocol", "Realtime Provider event is invalid or oversized.", false)];
@@ -155,6 +157,7 @@ export class ZhizengzengRealtimeAdapter implements DuplexRealtimeProviderAdapter
     if (type === "input_audio_buffer.committed") return [{ type: "input_audio_ack", acknowledgedSequence: integerOr(event.sequence, -1), bufferedAudioMs: 0 }];
     if (type === "input_audio_buffer.speech_started") return [{ type: "input_speech_started", itemId: optionalId(event.item_id), audioStartMs: optionalInteger(event.audio_start_ms) }];
     if (type === "input_audio_buffer.speech_stopped") return [{ type: "input_speech_stopped", itemId: optionalId(event.item_id), audioEndMs: optionalInteger(event.audio_end_ms) }];
+    if (type === "conversation.item.created") { const item = recordValue(event.item, "conversation item"); if (item.role !== "user" || !Array.isArray(item.content)) return []; const text = item.content.flatMap((part) => part && typeof part === "object" && !Array.isArray(part) && (part as Record<string, unknown>).type === "input_text" && typeof (part as Record<string, unknown>).text === "string" ? [(part as Record<string, unknown>).text as string] : []).join(""); return text ? [{ type: "input_transcript_completed", itemId: providerId(item.id, "item ID"), text: boundedText(text, 20_000, "text input") }] : []; }
     if (type === "conversation.item.input_audio_transcription.delta") return [{ type: "input_transcript_delta", itemId: providerId(event.item_id, "item ID"), contentIndex: integerOr(event.content_index, 0), text: textValue(event.delta, "transcript delta") }];
     if (type === "conversation.item.input_audio_transcription.completed") return [{ type: "input_transcript_completed", itemId: providerId(event.item_id, "item ID"), text: textValue(event.transcript, "transcript") }];
     if (type === "response.created") return [{ type: "response_started", responseId: nestedId(event.response, "response") }];
@@ -192,7 +195,7 @@ export function resolveZhizengzengRealtimeUrl(value: string): URL {
 }
 
 function validateStartRequest(request: DesktopDuplexVoiceSessionStartRequest, capabilities: DesktopDuplexVoiceCapabilities): void {
-  if (request.protocolVersion !== 1 || request.channels !== 1) throw new Error("Realtime Session protocol or channels are unsupported.");
+  if (request.protocolVersion !== 2 || request.channels !== 1) throw new Error("Realtime Session protocol or channels are unsupported.");
   providerId(request.sessionId, "session ID");
   providerId(request.providerId, "Provider ID");
   providerId(request.modelId, "model ID");
@@ -204,7 +207,7 @@ function validateStartRequest(request: DesktopDuplexVoiceSessionStartRequest, ca
 }
 
 function validateAudioChunk(chunk: DesktopDuplexVoiceAudioChunk, capabilities: DesktopDuplexVoiceCapabilities): void {
-  if (chunk.protocolVersion !== 1 || chunk.channels !== 1 || !Number.isSafeInteger(chunk.sequence) || chunk.sequence < 0) throw new Error("Realtime audio chunk identity is invalid.");
+  if (chunk.protocolVersion !== 2 || chunk.channels !== 1 || !Number.isSafeInteger(chunk.sequence) || chunk.sequence < 0) throw new Error("Realtime audio chunk identity is invalid.");
   if (!Number.isFinite(chunk.capturedAtMs) || chunk.capturedAtMs < 0) throw new Error("Realtime audio capture timestamp is invalid.");
   providerId(chunk.sessionId, "session ID");
   if (!capabilities.inputAudioEncodings.includes(chunk.encoding) || !capabilities.inputSampleRatesHz.includes(chunk.sampleRateHz)) throw new Error("Realtime audio chunk format is unsupported.");

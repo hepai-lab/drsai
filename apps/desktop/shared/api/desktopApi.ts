@@ -220,6 +220,8 @@ export interface GatewayStatus {
   portOpen?: boolean;
   diagnosticCode?: string;
   diagnosticMessage?: string;
+  liveness?: GatewayLiveness;
+  instance?: RuntimeInstanceIdentity;
   endpoints?: {
     health: GatewayEndpointStatus;
     models: GatewayEndpointStatus;
@@ -295,6 +297,43 @@ export interface CodexBackendStatus {
   connectionState?: string;
   transport?: "local-process" | "ssh" | string;
   adapterVersion?: string;
+  readiness?: {
+    runtime?: CodexReadinessFacet;
+    transport?: CodexReadinessFacet;
+    process?: CodexReadinessFacet;
+    installed?: CodexReadinessFacet;
+    contract?: CodexReadinessFacet;
+    account?: CodexReadinessFacet;
+    models?: CodexReadinessFacet;
+    executable?: CodexReadinessFacet & { blockers?: string[] };
+  };
+  binaryIdentity?: {
+    source?: string | null;
+    version?: string | null;
+    binaryDigest?: string | null;
+    schemaDigest?: string | null;
+    releaseSafe?: boolean | null;
+  } | null;
+}
+
+export interface RuntimeInstanceIdentity {
+  mode: "development" | "packaged" | "external" | "remote";
+  home: string;
+  port: number;
+  pid: number | null;
+  instanceId: string;
+  owner: string;
+  startedAt: string | null;
+}
+
+export interface CodexReadinessFacet {
+  state: string;
+  reason?: string | null;
+  observedAt?: string | null;
+  lastSuccessAt?: string | null;
+  retryable?: boolean;
+  actions?: string[];
+  stale?: boolean;
 }
 
 export interface CodexBackendLogin {
@@ -418,7 +457,7 @@ export type DesktopVoiceInteractionMode = "serial" | "streaming" | "duplex";
 
 export type DesktopStreamingAudioEncoding = "pcm_s16le";
 
-export const DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION = 1 as const;
+export const DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION = 2 as const;
 
 export type DesktopDuplexVoiceAudioEncoding = "pcm_s16le" | "pcm_f32le";
 export type DesktopDuplexVoiceTerminalState = "completed" | "cancelled" | "failed";
@@ -461,6 +500,77 @@ export interface DesktopDuplexVoiceCapabilities {
   maxSessionDurationSeconds?: number;
 }
 
+export type GatewayLivenessState =
+  | "unknown"
+  | "probing"
+  | "ready"
+  | "degraded"
+  | "reconnecting"
+  | "action_required"
+  | "stopped";
+
+export interface GatewayLiveness {
+  state: GatewayLivenessState;
+  observedReady: boolean;
+  effectiveReady: boolean;
+  stale: boolean;
+  generation: number;
+  consecutiveFailures: number;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  degradedSince: string | null;
+  retryAfterMs: number | null;
+}
+
+export type DesktopDuplexVoiceReadinessReasonCode =
+  | "ready"
+  | "rollout_disabled"
+  | "gateway_unavailable"
+  | "credential_unavailable"
+  | "model_unconfigured"
+  | "provider_unsupported"
+  | "model_unsupported"
+  | "audio_worklet_unavailable"
+  | "media_devices_unavailable"
+  | "capability_unverified"
+  | "internal";
+
+export interface DesktopDuplexVoiceReadinessCheck {
+  id: "rollout" | "gateway" | "credential" | "model" | "provider" | "capability";
+  ready: boolean;
+  reasonCode: DesktopDuplexVoiceReadinessReasonCode;
+  message: string;
+}
+
+export interface DesktopDuplexVoiceLiveProbe {
+  status: "verified" | "unavailable";
+  provider_id: string | null;
+  model_id: string | null;
+  checked_at: string;
+  expires_at: string;
+  evidence_kind: "real_provider";
+  error_code?: string;
+  capabilities: Partial<{
+    input_transcription: boolean;
+    output_transcription: boolean;
+    server_vad: boolean;
+    response_cancel: boolean;
+    conversation_truncation: boolean;
+    tool_calling: boolean;
+  }>;
+}
+
+export interface DesktopDuplexVoiceReadiness {
+  available: boolean;
+  reasonCode: DesktopDuplexVoiceReadinessReasonCode;
+  message: string;
+  providerId: string | null;
+  modelId: string | null;
+  checkedAt: string;
+  checks: DesktopDuplexVoiceReadinessCheck[];
+  capabilities: DesktopDuplexVoiceCapabilities | null;
+}
+
 export interface DesktopDuplexVoiceSessionStartRequest {
   protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
   sessionId: string;
@@ -478,6 +588,8 @@ export interface DesktopDuplexVoiceSessionStartRequest {
   enableOutputTranscription: boolean;
   enableServerVad: boolean;
   enableToolCalling: boolean;
+  autoRecovery?: boolean;
+  updateId?: string;
 }
 
 export interface DesktopDuplexVoiceSessionStartResult {
@@ -487,9 +599,18 @@ export interface DesktopDuplexVoiceSessionStartResult {
   providerId: string;
   modelId: string;
   capabilities: DesktopDuplexVoiceCapabilities;
+  uplinkCredit: DesktopDuplexVoiceUplinkCredit;
+}
+
+export interface DesktopDuplexVoiceUplinkCredit {
+  frames: number;
+  bytes: number;
+  audioMs: number;
+  acknowledgedSequence: number;
 }
 
 export interface DesktopDuplexVoiceInterruptRequest {
+  interruptId: string;
   sessionId: string;
   responseId: string;
   itemId: string;
@@ -506,8 +627,13 @@ export interface DesktopDuplexVoiceToolResultRequest {
 
 export interface DesktopDuplexVoiceHistoryAppendRequest {
   threadId: string;
-  messages: Array<{ id: string; role: "user" | "assistant"; content: string; statusContent?: string }>;
+  messages: Array<{ id: string; role: "user" | "assistant"; content: string; revision: number; expectedRevision: number; statusContent?: string; voice?: DesktopVoiceMessageMetadata; toolTimeline?: ChatToolTimelineEvent[]; parts?: ChatMessagePart[] }>;
 }
+export interface DesktopDuplexVoiceToolApprovalRequest { sessionId: string; callId: string; name: string; argumentsSummary: string; scope?: string; risk?: "low" | "medium" | "high" }
+export interface DesktopDuplexVoiceToolApprovalDecision { sessionId: string; callId: string; decision: "allow" | "reject" | "cancel" }
+export interface DesktopDuplexVoiceTextInputRequest { sessionId: string; itemId: string; text: string }
+
+export interface DesktopVoiceMessageMetadata { revision: number; generatedAudioMs?: number; playedAudioMs?: number; interruptedAt?: number; alignmentConfidence?: "none" | "word_timing"; heardContent?: string }
 
 export interface DesktopDuplexVoiceAudioChunk {
   protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
@@ -526,6 +652,7 @@ export interface DesktopDuplexVoiceAudioDelta {
   itemId: string;
   contentIndex: number;
   sequence: number;
+  providerReceivedAtMs: number;
   encoding: DesktopDuplexVoiceAudioEncoding;
   sampleRateHz: number;
   channels: 1;
@@ -552,22 +679,24 @@ export type DesktopDuplexVoiceEvent = {
   sequence: number;
 } & (
   | { type: "session_started"; runtimeId: "realtime-provider" | "mock-local"; providerId: string; modelId: string; capabilities: DesktopDuplexVoiceCapabilities }
-  | { type: "connection_state"; state: DesktopDuplexVoiceConnectionState; attempt?: number }
+  | { type: "session_update_ack"; updateId: string; status: "applied" | "rejected" | "rolled_back" | "requires_restart"; changedFields: string[]; reason?: string }
+  | { type: "connection_state"; state: DesktopDuplexVoiceConnectionState; attempt?: number; segmentId?: number; lostAudioMs?: number; retryAfterMs?: number }
   | { type: "input_audio_ack"; acknowledgedSequence: number; bufferedAudioMs: number }
+  | { type: "uplink_credit"; credit: DesktopDuplexVoiceUplinkCredit; reason: "initial" | "ack" | "reconnect" }
   | { type: "flow_control"; direction: "uplink" | "playback"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
   | { type: "input_speech_started"; itemId?: string; audioStartMs?: number }
   | { type: "input_speech_stopped"; itemId?: string; audioEndMs?: number }
   | { type: "input_transcript_delta"; delta: DesktopDuplexVoiceTranscriptDelta }
   | { type: "input_transcript_completed"; itemId: string; text: string }
-  | { type: "response_started"; responseId: string }
+  | { type: "response_started"; responseId: string; firstAudioSequence: number }
   | { type: "response_audio_delta"; delta: DesktopDuplexVoiceAudioDelta }
-  | { type: "response_audio_completed"; responseId: string; itemId: string; contentIndex: number }
+  | { type: "response_audio_completed"; responseId: string; itemId: string; contentIndex: number; finalSequence: number }
   | { type: "response_transcript_delta"; delta: DesktopDuplexVoiceTranscriptDelta }
   | { type: "response_transcript_completed"; responseId: string; itemId: string; text: string }
   | { type: "tool_call"; call: DesktopDuplexVoiceToolCall }
   | { type: "usage_update"; inputAudioMs: number; outputAudioMs: number; inputTokens: number | null; outputTokens: number | null; estimatedCostUsd: number | null; warning: boolean; exceeded: boolean }
   | { type: "diagnostic"; metrics: { connectMs: number | null; firstInputEventMs: number | null; ttfaMs: number | null; reconnects: number; interrupts: number; maxBufferedAudioMs: number; inputAudioMs: number; outputAudioMs: number } }
-  | { type: "interrupted"; responseId: string; playedAudioMs: number; reason: "user_speech" | "manual" | "stop_intent" }
+  | { type: "interrupted"; interruptId: string; responseId: string; playedAudioMs: number; reason: "user_speech" | "manual" | "stop_intent" }
   | { type: "completed"; terminal: "completed" }
   | { type: "cancelled"; terminal: "cancelled" }
   | { type: "failed"; terminal: "failed"; error: DesktopDuplexVoiceError }
@@ -2611,6 +2740,7 @@ export interface DesktopScheduledTaskWorkerStatus {
 
 export type DesktopChannelAdapterProvider =
   | "mobile"
+  | "wechat"
   | "slack"
   | "github"
   | "docs"
@@ -2644,7 +2774,7 @@ export interface DesktopChannelAdapter {
   capabilities: string[];
   description: string;
   setupHint?: string;
-  authMode?: "not_configured" | "local_git_remote" | "oauth" | "provider_token" | "session_stub";
+  authMode?: "not_configured" | "local_git_remote" | "oauth" | "provider_token" | "session_stub" | "ilink_qr";
   accountLabel?: string;
   scopeLabel?: string;
   configuredAt?: string;
@@ -2701,7 +2831,7 @@ export interface DesktopChannelConnection {
   adapterId: string;
   workspacePath: string;
   provider: DesktopChannelAdapterProvider;
-  mode: "local_git_remote" | "oauth" | "provider_token" | "session_stub";
+  mode: "local_git_remote" | "oauth" | "provider_token" | "session_stub" | "ilink_qr";
   configuredAt: string;
   updatedAt: string;
   accountLabel: string;
@@ -2721,6 +2851,96 @@ export interface DesktopChannelAdapterConfigureResult {
   connection: DesktopChannelConnection;
   message: string;
   verification: string;
+}
+
+export interface DesktopDuplexVoicePlaybackAck {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  sessionId: string;
+  receivedSequence: number;
+  scheduledSequence: number;
+  playedSequence: number;
+  receivedAudioMs: number;
+  scheduledAudioMs: number;
+  playedAudioMs: number;
+}
+
+export interface DesktopDuplexVoiceOccupancy {
+  occupied: boolean;
+  sessionId: string | null;
+  ownerWindowId: number | null;
+  ownerLabel: string | null;
+  startedAt: string | null;
+  ownedByCaller: boolean;
+}
+
+export interface DesktopDuplexVoiceTakeoverRequest {
+  expectedSessionId: string;
+  session: DesktopDuplexVoiceSessionStartRequest;
+}
+
+export type DesktopWeChatCredentialState = "missing" | "valid" | "expired" | "unavailable";
+export type DesktopWeChatRuntimeState = "stopped" | "running" | "failed";
+export interface DesktopWeChatModelRef {
+  providerId: string;
+  modelId: string;
+}
+export interface DesktopWeChatChannelStatus {
+  configured: boolean;
+  credentialState: DesktopWeChatCredentialState;
+  runtimeState: DesktopWeChatRuntimeState;
+  accountLabel?: string;
+  loginTime?: string;
+  expiresAt?: string;
+  startedAt?: string;
+  errorCode?: string;
+  modelPolicy?: {
+    primary?: DesktopWeChatModelRef;
+    imageUnderstanding?: DesktopWeChatModelRef;
+    imageGeneration?: DesktopWeChatModelRef;
+    textToSpeech?: DesktopWeChatModelRef;
+    realtimeVoice?: DesktopWeChatModelRef;
+    speechToText?: DesktopWeChatModelRef;
+  };
+  mediaCapabilities?: {
+    imageUnderstanding: boolean;
+    imageGeneration: boolean;
+  };
+}
+export interface DesktopWeChatLoginStartResult {
+  operationId: string;
+  qrContent: string;
+  status: "waiting";
+  expiresAt: string;
+  pollIntervalSeconds: number;
+}
+export interface DesktopWeChatLoginPollRequest { operationId: string; }
+export interface DesktopWeChatLoginPollResult {
+  operationId: string;
+  status: "waiting" | "scanned" | "confirmed" | "expired" | "cancelled";
+  expiresAt?: string;
+  pollIntervalSeconds?: number;
+  retryAfterSeconds?: number;
+  accountLabel?: string;
+}
+export interface DesktopWeChatLoginCancelResult { operationId: string; status: "cancelled"; cancelled: boolean; }
+export interface DesktopWeChatSessionSummary { count: number; }
+export interface DesktopWeChatReplyCapabilityRequest { sessionId: string; }
+export interface DesktopWeChatReplyCapability {
+  available: boolean;
+  reason?: "feature_disabled" | "channel_not_running" | "waiting_for_inbound" | "runtime_session_unavailable";
+}
+export interface DesktopWeChatOutboundRequest {
+  sessionId: string;
+  text: string;
+  idempotencyKey: string;
+  confirmExternalSend: true;
+}
+export interface DesktopWeChatOutboundResult {
+  deliveryId: string;
+  sessionId: string;
+  status: "pending" | "sent" | "failed" | "unknown";
+  attemptCount: number;
+  errorCode?: string;
 }
 
 export interface DesktopChannelContextImportRequest {
@@ -2883,6 +3103,7 @@ export type DesktopExternalConnectionId =
   | "chrome"
   | "latex"
   | "mobile"
+  | "wechat"
   | "slack"
   | "docs"
   | "calendar"
@@ -3213,6 +3434,7 @@ export interface DesktopAgent {
   capabilities?: string[];
   lastUsedAt?: string;
   catalogGroup?: "local" | "official" | "mine";
+  catalogVisibility?: "always" | "when_available";
   url?: string;
   model?: string;
   models?: string[];
@@ -3431,11 +3653,14 @@ export interface PerceptorResource {
   perceptor_id: string;
   name?: string | null;
   kind: "public_web" | "large_facility_data";
-  adapter: "tavily" | "facility_gateway";
+  adapter: "tavily" | "hai_managed_tavily" | "facility_gateway";
   enabled: boolean;
   capabilities: string[];
   config: Record<string, unknown>;
   revision: string;
+  dynamic?: boolean;
+  status?: "available" | "login_required" | "permission_denied" | "quota_exhausted" | "worker_unavailable" | "provider_authentication_failed" | "provider_rate_limited" | "provider_quota_exhausted" | "provider_timeout" | "provider_unavailable" | "provider_invalid_response" | "unsafe_web_url" | string;
+  platform?: { available: boolean; enabled: boolean; functions: string[] };
 }
 
 export interface SavePerceptorRequest {
@@ -3446,6 +3671,14 @@ export interface SavePerceptorRequest {
   enabled: boolean;
   capabilities: string[];
   config: Record<string, unknown>;
+}
+
+export type WebSearchProviderMode = "auto" | "managed" | "byok" | "none";
+export interface WebSearchProviderPolicy {
+  mode: WebSearchProviderMode;
+  provider: "hai_managed_tavily" | "tavily" | null;
+  available: boolean;
+  error: string | null;
 }
 
 export interface SaveKnowledgeBaseRequest {
@@ -3759,6 +3992,7 @@ export interface DesktopThread {
   lastRunId?: string;
   lastRequestId?: string;
   runtimeSessionId?: string;
+  sourceChannel?: "wechat";
   status?: "idle" | "running" | "error";
   messageCount?: number;
   pinned?: boolean;
@@ -3768,11 +4002,25 @@ export interface DesktopThread {
   unread?: boolean;
 }
 
+export interface DesktopThreadListRequest {
+  /** Limit the startup catalog to one Workspace. Omit only for explicit all-Workspace views. */
+  workspacePath?: string;
+  /** Number of recent active and archived entries retained per category. */
+  limit?: number;
+  offset?: number;
+  includeArchived?: boolean;
+  /** Entries required by current selection remain visible even outside the recent window. */
+  requiredThreadIds?: string[];
+  /** Runtime Workspace whose live catalog should be followed by this window. */
+  runtimeWorkspaceId?: string;
+}
+
 export interface DesktopThreadMessageSnapshot extends ChatMessage {
   id: string;
   streaming?: boolean;
   error?: boolean;
   statusContent?: string;
+  voice?: DesktopVoiceMessageMetadata;
   reasoningContent?: string;
   toolTimeline?: ChatToolTimelineEvent[];
   /** Canonical structured display representation; legacy fields remain during migration. */
@@ -4926,6 +5174,7 @@ export interface UpdateThreadRequest {
   lastRunId?: string;
   lastRequestId?: string;
   runtimeSessionId?: string;
+  sourceChannel?: "wechat";
   status?: DesktopThread["status"];
   messageCount?: number;
   pinned?: boolean;
@@ -5350,6 +5599,17 @@ export interface DesktopApi {
   previewDiagnosticPackage(): Promise<DiagnosticPackagePreview>;
   exportProductionDiagnosticPackage(): Promise<DiagnosticPackageResult>;
   importProductionDiagnosticPackage(): Promise<DiagnosticPackageResult | null>;
+  previewFeedback(draft: import("./feedback").FeedbackDraft): Promise<import("./feedback").FeedbackPackagePreview>;
+  submitFeedback(draft: import("./feedback").FeedbackDraft): Promise<import("./feedback").FeedbackSubmitResult>;
+  listPendingFeedback(): Promise<import("./feedback").PendingFeedbackItem[]>;
+  retryPendingFeedback(): Promise<{ sent: number; remaining: number }>;
+  deletePendingFeedback(clientFeedbackId: string): Promise<boolean>;
+  getPendingCrashFeedback(): Promise<import("./feedback").PendingCrashFeedback | null>;
+  clearPendingCrashFeedback(incidentId: string): Promise<boolean>;
+  captureFeedbackScreenshot(): Promise<import("./feedback").FeedbackScreenshotResult>;
+  listFeedbackAdmin(status?: import("./feedback").FeedbackStatus): Promise<import("./feedback").FeedbackAdminRecord[]>;
+  updateFeedbackAdmin(feedbackId: string, update: { status: import("./feedback").FeedbackStatus; fixed_in_version?: string; recommended_owner?: string; note?: string }): Promise<import("./feedback").FeedbackAdminRecord>;
+  deleteFeedbackAdmin(feedbackId: string): Promise<boolean>;
   getAuthSession(): Promise<AuthSession>;
   onAuthSessionInvalidated(callback: () => void): () => void;
   getA5ServiceGuidanceScenario(): Promise<DesktopA5ServiceGuidanceScenario | null>;
@@ -5502,7 +5762,7 @@ export interface DesktopApi {
   restoreWorkspaceCheckpoint(
     request: WorkspaceCheckpointRestoreRequest,
   ): Promise<WorkspaceCheckpointRestoreResult>;
-  listThreads(): Promise<DesktopThread[]>;
+  listThreads(request?: DesktopThreadListRequest): Promise<DesktopThread[]>;
   listAgents(options?: DesktopAgentListOptions): Promise<DesktopAgent[]>;
   getAgentCatalogSnapshot(options?: DesktopAgentListOptions): Promise<DesktopAgentCatalogSnapshot>;
   setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult>;
@@ -5526,6 +5786,8 @@ export interface DesktopApi {
   searchKnowledgeBase(knowledgeId: string, query: string): Promise<{ knowledge_id: string; query: string; evidence: KnowledgeSearchEvidence[] }>;
   listKnowledgeBases(): Promise<KnowledgeBaseResource[]>;
   listPerceptors(): Promise<PerceptorResource[]>;
+  getWebSearchProviderPolicy(): Promise<WebSearchProviderPolicy>;
+  updateWebSearchProviderPolicy(mode: WebSearchProviderMode): Promise<WebSearchProviderPolicy>;
   savePerceptor(request: SavePerceptorRequest): Promise<PerceptorResource>;
   updatePerceptor(perceptorId: string, request: SavePerceptorRequest): Promise<PerceptorResource>;
   testPerceptor(perceptorId: string, capability?: "search" | "extract"): Promise<{ ok: boolean; perceptor_id: string; status: string; tested?: string; result_count?: number; error?: string }>;
@@ -5618,12 +5880,20 @@ export interface DesktopApi {
   getVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus>;
   getStreamingVoiceCapabilities(): Promise<DesktopStreamingVoiceCapabilities>;
   getDuplexVoiceCapabilities(): Promise<DesktopDuplexVoiceCapabilities>;
+  getDuplexVoiceReadiness(): Promise<DesktopDuplexVoiceReadiness>;
+  getDuplexVoiceOccupancy(): Promise<DesktopDuplexVoiceOccupancy>;
   startDuplexVoiceSession(request: DesktopDuplexVoiceSessionStartRequest): Promise<DesktopDuplexVoiceSessionStartResult>;
+  takeOverDuplexVoiceSession(request: DesktopDuplexVoiceTakeoverRequest): Promise<DesktopDuplexVoiceSessionStartResult>;
   sendDuplexVoiceAudioChunk(chunk: DesktopDuplexVoiceAudioChunk): boolean;
+  sendDuplexVoicePlaybackAck(ack: DesktopDuplexVoicePlaybackAck): boolean;
   updateDuplexVoiceSession(request: DesktopDuplexVoiceSessionStartRequest): Promise<boolean>;
   interruptDuplexVoiceSession(request: DesktopDuplexVoiceInterruptRequest): Promise<boolean>;
   submitDuplexVoiceToolResult(request: DesktopDuplexVoiceToolResultRequest): Promise<boolean>;
+  requestDuplexVoiceToolApproval(request: DesktopDuplexVoiceToolApprovalRequest): Promise<DesktopApprovalProposalResult>;
+  onDuplexVoiceToolApprovalDecision(listener: (decision: DesktopDuplexVoiceToolApprovalDecision) => void): () => void;
+  submitDuplexVoiceTextInput(request: DesktopDuplexVoiceTextInputRequest): Promise<boolean>;
   stopDuplexVoiceSession(sessionId: string): Promise<boolean>;
+  finishDuplexVoiceTurn(sessionId: string): Promise<boolean>;
   cancelDuplexVoiceSession(sessionId: string): Promise<boolean>;
   disposeDuplexVoiceSession(sessionId: string): Promise<boolean>;
   onDuplexVoiceEvents(callback: (events: DesktopDuplexVoiceEvent[]) => void): () => void;
@@ -5811,6 +6081,16 @@ export interface DesktopApi {
   ): Promise<DesktopScheduledTaskRunResult>;
   getScheduledTaskWorkerStatus(): Promise<DesktopScheduledTaskWorkerStatus>;
   listChannelAdapters(workspacePath?: string): Promise<DesktopChannelAdapterListResult>;
+  getWeChatChannelStatus(): Promise<DesktopWeChatChannelStatus>;
+  startWeChatLogin(): Promise<DesktopWeChatLoginStartResult>;
+  pollWeChatLogin(request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginPollResult>;
+  cancelWeChatLogin(request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginCancelResult>;
+  startWeChatChannel(): Promise<DesktopWeChatChannelStatus>;
+  stopWeChatChannel(): Promise<DesktopWeChatChannelStatus>;
+  logoutWeChatChannel(): Promise<DesktopWeChatChannelStatus>;
+  getWeChatSessionSummary(): Promise<DesktopWeChatSessionSummary>;
+  getWeChatReplyCapability(request: DesktopWeChatReplyCapabilityRequest): Promise<DesktopWeChatReplyCapability>;
+  sendToWeChat(request: DesktopWeChatOutboundRequest): Promise<DesktopWeChatOutboundResult>;
   configureChannelAdapter(
     request: DesktopChannelAdapterConfigureRequest,
   ): Promise<DesktopChannelAdapterConfigureResult>;

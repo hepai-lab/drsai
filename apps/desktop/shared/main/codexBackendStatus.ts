@@ -19,6 +19,7 @@ export function presentCodexBackendStatus(capability?: AgentBackendCapability, a
       retryable: state === "fault", action: state === "not_installed" ? "install" : state === "version_incompatible" ? "upgrade" : "restart",
       appServerState: capability?.app_server_state, connectionState: capability?.connection_state,
       transport: capability?.transport, adapterVersion: capability?.adapter_version,
+      readiness: presentReadiness(capability), binaryIdentity: presentBinaryIdentity(capability),
     };
   }
 
@@ -38,5 +39,32 @@ export function presentCodexBackendStatus(capability?: AgentBackendCapability, a
     action: loggedIn ? "none" : accountState === "signed_out" ? "login" : "reconnect",
     appServerState: capability.app_server_state, connectionState: capability.connection_state,
     transport: capability.transport, adapterVersion: capability.adapter_version,
+    readiness: presentReadiness(capability), binaryIdentity: presentBinaryIdentity(capability),
   };
+}
+
+function presentReadiness(capability?: AgentBackendCapability): CodexBackendStatus["readiness"] {
+  if (!capability?.readiness) return undefined;
+  const facet = (value: import("./runtimeClient").BackendReadinessFacet | undefined) => value ? ({
+    state: value.state, reason: value.reason, observedAt: value.observed_at,
+    lastSuccessAt: value.last_success_at, retryable: value.retryable,
+    actions: value.actions, stale: value.stale,
+  }) : undefined;
+  return {
+    runtime: facet(capability.readiness.runtime), transport: facet(capability.readiness.transport),
+    process: facet(capability.readiness.process), installed: facet(capability.readiness.installed),
+    contract: facet(capability.readiness.contract), account: facet(capability.readiness.account),
+    models: facet(capability.readiness.models),
+    executable: capability.readiness.executable ? {
+      ...facet(capability.readiness.executable)!, blockers: capability.readiness.executable.blockers,
+    } : undefined,
+  };
+}
+
+function presentBinaryIdentity(capability?: AgentBackendCapability): CodexBackendStatus["binaryIdentity"] {
+  const identity = capability?.binary_identity;
+  return identity ? {
+    source: identity.source, version: identity.version, binaryDigest: identity.binary_digest,
+    schemaDigest: identity.schema_digest, releaseSafe: identity.release_safe,
+  } : null;
 }

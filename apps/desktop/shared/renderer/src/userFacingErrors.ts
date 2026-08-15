@@ -48,6 +48,8 @@ const LABELS: Record<UserFacingRecoveryAction["id"], { en: string; zh: string }>
 
 export function describeUserFacingError(error: unknown, language: "zh" | "en"): UserFacingError {
   const envelope = normalizeRuntimeErrorEnvelope(error);
+  const webSearch = describeWebSearchFailure(envelope.code, envelope.retryable, language);
+  if (webSearch) return { ...webSearch, diagnosticCode: envelope.diagnostic_reference === "diag-unavailable" ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}` };
   if (envelope.code === "model_image_input_unsupported") {
     return {
       title: language === "zh" ? "当前模型不支持图片理解" : "The selected model cannot understand images",
@@ -178,4 +180,25 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       return { id, label: LABELS[id][language] };
     }),
   };
+}
+
+function describeWebSearchFailure(code: string, retryable: boolean, language: "zh" | "en"): Omit<UserFacingError, "diagnosticCode"> | null {
+  const copy: Record<string, { zh: [string, string]; en: [string, string]; actions: UserFacingRecoveryAction["id"][] }> = {
+    login_required: { zh: ["需要登录后才能使用托管网页搜索", "登录 HAI 后可以继续原任务，无需配置 Tavily Key。"], en: ["Sign in to use managed web search", "Sign in to HAI to continue the original task without configuring a Tavily key."], actions: ["login_codex"] },
+    permission_denied: { zh: ["当前账户未开通托管网页搜索", "可联系管理员开通，或在感知器设置中选择自己的 Tavily Key。"], en: ["Managed web search is not enabled for this account", "Ask an administrator for access or select your own Tavily key in Perceptor settings."], actions: ["diagnostics"] },
+    quota_exhausted: { zh: ["托管网页搜索额度已用尽", "额度恢复后重试，或明确切换到自己的 Tavily Key。"], en: ["Managed web-search quota is exhausted", "Retry after quota is restored or explicitly switch to your own Tavily key."], actions: ["diagnostics"] },
+    rate_limited: { zh: ["网页搜索请求过于频繁", "原任务已保留，请稍后重试。"], en: ["Web-search requests are temporarily rate limited", "The original task is preserved. Retry later."], actions: ["retry", "diagnostics"] },
+    worker_unavailable: { zh: ["网页搜索服务暂时不可用", "原问题和已完成内容已保留，请稍后重试。"], en: ["Web-search service is temporarily unavailable", "Your question and completed work are preserved. Retry later."], actions: ["retry", "diagnostics"] },
+    provider_authentication_failed: { zh: ["平台托管搜索凭据异常", "这是平台配置问题，无需输入自己的 Tavily Key；请查看诊断并联系管理员。"], en: ["The platform-managed search credential failed", "This is a platform configuration issue. Do not enter your own Tavily key; view diagnostics and contact an administrator."], actions: ["diagnostics"] },
+    provider_rate_limited: { zh: ["Tavily 上游暂时限流", "原任务已保留，请稍后重试。"], en: ["Tavily is temporarily rate limited", "The original task is preserved. Retry later."], actions: ["retry", "diagnostics"] },
+    provider_quota_exhausted: { zh: ["平台的 Tavily 上游额度不足", "这是平台额度问题，无需输入自己的 Tavily Key；请查看诊断或联系管理员。"], en: ["The platform Tavily quota is exhausted", "This is a platform quota issue. Do not enter your own Tavily key; view diagnostics or contact an administrator."], actions: ["diagnostics"] },
+    provider_unavailable: { zh: ["上游网页搜索暂时不可用", "无需重新配置登录；请稍后重试或查看脱敏诊断。"], en: ["The upstream web-search provider is unavailable", "You do not need to sign in again. Retry later or view redacted diagnostics."], actions: ["retry", "diagnostics"] },
+    provider_timeout: { zh: ["网页搜索响应超时", "本次请求已停止，稍后重试不会复用失败结果。"], en: ["Web search timed out", "This request has stopped. A later retry will not reuse the failed result."], actions: ["retry", "diagnostics"] },
+    provider_invalid_response: { zh: ["网页搜索返回了异常响应", "请稍后重试；诊断信息中仅保留脱敏请求标识。"], en: ["Web search returned an invalid response", "Retry later. Diagnostics retain only redacted request identifiers."], actions: ["retry", "diagnostics"] },
+    unsafe_web_url: { zh: ["无法访问不安全的网页地址", "请改用公开的 HTTP 或 HTTPS 网页地址。"], en: ["The web address is not safe to access", "Use a public HTTP or HTTPS web address instead."], actions: ["diagnostics"] },
+  };
+  const selected = copy[code];
+  if (!selected) return null;
+  const [title, action] = selected[language];
+  return { title, action, retryable, actions: selected.actions.map((id) => ({ id, label: LABELS[id][language] })) };
 }

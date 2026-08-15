@@ -4,7 +4,7 @@ import { Agent, get } from "http";
 import { connect as connectTcp } from "net";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import type { GatewayEndpointStatus, GatewayStatus } from "../api/desktopApi";
+import type { GatewayEndpointStatus, GatewayLiveness, GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
 import { collectMigrationAliases, getCliConfigUserId, rememberUserIdAlias, setCliConfigUserId } from "./userIdentity";
@@ -52,6 +52,10 @@ const GATEWAY_PROBE_TIMEOUT_MS = Math.max(500, Math.min(15_000,
   Number(process.env.OPENDRSAI_GATEWAY_PROBE_TIMEOUT_MS || "2500") || 2_500));
 const GATEWAY_PROBE_CACHE_MS = Math.max(0, Math.min(5_000,
   Number(process.env.OPENDRSAI_GATEWAY_PROBE_CACHE_MS || "750") || 750));
+const GATEWAY_FAILURE_THRESHOLD = Math.max(1, Math.min(10,
+  Number(process.env.OPENDRSAI_GATEWAY_FAILURE_THRESHOLD || "3") || 3));
+const GATEWAY_DEGRADED_GRACE_MS = Math.max(1_000, Math.min(60_000,
+  Number(process.env.OPENDRSAI_GATEWAY_DEGRADED_GRACE_MS || "10000") || 10_000));
 const GATEWAY_READY_POLL_MS = 10_000;
 let lastSyncedGatewayUserId: string | null = null;
 let lastCanonicalizedUserId: string | null = null;
@@ -72,9 +76,17 @@ let gatewaySpawnError: Error | null = null;
 let gatewayRegistration: ManagedProcessRegistration | null = null;
 let gatewayProbePromise: Promise<GatewayProbe> | null = null;
 let gatewayProbeCache: { probe: GatewayProbe; expiresAt: number } | null = null;
+let gatewayProbeEpoch = 0;
+let gatewayLastKnownGood: GatewayProbe | null = null;
+let gatewayLastAttemptAt: number | null = null;
+let gatewayLastSuccessAt: number | null = null;
+let gatewayDegradedSince: number | null = null;
+let gatewayConsecutiveFailures = 0;
+let gatewayObservationGeneration = 0;
 
 interface GatewayEndpointProbe extends GatewayEndpointStatus {
   error?: string;
+  body?: Record<string, unknown> | null;
 }
 
 interface GatewayProbe {
@@ -110,7 +122,9 @@ function loadGatewayInstanceToken(): string {
 
 export function getGatewayStartupMode(): GatewayStartupMode {
   const configured = process.env.OPENDRSAI_GATEWAY_STARTUP?.trim().toLowerCase();
-  return configured === "eager" || configured === "external" ? configured : "on-demand";
+  // Desktop owns a local Full Agent Runtime by default. Keep on-demand only as
+  // an explicit diagnostic/launcher override (for example -NoGateway).
+  return configured === "on-demand" || configured === "external" ? configured : "eager";
 }
 
 export function getGatewayRequestHeaders(): Record<string, string> {
@@ -162,27 +176,7 @@ export async function getGatewayStatus(): Promise<GatewayStatus> {
   if (!probe.ready) lastSyncedGatewayUserId = null;
   // Ownership and health are deliberately independent. A managed Runtime that
   // misses one probe deadline is degraded, not a foreign port occupant.
-  const managed = isGatewayOwnershipKnown();
-  const externalMode = getGatewayStartupMode() === "external";
-  const diagnosticMessage = managed && probe.diagnosticCode === "gateway_probe_timeout"
-    ? "The managed OpenDrSai Runtime is busy and did not answer before the probe deadline. Desktop will retry without starting a competing process."
-    : probe.diagnosticMessage;
-  return {
-    ready: managed && probe.ready,
-    managed,
-    externalReady: probe.ready,
-    externalConflict: probe.portOpen && !managed && !externalMode,
-    baseUrl: GATEWAY_BASE_URL,
-    pid: gatewayProcess?.pid ?? null,
-    lastLog: readGatewayLogTail() || lastGatewayLog,
-    portOpen: probe.portOpen,
-    diagnosticCode: probe.diagnosticCode,
-    diagnosticMessage,
-    endpoints: {
-      health: publicEndpointStatus(probe.health),
-      models: publicEndpointStatus(probe.models),
-    },
-  };
+  return gatewayStatusFromProbe(probe, true);
 }
 
 export async function startGateway(): Promise<boolean> {
@@ -261,27 +255,100 @@ async function canonicalizeHistoricalUserIds(
 }
 
 export function getGatewaySnapshot(): GatewayStatus {
+  // Snapshot consumers poll more slowly than the probe de-duplication TTL.
+  // Expiry means that the next active operation must revalidate the Runtime;
+  // it does not mean that the last verified Runtime suddenly became offline.
+  // Keep presenting the last observed probe until a real probe replaces it.
+  // Otherwise the 2s Desktop health poll alternates gatewayReady between true
+  // and false around the default 750ms cache TTL.
+  const probe = gatewayProbeCache?.probe ?? gatewayLastKnownGood;
+  if (!probe) return gatewayStatusFromProbe(null, false);
+  return gatewayStatusFromProbe(probe, false);
+}
+
+function gatewayStatusFromProbe(probe: GatewayProbe | null, includeLogTail: boolean): GatewayStatus {
   const managed = isGatewayOwnershipKnown();
-  const probe = gatewayProbeCache && gatewayProbeCache.expiresAt > Date.now()
-    ? gatewayProbeCache.probe
-    : undefined;
-  const ready = Boolean(managed && probe?.ready);
+  const externalMode = getGatewayStartupMode() === "external";
+  const liveness = gatewayLiveness(probe, managed);
+  const observedCode = probe?.diagnosticCode ?? "gateway_not_checked";
+  const diagnosticCode = liveness.state === "degraded" || liveness.state === "reconnecting"
+    ? "gateway_reconnecting"
+    : observedCode;
+  const diagnosticMessage = liveness.state === "degraded" || liveness.state === "reconnecting"
+    ? "The local OpenDrSai Runtime is busy. Desktop is keeping the last verified connection while it retries automatically."
+    : managed && observedCode === "gateway_probe_timeout"
+      ? "The managed OpenDrSai Runtime remained busy beyond the recovery grace period."
+      : probe?.diagnosticMessage ?? "Gateway has not completed endpoint probing yet.";
+  const rawInstance = probe?.health.body?.runtime_instance;
+  const instance = rawInstance && typeof rawInstance === "object"
+    ? rawInstance as Record<string, unknown>
+    : null;
   return {
-    ready,
+    ready: Boolean(managed && liveness.effectiveReady),
     managed,
-    externalReady: Boolean(probe?.ready),
-    externalConflict: Boolean(probe?.portOpen && !managed && getGatewayStartupMode() !== "external"),
+    externalReady: liveness.effectiveReady,
+    externalConflict: Boolean(probe?.portOpen && !managed && !externalMode),
     baseUrl: GATEWAY_BASE_URL,
     pid: gatewayProcess?.pid ?? null,
-    lastLog: lastGatewayLog,
+    lastLog: includeLogTail ? readGatewayLogTail() || lastGatewayLog : lastGatewayLog,
     portOpen: Boolean(probe?.portOpen),
-    diagnosticCode: probe?.diagnosticCode ?? "gateway_not_checked",
-    diagnosticMessage: probe?.diagnosticMessage ?? "Gateway has not completed endpoint probing yet.",
+    diagnosticCode,
+    diagnosticMessage,
+    liveness,
+    instance: instance ? {
+      mode: ["development", "packaged", "external", "remote"].includes(String(instance.mode))
+        ? String(instance.mode) as "development" | "packaged" | "external" | "remote"
+        : "external",
+      home: typeof instance.home === "string" ? instance.home : DRSAI_HOME,
+      port: typeof instance.port === "number" ? instance.port : Number(GATEWAY_PORT),
+      pid: typeof instance.pid === "number" ? instance.pid : gatewayProcess?.pid ?? null,
+      instanceId: typeof instance.instance_id === "string" ? instance.instance_id : "unknown",
+      owner: typeof instance.owner === "string" ? instance.owner : (managed ? "desktop" : "external"),
+      startedAt: typeof instance.started_at === "string" ? instance.started_at : null,
+    } : undefined,
     endpoints: probe ? {
       health: publicEndpointStatus(probe.health),
       models: publicEndpointStatus(probe.models),
     } : undefined,
   };
+}
+
+function gatewayLiveness(probe: GatewayProbe | null, managed: boolean): GatewayLiveness {
+  const now = Date.now();
+  const observedReady = Boolean(probe?.ready);
+  const deterministicFailure = Boolean(probe && (
+    probe.unauthorized
+    || (probe.portOpen && !managed && getGatewayStartupMode() !== "external")
+  ));
+  const graceExpired = gatewayDegradedSince !== null && now - gatewayDegradedSince >= GATEWAY_DEGRADED_GRACE_MS;
+  const failureConfirmed = deterministicFailure
+    || gatewayConsecutiveFailures >= GATEWAY_FAILURE_THRESHOLD
+    || graceExpired;
+  const lastGoodUsable = Boolean(gatewayLastKnownGood && !failureConfirmed);
+  let state: GatewayLiveness["state"] = "unknown";
+  if (observedReady) state = "ready";
+  else if (!probe && gatewayProbePromise) state = "probing";
+  else if (deterministicFailure) state = "action_required";
+  else if (!managed && !probe?.portOpen) state = "stopped";
+  else if (failureConfirmed) state = probe?.portOpen ? "action_required" : "stopped";
+  else if (lastGoodUsable) state = gatewayConsecutiveFailures <= 1 ? "degraded" : "reconnecting";
+  else if (probe) state = "reconnecting";
+  return {
+    state,
+    observedReady,
+    effectiveReady: observedReady || lastGoodUsable,
+    stale: !observedReady && Boolean(gatewayLastKnownGood),
+    generation: gatewayObservationGeneration,
+    consecutiveFailures: gatewayConsecutiveFailures,
+    lastAttemptAt: isoTimestamp(gatewayLastAttemptAt),
+    lastSuccessAt: isoTimestamp(gatewayLastSuccessAt),
+    degradedSince: isoTimestamp(gatewayDegradedSince),
+    retryAfterMs: state === "degraded" || state === "reconnecting" ? GATEWAY_PROBE_CACHE_MS : null,
+  };
+}
+
+function isoTimestamp(value: number | null): string | null {
+  return value === null ? null : new Date(value).toISOString();
 }
 
 async function killPortOccupant(port: string): Promise<boolean> {
@@ -370,7 +437,7 @@ async function startGatewayOnce(): Promise<boolean> {
   // a Runtime is force-terminated. Never adopt a cached response from the
   // dead instance as an external Runtime; startup preflight must observe the
   // port and authenticated health endpoint again.
-  gatewayProbeCache = null;
+  invalidateGatewayObservation(true);
   const desktopUserId = await resolveDesktopUserIdForGateway();
   if (await checkGatewayReady()) {
     if (desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
@@ -500,7 +567,7 @@ async function startGatewayOnce(): Promise<boolean> {
     gatewayRegistration = null;
     gatewayProcess = null;
     adoptedPersistentRuntime = false;
-    gatewayProbeCache = null;
+    invalidateGatewayObservation(true);
   });
   if (PERSIST_RUNTIME) gatewayProcess.unref();
 
@@ -576,36 +643,12 @@ async function putGatewayJson(
 async function getLocalCodexDevelopmentEnv(): Promise<Record<string, string>> {
   if (desktopAppRuntime.isPackaged || process.env.DRSAI_CODEX_DEVELOPMENT === "0") return {};
   const configured = process.env.CODEX_BIN?.trim();
-  const projectBinary = process.platform === "win32"
-    ? join(desktopAppRuntime.getAppPath(), "node_modules", ".bin", "codex.cmd")
-    : join(desktopAppRuntime.getAppPath(), "node_modules", ".bin", "codex");
-  const binary = configured || (existsSync(projectBinary) ? projectBinary : await findCommandOnPath("codex"));
-  if (!binary) return {};
-  return { DRSAI_CODEX_DEVELOPMENT: "1", CODEX_BIN: binary };
-}
-
-function findCommandOnPath(command: string): Promise<string | null> {
-  const locator = process.platform === "win32" ? "where.exe" : "which";
-  return new Promise((resolve) => {
-    execFile(locator, [command], {
-      env: { ...process.env, PATH: getEnhancedPath() },
-      timeout: 5000,
-      windowsHide: true,
-    }, (error, stdout) => {
-      if (error) {
-        resolve(null);
-        return;
-      }
-      const candidates = stdout.toString().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      // Windows Store application-package members may be listed by `where`
-      // while remaining inaccessible to an external Runtime process. Never
-      // advertise those aliases as an operational Backend executable.
-      const accessible = candidates.filter((candidate) => !/\\WindowsApps\\/i.test(candidate));
-      const selected = accessible.find((candidate) => process.platform !== "win32" || /\.(?:exe|cmd)$/i.test(candidate))
-        ?? accessible[0];
-      resolve(selected && existsSync(selected) ? selected : null);
-    });
-  });
+  // Development follows the same deterministic provider order as product:
+  // explicit override -> managed artifact -> trusted Codex Desktop. Never
+  // silently select the repository's node_modules CLI: that made the running
+  // App Server differ from the version recorded by live release evidence.
+  if (configured) return { DRSAI_CODEX_DEVELOPMENT: "1", CODEX_BIN: configured };
+  return { DRSAI_CODEX_DEVELOPMENT: "1" };
 }
 
 /**
@@ -670,13 +713,46 @@ async function probeGatewayEndpoints(): Promise<GatewayProbe> {
   const now = Date.now();
   if (gatewayProbeCache && gatewayProbeCache.expiresAt > now) return gatewayProbeCache.probe;
   if (gatewayProbePromise) return gatewayProbePromise;
-  gatewayProbePromise = probeGatewayEndpointsOnce().then((probe) => {
+  const epoch = gatewayProbeEpoch;
+  gatewayLastAttemptAt = now;
+  const pending = probeGatewayEndpointsOnce().then((probe) => {
+    if (epoch !== gatewayProbeEpoch) return probe;
+    observeGatewayProbe(probe);
     gatewayProbeCache = { probe, expiresAt: Date.now() + GATEWAY_PROBE_CACHE_MS };
     return probe;
   }).finally(() => {
-    gatewayProbePromise = null;
+    if (gatewayProbePromise === pending) gatewayProbePromise = null;
   });
-  return gatewayProbePromise;
+  gatewayProbePromise = pending;
+  return pending;
+}
+
+function invalidateGatewayObservation(forgetLastKnownGood: boolean): void {
+  gatewayProbeEpoch += 1;
+  gatewayProbePromise = null;
+  gatewayProbeCache = null;
+  gatewayObservationGeneration += 1;
+  if (!forgetLastKnownGood) return;
+  gatewayLastKnownGood = null;
+  gatewayLastAttemptAt = null;
+  gatewayLastSuccessAt = null;
+  gatewayDegradedSince = null;
+  gatewayConsecutiveFailures = 0;
+}
+
+function observeGatewayProbe(probe: GatewayProbe): void {
+  const now = Date.now();
+  gatewayLastAttemptAt = now;
+  if (probe.ready) {
+    if (!gatewayLastKnownGood || gatewayConsecutiveFailures > 0) gatewayObservationGeneration += 1;
+    gatewayLastKnownGood = probe;
+    gatewayLastSuccessAt = now;
+    gatewayDegradedSince = null;
+    gatewayConsecutiveFailures = 0;
+    return;
+  }
+  gatewayConsecutiveFailures += 1;
+  gatewayDegradedSince ??= now;
 }
 
 async function probeGatewayEndpointsOnce(): Promise<GatewayProbe> {
@@ -810,7 +886,10 @@ export async function stopGateway(): Promise<boolean> {
         }
       }
       const killed = !(await checkGatewayEndpoints()) || await killPortOccupant(GATEWAY_PORT);
-      if (killed) adoptedPersistentRuntime = false;
+      if (killed) {
+        adoptedPersistentRuntime = false;
+        invalidateGatewayObservation(true);
+      }
       return killed;
     }
     return false;
@@ -818,6 +897,7 @@ export async function stopGateway(): Promise<boolean> {
 
   gatewayStopPromise = terminateGatewayProcessTree(proc).finally(() => {
     if (gatewayProcess === proc && !isProcessRunning(proc)) gatewayProcess = null;
+    invalidateGatewayObservation(true);
     gatewayStopPromise = null;
   });
   return gatewayStopPromise;

@@ -105,6 +105,10 @@ export interface AuthContext {
 export async function getAuthSession(): Promise<AuthSession> {
   const stored = readStoredSession();
   if (!stored) return anonymousSession();
+  if (isDisallowedOfflineSession(stored)) {
+    clearStoredSession(false);
+    return anonymousSession();
+  }
   if (isExpired(stored)) {
     clearStoredSession(false);
     return anonymousSession();
@@ -116,7 +120,7 @@ export async function getAuthSession(): Promise<AuthSession> {
 
 export async function refreshAuthSession(): Promise<AuthSession> {
   const stored = readStoredSession();
-  if (!stored || isExpired(stored)) {
+  if (!stored || isExpired(stored) || isDisallowedOfflineSession(stored)) {
     clearStoredSession(false);
     return anonymousSession();
   }
@@ -135,7 +139,7 @@ export async function refreshAuthSession(): Promise<AuthSession> {
 
 export async function requireAuthContext(): Promise<AuthContext> {
   const stored = readStoredSession();
-  if (!stored || isExpired(stored)) {
+  if (!stored || isExpired(stored) || isDisallowedOfflineSession(stored)) {
     clearStoredSession(false);
     throw new Error("Sign in before sending a request to OpenDrSai Agent.");
   }
@@ -600,12 +604,18 @@ function createDeveloperSession(rememberMe = true): StoredAuthSession {
 }
 
 function isDeveloperBypassAllowed(): boolean {
-  return (
-    IS_DESKTOP_DEV ||
+  const explicitFixture = (
     Boolean(process.env.OPENDRSAI_E2E_OIDC_HS256_SECRET?.trim()) ||
     process.env.OPENDRSAI_DEV_AUTH_BYPASS === "1" ||
     process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
   );
+  return explicitFixture || (IS_DESKTOP_DEV && process.env.OPENDRSAI_OIDC_ONLY !== "1");
+}
+
+function isDisallowedOfflineSession(session: StoredAuthSession): boolean {
+  return session.authMode === "offline"
+    && process.env.OPENDRSAI_OIDC_ONLY === "1"
+    && !isDeveloperBypassAllowed();
 }
 
 function getExpiryDate(days: number): string {

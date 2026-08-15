@@ -17,7 +17,7 @@ import {
   refreshAuthContextAfterUnauthorized,
   requireAuthContext,
 } from "./auth";
-import { getGatewaySnapshot } from "./gateway";
+import { getGatewaySnapshot, getGatewayStatus } from "./gateway";
 import { DRSAI_CONFIG_FILE, DRSAI_HOME } from "./paths";
 import { getActivePlatformConfig } from "./platformConfig";
 import {
@@ -195,7 +195,12 @@ async function listLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
 async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<DesktopAgent[]> {
   // Catalog discovery is read-only. It must never start Python, Gateway, or
   // Codex merely because the user opened the Agent Square.
-  const gateway = getGatewaySnapshot();
+  // The cache-first pass keeps initial paint cheap. Every normal/background
+  // refresh probes the current Runtime so a startup transition cannot leave
+  // the local OpenDrSai entry permanently labelled "stopped".
+  const gateway = options.preferCache === true
+    ? getGatewaySnapshot()
+    : await getGatewayStatus();
   const localSnapshot = readLocalAgentSnapshot();
   const configured = gateway.ready
     ? await listConfiguredAgents().catch(() => localSnapshot)
@@ -234,9 +239,11 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
     const executable = capability?.available === true && capability.contract_compatible !== false
       && account.state === "signed_in" && modelCatalog.stale !== true && visibleModels.length > 0;
     agents.push({
-      id: "my-codex", name: "Codex", description: "Codex Agent Runtime running in this Workspace Runtime.",
-      owner: "Local", source: "local", status: executable ? "running" : "stopped", mode: "local",
-      available: executable, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local",
+      id: "my-codex", name: "Codex", description: "A coding agent integrated through the OpenDrSai Codex Adapter.",
+      localizedDescription: { zh: "通过 OpenDrSai Codex Adapter 接入的编程智能体。", en: "A coding agent integrated through the OpenDrSai Codex Adapter." },
+      owner: "OpenAI", source: "local", status: executable ? "running" : "stopped", mode: "local",
+      available: executable, capabilities: ["chat", "streaming", "workspace", "tools"], catalogGroup: "local",
+      catalogVisibility: "when_available",
       model: defaultModel, models: visibleModels.map((model) => model.id),
       error: capability?.available
         ? account.state === "signed_out" ? "Codex needs you to sign in before sending a message."
@@ -473,7 +480,7 @@ function platformClientOptions(refresh = false): PlatformAgentClientOptions {
       getAccessToken: async () => {
         const auth = await requireAuthContext();
         if (auth.authMode !== "oidc" || !auth.accessToken) {
-          throw new Error("HepAI OIDC sign-in is required.");
+          throw new Error("The current Desktop session is not a HepAI OIDC session.");
         }
         return auth.accessToken;
       },

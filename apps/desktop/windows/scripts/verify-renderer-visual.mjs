@@ -1010,6 +1010,11 @@ async function runCurrentVisual() {
   await new Promise((resolve) => setTimeout(resolve, 50));
   if (!(await clickByAnyText(chineseWin, [text.settingsZh, "Settings"]))) fail("could not open Chinese settings audit");
   await checkChinesePage("m9-chinese-settings");
+  if (!(await clickByAnyText(chineseWin, ["感知器配置", "Perceptors"]))) fail("could not open Perceptor settings audit");
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const perceptorAudit = await chineseWin.webContents.executeJavaScript("(() => { const policy=document.querySelector('[data-testid=web-search-provider-policy]'); const card=document.querySelector('.perceptor-resource-card'); const text=document.body.innerText; return { policy:Boolean(policy), card:Boolean(card), managed:text.includes('HAI 托管网页搜索'), credential:text.includes('平台托管凭据，不保存到本机'), search:text.includes('测试搜索'), extract:text.includes('测试读取') }; })()");
+  if (!Object.values(perceptorAudit).every(Boolean)) fail("managed Perceptor settings are incomplete: " + JSON.stringify(perceptorAudit));
+  await checkChinesePage("tavily-p3-managed-perceptor-settings");
   await chineseWin.webContents.executeJavaScript("document.querySelector('[data-testid=settings-pane-approvals]')?.click()");
   await checkChinesePage("m9-chinese-approval");
   chineseWin.close();
@@ -1274,7 +1279,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
   onLifecycleEvent: () => () => undefined,
   onDuplexVoiceEvents: () => () => undefined,
   getDuplexVoiceCapabilities: async () => ({
-    protocolVersion: 1,
+    protocolVersion: 2,
     inputAudioEncodings: ["pcm_s16le"],
     outputAudioEncodings: ["pcm_s16le"],
     inputSampleRatesHz: [24_000],
@@ -1290,6 +1295,16 @@ contextBridge.exposeInMainWorld("openDrSai", {
     maxPlaybackBufferedAudioMs: 3_000,
     maxSessionDurationSeconds: 1_800,
   }),
+  getDuplexVoiceReadiness: async () => ({
+    available: false,
+    reasonCode: "rollout_disabled",
+    message: "Realtime voice is disabled in this visual fixture.",
+    providerId: null,
+    modelId: null,
+    checkedAt: new Date().toISOString(),
+    checks: [],
+    capabilities: null,
+  }),
   startDuplexVoiceSession: async (request) => ({
     sessionId: request.sessionId,
     acceptedAt: new Date().toISOString(),
@@ -1297,8 +1312,10 @@ contextBridge.exposeInMainWorld("openDrSai", {
     providerId: request.providerId,
     modelId: request.modelId,
     capabilities: await window.openDrSai.getDuplexVoiceCapabilities(),
+    uplinkCredit: { frames: 100, bytes: 96_000, audioMs: 2_000, acknowledgedSequence: -1 },
   }),
   sendDuplexVoiceAudioChunk: () => true,
+  sendDuplexVoicePlaybackAck: () => true,
   updateDuplexVoiceSession: async () => true,
   interruptDuplexVoiceSession: async () => true,
   submitDuplexVoiceToolResult: async () => true,
@@ -1310,6 +1327,8 @@ contextBridge.exposeInMainWorld("openDrSai", {
   onRuntimeLogEvent: () => () => undefined,
   recordDiagnostic: async (event) => ({ ...event, id: "visual-diagnostic", timestamp: new Date().toISOString() }),
   getDiagnosticSnapshot: async () => ({ generatedAt: new Date().toISOString(), events: [], traces: [], health: [], findings: [], deepTracing: { performance: [], resources: [], activeCheckpoints: [], clockOffsets: [] }, rootCause: { analyses: [], clusters: [], generatedAt: new Date().toISOString() }, droppedEvents: 0, storage: { eventCount: 0, maxEvents: 500, persisted: false } }),
+  retryPendingFeedback: async () => ({ sent: 0, remaining: 0 }),
+  getPendingCrashFeedback: async () => null,
   getAuthSession: async () => ({
     authenticated: true,
     user: {
@@ -1439,6 +1458,24 @@ contextBridge.exposeInMainWorld("openDrSai", {
   onRemoteWorkspaceStatus: () => () => undefined,
   onWorkspaceFileChanges: () => () => undefined,
   listAgents: async () => [],
+  listPerceptors: async () => [{
+    perceptor_id: "hai-managed-web-search",
+    name: "HAI 托管网页搜索",
+    kind: "public_web",
+    adapter: "hai_managed_tavily",
+    enabled: true,
+    capabilities: ["web.search", "web.extract"],
+    config: { managed: true, credential_source: "platform_session" },
+    revision: "platform:hai-tavily-v1",
+    dynamic: true,
+    status: "available",
+    platform: { available: true, enabled: true, functions: ["search", "extract"] },
+  }],
+  getWebSearchProviderPolicy: async () => ({ mode: "managed", provider: "hai_managed_tavily", available: true, error: null }),
+  updateWebSearchProviderPolicy: async (mode) => ({ mode, provider: mode === "none" ? null : mode === "byok" ? "tavily" : "hai_managed_tavily", available: mode !== "none", error: null }),
+  savePerceptor: async (request) => ({ ...request, revision: "visual-perceptor-revision" }),
+  deletePerceptor: async () => true,
+  testPerceptor: async (perceptorId, capability = "search") => ({ ok: true, perceptor_id: perceptorId, status: "available", tested: capability, result_count: capability === "search" ? 1 : undefined }),
   getMyDrSaiConfig: async () => {
     modelProviderVisualState.configCalls += 1;
     return ({
@@ -1531,6 +1568,7 @@ contextBridge.exposeInMainWorld("openDrSai", {
   getDuplexVoiceCapabilities: async () => ({ enabled: false, inputAudioEncodings: ["pcm_s16le"], outputAudioEncodings: ["pcm_s16le"], inputSampleRates: [24000], outputSampleRates: [24000], channels: [1], maxChunkBytes: 65536, maxBufferedAudioMs: 2000, supportsServerVad: false, supportsBargeIn: false, supportsTools: false, providerDisclosure: "Visual fixture duplex voice is disabled.", reason: "visual_fixture" }),
   startDuplexVoiceSession: async () => { throw new Error("Duplex voice is disabled in the visual fixture."); },
   sendDuplexVoiceAudioChunk: () => false,
+  sendDuplexVoicePlaybackAck: () => false,
   updateDuplexVoiceSession: async () => false,
   interruptDuplexVoiceSession: async () => false,
   submitDuplexVoiceToolResult: async () => false,

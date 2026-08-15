@@ -40,10 +40,12 @@ try {
   await page.goto(`http://127.0.0.1:${address.port}?structuredVisualFixture=1&structuredActivityItems=10000`, { waitUntil: "networkidle" });
   const enter = page.getByRole("button", { name: /Enter developer workspace|进入开发者工作区/ });
   if (await enter.count()) await enter.click();
-  const fixtureThread = page.locator(".thread-item, .workspace-thread-item").filter({ hasText: "10,000-item process fixture" }).first();
-  await fixtureThread.waitFor({ state: "visible", timeout: 10000 });
-  await fixtureThread.click();
   const turn = page.locator('.structured-message-parts[data-turn-id="mock-structured-activity-run"]');
+  if (!await turn.isVisible().catch(() => false)) {
+    const fixtureThread = page.getByText("10,000-item process fixture", { exact: true }).first();
+    await fixtureThread.waitFor({ state: "visible", timeout: 10000 });
+    await fixtureThread.click();
+  }
   await turn.waitFor({ state: "visible", timeout: 10000 });
   const firstPaintMs = performance.now() - started;
   const process = turn.locator(".structured-process");
@@ -64,21 +66,21 @@ try {
   await process.locator("summary").click();
   const content = process.locator('[data-testid="structured-process-content"]');
   await content.waitFor({ state: "visible" });
-  assert.equal(await content.locator(".structured-activity-row").count(), 16, "expanded process must mount one bounded activity window");
-  assert.equal(await content.locator(".structured-activity-timeline").getAttribute("data-activity-count"), "10000");
-  const openedDomItems = await turn.locator(".structured-activity-row, .structured-process-window-item").count();
+  assert.equal(await content.locator(".structured-activity-group").count(), 16, "expanded process must mount one bounded aggregated activity window");
+  assert.equal(await content.locator(".structured-activity-groups").getAttribute("data-activity-group-total"), "3001", "10k raw activities must compact into stable semantic groups");
+  const openedDomItems = await turn.locator(".structured-activity-group, .structured-process-window-item").count();
   assert.ok(openedDomItems <= 200, `bounded process DOM exceeded 200 items: ${openedDomItems}`);
-  assert.match(await content.locator(".structured-process-pagination").last().innerText(), /1–16[^\d]+10,?000|1–16 \/ 10000/i);
+  assert.match(await content.locator(".structured-process-pagination").last().innerText(), /1–16[^\d]+3,?001|1–16 \/ 3001/i);
 
   await content.getByRole("button", { name: /Last|末页/ }).last().click();
   const activityWindow = content.locator(".structured-activity-window");
-  assert.equal(await activityWindow.getAttribute("data-activity-window-start"), "9984");
-  assert.equal(await activityWindow.getAttribute("data-activity-window-end"), "10000");
-  assert.equal(await activityWindow.locator(".structured-activity-row").count(), 16);
-  assert.equal(await activityWindow.locator(".structured-activity-row.error").count(), 1, "last-page failure evidence must remain reachable");
+  assert.equal(await activityWindow.getAttribute("data-activity-window-start"), "2992");
+  assert.equal(await activityWindow.getAttribute("data-activity-window-end"), "3001");
+  assert.equal(await activityWindow.locator(".structured-activity-group").count(), 9);
+  assert.equal(await activityWindow.locator(".structured-activity-group.error").count(), 1, "last-page failure evidence must remain reachable");
   assert.match(await composerApproval.innerText(), /Approve publishing/i, "paging evidence must not hide approval");
   assert.ok(firstPaintMs < 3000, `10k core result first paint exceeded 3s: ${firstPaintMs.toFixed(1)}ms`);
-  console.log(JSON.stringify({ ok: true, firstPaintMs: Number(firstPaintMs.toFixed(1)), totalItems: 10_000, mountedEvidenceItems: openedDomItems, activityRows: 16, lastWindow: [9984, 10000], approvalOutsideProcess: true }, null, 2));
+  console.log(JSON.stringify({ ok: true, firstPaintMs: Number(firstPaintMs.toFixed(1)), totalItems: 10_000, aggregatedGroups: 3001, mountedEvidenceItems: openedDomItems, activityRows: 16, lastWindow: [2992, 3001], approvalOutsideProcess: true }, null, 2));
   await page.close();
 } finally {
   await browser.close();

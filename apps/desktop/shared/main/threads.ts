@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "fs/promises";
-import { dirname, join } from "path";
+import { dirname, join, normalize } from "path";
 import type {
   CreateThreadRequest,
   DesktopThread,
+  DesktopThreadListRequest,
   DesktopThreadForkMetadata,
   DesktopThreadContentSearchRequest,
   DesktopThreadContentSearchResult,
@@ -88,7 +89,7 @@ async function persistDeletedThreadIds(): Promise<void> {
   await writeAtomicJson(DELETED_THREADS_FILE, ids);
 }
 
-export async function listThreads(): Promise<DesktopThread[]> {
+export async function listThreads(request?: DesktopThreadListRequest): Promise<DesktopThread[]> {
   if (!staleThreadFilesCleaned) {
     staleThreadFilesCleaned = true;
     await cleanupStaleThreadTemporaryFiles();
@@ -99,8 +100,35 @@ export async function listThreads(): Promise<DesktopThread[]> {
     const visible = result.threads.filter((thread) => !deletedThreadIds.has(thread.id));
     const removedTombstoned = visible.length !== result.threads.length;
     if (result.migrated || removedTombstoned) await writeThreads(visible);
-    return visible.sort(compareThreads);
+    const sorted = visible.sort(compareThreads);
+    return request ? selectRecentThreads(sorted, request) : sorted;
   });
+}
+
+function selectRecentThreads(threads: DesktopThread[], request: DesktopThreadListRequest): DesktopThread[] {
+  const limit = Math.max(1, Math.min(200, Math.trunc(request.limit ?? 50)));
+  const offset = Math.max(0, Math.trunc(request.offset ?? 0));
+  const wantedWorkspace = request.workspacePath ? comparableWorkspacePath(request.workspacePath) : null;
+  const scoped = wantedWorkspace
+    ? threads.filter((thread) => comparableWorkspacePath(thread.workspacePath) === wantedWorkspace)
+    : threads;
+  const required = new Set((request.requiredThreadIds ?? []).filter((id) => THREAD_ID_PATTERN.test(id)));
+  const allProtectedThreads = scoped.filter((thread) => !thread.archived && (
+    required.has(thread.id) || thread.pinned === true || thread.status === "running"));
+  const protectedThreads = offset === 0 ? allProtectedThreads : [];
+  const protectedIds = new Set(allProtectedThreads.map((thread) => thread.id));
+  const active = scoped.filter((thread) => !thread.archived && !protectedIds.has(thread.id)).slice(offset, offset + limit);
+  const archived = request.includeArchived
+    ? scoped.filter((thread) => thread.archived && !protectedIds.has(thread.id)).slice(offset, offset + limit)
+    : [];
+  return [...new Map([...protectedThreads, ...active, ...archived]
+    .sort(compareThreads)
+    .map((thread) => [thread.id, thread])).values()];
+}
+
+function comparableWorkspacePath(value: string | undefined): string {
+  const normalized = normalize(String(value ?? "").trim()).replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? normalized.toLocaleLowerCase() : normalized;
 }
 
 async function cleanupStaleThreadTemporaryFiles(): Promise<void> {
@@ -177,6 +205,7 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
       lastRunId: request.lastRunId ?? existing?.lastRunId,
       lastRequestId: request.lastRequestId ?? existing?.lastRequestId,
       runtimeSessionId: request.runtimeSessionId ?? existing?.runtimeSessionId,
+      sourceChannel: request.sourceChannel ?? existing?.sourceChannel,
       status: request.status ?? existing?.status ?? "idle",
       messageCount: request.messageCount ?? existing?.messageCount,
       pinned: request.pinned ?? existing?.pinned,
@@ -301,13 +330,14 @@ export async function appendDuplexVoiceHistory(rawRequest: DesktopDuplexVoiceHis
   if (!rawRequest || !THREAD_ID_PATTERN.test(rawRequest.threadId) || !Array.isArray(rawRequest.messages) || rawRequest.messages.length > 100) throw new Error("Duplex voice history request is invalid.");
   const messages = rawRequest.messages.map((message) => {
     if (!message || typeof message.id !== "string" || !message.id.startsWith("duplex:") || message.id.length > 500 || !["user", "assistant"].includes(message.role) || typeof message.content !== "string") throw new Error("Duplex voice history message is invalid.");
-    return { id: message.id, role: message.role, content: message.content.replace(/\0/g, "").slice(0, 20_000), ...(message.statusContent ? { statusContent: message.statusContent.replace(/\0/g, "").slice(0, 20_000) } : {}) } as DesktopThreadMessageSnapshot;
+    if (!Number.isInteger(message.revision) || message.revision < 1 || !Number.isInteger(message.expectedRevision) || message.expectedRevision < 0) throw new Error("Duplex voice history revision is invalid.");
+    return { id: message.id, role: message.role, content: message.content.replace(/\0/g, "").slice(0, 20_000), revision: message.revision, expectedRevision: message.expectedRevision, ...(message.statusContent ? { statusContent: message.statusContent.replace(/\0/g, "").slice(0, 20_000) } : {}), ...(message.voice ? { voice: message.voice } : {}), ...(Array.isArray(message.toolTimeline) ? { toolTimeline: message.toolTimeline.slice(-20).flatMap(sanitizeToolTimelineEvent) } : {}), ...(Array.isArray(message.parts) ? { parts: message.parts.slice(0, 64).flatMap(sanitizeMessagePart) } : {}) };
   });
   const path = threadSnapshotPath(rawRequest.threadId);
   return serializeJsonMutation(path, async () => {
     const current = await readThreadSnapshotShard(rawRequest.threadId) ?? { threadId: rawRequest.threadId, title: rawRequest.threadId, messages: [], updatedAt: Date.now(), messageCount: 0 };
     const merged = new Map(current.messages.map((message) => [message.id, message]));
-    for (const message of messages) merged.set(message.id, { ...merged.get(message.id), ...message });
+    for (const message of messages) { const existing = merged.get(message.id); const currentRevision = existing?.voice?.revision ?? 0; if (message.revision === currentRevision) { if (!existing || existing.content !== message.content || existing.role !== message.role || JSON.stringify(existing.parts ?? []) !== JSON.stringify(message.parts ?? existing.parts ?? [])) throw new Error("Duplex voice history revision conflict."); continue; } if (message.expectedRevision !== currentRevision || message.revision !== currentRevision + 1) throw new Error("Duplex voice history revision conflict."); const { revision: _revision, expectedRevision: _expectedRevision, ...value } = message; merged.set(message.id, { ...existing, ...value, voice: { ...value.voice, revision: message.revision } }); }
     const nextMessages = [...merged.values()].slice(-MAX_SNAPSHOT_MESSAGES);
     const next = validateThreadSnapshot({ ...current, messages: nextMessages, messageCount: nextMessages.length, updatedAt: Date.now() });
     await writeThreadSnapshotShard(next); return next;
@@ -324,6 +354,7 @@ export async function upsertThreadFromRun(input: {
   lastRunId?: string;
   lastRequestId?: string;
   runtimeSessionId?: string;
+  sourceChannel?: DesktopThread["sourceChannel"];
   status?: DesktopThread["status"];
   messageCount?: number;
 }): Promise<DesktopThread> {
@@ -351,6 +382,92 @@ export async function upsertThreadFromRun(input: {
     }
     throw error;
   }
+}
+
+export interface RuntimeThreadCatalogEntry {
+  id: string;
+  title: string;
+  workspacePath: string;
+  runtimeSessionId: string;
+  createdAt?: string;
+  updatedAt?: string;
+  archived: boolean;
+  sourceChannel?: DesktopThread["sourceChannel"];
+  messageCount?: number;
+}
+
+/** Persist one authoritative Runtime directory entry without inventing activity. */
+export async function upsertThreadFromRuntimeCatalog(
+  input: RuntimeThreadCatalogEntry,
+): Promise<{ thread: DesktopThread; changed: boolean }> {
+  const [result] = await upsertThreadsFromRuntimeCatalog([input]);
+  if (!result) throw new Error("Runtime catalog entry was not persisted.");
+  return result;
+}
+
+/** Apply a Runtime bootstrap page with one read and at most one atomic write. */
+export async function upsertThreadsFromRuntimeCatalog(
+  inputs: RuntimeThreadCatalogEntry[],
+): Promise<Array<{ thread: DesktopThread; changed: boolean }>> {
+  const entries = inputs.slice(0, 200).map((input) => ({ ...input, id: sanitizeThreadId(input.id) }));
+  return serializeJsonMutation(THREADS_FILE, async () => {
+    let threads = await readThreads();
+    const now = new Date().toISOString();
+    const results: Array<{ thread: DesktopThread; changed: boolean }> = [];
+    let anyChanged = false;
+    for (const input of entries) {
+      const existing = threads.find((thread) => thread.id === input.id);
+      const createdAt = validCatalogTimestamp(input.createdAt, existing?.createdAt ?? now);
+      const updatedAt = validCatalogTimestamp(input.updatedAt, existing?.updatedAt ?? createdAt);
+      const title = String(input.title || existing?.title || "New chat").slice(0, MAX_TITLE_CHARS);
+      const workspacePath = String(input.workspacePath || existing?.workspacePath || "").slice(0, MAX_WORKSPACE_PATH_CHARS);
+      const runtimeSessionId = sanitizeOptionalId(input.runtimeSessionId, "Thread Runtime session id is invalid.");
+      const archivedAt = input.archived ? existing?.archivedAt ?? updatedAt : undefined;
+      const archiveSource = input.archived ? existing?.archiveSource ?? "opendrsai" : undefined;
+      const sourceChannel = input.sourceChannel === "wechat" ? "wechat" : existing?.sourceChannel;
+      const messageCount = Number.isFinite(input.messageCount) ? Math.max(0, Number(input.messageCount)) : existing?.messageCount;
+      const unchanged = Boolean(existing
+        && existing.title === title
+        && existing.workspacePath === workspacePath
+        && existing.runtimeSessionId === runtimeSessionId
+        && existing.createdAt === createdAt
+        && existing.updatedAt === updatedAt
+        && Boolean(existing.archived) === input.archived
+        && existing.archivedAt === archivedAt
+        && existing.archiveSource === archiveSource
+        && existing.sourceChannel === sourceChannel
+        && existing.messageCount === messageCount);
+      if (existing && unchanged) {
+        results.push({ thread: existing, changed: false });
+        continue;
+      }
+      const thread: DesktopThread = {
+        ...(existing ?? {}),
+        id: input.id,
+        kind: existing?.kind ?? "chat",
+        title,
+        workspacePath,
+        createdAt,
+        updatedAt,
+        runtimeSessionId,
+        status: existing?.status ?? "idle",
+        messageCount,
+        archived: input.archived,
+        archivedAt,
+        archiveSource,
+        sourceChannel,
+      };
+      threads = [thread, ...threads.filter((item) => item.id !== input.id)];
+      results.push({ thread, changed: true });
+      anyChanged = true;
+    }
+    if (anyChanged) await writeThreads(retainThreads(threads));
+    return results;
+  });
+}
+
+function validCatalogTimestamp(value: string | undefined, fallback: string): string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : fallback;
 }
 
 async function readThreads(): Promise<DesktopThread[]> {
@@ -402,12 +519,17 @@ async function writeThreads(threads: DesktopThread[]): Promise<void> {
 }
 
 function retainThreads(threads: DesktopThread[]): DesktopThread[] {
-  const active: DesktopThread[] = [];
+  const protectedActive: DesktopThread[] = [];
+  const ordinaryActive: DesktopThread[] = [];
   const archived: DesktopThread[] = [];
   for (const thread of threads) {
-    (thread.archived ? archived : active).push(thread);
+    if (thread.archived) archived.push(thread);
+    else if (thread.pinned || thread.status === "running") protectedActive.push(thread);
+    else ordinaryActive.push(thread);
   }
-  return [...active.slice(0, MAX_THREADS), ...archived.slice(0, MAX_ARCHIVED_THREADS)];
+  const active = [...protectedActive.sort(compareThreads), ...ordinaryActive.sort(compareThreads)]
+    .slice(0, MAX_THREADS);
+  return [...active, ...archived.sort(compareThreads).slice(0, MAX_ARCHIVED_THREADS)];
 }
 
 async function readLegacyThreadSnapshots(): Promise<Record<string, DesktopThreadSnapshot>> {
@@ -524,7 +646,7 @@ function parseStoredJson(serialized: string): unknown {
     // without its closing quote. Repair only that narrow, line-oriented form;
     // all repaired data is rewritten atomically on the next normal update.
     const repaired = serialized.replace(
-      /^(\s*"(?:id|kind|title|workspacePath|boundAgentId|boundAgentName|createdAt|updatedAt|lastRunId|lastRequestId|runtimeSessionId|status|archivedAt|archiveSource)"\s*:\s*".*?)(,\s*)$/gm,
+      /^(\s*"(?:id|kind|title|workspacePath|boundAgentId|boundAgentName|createdAt|updatedAt|lastRunId|lastRequestId|runtimeSessionId|sourceChannel|status|archivedAt|archiveSource)"\s*:\s*".*?)(,\s*)$/gm,
       (line, prefix: string, suffix: string) => prefix.endsWith('"') ? line : `${prefix}"${suffix}`,
     );
     return JSON.parse(repaired);
@@ -579,6 +701,7 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
     lastRunId: sanitizeOptionalId(request.lastRunId, "Thread run id is invalid."),
     lastRequestId: sanitizeOptionalId(request.lastRequestId, "Thread request id is invalid."),
     runtimeSessionId: sanitizeOptionalId(request.runtimeSessionId, "Thread Runtime session id is invalid."),
+    sourceChannel: request.sourceChannel === "wechat" ? "wechat" : undefined,
     status: request.status,
     messageCount: Number.isFinite(request.messageCount) ? Math.max(0, Number(request.messageCount)) : undefined,
     pinned: typeof request.pinned === "boolean" ? request.pinned : undefined,
@@ -656,6 +779,7 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
     ...(typeof message.statusContent === "string"
       ? { statusContent: message.statusContent.slice(0, MAX_STATUS_CHARS) }
       : {}),
+    ...(message.voice && typeof message.voice === "object" && Number.isInteger(message.voice.revision) && message.voice.revision >= 1 ? { voice: { revision: message.voice.revision, ...(Number.isFinite(message.voice.generatedAudioMs) ? { generatedAudioMs: Math.max(0, message.voice.generatedAudioMs!) } : {}), ...(Number.isFinite(message.voice.playedAudioMs) ? { playedAudioMs: Math.max(0, message.voice.playedAudioMs!) } : {}), ...(Number.isFinite(message.voice.interruptedAt) ? { interruptedAt: message.voice.interruptedAt } : {}), ...(["none", "word_timing"].includes(message.voice.alignmentConfidence ?? "") ? { alignmentConfidence: message.voice.alignmentConfidence } : {}), ...(typeof message.voice.heardContent === "string" ? { heardContent: message.voice.heardContent.slice(0, MAX_MESSAGE_CHARS) } : {}) } } : {}),
     ...(typeof message.reasoningContent === "string"
       ? { reasoningContent: message.reasoningContent.slice(0, MAX_STATUS_CHARS) }
       : {}),
@@ -964,6 +1088,7 @@ function isThread(value: unknown): value is DesktopThread {
       typeof thread.title === "string" &&
       typeof thread.createdAt === "string" &&
       typeof thread.updatedAt === "string" &&
+      (thread.sourceChannel === undefined || thread.sourceChannel === "wechat") &&
       (thread.fork === undefined || isForkMetadata(thread.fork)),
   );
 }
