@@ -340,12 +340,19 @@ device.png
 .artifacts/
 approval-proof.txt
 
+# One-off diagnostics of a developer's local Codex runtime and sandbox ACLs.
+# Reusable troubleshooting guidance belongs in a sanitized project document.
+docs/voice/computer-use-node-kernel-assets-diagnostic.md
+
 # Raw device/UI captures are local validation output. Keep the curated JSON
 # acceptance ledgers and release manifests in docs, but do not accumulate
 # screenshots, accessibility dumps, or unfinished probe output in Git.
 docs/android/reports/evidence/**/*.png
 docs/android/reports/evidence/**/*.xml
 docs/android/reports/evidence/p9/pending/
+# P10 pending runs contain raw device media and instrumentation logs. Keep only
+# completed, curated evidence records under version control.
+docs/android/reports/evidence/p10/pending/
 docs/android/reports/evidence/round*.*
 docs/android/reports/evidence/samsung-model-provider-*/
 docs/android/reports/preflight/**/*.png
@@ -358,6 +365,9 @@ docs/desktop/evidence/round*/
 
 # Desktop renderer bundles are reproducible build output.
 apps/desktop/shared/renderer/out/
+
+# Empty temporary files occasionally left by Windows package tooling.
+apps/desktop/windows/_tmp_*
 
 # Windows packaging consumes these two brand assets from buildResources.
 # Keep other generated build directories ignored while making clean/CI builds branded.
