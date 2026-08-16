@@ -175,6 +175,9 @@ def remote_connect(rid, params: dict) -> dict:
         status = tunnel.connect(cfg)
 
         if not status.connected:
+            # 连接失败: 清理 tunnel 对象, 释放资源
+            with _tunnel_lock:
+                _tunnel = None
             return _err(rid, -32000, status.error or "连接失败")
 
         result = {
@@ -195,6 +198,9 @@ def remote_connect(rid, params: dict) -> dict:
 
     except Exception as e:
         logger.exception("remote.connect failed")
+        # 异常时清理 tunnel 对象
+        with _tunnel_lock:
+            _tunnel = None
         return _err(rid, -32000, str(e))
 
 

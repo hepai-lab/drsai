@@ -515,17 +515,19 @@ cd {remote_workdir} && \
 DRSAI_TUI_ENABLE_WS=1 \
 DRSAI_TUI_WS_PORT={port} \
 DRSAI_USER_CWD={remote_workdir} \
-setsid nohup opendrsai tui-gateway \
-  < /dev/null > /tmp/drsai_ssh_tui/gateway_{port}.log 2>&1 &
+nohup opendrsai tui-gateway \
+  < /dev/null > /tmp/drsai_ssh_tui/gateway_{port}.log 2>&1 & \
+disown; \
+echo $! > /tmp/drsai_ssh_tui/gateway_{port}.pid
 ```
 
 > `opendrsai tui-gateway` 是 `drsai` CLI 内置子命令，用于以独立进程启动
 > JSON-RPC TUI gateway。启动器脚本自身会导出 venv Python、`DRSAI_PYTHON_SRC_ROOT`
 > 等环境变量，因此不需要在 SSH 配置中填写任何 Python 路径。
 >
-> **`setsid` 进程隔离**：`setsid` 将 gateway 进程放入新的 session，
-> 完全脱离 SSH 通道。这避免了 `bash -c` 包装进程在 SSH 通道关闭后
-> 残留为孤儿进程（PPID=1）的问题。
+> **`disown` 进程隔离**：`disown` 将后台进程从 shell 的 job table 移除，
+> 避免 `bash -c` 在退出时等待后台进程。配合 `nohup`（忽略 SIGHUP）和
+> 重定向（`< /dev/null > log 2>&1`），gateway 进程完全脱离 SSH 通道。
 >
 > **Port 级文件隔离**：日志和 PID 文件按端口唯一命名
 > （`gateway_{port}.log`、`gateway_{port}.pid`），支持多并发接入，
@@ -780,8 +782,9 @@ TUI 会显示断链提示界面，不会直接退出。你可以选择：
 
 ### 断开后远程进程残留
 
-**已自动管理**：`disconnect()` 会杀掉远程 gateway 进程组（`kill -- -PID`）并清理
+**已自动管理**：`disconnect()` 会杀掉远程 gateway 进程并清理
 对应的 PID/log 文件。`connect()` 前也会自动清理同 port 上的残留进程。
+`connect()` 失败时会自动调用 `_cleanup_on_failure()` 清理已启动的进程。
 
 如果因网络异常或 TUI 崩溃导致自动清理未执行，可通过以下方式手动清理：
 
@@ -808,16 +811,16 @@ rm -rf /tmp/drsai_ssh_tui
 **三层清理保障：**
 
 1. **连接前清理**（`_start_remote_gateway`）：启动新 gateway 前，`pkill -f 'tui_gateway.*{port}'` 杀掉同 port 残留进程，删除旧 PID 文件。
-2. **断开时清理**（`disconnect`）：`kill -- -PID` 杀整个进程组（`setsid` 启动的进程自成 session），`kill -9` 兜底，删除 PID/log 文件。
-3. **手动清理**（`remote.cleanup` RPC）：扫描所有 `gateway_*.pid` 文件，杀残留进程，清理所有 PID/log 文件。可在已连接或未连接状态下调用。
+2. **断开时清理**（`disconnect`）：`kill PID` 杀进程，`kill -9` 兜底，删除 PID/log 文件。
+3. **连接失败清理**（`_cleanup_on_failure`）：`connect()` 异常时自动杀掉已启动的 gateway 进程并关闭 SSH 连接。
+4. **手动清理**（`remote.cleanup` RPC）：扫描所有 `gateway_*.pid` 文件，杀残留进程，清理所有 PID/log 文件。可在已连接或未连接状态下调用。
 
-**`setsid` 的作用：**
+**`disown` + `nohup` 的作用：**
 
-`setsid nohup opendrsai tui-gateway` 将 gateway 进程放入新的 session，完全脱离 SSH 通道。
-这解决了之前 `bash -c` 包装进程在 SSH 通道关闭后残留为孤儿进程（PPID=1）的问题：
-- `setsid` 创建新 session → gateway 进程的 PGID = PID
-- `kill -- -PID` 可以杀掉整个进程组（包括 gateway 及其子进程）
-- SSH 通道关闭时不会向 gateway 发送 SIGHUP（因为不在同一 session）
+`nohup opendrsai tui-gateway < /dev/null > log 2>&1 & disown` 确保 gateway 进程完全脱离 SSH 通道：
+- `nohup` 忽略 SIGHUP，SSH 通道关闭时不会杀死 gateway
+- `< /dev/null > log 2>&1` 重定向所有标准 IO，不继承 SSH 通道的 fd
+- `disown` 从 shell job table 移除，`bash -c` 退出时不等待后台进程
 
 **文件生命周期：**
 
@@ -882,4 +885,4 @@ pnpm dev      # 开发模式（热重载）
 5. **SSH Keepalive：** 默认每 30 秒发送 keepalive 包，防止 NAT/防火墙静默断开，同时也能更快检测到断链。
 6. **Session 隔离：** 远程 gateway 有独立的 session 数据库。切换到远程后，本地 transcript 被清除，聊天历史从远程 session 加载。断开时反向操作，恢复本地 session。
 7. **文件系统隔离：** 远程 gateway 进程在远程服务器上运行，`Path.cwd()` 天然指向远程工作目录。所有文件操作（读写、代码执行）都在远程执行，不存在本地/远程路径混淆。
-8. **多并发支持：** 每个连接使用 port 级唯一的日志和 PID 文件（`gateway_{port}.log`、`gateway_{port}.pid`），不同连接互不干扰。`setsid` 确保进程完全脱离 SSH 通道，避免残留。
+8. **多并发支持：** 每个连接使用 port 级唯一的日志和 PID 文件（`gateway_{port}.log`、`gateway_{port}.pid`），不同连接互不干扰。`nohup` + `disown` 确保进程完全脱离 SSH 通道，避免残留。
