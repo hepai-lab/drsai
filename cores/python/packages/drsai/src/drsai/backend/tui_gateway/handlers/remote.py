@@ -8,6 +8,7 @@ remote.py — tui_gateway 中的远程 SSH 管理 RPC 处理器。
   - remote.test           — 测试 SSH 连接
   - remote.connect        — 连接远程服务器, 启动远程 tui_gateway, 建立隧道
   - remote.disconnect     — 断开远程连接
+  - remote.cleanup        — 清理远程所有残留 gateway 进程和文件
   - remote.status         — 获取当前连接状态
   - remote.list_dirs      — 列出远程目录 (需已连接)
   - remote.list_files     — 列出远程文件 (需已连接)
@@ -207,6 +208,44 @@ def remote_disconnect(rid, params: dict) -> dict:
             _tunnel = None
     _emit("remote.disconnected", "", {})
     return _ok(rid, {"disconnected": True})
+
+
+@method("remote.cleanup")
+def remote_cleanup(rid, params: dict) -> dict:
+    """清理远程所有残留 gateway 进程和文件。
+
+    可在已连接或未连接状态下调用。如果当前有活跃连接, 使用该连接
+    执行清理; 否则尝试通过 params 中的 SSH 配置建立临时连接执行清理。
+    """
+    global _tunnel
+    with _tunnel_lock:
+        if _tunnel is not None and _tunnel.status.connected:
+            result = _tunnel.cleanup_stale()
+            return _ok(rid, result)
+
+    # 没有活跃连接 — 尝试临时连接
+    name = params.get("name", "")
+    cfg = None
+    if name:
+        cfg = get_ssh_config(name)
+    elif params.get("host"):
+        cfg = SSHConfig.from_dict(params)
+
+    if cfg is None:
+        return _err(rid, -32000, "无活跃连接且未提供 SSH 配置, 无法清理")
+
+    # 建立临时连接执行清理
+    temp_tunnel = SSHTunnelManager()
+    try:
+        temp_tunnel.connect(cfg)
+        if not temp_tunnel.status.connected:
+            return _err(rid, -32000, f"临时连接失败: {temp_tunnel.status.error}")
+        result = temp_tunnel.cleanup_stale()
+        temp_tunnel.disconnect()
+        return _ok(rid, result)
+    except Exception as e:
+        logger.exception("remote.cleanup failed")
+        return _err(rid, -32000, str(e))
 
 
 @method("remote.status")

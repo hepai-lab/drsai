@@ -515,13 +515,21 @@ cd {remote_workdir} && \
 DRSAI_TUI_ENABLE_WS=1 \
 DRSAI_TUI_WS_PORT={port} \
 DRSAI_USER_CWD={remote_workdir} \
-nohup opendrsai tui-gateway \
-  < /dev/null > /tmp/drsai_ssh_tui/gateway.log 2>&1 &
+setsid nohup opendrsai tui-gateway \
+  < /dev/null > /tmp/drsai_ssh_tui/gateway_{port}.log 2>&1 &
 ```
 
 > `opendrsai tui-gateway` 是 `drsai` CLI 内置子命令，用于以独立进程启动
 > JSON-RPC TUI gateway。启动器脚本自身会导出 venv Python、`DRSAI_PYTHON_SRC_ROOT`
 > 等环境变量，因此不需要在 SSH 配置中填写任何 Python 路径。
+>
+> **`setsid` 进程隔离**：`setsid` 将 gateway 进程放入新的 session，
+> 完全脱离 SSH 通道。这避免了 `bash -c` 包装进程在 SSH 通道关闭后
+> 残留为孤儿进程（PPID=1）的问题。
+>
+> **Port 级文件隔离**：日志和 PID 文件按端口唯一命名
+> （`gateway_{port}.log`、`gateway_{port}.pid`），支持多并发接入，
+> 不同连接互不干扰。
 >
 > **stdin 重定向到 `/dev/null`**：远程 gateway 以 WebSocket 模式运行时，
 > stdin 不用于接收命令（命令通过 WS `/attach` 端点接收）。
@@ -618,6 +626,7 @@ SSH 配置保存在 `~/.drsai/configs/ssh_configs.json`：
 | `remote.test` | 测试 SSH 连接 | 长（线程池） | 否 |
 | `remote.connect` | 连接 + 启动远程 gateway + 建立隧道 | 长（线程池） | 否 |
 | `remote.disconnect` | 断开 + 清理远程进程 | 短 | — |
+| `remote.cleanup` | 清理所有残留 gateway 进程和文件 | 短 | — |
 | `remote.status` | 获取连接状态 | 短 | 否 |
 | `remote.list_dirs` | 列出远程目录 | 短 | ✅ |
 | `remote.list_files` | 列出远程文件 | 短 | ✅ |
@@ -695,7 +704,7 @@ ssh xiongdb@192.168.32.192
 DRSAI_TUI_ENABLE_WS=1 DRSAI_TUI_WS_PORT=9999 opendrsai tui-gateway
 
 # 查看远程日志
-cat /tmp/drsai_ssh_tui/gateway.log
+cat /tmp/drsai_ssh_tui/gateway_9999.log
 
 # 常见原因：
 # 1. opendrsai 未安装 → 在远程运行 install_drsai.sh 安装
@@ -730,7 +739,7 @@ ps aux | grep tui_gateway
 ss -tlnp | grep 9999   # 检查端口
 
 # 检查日志
-cat /tmp/drsai_ssh_tui/gateway.log
+cat /tmp/drsai_ssh_tui/gateway_9999.log
 ```
 
 ### 连接报 `TimeoutError()`
@@ -740,7 +749,7 @@ cat /tmp/drsai_ssh_tui/gateway.log
 **常见原因：**
 1. **保存的配置与编辑表单不一致** — 浏览目录使用表单中的值（正确），但连接使用已保存配置中的值（可能过期）。在编辑视图按 `Ctrl+S` 重新保存后再连接。
 2. **`opendrsai --version` 执行缓慢** — 远程 venv 加载慢。已将此步骤超时从 15s 提高到 30s。
-3. **远程 gateway 启动超时** — 远程端口未在 6s 内就绪。检查远程日志：`ssh <host> "cat /tmp/drsai_ssh_tui/gateway.log"`
+3. **远程 gateway 启动超时** — 远程端口未在 6s 内就绪。检查远程日志：`ssh <host> "cat /tmp/drsai_ssh_tui/gateway_{port}.log"`
 
 **排查：**
 ```bash
@@ -771,12 +780,51 @@ TUI 会显示断链提示界面，不会直接退出。你可以选择：
 
 ### 断开后远程进程残留
 
+**已自动管理**：`disconnect()` 会杀掉远程 gateway 进程组（`kill -- -PID`）并清理
+对应的 PID/log 文件。`connect()` 前也会自动清理同 port 上的残留进程。
+
+如果因网络异常或 TUI 崩溃导致自动清理未执行，可通过以下方式手动清理：
+
 ```bash
-# 手动清理
+# 方式 1: 通过 TUI RPC 调用 remote.cleanup（推荐）
+# 在 TUI 中执行，会扫描所有 gateway_*.pid 文件，杀残留进程并清理文件
+
+# 方式 2: SSH 登录后手动清理
 ssh xiongdb@192.168.32.192
 pkill -f tui_gateway
 rm -rf /tmp/drsai_ssh_tui
 ```
+
+### 多并发接入支持
+
+每个连接使用 **port 级唯一的日志和 PID 文件**（`gateway_{port}.log`、`gateway_{port}.pid`），
+不同端口的连接互不干扰，天然支持多并发接入。
+
+但需注意：当前 TUI 前端为**单连接模式**（同一时间只维护一个 SSH 隧道），
+多并发场景主要指多个 TUI 客户端同时连接同一远程服务器的不同 gateway 端口。
+
+### 进程管理机制
+
+**三层清理保障：**
+
+1. **连接前清理**（`_start_remote_gateway`）：启动新 gateway 前，`pkill -f 'tui_gateway.*{port}'` 杀掉同 port 残留进程，删除旧 PID 文件。
+2. **断开时清理**（`disconnect`）：`kill -- -PID` 杀整个进程组（`setsid` 启动的进程自成 session），`kill -9` 兜底，删除 PID/log 文件。
+3. **手动清理**（`remote.cleanup` RPC）：扫描所有 `gateway_*.pid` 文件，杀残留进程，清理所有 PID/log 文件。可在已连接或未连接状态下调用。
+
+**`setsid` 的作用：**
+
+`setsid nohup opendrsai tui-gateway` 将 gateway 进程放入新的 session，完全脱离 SSH 通道。
+这解决了之前 `bash -c` 包装进程在 SSH 通道关闭后残留为孤儿进程（PPID=1）的问题：
+- `setsid` 创建新 session → gateway 进程的 PGID = PID
+- `kill -- -PID` 可以杀掉整个进程组（包括 gateway 及其子进程）
+- SSH 通道关闭时不会向 gateway 发送 SIGHUP（因为不在同一 session）
+
+**文件生命周期：**
+
+| 文件 | 创建时机 | 清理时机 |
+|------|---------|---------|
+| `gateway_{port}.pid` | gateway 启动时 `echo $! > pid_file` | disconnect / cleanup_stale / 连接前清理 |
+| `gateway_{port}.log` | gateway 启动时 `> log_path 2>&1` | disconnect / cleanup_stale |
 
 ---
 
@@ -789,7 +837,7 @@ rm -rf /tmp/drsai_ssh_tui
 DRSAI_LOG_LEVEL=DEBUG drsai chat
 
 # 远程：查看 gateway 日志
-ssh <host> "cat /tmp/drsai_ssh_tui/gateway.log"
+ssh <host> "cat /tmp/drsai_ssh_tui/gateway_{port}.log"
 ```
 
 ### 手动测试 SSH 隧道
@@ -829,8 +877,9 @@ pnpm dev      # 开发模式（热重载）
 
 1. **SSH 私钥安全：** 私钥文件仅在本机使用，不上传到远程。配置文件中密码以 `***` 脱敏显示。
 2. **端口转发范围：** 隧道仅绑定 `127.0.0.1`（本地回环），不暴露到网络。
-3. **远程进程清理：** 断开时自动 `kill` 远程 gateway 进程。异常退出时可能残留，需手动清理。
+3. **远程进程清理：** 断开时自动 `kill` 远程 gateway 进程组（`kill -- -PID`）并清理 PID/log 文件。连接前自动清理同 port 残留进程。异常退出时可通过 `remote.cleanup` RPC 方法或手动 `pkill -f tui_gateway` 清理。
 4. **API Key 隔离：** 远程使用远程自己的 DrSai 配置和 API Key，与本地完全独立。
 5. **SSH Keepalive：** 默认每 30 秒发送 keepalive 包，防止 NAT/防火墙静默断开，同时也能更快检测到断链。
 6. **Session 隔离：** 远程 gateway 有独立的 session 数据库。切换到远程后，本地 transcript 被清除，聊天历史从远程 session 加载。断开时反向操作，恢复本地 session。
 7. **文件系统隔离：** 远程 gateway 进程在远程服务器上运行，`Path.cwd()` 天然指向远程工作目录。所有文件操作（读写、代码执行）都在远程执行，不存在本地/远程路径混淆。
+8. **多并发支持：** 每个连接使用 port 级唯一的日志和 PID 文件（`gateway_{port}.log`、`gateway_{port}.pid`），不同连接互不干扰。`setsid` 确保进程完全脱离 SSH 通道，避免残留。

@@ -40,8 +40,16 @@ except ImportError:
 # ── 远程路径常量 ─────────────────────────────────────────────────────
 
 REMOTE_TMP_DIR = "/tmp/drsai_ssh_tui"
-REMOTE_LOG_PATH = f"{REMOTE_TMP_DIR}/gateway.log"
-REMOTE_PID_FILE = f"{REMOTE_TMP_DIR}/gateway.pid"
+
+
+def _remote_log_path(port: int) -> str:
+    """Port 级唯一的远程日志文件路径。"""
+    return f"{REMOTE_TMP_DIR}/gateway_{port}.log"
+
+
+def _remote_pid_file(port: int) -> str:
+    """Port 级唯一的远程 PID 文件路径。"""
+    return f"{REMOTE_TMP_DIR}/gateway_{port}.pid"
 
 
 # ── 数据结构 ─────────────────────────────────────────────────────────
@@ -270,8 +278,16 @@ class SSHTunnelManager:
 
     def _start_remote_gateway(self, cfg: SSHConfig, remote_port: int) -> None:
         """在远程启动 tui_gateway 进程（nohup 后台运行, WebSocket 模式）。"""
-        # 清理旧进程
-        self._exec_remote(f"pkill -f 'tui_gateway.*{remote_port}' 2>/dev/null; sleep 0.2; true")
+        log_path = _remote_log_path(remote_port)
+        pid_file = _remote_pid_file(remote_port)
+
+        # 连接前清理: 杀掉同 port 上的残留 gateway 进程 + 清理旧 PID 文件
+        self._exec_remote(
+            f"pkill -f 'tui_gateway.*{remote_port}' 2>/dev/null; "
+            f"sleep 0.2; "
+            f"rm -f {pid_file} 2>/dev/null; "
+            f"true"
+        )
         self._exec_remote(f"mkdir -p {REMOTE_TMP_DIR}")
 
         # 构建环境变量
@@ -286,14 +302,14 @@ class SSHTunnelManager:
         cwd_arg = f"cd {cfg.remote_workdir} && " if cfg.remote_workdir else ""
 
         # 启动命令 — 使用 opendrsai 启动器的 tui-gateway 子命令。
-        # 启动器脚本自身会设置好 venv python / PYTHONPATH 等环境,
-        # 无需在此处关心远程 Python 路径。
+        # setsid 将 gateway 进程放入新 session, 完全脱离 SSH 通道,
+        # 避免 bash -c 包装进程在通道关闭后残留为孤儿进程。
         start_cmd = (
             f"{cwd_arg}"
             f"{env_str} "
-            f"nohup {self._opendrsai} tui-gateway "
-            f"< /dev/null > {REMOTE_LOG_PATH} 2>&1 & "
-            f"echo $! > {REMOTE_PID_FILE}; cat {REMOTE_PID_FILE}"
+            f"setsid nohup {self._opendrsai} tui-gateway "
+            f"< /dev/null > {log_path} 2>&1 & "
+            f"echo $! > {pid_file}; cat {pid_file}"
         )
         stdout, stderr, code = self._exec_remote(start_cmd)
         if code != 0:
@@ -303,7 +319,7 @@ class SSHTunnelManager:
         try:
             self.status.remote_pid = int(pid_str)
         except ValueError:
-            log = self._read_remote_log()
+            log = self._read_remote_log(remote_port)
             raise RuntimeError(f"无法获取远程 PID (got '{pid_str}')。日志:\n{log}")
 
         # 等待端口就绪
@@ -326,21 +342,22 @@ class SSHTunnelManager:
                     f"kill -0 {self.status.remote_pid} 2>&1 && echo ALIVE || echo DEAD"
                 )
                 if "DEAD" in alive_out:
-                    log = self._read_remote_log()
+                    log = self._read_remote_log(remote_port)
                     raise RuntimeError(
                         f"远程 tui_gateway 进程已退出 (PID={self.status.remote_pid})。日志:\n{log}"
                     )
 
         if not ready:
-            log = self._read_remote_log()
+            log = self._read_remote_log(remote_port)
             raise RuntimeError(
                 f"远程 tui_gateway 端口 {remote_port} 未就绪 (等待 6s)。日志:\n{log}"
             )
 
-    def _read_remote_log(self) -> str:
+    def _read_remote_log(self, port: int = 0) -> str:
         """读取远程 gateway 日志。"""
+        log_path = _remote_log_path(port) if port else f"{REMOTE_TMP_DIR}/gateway_*.log"
         try:
-            out, _, _ = self._exec_remote(f"cat {REMOTE_LOG_PATH} 2>&1")
+            out, _, _ = self._exec_remote(f"cat {log_path} 2>&1")
             return out
         except Exception:
             return "(无法读取日志)"
@@ -477,14 +494,28 @@ class SSHTunnelManager:
         if self._tunnel_thread:
             self._tunnel_thread.join(timeout=2)
 
-        # 杀远程 gateway 进程
+        # 杀远程 gateway 进程 + 清理 PID/log 文件
+        remote_port = self.status.remote_port
+        pid_file = _remote_pid_file(remote_port) if remote_port else ""
+        log_path = _remote_log_path(remote_port) if remote_port else ""
+
         if self._client and self.status.remote_pid:
             try:
-                logger.info("终止远程进程 PID=%s", self.status.remote_pid)
-                self._exec_remote(
-                    f"kill {self.status.remote_pid} 2>/dev/null; "
-                    f"sleep 0.5; kill -9 {self.status.remote_pid} 2>/dev/null"
+                logger.info("终止远程进程 PID=%s (port=%s)", self.status.remote_pid, remote_port)
+                # 杀进程组 (setsid 启动的进程自成 session, kill -- -PGID 杀整个组)
+                # 同时杀进程本身, 最后清理 PID/log 文件
+                cleanup_cmd = (
+                    f"kill -- -{self.status.remote_pid} 2>/dev/null; "
+                    f"sleep 0.3; "
+                    f"kill -9 {self.status.remote_pid} 2>/dev/null; "
+                    f"kill -9 -- -{self.status.remote_pid} 2>/dev/null; "
                 )
+                if pid_file:
+                    cleanup_cmd += f"rm -f {pid_file} 2>/dev/null; "
+                if log_path:
+                    cleanup_cmd += f"rm -f {log_path} 2>/dev/null; "
+                cleanup_cmd += "true"
+                self._exec_remote(cleanup_cmd)
             except Exception:
                 pass
 
@@ -497,6 +528,81 @@ class SSHTunnelManager:
         self._client = None
         self._transport = None
         logger.info("SSH 隧道已断开")
+
+    # ── 残留进程清理 ────────────────────────────────────────────────
+
+    def cleanup_stale(self) -> dict:
+        """清理远程所有残留 gateway 进程和文件。
+
+        扫描 /tmp/drsai_ssh_tui/ 下的 PID 文件, 检查对应进程是否存活,
+        杀掉所有残留进程并删除 PID/log 文件。
+
+        Returns:
+            {"killed_pids": [...], "removed_files": [...]}
+        """
+        result: dict = {"killed_pids": [], "removed_files": []}
+        if not self._client:
+            return result
+
+        try:
+            # 列出所有 PID 文件并读取 PID
+            out, _, _ = self._exec_remote(
+                f"for f in {REMOTE_TMP_DIR}/gateway_*.pid; do "
+                f"[ -f \"$f\" ] && echo \"$(cat \"$f\" 2>/dev/null) $f\"; "
+                f"done 2>/dev/null || true"
+            )
+
+            for line in out.strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                try:
+                    pid = int(parts[0])
+                except ValueError:
+                    continue
+                pid_f = parts[1]
+
+                # 检查进程是否存活
+                alive_out, _, _ = self._exec_remote(
+                    f"kill -0 {pid} 2>&1 && echo ALIVE || echo DEAD"
+                )
+                if "ALIVE" in alive_out:
+                    # 杀进程组 + 进程本身
+                    self._exec_remote(
+                        f"kill -- -{pid} 2>/dev/null; "
+                        f"kill -9 {pid} 2>/dev/null; "
+                        f"kill -9 -- -{pid} 2>/dev/null; "
+                        f"true"
+                    )
+                    result["killed_pids"].append(pid)
+                    logger.info("清理残留进程 PID=%s", pid)
+
+                # 删除 PID 文件
+                self._exec_remote(f"rm -f {pid_f} 2>/dev/null; true")
+                result["removed_files"].append(pid_f)
+
+            # 清理无 PID 文件对应的残留 tui_gateway 进程
+            self._exec_remote(
+                f"pkill -f 'tui_gateway.*DRSAI_TUI_ENABLE_WS' 2>/dev/null; true"
+            )
+
+            # 列出并清理残留 log 文件
+            out, _, _ = self._exec_remote(
+                f"ls {REMOTE_TMP_DIR}/gateway_*.log 2>/dev/null || true"
+            )
+            for line in out.strip().split("\n"):
+                line = line.strip()
+                if line:
+                    self._exec_remote(f"rm -f {line} 2>/dev/null; true")
+                    result["removed_files"].append(line)
+
+        except Exception as e:
+            logger.warning("cleanup_stale 出错: %s", e)
+
+        return result
 
     # ── 测试连接 ────────────────────────────────────────────────────
 
