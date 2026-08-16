@@ -153,7 +153,12 @@ class SSHTunnelManager:
                 connect_kwargs["look_for_keys"] = True
 
             logger.info("SSH 连接 %s@%s:%s ...", cfg.username, cfg.host, cfg.port)
-            self._client.connect(**connect_kwargs)
+            try:
+                self._client.connect(**connect_kwargs)
+            except Exception as e:
+                raise RuntimeError(
+                    f"SSH 连接失败 (host={cfg.host}, port={cfg.port}, user={cfg.username}): {e}"
+                ) from e
             self._transport = self._client.get_transport()
 
             # 启用 SSH Transport keepalive，防止 NAT/防火墙静默断开空闲连接。
@@ -166,14 +171,20 @@ class SSHTunnelManager:
             logger.info("SSH 连接成功")
 
             # 获取远程主机信息
-            self.status.remote_hostname = self._exec_remote("hostname")[0].strip()
-            self.status.remote_cwd = self._exec_remote("pwd")[0].strip()
+            try:
+                self.status.remote_hostname = self._exec_remote("hostname")[0].strip()
+                self.status.remote_cwd = self._exec_remote("pwd")[0].strip()
+            except Exception as e:
+                raise RuntimeError(f"远程命令执行失败 (hostname/pwd): {e}") from e
 
             # 定位远程 opendrsai 可执行文件 (PATH → 默认安装目录)
             self._opendrsai = self._resolve_opendrsai()
             logger.info("远程 opendrsai: %s", self._opendrsai)
 
-            py_ver_out, _, _ = self._exec_remote(f"{self._opendrsai} --version 2>&1 || true")
+            try:
+                py_ver_out, _, _ = self._exec_remote(f"{self._opendrsai} --version 2>&1 || true", timeout=30)
+            except Exception as e:
+                raise RuntimeError(f"远程 opendrsai --version 执行超时或失败: {e}") from e
             self.status.remote_python_version = py_ver_out.strip().splitlines()[0] if py_ver_out.strip() else ""
 
             # 选择远程 gateway 端口

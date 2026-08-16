@@ -632,6 +632,19 @@ SSH 配置保存在 `~/.drsai/configs/ssh_configs.json`：
 
 ## 故障排查
 
+### `opendrsai --version` 报 `No such option: --version`
+
+**原因：** CLI 入口 `run()` 将所有以 `-` 开头的参数自动路由到 `chat` 子命令，导致 `--version` 被传给 `chat`（不支持此选项）。
+
+**修复：** `run()` 现在排除 `--version` 和 `-V`，让它们由 typer callback 处理。同时 callback 新增 `--version` / `-V` eager option。
+
+**验证：**
+```bash
+opendrsai --version    # 应输出: version: x.x.x
+opendrsai -V           # 同上
+opendrsai version      # 子命令方式，同上
+```
+
 ### `paramiko 未安装`
 
 ```
@@ -657,6 +670,17 @@ head -1 ~/.ssh/id_rsa
 # 3. 如果是 PuTTY 格式，转换：
 # puttygen id_rsa.ppk -O private-openssh -o id_rsa
 ```
+
+### 测试连接报 `Authentication failed`
+
+**原因：** 后端 `remote.test` 未从已保存配置加载连接参数（已修复）。
+
+**修复后：** `remote.test` 现在与 `remote.connect` 一样，通过 `name` 从 `ssh_configs.json` 加载完整配置（host、username、password/private_key_path 等），再执行测试。
+
+**如果仍报错：**
+1. 确认配置已保存（在编辑视图按 `Ctrl+S` 保存）
+2. 确认保存的密码/私钥路径正确（浏览目录使用的是表单中的值，测试使用的是已保存的值）
+3. 如果修改了配置但未保存，浏览会用新值成功，但测试/连接仍用旧值
 
 ### 远程 gateway 启动失败
 
@@ -707,6 +731,24 @@ ss -tlnp | grep 9999   # 检查端口
 
 # 检查日志
 cat /tmp/drsai_ssh_tui/gateway.log
+```
+
+### 连接报 `TimeoutError()`
+
+**原因：** SSH 连接或远程命令执行超时。
+
+**常见原因：**
+1. **保存的配置与编辑表单不一致** — 浏览目录使用表单中的值（正确），但连接使用已保存配置中的值（可能过期）。在编辑视图按 `Ctrl+S` 重新保存后再连接。
+2. **`opendrsai --version` 执行缓慢** — 远程 venv 加载慢。已将此步骤超时从 15s 提高到 30s。
+3. **远程 gateway 启动超时** — 远程端口未在 6s 内就绪。检查远程日志：`ssh <host> "cat /tmp/drsai_ssh_tui/gateway.log"`
+
+**排查：**
+```bash
+# 手动测试 SSH 连接（使用保存的配置中的 host/user/key）
+ssh -i ~/.ssh/id_rsa xiongdb@192.168.32.192 "hostname; opendrsai --version"
+
+# 如果 opendrsai --version 很慢，检查 venv
+ssh xiongdb@192.168.32.192 "time ~/.drsai/bin/opendrsai --version"
 ```
 
 ### 远程连接意外断开

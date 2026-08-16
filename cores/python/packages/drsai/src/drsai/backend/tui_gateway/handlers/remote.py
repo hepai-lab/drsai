@@ -99,9 +99,26 @@ def remote_config_delete(rid, params: dict) -> dict:
 
 @method("remote.test")
 def remote_test(rid, params: dict) -> dict:
-    """测试 SSH 连接是否可用（不启动 gateway）。"""
+    """测试 SSH 连接是否可用（不启动 gateway）。
+
+    params:
+      name: 配置名称 (从已保存配置加载)
+      或直接传入 host/port/username/... 等连接参数
+    """
     try:
-        cfg = SSHConfig.from_dict(params)
+        # 从名称加载配置, 或直接从 params 构建
+        name = params.get("name", "")
+        if name:
+            cfg = get_ssh_config(name)
+            if cfg is None:
+                return _err(rid, -32000, f"配置 '{name}' 不存在")
+            # 允许 params 覆盖配置中的字段
+            for k, v in params.items():
+                if k != "name" and hasattr(cfg, k) and v:
+                    setattr(cfg, k, v)
+        else:
+            cfg = SSHConfig.from_dict(params)
+
         ok, info = SSHTunnelManager.test_connection(cfg)
         return _ok(rid, {"ok": ok, "info": info})
     except Exception as e:
