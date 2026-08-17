@@ -510,7 +510,7 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
     stepFollowingExpanded,
   }) => {
     const expanded =
-      stepFollowingExpanded !== undefined ? stepFollowingExpanded : true;
+      stepFollowingExpanded !== undefined ? stepFollowingExpanded : false;
 
     const handleToggle = () => {
       onToggleHide?.(!expanded);
@@ -1020,7 +1020,7 @@ export function FilesEventCard({ message }: { message: any }) {
           downloadHref = `data:${file.mime_type || 'application/octet-stream'};base64,${file.base64_content}`;
         }
 
-        // GFS location label — description may hold a path hint
+        // GFS location label �?description may hold a path hint
         const locationLabel = file.description
           ? (file.description.startsWith("GFS:") ? file.description : null)
           : null;
@@ -1122,7 +1122,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       return null;
     }
 
-    // BESIII global_info — right panel only (runview besiiiServerGlobalInfo); hide from main thread
+    // BESIII global_info �?right panel only (runview besiiiServerGlobalInfo); hide from main thread
     if (message.metadata?.type === "global_info") {
       return null;
     }
@@ -1145,13 +1145,13 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       // Historical message: normalize to have metadata.type = "log"
       let contentValue: string;
 
-      // 处理 title（优先使用 title 作为显示内容）
+      // 处理 title（优先使�?title 作为显示内容�?
       if (messageAny.title) {
         contentValue = typeof messageAny.title === "string"
           ? messageAny.title
           : stringifyForDisplay(messageAny.title);
       }
-      // 处理 content（可能是对象或字符串）
+      // 处理 content（可能是对象或字符串�?
       else if (messageAny.content) {
         if (typeof messageAny.content === "string") {
           contentValue = messageAny.content;
@@ -1164,7 +1164,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
           contentValue = stringifyForDisplay(messageAny.content);
         }
       }
-      // 回退到 message.content
+      // 回退�?message.content
       else if (message.content) {
         contentValue = typeof message.content === "string"
           ? message.content
@@ -1174,7 +1174,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
         contentValue = "";
       }
 
-      // 处理 log_content（保存原始的 content 用于 logExecution 面板）
+      // 处理 log_content（保存原始的 content 用于 logExecution 面板�?
       let logContentValue: string | undefined;
       if (messageAny.content) {
         if (typeof messageAny.content === "string") {
@@ -1239,7 +1239,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
           } as ParsedContent;
         })();
 
-    /** tools / AgentLogEvent 行 — 不显示本条下方的复制按钮（用归一化后 config，避免 metadata 为空时漏判） */
+    /** tools / AgentLogEvent �?�?不显示本条下方的复制按钮（用归一化后 config，避�?metadata 为空时漏判） */
     const cfg = normalizedMessage as unknown as Record<string, unknown>;
     const meta = (normalizedMessage.metadata || {}) as Record<string, unknown>;
     const suppressNonUserCopyButton =
@@ -1321,19 +1321,19 @@ export const RenderMessage: React.FC<MessageProps> = memo(
         : undefined;
     const sourceBadgeText = streamSourceLabel || normalizedMessage.source;
 
-    // 判断是否是 TextMessage 类型（使用已存在的 messageAny）
+    // 判断是否�?TextMessage 类型（使用已存在�?messageAny�?
     const normalizedMessageAny = normalizedMessage as any;
     const isTextMessage = normalizedMessageAny.type === "TextMessage";
     const isToolCallSummaryMessage =
       normalizedMessageAny.type === "ToolCallSummaryMessage";
 
-    // 判断是否是历史消息（没有 start_flag 或 metadata.is_save === "yes"）
+    // 判断是否是历史消息（没有 start_flag �?metadata.is_save === "yes"�?
     const isHistoricalMessage =
       !startFlagValue ||
       normalizedMessage.metadata?.is_save === "yes" ||
       normalizedMessage.metadata?.internal === "yes";
 
-    // 对于 TextMessage 类型的历史消息，直接显示 source badge；对于流式消息，需要 start_flag 判断
+    // 对于 TextMessage 类型的历史消息，直接显示 source badge；对于流式消息，需�?start_flag 判断
     const shouldShowSourceBadge = !isUser && !isUserProxy && (
       (isTextMessage && isHistoricalMessage) || isStartFlagActive
     );

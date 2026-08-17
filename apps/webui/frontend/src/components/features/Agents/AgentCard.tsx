@@ -1,5 +1,6 @@
 import { Network, Pencil, X, Star } from "lucide-react";
 import React from "react";
+import { Tooltip } from "antd";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { useLang } from "../../../i18n/useLang";
 import { getLocalizedDescription } from "../../utils";
@@ -172,23 +173,27 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
               </div>
             )}
 
-            {agent.onSetDefault && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  agent.onSetDefault?.(agent.id);
-                }}
+                        {agent.onSetDefault && (
+              <Tooltip
                 title={agent.is_user_default ? t("agentsquare.currentDefault") : t("agentsquare.setAsDefault")}
-                aria-label={agent.is_user_default ? t("agentsquare.currentDefault") : t("agentsquare.setAsDefault")}
-                className={`${TOP_ICON_BUTTON_BASE} absolute right-0 top-0 transition-transform ${(agent.mode === "remote" || agent.mode === "custom") && agent.onRemove ? "group-hover:-translate-x-8" : ""
-                  } ${agent.is_user_default ? STAR_BUTTON_ACTIVE : STAR_BUTTON_IDLE}`}
+                placement="top"
               >
-                <Star
-                  className="h-4 w-4"
-                  fill={agent.is_user_default ? "currentColor" : "none"}
-                />
-              </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    agent.onSetDefault?.(agent.id);
+                  } }
+                  aria-label={agent.is_user_default ? t("agentsquare.currentDefault") : t("agentsquare.setAsDefault")}
+                  className={`${TOP_ICON_BUTTON_BASE} absolute right-0 top-0 transition-transform ${(agent.mode === "remote" || agent.mode === "custom") && agent.onRemove ? "group-hover:-translate-x-8" : ""
+                    } ${agent.is_user_default ? STAR_BUTTON_ACTIVE : STAR_BUTTON_IDLE}`}
+                >
+                  <Star
+                    className="h-4 w-4"
+                    fill={agent.is_user_default ? "currentColor" : "none"}
+                  />
+                </button>
+              </Tooltip>
             )}
           </div>
         )}
