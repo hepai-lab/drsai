@@ -26,6 +26,7 @@ import {
   parseAgentRunSseFileEvents,
 } from "./sseParser";
 import { expectRuntimeSessionBind, listThreads, rememberRuntimeSessionOwner, updateThread, upsertThreadFromRun } from "./threads";
+import { sanitizeDesktopThreadTitle } from "../api/threadSidebarCatalog";
 import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { recordAgentTelemetry } from "./agentTelemetry";
@@ -168,6 +169,7 @@ interface ChatTurnRecord {
   requestId: string;
   sessionId: string;
   runId?: string;
+  runtimeSessionId?: string;
   phase: "pending" | "running" | "cancelling";
   cancelRequested: boolean;
   controller: AbortController;
@@ -1069,7 +1071,7 @@ async function runChat(
       recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt, requestId, runId: chatTurns.get(requestId)?.runtime?.runId ?? runId });
       await upsertThreadFromRun({ id: sessionId, kind: "chat", title: deriveThreadTitle(request.messages),
         workspacePath: request.workspacePath, boundAgentId, boundAgentName, lastRunId: chatTurns.get(requestId)?.runtime?.runId ?? runId,
-        lastRequestId: requestId, status: "idle", messageCount: request.messages.length });
+        lastRequestId: requestId, runtimeSessionId: chatTurns.get(requestId)?.runtimeSessionId, status: "idle", messageCount: request.messages.length });
       // OAEP event.run.* is the only Runtime terminal source. The shared
       // projector already sent the terminal Structured Event.
       structuredTerminalRequests.delete(requestId);
@@ -1215,6 +1217,7 @@ async function runChat(
       boundAgentName,
       lastRunId: chatTurns.get(requestId)?.runtime?.runId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
+      runtimeSessionId: chatTurns.get(requestId)?.runtimeSessionId,
       status: "idle",
       messageCount: request.messages.length,
     });
@@ -1251,6 +1254,7 @@ async function runChat(
       boundAgentName,
       lastRunId: authoritativeRuntimeRunId ?? (isCodexBackend ? undefined : runId),
       lastRequestId: requestId,
+      runtimeSessionId: chatTurns.get(requestId)?.runtimeSessionId,
       status: controller.signal.aborted && controller.signal.reason !== "timeout" ? "idle" : "error",
       messageCount: request.messages.length,
     });
@@ -1767,6 +1771,8 @@ async function runRuntimeBackendChat(
     });
     runtimeSessionId = (await client.createSession(resolved.workspaceId, title)).session_id;
     rememberRuntimeSessionOwner(displaySessionId, runtimeSessionId);
+    const turn = chatTurns.get(requestId);
+    if (turn) turn.runtimeSessionId = runtimeSessionId;
     await upsertThreadFromRun({
       id: displaySessionId,
       kind: "chat",
@@ -1778,6 +1784,8 @@ async function runRuntimeBackendChat(
     });
   } else {
     rememberRuntimeSessionOwner(displaySessionId, runtimeSessionId);
+    const turn = chatTurns.get(requestId);
+    if (turn) turn.runtimeSessionId = runtimeSessionId;
   }
   controller.signal.throwIfAborted();
   bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
@@ -2312,7 +2320,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function deriveThreadTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((message) => message.role === "user");
-  return firstUser?.content.trim().slice(0, 80) || "New chat";
+  return sanitizeDesktopThreadTitle(firstUser?.content) || "New chat";
 }
 
 function isPlatformBearerAuth(auth: AuthContext): auth is AuthContext & { accessToken: string } {

@@ -74,7 +74,61 @@ export function shouldMaterializeCatalogThread(input: {
 function sameWorkspace(left?: string, right?: string): boolean {
   const a = comparableWorkspacePath(left);
   const b = comparableWorkspacePath(right);
-  return !a || !b || a === b;
+  if (!a || !b) return false;
+  return a === b;
+}
+
+const MAX_SIDEBAR_TITLE_CHARS = 120;
+
+/** Single title form for Desktop rows, pending binds, and Runtime catalog matching. */
+export function sanitizeDesktopThreadTitle(title: string | undefined): string {
+  return normalizeCatalogTitle(title).slice(0, MAX_SIDEBAR_TITLE_CHARS);
+}
+
+export function normalizeCatalogTitle(title: string | undefined): string {
+  return String(title ?? "").replace(/\s+/g, " ").trim();
+}
+
+/** Desktop sanitizes newlines to spaces and truncates; Runtime catalog keeps the raw prompt. */
+export function catalogTitlesLikelySame(left: string | undefined, right: string | undefined): boolean {
+  const a = normalizeCatalogTitle(left);
+  const b = normalizeCatalogTitle(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 16) return false;
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+function sameCreatedAt(left?: string, right?: string): boolean {
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const a = Date.parse(left);
+  const b = Date.parse(right);
+  return Number.isFinite(a) && a === b;
+}
+
+function compareCatalogRecency(left: DesktopThread, right: DesktopThread): number {
+  const byTime = (right.updatedAt || "").localeCompare(left.updatedAt || "");
+  return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
+}
+
+function bindCatalogOrphan(thread: DesktopThread, orphan: DesktopThread): DesktopThread {
+  return {
+    ...preferDesktopThread(thread, orphan),
+    runtimeSessionId: effectiveRuntimeSessionId(thread) || effectiveRuntimeSessionId(orphan) || orphan.id,
+  };
+}
+
+function takeMatchingOrphan(
+  thread: DesktopThread,
+  catalog: readonly DesktopThread[],
+  consumed: Set<string>,
+  matches: (item: DesktopThread) => boolean,
+): DesktopThread | undefined {
+  const orphan = catalog.find((item) => !consumed.has(item.id) && matches(item));
+  if (!orphan) return undefined;
+  consumed.add(orphan.id);
+  return orphan;
 }
 
 /** Collapse Desktop thread-* rows and Runtime session-* orphans to one sidebar entry. */
@@ -92,26 +146,63 @@ export function canonicalizeSidebarThreads(threads: readonly DesktopThread[]): D
     !isDesktopThreadId(thread.id) && !(isRuntimeCatalogSessionId(thread.id) && thread.sourceChannel !== "wechat"));
   const consumed = new Set<string>();
 
-  const mergedDesktop = desktop.map((thread) => {
+  const bindUnbound = (
+    current: DesktopThread[],
+    matches: (thread: DesktopThread, item: DesktopThread) => boolean,
+  ): DesktopThread[] => current.map((thread) => {
+    if (effectiveRuntimeSessionId(thread)) return thread;
+    const orphan = takeMatchingOrphan(thread, catalog, consumed, (item) => matches(thread, item));
+    return orphan ? bindCatalogOrphan(thread, orphan) : thread;
+  });
+
+  // Bind by Runtime session id first. Title matching is order-sensitive when the
+  // user retries the same prompt, which made the workspace tree jump 6/9/12.
+  const sessionBound = desktop.map((thread) => {
     const sessionId = effectiveRuntimeSessionId(thread);
     const bySession = sessionId
-      ? catalog.find((item) => item.id === sessionId || effectiveRuntimeSessionId(item) === sessionId)
+      ? takeMatchingOrphan(thread, catalog, consumed, (item) =>
+        item.id === sessionId || effectiveRuntimeSessionId(item) === sessionId)
       : undefined;
-    const byTitle = catalog.find((item) =>
-      !consumed.has(item.id)
-      && item.title === thread.title
-      && sameWorkspace(item.workspacePath, thread.workspacePath));
-    const orphan = bySession && !consumed.has(bySession.id) ? bySession : byTitle;
-    if (!orphan) return {
+    if (!bySession) return {
       ...thread,
       ...(sessionId ? { runtimeSessionId: sessionId } : { runtimeSessionId: undefined }),
     };
-    consumed.add(orphan.id);
-    return {
-      ...preferDesktopThread(thread, orphan),
-      runtimeSessionId: sessionId || effectiveRuntimeSessionId(orphan) || orphan.id,
-    };
+    return bindCatalogOrphan(thread, bySession);
   });
 
-  return [...mergedDesktop, ...catalog.filter((item) => !consumed.has(item.id)), ...rest];
+  // Historical Desktop rows stored thread-* as runtimeSessionId and never bound.
+  // Runtime catalog copies the Desktop createdAt, so that pair is unambiguous.
+  const createdAtBound = bindUnbound(sessionBound, (thread, item) =>
+    sameWorkspace(item.workspacePath, thread.workspacePath) && sameCreatedAt(item.createdAt, thread.createdAt));
+
+  // Desktop titles collapse newlines; catalog titles keep the raw prompt. Pair
+  // remaining orphans 1:1 by recency so repeated prompts stay separate chats.
+  const unboundDesktop = createdAtBound
+    .map((thread, index) => ({ thread, index }))
+    .filter(({ thread }) => !effectiveRuntimeSessionId(thread) && thread.title)
+    .sort((left, right) => compareCatalogRecency(left.thread, right.thread));
+  const remainingCatalog = catalog.filter((item) => !consumed.has(item.id)).sort(compareCatalogRecency);
+  const mergedDesktop = [...createdAtBound];
+  for (const { thread, index } of unboundDesktop) {
+    const orphan = remainingCatalog.find((item) =>
+      !consumed.has(item.id)
+      && sameWorkspace(item.workspacePath, thread.workspacePath)
+      && catalogTitlesLikelySame(item.title, thread.title));
+    if (!orphan) continue;
+    consumed.add(orphan.id);
+    mergedDesktop[index] = bindCatalogOrphan(thread, orphan);
+  }
+
+  const leftoverCatalog = catalog.filter((item) => {
+    if (consumed.has(item.id)) return false;
+    const ghost = mergedDesktop.some((thread) =>
+      catalogTitlesLikelySame(thread.title, item.title)
+      && (sameWorkspace(thread.workspacePath, item.workspacePath) || !comparableWorkspacePath(item.workspacePath)));
+    if (!ghost) return true;
+    // Keep an unmatched Runtime-only chat that actually has history. Empty
+    // catalog rows next to a Desktop prompt are bootstrap ghosts.
+    return (item.messageCount ?? 0) > 0;
+  });
+
+  return [...mergedDesktop, ...leftoverCatalog, ...rest];
 }

@@ -995,7 +995,10 @@ function AuthenticatedApp({
     };
   }, []);
   useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
-    if (deletedThreadIdsRef.current.has(event.thread.id)) return;
+    if (
+      deletedThreadIdsRef.current.has(event.thread.id)
+      || (event.thread.runtimeSessionId && deletedThreadIdsRef.current.has(event.thread.runtimeSessionId))
+    ) return;
     setThreads((current) => boundThreadCatalogForRenderer(
       canonicalizeSidebarThreads([event.thread, ...current]),
       {
@@ -2260,11 +2263,15 @@ function AuthenticatedApp({
   }
 
   async function handleDeleteThread(threadId: string): Promise<void> {
-    deletedThreadIdsRef.current.add(threadId);
     const thread = threads.find((item) => item.id === threadId);
+    deletedThreadIdsRef.current.add(threadId);
+    if (thread?.runtimeSessionId) deletedThreadIdsRef.current.add(thread.runtimeSessionId);
     const wasActive = activeThreadId === threadId;
     // Optimistic sidebar removal so the row disappears before persistence finishes.
-    setThreads((current) => current.filter((item) => item.id !== threadId));
+    setThreads((current) => current.filter((item) =>
+      item.id !== threadId
+      && item.runtimeSessionId !== threadId
+      && !(thread?.runtimeSessionId && (item.id === thread.runtimeSessionId || item.runtimeSessionId === thread.runtimeSessionId))));
     threadSnapshotStore.delete(threadId);
     setThreadHydrationError((current) => (current?.threadId === threadId ? null : current));
     try {
@@ -2283,6 +2290,7 @@ function AuthenticatedApp({
       } catch (persistError) {
         console.error("[handleDeleteThread] persist failed", threadId, persistError);
         deletedThreadIdsRef.current.delete(threadId);
+        if (thread?.runtimeSessionId) deletedThreadIdsRef.current.delete(thread.runtimeSessionId);
         await refreshThreads().catch(() => undefined);
         const detail = persistError instanceof Error ? persistError.message : String(persistError);
         void showAppNotice({
@@ -2434,7 +2442,9 @@ function AuthenticatedApp({
       )).map((thread) => thread.id));
       workspaceThreadOffsetRef.current = 50;
       setWorkspaceThreadsHasMore(catalog.filter((thread) => !thread.archived && !protectedIds.has(thread.id)).length === 50);
-      setThreads(catalog.filter((thread) => !deletedThreadIdsRef.current.has(thread.id)));
+      setThreads(sortThreadsForSidebar(canonicalizeSidebarThreads(catalog.filter((thread) =>
+        !deletedThreadIdsRef.current.has(thread.id)
+        && !(thread.runtimeSessionId && deletedThreadIdsRef.current.has(thread.runtimeSessionId))))));
     } finally {
       setThreadsLoaded(true);
     }

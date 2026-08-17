@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -140,6 +140,117 @@ try {
   assert.equal(collapsed.length, 1, "Sidebar canonicalization must keep one row for a Desktop chat and its Runtime session.");
   assert.equal(collapsed[0]?.id, "thread-live-e");
   assert.equal(collapsed[0]?.runtimeSessionId, "session-live-orphan");
+
+  const duplicatePrompt = (id: string, kind: "thread" | "session", updatedAt: string) => ({
+    id,
+    kind: "chat" as const,
+    title: "请分析这张 OpenDrSai",
+    workspacePath: root,
+    createdAt: "2026-08-17T07:50:00.000Z",
+    updatedAt,
+    runtimeSessionId: kind === "session" ? id : undefined,
+    status: "idle" as const,
+  });
+  const duplicateDesktop = [
+    duplicatePrompt("thread-dup-a", "thread", "2026-08-17T07:58:00.000Z"),
+    duplicatePrompt("thread-dup-b", "thread", "2026-08-17T07:57:00.000Z"),
+    duplicatePrompt("thread-dup-c", "thread", "2026-08-17T07:56:00.000Z"),
+  ];
+  const duplicateSessions = [
+    duplicatePrompt("session-dup-a", "session", "2026-08-17T07:58:01.000Z"),
+    duplicatePrompt("session-dup-b", "session", "2026-08-17T07:57:01.000Z"),
+    duplicatePrompt("session-dup-c", "session", "2026-08-17T07:56:01.000Z"),
+  ];
+  const collapsedDuplicates = canonicalizeSidebarThreads([...duplicateSessions, ...duplicateDesktop]);
+  const collapsedDuplicatesReversed = canonicalizeSidebarThreads([...duplicateDesktop, ...duplicateSessions].reverse());
+  assert.equal(collapsedDuplicates.length, 3, "Repeated prompts must not create a second Runtime row per Desktop chat.");
+  assert.equal(collapsedDuplicatesReversed.length, 3, "Sidebar duplicate collapse must not depend on catalog arrival order.");
+  assert.deepEqual(collapsedDuplicates.map((thread) => thread.id).sort(), ["thread-dup-a", "thread-dup-b", "thread-dup-c"]);
+
+  const desktopPrompt = {
+    id: "thread-title-mismatch",
+    kind: "chat" as const,
+    title: "请生成一张 16:9 横版科技插图，主题是“OpenDrSai Agent Runtime”。",
+    workspacePath: root,
+    createdAt: "2026-08-17T07:52:20.772257+00:00",
+    updatedAt: "2026-08-17T07:53:35.564Z",
+    runtimeSessionId: "thread-title-mismatch",
+    status: "idle" as const,
+    messageCount: 4,
+  };
+  const catalogPrompt = {
+    id: "session-title-mismatch",
+    kind: "chat" as const,
+    title: "请生成一张 16:9 横版科技插图，主题是“OpenDrSai Agent Runtime”。\n\n画面要求：\n- 深蓝色背景；\n- 画面中央是一个发光的智能体核",
+    workspacePath: root,
+    createdAt: "2026-08-17T07:52:20.772257+00:00",
+    updatedAt: "2026-08-17T07:57:23.394242+00:00",
+    runtimeSessionId: "session-title-mismatch",
+    status: "idle" as const,
+    messageCount: 0,
+  };
+  const collapsedPrompt = canonicalizeSidebarThreads([catalogPrompt, desktopPrompt]);
+  assert.equal(collapsedPrompt.length, 1, "Desktop and Runtime rows for the same send must collapse even when titles keep different newlines.");
+  assert.equal(collapsedPrompt[0]?.id, "thread-title-mismatch");
+  assert.equal(collapsedPrompt[0]?.runtimeSessionId, "session-title-mismatch");
+
+  const invalidBinding = threads.migrateInvalidRuntimeSessionBinding({
+    id: "thread-invalid-session",
+    kind: "chat",
+    title: "x",
+    workspacePath: root,
+    createdAt: "2026-08-17T08:00:00.000Z",
+    updatedAt: "2026-08-17T08:00:00.000Z",
+    runtimeSessionId: "thread-invalid-session",
+    status: "idle",
+  });
+  assert.equal(invalidBinding.runtimeSessionId, undefined, "Desktop rows must never keep thread-* as runtimeSessionId.");
+
+  const persistedDuplicate = await threads.upsertThreadFromRuntimeCatalog({
+    id: "session-persisted-dup",
+    title: "请生成一张 16:9 横版科技插图，主题是“OpenDrSai Agent Runtime”。\n\n画面要求：",
+    workspacePath: root,
+    runtimeSessionId: "session-persisted-dup",
+    createdAt: "2026-08-17T08:01:00.000Z",
+    updatedAt: "2026-08-17T08:01:00.000Z",
+    archived: false,
+    messageCount: 0,
+  });
+  assert.equal(persistedDuplicate.thread.id, "session-persisted-dup");
+  const desktopOwner = await threads.createThread({
+    kind: "chat",
+    title: "请生成一张 16:9 横版科技插图，主题是“OpenDrSai Agent Runtime”。",
+    workspacePath: root,
+  });
+  // Simulate the historical bad row: Desktop kept thread-* as runtimeSessionId
+  // while Runtime catalog inserted a sibling session-* with the same createdAt.
+  const raw = JSON.parse(await readFile(join(root, "desktop", "threads.json"), "utf8"));
+  for (const row of raw) {
+    if (row.id === desktopOwner.id) {
+      row.createdAt = "2026-08-17T08:01:00.000Z";
+      row.updatedAt = "2026-08-17T08:01:30.000Z";
+      row.runtimeSessionId = desktopOwner.id;
+      row.messageCount = 2;
+    }
+  }
+  await writeFile(join(root, "desktop", "threads.json"), JSON.stringify(raw));
+  const afterMigration = await threads.listThreads();
+  assert.equal(
+    afterMigration.filter((thread) =>
+      thread.id === desktopOwner.id
+      || thread.id === "session-persisted-dup"
+      || thread.runtimeSessionId === "session-persisted-dup").length,
+    1,
+    "Reading threads.json must permanently merge Desktop/Runtime duplicates and bind the real session id.",
+  );
+  assert.equal(
+    afterMigration.find((thread) => thread.id === desktopOwner.id)?.runtimeSessionId,
+    "session-persisted-dup",
+  );
+  const persistedAfterMerge = JSON.parse(await readFile(join(root, "desktop", "threads.json"), "utf8"));
+  assert.equal(persistedAfterMerge.filter((thread) => thread.id === "session-persisted-dup").length, 0);
+  assert.equal(persistedAfterMerge.find((thread) => thread.id === desktopOwner.id)?.runtimeSessionId, "session-persisted-dup");
+
   assert.equal(shouldMaterializeCatalogThread({ mode: "live" }), false, "Live catalog must not invent a Desktop chat row.");
   assert.equal(shouldMaterializeCatalogThread({ mode: "live", ownerThreadId: "thread-live-e" }), true);
   assert.equal(shouldMaterializeCatalogThread({ mode: "live", sourceChannel: "wechat" }), true);
@@ -184,6 +295,88 @@ try {
     messageCount: 0,
   });
   assert.equal(catalogZero.thread.messageCount, 2, "Runtime catalog 0 must not wipe a Desktop messageCount.");
+
+  const doomed = await threads.createThread({ kind: "chat", title: "resurrect-me", workspacePath: root });
+  await threads.updateThread({ id: doomed.id, runtimeSessionId: "session-resurrect-me", messageCount: 1 });
+  assert.equal(await threads.deleteThread(doomed.id), true);
+  const resurrect = await threads.upsertThreadFromRuntimeCatalog({
+    id: "session-resurrect-me",
+    title: "resurrect-me",
+    workspacePath: root,
+    runtimeSessionId: "session-resurrect-me",
+    archived: false,
+    messageCount: 4,
+  });
+  assert.equal(resurrect.changed, false, "Runtime catalog bootstrap must not resurrect a deleted conversation.");
+  assert.equal(
+    (await threads.listThreads()).some((thread) =>
+      thread.id === doomed.id || thread.id === "session-resurrect-me" || thread.runtimeSessionId === "session-resurrect-me"),
+    false,
+    "Deleted conversations must stay out of the sidebar after Runtime catalog sync.",
+  );
+  const resurrectionTombstones = JSON.parse(await readFile(deletedPath, "utf8"));
+  assert.ok(resurrectionTombstones.includes(doomed.id), "deleteThread must tombstone the Desktop thread id.");
+  assert.ok(resurrectionTombstones.includes("session-resurrect-me"), "deleteThread must tombstone the Runtime session id.");
+
+  const liveKeep = await threads.createThread({ kind: "chat", title: "keep-me", workspacePath: root });
+  await threads.updateThread({ id: liveKeep.id, runtimeSessionId: "session-keep-me", messageCount: 2 });
+  const batch = await threads.upsertThreadsFromRuntimeCatalog([
+    {
+      id: "session-resurrect-me",
+      title: "resurrect-me",
+      workspacePath: root,
+      runtimeSessionId: "session-resurrect-me",
+      archived: false,
+      messageCount: 9,
+    },
+    {
+      id: "session-keep-me",
+      title: "keep-me",
+      workspacePath: root,
+      runtimeSessionId: "session-keep-me",
+      archived: false,
+      messageCount: 2,
+    },
+    {
+      id: "session-fresh-import",
+      title: "fresh-import",
+      workspacePath: root,
+      runtimeSessionId: "session-fresh-import",
+      archived: false,
+      messageCount: 1,
+    },
+  ]);
+  assert.equal(batch[0]?.changed, false, "Batch Runtime bootstrap must skip a tombstoned session.");
+  assert.equal(batch[1]?.thread.id, liveKeep.id, "Batch Runtime bootstrap must still bind live Desktop threads.");
+  assert.equal(batch[2]?.changed, true, "Batch Runtime bootstrap must still import sessions the user did not delete.");
+  const afterBatch = await threads.listThreads();
+  assert.equal(afterBatch.some((thread) => thread.id === doomed.id || thread.runtimeSessionId === "session-resurrect-me"), false);
+  assert.equal(afterBatch.some((thread) => thread.id === liveKeep.id), true);
+  assert.equal(afterBatch.some((thread) => thread.id === "session-fresh-import"), true);
+
+  const alreadyResurrected = await threads.upsertThreadFromRuntimeCatalog({
+    id: "session-already-visible",
+    title: "already-visible",
+    workspacePath: root,
+    runtimeSessionId: "session-already-visible",
+    archived: false,
+    messageCount: 1,
+  });
+  assert.equal(alreadyResurrected.thread.id, "session-already-visible");
+  assert.equal(await threads.deleteThread("session-already-visible"), true);
+  assert.equal((await threads.upsertThreadFromRuntimeCatalog({
+    id: "session-already-visible",
+    title: "already-visible",
+    workspacePath: root,
+    runtimeSessionId: "session-already-visible",
+    archived: false,
+    messageCount: 3,
+  })).changed, false);
+  assert.equal(
+    (await threads.listThreads()).some((thread) => thread.id === "session-already-visible"),
+    false,
+    "Deleting a resurrected session-* row must keep it from coming back.",
+  );
 
   console.log("Thread lifecycle and persistence verification passed.");
 } finally {

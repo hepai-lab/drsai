@@ -335,6 +335,9 @@ class DrSaiAgentKernel:
             raise ValueError("run_host_capabilities_invalid")
         if not isinstance(raw_diagnostics, Mapping):
             raise ValueError("run_capability_diagnostics_invalid")
+        artifacts = command.payload.get("artifacts", [])
+        if not isinstance(artifacts, list) or any(not isinstance(value, str) or not value for value in artifacts):
+            raise ValueError("artifacts_invalid")
         raw_blocked = raw_diagnostics.get("blocked", [])
         raw_remote = raw_diagnostics.get("remote_available", [])
         if not isinstance(raw_blocked, list) or not all(isinstance(value, Mapping) for value in raw_blocked):
@@ -491,9 +494,6 @@ class DrSaiAgentKernel:
         prefix = [started]
         if state.lifecycle_state in {"background", "low_memory", "thermal_limited"}:
             prefix.append(self._event(state, "runtime.degraded", {"reason": state.lifecycle_state, "max_parallel_agents": 1}))
-        artifacts = command.payload.get("artifacts", [])
-        if not isinstance(artifacts, list) or any(not isinstance(value, str) or not value for value in artifacts):
-            raise ValueError("artifacts_invalid")
         if artifacts:
             state.phase = RunPhase.WAITING_ARTIFACT
             state.pending_artifacts = {value: {"phase": "describe"} for value in artifacts}
@@ -2055,6 +2055,10 @@ class DrSaiAgentKernel:
             self._event(state, "run.cancelled", {"reason": "user_cancelled"}),
             self._checkpoint(state, "terminal"),
         )
+
+    def active_run_id_for_session(self, session_id: str) -> str | None:
+        active = self._active_run_by_session.get(session_id)
+        return active if isinstance(active, str) and active else None
 
     def snapshot(self, run_id: str) -> dict[str, Any]:
         state = self._runs[run_id]

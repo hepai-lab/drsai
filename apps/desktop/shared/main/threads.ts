@@ -17,7 +17,15 @@ import type {
   UpdateThreadRequest,
 } from "../api/desktopApi";
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
-import { canonicalizeSidebarThreads, isRuntimeCatalogSessionId, resolveBoundDesktopThreadId } from "../api/threadSidebarCatalog";
+import {
+  canonicalizeSidebarThreads,
+  catalogTitlesLikelySame,
+  isDesktopThreadId,
+  isRuntimeCatalogSessionId,
+  resolveBoundDesktopThreadId,
+  effectiveRuntimeSessionId,
+  sanitizeDesktopThreadTitle,
+} from "../api/threadSidebarCatalog";
 import { DRSAI_HOME } from "./paths";
 import { sanitizeStructuredTurnState } from "../api/structuredConversation";
 import { replaceFileSafely } from "./atomicFileReplace";
@@ -90,6 +98,35 @@ async function persistDeletedThreadIds(): Promise<void> {
   await writeAtomicJson(DELETED_THREADS_FILE, ids);
 }
 
+function rememberDeletedThreadIdentity(id: string | undefined): void {
+  if (id && THREAD_ID_PATTERN.test(id) && !/[\r\n]/.test(id)) deletedThreadIds.add(id);
+}
+
+function isDeletedThreadIdentity(id: string | undefined): boolean {
+  return Boolean(id && deletedThreadIds.has(id));
+}
+
+function isTombstonedThread(thread: Pick<DesktopThread, "id" | "runtimeSessionId">): boolean {
+  return isDeletedThreadIdentity(thread.id) || isDeletedThreadIdentity(thread.runtimeSessionId);
+}
+
+function catalogGhostThread(input: RuntimeThreadCatalogEntry, catalogId: string, runtimeSessionId: string): DesktopThread {
+  const now = new Date().toISOString();
+  return {
+    id: catalogId,
+    kind: "chat",
+    title: String(input.title || "New chat").slice(0, MAX_TITLE_CHARS),
+    workspacePath: String(input.workspacePath || "").slice(0, MAX_WORKSPACE_PATH_CHARS),
+    createdAt: validCatalogTimestamp(input.createdAt, now),
+    updatedAt: validCatalogTimestamp(input.updatedAt, now),
+    runtimeSessionId,
+    status: "idle",
+    archived: input.archived,
+    sourceChannel: input.sourceChannel === "wechat" ? "wechat" : undefined,
+    messageCount: Number.isFinite(input.messageCount) ? Math.max(0, Number(input.messageCount)) : undefined,
+  };
+}
+
 export async function listThreads(request?: DesktopThreadListRequest): Promise<DesktopThread[]> {
   if (!staleThreadFilesCleaned) {
     staleThreadFilesCleaned = true;
@@ -98,7 +135,7 @@ export async function listThreads(request?: DesktopThreadListRequest): Promise<D
   await ensureDeletedTombstonesLoaded();
   return serializeJsonMutation(THREADS_FILE, async () => {
     const result = await readThreadsWithMigration();
-    const visible = result.threads.filter((thread) => !deletedThreadIds.has(thread.id));
+    const visible = result.threads.filter((thread) => !isTombstonedThread(thread));
     const removedTombstoned = visible.length !== result.threads.length;
     if (result.migrated || removedTombstoned) await writeThreads(visible);
     const sorted = visible.sort(compareThreads);
@@ -188,7 +225,9 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
   // deleteThread: update can pass the check, wait for the lock, then recreate
   // the row after delete has already removed it from threads.json.
   return serializeJsonMutation(THREADS_FILE, async () => {
-    if (deletedThreadIds.has(request.id)) throwThreadDeleted();
+    if (isDeletedThreadIdentity(request.id) || isDeletedThreadIdentity(request.runtimeSessionId)) {
+      throwThreadDeleted();
+    }
     const threads = await readThreads();
     const now = new Date().toISOString();
     const existing = threads.find((thread) => thread.id === request.id);
@@ -229,7 +268,7 @@ export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
   await ensureDeletedTombstonesLoaded();
   // Durable tombstone first so restart/login cannot resurrect via upsert even if
   // the catalog rewrite loses a race or the process exits mid-delete.
-  deletedThreadIds.add(threadId);
+  rememberDeletedThreadIdentity(threadId);
   try {
     await persistDeletedThreadIds();
   } catch {
@@ -238,8 +277,21 @@ export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
   }
   const deleted = await serializeJsonMutation(THREADS_FILE, async () => {
     const threads = await readThreads();
-    if (!threads.some((thread) => thread.id === threadId)) return false;
-    await writeThreads(threads.filter((thread) => thread.id !== threadId));
+    const existing = threads.find((thread) => thread.id === threadId)
+      ?? threads.find((thread) => thread.runtimeSessionId === threadId);
+    rememberDeletedThreadIdentity(existing?.id);
+    rememberDeletedThreadIdentity(existing?.runtimeSessionId);
+    try {
+      await persistDeletedThreadIds();
+    } catch {
+      // In-process tombstones still block Runtime catalog upsert in this session.
+    }
+    if (!existing) return false;
+    await writeThreads(threads.filter((thread) =>
+      thread.id !== existing.id
+      && thread.id !== existing.runtimeSessionId
+      && thread.runtimeSessionId !== existing.id
+      && !(existing.runtimeSessionId && thread.runtimeSessionId === existing.runtimeSessionId)));
     return true;
   });
   await rm(threadSnapshotPath(threadId), { force: true }).catch(() => undefined);
@@ -260,7 +312,7 @@ export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
 export async function getThreadSnapshot(rawThreadId: unknown): Promise<DesktopThreadSnapshot | null> {
   const threadId = sanitizeThreadId(rawThreadId);
   await ensureDeletedTombstonesLoaded();
-  if (deletedThreadIds.has(threadId)) return null;
+  if (isDeletedThreadIdentity(threadId)) return null;
   const sharded = await readThreadSnapshotShard(threadId);
   if (sharded) return sharded;
   // One-time compatibility path for installations created before snapshots
@@ -321,10 +373,10 @@ function createSearchSnippet(content: string, matchIndex: number, matchLength: n
 export async function updateThreadSnapshot(rawRequest: unknown): Promise<DesktopThreadSnapshot> {
   const snapshot = validateThreadSnapshot(rawRequest);
   await ensureDeletedTombstonesLoaded();
-  if (deletedThreadIds.has(snapshot.threadId)) throwThreadDeleted();
+  if (isDeletedThreadIdentity(snapshot.threadId)) throwThreadDeleted();
   const path = threadSnapshotPath(snapshot.threadId);
   return serializeJsonMutation(path, async () => {
-    if (deletedThreadIds.has(snapshot.threadId)) throwThreadDeleted();
+    if (isDeletedThreadIdentity(snapshot.threadId)) throwThreadDeleted();
     await writeThreadSnapshotShard(snapshot);
     return snapshot;
   });
@@ -418,7 +470,7 @@ export function expectRuntimeSessionBind(input: {
 }): void {
   const threadId = sanitizeThreadId(input.threadId);
   const workspacePath = comparableWorkspacePath(input.workspacePath);
-  const title = String(input.title || "New chat").slice(0, MAX_TITLE_CHARS);
+  const title = sanitizeDesktopThreadTitle(input.title) || "New chat";
   const now = Date.now();
   expirePendingRuntimeSessionBinds(now);
   for (let index = pendingRuntimeSessionBinds.length - 1; index >= 0; index -= 1) {
@@ -464,9 +516,10 @@ function claimPendingRuntimeSessionBind(input: {
   const now = Date.now();
   expirePendingRuntimeSessionBinds(now);
   const workspacePath = comparableWorkspacePath(input.workspacePath);
-  const title = String(input.title || "New chat").slice(0, MAX_TITLE_CHARS);
+  const title = sanitizeDesktopThreadTitle(input.title) || "New chat";
   const inWorkspace = pendingRuntimeSessionBinds.filter((pending) => pending.workspacePath === workspacePath);
-  const match = inWorkspace.find((pending) => pending.title === title) ?? (inWorkspace.length === 1 ? inWorkspace[0] : undefined);
+  const match = inWorkspace.find((pending) => catalogTitlesLikelySame(pending.title, title))
+    ?? (inWorkspace.length === 1 ? inWorkspace[0] : undefined);
   if (!match) return undefined;
   const index = pendingRuntimeSessionBinds.indexOf(match);
   if (index >= 0) pendingRuntimeSessionBinds.splice(index, 1);
@@ -484,7 +537,30 @@ export function findDesktopOwnerThreadId(
       title: input.title,
       createdAt: input.createdAt,
       updatedAt: input.updatedAt,
-    });
+    })
+    ?? findUnboundDesktopOwnerThreadId(threads, input);
+}
+
+function findUnboundDesktopOwnerThreadId(
+  threads: DesktopThread[],
+  input: { workspacePath: string; title: string; createdAt?: string; updatedAt?: string },
+): string | undefined {
+  const workspacePath = comparableWorkspacePath(input.workspacePath);
+  const unbound = threads.filter((thread) =>
+    isDesktopThreadId(thread.id)
+    && !effectiveRuntimeSessionId(thread)
+    && comparableWorkspacePath(thread.workspacePath) === workspacePath);
+  const byCreatedAt = input.createdAt
+    ? unbound.find((thread) => thread.createdAt === input.createdAt || (
+      Number.isFinite(Date.parse(thread.createdAt)) && Date.parse(thread.createdAt) === Date.parse(input.createdAt)
+    ))
+    : undefined;
+  if (byCreatedAt) return byCreatedAt.id;
+  if (!isRecentRuntimeCatalogTimestamp(input.createdAt) && !isRecentRuntimeCatalogTimestamp(input.updatedAt)) {
+    return undefined;
+  }
+  const byTitle = unbound.filter((thread) => catalogTitlesLikelySame(thread.title, input.title));
+  return byTitle.length === 1 ? byTitle[0]?.id : undefined;
 }
 
 function resolveRuntimeCatalogThreadId(
@@ -514,6 +590,7 @@ export async function upsertThreadsFromRuntimeCatalog(
   inputs: RuntimeThreadCatalogEntry[],
 ): Promise<Array<{ thread: DesktopThread; changed: boolean }>> {
   const entries = inputs.slice(0, 200).map((input) => ({ ...input, id: sanitizeThreadId(input.id) }));
+  await ensureDeletedTombstonesLoaded();
   return serializeJsonMutation(THREADS_FILE, async () => {
     let threads = await readThreads();
     const now = new Date().toISOString();
@@ -529,10 +606,30 @@ export async function upsertThreadsFromRuntimeCatalog(
         createdAt: input.createdAt,
         updatedAt: input.updatedAt,
       });
+      if (
+        isDeletedThreadIdentity(catalogId)
+        || isDeletedThreadIdentity(input.id)
+        || isDeletedThreadIdentity(runtimeSessionId)
+      ) {
+        const before = threads.length;
+        threads = threads.filter((item) =>
+          !isTombstonedThread(item)
+          && item.id !== catalogId
+          && item.id !== input.id
+          && item.id !== runtimeSessionId
+          && item.runtimeSessionId !== runtimeSessionId);
+        if (threads.length !== before) anyChanged = true;
+        results.push({ thread: catalogGhostThread(input, catalogId, runtimeSessionId), changed: false });
+        continue;
+      }
       const existing = threads.find((thread) => thread.id === catalogId) ?? threads.find((thread) => thread.id === input.id);
-      const createdAt = validCatalogTimestamp(input.createdAt, existing?.createdAt ?? now);
+      // Keep the Desktop thread's createdAt. Overwriting it with the Runtime
+      // timestamp erased the only stable join key when runtimeSessionId was lost.
+      const createdAt = isDesktopThreadId(catalogId)
+        ? (existing?.createdAt ?? validCatalogTimestamp(input.createdAt, now))
+        : validCatalogTimestamp(input.createdAt, existing?.createdAt ?? now);
       const updatedAt = validCatalogTimestamp(input.updatedAt, existing?.updatedAt ?? createdAt);
-      const title = String(input.title || existing?.title || "New chat").slice(0, MAX_TITLE_CHARS);
+      const title = sanitizeDesktopThreadTitle(input.title || existing?.title) || "New chat";
       const workspacePath = String(input.workspacePath || existing?.workspacePath || "").slice(0, MAX_WORKSPACE_PATH_CHARS);
       const archivedAt = input.archived ? existing?.archivedAt ?? updatedAt : undefined;
       const archiveSource = input.archived ? existing?.archiveSource ?? "opendrsai" : undefined;
@@ -605,8 +702,13 @@ async function readThreadsWithMigration(): Promise<{ threads: DesktopThread[]; m
     if (!Array.isArray(parsed)) return { threads: [], migrated: false };
     let migrated = false;
     const threads = retainThreads(parsed.filter(isThread)).map((thread) => {
-      const next = migrateLocalAgentDisplayName(thread);
+      let next = migrateLocalAgentDisplayName(thread);
       if (next !== thread) migrated = true;
+      const cleared = migrateInvalidRuntimeSessionBinding(next);
+      if (cleared !== next) {
+        migrated = true;
+        next = cleared;
+      }
       return next;
     });
     const deduped = dedupeRuntimeSessionCatalogDuplicates(threads);
@@ -622,7 +724,19 @@ export function dedupeRuntimeSessionCatalogDuplicates(threads: DesktopThread[]):
   migrated: boolean;
 } {
   const next = canonicalizeSidebarThreads(threads);
-  return { threads: next, migrated: next.length !== threads.length };
+  if (next.length !== threads.length) return { threads: next, migrated: true };
+  const before = new Map(threads.map((thread) => [thread.id, thread.runtimeSessionId ?? ""]));
+  const migrated = next.some((thread) => (before.get(thread.id) ?? "") !== (thread.runtimeSessionId ?? "")
+    || !before.has(thread.id));
+  return { threads: next, migrated };
+}
+
+/** Desktop thread ids must never be stored as Runtime Session ids. */
+export function migrateInvalidRuntimeSessionBinding(thread: DesktopThread): DesktopThread {
+  if (!isDesktopThreadId(thread.id)) return thread;
+  if (!thread.runtimeSessionId || isRuntimeCatalogSessionId(thread.runtimeSessionId)) return thread;
+  const { runtimeSessionId: _invalid, ...rest } = thread;
+  return rest;
 }
 
 export function migrateLocalAgentDisplayName(thread: DesktopThread): DesktopThread {
@@ -1061,7 +1175,7 @@ function sanitizeTitle(title: unknown): string | undefined {
   if (typeof title !== "string") {
     throw new Error("Thread title is invalid.");
   }
-  return title.replace(/[\r\n\u2028\u2029]+/g, " ").trim().slice(0, MAX_TITLE_CHARS) || undefined;
+  return sanitizeDesktopThreadTitle(title) || undefined;
 }
 
 function sanitizeWorkspacePath(path: unknown): string | undefined {

@@ -142,108 +142,148 @@ class DesktopKernelCoordinator:
                     except Exception as cancel_error:
                         raise error from cancel_error
 
-        send(start)
-        while queue:
-            outbound = queue.popleft()
-            if outbound.message_type is MessageType.RUNTIME_EVENT:
-                yield outbound
-            elif outbound.message_type is MessageType.CHECKPOINT_REQUEST:
-                await self._checkpoint(outbound.payload)
-            elif outbound.message_type is MessageType.MODEL_REQUEST:
-                try:
-                    stream = getattr(self._model, "stream", None)
-                    if callable(stream):
-                        result: DesktopModelResult | None = None
-                        async for item in stream(outbound.payload):
-                            if isinstance(item, DesktopModelDelta):
-                                if not item.text:
-                                    continue
-                                # Do not enqueue model chunks behind the still-running
-                                # Provider call. Feed them into the Kernel immediately
-                                # and yield its Runtime Events before requesting the next
-                                # Provider fragment.
-                                commands = self._kernel.handle(response(
-                                    MessageType.MODEL_CHUNK,
-                                    {"delta": item.text},
-                                    "model-chunk",
-                                ))
-                                for command in commands:
-                                    if command.message_type is MessageType.RUNTIME_EVENT:
-                                        yield command
-                                    else:
-                                        queue.append(command)
-                            elif isinstance(item, DesktopModelResult):
-                                if result is not None:
-                                    raise RuntimeError("desktop_model_result_duplicate")
-                                result = item
-                            else:
-                                raise RuntimeError(f"desktop_model_stream_item_invalid:{type(item).__name__}")
-                        if result is None:
-                            raise RuntimeError("desktop_model_result_missing")
-                    else:
-                        # Compatibility for small Host adapters and existing
-                        # extensions that still implement the atomic ModelPort.
-                        result = await self._model(outbound.payload)
-                except Exception as error:
-                    # The model port is the last layer that still owns the SDK
-                    # exception (including HTTP status and provider response
-                    # body). Preserve that diagnostic text across the compact
-                    # Kernel protocol, redacting credential values only.
-                    send(response(MessageType.MODEL_FAILED, {
-                        "code": type(error).__name__,
-                        "message": redact_credentials(str(error)).strip() or type(error).__name__,
-                        "retryable": False,
-                    }, "model-failed"))
-                    continue
-                # Atomic ModelPorts can still return buffered deltas. Production
-                # Desktop uses ``stream`` above and therefore reaches the UI as
-                # each Provider fragment arrives.
-                for delta in result.deltas:
-                    send(response(MessageType.MODEL_CHUNK, {"delta": delta}, "model-chunk"))
-                send(response(MessageType.MODEL_COMPLETED, {
-                    "content": result.content or "".join(result.deltas),
-                    "tool_calls": [dict(value) for value in result.tool_calls],
-                    "finish_reason": result.finish_reason,
-                    "reasoning_summary": result.reasoning_summary,
-                }, "model-completed"))
-            elif outbound.message_type is MessageType.TOOL_CALL_REQUEST:
-                result = await self._tool(outbound.payload)
-                if result.call_id != outbound.payload.get("call_id"):
-                    raise RuntimeError("desktop_tool_call_identity_mismatch")
-                send(response(MessageType.TOOL_RESULT, {
-                    "call_id": result.call_id,
-                    "succeeded": result.succeeded,
-                    "content": dict(result.content),
-                    "error_code": result.error_code,
-                    "artifact_ids": list(result.artifact_ids),
-                    "artifacts": [dict(value) for value in result.artifacts],
-                    **({"inspection": dict(result.inspection)} if result.inspection is not None else {}),
-                }, f"tool-result:{result.call_id}"))
-            elif outbound.message_type is MessageType.APPROVAL_REQUEST:
-                if self._approval is None:
-                    raise RuntimeError("desktop_approval_port_unavailable")
-                result = await self._approval(outbound.payload)
-                if result.approval_id != outbound.payload.get("approval_id"):
-                    raise RuntimeError("desktop_approval_identity_mismatch")
-                if result.call_id != outbound.payload.get("call_id"):
-                    raise RuntimeError("desktop_approval_call_identity_mismatch")
-                if result.decision not in {"approved", "rejected"}:
-                    raise RuntimeError("desktop_approval_decision_invalid")
-                send(response(MessageType.APPROVAL_RESULT, {
-                    "approval_id": result.approval_id,
-                    "call_id": result.call_id,
-                    "decision": result.decision,
-                }, f"approval-result:{result.approval_id}"))
-            elif outbound.message_type is MessageType.ARTIFACT_REQUEST:
-                if self._artifact is None:
-                    raise RuntimeError("desktop_artifact_port_unavailable")
-                result = dict(await self._artifact(outbound.payload))
-                if result.get("artifact_id") != outbound.payload.get("artifact_id"):
-                    raise RuntimeError("desktop_artifact_identity_mismatch")
-                if result.get("operation") != outbound.payload.get("operation"):
-                    raise RuntimeError("desktop_artifact_operation_mismatch")
-                send(response(MessageType.ARTIFACT_RESULT, result, (
-                    f"artifact-result:{result['artifact_id']}:{result['operation']}"
-                )))
-            else:
-                raise RuntimeError(f"desktop_kernel_host_port_unimplemented:{outbound.message_type.value}")
+        release_seq = 0
+
+        def release_session_run(run_id: str) -> None:
+            nonlocal release_seq, inbound_sequence
+            if self._kernel.active_run_id_for_session(start.session_id) != run_id:
+                return
+            release_seq += 1
+            inbound_sequence += 1
+            try:
+                self._kernel.handle(RuntimeEnvelope(
+                    MessageType.CANCEL_RUN,
+                    f"{run_id}:desktop-host:release:{release_seq}",
+                    run_id,
+                    start.session_id,
+                    inbound_sequence,
+                    f"{run_id}:desktop-host:release:{release_seq}",
+                    {},
+                ))
+            except Exception:
+                if self._kernel.active_run_id_for_session(start.session_id) == run_id:
+                    self._kernel._active_run_by_session.pop(start.session_id, None)
+
+        def start_or_replace_stale_session() -> None:
+            try:
+                send(start)
+            except ValueError as error:
+                if str(error) != "session_run_already_active":
+                    raise
+                stale = self._kernel.active_run_id_for_session(start.session_id)
+                if stale is None or stale == start.run_id:
+                    raise
+                # A previous Desktop turn can leave the shared Kernel session
+                # locked after a Host exception or a UI stop that never reached
+                # CANCEL_RUN. The next user message must replace that stale Run.
+                release_session_run(stale)
+                send(start)
+
+        try:
+            start_or_replace_stale_session()
+            while queue:
+                outbound = queue.popleft()
+                if outbound.message_type is MessageType.RUNTIME_EVENT:
+                    yield outbound
+                elif outbound.message_type is MessageType.CHECKPOINT_REQUEST:
+                    await self._checkpoint(outbound.payload)
+                elif outbound.message_type is MessageType.MODEL_REQUEST:
+                    try:
+                        stream = getattr(self._model, "stream", None)
+                        if callable(stream):
+                            result: DesktopModelResult | None = None
+                            async for item in stream(outbound.payload):
+                                if isinstance(item, DesktopModelDelta):
+                                    if not item.text:
+                                        continue
+                                    # Do not enqueue model chunks behind the still-running
+                                    # Provider call. Feed them into the Kernel immediately
+                                    # and yield its Runtime Events before requesting the next
+                                    # Provider fragment.
+                                    commands = self._kernel.handle(response(
+                                        MessageType.MODEL_CHUNK,
+                                        {"delta": item.text},
+                                        "model-chunk",
+                                    ))
+                                    for command in commands:
+                                        if command.message_type is MessageType.RUNTIME_EVENT:
+                                            yield command
+                                        else:
+                                            queue.append(command)
+                                elif isinstance(item, DesktopModelResult):
+                                    if result is not None:
+                                        raise RuntimeError("desktop_model_result_duplicate")
+                                    result = item
+                                else:
+                                    raise RuntimeError(f"desktop_model_stream_item_invalid:{type(item).__name__}")
+                            if result is None:
+                                raise RuntimeError("desktop_model_result_missing")
+                        else:
+                            # Compatibility for small Host adapters and existing
+                            # extensions that still implement the atomic ModelPort.
+                            result = await self._model(outbound.payload)
+                    except Exception as error:
+                        # The model port is the last layer that still owns the SDK
+                        # exception (including HTTP status and provider response
+                        # body). Preserve that diagnostic text across the compact
+                        # Kernel protocol, redacting credential values only.
+                        send(response(MessageType.MODEL_FAILED, {
+                            "code": type(error).__name__,
+                            "message": redact_credentials(str(error)).strip() or type(error).__name__,
+                            "retryable": False,
+                        }, "model-failed"))
+                        continue
+                    # Atomic ModelPorts can still return buffered deltas. Production
+                    # Desktop uses ``stream`` above and therefore reaches the UI as
+                    # each Provider fragment arrives.
+                    for delta in result.deltas:
+                        send(response(MessageType.MODEL_CHUNK, {"delta": delta}, "model-chunk"))
+                    send(response(MessageType.MODEL_COMPLETED, {
+                        "content": result.content or "".join(result.deltas),
+                        "tool_calls": [dict(value) for value in result.tool_calls],
+                        "finish_reason": result.finish_reason,
+                        "reasoning_summary": result.reasoning_summary,
+                    }, "model-completed"))
+                elif outbound.message_type is MessageType.TOOL_CALL_REQUEST:
+                    result = await self._tool(outbound.payload)
+                    if result.call_id != outbound.payload.get("call_id"):
+                        raise RuntimeError("desktop_tool_call_identity_mismatch")
+                    send(response(MessageType.TOOL_RESULT, {
+                        "call_id": result.call_id,
+                        "succeeded": result.succeeded,
+                        "content": dict(result.content),
+                        "error_code": result.error_code,
+                        "artifact_ids": list(result.artifact_ids),
+                        "artifacts": [dict(value) for value in result.artifacts],
+                        **({"inspection": dict(result.inspection)} if result.inspection is not None else {}),
+                    }, f"tool-result:{result.call_id}"))
+                elif outbound.message_type is MessageType.APPROVAL_REQUEST:
+                    if self._approval is None:
+                        raise RuntimeError("desktop_approval_port_unavailable")
+                    result = await self._approval(outbound.payload)
+                    if result.approval_id != outbound.payload.get("approval_id"):
+                        raise RuntimeError("desktop_approval_identity_mismatch")
+                    if result.call_id != outbound.payload.get("call_id"):
+                        raise RuntimeError("desktop_approval_call_identity_mismatch")
+                    if result.decision not in {"approved", "rejected"}:
+                        raise RuntimeError("desktop_approval_decision_invalid")
+                    send(response(MessageType.APPROVAL_RESULT, {
+                        "approval_id": result.approval_id,
+                        "call_id": result.call_id,
+                        "decision": result.decision,
+                    }, f"approval-result:{result.approval_id}"))
+                elif outbound.message_type is MessageType.ARTIFACT_REQUEST:
+                    if self._artifact is None:
+                        raise RuntimeError("desktop_artifact_port_unavailable")
+                    result = dict(await self._artifact(outbound.payload))
+                    if result.get("artifact_id") != outbound.payload.get("artifact_id"):
+                        raise RuntimeError("desktop_artifact_identity_mismatch")
+                    if result.get("operation") != outbound.payload.get("operation"):
+                        raise RuntimeError("desktop_artifact_operation_mismatch")
+                    send(response(MessageType.ARTIFACT_RESULT, result, (
+                        f"artifact-result:{result['artifact_id']}:{result['operation']}"
+                    )))
+                else:
+                    raise RuntimeError(f"desktop_kernel_host_port_unimplemented:{outbound.message_type.value}")
+        finally:
+            release_session_run(start.run_id)

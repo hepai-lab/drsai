@@ -575,6 +575,18 @@ def test_invalid_phase_and_parallel_session_run_are_rejected() -> None:
                 {"input": "again", "model_id": "model-1"},
             )
         )
+    assert core.active_run_id_for_session("session-1") == "run-1"
+
+
+def test_invalid_artifacts_do_not_lock_session() -> None:
+    core = create_mobile_agent_core()
+    with pytest.raises(ValueError, match="artifacts_invalid"):
+        core.handle(command(MessageType.START_RUN, 0, {
+            "input": "hello", "model_id": "model-1", "artifacts": [""],
+        }))
+    assert core.active_run_id_for_session("session-1") is None
+    started = core.handle(command(MessageType.START_RUN, 1, {"input": "hello", "model_id": "model-1"}))
+    assert started[0].payload["kind"] == "run.started"
 
 
 def test_high_risk_tool_waits_for_approval_before_host_execution() -> None:

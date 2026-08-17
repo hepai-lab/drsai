@@ -15,8 +15,15 @@ from drsai.backend.runtime.desktop_kernel_coordinator import (
 from drsai.backend.runtime.mobile_core import MessageType, RuntimeEnvelope
 
 
-def _start(*, input_text: str = "hello", tools: list[dict] | None = None, artifacts: list[str] | None = None) -> RuntimeEnvelope:
-    return RuntimeEnvelope(MessageType.START_RUN, "request-0", "run-1", "session-1", 0, "start", {
+def _start(
+    *,
+    input_text: str = "hello",
+    tools: list[dict] | None = None,
+    artifacts: list[str] | None = None,
+    run_id: str = "run-1",
+    session_id: str = "session-1",
+) -> RuntimeEnvelope:
+    return RuntimeEnvelope(MessageType.START_RUN, f"{run_id}:request-0", run_id, session_id, 0, f"{run_id}:start", {
         "input": input_text,
         "model_id": "model",
         "tools": tools or [],
@@ -279,3 +286,61 @@ async def test_desktop_coordinator_preserves_provider_body_but_redacts_credentia
     assert failure["message"].endswith("access_token=[REDACTED] tail")
     assert "unsupported field" in failure["message"]
     assert "private-token" not in failure["message"]
+
+
+@pytest.mark.asyncio
+async def test_desktop_coordinator_releases_session_after_host_tool_failure() -> None:
+    kernel = create_agent_kernel(surface="desktop")
+
+    async def model(_payload):
+        return DesktopModelResult(tool_calls=({
+            "call_id": "clock-1", "name": "clock", "arguments": {},
+        },))
+
+    async def tool(_payload):
+        raise RuntimeError("tool exploded")
+
+    async def checkpoint(_payload):
+        return None
+
+    coordinator = DesktopKernelCoordinator(
+        kernel, model=model, tool=tool, checkpoint=checkpoint,
+    )
+    with pytest.raises(RuntimeError, match="tool exploded"):
+        _ = [event async for event in coordinator.execute(_start(tools=[_tool("clock")]))]
+    assert kernel.active_run_id_for_session("session-1") is None
+
+    async def followup_model(_payload):
+        return DesktopModelResult(content="ok")
+
+    async def unused(_payload):
+        raise AssertionError("follow-up turn must not call tools")
+
+    followup = DesktopKernelCoordinator(
+        kernel, model=followup_model, tool=unused, checkpoint=checkpoint,
+    )
+    events = [event async for event in followup.execute(_start(run_id="run-2"))]
+    assert events[-1].payload["kind"] == "run.completed"
+
+
+@pytest.mark.asyncio
+async def test_desktop_coordinator_replaces_stale_session_run_on_next_turn() -> None:
+    kernel = create_agent_kernel(surface="desktop")
+    kernel.handle(_start())
+    assert kernel.active_run_id_for_session("session-1") == "run-1"
+
+    async def model(_payload):
+        return DesktopModelResult(content="ok")
+
+    async def unused(_payload):
+        raise AssertionError
+
+    async def checkpoint(_payload):
+        return None
+
+    coordinator = DesktopKernelCoordinator(
+        kernel, model=model, tool=unused, checkpoint=checkpoint,
+    )
+    events = [event async for event in coordinator.execute(_start(run_id="run-2"))]
+    assert events[-1].payload["kind"] == "run.completed"
+    assert kernel.active_run_id_for_session("session-1") is None
