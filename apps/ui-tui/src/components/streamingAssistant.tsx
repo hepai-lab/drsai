@@ -308,11 +308,15 @@ export function StreamingAssistant() {
   //     instead of log(), which sets previousLineCount WITHOUT writing
   //     to the terminal. At finalize, log.clear() then erases the wrong
   //     number of lines → stale content + bottom blank space.
-  const reasoningRows = showReasoning && cur?.reasoning?.trim() ? 4 : 0
+  const effectiveCols = Math.max(20, cols - 4)
   // Guard: if rows is still 0 or impossibly small (terminal size not yet
   // reported), use a generous default so we don't trigger clipping on
   // the very first render.
   const effectiveRows = rows > 0 ? rows : 24
+  const reasoningText = showReasoning && cur?.reasoning?.trim() ? cur.reasoning.trim() : ''
+  const reasoningRows = reasoningText
+    ? 1 /* marginTop */ + 1 /* header */ + countVisualRows(reasoningText, Math.max(10, effectiveCols - 2)) + 1 /* footer */
+    : 0
   const budget = Math.max(
     MIN_STREAM_ROWS,
     effectiveRows - RESERVED_ROWS - 1 /* header */ - reasoningRows - 1 /* marker */ - 1 /* safety */,
@@ -333,8 +337,6 @@ export function StreamingAssistant() {
   // Build ordered render items from contentParts. Fall back to legacy
   // rendering (all tools → text) if contentParts is empty (e.g. turns
   // loaded from history that haven't been migrated yet).
-  const effectiveCols = Math.max(20, cols - 4)
-
   let visibleParts: ContentPart[] = []
   let hiddenRows = 0
   let firstPartMaxRows = 0

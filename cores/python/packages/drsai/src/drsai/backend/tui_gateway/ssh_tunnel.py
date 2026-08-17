@@ -314,6 +314,18 @@ class SSHTunnelManager:
         }
         if cfg.remote_workdir:
             env_updates["DRSAI_USER_CWD"] = cfg.remote_workdir
+        # Propagate local user_id to remote gateway so session DB queries
+        # match the same user's sessions (remote machine's cli_config
+        # may have a different user_id).
+        local_user_id = os.environ.get("DRSAI_USER_ID", "")
+        if not local_user_id:
+            try:
+                from drsai.backend.cli import config as cli_config
+                local_user_id = cli_config.load_config().get("user_id") or ""
+            except Exception:
+                pass
+        if local_user_id:
+            env_updates["DRSAI_USER_ID"] = local_user_id
 
         # 启动远程 gateway — 使用 Python subprocess.Popen 替代 shell nohup。
         #

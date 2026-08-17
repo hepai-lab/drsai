@@ -1074,18 +1074,19 @@ def cmd_list(ctx: SlashContext) -> dict:
     
     if show_all:
         workdir_filter = None
+    elif os.environ.get("DRSAI_TUI_ENABLE_WS"):
+        # In WebSocket mode (SSH tunnel), always show all sessions.
+        # The workdir stored in remote sessions may not match
+        # DRSAI_USER_CWD (different machine, symlinks, different
+        # path resolution, etc.).  Client-side filtering by a
+        # mismatched path would silently hide every session.
+        workdir_filter = None
     else:
-        # Resolve workdir: prefer DRSAI_USER_CWD (set by run_cli.py and
-        # ssh_tunnel.py), fall back to Path.cwd().resolve().
-        # In WebSocket mode (SSH tunnel) without DRSAI_USER_CWD, the
-        # gateway's cwd may be the home directory rather than the user's
-        # project workdir.  In that case, show all sessions to avoid
-        # silently filtering out every session.
+        # Local mode: filter by workdir so the picker only shows
+        # sessions for the current project directory.
         user_cwd = os.environ.get("DRSAI_USER_CWD", "").strip()
         if user_cwd:
             workdir_filter = str(Path(user_cwd).resolve())
-        elif os.environ.get("DRSAI_TUI_ENABLE_WS"):
-            workdir_filter = None
         else:
             workdir_filter = str(Path.cwd().resolve())
     
