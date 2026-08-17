@@ -618,8 +618,20 @@ def normalize_model_route_snapshot(raw: Mapping[str, Any], expected_model_id: st
     return {**fields, "sha256": expected}
 
 
-def normalize_tool_loop_policy(raw: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Return a bounded, versioned policy shared by every production surface."""
+def normalize_tool_loop_policy(
+    raw: Mapping[str, Any] | None = None,
+    *,
+    max_rounds_ceiling: int | None = None,
+    max_parallel_ceiling: int | None = None,
+) -> dict[str, Any]:
+    """Return a bounded, versioned policy shared by every production surface.
+
+    The bounds default to the desktop-oriented constants but can be raised via
+    ``max_rounds_ceiling`` / ``max_parallel_ceiling`` for non-desktop surfaces
+    (e.g. worker / console) that need longer tool loops or higher parallelism.
+    """
+    rounds_ceiling = max_rounds_ceiling if isinstance(max_rounds_ceiling, int) and max_rounds_ceiling >= 1 else DEFAULT_MAX_TOOL_ROUNDS
+    parallel_ceiling = max_parallel_ceiling if isinstance(max_parallel_ceiling, int) and max_parallel_ceiling >= 1 else DEFAULT_MAX_PARALLEL_TOOL_CALLS
     source = dict(raw or {})
     if source and source.get("schema_version") != TOOL_LOOP_POLICY_SCHEMA_VERSION:
         raise ValueError("tool_loop_policy_schema_unsupported")
@@ -627,9 +639,9 @@ def normalize_tool_loop_policy(raw: Mapping[str, Any] | None = None) -> dict[str
         raise ValueError("tool_loop_policy_version_unsupported")
     max_rounds = source.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
     max_parallel = source.get("max_parallel_tool_calls", DEFAULT_MAX_PARALLEL_TOOL_CALLS)
-    if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or not 1 <= max_rounds <= DEFAULT_MAX_TOOL_ROUNDS:
+    if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or not 1 <= max_rounds <= rounds_ceiling:
         raise ValueError("tool_loop_max_rounds_invalid")
-    if isinstance(max_parallel, bool) or not isinstance(max_parallel, int) or not 1 <= max_parallel <= DEFAULT_MAX_PARALLEL_TOOL_CALLS:
+    if isinstance(max_parallel, bool) or not isinstance(max_parallel, int) or not 1 <= max_parallel <= parallel_ceiling:
         raise ValueError("tool_loop_max_parallel_invalid")
     policy = {
         "schema_version": TOOL_LOOP_POLICY_SCHEMA_VERSION,
@@ -647,8 +659,16 @@ def validate_tool_call_batch(
     *,
     max_parallel_tool_calls: int = DEFAULT_MAX_PARALLEL_TOOL_CALLS,
     allow_homogeneous_approval_batch: bool = False,
+    enforce_approval_batch: bool = True,
 ) -> tuple[dict[str, Any], ...]:
-    """Validate a model tool batch before any executor or mutable state is touched."""
+    """Validate a model tool batch before any executor or mutable state is touched.
+
+    ``enforce_approval_batch`` gates the desktop approval invariant
+    (``approval_tool_must_be_single``). Non-desktop surfaces that do not wire a
+    ``_tool_approval_handler`` pass ``False`` so mixed batches are not rejected
+    by a desktop-only constraint; the execution layer still honors per-call
+    approval when a handler is present.
+    """
     if not calls:
         raise ValueError("tool_call_batch_empty")
     if len(calls) > max_parallel_tool_calls:
@@ -668,7 +688,7 @@ def validate_tool_call_batch(
         if not isinstance(name, str) or not name:
             raise ValueError("tool_call_name_invalid")
         records.append(execution_tool_record(registry, name))
-    if len(calls) > 1 and any(record["approval_mode"] == "required" for record in records):
+    if enforce_approval_batch and len(calls) > 1 and any(record["approval_mode"] == "required" for record in records):
         homogeneous = len({(record["name"], record["executor_id"], record["approval_mode"]) for record in records}) == 1
         if not allow_homogeneous_approval_batch or not homogeneous:
             raise ValueError("approval_tool_must_be_single")

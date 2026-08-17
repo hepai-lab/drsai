@@ -1248,6 +1248,17 @@ def create_agent(
         tools=final_tools,                # Extra tools (MCP, knowledge, GFS, etc.)
         sub_agent_config=final_sub_agent_config,
         max_agent_concurrent=cli_cfg.get("max_agent_concurrent", 5),
+        # Tool-loop ceilings: optional, from cli_cfg. Omit when absent so the
+        # assistant defaults (desktop-oriented constants) apply.
+        **({
+            "max_tool_rounds_ceiling": cli_cfg["max_tool_rounds_ceiling"],
+        } if "max_tool_rounds_ceiling" in cli_cfg else {}),
+        **({
+            "max_parallel_tool_calls_ceiling": cli_cfg["max_parallel_tool_calls_ceiling"],
+        } if "max_parallel_tool_calls_ceiling" in cli_cfg else {}),
+        **({
+            "max_inline_tool_output_chars": cli_cfg["max_inline_tool_output_chars"],
+        } if "max_inline_tool_output_chars" in cli_cfg else {}),
         token_limit=int(token_limit * 0.7),
         rag_flow_url=rag_flow_url,
         rag_flow_token=rag_flow_token,
