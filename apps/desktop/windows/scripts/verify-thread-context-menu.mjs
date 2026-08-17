@@ -94,7 +94,9 @@ const checks = [
     app.includes("void hydrateThreadSnapshot(threadId)") &&
       app.includes("desktopApi.getThreadSnapshotEnvelope(threadId, requestId, options)") &&
       app.includes("threadSnapshotCoordinatorRef.current.commitEnvelope(envelope") &&
-      app.includes("threadSnapshotStore.set(threadId, snapshot)"),
+      app.includes("threadSnapshotStore.set(threadId, snapshot)") &&
+      app.includes("threadNeedsHistoryHydration(thread)") &&
+      app.includes("threadSnapshotHasConversation(event.snapshot)"),
   ],
   [
     "chat updates persist the conversation snapshot",

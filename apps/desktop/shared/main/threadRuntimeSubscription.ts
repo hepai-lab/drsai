@@ -22,6 +22,7 @@ import { syncSessionHistorySingleflight } from "./sessionHistorySync";
 import { LegacyConversationAdapter } from "./legacyConversationAdapter";
 import { legacyProtocolTelemetry } from "./legacyProtocolTelemetry";
 import { ThreadSnapshotEnvelopeCache } from "./threadSnapshotEnvelopeCache";
+import { runtimeSessionIdForLookup } from "../api/threadSidebarCatalog";
 
 interface ThreadSnapshotEvent {
   version: 1;
@@ -186,7 +187,8 @@ function emitOaepEventLog(
 export { projectRuntimeThreadSnapshot } from "./threadRuntimeProjection";
 
 async function runtimeForThread(thread: DesktopThread) {
-  if (!thread.runtimeSessionId || !thread.workspacePath) return null;
+  const runtimeSessionId = runtimeSessionIdForLookup(thread);
+  if (!runtimeSessionId || !thread.workspacePath) return null;
   const resolved = await connectRuntimeClientForWorkspaceIfAvailable(
     thread.workspacePath,
     thread.execution?.workspaceId,
@@ -194,7 +196,7 @@ async function runtimeForThread(thread: DesktopThread) {
   if (!resolved) return null;
   return {
     resolved,
-    runtimeSessionId: thread.runtimeSessionId,
+    runtimeSessionId,
   };
 }
 

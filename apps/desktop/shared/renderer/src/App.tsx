@@ -119,6 +119,7 @@ import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
 import { deriveOperationalState, shouldShowOperationalStateBar, type OperationalStateFacts } from "@shared/operationalState";
 import { canonicalizeSidebarThreads } from "@shared/threadSidebarCatalog";
+import { threadSnapshotHasConversation } from "../../api/threadSnapshotHydration";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
 import { ApprovalCenterView } from "./components/ApprovalCenterView";
@@ -963,7 +964,9 @@ function AuthenticatedApp({
     });
     const removeSnapshot = desktopApi.onThreadSnapshot((event) => {
       if (deletedThreadIdsRef.current.has(event.threadId)) return;
-      const snapshot = mergeThreadSnapshotForDisplay(event.snapshot, threadSnapshotStore.get(event.threadId) ?? undefined);
+      const existing = threadSnapshotStore.get(event.threadId) ?? undefined;
+      if (!threadSnapshotHasConversation(event.snapshot) && threadSnapshotHasConversation(existing)) return;
+      const snapshot = mergeThreadSnapshotForDisplay(event.snapshot, existing);
       if (!threadSnapshotCoordinatorRef.current.commitEnvelope(event, () => threadSnapshotStore.set(event.threadId, snapshot))) return;
       batcher.clearThread(event.threadId);
     });
@@ -1051,12 +1054,18 @@ function AuthenticatedApp({
     if (!activeThreadId) return;
     let subscribed = false;
     let disposed = false;
-    void desktopApi.subscribeThreadSnapshot(activeThreadId)
-      .then((value) => {
+    void (async () => {
+      const thread = threads.find((item) => item.id === activeThreadId);
+      if (threadNeedsHistoryHydration(thread)) await hydrateThreadSnapshot(activeThreadId);
+      if (disposed) return;
+      try {
+        const value = await desktopApi.subscribeThreadSnapshot(activeThreadId);
         subscribed = value;
         if (disposed && value) void desktopApi.unsubscribeThreadSnapshot(activeThreadId);
-      })
-      .catch(() => undefined);
+      } catch {
+        // Live Runtime history is best-effort after the persisted body is restored.
+      }
+    })();
     return () => {
       disposed = true;
       if (subscribed) void desktopApi.unsubscribeThreadSnapshot(activeThreadId);
@@ -1237,9 +1246,10 @@ function AuthenticatedApp({
   useEffect(() => {
     const thread = threads.find((item) => item.id === activeThreadId);
     if (!thread || activeThreadSnapshot) return;
-    // Restore/open only the active body. Blank sessions have no body to read;
-    // all other directory entries stay as lightweight DesktopThread metadata.
-    if ((thread.messageCount ?? 0) <= 0 && !thread.runtimeSessionId) return;
+    // Restore/open only the active body. Blank placeholder sessions have no body
+    // to read; titled rows and Runtime-bound rows still hydrate even when the
+    // catalog messageCount was wiped to 0.
+    if (!threadNeedsHistoryHydration(thread)) return;
     void hydrateThreadSnapshot(activeThreadId);
   }, [activeThreadId, activeThreadSnapshot, threads]);
 
@@ -1806,7 +1816,7 @@ function AuthenticatedApp({
     }
     setActiveThreadId(threadId);
     setRightPanelCollapsed(true);
-    if ((thread?.messageCount ?? 0) > 0 || thread?.runtimeSessionId) {
+    if (threadNeedsHistoryHydration(thread)) {
       void hydrateThreadSnapshot(threadId);
     }
     if (messageId) {
@@ -1862,8 +1872,14 @@ function AuthenticatedApp({
       const envelope = await desktopApi.getThreadSnapshotEnvelope(threadId, requestId, options);
       if ((threadSnapshotCoordinatorRef.current.get(threadId)?.generation ?? 0) !== generation) return;
       if (!envelope) throw new Error(language === "zh" ? "未能读取该会话的历史内容。" : "The session history could not be loaded.");
-      const snapshot = mergeThreadSnapshotForDisplay(envelope.snapshot, threadSnapshotStore.get(threadId) ?? undefined);
-      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, snapshot))) return;
+      const existing = threadSnapshotStore.get(threadId) ?? undefined;
+      const snapshot = mergeThreadSnapshotForDisplay(envelope.snapshot, existing);
+      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, snapshot))) {
+        if (threadSnapshotHasConversation(snapshot) && !threadSnapshotHasConversation(existing)) {
+          threadSnapshotStore.set(threadId, snapshot);
+        }
+        return;
+      }
     } catch (error) {
       if ((error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && /abort|cancel/i.test(error.name))) return;
       // Runtime generation races during sidebar switches are recovered by the
@@ -2288,10 +2304,10 @@ function AuthenticatedApp({
         navigateTo(MENU_IDS.currentSession);
       } else if (thread?.status === "running" && thread.lastRunId) {
         if (thread.kind === "agent_run") {
-          await desktopApi.abortAgentRun(thread.lastRunId).catch(() => undefined);
+          await desktopApi.abortAgentRun(thread.lastRequestId || thread.lastRunId).catch(() => undefined);
         } else {
           await desktopApi.cancelChatTurn({
-            requestId: thread.lastRunId,
+            requestId: thread.lastRequestId || thread.lastRunId,
             sessionId: thread.id,
             runId: thread.lastRunId,
           }).catch(() => undefined);
@@ -2757,7 +2773,7 @@ function AuthenticatedApp({
           runtimeSessionId={activeThread?.runtimeSessionId}
           conversationHistoryPending={Boolean(
             hydratingThreadId === activeThreadId
-            || ((activeThread?.messageCount ?? 0) > 0 && !activeThreadSnapshot),
+            || (Boolean(activeThread) && !activeThreadSnapshot && threadNeedsHistoryHydration(activeThread)),
           )}
           conversationHistory={activeThreadSnapshot?.history}
           operationalStateControl={shouldShowOperationalStateBar(operationalDecision) ? (
@@ -3845,6 +3861,18 @@ function preferAttachmentPreviews(
     if (!match?.screenshotDataUrl?.startsWith("data:image/")) return attachment;
     return { ...attachment, screenshotDataUrl: match.screenshotDataUrl };
   });
+}
+
+function threadNeedsHistoryHydration(thread?: {
+  title?: string;
+  messageCount?: number;
+  runtimeSessionId?: string;
+} | null): boolean {
+  if (!thread) return false;
+  if ((thread.messageCount ?? 0) > 0) return true;
+  if (thread.runtimeSessionId) return true;
+  const title = thread.title?.trim() ?? "";
+  return Boolean(title) && title !== "New chat" && title !== "新会话" && title !== "Agent run";
 }
 
 function mergeThreadSnapshotForDisplay(

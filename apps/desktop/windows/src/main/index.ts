@@ -234,9 +234,10 @@ import {
 import {
   getRuntimeThreadSnapshot,
   getRuntimeThreadSnapshotEnvelope,
-  isRuntimeGenerationInvalidated,
   subscribeRuntimeThreadSnapshot,
 } from "../../../shared/main/threadRuntimeSubscription";
+import { coalesceHydrationEnvelope, persistedThreadSnapshotEnvelope, threadSnapshotHasConversation } from "../../../shared/api/threadSnapshotHydration";
+import { runtimeSessionIdForLookup } from "../../../shared/api/threadSidebarCatalog";
 import { setThreadArchived } from "./threadArchive";
 import {
   addProjectMemory,
@@ -5541,13 +5542,15 @@ function registerIpc(): void {
   });
   secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) => {
     const remote = await getRemoteThreadSnapshot(threadId);
-    if (remote) return remote;
+    if (threadSnapshotHasConversation(remote)) return remote;
+    const persisted = await getThreadSnapshot(threadId);
+    if (threadSnapshotHasConversation(persisted)) return persisted;
     const thread = (await listThreads()).find((item) => item.id === threadId);
-    if (thread?.runtimeSessionId) {
-      const runtime = await getRuntimeThreadSnapshot(thread);
-      if (runtime) return runtime;
+    if (runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined })) {
+      const runtime = await getRuntimeThreadSnapshot(thread!).catch(() => null);
+      if (threadSnapshotHasConversation(runtime)) return runtime;
     }
-    return getThreadSnapshot(threadId);
+    return persisted ?? remote;
   });
   secureHandle("desktop:get-my-drsai-runtime-model-catalog", () => getMyDrSaiRuntimeModelCatalog());
   secureHandle("desktop:get-my-drsai-agent-model-policy", (_event, agentId?: string) => getMyDrSaiAgentModelPolicy(agentId));
@@ -5594,23 +5597,25 @@ function registerIpc(): void {
     }
     try {
       const thread = (await listThreads()).find((item) => item.id === threadId);
-      if (thread?.runtimeSessionId) {
+      const remote = await getRemoteThreadSnapshot(threadId);
+      const persisted = (threadSnapshotHasConversation(remote) ? remote : null) ?? await getThreadSnapshot(threadId);
+      // Open from local history first. An empty/restarted Runtime session must
+      // not block or blank the persisted conversation body.
+      if (threadSnapshotHasConversation(persisted)) {
+        return persistedThreadSnapshotEnvelope(threadId, persisted, thread?.runtimeSessionId);
+      }
+      let runtimeEnvelope = null;
+      if (runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined })) {
         try {
-          const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
-          if (envelope) return envelope;
+          runtimeEnvelope = await getRuntimeThreadSnapshotEnvelope(thread!, controller.signal, options);
         } catch (error) {
-          // Generation races during rapid thread switching must not blank the
-          // conversation body; fall through to the last persisted snapshot.
-          if (!isRuntimeGenerationInvalidated(error)) throw error;
+          if (controller.signal.aborted) throw error;
+          // Missing sessions and generation races fall through to persisted.
+          runtimeEnvelope = null;
         }
       }
       controller.signal.throwIfAborted();
-      const remote = await getRemoteThreadSnapshot(threadId);
-      const snapshot = remote ?? await getThreadSnapshot(threadId);
-      if (!snapshot) return null;
-      return { version: 1, namespace: "conversation/1", threadId,
-        runtimeSessionId: thread?.runtimeSessionId ?? `persisted:${threadId}`,
-        sessionSequence: 0, generation: 0, source: "persisted", snapshot };
+      return coalesceHydrationEnvelope(threadId, thread, runtimeEnvelope, persisted);
     } catch (error) {
       // Cancellation is part of the hydration protocol: the renderer cancels
       // stale work when a newer generation starts or the active Thread

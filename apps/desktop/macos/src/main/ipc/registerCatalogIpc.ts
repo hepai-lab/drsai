@@ -4,7 +4,9 @@ import type { MobilePairingController } from "../../../../shared/main/mobilePair
 import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../../shared/main/myDrSaiConfig";
 import { getWebSearchProviderPolicy, updateWebSearchProviderPolicy } from "../../../../shared/main/myDrSaiConfig";
 import { appendDuplexVoiceHistory, createThread, deleteThread, getThreadSnapshot, listThreads, searchThreadMessages, updateThread, updateThreadSnapshot } from "../../../../shared/main/threads";
-import { getRuntimeThreadSnapshot, getRuntimeThreadSnapshotEnvelope, isRuntimeGenerationInvalidated } from "../../../../shared/main/threadRuntimeSubscription";
+import { getRuntimeThreadSnapshot, getRuntimeThreadSnapshotEnvelope } from "../../../../shared/main/threadRuntimeSubscription";
+import { coalesceHydrationEnvelope, persistedThreadSnapshotEnvelope, threadSnapshotHasConversation } from "../../../../shared/api/threadSnapshotHydration";
+import { runtimeSessionIdForLookup } from "../../../../shared/api/threadSidebarCatalog";
 import { createDefaultWorkspace, createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../../../../shared/main/workspaces";
 import { remoteWorkspaceController } from "../../../../shared/main/remoteWorkspaceController";
 import type { MacosServiceContainer } from "../serviceContainer";
@@ -58,9 +60,15 @@ export function registerMacosCatalogIpc(
   ipcMain.handle("desktop:set-thread-archived", (_event, request: { threadId: string; archived: boolean }) => updateThread({ id: request.threadId, archived: request.archived }));
   ipcMain.handle("desktop:get-thread-snapshot", async (_event, threadId) => {
     const remote = await remoteWorkspaceController.getThreadSnapshot(threadId);
-    if (remote) return remote;
+    if (threadSnapshotHasConversation(remote)) return remote;
+    const persisted = await getThreadSnapshot(threadId);
+    if (threadSnapshotHasConversation(persisted)) return persisted;
     const thread = (await listThreads()).find((item) => item.id === threadId);
-    return (thread ? await getRuntimeThreadSnapshot(thread).catch(() => null) : null) || getThreadSnapshot(threadId);
+    const runtime = runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined })
+      ? await getRuntimeThreadSnapshot(thread!).catch(() => null)
+      : null;
+    if (threadSnapshotHasConversation(runtime)) return runtime;
+    return persisted ?? remote;
   });
   ipcMain.handle("desktop:get-thread-snapshot-envelope", async (_event, threadId, requestId?: string, options?: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string }) => {
     if (typeof threadId !== "string" || (requestId !== undefined && (typeof requestId !== "string" || requestId.length > 160))) {
@@ -79,21 +87,22 @@ export function registerMacosCatalogIpc(
     }
     try {
     const thread = (await listThreads()).find((item) => item.id === threadId);
-    if (thread?.runtimeSessionId) {
+    const remote = await remoteWorkspaceController.getThreadSnapshot(threadId);
+    const persisted = (threadSnapshotHasConversation(remote) ? remote : null) ?? await getThreadSnapshot(threadId);
+    if (threadSnapshotHasConversation(persisted)) {
+      return persistedThreadSnapshotEnvelope(threadId, persisted, thread?.runtimeSessionId);
+    }
+    let runtimeEnvelope = null;
+    if (runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined })) {
       try {
-        const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
-        if (envelope) return envelope;
+        runtimeEnvelope = await getRuntimeThreadSnapshotEnvelope(thread!, controller.signal, options);
       } catch (error) {
-        if (!isRuntimeGenerationInvalidated(error)) throw error;
+        if (controller.signal.aborted) throw error;
+        runtimeEnvelope = null;
       }
     }
     controller.signal.throwIfAborted();
-    const remote = await remoteWorkspaceController.getThreadSnapshot(threadId);
-    const snapshot = remote ?? await getThreadSnapshot(threadId);
-    if (!snapshot) return null;
-    return { version: 1, projection: "conversation/1", threadId,
-      runtimeSessionId: thread?.runtimeSessionId ?? `persisted:${threadId}`,
-      sessionSequence: 0, generation: 0, source: "persisted", snapshot };
+    return coalesceHydrationEnvelope(threadId, thread, runtimeEnvelope, persisted);
     } finally {
       if (requestId && threadSnapshotHydrations.get(requestId) === controller) threadSnapshotHydrations.delete(requestId);
     }

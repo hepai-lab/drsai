@@ -537,7 +537,12 @@ export async function upsertThreadsFromRuntimeCatalog(
       const archivedAt = input.archived ? existing?.archivedAt ?? updatedAt : undefined;
       const archiveSource = input.archived ? existing?.archiveSource ?? "opendrsai" : undefined;
       const sourceChannel = input.sourceChannel === "wechat" ? "wechat" : existing?.sourceChannel;
-      const messageCount = Number.isFinite(input.messageCount) ? Math.max(0, Number(input.messageCount)) : existing?.messageCount;
+      const incomingCount = Number.isFinite(input.messageCount) ? Math.max(0, Number(input.messageCount)) : undefined;
+      // Runtime catalog rows often omit message_count (treated as 0). Do not
+      // wipe a Desktop count that already reflects a persisted snapshot.
+      const messageCount = incomingCount === undefined
+        ? existing?.messageCount
+        : Math.max(existing?.messageCount ?? 0, incomingCount);
       const unchanged = Boolean(existing
         && existing.id === catalogId
         && existing.title === title

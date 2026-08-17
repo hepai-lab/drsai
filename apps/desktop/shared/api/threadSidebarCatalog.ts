@@ -19,6 +19,17 @@ export function effectiveRuntimeSessionId(thread: Pick<DesktopThread, "id" | "ru
   return sessionId;
 }
 
+/**
+ * Session id used to read Runtime history. Desktop `thread-*` ids were
+ * historically stored as `runtimeSessionId`; looking those up returns an empty
+ * conversation and blanks the persisted snapshot.
+ */
+export function runtimeSessionIdForLookup(thread: Pick<DesktopThread, "runtimeSessionId">): string | undefined {
+  const sessionId = thread.runtimeSessionId?.trim();
+  if (!sessionId || isDesktopThreadId(sessionId)) return undefined;
+  return sessionId;
+}
+
 function preferDesktopThread(left: DesktopThread, right: DesktopThread): DesktopThread {
   const desktop = isDesktopThreadId(left.id) ? left : isDesktopThreadId(right.id) ? right : left;
   const other = desktop.id === left.id ? right : left;

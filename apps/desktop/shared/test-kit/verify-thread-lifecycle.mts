@@ -115,7 +115,7 @@ try {
   });
   assert.equal(staleCatalog.thread.id, "session-stale-title", "Historical catalog rows must not steal a pending live bind.");
 
-  const { canonicalizeSidebarThreads, shouldMaterializeCatalogThread } = await import("../api/threadSidebarCatalog.ts");
+  const { canonicalizeSidebarThreads, runtimeSessionIdForLookup, shouldMaterializeCatalogThread } = await import("../api/threadSidebarCatalog.ts");
   const desktopRow = {
     id: "thread-live-e",
     kind: "chat" as const,
@@ -144,6 +144,46 @@ try {
   assert.equal(shouldMaterializeCatalogThread({ mode: "live", ownerThreadId: "thread-live-e" }), true);
   assert.equal(shouldMaterializeCatalogThread({ mode: "live", sourceChannel: "wechat" }), true);
   assert.equal(shouldMaterializeCatalogThread({ mode: "bootstrap" }), true);
+
+  assert.equal(runtimeSessionIdForLookup({ runtimeSessionId: "thread-live-e" }), undefined, "Desktop thread ids must not be used as Runtime session ids.");
+  assert.equal(runtimeSessionIdForLookup({ runtimeSessionId: "session-live-orphan" }), "session-live-orphan");
+
+  const hydration = await import("../api/threadSnapshotHydration.ts");
+  const persisted = {
+    threadId: "thread-w",
+    title: "w",
+    messages: [
+      { id: "user-w", role: "user" as const, content: "w" },
+      { id: "assistant-w", role: "assistant" as const, content: "hello" },
+    ],
+    updatedAt: 1,
+    messageCount: 2,
+  };
+  const emptyRuntime = {
+    version: 1 as const,
+    projection: "oaep/1" as const,
+    threadId: "thread-w",
+    runtimeSessionId: "session-w",
+    sessionSequence: 4,
+    generation: 1,
+    source: "runtime" as const,
+    snapshot: { threadId: "thread-w", title: "w", messages: [], updatedAt: 2, messageCount: 0 },
+  };
+  const coalesced = hydration.coalesceHydrationEnvelope("thread-w", { runtimeSessionId: "session-w" }, emptyRuntime, persisted);
+  assert.equal(coalesced?.source, "persisted", "Empty Runtime history must fall back to the persisted snapshot.");
+  assert.equal(coalesced?.snapshot.messageCount, 2);
+
+  const counted = await threads.createThread({ kind: "chat", title: "count-keep", workspacePath: root });
+  await threads.updateThread({ id: counted.id, runtimeSessionId: "session-count-keep", messageCount: 2 });
+  const catalogZero = await threads.upsertThreadFromRuntimeCatalog({
+    id: "session-count-keep",
+    title: "count-keep",
+    workspacePath: root,
+    runtimeSessionId: "session-count-keep",
+    archived: false,
+    messageCount: 0,
+  });
+  assert.equal(catalogZero.thread.messageCount, 2, "Runtime catalog 0 must not wipe a Desktop messageCount.");
 
   console.log("Thread lifecycle and persistence verification passed.");
 } finally {
