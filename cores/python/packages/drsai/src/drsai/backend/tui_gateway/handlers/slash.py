@@ -1072,10 +1072,27 @@ def cmd_list(ctx: SlashContext) -> dict:
     """
     show_all = ctx.args.strip() == "--all"
     
+    if show_all:
+        workdir_filter = None
+    else:
+        # Resolve workdir: prefer DRSAI_USER_CWD (set by run_cli.py and
+        # ssh_tunnel.py), fall back to Path.cwd().resolve().
+        # In WebSocket mode (SSH tunnel) without DRSAI_USER_CWD, the
+        # gateway's cwd may be the home directory rather than the user's
+        # project workdir.  In that case, show all sessions to avoid
+        # silently filtering out every session.
+        user_cwd = os.environ.get("DRSAI_USER_CWD", "").strip()
+        if user_cwd:
+            workdir_filter = str(Path(user_cwd).resolve())
+        elif os.environ.get("DRSAI_TUI_ENABLE_WS"):
+            workdir_filter = None
+        else:
+            workdir_filter = str(Path.cwd().resolve())
+    
     return {
         "output": f"Opening session list{'…' if not show_all else ' (all workdirs)…'}",
         "ui_action": "session.list",
-        "workdir_filter": None if show_all else str(Path.cwd().resolve()),
+        "workdir_filter": workdir_filter,
     }
 
 
@@ -1135,12 +1152,14 @@ def cmd_find(ctx: SlashContext) -> dict:
         # Parse --cwd flag
         workdir = None
         query = ctx.args
+        _cwd = os.environ.get("DRSAI_USER_CWD", "").strip()
+        _cwd = str(Path(_cwd).resolve()) if _cwd else str(Path.cwd().resolve())
         if query.startswith("--cwd "):
-            workdir = str(Path.cwd().resolve())
+            workdir = _cwd
             query = query[6:].strip()
         elif " --cwd" in query:
             query = query.replace(" --cwd", "").strip()
-            workdir = str(Path.cwd().resolve())
+            workdir = _cwd
 
         results = store.smart_search(query, limit=10, workdir=workdir)
         if not results:
