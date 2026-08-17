@@ -118,6 +118,7 @@ import { normalizeRuntimeErrorEnvelope } from "../../api/errorEnvelope";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
 import { deriveOperationalState, shouldShowOperationalStateBar, type OperationalStateFacts } from "@shared/operationalState";
+import { canonicalizeSidebarThreads } from "@shared/threadSidebarCatalog";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
 import { ApprovalCenterView } from "./components/ApprovalCenterView";
@@ -734,10 +735,11 @@ function AuthenticatedApp({
       ? "remote"
       : thread.archiveSource === "codex" || thread.boundAgentId === "my-codex" ? "codex" : "opendrsai",
   });
+  const sidebarThreads = canonicalizeSidebarThreads(threads);
   const scopedThreads =
     sessionScope === "all"
-      ? threads
-      : threads.filter((thread) => {
+      ? sidebarThreads
+      : sidebarThreads.filter((thread) => {
           if (thread.id === activeThreadId) return true;
           if (!thread.workspacePath) return true;
           return getComparablePath(thread.workspacePath) === activeWorkspacePathKey;
@@ -749,7 +751,7 @@ function AuthenticatedApp({
     .slice(0, 12)
     .map(toWorkspaceThread);
   const searchableThreads: WorkspaceThread[] = visibleThreads.map(toWorkspaceThread);
-  const workspaceThreads: WorkspaceThread[] = threads
+  const workspaceThreads: WorkspaceThread[] = sortThreadsForSidebar(sidebarThreads)
     .filter((thread) => !thread.archived)
     .map(toWorkspaceThread);
   const remotePlatformChatAvailable = Boolean(
@@ -992,7 +994,7 @@ function AuthenticatedApp({
   useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
     if (deletedThreadIdsRef.current.has(event.thread.id)) return;
     setThreads((current) => boundThreadCatalogForRenderer(
-      [event.thread, ...current.filter((item) => item.id !== event.thread.id)],
+      canonicalizeSidebarThreads([event.thread, ...current]),
       {
         activeThreadId: activeThreadIdRef.current,
         activeLimit: Math.max(50, workspaceThreadOffsetRef.current),
@@ -2393,10 +2395,10 @@ function AuthenticatedApp({
     }
     if (deletedThreadIdsRef.current.has(snapshot.threadId)) return;
     setThreads((current) =>
-      sortThreadsForSidebar([
+      sortThreadsForSidebar(canonicalizeSidebarThreads([
         thread,
         ...current.filter((item) => item.id !== thread.id),
-      ]),
+      ])),
     );
   }
 
@@ -4193,12 +4195,13 @@ function boundThreadCatalogForRenderer(
   threads: DesktopThread[],
   options: { activeThreadId: string; activeLimit: number; archivedLimit: number; workspacePath?: string },
 ): DesktopThread[] {
+  const unique = canonicalizeSidebarThreads(threads);
   const workspaceKey = options.workspacePath ? getComparablePath(options.workspacePath) : null;
   const scoped = workspaceKey
-    ? threads.filter((thread) => thread.id === options.activeThreadId
+    ? unique.filter((thread) => thread.id === options.activeThreadId
       || !thread.workspacePath
       || getComparablePath(thread.workspacePath) === workspaceKey)
-    : threads;
+    : unique;
   const sorted = sortThreadsForSidebar(scoped);
   const protectedThreads = sorted.filter((thread) => !thread.archived && (
     thread.id === options.activeThreadId || thread.pinned || thread.status === "running"));

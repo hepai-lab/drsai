@@ -63,6 +63,88 @@ try {
   const tombstones = JSON.parse(await readFile(deletedPath, "utf8"));
   assert.ok(tombstones.includes(raceTarget.id), "deleteThread must persist a durable tombstone.");
 
+  const desktopOwned = await threads.createThread({ kind: "chat", title: "hi", workspacePath: root });
+  await threads.updateThread({ id: desktopOwned.id, runtimeSessionId: "session-dup-001", title: "hi", messageCount: 2 });
+  const catalogMerge = await threads.upsertThreadFromRuntimeCatalog({
+    id: "session-dup-001",
+    title: "hi",
+    workspacePath: root,
+    runtimeSessionId: "session-dup-001",
+    archived: false,
+    messageCount: 3,
+  });
+  assert.equal(catalogMerge.thread.id, desktopOwned.id, "Runtime catalog must reuse the Desktop thread-* row.");
+  const afterCatalog = await threads.listThreads();
+  assert.equal(
+    afterCatalog.filter((thread) => thread.runtimeSessionId === "session-dup-001" || thread.id === "session-dup-001").length,
+    1,
+    "A bound Desktop thread must not keep a session_id sidebar orphan.",
+  );
+
+  const pendingOwner = await threads.createThread({ kind: "chat", title: "e", workspacePath: root });
+  threads.expectRuntimeSessionBind({ threadId: pendingOwner.id, workspacePath: root, title: "e" });
+  const liveCatalog = await threads.upsertThreadFromRuntimeCatalog({
+    id: "session-live-e",
+    title: "e",
+    workspacePath: root,
+    runtimeSessionId: "session-live-e",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    archived: false,
+    messageCount: 1,
+  });
+  assert.equal(liveCatalog.thread.id, pendingOwner.id, "A catalog event during createSession must reuse the pending Desktop thread.");
+  assert.equal(liveCatalog.thread.runtimeSessionId, "session-live-e");
+  assert.equal(
+    (await threads.listThreads()).filter((thread) => thread.title === "e" || thread.id === "session-live-e").length,
+    1,
+    "Pending Desktop binds must not materialize a second sidebar row.",
+  );
+
+  const staleOwner = await threads.createThread({ kind: "chat", title: "stale-title", workspacePath: root });
+  threads.expectRuntimeSessionBind({ threadId: staleOwner.id, workspacePath: root, title: "stale-title" });
+  const staleCatalog = await threads.upsertThreadFromRuntimeCatalog({
+    id: "session-stale-title",
+    title: "stale-title",
+    workspacePath: root,
+    runtimeSessionId: "session-stale-title",
+    createdAt: "2020-01-01T00:00:00.000Z",
+    updatedAt: "2020-01-01T00:00:00.000Z",
+    archived: false,
+    messageCount: 1,
+  });
+  assert.equal(staleCatalog.thread.id, "session-stale-title", "Historical catalog rows must not steal a pending live bind.");
+
+  const { canonicalizeSidebarThreads, shouldMaterializeCatalogThread } = await import("../api/threadSidebarCatalog.ts");
+  const desktopRow = {
+    id: "thread-live-e",
+    kind: "chat" as const,
+    title: "a",
+    workspacePath: root,
+    createdAt: "2026-08-17T01:52:38.485330+00:00",
+    updatedAt: "2026-08-17T01:52:44.812Z",
+    runtimeSessionId: "thread-live-e",
+    status: "idle" as const,
+  };
+  const catalogRow = {
+    id: "session-live-orphan",
+    kind: "chat" as const,
+    title: "a",
+    workspacePath: root,
+    createdAt: "2026-08-17T01:52:38.485330+00:00",
+    updatedAt: "2026-08-17T01:52:38.608730+00:00",
+    runtimeSessionId: "session-live-orphan",
+    status: "idle" as const,
+  };
+  const collapsed = canonicalizeSidebarThreads([desktopRow, catalogRow]);
+  assert.equal(collapsed.length, 1, "Sidebar canonicalization must keep one row for a Desktop chat and its Runtime session.");
+  assert.equal(collapsed[0]?.id, "thread-live-e");
+  assert.equal(collapsed[0]?.runtimeSessionId, "session-live-orphan");
+  assert.equal(shouldMaterializeCatalogThread({ mode: "live" }), false, "Live catalog must not invent a Desktop chat row.");
+  assert.equal(shouldMaterializeCatalogThread({ mode: "live", ownerThreadId: "thread-live-e" }), true);
+  assert.equal(shouldMaterializeCatalogThread({ mode: "live", sourceChannel: "wechat" }), true);
+  assert.equal(shouldMaterializeCatalogThread({ mode: "bootstrap" }), true);
+
   console.log("Thread lifecycle and persistence verification passed.");
 } finally {
   await rm(root, { recursive: true, force: true });

@@ -17,6 +17,7 @@ import type {
   UpdateThreadRequest,
 } from "../api/desktopApi";
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
+import { canonicalizeSidebarThreads, isRuntimeCatalogSessionId, resolveBoundDesktopThreadId } from "../api/threadSidebarCatalog";
 import { DRSAI_HOME } from "./paths";
 import { sanitizeStructuredTurnState } from "../api/structuredConversation";
 import { replaceFileSafely } from "./atomicFileReplace";
@@ -204,7 +205,10 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
       updatedAt: now,
       lastRunId: request.lastRunId ?? existing?.lastRunId,
       lastRequestId: request.lastRequestId ?? existing?.lastRequestId,
-      runtimeSessionId: request.runtimeSessionId ?? existing?.runtimeSessionId,
+      runtimeSessionId: normalizeStoredRuntimeSessionId(
+        request.id,
+        request.runtimeSessionId ?? existing?.runtimeSessionId,
+      ),
       sourceChannel: request.sourceChannel ?? existing?.sourceChannel,
       status: request.status ?? existing?.status ?? "idle",
       messageCount: request.messageCount ?? existing?.messageCount,
@@ -215,7 +219,7 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
       unread: request.unread ?? existing?.unread,
     };
     const withoutCurrent = threads.filter((thread) => thread.id !== request.id);
-    await writeThreads(retainThreads([next, ...withoutCurrent]));
+    await writeThreads(retainThreads(dedupeRuntimeSessionCatalogDuplicates([next, ...withoutCurrent]).threads));
     return next;
   });
 }
@@ -396,6 +400,106 @@ export interface RuntimeThreadCatalogEntry {
   messageCount?: number;
 }
 
+const PENDING_RUNTIME_SESSION_BIND_TTL_MS = 30_000;
+const RECENT_RUNTIME_SESSION_MS = 60_000;
+const pendingRuntimeSessionBinds: Array<{
+  threadId: string;
+  workspacePath: string;
+  title: string;
+  createdAt: number;
+}> = [];
+const pendingRuntimeSessionOwners = new Map<string, { threadId: string; boundAt: number }>();
+
+/** Register the Desktop thread that is about to create a Runtime Session. */
+export function expectRuntimeSessionBind(input: {
+  threadId: string;
+  workspacePath: string;
+  title: string;
+}): void {
+  const threadId = sanitizeThreadId(input.threadId);
+  const workspacePath = comparableWorkspacePath(input.workspacePath);
+  const title = String(input.title || "New chat").slice(0, MAX_TITLE_CHARS);
+  const now = Date.now();
+  expirePendingRuntimeSessionBinds(now);
+  for (let index = pendingRuntimeSessionBinds.length - 1; index >= 0; index -= 1) {
+    if (pendingRuntimeSessionBinds[index]?.threadId === threadId) pendingRuntimeSessionBinds.splice(index, 1);
+  }
+  pendingRuntimeSessionBinds.push({ threadId, workspacePath, title, createdAt: now });
+}
+
+/** Remember the owner after Runtime returns a session_id. */
+export function rememberRuntimeSessionOwner(threadId: string, runtimeSessionId: string): void {
+  pendingRuntimeSessionOwners.set(runtimeSessionId, { threadId: sanitizeThreadId(threadId), boundAt: Date.now() });
+  if (pendingRuntimeSessionOwners.size > 200) {
+    const cutoff = Date.now() - 10 * 60_000;
+    for (const [sessionId, owner] of pendingRuntimeSessionOwners) {
+      if (owner.boundAt < cutoff) pendingRuntimeSessionOwners.delete(sessionId);
+    }
+  }
+}
+
+function expirePendingRuntimeSessionBinds(now = Date.now()): void {
+  for (let index = pendingRuntimeSessionBinds.length - 1; index >= 0; index -= 1) {
+    if (now - (pendingRuntimeSessionBinds[index]?.createdAt ?? 0) > PENDING_RUNTIME_SESSION_BIND_TTL_MS) {
+      pendingRuntimeSessionBinds.splice(index, 1);
+    }
+  }
+}
+
+function isRecentRuntimeCatalogTimestamp(value?: string): boolean {
+  if (!value) return true;
+  const stamp = Date.parse(value);
+  return Number.isFinite(stamp) && Date.now() - stamp < RECENT_RUNTIME_SESSION_MS;
+}
+
+function claimPendingRuntimeSessionBind(input: {
+  workspacePath: string;
+  title: string;
+  createdAt?: string;
+  updatedAt?: string;
+}): string | undefined {
+  if (!isRecentRuntimeCatalogTimestamp(input.updatedAt) && !isRecentRuntimeCatalogTimestamp(input.createdAt)) {
+    return undefined;
+  }
+  const now = Date.now();
+  expirePendingRuntimeSessionBinds(now);
+  const workspacePath = comparableWorkspacePath(input.workspacePath);
+  const title = String(input.title || "New chat").slice(0, MAX_TITLE_CHARS);
+  const inWorkspace = pendingRuntimeSessionBinds.filter((pending) => pending.workspacePath === workspacePath);
+  const match = inWorkspace.find((pending) => pending.title === title) ?? (inWorkspace.length === 1 ? inWorkspace[0] : undefined);
+  if (!match) return undefined;
+  const index = pendingRuntimeSessionBinds.indexOf(match);
+  if (index >= 0) pendingRuntimeSessionBinds.splice(index, 1);
+  return match.threadId;
+}
+
+export function findDesktopOwnerThreadId(
+  threads: DesktopThread[],
+  input: { sessionId: string; workspacePath: string; title: string; createdAt?: string; updatedAt?: string },
+): string | undefined {
+  return resolveBoundDesktopThreadId(threads, input.sessionId)
+    ?? pendingRuntimeSessionOwners.get(input.sessionId)?.threadId
+    ?? claimPendingRuntimeSessionBind({
+      workspacePath: input.workspacePath,
+      title: input.title,
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+    });
+}
+
+function resolveRuntimeCatalogThreadId(
+  threads: DesktopThread[],
+  input: { id: string; runtimeSessionId: string; workspacePath: string; title: string; createdAt?: string; updatedAt?: string },
+): string {
+  return findDesktopOwnerThreadId(threads, {
+    sessionId: input.runtimeSessionId,
+    workspacePath: input.workspacePath,
+    title: input.title,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt,
+  }) ?? input.id;
+}
+
 /** Persist one authoritative Runtime directory entry without inventing activity. */
 export async function upsertThreadFromRuntimeCatalog(
   input: RuntimeThreadCatalogEntry,
@@ -416,17 +520,26 @@ export async function upsertThreadsFromRuntimeCatalog(
     const results: Array<{ thread: DesktopThread; changed: boolean }> = [];
     let anyChanged = false;
     for (const input of entries) {
-      const existing = threads.find((thread) => thread.id === input.id);
+      const runtimeSessionId = sanitizeOptionalId(input.runtimeSessionId, "Thread Runtime session id is invalid.");
+      const catalogId = resolveRuntimeCatalogThreadId(threads, {
+        id: input.id,
+        runtimeSessionId,
+        workspacePath: input.workspacePath,
+        title: input.title,
+        createdAt: input.createdAt,
+        updatedAt: input.updatedAt,
+      });
+      const existing = threads.find((thread) => thread.id === catalogId) ?? threads.find((thread) => thread.id === input.id);
       const createdAt = validCatalogTimestamp(input.createdAt, existing?.createdAt ?? now);
       const updatedAt = validCatalogTimestamp(input.updatedAt, existing?.updatedAt ?? createdAt);
       const title = String(input.title || existing?.title || "New chat").slice(0, MAX_TITLE_CHARS);
       const workspacePath = String(input.workspacePath || existing?.workspacePath || "").slice(0, MAX_WORKSPACE_PATH_CHARS);
-      const runtimeSessionId = sanitizeOptionalId(input.runtimeSessionId, "Thread Runtime session id is invalid.");
       const archivedAt = input.archived ? existing?.archivedAt ?? updatedAt : undefined;
       const archiveSource = input.archived ? existing?.archiveSource ?? "opendrsai" : undefined;
       const sourceChannel = input.sourceChannel === "wechat" ? "wechat" : existing?.sourceChannel;
       const messageCount = Number.isFinite(input.messageCount) ? Math.max(0, Number(input.messageCount)) : existing?.messageCount;
       const unchanged = Boolean(existing
+        && existing.id === catalogId
         && existing.title === title
         && existing.workspacePath === workspacePath
         && existing.runtimeSessionId === runtimeSessionId
@@ -437,13 +550,15 @@ export async function upsertThreadsFromRuntimeCatalog(
         && existing.archiveSource === archiveSource
         && existing.sourceChannel === sourceChannel
         && existing.messageCount === messageCount);
-      if (existing && unchanged) {
+      const withoutCatalogOrphans = threads.filter((item) =>
+        item.id === catalogId || (item.id !== input.id && item.id !== runtimeSessionId));
+      if (existing && unchanged && withoutCatalogOrphans.length === threads.length) {
         results.push({ thread: existing, changed: false });
         continue;
       }
       const thread: DesktopThread = {
         ...(existing ?? {}),
-        id: input.id,
+        id: catalogId,
         kind: existing?.kind ?? "chat",
         title,
         workspacePath,
@@ -457,8 +572,13 @@ export async function upsertThreadsFromRuntimeCatalog(
         archiveSource,
         sourceChannel,
       };
-      threads = [thread, ...threads.filter((item) => item.id !== input.id)];
+      threads = [thread, ...withoutCatalogOrphans.filter((item) => item.id !== catalogId)];
       results.push({ thread, changed: true });
+      anyChanged = true;
+    }
+    const deduped = dedupeRuntimeSessionCatalogDuplicates(threads);
+    if (deduped.migrated) {
+      threads = deduped.threads;
       anyChanged = true;
     }
     if (anyChanged) await writeThreads(retainThreads(threads));
@@ -496,15 +616,7 @@ export function dedupeRuntimeSessionCatalogDuplicates(threads: DesktopThread[]):
   threads: DesktopThread[];
   migrated: boolean;
 } {
-  const ownedSessionIds = new Set(
-    threads
-      .filter((thread) => thread.runtimeSessionId && thread.id !== thread.runtimeSessionId)
-      .map((thread) => thread.runtimeSessionId as string),
-  );
-  if (ownedSessionIds.size === 0) return { threads, migrated: false };
-  // Drop any row whose id is a Runtime session_id already owned by a Desktop
-  // thread-* — including catalog orphans that never set runtimeSessionId.
-  const next = threads.filter((thread) => !ownedSessionIds.has(thread.id));
+  const next = canonicalizeSidebarThreads(threads);
   return { threads: next, migrated: next.length !== threads.length };
 }
 
@@ -1068,6 +1180,12 @@ function sanitizeIsoLike(value: unknown): string | undefined {
   if (typeof value !== "string" || /[\r\n]/.test(value)) return undefined;
   const trimmed = value.trim();
   return trimmed && Number.isFinite(Date.parse(trimmed)) ? trimmed : undefined;
+}
+
+function normalizeStoredRuntimeSessionId(threadId: string, sessionId: string | undefined): string | undefined {
+  if (!sessionId) return undefined;
+  if (threadId.startsWith("thread-") && !isRuntimeCatalogSessionId(sessionId)) return undefined;
+  return sessionId;
 }
 
 function sanitizeOptionalId(value: unknown, message: string): string | undefined {

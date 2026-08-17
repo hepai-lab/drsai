@@ -99,6 +99,7 @@ import {
   WorkspaceSessionCatalogGate,
 } from "../../../shared/main/workspaceSessionCatalog";
 import { RemoteProtocolError } from "../../../shared/api/remoteSshProtocol";
+import { shouldMaterializeCatalogThread } from "../../../shared/api/threadSidebarCatalog";
 import { desktopDiagnostics } from "./diagnostics";
 import { productionDiagnostics } from "../../../shared/main/productionDiagnostics";
 import { desktopFeedback } from "../../../shared/main/feedback";
@@ -203,6 +204,7 @@ import {
   upsertThreadFromRun,
   upsertThreadFromRuntimeCatalog,
   upsertThreadsFromRuntimeCatalog,
+  findDesktopOwnerThreadId,
 } from "./threads";
 import {
   createThreadShare,
@@ -649,22 +651,27 @@ async function applyRuntimeWorkspaceCatalogEvent(
     listThreads(),
   ]);
   if (session.workspace_id !== workspaceId) throw new Error("session_catalog_workspace_mismatch");
-  // Desktop chat already owns a thread-* row bound to this Runtime Session.
-  // Never materialize a second sidebar entry keyed by session_id, and never
-  // overwrite execution status/messageCount from catalog events — those belong
-  // to the chat/run pipeline. A late session.updated must not resurrect
-  // "running" after the Run has already settled to idle.
-  const boundDesktop = existingThreads.find((thread) =>
-    thread.runtimeSessionId === session.session_id && thread.id !== session.session_id);
+  const sourceChannel = session.origin?.provider === "wechat" ? "wechat" as const : undefined;
+  const ownerThreadId = findDesktopOwnerThreadId(existingThreads, {
+    sessionId: session.session_id,
+    workspacePath,
+    title: session.title || "New chat",
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
+  });
+  // Live catalog events for Desktop-created chats must update the existing
+  // thread-* row. They must never insert a second sidebar entry keyed by
+  // session_id — that row is owned by the chat send pipeline.
+  if (!shouldMaterializeCatalogThread({ mode: "live", sourceChannel, ownerThreadId })) return;
   const result = await upsertThreadFromRuntimeCatalog({
-    id: boundDesktop?.id ?? session.session_id,
-    title: session.title || boundDesktop?.title || "New chat",
+    id: ownerThreadId ?? session.session_id,
+    title: session.title || "New chat",
     workspacePath,
     runtimeSessionId: session.session_id,
     createdAt: session.created_at,
     updatedAt: session.updated_at,
     archived: session.archived === true || session.lifecycle === "archived" || session.lifecycle === "removed",
-    sourceChannel: session.origin?.provider === "wechat" ? "wechat" : undefined,
+    sourceChannel,
     messageCount: typeof session.message_count === "number" ? session.message_count : 0,
   });
   if (result.changed && !webContents.isDestroyed()) webContents.send("desktop:thread-catalog", {

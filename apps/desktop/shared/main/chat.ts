@@ -25,7 +25,7 @@ import {
   parseProviderUsageAnalyticsSseFrame,
   parseAgentRunSseFileEvents,
 } from "./sseParser";
-import { listThreads, updateThread, upsertThreadFromRun } from "./threads";
+import { expectRuntimeSessionBind, listThreads, rememberRuntimeSessionOwner, updateThread, upsertThreadFromRun } from "./threads";
 import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { recordAgentTelemetry } from "./agentTelemetry";
@@ -1730,6 +1730,9 @@ async function runRuntimeBackendChat(
   }
   const existingThread = (await listThreads()).find((thread) => thread.id === displaySessionId);
   let runtimeSessionId = existingThread?.runtimeSessionId;
+  if (runtimeSessionId && displaySessionId.startsWith("thread-") && !runtimeSessionId.startsWith("session-")) {
+    runtimeSessionId = undefined;
+  }
   if (!runtimeSessionId && existingThread?.lastRunId) {
     runtimeSessionId = await client.getAgentRun(existingThread.lastRunId)
       .then((run) => run.session_id)
@@ -1756,7 +1759,25 @@ async function runRuntimeBackendChat(
   }
   if (!runtimeSessionId) {
     controller.signal.throwIfAborted();
-    runtimeSessionId = (await client.createSession(resolved.workspaceId, deriveThreadTitle(request.messages))).session_id;
+    const title = deriveThreadTitle(request.messages);
+    expectRuntimeSessionBind({
+      threadId: displaySessionId,
+      workspacePath: request.workspacePath,
+      title,
+    });
+    runtimeSessionId = (await client.createSession(resolved.workspaceId, title)).session_id;
+    rememberRuntimeSessionOwner(displaySessionId, runtimeSessionId);
+    await upsertThreadFromRun({
+      id: displaySessionId,
+      kind: "chat",
+      title,
+      workspacePath: request.workspacePath,
+      runtimeSessionId,
+      status: "running",
+      messageCount: request.messages.length,
+    });
+  } else {
+    rememberRuntimeSessionOwner(displaySessionId, runtimeSessionId);
   }
   controller.signal.throwIfAborted();
   bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);

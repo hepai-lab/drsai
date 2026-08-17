@@ -1,8 +1,8 @@
 import type { WebContents } from "electron";
 import { getRuntimeThreadSnapshot, subscribeRuntimeThreadSnapshot } from "../../../shared/main/threadRuntimeSubscription";
 import type { SessionConversationSubscription } from "../../../shared/main/sessionConversationSubscription";
-import { listThreads, updateThread } from "../../../shared/main/threads";
-import { upsertThreadFromRun } from "../../../shared/main/threads";
+import { findDesktopOwnerThreadId, listThreads, updateThread, upsertThreadFromRuntimeCatalog } from "../../../shared/main/threads";
+import { shouldMaterializeCatalogThread } from "../../../shared/api/threadSidebarCatalog";
 import { listWorkspaces } from "../../../shared/main/workspaces";
 import { LocalRuntimeClient } from "../../../shared/main/runtimeClient";
 import type { RuntimeSession } from "../../../shared/main/runtimeClient";
@@ -81,19 +81,28 @@ export class MacosThreadSnapshotController {
     if (target.isDestroyed()) return;
     const localWorkspace = (await listWorkspaces()).find((item) => item.id === runtime.workspace_id);
     if (!localWorkspace) return;
-    const thread = await upsertThreadFromRun({
-      id: runtime.session_id, kind: "chat", title: runtime.title,
-      workspacePath: localWorkspace.path, runtimeSessionId: runtime.session_id,
-      sourceChannel: runtime.origin?.provider === "wechat" ? "wechat" : undefined,
-      status: "idle", messageCount: runtime.message_count ?? 0,
+    const sourceChannel = runtime.origin?.provider === "wechat" ? "wechat" as const : undefined;
+    const ownerThreadId = findDesktopOwnerThreadId(await listThreads(), {
+      sessionId: runtime.session_id,
+      workspacePath: localWorkspace.path,
+      title: runtime.title || "New chat",
+      createdAt: runtime.created_at,
+      updatedAt: runtime.updated_at,
     });
-    const updated = await updateThread({
-      id: thread.id,
+    if (!shouldMaterializeCatalogThread({ mode: "live", sourceChannel, ownerThreadId })) return;
+    const result = await upsertThreadFromRuntimeCatalog({
+      id: ownerThreadId ?? runtime.session_id,
+      title: runtime.title || "New chat",
+      workspacePath: localWorkspace.path,
+      runtimeSessionId: runtime.session_id,
+      createdAt: runtime.created_at,
+      updatedAt: runtime.updated_at,
       archived: runtime.archived === true || runtime.lifecycle === "archived" || runtime.lifecycle === "removed",
-      archiveSource: runtime.archived === true || runtime.lifecycle === "archived" ? "opendrsai" : undefined,
+      sourceChannel,
+      messageCount: runtime.message_count ?? 0,
     });
     if (!target.isDestroyed()) {
-      target.send("desktop:thread-catalog", { thread: updated, source: "runtime-session" });
+      target.send("desktop:thread-catalog", { thread: result.thread, source: "runtime-session" });
     }
   }
 

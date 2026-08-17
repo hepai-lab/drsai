@@ -429,10 +429,14 @@ export function WorkspaceShell({
       (path ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
     return new Map(workspaces.map((workspace) => [
       workspace.id,
-      workspaceThreads.filter((thread) =>
-        thread.workspaceId === workspace.id ||
-        (Boolean(thread.workspacePath) && normalizePath(thread.workspacePath) === normalizePath(workspace.path)),
-      ),
+      [...new Map(
+        workspaceThreads
+          .filter((thread) =>
+            thread.workspaceId === workspace.id ||
+            (Boolean(thread.workspacePath) && normalizePath(thread.workspacePath) === normalizePath(workspace.path)),
+          )
+          .map((thread) => [thread.id, thread]),
+      ).values()],
     ]));
   }, [workspaces, workspaceThreads]);
 
