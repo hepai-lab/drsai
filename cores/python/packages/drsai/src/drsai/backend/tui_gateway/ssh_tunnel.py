@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import posixpath
@@ -255,12 +256,25 @@ class SSHTunnelManager:
         )
 
     def _exec_remote(self, cmd: str, timeout: float = 15) -> tuple[str, str, int]:
-        """执行远程命令，返回 (stdout, stderr, returncode)。"""
+        """执行远程命令，返回 (stdout, stderr, returncode)。
+
+        Raises:
+            TimeoutError: 远程命令在 *timeout* 秒内未完成，错误信息中
+                包含被截断的命令文本以便定位超时来源。
+        """
         assert self._client is not None
         stdin, stdout, stderr = self._client.exec_command(cmd, timeout=timeout)
-        out = stdout.read().decode("utf-8", errors="replace")
-        err = stderr.read().decode("utf-8", errors="replace")
-        code = stdout.channel.recv_exit_status()
+        try:
+            out = stdout.read().decode("utf-8", errors="replace")
+            err = stderr.read().decode("utf-8", errors="replace")
+            code = stdout.channel.recv_exit_status()
+        except (socket.timeout, TimeoutError) as exc:
+            # socket.timeout 是 TimeoutError 的别名 (Python 3.10+)；
+            # 无参数时 str() 为空，补充命令上下文方便排查。
+            preview = cmd.strip().replace("\n", " ")[:120]
+            raise TimeoutError(
+                f"远程命令执行超时 ({timeout}s): {preview}"
+            ) from exc
         return out, err, code
 
     def _find_free_remote_port(self, cfg: SSHConfig) -> int:
@@ -294,28 +308,48 @@ class SSHTunnelManager:
         self._exec_remote(f"mkdir -p {REMOTE_TMP_DIR}")
 
         # 构建环境变量
-        env_parts = [
-            f"DRSAI_TUI_ENABLE_WS=1",
-            f"DRSAI_TUI_WS_PORT={remote_port}",
-        ]
+        env_updates: dict[str, str] = {
+            "DRSAI_TUI_ENABLE_WS": "1",
+            "DRSAI_TUI_WS_PORT": str(remote_port),
+        }
         if cfg.remote_workdir:
-            env_parts.append(f"DRSAI_USER_CWD={cfg.remote_workdir}")
+            env_updates["DRSAI_USER_CWD"] = cfg.remote_workdir
 
-        env_str = " ".join(env_parts)
-        cwd_arg = f"cd {cfg.remote_workdir} && " if cfg.remote_workdir else ""
-
-        # 启动命令 — 使用 opendrsai 启动器的 tui-gateway 子命令。
-        # nohup + 重定向确保进程脱离 SSH 通道; disown 从 shell job table 移除,
-        # 避免 bash -c 等待后台进程。
-        start_cmd = (
-            f"{cwd_arg}"
-            f"{env_str} "
-            f"nohup {self._opendrsai} tui-gateway "
-            f"< /dev/null > {log_path} 2>&1 & "
-            f"disown; "
-            f"echo $! > {pid_file}; cat {pid_file}"
+        # 启动远程 gateway — 使用 Python subprocess.Popen 替代 shell nohup。
+        #
+        # 根本原因: `nohup cmd </dev/null >log 2>&1 &` 虽然重定向了 fd 0/1/2,
+        # 但子进程仍会继承 SSH channel 的更高编号 fd (如 socket fd)。
+        # paramiko 的 stdout.read() 等待 channel EOF, 而后台进程持有这些 fd
+        # 导致 channel 无法关闭 → 30s 超时。
+        #
+        # 修复: subprocess.Popen(close_fds=True) 关闭所有 fd > 2,
+        # start_new_session=True 等价于 setsid (创建新会话)。
+        # launcher 脚本启动 gateway 后立即退出, channel 正常关闭。
+        #
+        # 使用 base64 编码 launcher 源码, 避免 shell 引号转义问题。
+        launcher_code = (
+            "import subprocess, os, sys\n"
+            "env = os.environ.copy()\n"
+            f"env.update({env_updates!r})\n"
+            f"log = open({log_path!r}, 'w')\n"
+            # expanduser: subprocess.Popen 不做 shell 展开, 需手动展开 ~
+            f"exe = os.path.expanduser({self._opendrsai!r})\n"
+            "p = subprocess.Popen(\n"
+            "    [exe, 'tui-gateway'],\n"
+            "    env=env,"
+            + (f" cwd=os.path.expanduser({cfg.remote_workdir!r}),\n" if cfg.remote_workdir else "\n")
+            + "    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,\n"
+            "    close_fds=True, start_new_session=True,\n"
+            ")\n"
+            f"open({pid_file!r}, 'w').write(str(p.pid))\n"
+            "print(p.pid)\n"
+            "sys.stdout.flush()\n"
         )
-        stdout, stderr, code = self._exec_remote(start_cmd, timeout=30)
+        encoded = base64.b64encode(launcher_code.encode()).decode()
+        start_cmd = (
+            f"python3 -c \"import base64;exec(base64.b64decode('{encoded}'))\""
+        )
+        stdout, stderr, code = self._exec_remote(start_cmd, timeout=15)
         if code != 0:
             raise RuntimeError(f"远程启动命令失败 (code={code}): {stderr or stdout}")
 
@@ -326,22 +360,48 @@ class SSHTunnelManager:
             log = self._read_remote_log(remote_port)
             raise RuntimeError(f"无法获取远程 PID (got '{pid_str}')。日志:\n{log}")
 
-        # 等待端口就绪
+        # 等待端口就绪 — 直接通过 SSH transport 尝试建立 direct-tcpip
+        # channel 来探测远程端口, 不依赖 ss/netstat 命令 (跨平台、
+        # 无需额外远程命令执行, 避免 channel 拥塞导致的超时)。
+        #
+        # 修复: 仅 open_channel + close 可能产生假阳性 — SSH channel
+        # 创建成功不代表远程 TCP 端口有进程监听。  改为发送一个 HTTP
+        # upgrade 请求并读取响应, 确认远端确实有 WebSocket 服务器在监听。
         ready = False
-        for i in range(20):
+        for i in range(30):  # 30 × 0.3s = 9s
             time.sleep(0.3)
-            # 尝试多种端口检测方式
-            check_cmd = (
-                f"ss -tlnp 2>/dev/null | grep ':{remote_port}' "
-                f"|| netstat -tlnp 2>/dev/null | grep ':{remote_port}' "
-                f"|| true"
-            )
-            out, _, _ = self._exec_remote(check_cmd)
-            if str(remote_port) in out:
-                ready = True
-                break
-            # 检查进程是否还活着
-            if i == 5:
+            try:
+                chan = self._transport.open_channel(
+                    "direct-tcpip",
+                    ("127.0.0.1", remote_port),
+                    ("127.0.0.1", 22),
+                )
+                # 发送 HTTP 升级请求, 验证远端确实有 WS 服务器在监听。
+                # 如果端口无人监听, SSH 服务端会返回 channel EOF 或
+                # 连接拒绝异常, recv() 会抛错或返回空。
+                chan.send(
+                    b"GET /attach HTTP/1.1\r\n"
+                    b"Host: 127.0.0.1\r\n"
+                    b"Upgrade: websocket\r\n"
+                    b"Connection: Upgrade\r\n"
+                    b"\r\n"
+                )
+                # 等待响应 (最多 1s)
+                chan.settimeout(1.0)
+                data = chan.recv(1024)
+                chan.close()
+                if data:
+                    # 收到任何响应都说明端口有进程在监听
+                    ready = True
+                    break
+                else:
+                    # 空响应 = 端口已关闭
+                    chan.close()
+            except Exception:
+                pass  # 端口未就绪或连接被拒, 继续等待
+
+            # 检查进程是否还活着 (第 5 次和第 15 次各检查一次)
+            if i == 5 or i == 15:
                 alive_out, _, _ = self._exec_remote(
                     f"kill -0 {self.status.remote_pid} 2>&1 && echo ALIVE || echo DEAD"
                 )
@@ -354,7 +414,20 @@ class SSHTunnelManager:
         if not ready:
             log = self._read_remote_log(remote_port)
             raise RuntimeError(
-                f"远程 tui_gateway 端口 {remote_port} 未就绪 (等待 6s)。日志:\n{log}"
+                f"远程 tui_gateway 端口 {remote_port} 未就绪 (等待 9s)。日志:\n{log}"
+            )
+
+        # 端口探测通过后, 再等待 1s 并检查进程是否仍然存活。
+        # 这可以捕获 "进程绑定端口后立即崩溃" 的情况 (例如依赖缺失、
+        # 配置错误等导致 uvicorn 启动后马上退出)。
+        time.sleep(1.0)
+        alive_out, _, _ = self._exec_remote(
+            f"kill -0 {self.status.remote_pid} 2>&1 && echo ALIVE || echo DEAD"
+        )
+        if "DEAD" in alive_out:
+            log = self._read_remote_log(remote_port)
+            raise RuntimeError(
+                f"远程 tui_gateway 进程在启动后立即退出 (PID={self.status.remote_pid})。日志:\n{log}"
             )
 
     def _read_remote_log(self, port: int = 0) -> str:

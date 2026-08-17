@@ -185,6 +185,8 @@ export class GatewayClient extends EventEmitter {
     env.PYTHONIOENCODING = 'utf-8'
     env.PYTHONUTF8 = '1'
 
+    // Clear any existing ready timer before setting a new one
+    if (this.readyTimer) clearTimeout(this.readyTimer)
     this.readyTimer = setTimeout(() => {
       if (!this.ready) {
         const msg = `gateway startup timed out after ${STARTUP_TIMEOUT_MS}ms`
@@ -338,6 +340,55 @@ export class GatewayClient extends EventEmitter {
     })
   }
 
+  /**
+   * Send a JSON-RPC request to the LOCAL gateway subprocess via stdin,
+   * bypassing the WebSocket transport.  Used for control RPCs like
+   * `remote.disconnect` and `remote.status` that are handled by the
+   * local gateway (managing the SSH tunnel) even when the client is
+   * in WebSocket mode talking to a remote gateway.
+   *
+   * The response is received through the same `dispatch()` path —
+   * the local subprocess's stdout readline is still draining and will
+   * route RPC responses to the pending map.
+   */
+  requestLocal<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    if (!this.proc?.stdin || this.proc.killed || this.proc.exitCode !== null) {
+      return Promise.reject(new Error('local gateway not running'))
+    }
+
+    const id = `r${++this.reqId}`
+    return new Promise<T>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const pending = this.pending.get(id)
+        if (pending) {
+          this.pending.delete(id)
+          reject(new Error(`RPC ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`))
+        }
+      }, REQUEST_TIMEOUT_MS)
+      timeout.unref?.()
+
+      this.pending.set(id, {
+        id,
+        method,
+        resolve: v => resolve(v as T),
+        reject,
+        timeout,
+      })
+
+      try {
+        const frame = JSON.stringify({ id, jsonrpc: '2.0', method, params }) + '\n'
+        this.proc!.stdin!.write(frame)
+      } catch (e) {
+        const pending = this.pending.get(id)
+        if (pending) {
+          clearTimeout(pending.timeout)
+          this.pending.delete(id)
+        }
+        reject(e instanceof Error ? e : new Error(String(e)))
+      }
+    })
+  }
+
   /** Get recent stderr lines (debugging). */
   getLogs(): string[] {
     return [...this.logs]
@@ -395,22 +446,27 @@ export class GatewayClient extends EventEmitter {
 
   /**
    * Switch from stdio mode to WebSocket attach mode at runtime.
-   * Kills the local subprocess and connects to a remote gateway via WebSocket.
+   * Keeps the local subprocess alive (it holds the SSH tunnel) and
+   * connects to a remote gateway via WebSocket through the tunnel.
    * Used by the SSH remote feature to connect to a remote tui_gateway.
    */
   switchToWebSocket(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      // Kill existing subprocess if in stdio mode
+      // ── Keep local subprocess alive for SSH tunnel ──────────────
+      // The local gateway subprocess holds the paramiko SSH connection
+      // and port-forwarding tunnel.  If we kill it here, the tunnel dies
+      // and the WebSocket connection to ws://127.0.0.1:{local_port}/attach
+      // will fail immediately ("Remote connection lost").
+      //
+      // Instead, just detach from the subprocess's exit/error events so
+      // that handleExit doesn't fire and interfere with the WebSocket
+      // readyPromise.  The stdout/stderr readline interfaces continue
+      // draining the pipes (preventing buffer deadlock) and dispatching
+      // any events the local gateway might emit (e.g. remote.disconnected).
+      // The subprocess reference is kept in this.proc so that
+      // switchToSubprocess can clean it up later.
       if (this.mode === 'stdio' && this.proc) {
-        try {
-          this.proc.kill('SIGTERM')
-          setTimeout(() => {
-            if (this.proc && !this.proc.killed) {
-              this.proc.kill('SIGKILL')
-            }
-          }, 1000)
-        } catch { /* best effort */ }
-        this.proc = null
+        try { this.proc.removeAllListeners() } catch { /* best effort */ }
       }
 
       // Close existing WebSocket if any
@@ -497,6 +553,32 @@ export class GatewayClient extends EventEmitter {
       if (this.mode === 'websocket' && this.ws) {
         try { this.ws.close() } catch { /* best effort */ }
         this.ws = null
+      }
+
+      // Kill any lingering subprocess from a previous stdio session.
+      // Its exit event could fire later and race with the new subprocess
+      // startup (handleExit would clear readyTimer / reject readyPromise
+      // for the NEW process).  Remove all listeners and null the ref so
+      // the old process's exit is silently ignored.
+      if (this.proc) {
+        // If we were in remote SSH mode, the old subprocess holds the
+        // SSH tunnel + remote gateway.  Send remote.disconnect via stdin
+        // (fire-and-forget) so the local gateway can clean up the remote
+        // process and close the SSH connection gracefully.
+        if (this.mode === 'websocket') {
+          try {
+            const disconnectReq = JSON.stringify({
+              jsonrpc: '2.0',
+              id: `cleanup-${Date.now()}`,
+              method: 'remote.disconnect',
+              params: {},
+            }) + '\n'
+            this.proc.stdin?.write(disconnectReq)
+          } catch { /* best effort */ }
+        }
+        try { this.proc.removeAllListeners() } catch { /* best effort */ }
+        try { this.proc.kill('SIGTERM') } catch { /* best effort */ }
+        this.proc = null
       }
 
       // Reset ready state
@@ -596,6 +678,10 @@ export class GatewayClient extends EventEmitter {
     if (this.readyTimer) {
       clearTimeout(this.readyTimer)
       this.readyTimer = null
+    }
+    // Reject readyPromise if still pending — otherwise switchToWebSocket hangs
+    if (!this.ready) {
+      this.rejectReady(new Error(`remote connection lost: ${reason}`))
     }
     // Reject all pending requests — they're dead anyway
     for (const [id, pending] of this.pending) {

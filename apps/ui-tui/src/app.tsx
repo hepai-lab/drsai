@@ -344,8 +344,10 @@ export function App({ gw }: AppProps) {
       $connectionStatus.set('remote_lost')
       $connectionError.set(p?.reason || 'Remote connection lost')
       setBoot(prev => {
-        // Only transition if we're in the ready phase — don't interrupt boot/setup
-        if (prev.phase === 'ready') {
+        // Transition to remote_lost from ready or connecting phases.
+        // Don't interrupt setup or error phases — the user needs to
+        // resolve those first.
+        if (prev.phase === 'ready' || prev.phase === 'connecting' || prev.phase === 'resuming') {
           return { phase: 'remote_lost', reason: p?.reason || 'Connection lost' }
         }
         return prev

@@ -145,8 +145,18 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
           theme.good,
         )
         setStatus(res)
-        onRemoteConnect?.(res)
         setView('status')
+        // onRemoteConnect switches to WebSocket mode and resolves a remote
+        // session.  If it fails (e.g. remote gateway crashed, WebSocket
+        // timeout), we must roll back the panel state so the UI doesn't
+        // show "connected" while nothing is actually working.
+        try {
+          await onRemoteConnect?.(res)
+        } catch (e) {
+          setStatus(null)
+          setView('list')
+          showMsg(`❌ Remote attach failed: ${(e as Error).message}`, theme.error)
+        }
       } else {
         showMsg('❌ Connection failed', theme.error)
         setView('list')
@@ -160,10 +170,19 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
   const disconnect = async () => {
     showMsg('⏳ Disconnecting...', theme.muted)
     try {
-      await gw.request('remote.disconnect', {})
-      showMsg('✅ Disconnected', theme.good)
+      // In WebSocket mode, gw.request() sends RPCs to the REMOTE gateway,
+      // but `remote.disconnect` is a LOCAL gateway handler that manages the
+      // SSH tunnel (the _tunnel singleton in remote.py).  Sending it over
+      // WebSocket would either hit a method-not-found error or time out
+      // after 30s, causing the "disconnecting..." hang.
+      //
+      // Instead, directly call onRemoteDisconnect(), which triggers
+      // switchToSubprocess() in composerPane.  switchToSubprocess() already
+      // sends `remote.disconnect` via proc.stdin to the LOCAL gateway before
+      // killing the subprocess and starting a fresh local gateway.
       setStatus(null)
-      onRemoteDisconnect?.()
+      await onRemoteDisconnect?.()
+      showMsg('✅ Disconnected', theme.good)
       refresh()
     } catch (e) {
       showMsg(`❌ ${(e as Error).message}`, theme.error)
