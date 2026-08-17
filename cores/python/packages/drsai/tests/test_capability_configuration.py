@@ -33,14 +33,9 @@ def test_current_or_explicit_queries_require_web_but_timeless_prompts_do_not() -
     assert prompt_requires_current_web("请搜索 HEPiX 的官方网站", current_year=2026)
     assert prompt_requires_current_web("What is the latest HEPiX schedule?", current_year=2026)
     assert prompt_requires_current_web("当前油价是多少", current_year=2026)
+    assert prompt_requires_current_web(_SCREENSHOT_PROMPT, current_year=2026)
     assert not prompt_requires_current_web("解释二叉树的中序遍历", current_year=2026)
     assert not prompt_requires_current_web("HEPiX 2024 的历史背景是什么？", current_year=2026)
-
-
-def test_local_run_and_screenshot_prompts_do_not_require_web() -> None:
-    assert not prompt_requires_current_web("当前运行发生了什么？", current_year=2026)
-    assert not prompt_requires_current_web(_SCREENSHOT_PROMPT, current_year=2026)
-    assert prompt_requires_current_web("请搜索这张截图里公司的官方网站", current_year=2026)
 
 
 def test_managed_search_permission_denied_pauses_instead_of_failing_the_run() -> None:

@@ -53,21 +53,8 @@ _EXPLICIT_WEB = re.compile(
     re.IGNORECASE,
 )
 _CURRENT_INFO = re.compile(
-    r"(?:最新|近期|最近|今天|本周|本月|新闻|价格|政策|"
-    r"latest|recent|today|news|price)",
-    re.IGNORECASE,
-)
-_NOW_TOKEN = re.compile(
-    r"(?:当前|现在|(?<![a-z])current(?![a-z]))",
-    re.IGNORECASE,
-)
-_LOCAL_NOW = re.compile(
-    r"(?:当前|现在)\s*(?:的\s*)?(?:运行|任务|错误|会话|截图|诊断|模型|状态|连接|Agent)"
-    r"|(?<![a-z])current(?![a-z])\s+(?:run|task|error|session|screenshot|diagnostic|model|status|connection)\b",
-    re.IGNORECASE,
-)
-_LOCAL_EVIDENCE = re.compile(
-    r"(?:截图|screenshot|这张图|分析这张|运行诊断)",
+    r"(?:最新|近期|最近|现在|当前|今天|本周|本月|日程|会议|活动|新闻|价格|政策|版本|"
+    r"latest|recent|current|today|schedule|conference|event|news|price|version)",
     re.IGNORECASE,
 )
 _RETRYABLE_MANAGED_STATUS = frozenset({
@@ -84,19 +71,12 @@ def prompt_requires_current_web(prompt: str, *, current_year: int | None = None)
     The Tool Router remains the final enforcement boundary.  This preflight is
     intentionally biased toward explicit search requests, current-information
     vocabulary, and present/future years rather than broad topic guessing.
-    Local screenshot / run-state questions are answered from attached evidence.
     """
 
     normalized = " ".join(str(prompt or "").split())[:16_000]
     if not normalized:
         return False
-    if _EXPLICIT_WEB.search(normalized):
-        return True
-    if _LOCAL_EVIDENCE.search(normalized):
-        return False
-    if _CURRENT_INFO.search(normalized):
-        return True
-    if _NOW_TOKEN.search(normalized) and not _LOCAL_NOW.search(normalized):
+    if _EXPLICIT_WEB.search(normalized) or _CURRENT_INFO.search(normalized):
         return True
     year = current_year or datetime.now(UTC).year
     mentioned = [int(value) for value in re.findall(r"(?<!\d)(20\d{2})(?!\d)", normalized)]
