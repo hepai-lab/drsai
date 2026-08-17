@@ -5546,7 +5546,27 @@ button.structured-activity-detail:hover {
   background: var(--app-panel-bg);
 }
 
-.composer-attachment-chip button {
+.composer-attachment-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.composer-attachment-preview:hover .composer-attachment-thumb {
+  border-color: var(--app-accent, #7c5cfc);
+}
+
+.composer-attachment-chip > button:not(.composer-attachment-preview) {
   display: inline-grid;
   width: 18px;
   height: 18px;
@@ -5557,7 +5577,7 @@ button.structured-activity-detail:hover {
   background: transparent;
 }
 
-.composer-attachment-chip button:hover {
+.composer-attachment-chip > button:not(.composer-attachment-preview):hover {
   color: var(--app-danger);
   background: var(--app-danger-soft);
 }

@@ -3382,65 +3382,15 @@ function ChatWorkspaceImpl({
             </div>
           )}
           <div className="composer-attachments" aria-live="polite">
-            {attachments.map((attachment) => {
-              const Icon =
-                attachment.kind === "folder"
-                  ? FolderPlus
-                  : attachment.kind === "terminal"
-                    ? Terminal
-                  : attachment.kind === "selection"
-                    ? ClipboardList
-                  : attachment.kind === "browser"
-                    ? Globe2
-                    : Paperclip;
-              return (
-                <span
-                  className={`composer-attachment-chip ${(attachment.importFile?.status && attachment.importFile.status !== "ready") || attachment.folderImport?.phase === "failed" ? "import-failed" : ""} ${attachment.folderImport?.phase === "scanning" ? "import-scanning" : ""} ${isImageAttachment(attachment, attachment.importFile) ? "has-image-preview" : ""}`}
-                  key={attachment.id}
-                  title={attachment.importFile?.message || attachment.folderImport?.message || attachment.path}
-                  data-testid="composer-attachment"
-                  data-import-status={attachment.importFile?.status || "ready"}
-                  data-file-category={attachment.importFile?.category || "other"}
-                  data-size-bytes={attachment.importFile?.sizeBytes ?? ""}
-                  data-diagnostic-code={attachment.importFile?.diagnosticCode || ""}
-                  data-processing-mode={attachment.importFile?.processingMode || ""}
-                  data-sensitive-detected={attachment.importFile?.sensitiveDataDetected ? "true" : "false"}
-                  data-sensitive-kinds={attachment.importFile?.sensitiveKinds?.join(",") || ""}
-                  data-sensitive-count={attachment.importFile?.sensitiveValueCount ?? 0}
-                  data-folder-import-phase={attachment.folderImport?.phase || ""}
-                  data-imported-count={attachment.folderImport?.imported ?? ""}
-                  data-skipped-count={attachment.folderImport?.skipped ?? ""}
-                  data-failed-count={attachment.folderImport?.failed ?? ""}
-                  data-duplicate-count={attachment.folderImport?.duplicates ?? ""}
-                >
-                  {isImageAttachment(attachment, attachment.importFile)
-                    && (attachment.screenshotDataUrl || attachment.importFile?.previewDataUrl)?.startsWith("data:image/") ? (
-                    <img
-                      className="composer-attachment-thumb"
-                      src={attachment.screenshotDataUrl || attachment.importFile?.previewDataUrl}
-                      alt=""
-                    />
-                  ) : (
-                    <Icon size={14} />
-                  )}
-                  <span className="composer-attachment-copy">
-                    <strong>{attachment.name}</strong>
-                    {attachment.importFile ? <small>{formatPickedFileMeta(attachment.importFile, zh)}</small> : null}
-                    {attachment.importFile?.message ? <small data-testid="composer-file-status-message">{attachment.importFile.message}</small> : null}
-                    {attachment.importFile?.recoveryAction ? <small data-testid="composer-file-recovery-action">{attachment.importFile.recoveryAction}</small> : null}
-                    {attachment.importFile?.privacyNotice ? <small data-testid="composer-file-privacy-notice">{attachment.importFile.privacyNotice}</small> : null}
-                    {attachment.folderImport ? <small>{formatFolderImportMeta(attachment.folderImport, zh)}</small> : null}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={zh ? `绉婚櫎 ${attachment.name}` : `Remove ${attachment.name}`}
-                    onClick={() => removeAttachment(attachment.id)}
-                  >
-                    <X size={13} />
-                  </button>
-                </span>
-              );
-            })}
+            {attachments.map((attachment) => (
+              <ComposerAttachmentChip
+                key={attachment.id}
+                attachment={attachment}
+                workspacePath={workspacePath}
+                zh={zh}
+                onRemove={() => removeAttachment(attachment.id)}
+              />
+            ))}
             {externalAttachments.map((attachment, index) => {
               if (attachment.kind === "terminal") return null;
               const name =
@@ -4969,28 +4919,116 @@ function isImageAttachment(
   return isImageFileName(attachment.name) || isImageFileName(attachment.path);
 }
 
-function MessageAttachmentBadge({
+function ComposerAttachmentChip({
   attachment,
   workspacePath,
   zh,
+  onRemove,
 }: {
-  attachment: ChatAttachment;
+  attachment: ComposerAttachment;
   workspacePath?: string;
   zh: boolean;
+  onRemove: () => void;
 }): React.JSX.Element {
-  const [previewSrc, setPreviewSrc] = useState(
-    attachment.screenshotDataUrl?.startsWith("data:image/")
-      ? attachment.screenshotDataUrl
-      : undefined,
-  );
+  const Icon =
+    attachment.kind === "folder"
+      ? FolderPlus
+      : attachment.kind === "terminal"
+        ? Terminal
+      : attachment.kind === "selection"
+        ? ClipboardList
+      : attachment.kind === "browser"
+        ? Globe2
+        : Paperclip;
+  const previewSrc = useAttachmentImageSrc(attachment, workspacePath, attachment.importFile);
   const [lightboxOpen, setLightboxOpen] = useState(false);
-  const showImage = isImageAttachment(attachment);
+  const canPreview = Boolean(previewSrc);
+  const copy = (
+    <span className="composer-attachment-copy">
+      <strong>{attachment.name}</strong>
+      {attachment.importFile ? <small>{formatPickedFileMeta(attachment.importFile, zh)}</small> : null}
+      {attachment.importFile?.message ? <small data-testid="composer-file-status-message">{attachment.importFile.message}</small> : null}
+      {attachment.importFile?.recoveryAction ? <small data-testid="composer-file-recovery-action">{attachment.importFile.recoveryAction}</small> : null}
+      {attachment.importFile?.privacyNotice ? <small data-testid="composer-file-privacy-notice">{attachment.importFile.privacyNotice}</small> : null}
+      {attachment.folderImport ? <small>{formatFolderImportMeta(attachment.folderImport, zh)}</small> : null}
+    </span>
+  );
+
+  return (
+    <span
+      className={`composer-attachment-chip ${(attachment.importFile?.status && attachment.importFile.status !== "ready") || attachment.folderImport?.phase === "failed" ? "import-failed" : ""} ${attachment.folderImport?.phase === "scanning" ? "import-scanning" : ""} ${isImageAttachment(attachment, attachment.importFile) ? "has-image-preview" : ""}`}
+      title={attachment.importFile?.message || attachment.folderImport?.message || attachment.path}
+      data-testid="composer-attachment"
+      data-import-status={attachment.importFile?.status || "ready"}
+      data-file-category={attachment.importFile?.category || "other"}
+      data-size-bytes={attachment.importFile?.sizeBytes ?? ""}
+      data-diagnostic-code={attachment.importFile?.diagnosticCode || ""}
+      data-processing-mode={attachment.importFile?.processingMode || ""}
+      data-sensitive-detected={attachment.importFile?.sensitiveDataDetected ? "true" : "false"}
+      data-sensitive-kinds={attachment.importFile?.sensitiveKinds?.join(",") || ""}
+      data-sensitive-count={attachment.importFile?.sensitiveValueCount ?? 0}
+      data-folder-import-phase={attachment.folderImport?.phase || ""}
+      data-imported-count={attachment.folderImport?.imported ?? ""}
+      data-skipped-count={attachment.folderImport?.skipped ?? ""}
+      data-failed-count={attachment.folderImport?.failed ?? ""}
+      data-duplicate-count={attachment.folderImport?.duplicates ?? ""}
+    >
+      {canPreview && previewSrc ? (
+        <button
+          type="button"
+          className="composer-attachment-preview"
+          title={zh ? `查看大图：${attachment.name}` : `View full size: ${attachment.name}`}
+          aria-label={zh ? `查看大图：${attachment.name}` : `View full size: ${attachment.name}`}
+          data-testid="composer-attachment-preview"
+          onClick={() => setLightboxOpen(true)}
+        >
+          <img className="composer-attachment-thumb" src={previewSrc} alt="" />
+          {copy}
+        </button>
+      ) : (
+        <>
+          <Icon size={14} />
+          {copy}
+        </>
+      )}
+      <button
+        type="button"
+        aria-label={zh ? `移除 ${attachment.name}` : `Remove ${attachment.name}`}
+        onClick={onRemove}
+      >
+        <X size={13} />
+      </button>
+      {lightboxOpen && previewSrc
+        ? (
+          <AttachmentImageLightbox
+            src={previewSrc}
+            name={attachment.name}
+            path={attachment.path}
+            zh={zh}
+            onClose={() => setLightboxOpen(false)}
+          />
+        )
+        : null}
+    </span>
+  );
+}
+
+function useAttachmentImageSrc(
+  attachment: ChatAttachment,
+  workspacePath?: string,
+  importFile?: PickedFileDescriptor,
+): string | undefined {
+  const embedded = attachment.screenshotDataUrl?.startsWith("data:image/")
+    ? attachment.screenshotDataUrl
+    : importFile?.previewDataUrl?.startsWith("data:image/")
+      ? importFile.previewDataUrl
+      : undefined;
+  const [previewSrc, setPreviewSrc] = useState(embedded);
+  const showImage = isImageAttachment(attachment, importFile);
 
   useEffect(() => {
-    if (attachment.screenshotDataUrl?.startsWith("data:image/")) {
-      setPreviewSrc(attachment.screenshotDataUrl);
-    }
-  }, [attachment.screenshotDataUrl]);
+    if (embedded) setPreviewSrc(embedded);
+  }, [embedded]);
 
   useEffect(() => {
     if (!showImage || previewSrc || !workspacePath?.trim() || !attachment.path.trim()) return;
@@ -5010,12 +5048,27 @@ function MessageAttachmentBadge({
     };
   }, [attachment.path, previewSrc, showImage, workspacePath]);
 
+  return previewSrc;
+}
+
+function AttachmentImageLightbox({
+  src,
+  name,
+  path,
+  zh,
+  onClose,
+}: {
+  src: string;
+  name: string;
+  path?: string;
+  zh: boolean;
+  onClose: () => void;
+}): React.JSX.Element {
   useEffect(() => {
-    if (!lightboxOpen) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        setLightboxOpen(false);
+        onClose();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -5025,7 +5078,48 @@ function MessageAttachmentBadge({
       window.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
     };
-  }, [lightboxOpen]);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="message-attachment-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={name}
+      data-testid="message-attachment-lightbox"
+    >
+      <button
+        type="button"
+        className="message-attachment-lightbox-backdrop"
+        aria-label={zh ? "关闭大图" : "Close image"}
+        onClick={onClose}
+      />
+      <div className="message-attachment-lightbox-panel">
+        <header>
+          <strong title={path || name}>{name}</strong>
+          <button type="button" aria-label={zh ? "关闭" : "Close"} onClick={onClose}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+        <img src={src} alt={name} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function MessageAttachmentBadge({
+  attachment,
+  workspacePath,
+  zh,
+}: {
+  attachment: ChatAttachment;
+  workspacePath?: string;
+  zh: boolean;
+}): React.JSX.Element {
+  const previewSrc = useAttachmentImageSrc(attachment, workspacePath);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const showImage = isImageAttachment(attachment);
 
   if (showImage && previewSrc) {
     return (
@@ -5042,35 +5136,14 @@ function MessageAttachmentBadge({
           <span className="message-attachment-image-caption">{attachment.name}</span>
         </button>
         {lightboxOpen
-          ? createPortal(
-            <div
-              className="message-attachment-lightbox"
-              role="dialog"
-              aria-modal="true"
-              aria-label={attachment.name}
-              data-testid="message-attachment-lightbox"
-            >
-              <button
-                type="button"
-                className="message-attachment-lightbox-backdrop"
-                aria-label={zh ? "关闭大图" : "Close image"}
-                onClick={() => setLightboxOpen(false)}
-              />
-              <div className="message-attachment-lightbox-panel">
-                <header>
-                  <strong title={attachment.path || attachment.name}>{attachment.name}</strong>
-                  <button
-                    type="button"
-                    aria-label={zh ? "关闭" : "Close"}
-                    onClick={() => setLightboxOpen(false)}
-                  >
-                    <X size={16} aria-hidden="true" />
-                  </button>
-                </header>
-                <img src={previewSrc} alt={attachment.name} />
-              </div>
-            </div>,
-            document.body,
+          ? (
+            <AttachmentImageLightbox
+              src={previewSrc}
+              name={attachment.name}
+              path={attachment.path}
+              zh={zh}
+              onClose={() => setLightboxOpen(false)}
+            />
           )
           : null}
       </>
