@@ -53,10 +53,29 @@ _EXPLICIT_WEB = re.compile(
     re.IGNORECASE,
 )
 _CURRENT_INFO = re.compile(
-    r"(?:最新|近期|最近|现在|当前|今天|本周|本月|日程|会议|活动|新闻|价格|政策|版本|"
-    r"latest|recent|current|today|schedule|conference|event|news|price|version)",
+    r"(?:最新|近期|最近|今天|本周|本月|新闻|价格|政策|"
+    r"latest|recent|today|news|price)",
     re.IGNORECASE,
 )
+_NOW_TOKEN = re.compile(
+    r"(?:当前|现在|(?<![a-z])current(?![a-z]))",
+    re.IGNORECASE,
+)
+_LOCAL_NOW = re.compile(
+    r"(?:当前|现在)\s*(?:的\s*)?(?:运行|任务|错误|会话|截图|诊断|模型|状态|连接|Agent)"
+    r"|(?<![a-z])current(?![a-z])\s+(?:run|task|error|session|screenshot|diagnostic|model|status|connection)\b",
+    re.IGNORECASE,
+)
+_LOCAL_EVIDENCE = re.compile(
+    r"(?:截图|screenshot|这张图|分析这张|运行诊断)",
+    re.IGNORECASE,
+)
+_RETRYABLE_MANAGED_STATUS = frozenset({
+    "worker_unavailable", "provider_unavailable", "timeout", "provider_timeout", "rate_limited",
+})
+_CREDENTIAL_MANAGED_STATUS = frozenset({
+    "permission_denied", "login_required", "authentication_failed",
+})
 
 
 def prompt_requires_current_web(prompt: str, *, current_year: int | None = None) -> bool:
@@ -65,16 +84,40 @@ def prompt_requires_current_web(prompt: str, *, current_year: int | None = None)
     The Tool Router remains the final enforcement boundary.  This preflight is
     intentionally biased toward explicit search requests, current-information
     vocabulary, and present/future years rather than broad topic guessing.
+    Local screenshot / run-state questions are answered from attached evidence.
     """
 
     normalized = " ".join(str(prompt or "").split())[:16_000]
     if not normalized:
         return False
-    if _EXPLICIT_WEB.search(normalized) or _CURRENT_INFO.search(normalized):
+    if _EXPLICIT_WEB.search(normalized):
+        return True
+    if _LOCAL_EVIDENCE.search(normalized):
+        return False
+    if _CURRENT_INFO.search(normalized):
+        return True
+    if _NOW_TOKEN.search(normalized) and not _LOCAL_NOW.search(normalized):
         return True
     year = current_year or datetime.now(UTC).year
     mentioned = [int(value) for value in re.findall(r"(?<!\d)(20\d{2})(?!\d)", normalized)]
     return any(value >= year for value in mentioned)
+
+
+def classify_managed_web_search_status(status: str) -> CapabilityConfigurationRequest | None:
+    """Map a non-available HAI-managed search status to a recoverable pause.
+
+    Transient transport failures stay with the caller so they can raise a
+    retryable RuntimeExecutionError. Account/policy denials must not fail the
+    whole Run; Desktop already knows how to offer answer-without-network.
+    """
+
+    code = str(status or "worker_unavailable").strip() or "worker_unavailable"
+    if code == "available" or code in _RETRYABLE_MANAGED_STATUS:
+        return None
+    reason: CapabilityReason = (
+        "credential_unavailable" if code in _CREDENTIAL_MANAGED_STATUS else "policy_denied"
+    )
+    return CapabilityConfigurationRequest("web.search", "public_web", "tavily", reason)
 
 
 def classify_web_search_configuration(

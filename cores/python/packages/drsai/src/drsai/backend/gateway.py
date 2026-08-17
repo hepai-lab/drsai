@@ -290,6 +290,7 @@ from drsai.config import (
 from drsai.backend.runtime.goals import propose_goal_from_request, render_goal_execution_prompt
 from drsai.backend.runtime.capabilities import (
     CapabilityConfigurationRequest,
+    classify_managed_web_search_status,
     classify_web_search_configuration,
     prompt_requires_current_web,
 )
@@ -6685,12 +6686,15 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                         "capability": "web.search", "provider": "hai_managed_tavily",
                         "error_code": code[:80], "query_disclosed": False,
                     })
-                    raise RuntimeExecutionError(
-                        code,
-                        "HAI-managed web search is not available for the current account. Retry after the service or account access is restored.",
-                        retryable=code in {"worker_unavailable", "provider_unavailable", "timeout", "rate_limited"},
-                    )
-                missing = None
+                    missing = classify_managed_web_search_status(code)
+                    if missing is None:
+                        raise RuntimeExecutionError(
+                            code,
+                            "HAI-managed web search is not available for the current account. Retry after the service or account access is restored.",
+                            retryable=True,
+                        )
+                else:
+                    missing = None
             elif active_web_config is not None:
                 missing = None
             elif provider_mode == "none":
