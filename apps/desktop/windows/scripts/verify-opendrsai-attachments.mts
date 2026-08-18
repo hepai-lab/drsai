@@ -141,6 +141,33 @@ try {
   await assert.rejects(stageAttachments([{ kind: "browser", path: "browser:2", name: "screenshot", screenshotDataUrl: "data:image/png;base64,AA==" }], workspace, "run-screenshot"), /not supported/);
   checks.unsupportedScreenshotRejected = true;
 
+  const clipboardPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  await preflightAttachments([{
+    kind: "selection", path: "clipboard:image:paste-1", name: "image.png", screenshotDataUrl: clipboardPng,
+  }], workspace);
+  const stagedClipboard = await stageAttachments([{
+    kind: "selection", path: "clipboard:image:paste-1", name: "image.png", screenshotDataUrl: clipboardPng,
+  }], workspace, "run-clipboard");
+  assert.equal(stagedClipboard.resources[0]?.kind, "file");
+  assert.equal(stagedClipboard.resources[0]?.mime, "image/png");
+  assert.match(stagedClipboard.refs[0] ?? "", /\.opendrsai\/attachments\/run-clipboard\/image\.png$/);
+  await access(join(workspace, stagedClipboard.refs[0]));
+  checks.clipboardImageStagesAsNativeFile = true;
+
+  const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const stagedCharset = await stageAttachments([{
+    kind: "selection", path: "clipboard:image:paste-charset", name: "image.png",
+    screenshotDataUrl: `data:image/png;charset=utf-8;base64,${pngBase64}`,
+  }], workspace, "run-clipboard-charset");
+  assert.equal(stagedCharset.resources[0]?.mime, "image/png");
+  const stagedOctet = await stageAttachments([{
+    kind: "selection", path: "clipboard:image:paste-octet", name: "image.png",
+    screenshotDataUrl: `data:application/octet-stream;base64,${pngBase64}`,
+  }], workspace, "run-clipboard-octet");
+  assert.equal(stagedOctet.resources[0]?.kind, "file");
+  assert.equal(stagedOctet.resources[0]?.mime, "image/png");
+  checks.clipboardImageAcceptsNonImageDataUrlMime = true;
+
   const cancelledSource = join(external, "cancel.bin");
   await writeFile(cancelledSource, "x"); await truncate(cancelledSource, 64 * 1024 * 1024);
   const controller = new AbortController();

@@ -354,6 +354,20 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   const sessionId = request.sessionId;
   const existingTurn = chatTurns.get(requestId);
   if (eventTarget && existingTurn) existingTurn.eventTarget = eventTarget;
+  // Switching sidebar threads rehydrates the renderer and calls recoverChatRun
+  // while startChat still owns the OAEP Session. Stealing that listener closes
+  // the shared stream and the live turn fails with oaep_run_terminal_missing.
+  // Rebind the renderer and leave the in-process owner waiting for the Run terminal.
+  if (existingTurn) {
+    const runId = existingTurn.runtime?.runId ?? existingTurn.runId;
+    return [{
+      requestId,
+      sessionId,
+      ...(runId ? { runId } : {}),
+      seq: 1,
+      type: "start",
+    }];
+  }
   let thread = (await listThreads()).find((candidate) => candidate.id === sessionId);
   if (!thread) return [];
   // Electron may stop after Runtime committed Run creation but before the
@@ -938,7 +952,9 @@ function normalizeChatAttachments(rawAttachments: unknown): ChatRequest["attachm
           : undefined,
       screenshotDataUrl:
         typeof attachment.screenshotDataUrl === "string"
-          ? attachment.screenshotDataUrl.slice(0, MAX_BROWSER_SCREENSHOT_DATA_URL_CHARS)
+          ? (typeof attachment.path === "string" && attachment.path.startsWith("clipboard:")
+            ? attachment.screenshotDataUrl
+            : attachment.screenshotDataUrl.slice(0, MAX_BROWSER_SCREENSHOT_DATA_URL_CHARS))
           : undefined,
       note: typeof attachment.note === "string" ? attachment.note.slice(0, 1000) : undefined,
     };
@@ -1314,7 +1330,30 @@ export async function stageAttachments(
   for (const [index, attachment] of rawAttachments.entries()) {
     const resourceId = `attachment-${index + 1}`;
     if (attachment.kind === "browser" || attachment.kind === "terminal" || attachment.kind === "selection") {
-      if (attachment.screenshotDataUrl) {
+      if (isClipboardImageAttachment(attachment)) {
+        try {
+          const { bytes, mime } = decodeClipboardImageBytes(attachment.screenshotDataUrl, attachment.name);
+          nativeImageBytes += bytes.length;
+          if (nativeImageBytes > NATIVE_IMAGE_TOTAL_LIMIT_BYTES) {
+            throw new Error(`Images exceed the ${formatBytes(NATIVE_IMAGE_TOTAL_LIMIT_BYTES)} total native image limit.`);
+          }
+          const stagedImage = await stageNativeImageBytes({
+            root, cacheRoot, runId, name: attachment.name, bytes, mime, signal,
+          });
+          staged.push({ ...attachment, kind: "file", path: stagedImage.destPath, name: stagedImage.destName });
+          refs.push(stagedImage.destRel);
+          resources.push({
+            protocol: "oaep.input/1", resource_id: resourceId, kind: "file",
+            name: stagedImage.destName, permission: "read", status: "encoded",
+            reference: stagedImage.destRel, size_bytes: bytes.length, sha256: stagedImage.sha256, mime,
+          });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(reason.startsWith(`${attachment.name}:`) ? reason : `${attachment.name}: ${reason}`);
+        }
+        continue;
+      }
+      if (attachment.kind !== "selection" && attachment.screenshotDataUrl) {
         throw new Error(`${attachment.name}: screenshot input is not supported by the current Agent Runtime.`);
       }
       const [context] = await buildAttachmentContext([attachment]);
@@ -1440,7 +1479,21 @@ export async function preflightAttachments(
   for (const attachment of rawAttachments) {
     signal?.throwIfAborted();
     if (attachment.kind === "browser" || attachment.kind === "terminal" || attachment.kind === "selection") {
-      if (attachment.screenshotDataUrl) {
+      if (isClipboardImageAttachment(attachment)) {
+        try {
+          const { bytes } = decodeClipboardImageBytes(attachment.screenshotDataUrl, attachment.name);
+          nativeImageBytes += bytes.length;
+          if (nativeImageBytes > NATIVE_IMAGE_TOTAL_LIMIT_BYTES) {
+            throw new Error(`Images exceed the ${formatBytes(NATIVE_IMAGE_TOTAL_LIMIT_BYTES)} total native image limit.`);
+          }
+          externalBytes += bytes.length;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(reason.startsWith(`${attachment.name}:`) ? reason : `${attachment.name}: ${reason}`);
+        }
+        continue;
+      }
+      if (attachment.kind !== "selection" && attachment.screenshotDataUrl) {
         throw new Error(`${attachment.name}: screenshot input is not supported by the current Agent Runtime.`);
       }
       const [context] = await buildAttachmentContext([attachment]);
@@ -1503,6 +1556,82 @@ export async function preflightAttachments(
   }
 }
 
+function isClipboardImageAttachment(
+  attachment: { kind: string; path?: string; screenshotDataUrl?: string },
+): boolean {
+  const path = typeof attachment.path === "string" ? attachment.path : "";
+  if (path.startsWith("clipboard:")) return true;
+  return attachment.kind === "selection" && typeof attachment.screenshotDataUrl === "string"
+    && attachment.screenshotDataUrl.length > 0;
+}
+
+function decodeClipboardImageBytes(dataUrl: string | undefined, name: string): { bytes: Buffer; mime: string } {
+  if (typeof dataUrl !== "string" || !dataUrl.trim()) {
+    throw new Error("Clipboard image data is missing. Paste again or attach the file from disk.");
+  }
+  const trimmed = dataUrl.trim();
+  const comma = trimmed.indexOf(",");
+  const header = comma >= 0 ? trimmed.slice(0, comma) : "";
+  const payload = comma >= 0 ? trimmed.slice(comma + 1) : trimmed;
+  if (header && /^data:/i.test(header) && !/;base64/i.test(header)) {
+    throw new Error("Clipboard image data URL is invalid.");
+  }
+  const bytes = Buffer.from(payload.replace(/\s/g, ""), "base64");
+  if (!bytes.length) throw new Error("Clipboard image is empty.");
+  const mime = inspectNativeImageBytes(bytes, name, true);
+  if (!mime) throw new Error("Image is corrupt or uses an unsupported format (PNG, JPEG, GIF, or WebP required).");
+  return { bytes, mime };
+}
+
+async function stageNativeImageBytes(params: {
+  root: string;
+  cacheRoot: string;
+  runId: string;
+  name: string;
+  bytes: Buffer;
+  mime: string;
+  signal?: AbortSignal;
+}): Promise<{ destPath: string; destName: string; destRel: string; sha256: string }> {
+  const destDir = join(params.root, ".opendrsai", "attachments", params.runId);
+  const cacheBytes = await attachmentCacheBytes(params.cacheRoot);
+  if (cacheBytes + params.bytes.length > ATTACHMENT_CACHE_LIMIT_BYTES) {
+    throw new Error(`Attachment cache would exceed ${formatBytes(ATTACHMENT_CACHE_LIMIT_BYTES)}.`);
+  }
+  const disk = await statfs(params.root).catch(() => null);
+  if (disk && Number(disk.bavail) * Number(disk.bsize) < params.bytes.length + ATTACHMENT_DISK_RESERVE_BYTES) {
+    throw new Error("Not enough free disk space to stage this attachment.");
+  }
+  await ensureGitignored(params.root);
+  await mkdir(destDir, { recursive: true });
+  const destName = await uniqueName(destDir, basename(imageFileNameForMime(params.name, params.mime)));
+  const destPath = join(destDir, destName);
+  const partialPath = `${destPath}.${process.pid}.${randomUUID()}.partial`;
+  try {
+    params.signal?.throwIfAborted();
+    await writeFile(partialPath, params.bytes, { mode: 0o600 });
+    params.signal?.throwIfAborted();
+    await rename(partialPath, destPath);
+  } finally {
+    await rm(partialPath, { force: true }).catch(() => undefined);
+  }
+  return {
+    destPath,
+    destName,
+    destRel: relative(params.root, destPath).replace(/\\/g, "/"),
+    sha256: createHash("sha256").update(params.bytes).digest("hex"),
+  };
+}
+
+function imageFileNameForMime(name: string, mime: string): string {
+  const base = basename(name || "clipboard-image");
+  if (NATIVE_IMAGE_EXTENSIONS.has(extname(base).toLowerCase())) return base;
+  const extension = mime === "image/jpeg" ? ".jpg"
+    : mime === "image/gif" ? ".gif"
+      : mime === "image/webp" ? ".webp"
+        : ".png";
+  return `${base}${extension}`;
+}
+
 async function inspectNativeImage(path: string, name: string, size: number): Promise<string | undefined> {
   const extension = extname(name || path).toLowerCase();
   const extensionSuggestsImage = NATIVE_IMAGE_EXTENSIONS.has(extension);
@@ -1511,8 +1640,20 @@ async function inspectNativeImage(path: string, name: string, size: number): Pro
   }
   if (!extensionSuggestsImage && size > NATIVE_IMAGE_FILE_LIMIT_BYTES) return undefined;
   const bytes = await readFile(path);
+  return inspectNativeImageBytes(bytes, name, extensionSuggestsImage);
+}
+
+function inspectNativeImageBytes(bytes: Buffer, name: string, requireImage = false): string | undefined {
+  const extension = extname(name).toLowerCase();
+  const extensionSuggestsImage = NATIVE_IMAGE_EXTENSIONS.has(extension);
+  if (bytes.length > NATIVE_IMAGE_FILE_LIMIT_BYTES) {
+    if (extensionSuggestsImage || requireImage) {
+      throw new Error(`Image exceeds the ${formatBytes(NATIVE_IMAGE_FILE_LIMIT_BYTES)} native image limit.`);
+    }
+    return undefined;
+  }
   const detected = detectImageMime(bytes);
-  if (!extensionSuggestsImage && !detected) return undefined;
+  if (!extensionSuggestsImage && !requireImage && !detected) return undefined;
   if (!detected) throw new Error("Image is corrupt or uses an unsupported format (PNG, JPEG, GIF, or WebP required).");
   const expected = extension === ".png" ? "image/png"
     : extension === ".jpg" || extension === ".jpeg" ? "image/jpeg"

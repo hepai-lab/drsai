@@ -67,6 +67,18 @@ try {
     }], workspace, "run-screenshot"),
     /screenshot input is not supported/,
   );
+  const clipboardPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const stagedClipboard = await stageAttachments([{
+    kind: "selection", path: "clipboard:image:paste-1", name: "image.png", screenshotDataUrl: clipboardPng,
+  }], workspace, "run-clipboard");
+  assert.equal(stagedClipboard.resources[0]?.kind, "file");
+  assert.equal(stagedClipboard.resources[0]?.mime, "image/png");
+  const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const stagedOctet = await stageAttachments([{
+    kind: "selection", path: "clipboard:image:paste-octet", name: "image.png",
+    screenshotDataUrl: `data:application/octet-stream;base64,${pngBase64}`,
+  }], workspace, "run-clipboard-octet");
+  assert.equal(stagedOctet.resources[0]?.mime, "image/png");
 
   const cancelledSource = join(external, "cancel.bin");
   await writeFile(cancelledSource, "x"); await truncate(cancelledSource, 64 * 1024 * 1024);

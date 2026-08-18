@@ -247,7 +247,7 @@ interface MaterialTaskSuggestion {
 
 export type ThinkingEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 const THINKING_EFFORTS: ThinkingEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
-const MAX_CLIPBOARD_IMAGE_BYTES = 1_250_000;
+const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
 function useEventCallback<Args extends unknown[], Result>(callback: (...args: Args) => Result): (...args: Args) => Result {
@@ -2028,7 +2028,7 @@ function ChatWorkspaceImpl({
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>): void {
     const clipboard = event.clipboardData;
     const imageFiles = Array.from(clipboard.files)
-      .filter((file) => file.type.startsWith("image/"))
+      .filter((file) => file.type.startsWith("image/") || isImageFileName(file.name || ""))
       .slice(0, MAX_CLIPBOARD_IMAGE_COUNT);
     const text = clipboard.getData("text/plain");
     const pathMentionText = normalizePastedLocalPathMentions(text);

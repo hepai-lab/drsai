@@ -41,6 +41,11 @@ assert(chatWorkspace.includes("createClipboardImageAttachment"), "clipboard imag
 assert(chatWorkspace.includes('path: `clipboard:image:${crypto.randomUUID()}`'), "clipboard images do not use a non-filesystem attachment path");
 assert(chatWorkspace.includes('kind: "selection"'), "clipboard image context is not attached as reviewed selection context");
 assert(chatWorkspace.includes("screenshotDataUrl"), "clipboard image data URL is not attached for model-capable visual context");
+const chatMain = read("../shared/main/chat.ts");
+assert(chatMain.includes("isClipboardImageAttachment") && chatMain.includes("decodeClipboardImageBytes"),
+  "clipboard paste images must be staged as native Runtime image files");
+assert(chatMain.includes("screenshot input is not supported by the current Agent Runtime."),
+  "browser screenshot captures must remain an explicit unsupported-input failure");
 assert(chatWorkspace.includes("Image data URL was not attached because it exceeds"), "large clipboard image downgrade copy is missing");
 assert(chatWorkspace.includes("No OCR, vision model, filesystem write, network call, or provider send was performed"), "clipboard image safety boundary copy is missing");
 assert(clipboardSource.includes("copyTextToClipboard"), "copy helper must prefer the Electron main-process clipboard");

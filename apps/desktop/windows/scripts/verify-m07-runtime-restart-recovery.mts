@@ -48,6 +48,8 @@ const recoveryStart = chat.indexOf("export async function recoverChatRun");
 const recoveryEnd = chat.indexOf("export async function respondChatInput", recoveryStart);
 const recovery = chat.slice(recoveryStart, recoveryEnd);
 assert.ok(recovery.includes("decideRuntimeRestartRecovery(authoritativeRun, runtimeIdentity)"));
+assert.ok(recovery.includes("if (existingTurn)") && recovery.includes("oaep_run_terminal_missing"),
+  "Live in-process turns must reattach after a sidebar switch without stealing the OAEP owner");
 assert.ok(recovery.includes('recoveryDecision.kind === "reconnect"') && recovery.includes("subscribeOaepSession"));
 assert.ok(recovery.includes("current.listOaepEvents(thread!.runtimeSessionId!, cursor, 2_000)"), "Recovery must page the complete OAEP journal.");
 assert.ok(recovery.includes("withCurrentRecoveryClient") && recovery.includes("isRuntimeClientGenerationInvalidated(error)") && recovery.includes("attempt >= 4"), "Recovery must reconnect with a bounded retry when the Runtime generation changes.");

@@ -94,6 +94,19 @@ const LOCAL_COMPACT_MAX_REUSABLE_ITEMS = 6;
 const LOCAL_COMPACT_MAX_MESSAGE_CHARS = 360;
 const LOCAL_COMPACT_MAX_ITEM_CHARS = 220;
 
+interface LiveThreadChatView {
+  messages: UiMessage[];
+  activeRequestId: string | null;
+  cancellingRequestId: string | null;
+  currentRuntimeMode: ChatRuntimeMode | null;
+  streamingAssistantByRequest: Record<string, string>;
+  structuredRequests: string[];
+  completedStructuredRequests: string[];
+  lastSequenceByRequest: Record<string, number>;
+  pendingDeltasByRequest: Record<string, { text: string; reasoning: string }>;
+  pendingStructuredEventsByRequest: Record<string, StructuredConversationEvent[]>;
+}
+
 export function useDesktopChatAdapter({
   availableAgents,
   availableModels,
@@ -136,6 +149,10 @@ export function useDesktopChatAdapter({
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null);
   const activeRequestIdRef = useRef<string | null>(null);
+  const cancellingRequestIdRef = useRef<string | null>(null);
+  const messagesRef = useRef<UiMessage[]>([createWelcomeMessage(language, [])]);
+  const liveThreadViewsRef = useRef<Map<string, LiveThreadChatView>>(new Map());
+  const backgroundChatEventsRef = useRef<Map<string, ChatEvent[]>>(new Map());
   const [currentRuntimeMode, setCurrentRuntimeMode] = useState<ChatRuntimeMode | null>(null);
   const [commandAttachments, setCommandAttachments] = useState<ChatAttachment[]>([]);
   const [customCommands, setCustomCommands] = useState<DesktopCustomCommand[]>([]);
@@ -165,6 +182,9 @@ export function useDesktopChatAdapter({
   const userPreferencesRef = useRef<DesktopUserPreference[]>([]);
 
   onThreadUpdatedRef.current = onThreadUpdated;
+  messagesRef.current = messages;
+  cancellingRequestIdRef.current = cancellingRequestId;
+  languageRef.current = language;
 
   function clearStructuredFlush(): void {
     pendingStructuredEventsByRequest.current = {};
@@ -256,6 +276,13 @@ export function useDesktopChatAdapter({
             settleUnrecoverableTurn(requestId, turn.turnId);
             return;
           }
+          // An in-process startChat still owns this Run. Reattach without
+          // replaying history or dropping the structured live listener.
+          if (isActive && events.length === 1 && events[0]?.type === "start") {
+            setActiveRequestId(requestId);
+            activeRequestIdRef.current = requestId;
+            return;
+          }
           // Runtime recovery emits the same normalized chunks as a live Codex
           // stream. Do not suppress them merely because the snapshot used the
           // structured-turn representation before Electron restarted.
@@ -285,13 +312,68 @@ export function useDesktopChatAdapter({
     activeRequestIdRef.current = latestActiveRequestId;
   }
 
+  function captureLiveThreadView(): LiveThreadChatView {
+    return {
+      messages: messagesRef.current,
+      activeRequestId: activeRequestIdRef.current,
+      cancellingRequestId: cancellingRequestIdRef.current,
+      currentRuntimeMode: currentRuntimeModeRef.current,
+      streamingAssistantByRequest: { ...streamingAssistantByRequest.current },
+      structuredRequests: [...structuredRequests.current],
+      completedStructuredRequests: [...completedStructuredRequests.current],
+      lastSequenceByRequest: { ...lastSequenceByRequest.current },
+      pendingDeltasByRequest: { ...pendingDeltasByRequest.current },
+      pendingStructuredEventsByRequest: { ...pendingStructuredEventsByRequest.current },
+    };
+  }
+
+  function restoreLiveThreadView(view: LiveThreadChatView): void {
+    streamingAssistantByRequest.current = { ...view.streamingAssistantByRequest };
+    structuredRequests.current = new Set(view.structuredRequests);
+    completedStructuredRequests.current = new Set(view.completedStructuredRequests);
+    lastSequenceByRequest.current = { ...view.lastSequenceByRequest };
+    pendingDeltasByRequest.current = { ...view.pendingDeltasByRequest };
+    pendingStructuredEventsByRequest.current = { ...view.pendingStructuredEventsByRequest };
+    currentRuntimeModeRef.current = view.currentRuntimeMode;
+    setCurrentRuntimeMode(view.currentRuntimeMode);
+    setCancellingRequestId(view.cancellingRequestId);
+    cancellingRequestIdRef.current = view.cancellingRequestId;
+    setActiveRequestId(view.activeRequestId);
+    activeRequestIdRef.current = view.activeRequestId;
+    setMessages(view.messages);
+    messagesRef.current = view.messages;
+    if (Object.keys(view.pendingStructuredEventsByRequest).length && structuredFlushFrameRef.current === null) {
+      structuredFlushFrameRef.current = window.requestAnimationFrame(flushStructuredEventDeltas);
+    }
+  }
+
+  function cacheLiveThreadView(threadKey: string): void {
+    if (!activeRequestIdRef.current) {
+      liveThreadViewsRef.current.delete(threadKey);
+      return;
+    }
+    liveThreadViewsRef.current.set(threadKey, captureLiveThreadView());
+  }
+
   useEffect(() => {
     if (!activeRequestId) setCancellingRequestId(null);
   }, [activeRequestId]);
 
   useEffect(() => {
     threadIdRef.current = threadId;
-    languageRef.current = language;
+    const cached = liveThreadViewsRef.current.get(threadId);
+    if (cached?.activeRequestId) {
+      liveThreadViewsRef.current.delete(threadId);
+      restoreLiveThreadView(cached);
+      restoredSnapshotThreadRef.current = threadId;
+      appliedSnapshotUpdatedAtRef.current = threadSnapshot?.threadId === threadId
+        ? threadSnapshot.updatedAt
+        : appliedSnapshotUpdatedAtRef.current;
+      const queued = backgroundChatEventsRef.current.get(threadId) ?? [];
+      backgroundChatEventsRef.current.delete(threadId);
+      if (queued.length) window.setTimeout(() => queued.forEach(applyChatEvent), 0);
+      return () => { cacheLiveThreadView(threadId); };
+    }
     streamingAssistantByRequest.current = {};
     structuredRequests.current.clear();
     completedStructuredRequests.current.clear();
@@ -314,16 +396,16 @@ export function useDesktopChatAdapter({
     setInput("");
     const restoredMessages = threadSnapshot?.messages?.length
       ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
-      : [createWelcomeMessage(language, userPreferencesRef.current)];
+      : [createWelcomeMessage(languageRef.current, userPreferencesRef.current)];
     if (threadSnapshot?.messages?.length) {
       restoreActiveStructuredTurns(restoredMessages);
       restoredSnapshotThreadRef.current = threadId;
     }
     setMessages(restoredMessages);
     return () => {
-      clearStructuredFlush();
+      cacheLiveThreadView(threadId);
     };
-  }, [language, threadId]);
+  }, [threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -395,7 +477,7 @@ export function useDesktopChatAdapter({
 
   useEffect(() => {
     if (threadSnapshot?.threadId !== threadId) return;
-    if (activeRequestId) return;
+    if (activeRequestId || activeRequestIdRef.current) return;
     if (threadSnapshot.updatedAt <= appliedSnapshotUpdatedAtRef.current) return;
     if (threadSnapshot.updatedAt <= lastPublishedSnapshotAtRef.current) return;
     const restoredMessages = threadSnapshot.messages.length
@@ -709,7 +791,12 @@ export function useDesktopChatAdapter({
   }
 
   function applyChatEvent(event: ChatEvent): void {
-    if (event.sessionId && event.sessionId !== threadIdRef.current) return;
+    if (event.sessionId && event.sessionId !== threadIdRef.current) {
+      const queued = backgroundChatEventsRef.current.get(event.sessionId) ?? [];
+      if (queued.length < 4_096) queued.push(event);
+      backgroundChatEventsRef.current.set(event.sessionId, queued);
+      return;
+    }
     if (!acceptChatEventSequence(lastSequenceByRequest.current, event.requestId, event.seq)) return;
     event = sanitizeSensitiveValue(event);
     if (event.type === "start") {
@@ -1108,6 +1195,7 @@ export function useDesktopChatAdapter({
   }
 
   function publishAndReturn(nextMessages: UiMessage[]): UiMessage[] {
+    messagesRef.current = nextMessages;
     scheduleThreadUpdate(nextMessages);
     return nextMessages;
   }

@@ -125,6 +125,8 @@ try {
   assert(!recoveryBlock.includes('push({ type: "done"') && !recoveryBlock.includes('push({ type: "error"'), "Recovery must not synthesize a second legacy terminal");
   const adapter = await readFile(join(root, "../shared/renderer/src/adapters/useDesktopChatAdapter.ts"), "utf8");
   assert(adapter.includes("desktopApi.recoverChatRun"), "Renderer must request Codex Run replay for an interrupted turn");
+  assert(adapter.includes("liveThreadViewsRef") && adapter.includes("backgroundChatEventsRef"),
+    "Switching sidebar threads must keep an in-flight chat view and queue events until the user returns");
   assert(adapter.includes("structuredRequests.current.delete(requestId)"), "Recovered plain-text deltas must not be suppressed as structured events");
   assert(app.includes("archived-threads-settings"), "Settings must expose the archived-session center");
   const threads = await readFile(join(root, "../shared/main/threads.ts"), "utf8");
