@@ -545,11 +545,24 @@ function ChatWorkspaceImpl({
   const [duplexPrivacyConfirmed, setDuplexPrivacyConfirmed] = useState(false);
   const [duplexTextStrategy, setDuplexTextStrategy] = useState<"after_response" | "interrupt_now">("after_response");
   const [voiceConsentRequired, setVoiceConsentRequired] = useState(false);
+  const [voiceMenuOpen, setVoiceMenuOpen] = useState(false);
+  const voiceMenuRef = useRef<HTMLDivElement | null>(null);
+  const voiceButtonRef = useRef<HTMLButtonElement | null>(null);
   const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
   const [voiceTurnState, dispatchVoiceTurnBase] = useReducer(reduceVoiceTurn, initialVoiceTurnState);
   const voiceRecordingProcessTimerRef = useRef<number | null>(null);
   const voiceTurnStateRef = useRef(voiceTurnState);
   voiceTurnStateRef.current = voiceTurnState;
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (voiceMenuOpen && voiceMenuRef.current && !voiceMenuRef.current.contains(event.target as Node) && voiceButtonRef.current && !voiceButtonRef.current.contains(event.target as Node)) {
+        setVoiceMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [voiceMenuOpen]);
   const dispatchVoiceTurn = useCallback((event: VoiceTurnEvent): void => {
     const current = voiceTurnStateRef.current;
     const next = reduceVoiceTurn(current, event);
@@ -1931,7 +1944,7 @@ function ChatWorkspaceImpl({
 
   useEffect(() => {
     const running = ["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase);
-    if (duplexWasRunningRef.current && !running) duplexStartButtonRef.current?.focus();
+    if (duplexWasRunningRef.current && !running) voiceButtonRef.current?.focus();
     duplexWasRunningRef.current = running;
   }, [duplexVoiceInput.phase]);
 
@@ -2170,7 +2183,9 @@ function ChatWorkspaceImpl({
     if (!browserReady) { setVoiceError(zh ? "实时语音需要 AudioWorklet 和麦克风设备支持。" : "Realtime voice requires AudioWorklet and microphone device support."); return; }
     if (!readiness?.available) { setVoiceError(readiness?.message ?? duplexVoiceAvailability.reason ?? "Realtime voice is unavailable."); return; }
     if (!privacyAlreadyConfirmed && !duplexDisclosureAcknowledged) { setVoiceError(duplexPrivacyDisclosure); return; }
-    voicePlayback.stop(); streamingVoiceOutput.stop(); setVoiceError(null); await duplexVoiceInput.start();
+    voicePlayback.stop(); streamingVoiceOutput.stop(); setVoiceError(null);
+    try { await duplexVoiceInput.start(); }
+    catch (error) { setVoiceError(error instanceof Error ? error.message : "Realtime voice failed to start."); }
   }
 
   async function startStreamingVoiceRecording(): Promise<void> {
@@ -4178,18 +4193,17 @@ function ChatWorkspaceImpl({
               </div>
               */}
               <div className="composer-actions composer-actions-meta">
-                <select
-                  className="composer-voice-mode"
-                  data-testid="composer-voice-mode"
-                  value={voicePreferences.interactionMode}
-                  onChange={(event) => updateVoicePreferences({ interactionMode: event.target.value as DesktopVoiceInteractionMode })}
-                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showStreamingVoiceCaptureBar || showDuplexVoiceCaptureBar || streamingVoiceInput.phase === "reviewing" || streamingVoiceReadyToSend || streamingVoiceResponseArmed}
-                  aria-label={zh ? "语音交互模式" : "Voice interaction mode"}
-                  title={streamingVoiceAvailability.reason ?? voiceRuntimeDisclosure ?? voiceRuntimeLabel}
-                >
-                  <option value="serial">{zh ? "单次语音输入" : "Single voice input"}</option>
-                  <option value="duplex" disabled={!duplexVoiceAvailability.available}>{zh ? "实时对话" : "Realtime conversation"}</option>
-                </select>
+                {input.trim() && !showStop ? (
+                  <button
+                    type="button"
+                    className="composer-icon-button"
+                    onClick={clearInput}
+                    aria-label="Clear input"
+                    title="Clear"
+                  >
+                    <X size={16} />
+                  </button>
+                ) : null}
                 {voicePreferences.interactionMode === "duplex" && duplexVoiceAvailability.available && ["idle", "failed"].includes(duplexVoiceInput.phase) && !duplexDisclosureAcknowledged ? <section className="composer-voice-preflight" data-testid="duplex-voice-preflight" aria-labelledby="duplex-preflight-title">
                   <strong id="duplex-preflight-title">{zh ? "开始实时语音前" : "Before Realtime voice starts"}</strong>
                   <ul>
@@ -4206,50 +4220,10 @@ function ChatWorkspaceImpl({
                   <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.primary)}>{duplexReadinessActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexReadinessActions.primary === "switch_to_serial" ? (zh ? "使用单次输入" : "Use single input") : (zh ? "重新检查" : "Check again")}</button>
                   {duplexReadinessActions.fallback ? <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.fallback!)}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
                 </div> : null}
-                {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).length > 1 ? (
-                  <select
-                    className="composer-voice-device"
-                    value={voiceDeviceId}
-                    onChange={(event) => updateVoicePreferences(voicePreferences.interactionMode === "duplex" ? { realtimeInputDeviceId: event.target.value } : { inputDeviceId: event.target.value })}
-                    disabled={showAnyVoiceCaptureBar}
-                    aria-label="Microphone device"
-                    title="Microphone device"
-                  >
-                    <option value="">Default mic</option>
-                    {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).map((device, index) => (
-                      <option key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Microphone ${index + 1}`}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-                <select
-                  className="composer-voice-language"
-                  value={voiceLanguage}
-                  onChange={(event) => updateVoicePreferences({ inputLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}
-                  disabled={showAnyVoiceCaptureBar}
-                  aria-label="Voice transcription language"
-                  title="Voice transcription language"
-                >
-                  <option value="auto">Auto</option>
-                  <option value="zh-CN">中文</option>
-                  <option value="en-US">EN</option>
-                </select>
-                {input.trim() && !showStop ? (
-                  <button
-                    type="button"
-                    className="composer-icon-button"
-                    onClick={clearInput}
-                    aria-label="Clear input"
-                    title="Clear"
-                  >
-                    <X size={16} />
-                  </button>
-                ) : null}
+                                <div style={{position:"relative", display:"inline-flex"}}>
                 <button
-                  ref={duplexStartButtonRef}
                   type="button"
-                  className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
+                  ref={voiceButtonRef} className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
                   disabled={voiceState === "requesting_permission" || voiceState === "processing" || duplexVoiceInput.phase === "starting" || duplexVoiceInput.phase === "stopping"}
                   aria-pressed={voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active"}
                   aria-keyshortcuts={voicePreferences.interactionMode === "duplex" ? "Alt+Shift+V" : undefined}
@@ -4267,38 +4241,79 @@ function ChatWorkspaceImpl({
                       ? "Stop voice recording"
                       : "Start voice recording"
                   }
-                  onClick={() => {
-                    void toggleVoiceRecording();
-                  }}
+                  onClick={() => { setVoiceMenuOpen(!voiceMenuOpen); }}
                 >
                   {voiceState === "processing" ? (
                     <ThreadActivityBubble state={{ kind: "running" }} language={zh ? "zh" : "en"} />
                   ) : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering" ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
+                  {voiceMenuOpen && (
+                    <div style={{position:"absolute", bottom:"calc(100% + 8px)", right:"0", zIndex:45, display:"grid", gap:"4px", padding:"8px", border:"1px solid var(--app-panel-border)", borderRadius:"12px", background:"var(--app-card-bg)", boxShadow:"var(--app-shadow-menu)", minWidth:"180px"}} ref={voiceMenuRef}>
+                      <button
+                        type="button"
+                        style={{display:"flex", alignItems:"center", gap:"8px", padding:"8px 12px", border:"none", borderRadius:"8px", background:"var(--app-accent)", color:"#fff", cursor:"pointer", fontSize:"13px", fontWeight:500, textAlign:"left", width:"100%"}}
+                        onClick={() => { setVoiceMenuOpen(false); void startVoiceRecording(); }}
+                      >
+                        <Mic size={16} />
+                        {zh ? "开始录音" : "Start recording"}
+                      </button>
+                      <div style={{height:"1px", background:"var(--app-panel-border)", margin:"4px 0"}} />
+<select
+                  className="composer-voice-mode"
+                  data-testid="composer-voice-mode"
+                  value={voicePreferences.interactionMode}
+                  onChange={(event) => updateVoicePreferences({ interactionMode: event.target.value as DesktopVoiceInteractionMode })}
+                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showStreamingVoiceCaptureBar || showDuplexVoiceCaptureBar || streamingVoiceInput.phase === "reviewing" || streamingVoiceReadyToSend || streamingVoiceResponseArmed}
+                  aria-label={zh ? "语音交互模式" : "Voice interaction mode"}
+                  title={streamingVoiceAvailability.reason ?? voiceRuntimeDisclosure ?? voiceRuntimeLabel}
+                >
+                  <option value="serial">{zh ? "串行" : "Serial"}</option>
+                  <option value="streaming" disabled={!streamingVoiceAvailability.available}>{zh ? "流式" : "Streaming"}</option>
+                  <option value="duplex" disabled={!duplexVoiceAvailability.available}>{zh ? "实时" : "Realtime"}</option>
+                </select>
+<select
+                    className="composer-voice-device"
+                    value={voiceDeviceId}
+                    onChange={(event) => updateVoicePreferences({ inputDeviceId: event.target.value })}
+                    disabled={showAnyVoiceCaptureBar}
+                    aria-label="Microphone device"
+                    title="Microphone device"
+                  >
+                    <option value="">Default mic</option>
+                    {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).map((device, index) => (
+                      <option key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Microphone ${index + 1}`}
+                      </option>
+                    ))}
+                  </select>
+<select
+                  className="composer-voice-language"
+                  value={voiceLanguage}
+                  onChange={(event) => updateVoicePreferences({ inputLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}
+                  disabled={showAnyVoiceCaptureBar}
+                  aria-label="Voice transcription language"
+                  title="Voice transcription language"
+                >
+                  <option value="auto">Auto</option>
+                  <option value="zh-CN">中文</option>
+                  <option value="en-US">EN</option>
+                </select>
+                    </div>
+                  )}
+                </div>
+
                 {showStop ? (
                   <>
                     {input.trim() ? <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
                       <Send size={16} />{zh ? "排队发送" : "Queue"}
                     </button> : null}
-                    {input.trim() ? <button className="composer-submit" type="button"
-                      onClick={() => void Promise.resolve(onAbort()).then(() => submitWithAttachments())}
-                      title={zh ? "明确停止当前任务并改为执行这条消息" : "Explicitly stop the active task and run this message"}>
-                      {zh ? "停止并替换" : "Stop & replace"}
-                    </button> : null}
-                    <button className="composer-submit stop" type="button" disabled={cancellingRequestId === activeRequestId} onClick={() => void onAbort()}>
-                      <Square size={16} />
-                      {cancellingRequestId === activeRequestId
-                        ? (zh ? "正在取消…" : "Cancelling…")
-                        : messages.some((message) => message.structuredTurn?.turnId === activeRequestId && message.structuredTurn.status === "pending")
-                        ? (zh ? "取消排队" : "Cancel queued") : (zh ? "停止" : "Stop")}
+                    <button className="composer-submit" type="submit" title={zh ? "发送并停止当前任务输出，开始新任务" : "Send and stop current task output, start new task"}>
+                      <Send size={16} />{zh ? "发送并停止" : "Send & Stop"}
                     </button>
                   </>
                 ) : (
-                  <button className="composer-submit" data-testid={channelSource === "wechat" ? "send-to-wechat" : undefined} type="submit" disabled={!input.trim() || wechatSending || (channelSource === "wechat" ? !wechatCapability?.available : (!canChat && !materialSuggestionRuntimeReady && !canSaveLocalPreference && !canAnswerMaterialInventoryLocally && !canAnswerMaterialQuestionLocally))}>
+                  <button className="composer-submit" type="submit" title={zh ? "发送消息" : "Send message"}>
                     <Send size={16} />
-                    {channelSource === "wechat"
-                      ? wechatSending ? (zh ? "正在发送…" : "Sending…") : wechatConfirmationPending ? (zh ? "确认发送到微信" : "Confirm send to WeChat") : (zh ? "发送到微信" : "Send to WeChat")
-                      : (zh ? "发送" : "Send")}
                   </button>
                 )}
               </div>
