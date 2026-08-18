@@ -71,6 +71,37 @@ const notifyLocationChange = () => {
     window.dispatchEvent(new Event(LOCATION_CHANGE_EVENT));
 };
 
+/**
+ * Query-only 路由（?menu=&view=&skill=）走 pushState，Gatsby 不知道这些 history 条目。
+ * 浏览器后退会触发原生 popstate → Gatsby EnsureResources.loadPageSync(pathname+search)
+ * 把 `/?menu=skills_square&skill=...` 当成新页面，匹配 404。
+ *
+ * 捕获阶段拦住「pathname 没变」的 popstate，不让 Gatsby 处理。
+ * 必须等首页资源加载完成后再安装，否则会拦到 Gatsby 自己的首次路由。
+ */
+const handleBrowserPopState = (event: PopStateEvent) => {
+    const nextPathname = window.location.pathname;
+    if (nextPathname === gatsbySyncedPathname) {
+        event.stopImmediatePropagation();
+        notifyLocationChange();
+        return;
+    }
+
+    gatsbySyncedPathname = nextPathname;
+    void gatsbyNavigate(nextPathname, { replace: true });
+    notifyLocationChange();
+};
+
+const POPSTATE_GUARD = "__drsaiQueryPopstateGuard";
+
+const installQueryPopstateGuard = () => {
+    if (typeof window === "undefined") return;
+    const w = window as Window & { [POPSTATE_GUARD]?: boolean };
+    if (w[POPSTATE_GUARD]) return;
+    w[POPSTATE_GUARD] = true;
+    window.addEventListener("popstate", handleBrowserPopState, true);
+};
+
 const navigateWithHistory = (target: HistoryTarget, replace?: boolean) => {
     const href = `${target.pathname}${target.search}${target.hash}`;
     if (replace) {
@@ -94,6 +125,8 @@ export const useLocation = () => {
     );
 
     useEffect(() => {
+        installQueryPopstateGuard();
+
         const handleLocationChange = () => {
             const newPathname = window.location.pathname;
             const newSearch = window.location.search;
@@ -110,20 +143,7 @@ export const useLocation = () => {
             });
         };
 
-        const handlePopState = () => {
-            const nextPathname = window.location.pathname;
-            const href = `${nextPathname}${window.location.search}${window.location.hash}`;
-
-            // 从 /welcome 等跨页后退时，浏览器 URL 已变但 Gatsby 仍停留在旧页面
-            if (nextPathname !== gatsbySyncedPathname) {
-                gatsbySyncedPathname = nextPathname;
-                void gatsbyNavigate(href, { replace: true });
-            }
-
-            handleLocationChange();
-        };
-
-        window.addEventListener("popstate", handlePopState);
+        window.addEventListener("popstate", handleLocationChange);
         window.addEventListener(LOCATION_CHANGE_EVENT, handleLocationChange);
 
         const originalPushState = window.history.pushState;
@@ -140,7 +160,7 @@ export const useLocation = () => {
         };
 
         return () => {
-            window.removeEventListener("popstate", handlePopState);
+            window.removeEventListener("popstate", handleLocationChange);
             window.removeEventListener(LOCATION_CHANGE_EVENT, handleLocationChange);
             window.history.pushState = originalPushState;
             window.history.replaceState = originalReplaceState;

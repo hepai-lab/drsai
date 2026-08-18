@@ -22,7 +22,9 @@ export type {
   SkillsUserDetail,
   SkillsCatalogDetail,
   SkillsCatalogUploadResult,
+  SkillTagItem,
 } from "./skills";
+export { SkillTagAPI, skillTagAPI } from "./skills";
 export { DocMasterAPI, docmasterAPI } from "./docmaster";
 export type { DocMasterTemplateEntry, DocMasterPptxPreviewSlide, DocMasterTemplatesResponse } from "./docmaster";
 export { CloudAPI, cloudAPI } from "./cloud";

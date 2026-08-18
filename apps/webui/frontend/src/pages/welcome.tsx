@@ -317,9 +317,9 @@ const WelcomePage = () => {
         </div>
       </section>
 
-      <section id="clients" className="relative z-10 mx-auto max-w-6xl px-4 sm:px-8">
+      <section id="clients" className="relative z-10 mx-auto max-w-3xl px-4 sm:px-8">
         <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-[0_18px_60px_-36px_rgba(76,29,149,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.035]">
-          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-5">
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-2">
             <ClientItem
               icon={<WebBrowserLogo />}
               title="WebUI"
@@ -367,7 +367,7 @@ const WelcomePage = () => {
                 {isZh ? "查看" : "View"}
               </span>
             </button>
-            <button
+            {/* <button
               type="button"
               onClick={() => toggleClient("macos")}
               className={`order-5 flex min-h-24 min-w-[165px] snap-start items-center gap-3 border-l border-slate-100 p-4 text-left text-slate-950 transition sm:min-h-36 sm:min-w-0 sm:gap-4 sm:border-l sm:border-t-0 sm:p-5 dark:border-white/5 dark:text-white ${activeClient === "macos"
@@ -387,7 +387,7 @@ const WelcomePage = () => {
               <span className="hidden text-xs font-extrabold text-violet-700 sm:inline dark:text-violet-300">
                 {isZh ? "查看" : "View"}
               </span>
-            </button>
+            </button> */}
           </div>
           {activeClient && (
             <div ref={clientDetailsRef} tabIndex={-1} className="outline-none">

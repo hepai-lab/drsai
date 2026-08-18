@@ -1,6 +1,5 @@
 import { Tooltip } from "antd";
 import {
-  Bot,
   ChartColumn,
   ChevronLeft,
   ChevronRight,
@@ -31,11 +30,10 @@ interface LeftMenuProps {
   onNewSession?: () => void;
 }
 
-type SectionId = "chat" | "agents" | "settings" | "history";
+type SectionId = "chat" | "settings" | "history";
 
 const SECTIONS: { id: SectionId; icon: React.ReactNode; label: string; defaultItem: string }[] = [
   { id: "chat", icon: <MessageSquare className="w-3.5 h-3.5" />, label: "Chat", defaultItem: "current_session" },
-  { id: "agents", icon: <Bot className="w-3.5 h-3.5" />, label: "Agents", defaultItem: "agent_square" },
   { id: "history", icon: <Clock className="w-3.5 h-3.5" />, label: "History", defaultItem: "" },
   { id: "settings", icon: <Settings className="w-3.5 h-3.5" />, label: "Settings", defaultItem: "profile" },
 ];
@@ -55,7 +53,6 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
 
   const [expanded, setExpanded] = useState<Record<SectionId, boolean>>({
     chat: true,
-    agents: false,
     settings: false,
     history: true,
   });
@@ -63,8 +60,6 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   useEffect(() => {
     if (["current_session"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, chat: true }));
-    } else if (["my_agents", "agent_square", "skills_square"].includes(activeSubMenuItem)) {
-      setExpanded((e) => ({ ...e, agents: true }));
     } else if (historyContent) {
       // 历史会话默认展开
       setExpanded((e) => ({ ...e, history: true }));
@@ -124,7 +119,6 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   // Map each section to the items it contains, for active highlight detection
   const SECTION_ITEMS: Record<SectionId, string[]> = {
     chat: ["current_session"],
-    agents: ["my_agents", "agent_square", "skills_square"],
     settings: [
       "profile",
       "channels",
@@ -153,7 +147,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
 
         {/* Section icons — same order as expanded: chat, agents, cloud, history, settings */}
         <div className="flex flex-col items-center gap-1 mt-2">
-          {(["chat", "agents"] as SectionId[]).map((id) => {
+          {(["chat"] as SectionId[]).map((id) => {
             const s = SECTIONS.find((x) => x.id === id)!;
             const isSectionActive = SECTION_ITEMS[s.id].includes(activeSubMenuItem);
             return (
@@ -173,6 +167,36 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
               </Tooltip>
             );
           })}
+
+          <Tooltip title={t("leftmenu.nav.agentSquare")} placement="right">
+            <button
+              type="button"
+              onClick={() => { onSubMenuChange("agent_square"); onClose(); }}
+              className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${activeSubMenuItem === "agent_square"
+                ? "text-accent bg-accent/10"
+                : isDark
+                  ? "text-secondary hover:text-primary hover:bg-white/5"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+                }`}
+            >
+              <Grid2X2 className="w-3.5 h-3.5" />
+            </button>
+          </Tooltip>
+
+          <Tooltip title={t("leftmenu.nav.skillsSquare")} placement="right">
+            <button
+              type="button"
+              onClick={() => { onSubMenuChange("skills_square"); onClose(); }}
+              className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${activeSubMenuItem === "skills_square"
+                ? "text-accent bg-accent/10"
+                : isDark
+                  ? "text-secondary hover:text-primary hover:bg-white/5"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+                }`}
+            >
+              <Wrench className="w-3.5 h-3.5" />
+            </button>
+          </Tooltip>
 
           <Tooltip title={t("leftmenu.section.files")} placement="right">
             <button
@@ -248,25 +272,34 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
 
         <div className="h-px bg-border-primary/25 my-1.5" />
 
-        {/* ── 智能体 ── */}
+        {/* ── 智能体广场 ── */}
         <div>
-          <SectionHeader id="agents" icon={<Bot className="w-3.5 h-3.5" />} />
-          {expanded.agents && (
-            <div className="mt-0.5 space-y-0.5">
-              <NavItem
-                id="agent_square"
-                icon={<Grid2X2 className="w-3.5 h-3.5" />}
-                label={t("leftmenu.nav.agentSquare")}
-                onClick={() => onSubMenuChange("agent_square")}
-              />
-              <NavItem
-                id="skills_square"
-                icon={<Wrench className="w-3.5 h-3.5" />}
-                label={t("leftmenu.nav.skillsSquare")}
-                onClick={() => onSubMenuChange("skills_square")}
-              />
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => onSubMenuChange("agent_square")}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold tracking-wide transition-colors ${activeSubMenuItem === "agent_square"
+              ? "bg-accent/15 text-accent shadow-sm"
+              : "text-secondary hover:text-primary hover:bg-tertiary/25"
+            }`}
+          >
+            <Grid2X2 className="w-3.5 h-3.5" />
+            <span>{t("leftmenu.nav.agentSquare")}</span>
+          </button>
+        </div>
+
+        {/* ── 技能广场 ── */}
+        <div>
+          <button
+            type="button"
+            onClick={() => onSubMenuChange("skills_square")}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold tracking-wide transition-colors ${activeSubMenuItem === "skills_square"
+              ? "bg-accent/15 text-accent shadow-sm"
+              : "text-secondary hover:text-primary hover:bg-tertiary/25"
+            }`}
+          >
+            <Wrench className="w-3.5 h-3.5" />
+            <span>{t("leftmenu.nav.skillsSquare")}</span>
+          </button>
         </div>
 
         <div className="h-px bg-border-primary/25 my-1.5" />

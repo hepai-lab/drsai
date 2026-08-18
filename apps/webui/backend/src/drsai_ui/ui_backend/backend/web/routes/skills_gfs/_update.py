@@ -236,7 +236,11 @@ async def _update_user(
     db_mgr_update = await _get_db()
     resp_db = db_mgr_update.get(UserSkillMeta, filters={"user_id": user_id, "slug": slug})
     if resp_db.status and resp_db.data:
-        source_val = str(getattr(resp_db.data[0], "source", "created") or "created")
+        rows = sorted(
+            resp_db.data,
+            key=lambda r: 0 if str(getattr(r, "source", "created") or "created") == "created" else 1,
+        )
+        source_val = str(getattr(rows[0], "source", "created") or "created")
     else:
         prefix = _gfs_prefix("user", user_id)
         for src in ("created", "imported"):
@@ -250,6 +254,8 @@ async def _update_user(
     if source_val is None:
         logger.warning("[publish] _update_user skill not found slug=%s user_id=%s", slug, user_id)
         raise HTTPException(status_code=404, detail="Skill not found")
+    if source_val == "imported":
+        raise HTTPException(status_code=403, detail="Collected skills cannot be edited")
 
     db_mgr = await _get_db()
     check_resp = db_mgr.get(UserSkillMeta, filters={"user_id": user_id, "slug": slug, "source": source_val})

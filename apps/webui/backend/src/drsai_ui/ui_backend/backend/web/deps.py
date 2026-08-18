@@ -81,6 +81,23 @@ def _seed_default_users(db: DatabaseManager) -> None:
         logger.info(f"Seeded default user: {user_id} (admin={is_admin})")
 
 
+def _seed_default_tags(db: DatabaseManager) -> None:
+    """Seed initial skill tags if the table is empty."""
+    from ..datamodel.db import SkillTag
+
+    existing = db.get(SkillTag, return_json=False)
+    if existing.status and existing.data:
+        return  # Already seeded
+
+    default_tags = [
+        "计算中心服务", "自动化", "代码开发", "科研",
+        "办公", "LHAASO", "JUNO", "HEPS", "CSNS", "ALICPT",
+    ]
+    for i, name in enumerate(default_tags):
+        db.upsert(SkillTag(name=name, sort_order=i))
+    logger.info(f"Seeded {len(default_tags)} default skill tags")
+
+
 async def init_managers(
     database_uri: str,
     config_dir: Path,
@@ -104,6 +121,9 @@ async def init_managers(
         from .authz import bootstrap_platform_admins
 
         bootstrap_platform_admins(_db_manager)
+
+        # Seed default skill tags if none exist
+        _seed_default_tags(_db_manager)
 
         # init default team config
         await _db_manager.import_teams_from_directory(

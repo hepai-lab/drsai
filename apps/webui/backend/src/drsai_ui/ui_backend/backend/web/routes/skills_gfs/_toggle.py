@@ -46,6 +46,11 @@ async def _toggle_visibility(slug: str, user_id: str, public: bool) -> dict:
     db_mgr = await _get_db()
 
     if public:
+        user_check = db_mgr.get(UserSkillMeta, filters={"user_id": user_id, "slug": slug})
+        if user_check.status and user_check.data:
+            sources = {str(getattr(r, "source", "created") or "created") for r in user_check.data}
+            if "imported" in sources and "created" not in sources:
+                raise HTTPException(status_code=403, detail="Cannot publish a collected skill")
         # ── Publish (or re-publish) ──
         existing = db_mgr.get(SkillMeta, filters={"slug": slug})
         already_published = existing.status and existing.data

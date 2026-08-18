@@ -712,6 +712,26 @@ class DesktopAuthTicket(SQLModel, table=True):
     claimed: bool = Field(default=False)
 
 
+class SkillTag(SQLModel, table=True):
+    """Tag/category label for skills — admin-managed CRUD."""
+
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )  # pylint: disable=not-callable
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )  # pylint: disable=not-callable
+    name: str = Field(sa_column=Column(String, unique=True, nullable=False, index=True))
+    sort_order: int = Field(default=0)
+
+
 ##
 
 # DatabaseModel = Team | Message | Session | Run | Gallery | Settings | Plan | AgentModeSettings | AgentModeConfig | UserAgents | UserDDFAgents| Userinfo
@@ -739,5 +759,6 @@ DatabaseModel = (
     | UserSkillMeta
     | SkillShare
     | DesktopAuthTicket
+    | SkillTag
 )
 
