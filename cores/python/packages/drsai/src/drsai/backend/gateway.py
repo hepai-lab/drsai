@@ -5211,13 +5211,21 @@ async def runtime_session_update(session_id: str, request: RuntimeSessionUpdateR
             "active" if request.archived is False else
             session["lifecycle"]
         )
-        if wanted_lifecycle in {"active", "archived"} and wanted_lifecycle != session["lifecycle"]:
+        if wanted_lifecycle != session["lifecycle"]:
             # Mirror to the owning Agent Backend first.  If its remote archive
             # request fails, the Runtime Session remains unchanged and retryable.
-            await _runtime_agent_service().archive_session(
-                session_id,
-                archived=wanted_lifecycle == "archived",
-            )
+            # `removed` is terminal on Runtime; Codex/other backends only have
+            # archive, so deletion is mirrored as an archive transition.
+            if wanted_lifecycle in {"archived", "removed"}:
+                await _runtime_agent_service().archive_session(
+                    session_id,
+                    archived=True,
+                )
+            elif wanted_lifecycle == "active":
+                await _runtime_agent_service().archive_session(
+                    session_id,
+                    archived=False,
+                )
         return _runtime_engine().update_session(
             session_id,
             title=request.title,

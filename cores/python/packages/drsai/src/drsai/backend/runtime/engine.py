@@ -1267,6 +1267,9 @@ class RuntimeEngine:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)).fetchone()
             if existing is not None:
+                if str(existing["lifecycle"]) == "removed":
+                    db.rollback()
+                    return self._session(existing), False
                 if str(existing["workspace_id"]) != workspace_id:
                     db.rollback()
                     raise ValueError("Imported Session identity is already bound to another Workspace")

@@ -466,7 +466,7 @@ export interface RuntimeClient {
   getSession(sessionId: string): Promise<RuntimeSession>;
   openWorkspaceSessionCatalogStream(workspaceId: string, signal: AbortSignal): Promise<RuntimeWorkspaceSessionCatalogStream>;
   createSession(workspaceId: string, title?: string): Promise<RuntimeSession>;
-  updateSession(sessionId: string, updates: { archived?: boolean; title?: string }): Promise<RuntimeSession>;
+  updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed" }): Promise<RuntimeSession>;
   importLegacyDesktopAgentRun(request: LegacyDesktopAgentRunMigrationRequest): Promise<LegacyDesktopAgentRunMigrationResult>;
   getConversationSnapshot(sessionId: string): Promise<RuntimeConversationSnapshot>;
   listSessionEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<RuntimeSessionEventPage>;
@@ -787,7 +787,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspace_id: workspaceId, title }) });
   }
 
-  updateSession(sessionId: string, updates: { archived?: boolean; title?: string }): Promise<RuntimeSession> {
+  updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed" }): Promise<RuntimeSession> {
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
   }
 

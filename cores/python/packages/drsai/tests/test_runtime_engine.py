@@ -235,6 +235,15 @@ def test_session_agent_binding_removed_tombstone_and_revision(engine: RuntimeEng
         engine.update_session(session["session_id"], lifecycle="active")
     with pytest.raises(ValueError, match="active Session"):
         engine.create_run(session["session_id"], "mobile@1", "removed-session-run")
+    imported, created = engine.import_session(
+        session["session_id"],
+        "workspace-one",
+        "Should stay removed",
+        agent_definition="mobile@1",
+        backend_id="opendrsai",
+    )
+    assert created is False
+    assert imported["lifecycle"] == "removed"
 
 
 def test_run_state_idempotency_cancel_and_identity(engine: RuntimeEngine) -> None:

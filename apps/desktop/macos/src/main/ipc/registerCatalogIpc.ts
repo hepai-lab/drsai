@@ -3,7 +3,8 @@ import { getAgentCatalogSnapshot, getPlatformAgentStatus, listAgents, recordAgen
 import type { MobilePairingController } from "../../../../shared/main/mobilePairingController";
 import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../../shared/main/myDrSaiConfig";
 import { getWebSearchProviderPolicy, updateWebSearchProviderPolicy } from "../../../../shared/main/myDrSaiConfig";
-import { appendDuplexVoiceHistory, createThread, deleteThread, getThreadSnapshot, listThreads, searchThreadMessages, updateThread, updateThreadSnapshot } from "../../../../shared/main/threads";
+import { appendDuplexVoiceHistory, createThread, getThreadSnapshot, listThreads, searchThreadMessages, updateThread, updateThreadSnapshot } from "../../../../shared/main/threads";
+import { deleteThreadAndRuntimeSession } from "../../../../shared/main/threadDelete";
 import { getRuntimeThreadSnapshot, getRuntimeThreadSnapshotEnvelope } from "../../../../shared/main/threadRuntimeSubscription";
 import { coalesceHydrationEnvelope, persistedThreadSnapshotEnvelope, threadSnapshotHasConversation } from "../../../../shared/api/threadSnapshotHydration";
 import { runtimeSessionIdForLookup } from "../../../../shared/api/threadSidebarCatalog";
@@ -56,7 +57,7 @@ export function registerMacosCatalogIpc(
   ipcMain.handle("desktop:record-agent-usage", (_event, agentId) => recordAgentUsage(typeof agentId === "string" ? agentId : ""));
   ipcMain.handle("desktop:create-thread", (_event, request) => createThread(request));
   ipcMain.handle("desktop:update-thread", (_event, request) => updateThread(request));
-  ipcMain.handle("desktop:delete-thread", (_event, threadId) => deleteThread(threadId));
+  ipcMain.handle("desktop:delete-thread", (_event, threadId) => deleteThreadAndRuntimeSession(threadId));
   ipcMain.handle("desktop:set-thread-archived", (_event, request: { threadId: string; archived: boolean }) => updateThread({ id: request.threadId, archived: request.archived }));
   ipcMain.handle("desktop:get-thread-snapshot", async (_event, threadId) => {
     const remote = await remoteWorkspaceController.getThreadSnapshot(threadId);

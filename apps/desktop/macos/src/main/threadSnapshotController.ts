@@ -81,6 +81,7 @@ export class MacosThreadSnapshotController {
     if (target.isDestroyed()) return;
     const localWorkspace = (await listWorkspaces()).find((item) => item.id === runtime.workspace_id);
     if (!localWorkspace) return;
+    if (runtime.lifecycle === "removed") return;
     const sourceChannel = runtime.origin?.provider === "wechat" ? "wechat" as const : undefined;
     const ownerThreadId = findDesktopOwnerThreadId(await listThreads(), {
       sessionId: runtime.session_id,
@@ -101,7 +102,7 @@ export class MacosThreadSnapshotController {
       sourceChannel,
       messageCount: runtime.message_count ?? 0,
     });
-    if (!target.isDestroyed()) {
+    if (result.changed && !target.isDestroyed()) {
       target.send("desktop:thread-catalog", { thread: result.thread, source: "runtime-session" });
     }
   }

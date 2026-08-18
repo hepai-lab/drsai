@@ -676,6 +676,7 @@
     "verify:p3-windows-sandbox": "node scripts/verify-p3-windows-sandbox.mjs",
     "verify:thread-menu": "node scripts/verify-thread-context-menu.mjs",
     "verify:thread-archive": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-thread-archive.mts",
+    "verify:thread-delete": "node ../shared/test-kit/run-bundled-test.mjs ../shared/test-kit/verify-thread-delete.mts",
     "verify:thread-activity": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-thread-activity.mts",
     "verify:thread-activity-ui": "node scripts/verify-thread-activity-ui.mjs",
     "verify:conversation-turn-rail": "node ../shared/test-kit/run-bundled-test.mjs scripts/verify-conversation-turn-rail.mts",

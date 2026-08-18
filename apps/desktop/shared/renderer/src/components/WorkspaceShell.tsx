@@ -3281,15 +3281,15 @@ export function WorkspaceShell({
                   const approved = await requestAppDecision({
                     id: `delete-thread:${thread.id}`,
                     title: thread.source === "codex"
-                      ? (zh ? "从 OpenDrSai 列表移除？" : "Remove from the OpenDrSai list?")
-                      : (zh ? "永久删除本地对话？" : "Permanently delete this local conversation?"),
+                      ? (zh ? "删除 OpenDrSai 与 Runtime 会话？" : "Delete the OpenDrSai and Runtime session?")
+                      : (zh ? "永久删除对话？" : "Permanently delete this conversation?"),
                     description: thread.source === "codex"
                       ? (zh
-                        ? `「${thread.title}」只移除 OpenDrSai 的本地列表记录，不会删除或归档 Codex 历史；下次同步可重新导入。`
-                        : `"${thread.title}" only removes the local OpenDrSai list entry. Codex history is not deleted or archived and can be imported again.`)
+                        ? `「${thread.title}」会删除 OpenDrSai 本地记录，并把 Runtime 会话标为已移除。Codex 侧会尽量同步归档，且不可从侧栏恢复。`
+                        : `"${thread.title}" deletes the local OpenDrSai record and marks the Runtime session removed. Codex is archived when possible and cannot be restored from the sidebar.`)
                       : (zh
-                        ? `「${thread.title}」会永久删除 OpenDrSai 本地聊天记录，且不可恢复。若只想隐藏，请改用归档。`
-                        : `"${thread.title}" permanently deletes the local OpenDrSai chat history and cannot be undone. Use Archive if you only want to hide it.`),
+                        ? `「${thread.title}」会永久删除本地聊天记录和 Runtime 会话，且不可恢复。若只想隐藏，请改用归档。`
+                        : `"${thread.title}" permanently deletes the local chat history and the Runtime session. This cannot be undone. Use Archive if you only want to hide it.`),
                     tone: "danger",
                     kind: "confirmation",
                     confirmLabel: zh ? "删除" : "Delete",
@@ -3323,8 +3323,8 @@ export function WorkspaceShell({
               }
             >
               {threadMenu.thread.source === "codex"
-                ? (zh ? "从 OpenDrSai 列表移除…" : "Remove from OpenDrSai list…")
-                : (zh ? "永久删除本地对话…" : "Permanently delete local conversation…")}
+                ? (zh ? "删除会话…" : "Delete conversation…")
+                : (zh ? "永久删除对话…" : "Permanently delete conversation…")}
             </button>
           </div>
         </div>

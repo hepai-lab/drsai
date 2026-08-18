@@ -202,7 +202,7 @@ const remote = read(windowsRoot, "src/main/remoteWorkspace.ts");
     && threads.includes("deletedThreadIds")
     && threads.includes("thread_deleted")
     && threads.includes("deleted-threads.json")
-    && /serializeJsonMutation\(THREADS_FILE, async \(\) => \{[\s\S]*?deletedThreadIds\.has\(request\.id\)/.test(threads)
+    && /isDeletedThreadIdentity\(request\.id\)|deletedThreadIds\.has\(request\.id\)/.test(threads)
     && (
       /await (?:desktopApi|window\.openDrSai)\.deleteThread\(threadId\)/.test(deleteFn)
       || shell.includes("await deleteDesktopThread(thread.id)")

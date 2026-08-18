@@ -1,6 +1,6 @@
 import { desktopApi, hasDesktopApi } from "./desktopApi";
 
-/** Persistently remove a local conversation. Throws with a concrete message on failure. */
+/** Persistently remove a conversation locally and on Runtime. Throws with a concrete message on failure. */
 export async function deleteDesktopThread(threadId: string): Promise<void> {
   if (!threadId.trim()) {
     throw new Error("Conversation id is empty.");

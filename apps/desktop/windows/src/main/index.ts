@@ -195,7 +195,6 @@ import {
 import {
   createThread,
   appendDuplexVoiceHistory,
-  deleteThread,
   getThreadSnapshot,
   listThreads,
   searchThreadMessages,
@@ -206,6 +205,7 @@ import {
   upsertThreadsFromRuntimeCatalog,
   findDesktopOwnerThreadId,
 } from "./threads";
+import { deleteThreadAndRuntimeSession } from "../../../shared/main/threadDelete";
 import {
   createThreadShare,
   openThreadShare,
@@ -652,6 +652,7 @@ async function applyRuntimeWorkspaceCatalogEvent(
     listThreads(),
   ]);
   if (session.workspace_id !== workspaceId) throw new Error("session_catalog_workspace_mismatch");
+  if (session.lifecycle === "removed") return;
   const sourceChannel = session.origin?.provider === "wechat" ? "wechat" as const : undefined;
   const ownerThreadId = findDesktopOwnerThreadId(existingThreads, {
     sessionId: session.session_id,
@@ -702,7 +703,9 @@ function startRuntimeWorkspaceCatalogSubscription(
         await bootstrapRuntimeSessionCatalog(client, workspaceId, async (session) => {
           bootstrapSessions.push(session);
         });
-        const bootstrapResults = await upsertThreadsFromRuntimeCatalog(bootstrapSessions.map((session) => ({
+        const bootstrapResults = await upsertThreadsFromRuntimeCatalog(bootstrapSessions.filter((session) =>
+          session.lifecycle !== "removed"
+        ).map((session) => ({
           id: session.session_id,
           title: session.title,
           workspacePath,
@@ -5529,7 +5532,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:delete-thread", async (_event, threadId) => {
     try {
-      return await deleteThread(threadId);
+      return await deleteThreadAndRuntimeSession(threadId);
     } catch (error) {
       console.error("[desktop:delete-thread] failed", threadId, error);
       throw error;
