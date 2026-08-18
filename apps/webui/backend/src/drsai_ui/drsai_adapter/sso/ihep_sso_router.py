@@ -24,7 +24,7 @@ from datetime import timedelta
 
 from drsai_ui.ui_backend.backend.web.deps import get_db
 from drsai_ui.ui_backend.backend.web.auth_cookies import clear_refresh_cookie, set_refresh_cookie
-from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source
+from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source, record_cooper_info
 from drsai_ui.ui_backend.backend.web.routes.desktop_auth import (
     authorize_desktop_state,
     make_desktop_sso_state,
@@ -190,6 +190,25 @@ async def auth(request: Request, db=Depends(get_db)):
     logger.info(f'SSO authed user: {user}')
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     user_id = user.email
+
+    # 通过 IHEP access_token 获取合作组信息
+    ihep_token = jsonInfo.get("access_token")
+    if ihep_token:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    "https://newlogin.ihep.ac.cn/api/UserInfoAndCooperWithToken",
+                    params={"username": user_id, "token": ihep_token},
+                )
+            if resp.status_code == 200:
+                body = resp.json()
+                if body.get("code") == 1:
+                    cooper_info = body.get("data", {}).get("cooperInfo", "")
+                    record_cooper_info(db, user_id, cooper_info)
+                    logger.info(f"[SSO] cooperInfo stored for {user_id}: {cooper_info}")
+        except Exception as exc:
+            logger.warning(f"[SSO] UserInfoAndCooperWithToken failed for {user_id}: {exc}")
+
     access_token = create_jwt_token(data={"sub": user_id}, expires_delta=access_token_expires)
 
     if authorize_desktop_state(state, user_id, db):
