@@ -217,6 +217,55 @@ export interface SudoRequestPayload {
   request_id: string
 }
 
+// ── Remote SSH types ─────────────────────────────────────────────────
+
+export interface SSHConfigEntry {
+  name: string
+  host: string
+  port: number
+  username: string
+  password?: string        // masked as '***' when listed
+  private_key_path?: string
+  remote_gateway_port?: number
+  remote_workdir?: string
+}
+
+export interface RemoteConnectionResult {
+  connected: boolean
+  ws_attach_url: string
+  remote_hostname: string
+  remote_cwd: string
+  remote_port: number
+  local_port: number
+  remote_pid: number
+  remote_python_version?: string
+}
+
+export interface RemoteStatusResult {
+  connected: boolean
+  ws_attach_url?: string
+  remote_hostname?: string
+  remote_cwd?: string
+  remote_port?: number
+  local_port?: number
+  remote_pid?: number
+  remote_python_version?: string
+}
+
+export interface RemoteDirEntry {
+  name: string
+  path: string
+  is_dir: boolean
+  size?: string
+}
+
+export interface RemoteExecResult {
+  stdout: string
+  stderr: string
+  returncode: number
+  host: string
+}
+
 // ── Event union ──────────────────────────────────────────────────────
 
 interface BaseEvent {
@@ -259,6 +308,11 @@ export type GatewayEvent =
   | (BaseEvent & { type: 'status.update'; payload: { kind: string; text: string } })
   | (BaseEvent & { type: 'background.complete'; payload: BackgroundCompletePayload })
   | (BaseEvent & { type: 'error'; payload: { message: string } })
+  // Remote SSH
+  | (BaseEvent & { type: 'remote.connected'; payload: RemoteConnectionResult })
+  | (BaseEvent & { type: 'remote.disconnected'; payload?: Record<string, unknown> })
+  // Remote SSH — unexpected disconnection (not user-initiated)
+  | (BaseEvent & { type: 'remote.lost'; payload?: { reason?: string; was_remote?: boolean } })
   // Catch-all so forward-compatible event types don't break the union.
   | (BaseEvent & { type: string; payload?: unknown })
 

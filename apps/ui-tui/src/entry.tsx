@@ -16,6 +16,7 @@ import { App } from './app.js'
 import { GatewayClient } from './gatewayClient.js'
 import { setInkInstance } from './app/inkInstanceRef.js'
 import { initTerminalSize } from './hooks/terminalSizeStore.js'
+import { VERSION } from './version.js'
 import {
   disableAltScreen,
   disableFocusReporting,
@@ -191,6 +192,9 @@ if (!process.stdin.isTTY) {
   // Color: #FFD700 (gold) = theme.primary, applied via ANSI true-colour.
   process.stdout.write('\x1b[1m\x1b[38;2;255;215;0m⚡ OpenDrSai\x1b[0m\n')
   process.stdout.write('\x1b[2m  Website: https://opendrsai.ihep.ac.cn/  ·  Guide: https://note.ihep.ac.cn/s/QgtE3Nlx2\x1b[0m\n')
+  // Version line — printed once at startup so the user can confirm which
+  // build they are running.  Dim grey so it doesn't compete with the banner.
+  process.stdout.write(`\x1b[2m  Version: ${VERSION}\x1b[0m\n`)
 
   // Install the single global resize listener BEFORE mounting the app,
   // so all components can subscribe via the nanostore atom instead of

@@ -140,7 +140,7 @@ def _tool_schema_name(value: Any) -> str:
     return schema["name"]
 
 
-def _desktop_execution_metadata(name: str, executor_id: str) -> dict[str, Any]:
+def _desktop_execution_metadata(name: str, executor_id: str, *, desktop_mode: bool = True) -> dict[str, Any]:
     if name in _DESKTOP_READ_ONLY_TOOLS:
         risk, approval = "read_only", "none"
     elif name in _DESKTOP_LOCAL_WRITE_TOOLS:
@@ -151,8 +151,15 @@ def _desktop_execution_metadata(name: str, executor_id: str) -> dict[str, Any]:
         risk, approval = "sensitive", "required"
     else:
         # Dynamically loaded MCP/HepAI tools can have external side effects.
-        # They remain visible for compatibility but may not claim no-approval safety.
-        risk, approval = "external_write", "required"
+        # Desktop surfaces keep them visible but require approval. Non-desktop
+        # surfaces (worker/console/TUI legacy) have no approval channel, so we
+        # downgrade to a local-write classification instead of forcing
+        # ``external_write + required`` — otherwise every unknown tool is
+        # rejected by approval gating or batch validation.
+        if desktop_mode:
+            risk, approval = "external_write", "required"
+        else:
+            risk, approval = "local_write", "none"
     required_capabilities = ["network.public_https"] if name in {"web_search", "web_fetch"} else []
     if name == "web_search": required_capabilities.insert(0, "web_search")
     if name == "web_fetch": required_capabilities.insert(0, "web_fetch")
@@ -303,6 +310,10 @@ class DrSaiAssistantConfig(DrSaiAgentConfig):
     executor: ComponentModel
     sub_agent_config: Dict
     max_turn_count: int
+    max_agent_concurrent: int
+    max_tool_rounds_ceiling: int
+    max_parallel_tool_calls_ceiling: int
+    max_inline_tool_output_chars: int
     token_limit: int
     rag_flow_url: str
     rag_flow_token: str
@@ -373,6 +384,12 @@ class DrSaiAssistant(DrSaiAgent):
         max_agent_concurrent: int = 10,
         # task loop and memory
         max_turn_count: int = 500,
+        # Tool-loop safety ceilings. Defaults preserve desktop behavior; raise
+        # for non-desktop surfaces (worker/console) that need longer loops or
+        # higher parallelism. Actual loop bound = min(max_turn_count, max_tool_rounds_ceiling).
+        max_tool_rounds_ceiling: int = DEFAULT_MAX_TOOL_ROUNDS,
+        max_parallel_tool_calls_ceiling: int = DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+        max_inline_tool_output_chars: int = MAX_INLINE_TOOL_OUTPUT_CHARS,
         token_limit: int = 50000,
         rag_flow_url: Optional[str] = None,
         rag_flow_token: Optional[str] = None,
@@ -635,12 +652,18 @@ class DrSaiAssistant(DrSaiAgent):
 
         # max_turn_count
         self._max_turn_count = max_turn_count
+        # Tool-loop safety ceilings are constructor params (defaults preserve
+        # desktop behavior). Actual loop bound = min(max_turn_count, ceiling).
+        self._max_inline_tool_output_chars: int = max_inline_tool_output_chars
         self._tool_loop_policy = normalize_tool_loop_policy({
             "schema_version": 1,
             "policy_version": "p9-tool-loop-v1",
-            "max_tool_rounds": min(max_turn_count, DEFAULT_MAX_TOOL_ROUNDS),
-            "max_parallel_tool_calls": min(max_agent_concurrent, DEFAULT_MAX_PARALLEL_TOOL_CALLS),
-        })
+            "max_tool_rounds": min(max_turn_count, max_tool_rounds_ceiling),
+            "max_parallel_tool_calls": min(max_agent_concurrent, max_parallel_tool_calls_ceiling),
+        },
+            max_rounds_ceiling=max_tool_rounds_ceiling,
+            max_parallel_ceiling=max_parallel_tool_calls_ceiling,
+        )
 
         # config file mtime cache for lazy reloading
         self._config_mtimes: Dict[str, float] = {}
@@ -1774,8 +1797,9 @@ class DrSaiAssistant(DrSaiAgent):
                             content="\n\n(●'◡'●)抱歉，已达最大的任务循环次数，触发了保护措施，请重新调整您的询问方式或者更具体的告诉您的助手应该怎么做。",
                             source=agent_name,
                             metadata={"internal": "no"},
+                        ),
                         inner_messages=inner_messages,
-                    ))
+                    )
                     return
 
         except asyncio.CancelledError:
@@ -1793,11 +1817,29 @@ class DrSaiAssistant(DrSaiAgent):
             logger.error(traceback.format_exc())
             # Do NOT add error to chat history — retry logic in the loop already
             # handled retriable failures.  If we reach here the error is fatal.
+            # Tool-batch validation errors (ValueError) are raised once by
+            # validate_tool_call_batch and never retried, so do not mislabel
+            # them as "retried N times".
+            _tool_batch_errors = {
+                "tool_call_parallel_limit", "approval_tool_must_be_single",
+                "tool_call_batch_empty", "tool_call_id_invalid",
+                "tool_call_id_duplicate", "tool_call_name_invalid",
+            }
+            if isinstance(e, ValueError) and str(e) in _tool_batch_errors:
+                error_content = (
+                    f"❌ 工具批次校验失败: {e}\n"
+                    f"请减少单轮工具调用数量或调整调用方式后重试。\n"
+                    f"Tool batch validation failed: {e}"
+                )
+            else:
+                error_content = (
+                    f"❌ 执行任务时发生错误: {type(e).__name__}: {e}\n\n"
+                    f"模型调用已重试 {self._llm_max_retries} 次仍然失败。请检查网络连接或模型配置后重试。\n"
+                    f"An error occurred after {self._llm_max_retries} retries: {e}"
+                )
             yield Response(
                 chat_message=TextMessage(
-                    content=f"❌ 执行任务时发生错误: {type(e).__name__}: {e}\n\n"
-                            f"模型调用已重试 {self._llm_max_retries} 次仍然失败。请检查网络连接或模型配置后重试。\n"
-                            f"An error occurred after {self._llm_max_retries} retries: {e}",
+                    content=error_content,
                     source=self._user_profile_manager.agent_name,
                     metadata={"internal": "no"},
                 ),
@@ -1939,18 +1981,22 @@ class DrSaiAssistant(DrSaiAgent):
 
         workbench_tools = await workbench.list_tools()
         all_tools = workbench_tools + handoff_tools + manager_tools
+        # Desktop surfaces wire a `_tool_approval_handler`; its absence signals a
+        # non-desktop surface (worker / console / TUI legacy) where desktop-only
+        # approval/risk invariants must not be applied.
+        desktop_mode = self._tool_approval_handler is not None
         model_tool_snapshot = freeze_model_tool_snapshot("desktop", all_tools)
         self._active_model_tool_snapshot = model_tool_snapshot
         registry_metadata: dict[str, dict[str, Any]] = {}
         for tool in workbench_tools:
             name = _tool_schema_name(tool)
-            registry_metadata[name] = _desktop_execution_metadata(name, f"workbench:{name}")
+            registry_metadata[name] = _desktop_execution_metadata(name, f"workbench:{name}", desktop_mode=desktop_mode)
         for tool in handoff_tools:
             name = _tool_schema_name(tool)
-            registry_metadata[name] = _desktop_execution_metadata(name, f"handoff:{name}")
+            registry_metadata[name] = _desktop_execution_metadata(name, f"handoff:{name}", desktop_mode=desktop_mode)
         for tool in manager_tools:
             name = _tool_schema_name(tool)
-            registry_metadata[name] = _desktop_execution_metadata(name, f"manager:{name}")
+            registry_metadata[name] = _desktop_execution_metadata(name, f"manager:{name}", desktop_mode=desktop_mode)
         execution_registry = build_execution_tool_registry(
             "desktop", all_tools, registry_metadata,
             list((getattr(self, "_kernel_host_port", None) or {}).get("capabilities", [])),
@@ -2255,6 +2301,7 @@ class DrSaiAssistant(DrSaiAgent):
             model_result.content,
             max_parallel_tool_calls=tool_loop_policy["max_parallel_tool_calls"],
             allow_homogeneous_approval_batch=True,
+            enforce_approval_batch=self._tool_approval_handler is not None,
         ))
         registry_metadata = {
             "execution_registry_sha256": str((self._active_execution_tool_registry or {}).get("sha256", "")),
@@ -2303,10 +2350,18 @@ class DrSaiAssistant(DrSaiAgent):
                 except Exception:
                     pass  # parse error → handled in normal loop below
 
-        if len(delegate_indices) >= 2:
+        # Approval gating is the responsibility of the backend/runtime kernel
+        # (desktop_agent_kernel_adapter), which wires `_tool_approval_handler`.
+        # In legacy paths (run_worker / subagents / TUI legacy) no handler is
+        # injected, so we MUST NOT block here — otherwise every tool classified
+        # as `approval_mode == "required"` (Delegate, ScheduledTaskManager, and
+        # any unknown MCP/GFS/remote tool marked external_write) is rejected
+        # with "Tool approval channel is unavailable". Only enforce when a
+        # handler is actually present.
+        if len(delegate_indices) >= 2 and self._tool_approval_handler is not None:
             delegate_record = execution_tool_record(self._active_execution_tool_registry or {}, "Delegate")
             approval_handler = self._tool_approval_handler
-            approved = approval_handler is not None and await approval_handler(delegate_record, {
+            approved = await approval_handler(delegate_record, {
                 "parallel_calls": [delegate_indices[index] for index in sorted(delegate_indices)],
             })
             if not approved:
@@ -2406,7 +2461,7 @@ class DrSaiAssistant(DrSaiAgent):
                 continue
 
             registry_record = execution_tool_record(self._active_execution_tool_registry or {}, tool_name)
-            if registry_record["approval_mode"] == "required":
+            if registry_record["approval_mode"] == "required" and self._tool_approval_handler is not None:
                 if call_id in registry_denied_call_ids:
                     exec_results.append(FunctionExecutionResult(
                         content="Tool approval was denied or unavailable.",
@@ -2855,16 +2910,22 @@ class DrSaiAssistant(DrSaiAgent):
             encoded_payload = json.dumps(
                 model_payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
             )
-            if len(encoded_payload) <= MAX_INLINE_TOOL_OUTPUT_CHARS:
+            inline_limit = self._max_inline_tool_output_chars
+            if len(encoded_payload) <= inline_limit:
                 controlled_results.append(result)
                 continue
             artifact_handler = self._tool_output_artifact_handler
             if artifact_handler is None:
+                # Non-desktop surfaces have no artifact channel. Rather than
+                # replacing the entire output with an error (which loses the
+                # real result), truncate to the inline limit and note the
+                # truncation so worker/console users still see the payload.
                 controlled_results.append(FunctionExecutionResult(
-                    content="tool_output_artifact_channel_unavailable: complete tool output was not exposed",
+                    content=raw_content[:inline_limit]
+                    + f"\n\n[... output truncated at {inline_limit} chars; full output requires an artifact channel ...]",
                     name=result.name,
                     call_id=result.call_id,
-                    is_error=True,
+                    is_error=result.is_error,
                 ))
                 continue
             descriptor = await artifact_handler({
@@ -3853,11 +3914,18 @@ class DrSaiAssistant(DrSaiAgent):
             executor=self._local_executor.dump_component(),
             sub_agent_config=self._sub_agent_config,
             max_turn_count=self._max_turn_count,
+            max_agent_concurrent=self._max_agent_concurrent,
+            max_tool_rounds_ceiling=self._tool_loop_policy["max_tool_rounds"],
+            max_parallel_tool_calls_ceiling=self._tool_loop_policy["max_parallel_tool_calls"],
+            max_inline_tool_output_chars=self._max_inline_tool_output_chars,
             token_limit=self._token_limit,
             rag_flow_url=self._rag_flow_url,
             rag_flow_token=self._rag_flow_token,
             memory_dataset_id=self._memory_dataset_id,
             learning_dataset_id=self._learning_dataset_id,
+            context_type=self._context_type,
+            llm_max_retries=self._llm_max_retries,
+            llm_retry_base_delay=self._llm_retry_base_delay,
         )
     
     @classmethod
@@ -3910,11 +3978,18 @@ class DrSaiAssistant(DrSaiAgent):
             executor=CodeExecutor.load_component(config.executor),
             sub_agent_config = config.sub_agent_config,
             max_turn_count = config.max_turn_count,
+            max_agent_concurrent = config.max_agent_concurrent,
+            max_tool_rounds_ceiling = config.max_tool_rounds_ceiling,
+            max_parallel_tool_calls_ceiling = config.max_parallel_tool_calls_ceiling,
+            max_inline_tool_output_chars = config.max_inline_tool_output_chars,
             token_limit = config.token_limit,
             rag_flow_url = config.rag_flow_url,
             rag_flow_token = config.rag_flow_token,
             memory_dataset_id = config.memory_dataset_id,
             learning_dataset_id = config.learning_dataset_id,
+            context_type = config.context_type,
+            llm_max_retries = config.llm_max_retries,
+            llm_retry_base_delay = config.llm_retry_base_delay,
             **kwargs,
         )
     def export_production_parity_manifest(self) -> Dict[str, Any]:

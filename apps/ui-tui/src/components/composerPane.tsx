@@ -11,10 +11,10 @@ import { useEffect, useRef, useState } from 'react'
 
 import { loadPromptHistory, savePromptHistory } from '../app/promptHistory.js'
 import { isTerminalFocusEvent } from '../app/focusEvents.js'
-import { $isStreaming } from '../app/turnStore.js'
+import { $isStreaming, $transcript, $current } from '../app/turnStore.js'
 import type { ImageAttachment, TurnController } from '../app/turnController.js'
-import { $activeOverlay, $showReasoning } from '../app/uiStore.js'
-import type { SessionInfo, SessionListResult } from '../gatewayTypes.js'
+import { $activeOverlay, $showReasoning, $userId, $sessionMeta, $memoryPreview, $lastUsage, $remoteHost } from '../app/uiStore.js'
+import type { SessionInfo, SessionListResult, SessionResumeResult, SessionCreateResult } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
 
 import { ModelEditor, type ModelEditorValues, type ModelProviderPreset } from './modelEditor.js'
@@ -28,8 +28,10 @@ import { AgentPicker } from './agentPicker.js'
 import { SchedulerPanel } from './schedulerPanel.js'
 import { WeChatPanel } from './wechatPanel.js'
 import { GfsPanel } from './gfsPanel.js'
+import { SshRemotePanel } from './sshRemotePanel.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
 import { TextInput } from './textInput.js'
+import { parseHistory } from '../app/historyParser.js'
 
 function sessionSortTimestamp(session: SessionInfo): number {
   const raw = session.last_interaction_ts ?? session.updated_at ?? session.created_at ?? 0
@@ -237,6 +239,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const [schedulerPanelOpen, setSchedulerPanelOpen] = useState(false)
   const [wechatPanelOpen, setWechatPanelOpen] = useState(false)
   const [gfsPanelOpen, setGfsPanelOpen] = useState(false)
+  const [remotePanelOpen, setRemotePanelOpen] = useState(false)
   const [modelPicker, setModelPicker] = useState<
     { models: ModelEntry[]; currentAlias?: string } | null
   >(null)
@@ -369,17 +372,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         'model.options',
         {},
       )
-      let models = result.models || []
-      try {
-        const active = await controller.gw.request<{ model_provider: string }>('model.config.get', {})
-        const discovered = await controller.gw.request<{ ok: boolean; models?: string[] }>(
-          'model.config.models', { provider: active.model_provider },
-        )
-        const known = new Set(models.map(item => item.alias))
-        models = [...models, ...(discovered.models || []).filter(alias => !known.has(alias)).map(alias => ({ alias, provider: active.model_provider }))]
-      } catch {
-        // Discovery is optional; manual and configured model entries remain usable.
-      }
+      const models = result.models || []
       setModelPicker({ models, currentAlias: result.current })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -406,6 +399,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
           requires_api_key: boolean
         }
         revision?: string
+        token_limit?: number
+        max_tokens?: number
+        vision?: boolean
+        client_type?: string
+        yaml_base_url?: string
+        yaml_api_key_env?: string
+        yaml_requires_api_key?: boolean
+        yaml_use_responses_api?: boolean | null
       }>('model.config.get', {})
       setModelEditor({
         isNew: false,
@@ -413,9 +414,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         initial: {
           provider: result.model_provider,
           model: alias || result.model,
-          base_url: result.provider.base_url,
-          wire_api: result.provider.wire_api,
-          requires_api_key: result.provider.requires_api_key,
+          base_url: result.yaml_base_url || result.provider.base_url,
+          wire_api: (result.client_type as 'openai' | 'anthropic') || result.provider.wire_api,
+          requires_api_key: result.yaml_requires_api_key ?? result.provider.requires_api_key,
+          api_key_env: result.yaml_api_key_env,
+          token_limit: result.token_limit,
+          max_tokens: result.max_tokens,
+          vision: result.vision,
+          use_responses_api: result.yaml_use_responses_api ?? null,
         },
         revision: result.revision,
       })
@@ -705,6 +711,12 @@ For more info: https://github.com/yourusername/drsai
       return
     }
 
+    // ── /remote — open SSH remote connection panel ──────────────────
+    if (/^\/remote$/i.test(trimmed)) {
+      setRemotePanelOpen(true)
+      return
+    }
+
     // ── /image or /img without valid paths ──────────────────────────
     // parseImageCommand() returns null when the regex matches but no image
     // paths were found, OR when the input is just "/image" with no args.
@@ -869,6 +881,10 @@ For more info: https://github.com/yourusername/drsai
             setDaemonPanelOpen(true)
             return
           }
+          case 'remote.panel': {
+            setRemotePanelOpen(true)
+            return
+          }
           case 'agent.picker': {
             setAgentPickerOpen(true)
             return
@@ -988,6 +1004,97 @@ For more info: https://github.com/yourusername/drsai
       <GfsPanel
         gw={controller.gw}
         onDismiss={() => setGfsPanelOpen(false)}
+      />
+    )
+  }
+
+  // SSH remote panel overlay
+  if (remotePanelOpen) {
+    return (
+      <SshRemotePanel
+        gw={controller.gw}
+        onDismiss={() => setRemotePanelOpen(false)}
+        onRemoteConnect={async (result) => {
+          // Switch gateway client to WebSocket attach mode, then resolve
+          // a session from the REMOTE gateway so the UI reflects the remote
+          // workspace — not stale local state.
+          try {
+            await controller.gw.switchToWebSocket(result.ws_attach_url)
+            $remoteHost.set(result.remote_hostname || '')
+
+            // Clear local session state — the remote gateway has its own
+            // session database; we must not show local chat history.
+            $transcript.set([])
+            $current.set(null)
+            $sessionMeta.set(null)
+            $memoryPreview.set('')
+            $lastUsage.set(null)
+
+            // Resolve session: most_recent for remote cwd → create new
+            const recent = await controller.gw.request<{
+              session: SessionInfo | null
+              user_id?: string
+            }>('session.most_recent', {})
+            if (recent.user_id) $userId.set(recent.user_id)
+
+            let sid: string | null = recent.session?.session_id ?? null
+            if (!sid) {
+              const created = await controller.gw.request<SessionCreateResult>('session.create', {})
+              sid = created.session?.session_id ?? null
+              if (created.user_id) $userId.set(created.user_id)
+            }
+
+            if (sid) {
+              await switchSession(sid)
+            }
+
+            showSlashOutput(
+              `✅ Connected to ${result.remote_hostname} via SSH tunnel` +
+              (result.remote_cwd ? `\n   Remote workdir: ${result.remote_cwd}` : ''),
+              4000,
+            )
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            showSlashOutput(`❌ Failed to attach to remote gateway: ${msg}`, 5000)
+          }
+        }}
+        onRemoteDisconnect={async () => {
+          // Switch back to local subprocess mode and resolve a local session.
+          try {
+            await controller.gw.switchToSubprocess()
+            $remoteHost.set('')
+
+            // Clear remote session state
+            $transcript.set([])
+            $current.set(null)
+            $sessionMeta.set(null)
+            $memoryPreview.set('')
+            $lastUsage.set(null)
+
+            // Resolve local session (same flow as startup)
+            const recent = await controller.gw.request<{
+              session: SessionInfo | null
+              user_id?: string
+            }>('session.most_recent', {})
+            if (recent.user_id) $userId.set(recent.user_id)
+
+            let sid: string | null = recent.session?.session_id ?? null
+            if (!sid) {
+              const created = await controller.gw.request<SessionCreateResult>('session.create', {})
+              sid = created.session?.session_id ?? null
+              if (created.user_id) $userId.set(created.user_id)
+            }
+
+            if (sid) {
+              await switchSession(sid)
+            }
+
+            showSlashOutput('✅ Switched back to local gateway', 3000)
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            showSlashOutput(`⚠ Local gateway restart: ${msg}`, 5000)
+          }
+        }}
       />
     )
   }

@@ -13,6 +13,7 @@ VERSION_FILE = ROOT / "cores/VERSION"
 
 CORE_VERSION = ROOT / "cores/python/packages/drsai/src/drsai/version.py"
 WEBUI_VERSION = ROOT / "apps/webui/backend/src/drsai_ui/ui_backend/version.py"
+TUI_VERSION = ROOT / "apps/ui-tui/src/version.ts"
 DESKTOP_LOCK = ROOT / "apps/desktop/package-lock.json"
 WINDOWS_DESKTOP_PACKAGE = ROOT / "apps/desktop/windows/package.json"
 WINDOWS_DESKTOP_LOCK = ROOT / "apps/desktop/windows/package-lock.json"
@@ -74,6 +75,17 @@ def main(argv: list[str]) -> int:
         WEBUI_VERSION,
         r'^__version__\s*=\s*"[^"]+"',
         f'__version__ = "{version}"',
+    )
+    # TUI (apps/ui-tui) — TypeScript single-quote export.
+    replace(
+        TUI_VERSION,
+        r"^export const VERSION\s*=\s*'[^']+'",
+        f"export const VERSION = '{version}'",
+    )
+    replace(
+        TUI_VERSION,
+        r"^export const __version__\s*=\s*VERSION",
+        f"export const __version__ = VERSION",
     )
     update_json_version(WINDOWS_DESKTOP_PACKAGE, version)
     replace(WINDOWS_DESKTOP_LOCK, r'^(\s*"version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)

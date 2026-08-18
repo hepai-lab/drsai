@@ -44,14 +44,19 @@ def test_tui_model_options_includes_compact_model(monkeypatch) -> None:
 
 
 def test_tui_config_save_writes_provider_and_selection(monkeypatch) -> None:
-    calls = []
-    def commit(request, **_kwargs):
-        calls.append(request)
-        resolved = model_config.resolve_model_config(_config(), environ={}, require_credentials=False)
-        return SimpleNamespace(resolved=resolved, revision="b" * 64)
+    saved_configs = []
+    def _load_llm_mode_config(_path):
+        return {}
 
-    monkeypatch.setattr(slash, "commit_update", commit)
+    def _save_llm_mode_config(config, default_alias):
+        saved_configs.append(config)
+
     monkeypatch.setattr(slash, "load_user_config", _config)
+    monkeypatch.setattr(slash, "load_config", lambda: {})
+    # Patch the imports inside the function body
+    import drsai.backend.run_drsai_agent_factory as factory
+    monkeypatch.setattr(factory, "load_llm_mode_config", _load_llm_mode_config)
+    monkeypatch.setattr(factory, "save_llm_mode_config", _save_llm_mode_config)
     result = slash._model_provider_config_save(
         3,
         {
@@ -61,14 +66,25 @@ def test_tui_config_save_writes_provider_and_selection(monkeypatch) -> None:
             "api_key_env": "CUSTOM_KEY",
             "wire_api": "openai",
             "requires_api_key": True,
+            "token_limit": 128000,
+            "max_tokens": 32000,
+            "vision": False,
         },
     )
 
     assert "error" not in result
-    assert calls[0].provider_name == "custom"
-    assert calls[0].provider_values["api_key_env"] == "CUSTOM_KEY"
-    assert calls[0].model == "custom-model"
-    assert calls[0].model_provider == "custom"
+    assert result["result"]["ok"] is True
+    assert result["result"]["model"] == "custom-model"
+    assert result["result"]["model_provider"] == "custom"
+    # Verify the model was saved to llm_mode_config.yaml
+    assert len(saved_configs) == 1
+    saved_entry = saved_configs[0]["custom-model"]
+    assert saved_entry.model == "custom-model"
+    assert saved_entry.base_url == "https://provider.example/v1"
+    assert saved_entry.api_key_env == "CUSTOM_KEY"
+    assert saved_entry.token_limit == 128000
+    assert saved_entry.max_tokens == 32000
+    assert saved_entry.vision is False
 
 
 def test_tui_connection_test_returns_only_redacted_result(monkeypatch) -> None:

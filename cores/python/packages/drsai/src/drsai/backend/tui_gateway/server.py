@@ -127,6 +127,10 @@ _LONG_HANDLERS = frozenset({
     "skills.manage",
     "gateway.shutdown",
     "gfs.test",
+    "remote.connect",
+    "remote.test",
+    "remote.exec",
+    "remote.browse_dirs",
 })
 
 try:
@@ -336,13 +340,25 @@ def _get_db_manager():
 
 
 def _resolve_user_id() -> str:
-    """Read user_id from cli_config (mirrors run_cli.py); fall back to anonymous."""
+    """Resolve user_id for session DB queries.
+
+    Priority: DRSAI_USER_ID env (propagated by ssh_tunnel.py in WS mode)
+    → cli_config.json (local mode) → "anonymous".
+
+    In WebSocket (SSH tunnel) mode, ssh_tunnel.py sets DRSAI_USER_ID to
+    the *local* machine's user_id so the remote gateway queries the same
+    user's sessions.  Without this, the remote gateway would use the
+    remote machine's cli_config, which may have a different user_id.
+    """
+    env_uid = os.environ.get("DRSAI_USER_ID")
+    if env_uid:
+        return env_uid
     try:
         from drsai.backend.cli import config as cli_config
         cfg = cli_config.load_config()
-        return cfg.get("user_id") or os.environ.get("DRSAI_USER_ID") or "anonymous"
+        return cfg.get("user_id") or "anonymous"
     except Exception:
-        return os.environ.get("DRSAI_USER_ID") or "anonymous"
+        return "anonymous"
 
 
 # ── Smoke-test / health methods ──────────────────────────────────────

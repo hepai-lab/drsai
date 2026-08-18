@@ -59,6 +59,10 @@ dependencies = [
 
     # ── async networking ──────────────────────────────────────────────────
     "aiohttp",
+    # SSH client for the Remote TUI feature (/remote). Core functionality:
+    # the local TUI tunnels through SSH to a gateway running on the remote
+    # host, so paramiko must always be available (see tui_gateway/ssh_tunnel.py).
+    "paramiko>=3.0",
     # Use the native Windows certificate store for packaged Runtime HTTPS.
     # This keeps enterprise/IHEP trust roots aligned with Edge and the OS.
     "truststore>=0.10,<1; sys_platform == 'win32'",
@@ -87,9 +91,9 @@ dependencies = [
 ]
 
 [project.scripts]
-drsai = "drsai.backend.run_cli:run"
-drsai-tui = "drsai.backend.run_cli:run"
-drsai-gateway = "drsai.backend.tui_gateway.entry:main"
+opendrsai = "drsai.backend.run_cli:run"
+opendrsai-tui = "drsai.backend.run_cli:run"
+opendrsai-gateway = "drsai.backend.tui_gateway.entry:main"
 # ── Optional dependency groups ───────────────────────────────────────────────
 # Install with: pip install drsai[pipeline]  /  pip install drsai[all]
 

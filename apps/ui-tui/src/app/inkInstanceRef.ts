@@ -33,6 +33,10 @@ interface InkInstanceLike {
   throttledLog?: { cancel?: () => void }
   /** Throttled onRender (may have .cancel()). */
   throttledOnRender?: { cancel?: () => void }
+  /** Ink's internal lastOutputHeight. When >= stdout.rows, Ink's
+   *  fullscreen branch fires, calling log.sync() which corrupts
+   *  previousLineCount. Resetting to 0 at finalize prevents this. */
+  lastOutputHeight?: number
 }
 
 let _instance: InkInstanceLike | null = null
@@ -57,6 +61,27 @@ export function cancelPendingInkThrottles(): void {
   }
   try {
     inst.throttledOnRender?.cancel?.()
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * Reset Ink's internal ``lastOutputHeight`` to 0.  This prevents the
+ * fullscreen branch (``lastOutputHeight >= stdout.rows``) from firing
+ * on the finalize render.  The fullscreen branch corrupts
+ * ``previousLineCount`` via ``log.sync()``, which causes
+ * ``eraseLines()`` to erase the wrong number of lines on the next
+ * render — leaving 1 blank line per turn (the "growing bottom blank
+ * space" bug).
+ *
+ * Safe to call when no Ink instance is registered.
+ */
+export function resetInkLastOutputHeight(): void {
+  const inst = _instance
+  if (!inst) return
+  try {
+    inst.lastOutputHeight = 0
   } catch {
     // best-effort
   }

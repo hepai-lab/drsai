@@ -44,7 +44,7 @@ TOOL_LOOP_POLICY_VERSION = "p9-tool-loop-v1"
 TOOL_DECISION_POLICY_VERSION = "p9-tool-decision-v2"
 CITATION_POLICY_VERSION = "p9-citation-policy-v3"
 SKILL_MANIFEST_VERSION = "p9-skill-manifest-v1"
-DEFAULT_MAX_TOOL_ROUNDS = 24
+DEFAULT_MAX_TOOL_ROUNDS = 500
 DEFAULT_MAX_PARALLEL_TOOL_CALLS = 8
 READ_ONLY_RETRYABLE_TOOL_ERRORS = (
     "http_408", "http_429", "http_500", "http_502", "http_503", "http_504",
@@ -618,8 +618,20 @@ def normalize_model_route_snapshot(raw: Mapping[str, Any], expected_model_id: st
     return {**fields, "sha256": expected}
 
 
-def normalize_tool_loop_policy(raw: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Return a bounded, versioned policy shared by every production surface."""
+def normalize_tool_loop_policy(
+    raw: Mapping[str, Any] | None = None,
+    *,
+    max_rounds_ceiling: int | None = None,
+    max_parallel_ceiling: int | None = None,
+) -> dict[str, Any]:
+    """Return a bounded, versioned policy shared by every production surface.
+
+    The bounds default to the desktop-oriented constants but can be raised via
+    ``max_rounds_ceiling`` / ``max_parallel_ceiling`` for non-desktop surfaces
+    (e.g. worker / console) that need longer tool loops or higher parallelism.
+    """
+    rounds_ceiling = max_rounds_ceiling if isinstance(max_rounds_ceiling, int) and max_rounds_ceiling >= 1 else DEFAULT_MAX_TOOL_ROUNDS
+    parallel_ceiling = max_parallel_ceiling if isinstance(max_parallel_ceiling, int) and max_parallel_ceiling >= 1 else DEFAULT_MAX_PARALLEL_TOOL_CALLS
     source = dict(raw or {})
     if source and source.get("schema_version") != TOOL_LOOP_POLICY_SCHEMA_VERSION:
         raise ValueError("tool_loop_policy_schema_unsupported")
@@ -627,9 +639,9 @@ def normalize_tool_loop_policy(raw: Mapping[str, Any] | None = None) -> dict[str
         raise ValueError("tool_loop_policy_version_unsupported")
     max_rounds = source.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
     max_parallel = source.get("max_parallel_tool_calls", DEFAULT_MAX_PARALLEL_TOOL_CALLS)
-    if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or not 1 <= max_rounds <= DEFAULT_MAX_TOOL_ROUNDS:
+    if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or not 1 <= max_rounds <= rounds_ceiling:
         raise ValueError("tool_loop_max_rounds_invalid")
-    if isinstance(max_parallel, bool) or not isinstance(max_parallel, int) or not 1 <= max_parallel <= DEFAULT_MAX_PARALLEL_TOOL_CALLS:
+    if isinstance(max_parallel, bool) or not isinstance(max_parallel, int) or not 1 <= max_parallel <= parallel_ceiling:
         raise ValueError("tool_loop_max_parallel_invalid")
     policy = {
         "schema_version": TOOL_LOOP_POLICY_SCHEMA_VERSION,
@@ -647,8 +659,16 @@ def validate_tool_call_batch(
     *,
     max_parallel_tool_calls: int = DEFAULT_MAX_PARALLEL_TOOL_CALLS,
     allow_homogeneous_approval_batch: bool = False,
+    enforce_approval_batch: bool = True,
 ) -> tuple[dict[str, Any], ...]:
-    """Validate a model tool batch before any executor or mutable state is touched."""
+    """Validate a model tool batch before any executor or mutable state is touched.
+
+    ``enforce_approval_batch`` gates the desktop approval invariant
+    (``approval_tool_must_be_single``). Non-desktop surfaces that do not wire a
+    ``_tool_approval_handler`` pass ``False`` so mixed batches are not rejected
+    by a desktop-only constraint; the execution layer still honors per-call
+    approval when a handler is present.
+    """
     if not calls:
         raise ValueError("tool_call_batch_empty")
     if len(calls) > max_parallel_tool_calls:
@@ -668,7 +688,7 @@ def validate_tool_call_batch(
         if not isinstance(name, str) or not name:
             raise ValueError("tool_call_name_invalid")
         records.append(execution_tool_record(registry, name))
-    if len(calls) > 1 and any(record["approval_mode"] == "required" for record in records):
+    if enforce_approval_batch and len(calls) > 1 and any(record["approval_mode"] == "required" for record in records):
         homogeneous = len({(record["name"], record["executor_id"], record["approval_mode"]) for record in records}) == 1
         if not allow_homogeneous_approval_batch or not homogeneous:
             raise ValueError("approval_tool_must_be_single")
@@ -1840,8 +1860,10 @@ def validate_context_within_budget(
     if not any(message.get("role") == "user" for message in messages):
         raise ValueError("context_current_user_missing")
     tokens = sum(_message_token_cost(message) for message in messages)
-    if len(messages) > policy.max_messages or tokens > policy.input_tokens:
-        raise ValueError("context_active_chain_budget_overflow")
+    # Budget overflow is not fail-closed here: the agent owns context/output
+    # control. This function only reports a diagnostic (estimated vs. budget);
+    # callers (run.started, model-request payload, context_observability) read
+    # the shape, not an exception.
     return {
         **policy.diagnostic(),
         "estimated_input_tokens": tokens,
@@ -2344,19 +2366,8 @@ def assemble_agent_context(
             selected_tokens += unit_tokens
             selected_messages += len(unit)
             selected_chars += unit_chars
-        elif latest_tool_chain:
-            compacted = _compact_active_tool_chain(
-                unit,
-                token_limit=available_tokens - selected_tokens,
-                char_limit=None if available_chars is None else available_chars - selected_chars,
-            )
-            if compacted is None or selected_messages + len(compacted) > policy.max_messages - 2:
-                raise ValueError("context_active_tool_chain_overflow")
-            selected_units.append(compacted)
-            selected_tokens += sum(_message_token_cost(message) for message in compacted)
-            selected_messages += len(compacted)
-            selected_chars += sum(len(message["content"]) for message in compacted)
-            retained_original_ids.update(id(message) for message in unit)
+        # A latest tool chain that does not fit is skipped (not fail-closed);
+        # the agent owns context/output control and compaction is best-effort.
     selected_units.reverse()
     selected_ids = retained_original_ids | {id(message) for unit in selected_units for message in unit}
     omitted = [message for message in normalized if id(message) not in selected_ids]
@@ -2386,15 +2397,9 @@ def assemble_agent_context(
         *selected,
         {"role": "user", "content": input_text},
     ]
-    if len(result) > policy.max_messages or sum(_message_token_cost(message) for message in result) > policy.input_tokens:
-        raise ValueError("context_budget_invariant_failed")
+    # No fail-closed invariant here: compaction is best-effort and the agent
+    # owns context/output control. validate_context_within_budget is retained
+    # only as a diagnostic producer (it no longer raises on overflow).
     if max_chars is not None and sum(len(message["content"]) for message in result) > max_chars:
         raise ValueError("context_legacy_char_budget_exceeded")
-    validate_context_within_budget(result, {
-        "policy_version": CONTEXT_BUDGET_POLICY_VERSION,
-        "context_window_tokens": policy.context_window_tokens,
-        "reserved_output_tokens": policy.reserved_output_tokens,
-        "max_messages": policy.max_messages,
-        "summary_tokens": policy.summary_tokens,
-    })
     return result

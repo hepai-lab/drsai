@@ -111,7 +111,7 @@ opendrsai gateway --port 8642
 | 官网 | <https://opendrsai.ihep.ac.cn/> |
 | TUI 启动界面操作指南 | <https://note.ihep.ac.cn/s/QgtE3Nlx2> |
 
-**Node.js 依赖说明**：TUI 需要 Node.js ≥ 20。`drsai` 启动时按以下顺序解析：
+**Node.js 依赖说明**：TUI 需要 Node.js ≥ 20。`opendrsai` 启动时按以下顺序解析：
 1. `$DRSAI_NODE`（显式指定）
 2. 系统 `node`（PATH 上）
 3. `pnpm dev` / `npm run dev`（开发模式，源文件热加载）
@@ -373,20 +373,20 @@ opendrsai version                      # 显示版本号
 
 | 命令 | 参数 | 说明 |
 |------|------|------|
-| `drsai daemon start` | `--name` `--port` `--wechat` `--wechat-port` `--model` `--restart` | 启动后台 daemon；加 `--wechat` 时若微信凭据缺失则自动触发终端扫码登录 |
-| `drsai daemon stop` | `--name` `--all` | 停止 daemon（SIGTERM 优雅退出） |
-| `drsai daemon status` | — | 查看所有 daemon 运行状态（PID、端口、模型、uptime） |
-| `drsai daemon list` | `--json` | 输出精简列表，`--json` 为 JSON 格式 |
-| `drsai daemon logs` | `--name` `--tail` `--follow` | 查看 daemon 日志 |
-| `drsai daemon send` | `--name` `--session` `<消息>` | 向 daemon 中的 session 发送消息（调试用） |
+| `opendrsai daemon start` | `--name` `--port` `--wechat` `--wechat-port` `--model` `--restart` | 启动后台 daemon；加 `--wechat` 时若微信凭据缺失则自动触发终端扫码登录 |
+| `opendrsai daemon stop` | `--name` `--all` | 停止 daemon（SIGTERM 优雅退出） |
+| `opendrsai daemon status` | — | 查看所有 daemon 运行状态（PID、端口、模型、uptime） |
+| `opendrsai daemon list` | `--json` | 输出精简列表，`--json` 为 JSON 格式 |
+| `opendrsai daemon logs` | `--name` `--tail` `--follow` | 查看 daemon 日志 |
+| `opendrsai daemon send` | `--name` `--session` `<消息>` | 向 daemon 中的 session 发送消息（调试用） |
 
 ### 微信接入 (CLI)
 
 | 命令 | 参数 | 说明 |
 |------|------|------|
-| `drsai wechat login` | — | 单独执行微信 ilink Bot 扫码登录（保存凭据到 credentials.json） |
+| `opendrsai wechat login` | — | 单独执行微信 ilink Bot 扫码登录（保存凭据到 credentials.json） |
 
-> **自动登录**：`drsai daemon start --wechat` 会在凭据缺失或过期时自动触发扫码流程，无需手动运行 `drsai wechat login`。
+> **自动登录**：`opendrsai daemon start --wechat` 会在凭据缺失或过期时自动触发扫码流程，无需手动运行 `opendrsai wechat login`。
 
 ### TUI 内 Daemon 命令
 
@@ -1178,7 +1178,7 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 |------|----------|
 | `/abs/path.png` | 绝对路径 |
 | `~/path.png` | 相对于用户主目录 |
-| `./path.png` 或 `photos/img.png` | 相对于用户工作目录（即启动 `drsai` 时所在的目录） |
+| `./path.png` 或 `photos/img.png` | 相对于用户工作目录（即启动 `opendrsai` 时所在的目录） |
 
 **限制**：
 - 单张图像 ≤ 20 MB
@@ -1253,7 +1253,7 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 **注意事项**：
 - 非视觉模型（不支持 vision）时，Agent 内部的 `_get_compatible_context` 会自动调用 `remove_images()` 去除图像，不会报错。
-- `@` 路径候选由 gateway 的 `complete.path` RPC 提供；相对路径基于启动 `drsai` 时的用户工作目录。
+- `@` 路径候选由 gateway 的 `complete.path` RPC 提供；相对路径基于启动 `opendrsai` 时的用户工作目录。
 - 图像文件读取在 TUI（Node.js）端完成，因此 **attach 模式也能正常工作**——即使 gateway 在远程机器上，本地图像仍可传入。
 
 ### 13.4 错误提示
@@ -1629,7 +1629,7 @@ skills.manage RPC
 
 **Daemon 模式**将 gateway 提升为独立后台进程，TUI 作为其管理终端，随时可 attach/detach。
 
-### 19.2 `drsai daemon` 命令
+### 19.2 `opendrsai daemon` 命令
 
 ```bash
 # 启动后台 daemon（首次启动或重启）
@@ -1885,10 +1885,10 @@ drsai daemon start --name my-bot --wechat
 
 | 阶段 | 说明 |
 |------|------|
-| **首次启动** | `drsai daemon start --wechat` 自动触发扫码 → 保存到 `credentials.json` |
+| **首次启动** | `opendrsai daemon start --wechat` 自动触发扫码 → 保存到 `credentials.json` |
 | **后续重启** | 凭据有效（<7天）→ 跳过扫码，直接启动 |
 | **凭据过期** | 超过 7 天 → 自动重新触发扫码 |
-| **手动登录** | `drsai wechat login` 可随时手动重新扫码 |
+| **手动登录** | `opendrsai wechat login` 可随时手动重新扫码 |
 | **凭据位置** | `~/.drsai/workspace/wechat/credentials.json` |
 
 **credentials.json 格式**：
