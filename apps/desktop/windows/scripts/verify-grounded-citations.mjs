@@ -123,3 +123,20 @@ assert.equal(locatorLineRange({ locator: { kind: "page", page: 3 } }), undefined
 assert.equal(locatorLineRange({}), undefined);
 
 console.log("grounded citation projection and marker linking verified");
+
+// react-markdown sanitises hrefs: anything whose scheme is not http/https/
+// mailto/tel becomes an empty string. That silently disarmed every citation
+// link — it rendered, and clicking it did nothing. Locking the contract here
+// because the failure is invisible in the markup.
+{
+  const { defaultUrlTransform } = await import("react-markdown");
+  assert.equal(defaultUrlTransform(`${CITATION_HREF_PREFIX}abc123`), "");
+  const transform = (url) => url.startsWith(CITATION_HREF_PREFIX) ? url : defaultUrlTransform(url);
+  assert.equal(transform(`${CITATION_HREF_PREFIX}abc123`), `${CITATION_HREF_PREFIX}abc123`);
+  // The allowance is exactly one scheme wide: everything else still sanitises.
+  assert.equal(transform("javascript:alert(1)"), "");
+  assert.equal(transform("https://example.org/a"), "https://example.org/a");
+  assert.equal(transform("./relative/path.md"), "./relative/path.md");
+}
+
+console.log("citation href survives markdown url sanitising");

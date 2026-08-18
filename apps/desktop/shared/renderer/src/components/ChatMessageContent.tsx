@@ -1,6 +1,6 @@
 import { memo, Profiler, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { parseChatOutput } from "../chatOutputModel";
 import { copyTextSafely } from "../clipboard";
@@ -56,10 +56,18 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content, onOpenLink, s
     const citationPlugin = citations?.length ? createCitationMarkerPlugin(citations) : undefined;
     return citationPlugin ? [remarkGfm, citationPlugin] : [remarkGfm];
   }, [citations]);
+  // react-markdown drops any href whose scheme is not http/https/mailto/tel,
+  // so a `citation:` link arrived here as an empty string and the marker looked
+  // clickable while doing nothing. Only our own scheme is added back; every
+  // other URL still goes through the default sanitiser.
+  const urlTransform = useMemo(() => citations?.length
+    ? (url: string) => url.startsWith(CITATION_HREF_PREFIX) ? url : defaultUrlTransform(url)
+    : defaultUrlTransform, [citations]);
   return (
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       rehypePlugins={rehypePlugins}
+      urlTransform={urlTransform}
       components={{
         a: ({ href, children, title }) => {
           if (href?.startsWith(CITATION_HREF_PREFIX)) {
