@@ -7,6 +7,7 @@ import type {
 export type ThreadActivityState =
   | { kind: "idle" }
   | { kind: "running" }
+  | { kind: "error" }
   | { kind: "attention"; reason: "approval" | "interaction" };
 
 const TASK_PRIORITY: Record<DesktopBackgroundTask["status"], number> = {
@@ -57,6 +58,31 @@ function snapshotIsRunning(snapshot?: DesktopThreadSnapshot): boolean {
   ));
 }
 
+function assistantMessageFailed(message: DesktopThreadSnapshot["messages"][number]): boolean {
+  if (message.error || message.replyFailed) return true;
+  const turn = message.structuredTurn;
+  if (!turn) return false;
+  // Chat sanitizes OAEP `turn.error` to `cancelled` so the bubble is not the
+  // "Reply failed" chrome. The visible RuntimeError box is a leftover error
+  // notice; treat that as a failed session, not a user abort.
+  if (turn.status === "error" || Boolean(turn.error)) return true;
+  return turn.parts.some((part) => part.kind === "notice" && part.level === "error");
+}
+
+function latestAssistantOutcome(
+  snapshot?: DesktopThreadSnapshot,
+): "running" | "error" | "ok" | "none" {
+  if (!snapshot?.messages.length) return "none";
+  for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
+    const message = snapshot.messages[index];
+    if (message.id === "welcome" || message.role !== "assistant") continue;
+    if (message.streaming || isPendingStatus(message.structuredTurn?.status)) return "running";
+    if (assistantMessageFailed(message)) return "error";
+    return "ok";
+  }
+  return "none";
+}
+
 function taskNeedsApproval(task?: DesktopBackgroundTask): boolean {
   return Boolean(
     task
@@ -87,7 +113,30 @@ export function deriveThreadActivity(input: {
   ) {
     return { kind: "running" };
   }
+  const assistantOutcome = latestAssistantOutcome(input.snapshot);
+  if (assistantOutcome === "error") return { kind: "error" };
+  if (assistantOutcome === "ok") return { kind: "idle" };
+  if (input.thread.status === "error" || input.backgroundTask?.status === "failed") {
+    return { kind: "error" };
+  }
   return { kind: "idle" };
+}
+
+export function deriveThreadCatalogStatus(snapshot?: DesktopThreadSnapshot): DesktopThread["status"] {
+  const activity = deriveThreadActivity({
+    thread: {
+      id: snapshot?.threadId || "catalog",
+      kind: "chat",
+      title: snapshot?.title || "",
+      createdAt: "",
+      updatedAt: "",
+      status: "idle",
+    },
+    snapshot,
+  });
+  if (activity.kind === "running" || activity.kind === "attention") return "running";
+  if (activity.kind === "error") return "error";
+  return "idle";
 }
 
 function taskWins(candidate: DesktopBackgroundTask, current?: DesktopBackgroundTask): boolean {

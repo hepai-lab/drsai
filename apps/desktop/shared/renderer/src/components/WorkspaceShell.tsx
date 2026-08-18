@@ -1378,7 +1378,7 @@ export function WorkspaceShell({
       <button
         key={thread.id}
         type="button"
-        className={`thread-item workspace-thread-item ${thread.active ? "active" : ""}`}
+        className={`thread-item workspace-thread-item ${thread.active ? "active" : ""}${thread.activity.kind === "error" ? " failed" : ""}`}
         onClick={() => onThreadSelect(thread.id)}
         onContextMenu={(event) => openThreadMenu(event, thread)}
       >
@@ -1404,6 +1404,15 @@ export function WorkspaceShell({
         <span className="thread-item-status">
           {thread.activity.kind === "idle" ? (
             <time>{thread.timeLabel}</time>
+          ) : thread.activity.kind === "error" ? (
+            <span
+              className="thread-activity-failed"
+              role="status"
+              aria-label={zh ? "失败" : "Failed"}
+              title={zh ? "失败" : "Failed"}
+            >
+              {zh ? "失败" : "Failed"}
+            </span>
           ) : (
             <ThreadActivityBubble state={thread.activity} language={language} />
           )}

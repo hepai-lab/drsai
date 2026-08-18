@@ -6,6 +6,7 @@ import type {
 } from "../../shared/api/desktopApi";
 import {
   deriveThreadActivity,
+  deriveThreadCatalogStatus,
   indexBackgroundTasksByThread,
 } from "../../shared/renderer/src/threadActivity";
 
@@ -88,6 +89,56 @@ assert.deepEqual(deriveThreadActivity({
 assert.deepEqual(deriveThreadActivity({
   thread: thread({ status: "error" }),
   backgroundTask: task("completed"),
+}), { kind: "error" });
+assert.deepEqual(deriveThreadActivity({
+  thread: thread(),
+  backgroundTask: task("failed"),
+}), { kind: "error" });
+assert.deepEqual(deriveThreadActivity({
+  thread: thread(),
+  snapshot: snapshot({ id: "m1", role: "assistant", content: "Reply incomplete", replyFailed: true }),
+}), { kind: "error" });
+assert.deepEqual(deriveThreadActivity({
+  thread: thread(),
+  snapshot: snapshot({ id: "m1", role: "assistant", content: "Model failed", error: true }),
+}), { kind: "error" });
+assert.deepEqual(deriveThreadActivity({
+  thread: thread(),
+  snapshot: snapshot({
+    id: "m-runtime-notice",
+    role: "assistant",
+    content: "RuntimeError: Error code: 403",
+    structuredTurn: {
+      version: 2,
+      turnId: "turn-runtime-notice",
+      status: "cancelled",
+      parts: [{
+        id: "notice-runtime",
+        kind: "notice",
+        status: "error",
+        level: "error",
+        message: "RuntimeError: Error code: 403",
+      }],
+    },
+  }),
+}), { kind: "error" });
+assert.deepEqual(deriveThreadActivity({
+  thread: thread(),
+  snapshot: snapshot({
+    id: "m-user-abort",
+    role: "assistant",
+    content: "",
+    structuredTurn: {
+      version: 2,
+      turnId: "turn-user-abort",
+      status: "cancelled",
+      parts: [],
+    },
+  }),
+}), { kind: "idle" });
+assert.deepEqual(deriveThreadActivity({
+  thread: thread({ status: "error" }),
+  snapshot: snapshot({ id: "m2", role: "assistant", content: "Recovered answer" }),
 }), { kind: "idle" });
 assert.deepEqual(deriveThreadActivity({
   thread: thread(),
@@ -133,6 +184,27 @@ assert.deepEqual(deriveThreadActivity({
   }),
 }), { kind: "attention", reason: "interaction" });
 
+assert.equal(deriveThreadCatalogStatus(snapshot({ id: "m1", role: "assistant", content: "", streaming: true })), "running");
+assert.equal(deriveThreadCatalogStatus(snapshot({ id: "m1", role: "assistant", content: "Reply incomplete", replyFailed: true })), "error");
+assert.equal(deriveThreadCatalogStatus(snapshot({ id: "m1", role: "assistant", content: "Done" })), "idle");
+assert.equal(deriveThreadCatalogStatus(snapshot({
+  id: "m-catalog-notice",
+  role: "assistant",
+  content: "RuntimeError: Error code: 403",
+  structuredTurn: {
+    version: 2,
+    turnId: "turn-catalog-notice",
+    status: "cancelled",
+    parts: [{
+      id: "notice-catalog",
+      kind: "notice",
+      status: "error",
+      level: "error",
+      message: "RuntimeError: Error code: 403",
+    }],
+  },
+})), "error");
+
 const threads = [
   thread({ id: "thread-a", lastRequestId: "request-a", lastRunId: "run-a" }),
   thread({ id: "thread-b", lastRunId: "run-b" }),
@@ -156,4 +228,4 @@ const indexed = indexBackgroundTasksByThread(threads, [newerRunning, waiting, di
 assert.equal(indexed.get("thread-a"), waiting);
 assert.equal(indexed.has("thread-b"), false);
 
-process.stdout.write("Thread activity verification passed (14 checks).\n");
+process.stdout.write("Thread activity verification passed (24 checks).\n");

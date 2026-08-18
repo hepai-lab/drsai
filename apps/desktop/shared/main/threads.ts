@@ -1007,6 +1007,7 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
     content,
     ...(message.streaming ? { streaming: true } : {}),
     ...(message.error ? { error: true } : {}),
+    ...(message.replyFailed ? { replyFailed: true } : {}),
     ...(typeof message.statusContent === "string"
       ? { statusContent: message.statusContent.slice(0, MAX_STATUS_CHARS) }
       : {}),

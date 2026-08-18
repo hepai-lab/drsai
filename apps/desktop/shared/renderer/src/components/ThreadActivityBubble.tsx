@@ -2,7 +2,7 @@ import type { AppLanguage } from "../navigation";
 import type { ThreadActivityState } from "../threadActivity";
 
 export interface ThreadActivityBubbleProps {
-  state: Exclude<ThreadActivityState, { kind: "idle" }>;
+  state: Exclude<ThreadActivityState, { kind: "idle" } | { kind: "error" }>;
   language: AppLanguage;
 }
 

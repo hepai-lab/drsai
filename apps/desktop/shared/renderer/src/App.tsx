@@ -179,6 +179,7 @@ import { buildLocalDesktopDataExport } from "./localDataExport";
 import { useDesktopHealthAdapter } from "./adapters/useDesktopHealthAdapter";
 import {
   deriveThreadActivity,
+  deriveThreadCatalogStatus,
   indexBackgroundTasksByThread,
 } from "./threadActivity";
 import { resolveAvailableVoiceName, useVoicePreferences } from "./voice/useVoicePreferences";
@@ -714,7 +715,10 @@ function AuthenticatedApp({
     () => indexBackgroundTasksByThread(threads, threadBackgroundTasks),
     [threadBackgroundTasks, threads],
   );
-  const toWorkspaceThread = (thread: DesktopThread): WorkspaceThread => ({
+  const toWorkspaceThread = (
+    thread: DesktopThread,
+    liveMessages?: ChatThreadSnapshot["messages"],
+  ): WorkspaceThread => ({
     id: thread.id,
     title: thread.title,
     timeLabel: formatThreadTime(thread.updatedAt, language),
@@ -727,7 +731,16 @@ function AuthenticatedApp({
     unread: thread.unread,
     activity: deriveThreadActivity({
       thread,
-      snapshot: thread.id === activeThreadId ? activeThreadSnapshot ?? undefined : undefined,
+      snapshot: thread.id === activeThreadId && liveMessages?.length
+        ? {
+            threadId: thread.id,
+            title: thread.title,
+            messages: liveMessages,
+            updatedAt: Date.parse(thread.updatedAt) || 0,
+            messageCount: liveMessages.length,
+          }
+        : threadSnapshotStore.get(thread.id)
+          ?? (thread.id === activeThreadId ? activeThreadSnapshot ?? undefined : undefined),
       backgroundTask: backgroundTaskByThreadId.get(thread.id),
     }),
     source: thread.sourceChannel === "wechat"
@@ -748,13 +761,6 @@ function AuthenticatedApp({
   const visibleThreads = scopedThreads.filter((thread) =>
     sessionScope === "all" ? true : !thread.archived,
   );
-  const recentThreads: WorkspaceThread[] = visibleThreads
-    .slice(0, 12)
-    .map(toWorkspaceThread);
-  const searchableThreads: WorkspaceThread[] = visibleThreads.map(toWorkspaceThread);
-  const workspaceThreads: WorkspaceThread[] = sortThreadsForSidebar(sidebarThreads)
-    .filter((thread) => !thread.archived)
-    .map(toWorkspaceThread);
   const remotePlatformChatAvailable = Boolean(
     selectedChatAgent?.source === "remote"
     && selectedChatAgent.available !== false
@@ -823,6 +829,15 @@ function AuthenticatedApp({
     workspaceName: effectiveWorkspace.name,
     workspacePath: effectiveWorkspacePath,
   });
+  const recentThreads: WorkspaceThread[] = visibleThreads
+    .slice(0, 12)
+    .map((thread) => toWorkspaceThread(thread, chat.messages));
+  const searchableThreads: WorkspaceThread[] = visibleThreads.map((thread) =>
+    toWorkspaceThread(thread, chat.messages),
+  );
+  const workspaceThreads: WorkspaceThread[] = sortThreadsForSidebar(sidebarThreads)
+    .filter((thread) => !thread.archived)
+    .map((thread) => toWorkspaceThread(thread, chat.messages));
   const proposeTerminalCommand = useCallback((
     command: string,
     workflow?: { workflowRunId?: string; workflowStepId?: string },
@@ -2381,9 +2396,7 @@ function AuthenticatedApp({
     void desktopApi.updateThreadSnapshot(snapshot).catch(() => {
       // The local snapshot is still kept in renderer state and localStorage if disk persistence fails.
     });
-    const nextStatus = snapshot.messages.some((message) => message.streaming)
-      ? "running"
-      : "idle";
+    const nextStatus = deriveThreadCatalogStatus(snapshot);
     // Handoff/settle while switching must not bump updatedAt — that jumps the
     // previous thread to the top of the sidebar under the newly selected one.
     if (options?.preserveSidebarOrder) {
@@ -2902,6 +2915,7 @@ function AuthenticatedApp({
             if (mode === "new_session") await handleNewChat();
             chat.setInput(originalInput);
           }}
+          onDeleteMessage={chat.deleteMessage}
           onReportFeedback={(request) => setFeedbackRequest(request)}
           onRecoveryAction={handleChatRecoveryAction}
           onOpenPreviewBrowser={platformDescriptor?.capabilities.features.browser !== true ? undefined : openPreviewBrowser}

@@ -1368,6 +1368,25 @@ button {
   white-space: normal;
 }
 
+.thread-item.failed > span:first-of-type {
+  color: #9f2727;
+}
+
+.thread-activity-failed {
+  color: #c53c3c;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+:root[data-theme="dark"] .thread-item.failed > span:first-of-type {
+  color: #f0a7a7;
+}
+
+:root[data-theme="dark"] .thread-activity-failed {
+  color: #d98a8f;
+}
+
 .thread-activity-bubble {
   position: relative;
   width: 17px;
@@ -6091,8 +6110,28 @@ button.structured-activity-detail:hover {
   flex-direction: column;
 }
 
+.composer-edit-resend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 8px;
+  background: var(--app-panel-soft);
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.composer-edit-resend button {
+  min-height: 24px;
+  padding: 2px 8px;
+}
+
 .message-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-top: 10px;
   opacity: 0;

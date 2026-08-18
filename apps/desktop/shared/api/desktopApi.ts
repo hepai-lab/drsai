@@ -4019,6 +4019,7 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   id: string;
   streaming?: boolean;
   error?: boolean;
+  replyFailed?: boolean;
   statusContent?: string;
   voice?: DesktopVoiceMessageMetadata;
   reasoningContent?: string;

@@ -29,6 +29,7 @@ import {
   Mic,
   MicOff,
   Paperclip,
+  Pencil,
   Pause,
   Play,
   Plus,
@@ -40,6 +41,7 @@ import {
   TextCursorInput,
   Terminal,
   Telescope,
+  Trash2,
   Volume2,
   X,
   // Temporarily unused while composer Skills picker is hidden — keep for later reuse.
@@ -268,8 +270,10 @@ export interface ChatSubmitOptions {
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
   goalConfirmationRequired?: boolean;
   model?: string;
+  replaceFromMessageId?: string;
   runtimeMode?: ChatRuntimeMode | null;
   skillName?: string | null;
+  text?: string;
   thinkingEffort?: ThinkingEffort;
   onStarted?: (submission: {
     assistantMessageId: string;
@@ -302,6 +306,15 @@ function parseGoalConfirmationPrompt(prompt: string): GoalConfirmationDraft {
 
 function splitGoalConfirmationList(value: string): string[] {
   return value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+}
+
+function findPrecedingUserMessage(messages: UiMessage[], assistantMessageId: string): UiMessage | undefined {
+  const assistantIndex = messages.findIndex((message) => message.id === assistantMessageId);
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "user" && message.content.trim()) return message;
+  }
+  return undefined;
 }
 
 interface ChatWorkspaceProps {
@@ -369,6 +382,7 @@ interface ChatWorkspaceProps {
   onAttachIdeCurrentSelection?: () => void;
   onRefreshIdeContext?: () => void;
   onRetryMessage?: (assistantMessageId: string, mode: "same_session" | "new_session") => void | Promise<void>;
+  onDeleteMessage?: (messageId: string) => void;
   onReportFeedback?: (context: { source: "error" | "message" | "tool"; errorCode?: string; errorType?: string; runId?: string }) => void;
   onRecoveryAction?: (assistantMessageId: string, action: UserFacingRecoveryAction["id"]) => void | Promise<void>;
   onLoadEarlierHistory?: () => void | Promise<void>;
@@ -439,6 +453,7 @@ function ChatWorkspaceImpl({
   onAttachIdeCurrentSelection,
   onRefreshIdeContext,
   onRetryMessage,
+  onDeleteMessage,
   onReportFeedback,
   onRecoveryAction,
   onLoadEarlierHistory,
@@ -505,6 +520,10 @@ function ChatWorkspaceImpl({
   }, [chatStreaming, runtimeRunIdsKey, selectedWorkspaceId, workspacePath]);
   const [highlightedTurnId, setHighlightedTurnId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  const composerAttachmentsByThreadRef = useRef<Map<string, ComposerAttachment[]>>(new Map());
+  const composerConversationIdRef = useRef(conversationId);
+  attachmentsRef.current = attachments;
   const [interactionDraft, setInteractionDraft] = useState("");
   const [materialRoleAnalysis, setMaterialRoleAnalysis] = useState<MaterialRoleAnalysisResult | null>(null);
   const [materialRolePhase, setMaterialRolePhase] = useState<"idle" | "analyzing" | "ready" | "failed">("idle");
@@ -527,6 +546,8 @@ function ChatWorkspaceImpl({
   const [introMenuOpen, setIntroMenuOpen] = useState<"workspace" | "agent" | null>(null);
   const [introSearchQuery, setIntroSearchQuery] = useState("");
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
+  const [pendingReplaceFromMessageId, setPendingReplaceFromMessageId] = useState<string | null>(null);
+  const editResendBackupRef = useRef<{ input: string; attachments: ComposerAttachment[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchDate, setSearchDate] = useState("");
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
@@ -935,6 +956,10 @@ function ChatWorkspaceImpl({
   useEffect(() => {
     setTaskInteractionMode("normal");
     setRespondedInputRequests(new Set());
+    setInteractionDraft("");
+    setForkQueueAgentSelections({});
+    setPendingReplaceFromMessageId(null);
+    editResendBackupRef.current = null;
   }, [conversationId]);
 
   useEffect(() => {
@@ -2039,6 +2064,52 @@ function ChatWorkspaceImpl({
     if (imageFiles.length) void addClipboardImageAttachments(imageFiles);
   }
 
+  function startEditAndResend(assistantMessageId: string): void {
+    const user = findPrecedingUserMessage(messages, assistantMessageId);
+    if (!user) return;
+    if (!pendingReplaceFromMessageId) {
+      editResendBackupRef.current = { input, attachments };
+    }
+    onInputChange(user.content);
+    setPendingReplaceFromMessageId(user.id);
+    setAttachments(user.attachments?.length
+      ? user.attachments.map((attachment) => ({
+          ...attachment,
+          id: `${attachment.path || attachment.name || "attachment"}-${crypto.randomUUID()}`,
+        }))
+      : []);
+    textareaRef.current?.focus({ preventScroll: true });
+  }
+
+  function cancelEditAndResend(): void {
+    const backup = editResendBackupRef.current;
+    setPendingReplaceFromMessageId(null);
+    if (backup) {
+      onInputChange(backup.input);
+      setAttachments(backup.attachments);
+    }
+    editResendBackupRef.current = null;
+  }
+
+  async function regenerateAssistant(assistantMessageId: string): Promise<void> {
+    const user = findPrecedingUserMessage(messages, assistantMessageId);
+    if (!user || activeRequestId) return;
+    await onSubmit(
+      (user.attachments ?? []).filter((attachment) => !attachment.blockedReason),
+      {
+        agentId: selectedAgentId,
+        agentName: activeAgentName,
+        goalConfirmationRequired: isLocalOpenDrSaiAgent && taskInteractionMode === "confirm_goal",
+        model: selectedModelName,
+        replaceFromMessageId: user.id,
+        runtimeMode: currentRuntimeMode,
+        skillName: selectedSkillName,
+        text: user.content,
+        thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
+      },
+    );
+  }
+
   async function submitWithAttachments(): Promise<void> {
     if (duplexVoiceInput.phase === "active") { await submitDuplexText(); return; }
     if (["starting", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
@@ -2083,6 +2154,7 @@ function ChatWorkspaceImpl({
         runtimeMode: currentRuntimeMode,
         skillName: selectedSkillName,
         thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
+        ...(pendingReplaceFromMessageId ? { replaceFromMessageId: pendingReplaceFromMessageId } : {}),
         onStarted: isVoiceSubmission
           ? ({ assistantMessageId, requestId, userMessageId }) => dispatchVoiceTurn({
               type: "submission_linked",
@@ -2097,6 +2169,8 @@ function ChatWorkspaceImpl({
       setAttachments([]);
       onClearExternalAttachments?.();
       setSelectedSkillName(null);
+      setPendingReplaceFromMessageId(null);
+      editResendBackupRef.current = null;
       if (isVoiceSubmission) dispatchVoiceTurn({ type: "response_started" });
       if (isStreamingVoiceSubmission) {
         streamingVoiceInput.acceptReview();
@@ -2924,6 +2998,18 @@ function ChatWorkspaceImpl({
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
   });
 
+  if (composerConversationIdRef.current !== conversationId) {
+    const previousAttachments = attachmentsRef.current;
+    if (previousAttachments.length) {
+      composerAttachmentsByThreadRef.current.set(composerConversationIdRef.current, [...previousAttachments]);
+    } else {
+      composerAttachmentsByThreadRef.current.delete(composerConversationIdRef.current);
+    }
+    composerConversationIdRef.current = conversationId;
+    const restoredAttachments = composerAttachmentsByThreadRef.current.get(conversationId);
+    setAttachments(restoredAttachments ? [...restoredAttachments] : []);
+  }
+
   return (
     <div className="chat-workspace">
       <div className={`chat-primary-pane ${emptyChat ? "empty-chat" : ""}`}>
@@ -3191,6 +3277,11 @@ function ChatWorkspaceImpl({
                   synthesisMode={resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent)}
                   voiceName={voicePreferences.voiceName}
                   zh={zh}
+                  turnActionsDisabled={Boolean(activeRequestId) || !canChat}
+                  showTurnActions={!message.replyFailed}
+                  onEditAndResend={startEditAndResend}
+                  onRegenerate={() => void regenerateAssistant(message.id)}
+                  onDelete={onDeleteMessage}
                 />
               ) : null}
             </div>
@@ -3361,6 +3452,12 @@ function ChatWorkspaceImpl({
         onSubmit={handleSubmit}
       >
         <div className="composer-shell">
+          {pendingReplaceFromMessageId ? (
+            <div className="composer-edit-resend" data-testid="composer-edit-resend" role="status">
+              <span>{zh ? "将用这段文字替换该轮提问及之后的回复" : "This will replace that prompt and later replies"}</span>
+              <button type="button" onClick={cancelEditAndResend}>{zh ? "取消" : "Cancel"}</button>
+            </div>
+          ) : null}
           {channelSource === "wechat" ? (
             <div className="wechat-outbound-notice" data-testid="wechat-outbound-notice" role="status">
               <strong>{zh ? "微信会话" : "WeChat conversation"}</strong>
@@ -4711,6 +4808,11 @@ function MessageActions({
   synthesisMode,
   voiceName,
   zh,
+  turnActionsDisabled = false,
+  showTurnActions = false,
+  onEditAndResend,
+  onRegenerate,
+  onDelete,
 }: {
   content: string;
   messageId: string;
@@ -4720,6 +4822,11 @@ function MessageActions({
   synthesisMode: "system" | "provider";
   voiceName: string;
   zh: boolean;
+  turnActionsDisabled?: boolean;
+  showTurnActions?: boolean;
+  onEditAndResend?: (messageId: string) => void;
+  onRegenerate?: () => void;
+  onDelete?: (messageId: string) => void;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   const [localPending, setLocalPending] = useState(false);
@@ -4770,6 +4877,41 @@ function MessageActions({
         {copied ? "✓" : <ClipboardList size={13} />}
         <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
       </button>
+      {showTurnActions && onEditAndResend ? (
+        <button
+          type="button"
+          data-testid={`message-action-edit-resend-${messageId}`}
+          disabled={turnActionsDisabled}
+          onClick={() => onEditAndResend(messageId)}
+          title={zh ? "编辑原问题并重发这一轮" : "Edit the prompt and resend this turn"}
+        >
+          <Pencil size={13} />
+          <span>{zh ? "编辑并重发" : "Edit & resend"}</span>
+        </button>
+      ) : null}
+      {showTurnActions && onRegenerate ? (
+        <button
+          type="button"
+          data-testid={`message-action-regenerate-${messageId}`}
+          disabled={turnActionsDisabled}
+          onClick={() => onRegenerate()}
+          title={zh ? "用原问题重新生成这一轮" : "Regenerate this turn with the same prompt"}
+        >
+          <RefreshCw size={13} />
+          <span>{zh ? "重新生成" : "Regenerate"}</span>
+        </button>
+      ) : null}
+      {showTurnActions && onDelete ? (
+        <button
+          type="button"
+          data-testid={`message-action-delete-${messageId}`}
+          onClick={() => onDelete(messageId)}
+          title={zh ? "删除本条" : "Delete this message"}
+        >
+          <Trash2 size={13} />
+          <span>{zh ? "删除本条" : "Delete"}</span>
+        </button>
+      ) : null}
       {isSynthesizing ? (
         <button type="button" disabled title={zh ? "正在合成语音" : "Synthesizing speech"}>
           <RefreshCw size={13} className="spinning" />

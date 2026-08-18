@@ -79,6 +79,7 @@ export interface DesktopChatAdapter {
   clearCommandAttachments: () => void;
   removeCommandAttachment: (index: number) => void;
   dismissRecoveryActions: (messageId: string) => void;
+  deleteMessage: (messageId: string) => void;
   setInput: (value: string) => void;
   submit: (
     attachments?: ChatAttachment[],
@@ -105,6 +106,11 @@ interface LiveThreadChatView {
   lastSequenceByRequest: Record<string, number>;
   pendingDeltasByRequest: Record<string, { text: string; reasoning: string }>;
   pendingStructuredEventsByRequest: Record<string, StructuredConversationEvent[]>;
+}
+
+interface ComposerThreadDraft {
+  input: string;
+  commandAttachments: ChatAttachment[];
 }
 
 export function useDesktopChatAdapter({
@@ -152,9 +158,12 @@ export function useDesktopChatAdapter({
   const cancellingRequestIdRef = useRef<string | null>(null);
   const messagesRef = useRef<UiMessage[]>([createWelcomeMessage(language, [])]);
   const liveThreadViewsRef = useRef<Map<string, LiveThreadChatView>>(new Map());
+  const composerDraftsRef = useRef<Map<string, ComposerThreadDraft>>(new Map());
   const backgroundChatEventsRef = useRef<Map<string, ChatEvent[]>>(new Map());
   const [currentRuntimeMode, setCurrentRuntimeMode] = useState<ChatRuntimeMode | null>(null);
   const [commandAttachments, setCommandAttachments] = useState<ChatAttachment[]>([]);
+  const inputRef = useRef("");
+  const commandAttachmentsRef = useRef<ChatAttachment[]>([]);
   const [customCommands, setCustomCommands] = useState<DesktopCustomCommand[]>([]);
   const [projectMemory, setProjectMemory] = useState<DesktopProjectMemoryEntry[]>([]);
   const [userPreferences, setUserPreferences] = useState<DesktopUserPreference[]>([]);
@@ -185,6 +194,8 @@ export function useDesktopChatAdapter({
   messagesRef.current = messages;
   cancellingRequestIdRef.current = cancellingRequestId;
   languageRef.current = language;
+  inputRef.current = input;
+  commandAttachmentsRef.current = commandAttachments;
 
   function clearStructuredFlush(): void {
     pendingStructuredEventsByRequest.current = {};
@@ -355,6 +366,19 @@ export function useDesktopChatAdapter({
     liveThreadViewsRef.current.set(threadKey, captureLiveThreadView());
   }
 
+  function persistComposerDraft(threadKey: string): void {
+    const draftInput = inputRef.current;
+    const draftAttachments = commandAttachmentsRef.current;
+    if (!draftInput && draftAttachments.length === 0) {
+      composerDraftsRef.current.delete(threadKey);
+      return;
+    }
+    composerDraftsRef.current.set(threadKey, {
+      input: draftInput,
+      commandAttachments: [...draftAttachments],
+    });
+  }
+
   useEffect(() => {
     if (!activeRequestId) setCancellingRequestId(null);
   }, [activeRequestId]);
@@ -392,8 +416,6 @@ export function useDesktopChatAdapter({
     setActiveRequestId(null);
     setCurrentRuntimeMode(null);
     currentRuntimeModeRef.current = null;
-    setCommandAttachments([]);
-    setInput("");
     const restoredMessages = threadSnapshot?.messages?.length
       ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
       : [createWelcomeMessage(languageRef.current, userPreferencesRef.current)];
@@ -522,7 +544,7 @@ export function useDesktopChatAdapter({
         ? `用 ${skillName} `
         : `Use ${skillName} skill to `
       : "";
-    const rawInput = input.trim();
+    const rawInput = (options?.text ?? input).trim();
     const alreadyPrefixed = Boolean(
       skillName &&
         (languageRef.current === "zh"
@@ -531,6 +553,16 @@ export function useDesktopChatAdapter({
     );
     const text = (skillPrefix && !alreadyPrefixed ? `${skillPrefix}${rawInput}` : rawInput).trim();
     if (!text) return false;
+    const preserveComposer = options?.text !== undefined;
+
+    const replaceFromMessageId = options?.replaceFromMessageId?.trim();
+    const replaceIndex = replaceFromMessageId
+      ? messagesRef.current.findIndex((message) => message.id === replaceFromMessageId)
+      : -1;
+    const historyMessages = (replaceIndex >= 0
+      ? messagesRef.current.slice(0, replaceIndex)
+      : messagesRef.current
+    ).filter((message) => message.id !== "welcome");
 
     const materialPaths = [...new Set(attachments
       .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
@@ -538,8 +570,8 @@ export function useDesktopChatAdapter({
     if (materialPaths.length > 0 && isMaterialInventoryIntent(text)) {
       try {
         const analysis = await desktopApi.analyzeMaterialRoles({ paths: materialPaths });
-        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current), attachments);
-        setInput("");
+        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current), attachments, historyMessages);
+        if (!preserveComposer) setInput("");
         return true;
       } catch {
         // Fall through to the normal chat route when local material inspection is unavailable.
@@ -569,8 +601,8 @@ export function useDesktopChatAdapter({
         saved.length ? formatPreferenceConfirmation(saved, languageRef.current) : "",
         formatMemorySafetyNotice(memorySafety, languageRef.current),
       ].filter(Boolean).join("\n\n");
-      publishLocalAssistantResult(memorySafety.hasSensitiveContent ? redactSensitiveMemoryText(text) : text, response);
-      setInput("");
+      publishLocalAssistantResult(memorySafety.hasSensitiveContent ? redactSensitiveMemoryText(text) : text, response, [], historyMessages);
+      if (!preserveComposer) setInput("");
       return true;
     }
 
@@ -627,12 +659,14 @@ export function useDesktopChatAdapter({
         ]
           .filter((item) => item !== undefined && item !== "")
           .join("\n\n"),
+        [],
+        historyMessages,
       );
       if (forkHandoffResult?.thread) onForkThreadCreated?.(forkHandoffResult.thread);
       forkScheduleResult?.threads?.forEach((thread) => onForkThreadCreated?.(thread));
       forkDispatchResult?.threads?.forEach((thread) => onForkThreadCreated?.(thread));
       forkResult?.threads?.forEach((thread) => onForkThreadCreated?.(thread));
-      if (result.action?.type !== "set-input") {
+      if (result.action?.type !== "set-input" && !preserveComposer) {
         setInput("");
       }
       return true;
@@ -659,7 +693,7 @@ export function useDesktopChatAdapter({
     setCancellingRequestId(null);
     activeRequestIdRef.current = requestId;
     const nextMessages: UiMessage[] = [
-      ...messages.filter((message) => message.id !== "welcome"),
+      ...historyMessages,
       userMessage,
       {
         id: assistantId,
@@ -674,7 +708,7 @@ export function useDesktopChatAdapter({
     setMessages(nextMessages);
     publishThreadUpdate(nextMessages);
     streamingAssistantByRequest.current[requestId] = assistantId;
-    setInput("");
+    if (!preserveComposer) setInput("");
     setActiveRequestId(requestId);
 
     try {
@@ -704,7 +738,7 @@ export function useDesktopChatAdapter({
           team_memory: teamMemoryRef.current.map(({ id, teamId, content }) => ({ id, teamId, content })),
         },
         messages: buildRequestMessages(
-          [...messages, userMessage]
+          [...historyMessages, userMessage]
             .filter((message) => message.id !== "welcome" && !message.error && message.content.trim().length > 0)
             .map(({ role, content }) => ({ role, content })),
           workspaceInstructions,
@@ -728,7 +762,7 @@ export function useDesktopChatAdapter({
       activeRequestIdRef.current = null;
       delete streamingAssistantByRequest.current[requestId];
       setMessages((current) => current.filter((item) => item.id !== assistantId));
-      setInput(text);
+      if (!preserveComposer) setInput(text);
       return false;
     }
   }
@@ -1238,9 +1272,9 @@ export function useDesktopChatAdapter({
     }
   }
 
-  function createThreadSnapshot(nextMessages: UiMessage[]): ChatThreadSnapshot | null {
+  function createThreadSnapshot(nextMessages: UiMessage[], allowEmpty = false): ChatThreadSnapshot | null {
     const nonWelcome = nextMessages.filter((message) => message.id !== "welcome");
-    if (!nonWelcome.length) return null;
+    if (!nonWelcome.length && !allowEmpty) return null;
     const firstUser = nonWelcome.find((message) => message.role === "user");
     const updatedAt = Math.max(Date.now(), lastPublishedSnapshotAtRef.current + 1);
     lastPublishedSnapshotAtRef.current = updatedAt;
@@ -1259,9 +1293,10 @@ export function useDesktopChatAdapter({
     userText: string,
     assistantText: string,
     attachments: ChatAttachment[] = [],
+    baseMessages: UiMessage[] = messagesRef.current,
   ): void {
     const commandMessages: UiMessage[] = [
-      ...messages.filter((message) => message.id !== "welcome"),
+      ...baseMessages.filter((message) => message.id !== "welcome"),
       {
         id: crypto.randomUUID(),
         role: "user",
@@ -1991,6 +2026,26 @@ export function useDesktopChatAdapter({
     ));
   }
 
+  function deleteMessage(messageId: string): void {
+    if (!messageId || messageId === "welcome") return;
+    const remaining = messagesRef.current.filter((message) => message.id !== messageId && message.id !== "welcome");
+    const next = remaining.length
+      ? remaining
+      : [createWelcomeMessage(languageRef.current, userPreferencesRef.current)];
+    messagesRef.current = next;
+    setMessages(next);
+    const snapshot = createThreadSnapshot(remaining, true);
+    if (snapshot) notifyThreadUpdated(snapshot);
+  }
+
+  if (threadIdRef.current !== threadId) {
+    persistComposerDraft(threadIdRef.current);
+    const draft = composerDraftsRef.current.get(threadId);
+    threadIdRef.current = threadId;
+    setInput(draft?.input ?? "");
+    setCommandAttachments(draft?.commandAttachments ? [...draft.commandAttachments] : []);
+  }
+
   return {
     activeRequestId,
     cancellingRequestId,
@@ -2002,6 +2057,7 @@ export function useDesktopChatAdapter({
     clearRuntimeMode,
     removeCommandAttachment,
     dismissRecoveryActions,
+    deleteMessage,
     setInput,
     submit,
     abort,
