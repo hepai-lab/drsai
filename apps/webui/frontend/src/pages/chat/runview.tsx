@@ -31,6 +31,31 @@ import {
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
+type ScrollMetrics = {
+  scrollHeight: number;
+  scrollTop: number;
+  clientHeight: number;
+};
+
+/** True when the user actively scrolled up (not content growth lag during auto-follow). */
+function isUserScrollUp(
+  container: HTMLDivElement,
+  prev: ScrollMetrics
+): boolean {
+  return prev.scrollHeight > 0 && container.scrollTop < prev.scrollTop - 2;
+}
+
+/** True when content grew while the view was pinned to the bottom (streaming/images). */
+function isPassiveGrowthFromBottom(
+  container: HTMLDivElement,
+  prev: ScrollMetrics
+): boolean {
+  if (prev.scrollHeight <= 0) return false;
+  const wasPinned =
+    prev.scrollTop >= prev.scrollHeight - prev.clientHeight - 48;
+  return wasPinned && container.scrollHeight > prev.scrollHeight;
+}
+
 /** Stable live reply: ThinkBubble + answer in one tree so thinking never remounts away. */
 const StreamingChunkRender = React.memo(
   ({
@@ -234,7 +259,7 @@ const RunView: React.FC<RunViewProps> = ({
    *  resize as messages are added, giving us a reliable streaming-follow trigger. */
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const autoScrollLockedRef = useRef(false);
-  const [autoScrollLocked, setAutoScrollLocked] = useState(false);
+  const prevMessageCountRef = useRef(run.messages.length);
   /** Last scroll metrics — used so ResizeObserver can tell "was pinned to bottom" when content height grows (streaming). */
   const scrollMetricsRef = useRef({
     scrollHeight: 0,
@@ -336,7 +361,6 @@ const RunView: React.FC<RunViewProps> = ({
     }
 
     autoScrollLockedRef.current = false;
-    setAutoScrollLocked(false);
 
     programmaticScrollRef.current = true;
 
@@ -521,7 +545,15 @@ const RunView: React.FC<RunViewProps> = ({
     if (!container) return;
 
     const handleScroll = () => {
+      const prev = scrollMetricsRef.current;
+
       if (programmaticScrollRef.current) {
+        if (isUserScrollUp(container, prev)) {
+          autoScrollLockedRef.current = true;
+          programmaticScrollRef.current = false;
+        } else if (isPassiveGrowthFromBottom(container, prev)) {
+          container.scrollTop = container.scrollHeight;
+        }
         scrollMetricsRef.current = {
           scrollHeight: container.scrollHeight,
           scrollTop: container.scrollTop,
@@ -529,8 +561,6 @@ const RunView: React.FC<RunViewProps> = ({
         };
         return;
       }
-
-      const prev = scrollMetricsRef.current;
 
       scrollMetricsRef.current = {
         scrollHeight: container.scrollHeight,
@@ -552,14 +582,18 @@ const RunView: React.FC<RunViewProps> = ({
         prev.scrollHeight > 0 &&
         container.scrollHeight > prev.scrollHeight &&
         container.scrollTop >= prev.scrollTop;
+      const passiveGrowthFromBottom = isPassiveGrowthFromBottom(container, prev);
 
-      if (!isAtBottom && !autoScrollLockedRef.current && !contentPassivelyGrew) {
+      if (
+        !isAtBottom &&
+        !autoScrollLockedRef.current &&
+        !contentPassivelyGrew &&
+        !passiveGrowthFromBottom
+      ) {
         autoScrollLockedRef.current = true;
-        setAutoScrollLocked(true);
         console.log("[DEBUG-scroll] handleScroll: LOCKED. distanceFromBottom:", distanceFromBottom, "scrollTop:", container.scrollTop, "scrollHeight:", container.scrollHeight, "contentPassivelyGrew:", contentPassivelyGrew);
       } else if (isAtBottom && autoScrollLockedRef.current) {
         autoScrollLockedRef.current = false;
-        setAutoScrollLocked(false);
         console.log("[DEBUG-scroll] handleScroll: UNLOCKED");
       }
     };
@@ -614,8 +648,18 @@ const RunView: React.FC<RunViewProps> = ({
       if (programmaticScrollRef.current) {
         const container = threadContainerRef.current;
         if (container) {
-          console.log("[DEBUG-scroll] messagesContentRO: programmatic=true, silent scroll. scrollTop:", container.scrollTop, "scrollHeight:", container.scrollHeight);
-          container.scrollTop = container.scrollHeight;
+          const prev = scrollMetricsRef.current;
+          if (isUserScrollUp(container, prev)) {
+            autoScrollLockedRef.current = true;
+            programmaticScrollRef.current = false;
+          } else {
+            container.scrollTop = container.scrollHeight;
+            scrollMetricsRef.current = {
+              scrollHeight: container.scrollHeight,
+              scrollTop: container.scrollTop,
+              clientHeight: container.clientHeight,
+            };
+          }
         }
         return;
       }
@@ -633,12 +677,19 @@ const RunView: React.FC<RunViewProps> = ({
       return;
     }
 
-    // When the user sends a new message, always unlock auto-scroll so the view
-    // follows the new content regardless of where the user was previously scrolled.
+    const prevCount = prevMessageCountRef.current;
+    prevMessageCountRef.current = run.messages.length;
+
+    // Only unlock when the user actually sent a new message — not merely because
+    // the last message in history happens to be from the user.
     const lastMsg = run.messages[run.messages.length - 1];
-    if (lastMsg && messageUtils.isUser(lastMsg.config.source)) {
+    const userJustSent =
+      run.messages.length > prevCount &&
+      lastMsg &&
+      messageUtils.isUser(lastMsg.config.source);
+
+    if (userJustSent) {
       autoScrollLockedRef.current = false;
-      setAutoScrollLocked(false);
     }
 
     if (autoScrollLockedRef.current) {
@@ -648,15 +699,18 @@ const RunView: React.FC<RunViewProps> = ({
 
     // Use a small delay to ensure the DOM has updated
     const timeout = setTimeout(() => {
+      if (autoScrollLockedRef.current) {
+        return;
+      }
       scrollToBottom("auto");
     }, 100);
 
     return () => clearTimeout(timeout);
-  }, [run.messages, run.status, autoScrollLocked, scrollToBottom]);
+  }, [run.messages, run.status, scrollToBottom]);
 
   useEffect(() => {
     autoScrollLockedRef.current = false;
-    setAutoScrollLocked(false);
+    prevMessageCountRef.current = run.messages.length;
 
     const timeout = setTimeout(() => {
       scrollToBottom("auto", true);
@@ -671,7 +725,6 @@ const RunView: React.FC<RunViewProps> = ({
     if (!container || !element) return;
 
     autoScrollLockedRef.current = true;
-    setAutoScrollLocked(true);
     programmaticScrollRef.current = true;
     userNavScrollRef.current = true;
 
