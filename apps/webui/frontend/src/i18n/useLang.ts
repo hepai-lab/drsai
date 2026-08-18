@@ -627,6 +627,9 @@ const dict = {
   "skillSquare.makePublicBtn":     { zh: "公开",                  en: "List" },
   "skillSquare.unlistedBadge":     { zh: "已下架",                en: "Unlisted" },
   "skillSquare.presetBadge":       { zh: "预置技能",              en: "Preset" },
+  "skillSquare.higrafOnlyBadge":   { zh: "仅LHAASO成员可用",     en: "LHAASO members only" },
+  "skillSquare.restrictedTitle":  { zh: "仅LHAASO成员可用",     en: "LHAASO members only" },
+  "skillSquare.restrictedDesc":   { zh: "你可以查看技能简介和版本历史；加入LHAASO后才能启用、查看完整内容或下载技能。", en: "You can view the skill overview and version history. Join LHAASO to enable, view full content, or download the skill." },
   "skillSquare.systemOwner":       { zh: "系统预置",              en: "System" },
   "skillSquare.callCount":         { zh: "调用 %1 次",            en: "%1 calls" },
 } as const;

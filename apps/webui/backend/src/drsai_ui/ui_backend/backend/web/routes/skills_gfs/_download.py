@@ -65,7 +65,13 @@ async def download_skill(
 
     if not ok:
         if type_ == "public" and is_higraf_skill_slug(slug):
-            zip_bytes = await download_higraf_skill_bytes(slug)
+            zip_bytes, restricted = await download_higraf_skill_bytes(slug)
+            if restricted:
+                try:
+                    os.unlink(tmp_zip.name)
+                except OSError:
+                    pass
+                raise HTTPException(status_code=403, detail="仅限对应学术组成员下载")
             if zip_bytes:
                 with open(tmp_zip.name, "wb") as f:
                     f.write(zip_bytes)

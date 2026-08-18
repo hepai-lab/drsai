@@ -1,5 +1,5 @@
-import { Select } from "antd";
-import { ArrowUpDown, Search } from "lucide-react";
+import { Button as AntdButton, Select } from "antd";
+import { ArrowUpDown, Search, Tag } from "lucide-react";
 import React from "react";
 import { SEARCH_INPUT_CLS } from "./constants";
 
@@ -16,11 +16,13 @@ interface SkillFilterBarProps {
   isZh: boolean;
   t: TFn;
   sortRef: React.RefObject<HTMLDivElement | null>;
+  isPlatformAdmin?: boolean;
   onCategoryChange: (value: string) => void;
   onSearchChange: (value: string) => void;
   onSearchExpandedChange: (open: boolean) => void;
   onSortOpenChange: (open: boolean | ((v: boolean) => boolean)) => void;
   onSortByChange: (value: "name" | "time") => void;
+  onManageTags?: () => void;
 }
 
 const SkillFilterBar: React.FC<SkillFilterBarProps> = ({
@@ -33,11 +35,13 @@ const SkillFilterBar: React.FC<SkillFilterBarProps> = ({
   isZh,
   t,
   sortRef,
+  isPlatformAdmin,
   onCategoryChange,
   onSearchChange,
   onSearchExpandedChange,
   onSortOpenChange,
   onSortByChange,
+  onManageTags,
 }) => (
   <div className="shrink-0 flex items-center gap-3 pb-4 pr-4">
     <Select
@@ -49,6 +53,17 @@ const SkillFilterBar: React.FC<SkillFilterBarProps> = ({
         ...availableCategories.map((c) => ({ value: c, label: c })),
       ]}
     />
+    {isPlatformAdmin && (
+      <AntdButton
+        size="small"
+        type="text"
+        onClick={onManageTags}
+        className="shrink-0 text-xs text-secondary hover:text-accent"
+      >
+        <Tag className="h-3.5 w-3.5 inline mr-0.5" />
+        管理标签
+      </AntdButton>
+    )}
     <div className="flex items-center gap-2 ml-auto shrink-0">
       {searchExpanded ? (
         <div className="relative max-w-[180px]">

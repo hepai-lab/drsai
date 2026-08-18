@@ -504,21 +504,30 @@ async def fetch_higraf_skill_detail(skill_id: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-async def download_higraf_skill_bytes(skill_id: str) -> bytes | None:
-    """Download a Higraf skill zip and return raw bytes."""
+async def download_higraf_skill_bytes(skill_id: str) -> tuple[bytes | None, bool]:
+    """Download a Higraf skill zip and return raw bytes + restricted flag.
+
+    Returns (bytes, False) on success, (None, True) on 403, (None, False) on other errors.
+    """
     access_token = await get_system_higraf_access_token()
     if not access_token:
-        return None
+        return None, False
 
     url = f"{_higraf_base_url()}/api/v1/skill-hub/by-id/{skill_id}/download"
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             resp = await client.get(url, headers={"Cookie": f"access_token={access_token}"})
         resp.raise_for_status()
-        return resp.content
+        return resp.content, False
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 403:
+            logger.warning(f"[DeerFlow] download_higraf_skill_bytes restricted skill_id={skill_id}")
+            return None, True
+        logger.warning(f"[DeerFlow] download_higraf_skill_bytes failed skill_id={skill_id}: {type(exc).__name__}: {exc}")
+        return None, False
     except Exception as exc:
         logger.warning(f"[DeerFlow] download_higraf_skill_bytes failed skill_id={skill_id}: {type(exc).__name__}: {exc}")
-        return None
+        return None, False
 
 
 # ── 通用代理调用 ──────────────────────────────────────────────────────────────
@@ -602,7 +611,49 @@ async def skill_hub_list(fastapi_request: Request) -> dict:
       - kind: 技能类型（user 等）
       - search: 搜索关键词
     """
-    body = await _proxy_get("/agent/api/v1/skill-hub/list", fastapi_request)
+    # 优先使用用户 cookie 中的 token，没有时退回到系统级 token
+    access_token = fastapi_request.cookies.get(HIGRAF_ACCESS_TOKEN_COOKIE)
+    if not access_token:
+        access_token = fastapi_request.headers.get("X-Access-Token")
+    if not access_token:
+        access_token = await get_system_higraf_access_token()
+
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing access token",
+        )
+
+    url = f"{_higraf_base_url()}/agent/api/v1/skill-hub/list"
+    params = dict(fastapi_request.query_params)
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.get(
+                url,
+                params=params,
+                headers={"Cookie": f"access_token={access_token}"},
+            )
+        logger.info(f"[DeerFlow] GET /agent/api/v1/skill-hub/list -> status={resp.status_code}")
+        resp.raise_for_status()
+        body = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error(f"[DeerFlow] skill-hub/list HTTP error: status={exc.response.status_code} body={exc.response.text[:500]}")
+        raise HTTPException(
+            status_code=exc.response.status_code,
+            detail=f"Higraf request failed: {exc.response.status_code}",
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Higraf request timed out",
+        )
+    except Exception as exc:
+        logger.exception(f"[DeerFlow] skill-hub/list unexpected error: {type(exc).__name__}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Higraf request failed",
+        )
+
     return {
         "status": True,
         "data": body,

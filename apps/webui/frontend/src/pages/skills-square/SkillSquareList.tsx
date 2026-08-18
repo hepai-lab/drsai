@@ -173,6 +173,13 @@ const SkillSquareList: React.FC<SkillSquareListProps> = ({
             category={r.category}
             downloads={r.downloads}
             source={r.source}
+            badges={
+              r.academicGroupId === "lhaaso" ? (
+                <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                  {t("skillSquare.higrafOnlyBadge")}
+                </span>
+              ) : null
+            }
             onClick={onOpenDetail}
             renderSkillIcon={renderSkillIcon}
           />

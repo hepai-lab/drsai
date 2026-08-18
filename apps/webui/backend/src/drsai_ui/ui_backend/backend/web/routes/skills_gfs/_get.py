@@ -183,8 +183,9 @@ async def _get_higraf_public(slug: str) -> dict:
 
     body = (detail.get("content") or "").strip()
     compatibility = None
+    restricted = False
     if not body:
-        zip_bytes = await download_higraf_skill_bytes(slug)
+        zip_bytes, restricted = await download_higraf_skill_bytes(slug)
         if zip_bytes:
             try:
                 with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
@@ -217,6 +218,7 @@ async def _get_higraf_public(slug: str) -> dict:
             "downloads": detail.get("callCount", 0),
             "source": "higraf",
             "can_edit": False,
+            "restricted": restricted,
         },
     }
 

@@ -22,6 +22,7 @@ export type SkillsPublicItem = {
     changelog?: string;
     category?: string;
     source?: string;
+    academicGroupId?: string;
 };
 
 export type SkillsPublicDetail = SkillsPublicItem & {
@@ -29,6 +30,7 @@ export type SkillsPublicDetail = SkillsPublicItem & {
     created_at: string;
     profile?: string;
     changelog?: string;
+    restricted?: boolean;
 };
 
 export type SkillsUserItem = {
@@ -669,6 +671,68 @@ export class SkillsAPI {
 }
 
 export const skillsAPI = new SkillsAPI();
+
+// ── Academic Group Tags (Higraf proxy) ─────────────────────────────────────
+
+/**
+ * Tag names that represent academic groups in Higraf.
+ * When selected in the skill square, skills are fetched from the Higraf proxy
+ * using `visibility=group&academicGroupId=<tagName>`.
+ */
+export const ACADEMIC_GROUP_TAGS = new Set(["lhaaso"]);
+
+// ── Higraf Skill Hub Proxy ─────────────────────────────────────────────────
+
+export type HigrafGroupSkillResult = {
+    slug: string;
+    name: string;
+    description: string;
+    icon: string;
+    version: string;
+    owner: string;
+    updated_at: string;
+    downloads: number;
+    category: string;
+    source: "higraf";
+};
+
+/**
+ * Fetch skills from the Higraf skill hub for a specific academic group.
+ * Calls the backend proxy at `/api/deer-flow/skill-hub/list`.
+ */
+export async function fetchHigrafGroupSkills(
+    academicGroupId: string,
+): Promise<SkillsPublicItem[]> {
+    const baseUrl = getServerUrl();
+    const params = new URLSearchParams({
+        visibility: "group",
+        academicGroupId: academicGroupId.toLowerCase(),
+    });
+    const response = await fetch(
+        `${baseUrl}/deer-flow/skill-hub/list?${params}`,
+        { headers: { "Content-Type": "application/json" }, credentials: "include" },
+    );
+    const data = await response.json();
+    if (!data.status) {
+        throw new Error(data.message || "Failed to fetch Higraf group skills");
+    }
+    const items: any[] = data.data || [];
+    return items.map(
+        (h): SkillsPublicItem => ({
+            slug: h.skillId || h.id || "",
+            name: h.name || h.skillName || "",
+            description: h.description || "",
+            icon: h.emoji || "package",
+            version: h.version || h.currentVersion || "1.0.0",
+            owner: h.authorName || "",
+            updated_at: h.updatedAt || h.updated_at || "",
+            downloads: h.callCount || 0,
+            category: h.categoryL2 || "",
+            source: "higraf",
+            academicGroupId: h.academicGroupId || "",
+        }),
+    );
+}
 
 // ── Skill Tags (admin CRUD) ────────────────────────────────────────────────
 

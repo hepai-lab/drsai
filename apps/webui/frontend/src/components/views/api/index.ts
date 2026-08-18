@@ -23,8 +23,9 @@ export type {
   SkillsCatalogDetail,
   SkillsCatalogUploadResult,
   SkillTagItem,
+  HigrafGroupSkillResult,
 } from "./skills";
-export { SkillTagAPI, skillTagAPI } from "./skills";
+export { SkillTagAPI, skillTagAPI, ACADEMIC_GROUP_TAGS, fetchHigrafGroupSkills } from "./skills";
 export { DocMasterAPI, docmasterAPI } from "./docmaster";
 export type { DocMasterTemplateEntry, DocMasterPptxPreviewSlide, DocMasterTemplatesResponse } from "./docmaster";
 export { CloudAPI, cloudAPI } from "./cloud";

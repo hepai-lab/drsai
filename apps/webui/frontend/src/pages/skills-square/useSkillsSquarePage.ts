@@ -7,6 +7,8 @@ import React, {
   useState,
 } from "react";
 import {
+  ACADEMIC_GROUP_TAGS,
+  fetchHigrafGroupSkills,
   skillTagAPI,
   skillsAPI,
   userAPI,
@@ -439,6 +441,24 @@ export function useSkillsSquarePage() {
     publicPageRef.current = 1;
     setPublicHasNext(false);
     publicHasNextRef.current = false;
+
+    // Branch: if the selected category is an academic group, fetch from Higraf proxy
+    if (activeCategory && ACADEMIC_GROUP_TAGS.has(activeCategory.toLowerCase())) {
+      try {
+        const items = await fetchHigrafGroupSkills(activeCategory);
+        if (gen !== publicFetchGenRef.current) return;
+        setPublicRows(items);
+        setPublicHasNext(false);
+        publicHasNextRef.current = false;
+      } catch {
+        if (gen !== publicFetchGenRef.current) return;
+        setPublicRows([]);
+      } finally {
+        if (gen === publicFetchGenRef.current) setPublicLoading(false);
+      }
+      return;
+    }
+
     try {
       const result = await skillsAPI.listPublicSkillsPage(
         1,

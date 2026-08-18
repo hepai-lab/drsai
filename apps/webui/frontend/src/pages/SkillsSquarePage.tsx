@@ -1,5 +1,4 @@
 import { Button as AntdButton, Spin } from "antd";
-import { Tag } from "lucide-react";
 import React from "react";
 import ShareSkillModal from "./ShareSkillModal";
 import SkillDetailPanel from "./SkillDetailPanel";
@@ -24,27 +23,6 @@ const SkillsSquarePage: React.FC = () => {
       </div>
 
       <div className="relative z-10 flex min-h-0 flex-1 flex-col py-6 px-4 lg:px-6">
-        {!vm.skillSlugFromUrl && (
-          <div className="shrink-0 mb-3 px-2">
-            <div className="flex items-center gap-2.5">
-              {vm.isPlatformAdmin && (
-                <AntdButton
-                  size="small"
-                  type="text"
-                  onClick={() => {
-                    vm.setTagModalOpen(true);
-                    void vm.loadTags();
-                  }}
-                  className="ml-auto text-xs text-secondary hover:text-accent"
-                >
-                  <Tag className="h-3.5 w-3.5 inline mr-0.5" />
-                  管理标签
-                </AntdButton>
-              )}
-            </div>
-          </div>
-        )}
-
         <div className="flex min-h-0 w-full flex-1 flex-row gap-4">
           {!vm.skillSlugFromUrl && (
             <SkillSquareNav
@@ -83,11 +61,16 @@ const SkillsSquarePage: React.FC = () => {
                 isZh={vm.isZh}
                 t={vm.t}
                 sortRef={vm.sortRef}
+                isPlatformAdmin={vm.isPlatformAdmin}
                 onCategoryChange={vm.setActiveCategory}
                 onSearchChange={vm.setSearch}
                 onSearchExpandedChange={vm.setSearchExpanded}
                 onSortOpenChange={vm.setSortOpen}
                 onSortByChange={vm.setSortBy}
+                onManageTags={() => {
+                  vm.setTagModalOpen(true);
+                  void vm.loadTags();
+                }}
               />
             )}
 
