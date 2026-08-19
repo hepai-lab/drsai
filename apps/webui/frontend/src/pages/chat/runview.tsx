@@ -27,7 +27,9 @@ import {
   chatRenderLog,
   collapseMessagesForDisplay,
   classifyMessage,
+  type ChatMsgKind,
 } from "./chatMessagePipeline";
+import ProcessMessageGroup from "./ProcessMessageGroup";
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
@@ -104,7 +106,136 @@ function isProcessMsg(msg: Message): boolean {
   );
 }
 
-type MessageSegment = { kind: "single"; idx: number; msg: Message };
+type MessageSegment =
+  | { kind: "single"; idx: number; msg: Message }
+  | { kind: "process"; items: Array<{ idx: number; msg: Message }> };
+
+/** True when this reply is the last assistant answer before the next user turn. */
+function isFinalReplyInTurn(messages: Message[], idx: number): boolean {
+  const kind = classifyMessage(messages[idx]);
+  if (kind !== "reply") return false;
+  for (let j = idx + 1; j < messages.length; j++) {
+    const nextKind = classifyMessage(messages[j]);
+    if (nextKind === "user") break;
+    if (nextKind === "reply") return false;
+    if (
+      nextKind === "process" ||
+      nextKind === "thought" ||
+      nextKind === "other"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isRunLive(runStatus: string | undefined): boolean {
+  return (
+    runStatus === "active" ||
+    runStatus === "streaming" ||
+    runStatus === "connected" ||
+    runStatus === "pausing" ||
+    runStatus === "resuming"
+  );
+}
+
+/** Any process/thought steps in the current user turn before idx (excludes idx). */
+function hasProcessActivityInTurnBefore(
+  messages: Message[],
+  idx: number
+): boolean {
+  let lastUserIdx = -1;
+  for (let i = 0; i <= idx; i++) {
+    if (classifyMessage(messages[i]) === "user") lastUserIdx = i;
+  }
+  for (let i = lastUserIdx + 1; i < idx; i++) {
+    const k = classifyMessage(messages[i]);
+    if (k === "process" || k === "thought") return true;
+  }
+  return false;
+}
+
+function shouldTreatReplyAsFinal(
+  messages: Message[],
+  idx: number,
+  runStatus: string | undefined
+): boolean {
+  if (!isFinalReplyInTurn(messages, idx)) return false;
+
+  if (isRunLive(runStatus) && idx === messages.length - 1) {
+    // While the run is still going, a trailing TextMessage is usually interim
+    // narration — keep it inside the process group if tools/thoughts already ran.
+    return !hasProcessActivityInTurnBefore(messages, idx);
+  }
+
+  return true;
+}
+
+function shouldRenderAsSingleSegment(
+  msg: Message,
+  idx: number,
+  messages: Message[],
+  runStatus: string | undefined
+): boolean {
+  const kind = classifyMessage(msg);
+  const meta = (msg.config.metadata || {}) as Record<string, unknown>;
+  const cfg = msg.config as any;
+
+  if (kind === "user") return true;
+  if (messageUtils.isPlanMessage(meta) || messageUtils.isStepExecution(meta)) {
+    return true;
+  }
+  if (cfg.type === "FilesEvent" || meta.type === "FilesEvent") return true;
+  if (meta._is_streaming_chunk) return true;
+  if (
+    kind === "reply" &&
+    shouldTreatReplyAsFinal(messages, idx, runStatus)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function buildMessageSegments(
+  messages: Message[],
+  runStatus: string | undefined
+): MessageSegment[] {
+  const segments: MessageSegment[] = [];
+  let processBatch: Array<{ idx: number; msg: Message }> = [];
+
+  const flushProcess = () => {
+    if (processBatch.length > 0) {
+      segments.push({ kind: "process", items: [...processBatch] });
+      processBatch = [];
+    }
+  };
+
+  for (let idx = 0; idx < messages.length; idx++) {
+    const msg = messages[idx];
+    if (shouldRenderAsSingleSegment(msg, idx, messages, runStatus)) {
+      flushProcess();
+      segments.push({ kind: "single", idx, msg });
+      continue;
+    }
+
+    const kind = classifyMessage(msg) as ChatMsgKind;
+    if (
+      kind === "process" ||
+      kind === "thought" ||
+      kind === "other" ||
+      kind === "reply"
+    ) {
+      processBatch.push({ idx, msg });
+      continue;
+    }
+
+    flushProcess();
+    segments.push({ kind: "single", idx, msg });
+  }
+
+  flushProcess();
+  return segments;
+}
 
 /** Next index that bounds the "segment" after messageIndex (plan, final answer, or next non-duplicate step). */
 function getNextSignificantMessageIndex(
@@ -1553,9 +1684,10 @@ const RunView: React.FC<RunViewProps> = ({
   // ToolCallSummaryMessage, AgentLogEvent, ThoughtEvent, LLMCallEventMessage,
   // HandoffMessage, StopMessage, MultiModal, or intermediate assistant
   // TextMessages — is grouped into the scrollable box.
-  const messageSegments = useMemo((): MessageSegment[] => {
-    return localMessages.map((msg, idx) => ({ kind: "single", idx, msg }));
-  }, [localMessages]);
+  const messageSegments = useMemo(
+    (): MessageSegment[] => buildMessageSegments(localMessages, run.status),
+    [localMessages, run.status]
+  );
 
   // Add this effect to handle scrolling when status changes
   useEffect(() => {
@@ -1585,6 +1717,17 @@ const RunView: React.FC<RunViewProps> = ({
           <div ref={messagesContentRef}>
           {messageSegments.length > 0 &&
             messageSegments.map((segment) => {
+              if (segment.kind === "process") {
+                return (
+                  <ProcessMessageGroup
+                    key={`process-${segment.items.map((i) => i.idx).join("-")}`}
+                    items={segment.items}
+                    runStatus={run.status}
+                    onLogMessageClick={handleSwitchToLogExecution}
+                  />
+                );
+              }
+
               const { idx, msg } = segment;
 
               // Fast path for active streaming chunks: skip the heavy RenderMessage

@@ -413,22 +413,69 @@ const RenderToolResult: React.FC<{ content: FunctionExecutionResult[] }> = memo(
 );
 
 const extractToolLabel = (title: string | undefined): string => {
-  if (!title) return "Tool result";
-  const match = title.match(/I am using tools?:\s*(.+)/i);
-  if (match) {
-    return match[1].trim() || "Tool result";
+  if (!title) return "工具调用";
+  const toolsMatch = title.match(/I am using tools?:\s*(.+)/i);
+  if (toolsMatch) {
+    const names = toolsMatch[1].trim();
+    return names.length <= 48 ? names : `${names.slice(0, 45)}…`;
   }
-  return title.length <= 40 ? title : "Tool result";
+  const clean = title.replace(/\s+/g, " ").trim();
+  if (clean.length <= 48) return clean;
+  return `${clean.slice(0, 45)}…`;
 };
 
 const RenderToolCallSummaryCard: React.FC<{
   content: string;
   label?: string;
   defaultCollapsed?: boolean;
-}> = memo(({ content, label, defaultCollapsed = true }) => {
+  compact?: boolean;
+}> = memo(({ content, label, defaultCollapsed = true, compact = false }) => {
   const [expanded, setExpanded] = useState(!defaultCollapsed);
   const trimmed = (content || "").trim();
   const displayLabel = label ? extractToolLabel(label) : "Tool result";
+  const hasResult = trimmed.length > 0;
+
+  if (compact) {
+    return (
+      <div className="rounded-md border border-secondary/15 bg-secondary/[0.04] overflow-hidden">
+        <button
+          type="button"
+          className="group w-full flex items-center gap-2 px-2.5 py-1.5 text-left min-w-0 transition-colors hover:bg-secondary/10"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (hasResult) setExpanded((v) => !v);
+          }}
+          aria-expanded={expanded}
+          disabled={!hasResult}
+        >
+          <Terminal
+            size={12}
+            className="shrink-0 text-secondary/55 group-hover:text-secondary/75 transition-colors"
+            aria-hidden
+          />
+          <span className="text-xs font-medium text-secondary/80 truncate flex-1 min-w-0">
+            {displayLabel}
+          </span>
+          {hasResult && (
+            <ChevronRight
+              size={12}
+              className={`shrink-0 text-secondary/40 transition-transform ${expanded ? "rotate-90" : ""}`}
+              aria-hidden
+            />
+          )}
+        </button>
+        {expanded && hasResult && (
+          <div className="px-2.5 pb-2 border-t border-secondary/10">
+            <MarkdownRenderer
+              content={trimmed}
+              indented={true}
+              disableThinkTags={true}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg bg-gradient-to-br from-violet-500/12 via-purple-500/8 to-fuchsia-500/[0.06] pl-2.5 pr-2  backdrop-blur-[2px] dark:from-violet-400/16 dark:via-purple-500/11 dark:to-fuchsia-500/8">
@@ -1488,9 +1535,9 @@ export const RenderMessage: React.FC<MessageProps> = memo(
           {/* Non-user message content */}
           {!isUser && !isUserProxy && (
             <div className="w-full text-primary break-words overflow-hidden">
-              {shouldShowSourceBadge && (
-                <div className="relative mb-2 inline-flex items-center py-1.5 text-base font-semibold text-primary gap-2">
-                  <span className=""><Bot /></span>
+              {shouldShowSourceBadge && !isCompact && (
+                <div className="relative mb-1.5 inline-flex items-center py-0.5 text-sm font-medium text-secondary gap-1.5">
+                  <Bot size={16} className="text-secondary/70" />
                   <span>{sourceBadgeText}</span>
                 </div>
               )}
@@ -1539,6 +1586,31 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                     {normalizedMessage.metadata?.type === "file" ? (
                       <RenderFile message={normalizedMessage} />
                     ) : isLogMessage ? (
+                      (() => {
+                        const toolSummary =
+                          typeof (normalizedMessage.metadata as any)?.tool_call_summary ===
+                          "string"
+                            ? (normalizedMessage.metadata as any).tool_call_summary.trim()
+                            : "";
+                        const logLabel =
+                          typeof parsedContent.text === "string"
+                            ? parsedContent.text
+                            : undefined;
+
+                        if (isCompact) {
+                          return (
+                            <div className="py-0.5">
+                              <RenderToolCallSummaryCard
+                                content={toolSummary}
+                                label={logLabel}
+                                defaultCollapsed={true}
+                                compact={true}
+                              />
+                            </div>
+                          );
+                        }
+
+                        return (
                       <div
                         className={`flex items-start gap-2 ${onLogMessageClick ? "cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
                         onClick={onLogMessageClick ? (e) => {
@@ -1561,6 +1633,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                         />
 
                         <div className="flex-1">
+                          {!toolSummary && (
                           <div style={{ pointerEvents: onLogMessageClick ? "none" : "auto" }}>
                             <MarkdownRenderer
                               content={(() => {
@@ -1591,26 +1664,28 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                               }
                             />
                           </div>
+                          )}
 
-                          {typeof (normalizedMessage.metadata as any)?.tool_call_summary === "string" &&
-                            (normalizedMessage.metadata as any).tool_call_summary.trim().length > 0 && (
+                          {toolSummary.length > 0 && (
                               <div
                                 className="mt-1.5"
                                 style={{ pointerEvents: "auto" }}
                                 onClick={(e) => {
-                                  // Keep log card click for open-details, but allow expanding tool result.
                                   e.stopPropagation();
                                 }}
                               >
                                 <RenderToolCallSummaryCard
-                                  content={(normalizedMessage.metadata as any).tool_call_summary}
-                                  label={typeof parsedContent.text === "string" ? parsedContent.text : undefined}
+                                  content={toolSummary}
+                                  label={logLabel}
                                   defaultCollapsed={true}
+                                  compact={isCompact}
                                 />
                               </div>
                             )}
                         </div>
                       </div>
+                        );
+                      })()
                     ) : (
                       <div>
                         {isToolCallSummaryMessage ? (
@@ -1629,6 +1704,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                               return stringifyForDisplay(parsedContent.text);
                             })()}
                             defaultCollapsed={true}
+                            compact={isCompact}
                           />
                         ) : (
                           <MarkdownRenderer
