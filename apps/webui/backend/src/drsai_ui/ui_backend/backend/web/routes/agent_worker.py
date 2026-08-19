@@ -57,6 +57,56 @@ def _agent_entry_display_name(entry: dict) -> str:
     return str(n2).strip() if n2 is not None else ""
 
 
+def _remote_agent_url(entry: dict) -> str:
+    """Resolve remote agent base URL from top-level or config fields."""
+    cfg = entry.get("config") if isinstance(entry.get("config"), dict) else {}
+    for key in ("url", "base_url"):
+        for source in (entry, cfg):
+            value = source.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return ""
+
+
+def _validate_saved_agent_config(saved_agent_config: dict) -> str:
+    """Validate save payload; return normalized mode or raise HTTP 400."""
+    mode_lc = str(saved_agent_config.get("mode") or "").lower()
+    if mode_lc not in ("remote", "custom"):
+        raise HTTPException(
+            status_code=400,
+            detail="请指定智能体类型（mode 须为 remote 或 custom）。",
+        )
+    if mode_lc == "remote":
+        if not _agent_entry_display_name(saved_agent_config):
+            raise HTTPException(
+                status_code=400,
+                detail="请填写智能体名称后再保存远程连接。",
+            )
+        if not _remote_agent_url(saved_agent_config):
+            raise HTTPException(
+                status_code=400,
+                detail="请填写远程智能体 URL 后再保存。",
+            )
+    else:
+        if not _agent_entry_display_name(saved_agent_config):
+            raise HTTPException(
+                status_code=400,
+                detail="请填写智能体名称后再保存自定义智能体。",
+            )
+        cfg = saved_agent_config.get("config")
+        if not isinstance(cfg, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="自定义智能体缺少有效 config。",
+            )
+        if not isinstance(cfg.get("model_client"), dict):
+            raise HTTPException(
+                status_code=400,
+                detail="自定义智能体缺少 model_client 配置。",
+            )
+    return mode_lc
+
+
 def _same_agent_id(a: str, b: str) -> bool:
     return str(a or "").strip() == str(b or "").strip()
 
@@ -186,28 +236,25 @@ async def save_remote_agent(
             saved_agent_config.update({"id": str(uuid.uuid4())})
         agent_id = str(saved_agent_config.get("id") or "")
 
-        mode_lc = str(saved_agent_config.get("mode") or "").lower()
-        if mode_lc in ("remote", "custom"):
-            proposed = _agent_entry_display_name(saved_agent_config)
-            if mode_lc == "remote" and not proposed:
-                raise HTTPException(
-                    status_code=400,
-                    detail="请填写智能体名称后再保存远程连接。",
-                )
-            if proposed:
-                taken = _existing_saved_agent_display_name_keys(db, request.user_id, agent_id)
-                if proposed.casefold() in taken:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="该名称与已有智能体重名，请更换名称后再保存。",
-                    )
-                if mode_lc == "remote":
-                    saved_agent_config["name"] = proposed
-                    cfg = saved_agent_config.get("config")
-                    if not isinstance(cfg, dict):
-                        cfg = {}
-                        saved_agent_config["config"] = cfg
-                    cfg["name"] = proposed
+        mode_lc = _validate_saved_agent_config(saved_agent_config)
+        proposed = _agent_entry_display_name(saved_agent_config)
+        taken = _existing_saved_agent_display_name_keys(db, request.user_id, agent_id)
+        if proposed.casefold() in taken:
+            raise HTTPException(
+                status_code=409,
+                detail="该名称与已有智能体重名，请更换名称后再保存。",
+            )
+        saved_agent_config["name"] = proposed
+        cfg = saved_agent_config.get("config")
+        if not isinstance(cfg, dict):
+            cfg = {}
+            saved_agent_config["config"] = cfg
+        cfg["name"] = proposed
+        if mode_lc == "remote":
+            remote_url = _remote_agent_url(saved_agent_config)
+            cfg["url"] = remote_url
+            if not saved_agent_config.get("url"):
+                saved_agent_config["url"] = remote_url
 
         # 获取用户现有的远程智能体配置
         response = db.get(UserRemoteAgents, filters={"user_id": request.user_id})
