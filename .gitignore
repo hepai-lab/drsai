@@ -53,6 +53,7 @@ config.yaml
 structure.md
 overleaf_project_points_en.md
 .playwright-cli
+configs/
 
 # 工作目录
 /workspace

@@ -93,7 +93,7 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                 if (normalizedPath === "/login" && !isLogout) {
                     const session = await verifyAuthSession();
                     if (!cancelled && session.ok) {
-                        setUser({ email: session.userEmail, name: session.userEmail });
+                        setUser({ email: session.userEmail, name: session.displayName || session.userEmail });
                         navigate("/", { replace: true });
                         return;
                     }
@@ -118,7 +118,7 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             }
 
             if (session.ok) {
-                setUser({ email: session.userEmail, name: session.userEmail });
+                setUser({ email: session.userEmail, name: session.displayName || session.userEmail });
                 setChecked(true);
                 return;
             }

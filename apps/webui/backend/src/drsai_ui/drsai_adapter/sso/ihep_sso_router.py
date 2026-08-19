@@ -24,7 +24,7 @@ from datetime import timedelta
 
 from drsai_ui.ui_backend.backend.web.deps import get_db
 from drsai_ui.ui_backend.backend.web.auth_cookies import clear_refresh_cookie, set_refresh_cookie
-from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source, record_cooper_info
+from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source, record_cooper_info, record_display_name
 from drsai_ui.ui_backend.backend.web.routes.desktop_auth import (
     authorize_desktop_state,
     make_desktop_sso_state,
@@ -175,21 +175,22 @@ async def auth(request: Request, db=Depends(get_db)):
             )
     response.raise_for_status()
     jsonInfo = response.json()
-    
+
     userdata = json.loads(jsonInfo.get("userInfo"))
+
     user = UserInfo(
         username=userdata["truename"].strip(),
         email=userdata['cstnetId'],
         type=userdata['type'],
         umt_id=userdata['umtId']
         )
-    # print(f'SSO authed user: {user_info}')
 
-    # request.session['user'] = user_info.to_dict()  # 把用户信息保存到session中
-    
     logger.info(f'SSO authed user: {user}')
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     user_id = user.email
+
+    # 保存用户显示名称
+    record_display_name(db, user_id, user.username)
 
     # 通过 IHEP access_token 获取合作组信息
     ihep_token = jsonInfo.get("access_token")
@@ -203,11 +204,11 @@ async def auth(request: Request, db=Depends(get_db)):
             if resp.status_code == 200:
                 body = resp.json()
                 if body.get("code") == 1:
-                    cooper_info = body.get("data", {}).get("cooperInfo", "")
+                    data = body.get("data", {})
+                    cooper_info = data.get("cooperInfo", "") if isinstance(data, dict) else ""
                     record_cooper_info(db, user_id, cooper_info)
-                    logger.info(f"[SSO] cooperInfo stored for {user_id}: {cooper_info}")
         except Exception as exc:
-            logger.warning(f"[SSO] UserInfoAndCooperWithToken failed for {user_id}: {exc}")
+            logger.warning(f"UserInfoAndCooperWithToken failed for {user_id}: {exc}")
 
     access_token = create_jwt_token(data={"sub": user_id}, expires_delta=access_token_expires)
 

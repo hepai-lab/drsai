@@ -32,8 +32,10 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
     api_key: "",
   });
   const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [connectionTestPassed, setConnectionTestPassed] = useState(false);
   const [testError, setTestError] = useState<string>("");
+  const [saveError, setSaveError] = useState<string>("");
   const [agentInfo, setAgentInfo] = useState<any>(null);
 
   React.useEffect(() => {
@@ -48,9 +50,12 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
       ...prev,
       [field]: value
     }));
-    // Reset connection test status when form data changes
-    setConnectionTestPassed(false);
-    setTestError("");
+    setSaveError("");
+    // Changing the display name should not force a re-test (needed after name-conflict).
+    if (field !== "name") {
+      setConnectionTestPassed(false);
+      setTestError("");
+    }
   };
 
   const testConnection = async () => {
@@ -69,9 +74,9 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
 
       const testResult = await agentWorkerAPI.testRemoteAgent(
         user.email,
-        url,
-        name,
-        apiKey
+        formData.url,
+        formData.name,
+        formData.api_key
       );
 
       setAgentInfo(testResult);
@@ -87,30 +92,42 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
     }
   };
 
+  const resetForm = () => {
+    setFormData({ name: "", url: "", api_key: "" });
+    setConnectionTestPassed(false);
+    setTestError("");
+    setSaveError("");
+    setAgentInfo(null);
+    setIsSaving(false);
+  };
+
   const handleSave = async () => {
     if (!connectionTestPassed) {
       message.error(t("remoteModal.testFirst"));
       return;
     }
 
-    onSave(formData, agentInfo);
-    message.success(t("remoteModal.saveSuccess"));
-    onClose();
-
-    // Reset form
-    setFormData({ name: "", url: "", api_key: "" });
-    setConnectionTestPassed(false);
-    setTestError("");
-    setAgentInfo(null);
+    setIsSaving(true);
+    setSaveError("");
+    try {
+      await onSave(formData, agentInfo);
+      message.success(t("remoteModal.saveSuccess"));
+      onClose();
+      resetForm();
+    } catch (error) {
+      const errorMessage = error instanceof Error && error.message
+        ? error.message
+        : t("remoteModal.saveFailed");
+      setSaveError(errorMessage);
+      message.error(errorMessage);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleClose = () => {
     onClose();
-    // Reset form
-    setFormData({ name: "", url: "", api_key: "" });
-    setConnectionTestPassed(false);
-    setTestError("");
-    setAgentInfo(null);
+    resetForm();
   };
 
   if (!isOpen || !modalRoot) return null;
@@ -186,7 +203,13 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
                 <span>{t("remoteModal.testFailed")}{testError}</span>
               </div>
             )}
-            {connectionTestPassed && (
+            {saveError && (
+              <div className="mb-3 flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{saveError}</span>
+              </div>
+            )}
+            {connectionTestPassed && !saveError && (
               <div className="mb-3 flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
                 <CheckCircle2 className="h-4 w-4" />
                 <span>{t("remoteModal.testReady")}</span>
@@ -240,8 +263,8 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
           </button>
           <button
             onClick={handleSave}
-            disabled={!connectionTestPassed}
-            className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors inline-flex items-center gap-2 ${!connectionTestPassed
+            disabled={!connectionTestPassed || isSaving}
+            className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors inline-flex items-center gap-2 ${!connectionTestPassed || isSaving
               ? darkMode === "dark"
                 ? "bg-gray-700 text-gray-500 cursor-not-allowed"
                 : "bg-gray-200 text-gray-400 cursor-not-allowed"
@@ -250,7 +273,11 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
                 : "bg-[#4d3dc3] text-white hover:bg-[#4336b1]"
               }`}
           >
-            <Save className="h-4 w-4" />
+            {isSaving ? (
+              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
             {t("remoteModal.save")}
           </button>
         </div>

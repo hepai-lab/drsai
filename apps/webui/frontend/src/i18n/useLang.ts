@@ -137,6 +137,8 @@ const dict = {
 
   "userProfile.title":           { zh: "用户信息",           en: "User info" },
   "userProfile.logout":          { zh: "退出登录",           en: "Sign Out" },
+  "userProfile.cooperGroup":     { zh: "合作组",             en: "Cooper Group" },
+  "userProfile.role":            { zh: "角色",               en: "Role" },
 
   // ===== Voice Input / Output / Settings =====
   "voiceinput.notDetected":      { zh: "没有检测到语音，请重试", en: "No speech detected, please try again" },

@@ -44,6 +44,69 @@ def _bump_daily_use(row: UserAgentUsage, now: datetime) -> None:
         row.today_use_day = day_key
         row.today_use_count = 1
 
+
+def _agent_entry_display_name(entry: dict) -> str:
+    """Resolve display name from a stored agent dict (top-level or config.name)."""
+    if not entry:
+        return ""
+    n = entry.get("name")
+    if n is not None and str(n).strip():
+        return str(n).strip()
+    cfg = entry.get("config") or {}
+    n2 = cfg.get("name")
+    return str(n2).strip() if n2 is not None else ""
+
+
+def _same_agent_id(a: str, b: str) -> bool:
+    return str(a or "").strip() == str(b or "").strip()
+
+
+def _iter_agents_user_remote_rows(db: DatabaseManager, user_id: str) -> list[dict]:
+    """All agent dicts from every userremoteagents row (some DBs have multiple rows per user)."""
+    out: list[dict] = []
+    remote_resp = db.get(UserRemoteAgents, filters={"user_id": user_id})
+    if not (remote_resp.status and remote_resp.data):
+        return out
+    for row in remote_resp.data:
+        agents = getattr(row, "agents", None) or (row.get("agents") if isinstance(row, dict) else None) or []
+        out.extend(agents)
+    return out
+
+
+def _add_display_name_keys(
+    agents: list,
+    exclude_agent_id: str,
+    keys: set[str],
+) -> None:
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        aid = str(agent.get("id") or "")
+        if exclude_agent_id and _same_agent_id(aid, exclude_agent_id):
+            continue
+        name = _agent_entry_display_name(agent)
+        if name:
+            keys.add(name.casefold())
+
+
+def _existing_saved_agent_display_name_keys(
+    db: DatabaseManager,
+    user_id: str,
+    exclude_agent_id: str,
+) -> set[str]:
+    """Display names used by defaults, DDF cache, and saved remote/custom agents (for save-time uniqueness)."""
+    keys: set[str] = set()
+    _add_display_name_keys(get_default_agent_mode_config(user_id), exclude_agent_id, keys)
+
+    ddf_resp = db.get(UserDDFAgents, filters={"user_id": user_id})
+    if ddf_resp.status and ddf_resp.data:
+        for ddf_row in ddf_resp.data:
+            _add_display_name_keys(ddf_row.agents or [], exclude_agent_id, keys)
+
+    _add_display_name_keys(_iter_agents_user_remote_rows(db, user_id), exclude_agent_id, keys)
+
+    return keys
+
 # @router.get("/ddf_agents")
 # async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
 
@@ -231,6 +294,7 @@ async def get_user_agents_route(user_id: str, authorization: str = Header(...), 
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+    
 @router.get("/user_agents/{agent_id}")
 async def get_user_agent_by_id(user_id: str, agent_id: str, db=Depends(get_db)) -> Dict:
     try:
