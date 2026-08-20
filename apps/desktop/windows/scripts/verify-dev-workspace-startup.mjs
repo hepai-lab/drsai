@@ -30,6 +30,9 @@ assert.ok(installer.includes("[System.IO.Directory]::Delete($installItem.FullNam
 assert.ok(!installer.includes("-ItemType SymbolicLink"));
 assert.ok(!installer.includes("mklink /J"));
 assert.ok(installer.includes('$PackageDir = Join-Path $RepositorySource'));
+assert.ok(installer.includes("--force-reinstall --no-deps aiohttp"));
+assert.ok(installer.includes("aiohttp is installed but cannot be imported"));
+assert.ok(installer.includes('$aiohttpExitCode = $LASTEXITCODE'));
 
 assert.ok(!launcherEntry.includes("-HotLoad"));
 assert.ok(launcherEntry.includes("%*"));

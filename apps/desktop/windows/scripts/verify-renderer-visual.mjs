@@ -1186,6 +1186,16 @@ const chatListeners = new Set();
 const agentRunListeners = new Set();
 const installListeners = new Set();
 const updateListeners = new Set();
+const voicePreferencesListeners = new Set();
+let voicePreferences = {
+  schemaVersion: 11,
+  revision: 0,
+  realtimeOptIn: false,
+  selectedMode: "serial",
+  serial: { inputDeviceId: "", language: "auto", confirmBeforeSend: true },
+  duplex: { inputDeviceId: "", outputDeviceId: "", language: "auto", voice: "", volume: 1, autoRecovery: true, transcriptPolicy: "stable", disclosureFingerprint: "" },
+  playback: { autoReadResponses: false, playbackRate: 1, remoteSttConsent: false, remoteTtsConsent: false, synthesisMode: "system", voiceName: "" },
+};
 let threads = [];
 const modelStatePath = path.join(__dirname, "model-provider-state.json");
 const initialModelConnection = {
@@ -1555,6 +1565,14 @@ contextBridge.exposeInMainWorld("openDrSai", {
     models: [{ id: "visual-model", name: "Visual model" }],
     limits: { maxConcurrentRuns: 1 },
   }),
+  getVoicePreferences: async () => structuredClone(voicePreferences),
+  updateVoicePreferences: async (request) => {
+    if (request.expectedRevision !== voicePreferences.revision) throw new Error("Voice preferences changed in another window.");
+    voicePreferences = { ...structuredClone(request.preferences), revision: request.expectedRevision + 1 };
+    emit(voicePreferencesListeners, structuredClone(voicePreferences));
+    return structuredClone(voicePreferences);
+  },
+  onVoicePreferencesChanged: (callback) => subscribe(voicePreferencesListeners, callback),
   getVoiceRuntimeStatus: async () => ({
     runtimeId: "mock-local",
     state: "ready",

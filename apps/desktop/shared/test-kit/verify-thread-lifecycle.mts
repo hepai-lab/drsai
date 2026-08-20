@@ -115,7 +115,53 @@ try {
   });
   assert.equal(staleCatalog.thread.id, "session-stale-title", "Historical catalog rows must not steal a pending live bind.");
 
-  const { canonicalizeSidebarThreads, runtimeSessionIdForLookup, shouldMaterializeCatalogThread } = await import("../api/threadSidebarCatalog.ts");
+  const {
+    canonicalizeSidebarThreads,
+    mergeWorkspaceSidebarCatalogPages,
+    runtimeSessionIdForLookup,
+    shouldMaterializeCatalogThread,
+  } = await import("../api/threadSidebarCatalog.ts");
+  const sidebarWorkspaces = [
+    { id: "workspace-a", path: join(root, "workspace-a") },
+    { id: "workspace-b", path: join(root, "workspace-b") },
+  ];
+  const workspaceThread = (workspaceIndex: number, threadIndex: number) => ({
+    id: `thread-${workspaceIndex}-${threadIndex}`,
+    kind: "chat" as const,
+    title: `Workspace ${workspaceIndex} task ${threadIndex}`,
+    workspacePath: sidebarWorkspaces[workspaceIndex].path,
+    createdAt: `2026-08-${String(10 + threadIndex).padStart(2, "0")}T00:00:00.000Z`,
+    updatedAt: `2026-08-${String(10 + threadIndex).padStart(2, "0")}T00:00:00.000Z`,
+    status: "idle" as const,
+  });
+  const workspaceA = Array.from({ length: 7 }, (_, index) => workspaceThread(0, index));
+  const workspaceB = Array.from({ length: 7 }, (_, index) => workspaceThread(1, index));
+  const firstWorkspaceCatalog = mergeWorkspaceSidebarCatalogPages([], [
+    { workspace: sidebarWorkspaces[0], threads: workspaceA },
+    { workspace: sidebarWorkspaces[1], threads: workspaceB.slice(0, 5) },
+  ], {
+    activeThreadId: "",
+    activeWorkspaceId: sidebarWorkspaces[0].id,
+    workspaces: sidebarWorkspaces,
+    activeLimit: 50,
+    workspacePreviewLimit: 5,
+    archivedLimit: 0,
+  });
+  assert.equal(firstWorkspaceCatalog.filter((thread) => thread.workspacePath === sidebarWorkspaces[0].path).length, 7);
+  assert.equal(firstWorkspaceCatalog.filter((thread) => thread.workspacePath === sidebarWorkspaces[1].path).length, 5);
+  const switchedWorkspaceCatalog = mergeWorkspaceSidebarCatalogPages(firstWorkspaceCatalog, [
+    { workspace: sidebarWorkspaces[0], threads: workspaceA.slice(0, 5) },
+    { workspace: sidebarWorkspaces[1], threads: workspaceB },
+  ], {
+    activeThreadId: "",
+    activeWorkspaceId: sidebarWorkspaces[1].id,
+    workspaces: sidebarWorkspaces,
+    activeLimit: 50,
+    workspacePreviewLimit: 5,
+    archivedLimit: 0,
+  });
+  assert.equal(switchedWorkspaceCatalog.filter((thread) => thread.workspacePath === sidebarWorkspaces[0].path).length, 5);
+  assert.equal(switchedWorkspaceCatalog.filter((thread) => thread.workspacePath === sidebarWorkspaces[1].path).length, 7);
   const desktopRow = {
     id: "thread-live-e",
     kind: "chat" as const,
@@ -141,31 +187,43 @@ try {
   assert.equal(collapsed[0]?.id, "thread-live-e");
   assert.equal(collapsed[0]?.runtimeSessionId, "session-live-orphan");
 
-  const duplicatePrompt = (id: string, kind: "thread" | "session", updatedAt: string) => ({
+  const duplicatePrompt = (id: string, kind: "thread" | "session", createdAt: string, updatedAt: string) => ({
     id,
     kind: "chat" as const,
     title: "请分析这张 OpenDrSai",
     workspacePath: root,
-    createdAt: "2026-08-17T07:50:00.000Z",
+    createdAt,
     updatedAt,
     runtimeSessionId: kind === "session" ? id : undefined,
     status: "idle" as const,
   });
   const duplicateDesktop = [
-    duplicatePrompt("thread-dup-a", "thread", "2026-08-17T07:58:00.000Z"),
-    duplicatePrompt("thread-dup-b", "thread", "2026-08-17T07:57:00.000Z"),
-    duplicatePrompt("thread-dup-c", "thread", "2026-08-17T07:56:00.000Z"),
+    duplicatePrompt("thread-dup-a", "thread", "2026-08-17T07:50:01.000Z", "2026-08-17T07:58:00.000Z"),
+    duplicatePrompt("thread-dup-b", "thread", "2026-08-17T07:50:02.000Z", "2026-08-17T07:57:00.000Z"),
+    duplicatePrompt("thread-dup-c", "thread", "2026-08-17T07:50:03.000Z", "2026-08-17T07:56:00.000Z"),
   ];
   const duplicateSessions = [
-    duplicatePrompt("session-dup-a", "session", "2026-08-17T07:58:01.000Z"),
-    duplicatePrompt("session-dup-b", "session", "2026-08-17T07:57:01.000Z"),
-    duplicatePrompt("session-dup-c", "session", "2026-08-17T07:56:01.000Z"),
+    duplicatePrompt("session-dup-a", "session", "2026-08-17T07:50:01.000Z", "2026-08-17T07:58:01.000Z"),
+    duplicatePrompt("session-dup-b", "session", "2026-08-17T07:50:02.000Z", "2026-08-17T07:57:01.000Z"),
+    duplicatePrompt("session-dup-c", "session", "2026-08-17T07:50:03.000Z", "2026-08-17T07:56:01.000Z"),
   ];
   const collapsedDuplicates = canonicalizeSidebarThreads([...duplicateSessions, ...duplicateDesktop]);
   const collapsedDuplicatesReversed = canonicalizeSidebarThreads([...duplicateDesktop, ...duplicateSessions].reverse());
   assert.equal(collapsedDuplicates.length, 3, "Repeated prompts must not create a second Runtime row per Desktop chat.");
   assert.equal(collapsedDuplicatesReversed.length, 3, "Sidebar duplicate collapse must not depend on catalog arrival order.");
   assert.deepEqual(collapsedDuplicates.map((thread) => thread.id).sort(), ["thread-dup-a", "thread-dup-b", "thread-dup-c"]);
+
+  const ambiguousCreatedAt = "2026-08-17T07:51:00.000Z";
+  const ambiguousCreatedAtRows = canonicalizeSidebarThreads([
+    duplicatePrompt("thread-ambiguous-a", "thread", ambiguousCreatedAt, ambiguousCreatedAt),
+    duplicatePrompt("thread-ambiguous-b", "thread", ambiguousCreatedAt, ambiguousCreatedAt),
+    duplicatePrompt("session-ambiguous", "session", ambiguousCreatedAt, ambiguousCreatedAt),
+  ]);
+  assert.equal(ambiguousCreatedAtRows.length, 3, "A non-unique createdAt must not establish Runtime ownership.");
+  assert.equal(
+    ambiguousCreatedAtRows.filter((thread) => thread.id.startsWith("thread-ambiguous")).every((thread) => !thread.runtimeSessionId),
+    true,
+  );
 
   const desktopPrompt = {
     id: "thread-title-mismatch",
@@ -193,6 +251,30 @@ try {
   assert.equal(collapsedPrompt.length, 1, "Desktop and Runtime rows for the same send must collapse even when titles keep different newlines.");
   assert.equal(collapsedPrompt[0]?.id, "thread-title-mismatch");
   assert.equal(collapsedPrompt[0]?.runtimeSessionId, "session-title-mismatch");
+
+  const newHello = {
+    id: "thread-new-hello",
+    kind: "chat" as const,
+    title: "hello",
+    workspacePath: root,
+    createdAt: "2026-08-20T15:08:17.000Z",
+    updatedAt: "2026-08-20T15:08:17.000Z",
+    status: "idle" as const,
+  };
+  const historicalHello = {
+    id: "session-old-hello",
+    kind: "chat" as const,
+    title: "hello",
+    workspacePath: root,
+    createdAt: "2026-08-12T16:08:37.000Z",
+    updatedAt: "2026-08-12T16:17:42.000Z",
+    runtimeSessionId: "session-old-hello",
+    status: "idle" as const,
+    messageCount: 9,
+  };
+  const distinctHelloSessions = canonicalizeSidebarThreads([historicalHello, newHello]);
+  assert.equal(distinctHelloSessions.length, 2, "A new prompt must not bind to a historical Runtime Session by title.");
+  assert.equal(distinctHelloSessions.find((thread) => thread.id === newHello.id)?.runtimeSessionId, undefined);
 
   const invalidBinding = threads.migrateInvalidRuntimeSessionBinding({
     id: "thread-invalid-session",

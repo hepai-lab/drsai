@@ -1,4 +1,4 @@
-import type { DesktopThread } from "./desktopApi";
+import type { DesktopThread, WorkspaceProject } from "./desktopApi";
 
 export function isDesktopThreadId(id: string): boolean {
   return id.startsWith("thread-");
@@ -107,11 +107,6 @@ function sameCreatedAt(left?: string, right?: string): boolean {
   return Number.isFinite(a) && a === b;
 }
 
-function compareCatalogRecency(left: DesktopThread, right: DesktopThread): number {
-  const byTime = (right.updatedAt || "").localeCompare(left.updatedAt || "");
-  return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
-}
-
 function bindCatalogOrphan(thread: DesktopThread, orphan: DesktopThread): DesktopThread {
   return {
     ...preferDesktopThread(thread, orphan),
@@ -120,7 +115,6 @@ function bindCatalogOrphan(thread: DesktopThread, orphan: DesktopThread): Deskto
 }
 
 function takeMatchingOrphan(
-  thread: DesktopThread,
   catalog: readonly DesktopThread[],
   consumed: Set<string>,
   matches: (item: DesktopThread) => boolean,
@@ -146,12 +140,18 @@ export function canonicalizeSidebarThreads(threads: readonly DesktopThread[]): D
     !isDesktopThreadId(thread.id) && !(isRuntimeCatalogSessionId(thread.id) && thread.sourceChannel !== "wechat"));
   const consumed = new Set<string>();
 
-  const bindUnbound = (
+  const bindUnboundUniquely = (
     current: DesktopThread[],
     matches: (thread: DesktopThread, item: DesktopThread) => boolean,
   ): DesktopThread[] => current.map((thread) => {
     if (effectiveRuntimeSessionId(thread)) return thread;
-    const orphan = takeMatchingOrphan(thread, catalog, consumed, (item) => matches(thread, item));
+    const candidates = catalog.filter((item) => !consumed.has(item.id) && matches(thread, item));
+    if (candidates.length !== 1) return thread;
+    const orphan = candidates[0];
+    const owners = current.filter((candidate) =>
+      !effectiveRuntimeSessionId(candidate) && matches(candidate, orphan));
+    if (owners.length !== 1) return thread;
+    consumed.add(orphan.id);
     return orphan ? bindCatalogOrphan(thread, orphan) : thread;
   });
 
@@ -160,7 +160,7 @@ export function canonicalizeSidebarThreads(threads: readonly DesktopThread[]): D
   const sessionBound = desktop.map((thread) => {
     const sessionId = effectiveRuntimeSessionId(thread);
     const bySession = sessionId
-      ? takeMatchingOrphan(thread, catalog, consumed, (item) =>
+      ? takeMatchingOrphan(catalog, consumed, (item) =>
         item.id === sessionId || effectiveRuntimeSessionId(item) === sessionId)
       : undefined;
     if (!bySession) return {
@@ -172,37 +172,90 @@ export function canonicalizeSidebarThreads(threads: readonly DesktopThread[]): D
 
   // Historical Desktop rows stored thread-* as runtimeSessionId and never bound.
   // Runtime catalog copies the Desktop createdAt, so that pair is unambiguous.
-  const createdAtBound = bindUnbound(sessionBound, (thread, item) =>
+  const createdAtBound = bindUnboundUniquely(sessionBound, (thread, item) =>
     sameWorkspace(item.workspacePath, thread.workspacePath) && sameCreatedAt(item.createdAt, thread.createdAt));
 
-  // Desktop titles collapse newlines; catalog titles keep the raw prompt. Pair
-  // remaining orphans 1:1 by recency so repeated prompts stay separate chats.
-  const unboundDesktop = createdAtBound
-    .map((thread, index) => ({ thread, index }))
-    .filter(({ thread }) => !effectiveRuntimeSessionId(thread) && thread.title)
-    .sort((left, right) => compareCatalogRecency(left.thread, right.thread));
-  const remainingCatalog = catalog.filter((item) => !consumed.has(item.id)).sort(compareCatalogRecency);
-  const mergedDesktop = [...createdAtBound];
-  for (const { thread, index } of unboundDesktop) {
-    const orphan = remainingCatalog.find((item) =>
-      !consumed.has(item.id)
-      && sameWorkspace(item.workspacePath, thread.workspacePath)
-      && catalogTitlesLikelySame(item.title, thread.title));
-    if (!orphan) continue;
-    consumed.add(orphan.id);
-    mergedDesktop[index] = bindCatalogOrphan(thread, orphan);
-  }
+  // A title is presentation data, not Session identity.  Unmatched Runtime
+  // rows remain independent until an explicit runtimeSessionId, a pending bind,
+  // or an unambiguous legacy createdAt binding establishes ownership.
+  const leftoverCatalog = catalog.filter((item) => !consumed.has(item.id));
 
-  const leftoverCatalog = catalog.filter((item) => {
-    if (consumed.has(item.id)) return false;
-    const ghost = mergedDesktop.some((thread) =>
-      catalogTitlesLikelySame(thread.title, item.title)
-      && (sameWorkspace(thread.workspacePath, item.workspacePath) || !comparableWorkspacePath(item.workspacePath)));
-    if (!ghost) return true;
-    // Keep an unmatched Runtime-only chat that actually has history. Empty
-    // catalog rows next to a Desktop prompt are bootstrap ghosts.
-    return (item.messageCount ?? 0) > 0;
+  return [...createdAtBound, ...leftoverCatalog, ...rest];
+}
+
+type SidebarWorkspace = Pick<WorkspaceProject, "id" | "path">;
+
+function workspaceOwnsSidebarThread(
+  workspace: SidebarWorkspace,
+  thread: DesktopThread,
+): boolean {
+  return thread.execution?.workspaceId === workspace.id
+    || sameWorkspace(workspace.path, thread.workspacePath);
+}
+
+function sidebarThreadWorkspaceKey(
+  thread: DesktopThread,
+  workspaces: readonly SidebarWorkspace[],
+): string {
+  const registered = workspaces.find((workspace) => workspaceOwnsSidebarThread(workspace, thread));
+  if (registered) return registered.id;
+  const path = comparableWorkspacePath(thread.workspacePath);
+  return path ? `path:${path}` : "unassigned";
+}
+
+/**
+ * Keep an independent recent catalog for every registered Workspace.
+ * The active Workspace may retain a loaded page; inactive Workspaces retain a
+ * compact preview instead of disappearing when another Workspace refreshes.
+ */
+export function boundWorkspaceSidebarThreads(
+  threads: readonly DesktopThread[],
+  options: {
+    activeThreadId: string;
+    activeWorkspaceId: string;
+    workspaces: readonly SidebarWorkspace[];
+    activeLimit: number;
+    workspacePreviewLimit: number;
+    archivedLimit: number;
+  },
+): DesktopThread[] {
+  const sorted = canonicalizeSidebarThreads(threads).sort((left, right) => {
+    if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1;
+    return right.updatedAt.localeCompare(left.updatedAt);
   });
+  const protectedThreads = sorted.filter((thread) => !thread.archived && (
+    thread.id === options.activeThreadId || thread.pinned || thread.status === "running"
+  ));
+  const protectedIds = new Set(protectedThreads.map((thread) => thread.id));
+  const counts = new Map<string, number>();
+  const recent = sorted.filter((thread) => {
+    if (thread.archived || protectedIds.has(thread.id)) return false;
+    const key = sidebarThreadWorkspaceKey(thread, options.workspaces);
+    const limit = key === options.activeWorkspaceId
+      ? options.activeLimit
+      : options.workspacePreviewLimit;
+    const count = counts.get(key) ?? 0;
+    if (count >= limit) return false;
+    counts.set(key, count + 1);
+    return true;
+  });
+  const archived = sorted.filter((thread) => thread.archived).slice(0, options.archivedLimit);
+  return [...protectedThreads, ...recent, ...archived].sort((left, right) => {
+    if (Boolean(left.pinned) !== Boolean(right.pinned)) return left.pinned ? -1 : 1;
+    return right.updatedAt.localeCompare(left.updatedAt);
+  });
+}
 
-  return [...mergedDesktop, ...leftoverCatalog, ...rest];
+/** Replace only Workspaces whose catalog request succeeded; retain all others. */
+export function mergeWorkspaceSidebarCatalogPages(
+  current: readonly DesktopThread[],
+  pages: readonly { workspace: SidebarWorkspace; threads: readonly DesktopThread[] }[],
+  options: Parameters<typeof boundWorkspaceSidebarThreads>[1],
+): DesktopThread[] {
+  const preserved = current.filter((thread) =>
+    !pages.some(({ workspace }) => workspaceOwnsSidebarThread(workspace, thread)));
+  return boundWorkspaceSidebarThreads(
+    [...pages.flatMap(({ threads }) => threads), ...preserved],
+    options,
+  );
 }

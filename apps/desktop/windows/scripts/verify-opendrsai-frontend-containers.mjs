@@ -6,6 +6,8 @@ const root = resolve(import.meta.dirname, "../..");
 const renderer = resolve(root, "shared/renderer/src");
 const appPath = resolve(renderer, "App.tsx");
 const app = readFileSync(appPath, "utf8");
+const settingsPath = resolve(renderer, "components/SettingsPanel.tsx");
+const settings = readFileSync(settingsPath, "utf8");
 const authenticatedApp = app.slice(
   app.indexOf("function AuthenticatedApp("),
   app.indexOf("function loadRemoteRecentPaths("),
@@ -17,6 +19,10 @@ const containers = {
   TaskShellContainer: "containers/TaskShellContainer.tsx",
   DiagnosticsContainer: "containers/DiagnosticsContainer.tsx",
 };
+
+assert.equal(existsSync(settingsPath), true, "SettingsPanel module is missing");
+assert.match(app, /import \{ SettingsPanel, type SettingsPane \} from "\.\/components\/SettingsPanel";/, "App must compose the extracted SettingsPanel");
+assert.ok(Buffer.byteLength(app, "utf8") < 500_000, "App.tsx must stay below Babel's 500KB deoptimization threshold");
 
 for (const [name, relative] of Object.entries(containers)) {
   const path = resolve(renderer, relative);
@@ -58,9 +64,9 @@ assert.match(diagnostics, /const \[message, setMessage\] = useState/);
 assert.match(diagnostics, /copyTextSafely/);
 assert.doesNotMatch(diagnostics, /autoRecoverKey|completedAutomaticRecoveries/, "automatic Agent verification must not depend on whether the status popover is mounted");
 assert.doesNotMatch(authenticatedApp, /automaticAgentModelVerificationsRef|recordSuccessfulModelUsage/, "ordinary startup and chat must not perform or synthesize model probes");
-assert.equal((app.match(/testMyDrSaiModelProvider\(/g) ?? []).length, 1, "the saved-model probe must have exactly one renderer call site");
-assert.match(app, /async function testModelConnection\(mode:[\s\S]{0,700}testingSavedModel[\s\S]{0,160}testMyDrSaiModelProvider\(providerDraft\.trim\(\), modelDraft\.trim\(\)\)/, "the saved-model probe must remain inside Model provider settings");
-assert.match(authenticatedApp, /case "model":[\s\S]{0,700}setRequestedSettingsPane\("model-providers"\);[\s\S]{0,100}navigateTo\(MENU_IDS\.profile\)/, "global model recovery must navigate to Model provider settings without probing");
+assert.equal((settings.match(/testMyDrSaiModelProvider\(/g) ?? []).length, 1, "the saved-model probe must have exactly one renderer call site");
+assert.match(settings, /async function testModelConnection\(mode:[\s\S]{0,700}testingSavedModel[\s\S]{0,160}testMyDrSaiModelProvider\(providerDraft\.trim\(\), modelDraft\.trim\(\)\)/, "the saved-model probe must remain inside Model provider settings");
+assert.match(authenticatedApp, /case "agent":[\s\S]{0,1200}setRequestedSettingsPane\("model-providers"\);[\s\S]{0,100}navigateTo\(MENU_IDS\.profile\)/, "global model recovery must navigate to Model provider settings without probing");
 
 console.log(JSON.stringify({
   ok: true,
@@ -73,4 +79,6 @@ console.log(JSON.stringify({
   taskShellDelegated: true,
   appModelDraftsOwned: 0,
   modelProbeRendererCallSites: 1,
+  settingsPanelExtracted: true,
+  appBytes: Buffer.byteLength(app, "utf8"),
 }, null, 2));

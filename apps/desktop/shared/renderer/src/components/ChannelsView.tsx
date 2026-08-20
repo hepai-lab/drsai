@@ -396,7 +396,10 @@ export function ChannelsView({
     };
     for (const adapter of result?.adapters ?? []) {
       if (adapter.id === "mobile-chat") continue;
-      groups[adapter.kind].push(adapter);
+      const presentedAdapter = adapter.id === "slack-chat"
+        ? { ...adapter, status: "planned" as const, configured: false }
+        : adapter;
+      groups[presentedAdapter.kind].push(presentedAdapter);
     }
     return groups;
   }, [result]);

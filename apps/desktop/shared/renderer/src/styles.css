@@ -1343,6 +1343,46 @@ button {
   font-size: 12px;
 }
 
+.thread-item.has-source-icon {
+  grid-template-columns: minmax(0, 1fr) auto 16px;
+  column-gap: 6px;
+}
+
+.thread-source-icon {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  align-self: center;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 4px;
+  color: var(--app-text-muted);
+  line-height: 0;
+}
+
+.thread-source-icon img,
+.thread-source-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  max-width: 14px;
+  max-height: 14px;
+  object-fit: contain;
+}
+
+.thread-source-icon.source-opendrsai img {
+  border-radius: 3px;
+}
+
+.thread-source-icon.source-wechat {
+  color: #16a34a;
+}
+
+.thread-source-icon.source-remote {
+  color: #8b5cf6;
+}
+
 .thread-item span {
   display: inline-flex;
   align-items: center;
@@ -3117,6 +3157,7 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
 
 /* Hydration error banner sits above ChatWorkspace; keep the composer in view. */
 .conversation-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
 }
@@ -19143,19 +19184,112 @@ button.structured-activity-compact:hover > span {
 
 .agent-configuration-tabs {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 3px;
-  width: fit-content;
-  padding: 3px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--surface-subtle) 72%, transparent);
+  gap: 6px;
+  width: 100%;
+}
+
+.markdown-artifact-link {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--app-accent-strong);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 600;
+  gap: 4px;
+  margin: 0 1px;
+  max-width: 100%;
+  padding: 1px 2px;
+  text-align: left;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+
+.markdown-artifact-link span {
+  overflow-wrap: anywhere;
+}
+
+.markdown-artifact-link:hover {
+  background: color-mix(in srgb, var(--app-accent-strong) 10%, transparent);
+  text-decoration: underline;
+}
+
+.markdown-artifact-link:focus-visible {
+  outline: 2px solid var(--app-accent-strong);
+  outline-offset: 2px;
+}
+
+.markdown-artifact-link[data-resource-state="changed"],
+.markdown-artifact-link[data-resource-state="moved"] {
+  text-decoration: underline dotted;
+}
+
+.markdown-artifact-link[data-resource-state="deleted"],
+.markdown-artifact-link[data-resource-state="offline"],
+.markdown-artifact-link[data-resource-state="unsupported"] {
+  color: var(--app-text-secondary);
+}
+
+.conversation-resource-menu {
+  position: fixed;
+  z-index: 1200;
+  display: grid;
+  min-width: 260px;
+  padding: 6px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 10px;
+  background: var(--app-card-bg);
+  box-shadow: var(--app-shadow-menu);
+}
+
+.conversation-resource-menu button {
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--app-text-primary);
+  text-align: left;
+}
+
+.conversation-resource-menu button:hover,
+.conversation-resource-menu button:focus-visible {
+  background: var(--app-hover-bg);
+  outline: none;
+}
+
+.conversation-resource-notice,
+.conversation-resource-download {
+  position: absolute;
+  right: 16px;
+  bottom: 112px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 10px 12px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 10px;
+  background: var(--app-card-bg);
+  box-shadow: var(--app-shadow-menu);
+}
+
+.conversation-resource-download {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(100px, 180px) auto auto auto;
 }
 
 .agent-configuration-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   min-height: 30px;
-  padding: 5px 11px;
-  border: 0;
+  padding: 4px 10px 4px 5px;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
@@ -19170,9 +19304,34 @@ button.structured-activity-compact:hover > span {
 
 .agent-configuration-tabs button.active {
   background: var(--app-card-bg);
+  border-color: var(--app-accent-border);
   color: var(--text-primary);
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+}
+
+.agent-configuration-tabs .agent-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 10px;
+}
+
+.agent-configuration-tabs .agent-logo .openai-brand-icon {
+  width: 19px;
+  height: 19px;
+}
+
+.agent-configuration-tabs .agent-configuration-more {
+  min-width: 34px;
+  justify-content: center;
+  padding: 4px 7px;
+  border-color: var(--border-subtle);
+}
+
+.agent-configuration-more small {
+  color: var(--text-secondary);
+  font-size: 10px;
 }
 
 .agent-configuration-panel { position: relative; }
@@ -20256,6 +20415,114 @@ button.structured-activity-compact:hover > span {
   gap: 0;
 }
 
+.settings-connection-card-list,
+.remote-workspace-settings {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  max-width: 840px;
+}
+
+.settings-connection-card {
+  overflow: hidden;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 9px;
+  background: var(--app-card-bg);
+}
+
+.settings-connection-card-header {
+  display: flex;
+  min-height: 56px;
+  align-items: stretch;
+}
+
+.settings-connection-card-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--app-text-primary);
+  text-align: left;
+}
+
+.settings-connection-card-summary:hover,
+.settings-connection-card-summary:focus-visible {
+  background: var(--app-subtle-bg);
+  outline: none;
+}
+
+.settings-connection-card-summary > span:not(.settings-connection-card-logo) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.settings-connection-card-summary strong { font-size: 13px; }
+.settings-connection-card-summary small {
+  overflow: hidden;
+  color: var(--app-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-connection-card-summary em {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--app-subtle-bg);
+  color: var(--app-text-secondary);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.settings-connection-card-summary em.is-ready {
+  background: color-mix(in srgb, #16a34a 10%, var(--app-card-bg));
+  color: #15803d;
+}
+
+.settings-connection-card-logo {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--app-subtle-bg);
+  color: var(--app-text-primary);
+}
+
+.settings-connection-card-logo.android {
+  background: color-mix(in srgb, var(--app-accent) 10%, var(--app-card-bg));
+  color: var(--app-accent-strong);
+}
+
+.settings-connection-card-body {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--app-border-soft);
+}
+
+.settings-connection-card-body > p {
+  margin: 0;
+  color: var(--app-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.settings-connection-card-body > .settings-integration-actions {
+  justify-content: flex-end;
+}
+
+.settings-context-integrations { margin-top: 2px; }
+.remote-computers-card { padding-top: 6px; padding-bottom: 6px; }
+
 .settings-integration-row:first-child,
 .settings-row:first-child {
   border-top: 0;
@@ -20364,12 +20631,30 @@ button.structured-activity-compact:hover > span {
   border-top: 1px solid var(--border-subtle);
 }
 
+.settings-connection-card.android-remote-panel {
+  display: block;
+  padding: 0;
+  border-top: 1px solid var(--app-panel-border);
+}
+
 .android-remote-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
 }
+
+.settings-connection-card .android-remote-header {
+  display: flex;
+  gap: 0;
+}
+
+.android-remote-header > .settings-integration-actions {
+  padding: 0 14px;
+  border-left: 1px solid var(--app-border-soft);
+}
+
+.android-remote-body { gap: 12px; }
 
 .android-remote-header > span {
   display: grid;
@@ -20459,6 +20744,30 @@ button.structured-activity-compact:hover > span {
   min-width: 60px;
 }
 
+.android-device-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.android-device-actions button {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: 6px;
+  background: var(--app-subtle-bg);
+  color: var(--app-text-primary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.android-device-actions button.danger { color: var(--app-danger, #b42318); }
+
 .android-device-presence {
   width: 9px;
   height: 9px;
@@ -20497,6 +20806,9 @@ button.structured-activity-compact:hover > span {
 }
 
 .settings-button-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-height: 29px;
   padding: 0 11px;
   border: 1px solid var(--app-border-soft);
@@ -21791,10 +22103,12 @@ button.structured-activity-compact:hover > span {
 
   .android-remote-header .settings-integration-actions,
   .android-device-row em,
-  .android-device-row button {
+  .android-device-actions {
     grid-column: 2;
     justify-self: start;
   }
+
+  .android-device-actions { flex-wrap: wrap; justify-content: flex-start; }
 
   .settings-row select {
     width: 100%;
@@ -24588,6 +24902,7 @@ button.structured-activity-compact:hover > span {
 .operational-state-actions button { min-height: 32px; }
 .operational-state-actions span { flex-basis: 100%; color: var(--app-text-secondary); }
 .android-device-scope-editor {
+  grid-column: 2 / -1;
   flex: 1 0 100%;
   display: grid;
   gap: 8px;

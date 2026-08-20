@@ -2728,7 +2728,7 @@ export function installMockDesktopApi(): void {
     startChat: async (request) => {
       const requestId = request.requestId || crypto.randomUUID();
       const turnId = request.runId || requestId;
-      const visualFixture = request.messages.some((message) => message.content.includes("__STRUCTURED_VISUAL_FIXTURE__"));
+      const visualFixture = [...request.messages].reverse().find((message) => message.role === "user")?.content.includes("__STRUCTURED_VISUAL_FIXTURE__") === true;
       const goalFixture = request.metadata?.goal_confirmation_required === true
         && request.messages.some((message) => message.content.includes("__GOAL_CONFIRMATION_FIXTURE__"));
       if (visualFixture) {
@@ -6575,7 +6575,8 @@ function createStructuredVisualFixtureMarkdown(imageUrl: string): string {
     `${codeLines.join("\n")}\n`,
     "```\n\n",
     `![OpenDrSai visual fixture](${imageUrl})\n\n`,
-    "The table and code block scroll within the response, while the image remains bounded by the readable column.",
+    "The table and code block scroll within the response, while the image remains bounded by the readable column.\n\n",
+    "Generated file: `README.md`.",
   ].join("");
 }
 

@@ -550,17 +550,15 @@ function findUnboundDesktopOwnerThreadId(
     isDesktopThreadId(thread.id)
     && !effectiveRuntimeSessionId(thread)
     && comparableWorkspacePath(thread.workspacePath) === workspacePath);
-  const byCreatedAt = input.createdAt
-    ? unbound.find((thread) => thread.createdAt === input.createdAt || (
-      Number.isFinite(Date.parse(thread.createdAt)) && Date.parse(thread.createdAt) === Date.parse(input.createdAt)
-    ))
-    : undefined;
-  if (byCreatedAt) return byCreatedAt.id;
-  if (!isRecentRuntimeCatalogTimestamp(input.createdAt) && !isRecentRuntimeCatalogTimestamp(input.updatedAt)) {
-    return undefined;
-  }
-  const byTitle = unbound.filter((thread) => catalogTitlesLikelySame(thread.title, input.title));
-  return byTitle.length === 1 ? byTitle[0]?.id : undefined;
+  const createdAt = input.createdAt;
+  if (!createdAt) return undefined;
+  const createdAtStamp = Date.parse(createdAt);
+  const byCreatedAt = unbound.filter((thread) => thread.createdAt === createdAt || (
+    Number.isFinite(createdAtStamp)
+    && Number.isFinite(Date.parse(thread.createdAt))
+    && Date.parse(thread.createdAt) === createdAtStamp
+  ));
+  return byCreatedAt.length === 1 ? byCreatedAt[0]?.id : undefined;
 }
 
 function resolveRuntimeCatalogThreadId(
@@ -597,7 +595,7 @@ export async function upsertThreadsFromRuntimeCatalog(
     const results: Array<{ thread: DesktopThread; changed: boolean }> = [];
     let anyChanged = false;
     for (const input of entries) {
-      const runtimeSessionId = sanitizeOptionalId(input.runtimeSessionId, "Thread Runtime session id is invalid.");
+      const runtimeSessionId = sanitizeThreadId(input.runtimeSessionId);
       const catalogId = resolveRuntimeCatalogThreadId(threads, {
         id: input.id,
         runtimeSessionId,

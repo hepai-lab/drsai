@@ -44,8 +44,25 @@ await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen
 const address = server.address();
 assert.ok(address && typeof address === "object");
 const baseUrl = `http://127.0.0.1:${address.port}`;
-const browser = await chromium.launch({ headless: true, executablePath: chromePath });
+const browser = await chromium.launch({
+  headless: true,
+  executablePath: chromePath,
+  args: [
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-domain-reliability",
+    "--metrics-recording-only",
+    "--no-default-browser-check",
+    "--no-first-run",
+    "--host-resolver-rules=MAP * 0.0.0.0, EXCLUDE 127.0.0.1",
+  ],
+});
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, colorScheme: "light" });
+await page.route("**/*", async (route) => {
+  const url = new URL(route.request().url());
+  if (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.protocol === "data:" || url.protocol === "blob:") await route.continue();
+  else await route.abort("blockedbyclient");
+});
 const results = [];
 let accessibility = null;
 
@@ -161,11 +178,13 @@ try {
   const completedTurn = page.locator('.structured-message-parts[data-turn-status="completed"]').last();
   const p2Artifact = completedTurn.getByRole("button", { name: /打开资源: README\.md|Open resource: README\.md/ });
   await p2Artifact.waitFor({ state: "visible" });
+  assert.equal(await completedTurn.locator('.structured-artifact-card[data-artifact-id="mock-report"]').count(), 0, "An Artifact already named in the answer must render as one inline Markdown resource link, not a duplicate card.");
+  assert.equal(await p2Artifact.getAttribute("data-artifact-inline-id") !== null, true, "The answer must carry the structured Artifact identity on its inline link.");
   assert.equal(await p2Artifact.getAttribute("data-resource-state"), null);
   await p2Artifact.click({ button: "right" });
   const resourceMenu = page.getByTestId("conversation-resource-menu");
   await resourceMenu.waitFor({ state: "visible" });
-  assert.equal(await p2Artifact.locator("xpath=ancestor::*[contains(@class,'structured-artifact-card')][1]").getAttribute("data-resource-state"), "changed", "A version conflict must report changed on the resource card itself.");
+  assert.equal(await p2Artifact.getAttribute("data-resource-state"), "changed", "A version conflict must remain visible on the inline resource link itself.");
   for (const label of [/打开当前版本|Open current version/, /预览|Preview/, /打开引用时版本|Open cited version/, /下载 \/ 另存为|Download \/ Save as/, /复制逻辑路径|Copy logical path/, /查看资源详情|Resource details/]) {
     assert.equal(await resourceMenu.getByRole("menuitem", { name: label }).count(), 1, `Resource menu action ${label} must be capability-driven and visible.`);
   }

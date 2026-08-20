@@ -39,6 +39,7 @@ import type { RunReproducibilityLevel } from "@shared/runInspection";
 import type { OaepResourceRef } from "@shared/oaep.generated";
 import { ChatMessageContent } from "./ChatMessageContent";
 import { desktopApi } from "../desktopApi";
+import { selectInlineArtifactLinks, type InlineArtifactLink, type SelectedInlineArtifactLink } from "../artifactLinkPlugin";
 
 export interface InteractionResponse extends Record<string, unknown> {
   approved?: boolean;
@@ -58,9 +59,9 @@ interface StructuredMessagePartsProps {
   onOpenLink: (href: string | undefined) => void;
   onOpenArtifact: (part: ArtifactPart) => void;
   onDownloadArtifact?: (part: ArtifactPart) => void;
-  onOpenArtifactMenu?: (part: ArtifactPart, anchor: { x: number; y: number }) => void;
+  onOpenArtifactMenu?: (part: ArtifactPart, anchor: { x: number; y: number; trigger?: HTMLElement }) => void;
   onOpenCitation: (part: CitationPart) => void;
-  onOpenCitationMenu?: (part: CitationPart, anchor: { x: number; y: number }) => void;
+  onOpenCitationMenu?: (part: CitationPart, anchor: { x: number; y: number; trigger?: HTMLElement }) => void;
   onOpenResource?: (resourceRef: OaepResourceRef) => void;
   onRespondInteraction: (part: InteractionPart, response: InteractionResponse) => void;
   onRequestTextInteraction: (part: InteractionPart) => void;
@@ -121,7 +122,24 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     && (part.status === "running" || part.status === "pending")
     && (turn.status === "running" || !respondedRequestIds.has(part.requestId))
   );
-  const resultParts = turn.parts.filter((part) => part.kind === "markdown" || part.kind === "artifact" || part.kind === "citation");
+  const artifactParts = turn.parts.filter((part): part is ArtifactPart => part.kind === "artifact");
+  const inlineArtifactCandidates: InlineArtifactLink[] = artifactParts
+    .filter((part) => part.artifactType !== "image" && part.artifactType !== "web")
+    .map((part) => ({
+      id: part.id,
+      label: part.name,
+      title: part.path || part.url || part.name,
+      targets: [part.name, part.path, part.url].filter((value): value is string => Boolean(value)),
+      state: resourceState(part, resourceStates),
+    }));
+  const inlineArtifactsByMarkdown = new Map<string, SelectedInlineArtifactLink[]>();
+  const embeddedArtifactIds = new Set<string>();
+  for (const markdownPart of turn.parts.filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown")) {
+    const selected = selectInlineArtifactLinks(markdownPart.markdown, inlineArtifactCandidates.filter((candidate) => !embeddedArtifactIds.has(candidate.id)));
+    if (selected.length) inlineArtifactsByMarkdown.set(markdownPart.id, selected);
+    for (const artifact of selected) embeddedArtifactIds.add(artifact.id);
+  }
+  const resultParts = turn.parts.filter((part) => part.kind === "markdown" || part.kind === "citation" || (part.kind === "artifact" && !embeddedArtifactIds.has(part.id)));
   // The model writes `[E1]` so the support check can tell which passage each
   // sentence rests on. The reader has no use for the number, so the marker is
   // shown as the document it stands for. Order is the marker order the runtime
@@ -209,6 +227,15 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
               const citation = citationParts.find((candidate) => candidate.citationId === citationId);
               if (citation) onOpenCitation(citation);
             }}
+            artifactLinks={inlineArtifactsByMarkdown.get(part.id)}
+            onOpenArtifactLink={(artifactPartId) => {
+              const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId);
+              if (artifact) onOpenArtifact(artifact);
+            }}
+            onOpenArtifactLinkMenu={onOpenArtifactMenu ? (artifactPartId, anchor) => {
+              const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId);
+              if (artifact) onOpenArtifactMenu(artifact, anchor);
+            } : undefined}
           />
           {part.citationIds?.length ? <div className="structured-inline-citations" aria-label={language === "zh" ? "本段引用" : "Citations for this section"}>
             {part.citationIds.map((citationId) => {
