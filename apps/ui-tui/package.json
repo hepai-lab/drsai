@@ -9,7 +9,8 @@
     "watch": "tsx --watch src/entry.tsx",
     "start": "node dist/entry.mjs",
     "build": "node scripts/build.mjs",
-    "type-check": "tsc --noEmit -p tsconfig.json"
+    "type-check": "tsc --noEmit -p tsconfig.json",
+    "verify:oaep-resource-p2": "node scripts/verify-oaep-runtime-resource-route.mjs && node ../desktop/shared/test-kit/run-bundled-test.mjs src/tests/oaep-resource-commands.test.ts && node ../desktop/shared/test-kit/run-bundled-test.mjs src/tests/conversation-resource-fixture.test.ts"
   },
   "dependencies": {
     "@nanostores/react": "^1.0.0",

@@ -15,6 +15,7 @@ from drsai.backend.runtime.oaep import _safe_operation_ref, _safe_text
 ROOT = Path(__file__).resolve().parents[5]
 SCHEMA = ROOT / "cores" / "protocol" / "oaep" / "oaep.schema.json"
 EXAMPLES = ROOT / "cores" / "protocol" / "oaep" / "examples.json"
+RESOURCE_FIXTURE = ROOT / "cores" / "protocol" / "oaep" / "conversation-resources-p1.fixture.json"
 
 
 def test_runtime_oaep_preserves_public_error_code_but_redacts_credentials() -> None:
@@ -85,6 +86,21 @@ def test_oaep_schema_is_valid_and_examples_cover_core_item_types() -> None:
     }
     event_types = {event["type"] for event in fixture["events"]}
     assert {"event.item.delta", "event.item.completed", "event.item.failed", "event.run.failed"} <= event_types
+
+
+def test_conversation_resource_p1_fixture_is_cross_host_and_path_private() -> None:
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    fixture = json.loads(RESOURCE_FIXTURE.read_text(encoding="utf-8"))
+    Draft202012Validator({"$defs": schema["$defs"], "$ref": "#/$defs/snapshot"}).validate(fixture)
+    refs = []
+    for item in fixture["items"]:
+        content = item["content"]
+        refs.extend(part["resource_ref"] for part in content.get("parts", []) if "resource_ref" in part)
+        refs.extend(change["resource_ref"] for change in content.get("changes", []) if "resource_ref" in change)
+        refs.extend(content.get("resource_refs", []))
+    assert [ref["relation"] for ref in refs] == ["input_reference", "file_change_target", "output_artifact"]
+    assert all(ref["workspace_id"] == "workspace-resource-p1" for ref in refs)
+    assert not re.search(r"[A-Za-z]:[\\/]", json.dumps(fixture, ensure_ascii=False))
 
 
 def test_oaep_event_page_is_strict_and_uses_event_sequence_cursor() -> None:
@@ -184,6 +200,54 @@ def test_oaep_owop_references_are_bounded_and_never_inline_paths_or_content() ->
         forged["content"]["resource_refs"][0].update(forbidden)
         assert list(validator.iter_errors(forged))
 
+
+def test_resource_references_preserve_conversation_relation_locator_and_presentation() -> None:
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    validator = Draft202012Validator({"$defs": schema["$defs"], "$ref": "#/$defs/item"})
+    item = {
+        "id": "message-resource-1",
+        "session_id": "session-1",
+        "run_id": "run-1",
+        "type": "message",
+        "status": "completed",
+        "sequence": 1,
+        "created_at": "2026-08-16T00:00:00Z",
+        "updated_at": "2026-08-16T00:00:00Z",
+        "source": {"backend": "opendrsai"},
+        "content": {
+            "role": "user",
+            "text": "参考方案.md执行",
+            "parts": [
+                {"type": "text", "text": "参考"},
+                {
+                    "type": "resource_ref",
+                    "name": "方案.md",
+                    "mime_type": "text/markdown",
+                    "resource_ref": {
+                        "protocol": "owop/1",
+                        "workspace_id": "workspace-1",
+                        "resource_type": "file",
+                        "resource_id": "file-1",
+                        "label": "方案.md",
+                        "digest": "sha256:" + "a" * 64,
+                        "relation": "input_reference",
+                        "locator": {"kind": "text_range", "line": 42, "column": 3},
+                        "presentation": "inline",
+                    },
+                },
+                {"type": "text", "text": "执行"},
+            ],
+        },
+    }
+    validator.validate(item)
+
+    invalid_relation = copy.deepcopy(item)
+    invalid_relation["content"]["parts"][1]["resource_ref"]["relation"] = "codex_private_attachment"
+    assert list(validator.iter_errors(invalid_relation))
+
+    absolute_path = copy.deepcopy(item)
+    absolute_path["content"]["parts"][1]["resource_ref"]["absolute_path"] = r"C:\\secret.txt"
+    assert list(validator.iter_errors(absolute_path))
 
 def test_file_change_rejects_absolute_unc_and_escape_paths() -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))

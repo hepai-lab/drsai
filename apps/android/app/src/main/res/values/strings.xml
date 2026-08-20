@@ -325,4 +325,17 @@
     <string name="local_tool_approval_required">工具 %1$s 需要用户批准</string><string name="local_tool_rejected">工具 %1$s 被拒绝：%2$s</string><string name="local_tool_approval_state_invalid">工具审批状态无效</string><string name="local_tool_approval_declined">用户拒绝了工具 %1$s</string>
     <string name="remote_conversation_completed">任务已完成</string><string name="remote_conversation_failed">任务执行失败</string><string name="remote_conversation_cancelled">任务已取消</string><string name="remote_conversation_unknown_event">未知事件：%1$s</string>
     <string name="update_manifest_sources_failed">无法从 CDN 或 GitHub 获取更新，请检查网络后重试（%1$s）</string><string name="update_download_timeout">下载超时，已保留已下载部分，请重试继续</string><string name="update_download_sources_failed">CDN 和 GitHub 均无法完成下载或校验（%1$s）</string><string name="model_switch_next_message">模型将在下一次发送时生效，历史记录保持不变</string>
+    <string name="conversation_resource_runtime_offline">Runtime 已离线。重新连接后可重试；资源没有被删除。</string>
+    <string name="conversation_resource_state">状态：%1$s</string>
+    <string name="conversation_resource_state_available">可用</string>
+    <string name="conversation_resource_state_moved">已移动</string>
+    <string name="conversation_resource_state_changed">已变化</string>
+    <string name="conversation_resource_state_deleted">已删除</string>
+    <string name="conversation_resource_state_offline">Runtime 离线</string>
+    <string name="conversation_resource_state_unsupported">暂不支持</string>
+    <string name="conversation_resource_preview">预览</string>
+    <string name="conversation_resource_cited_version">引用时版本</string>
+    <string name="conversation_resource_save">保存</string>
+    <string name="conversation_resource_action_failed">资源操作失败。请重新连接或切换工作区后重试。</string>
+    <string name="conversation_resource_open_a11y">打开资源：%1$s，类型：%2$s</string>
 </resources>

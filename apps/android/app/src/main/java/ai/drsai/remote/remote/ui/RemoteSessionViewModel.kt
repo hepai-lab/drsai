@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import ai.drsai.remote.remote.data.*
 import android.content.Intent
+import android.net.Uri
 import android.util.Base64
 import java.io.File
 import ai.drsai.remote.remote.model.*
@@ -50,6 +51,7 @@ class RemoteSessionViewModel(
     private val oaep = container.boundaries.session.oaep
     private val legacy = container.boundaries.session.legacy
     private val workspace = container.boundaries.file.client(runtimeId)
+    private val conversationResources = container.boundaries.file.resources(runtimeId)
     private val cache = container.cache
     private val drafts = container.drafts
     private val activity = container.activity
@@ -707,6 +709,36 @@ class RemoteSessionViewModel(
                     ) else it
                 },
             ) }
+        }
+    }
+
+    suspend fun resolveConversationResource(resource: RemoteTranscriptResource): AndroidResourceDescriptor =
+        conversationResources.resolve(resource)
+
+    suspend fun previewConversationResource(resource: RemoteTranscriptResource, descriptor: AndroidResourceDescriptor, observed: Boolean): AndroidResourceDescriptor =
+        conversationResources.preview(resource, descriptor, observed)
+
+    suspend fun downloadConversationResource(
+        resource: RemoteTranscriptResource,
+        descriptor: AndroidResourceDescriptor,
+        destination: Uri,
+        onProgress: (Long, Long) -> Unit,
+    ) = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val resolver = getApplication<Application>().contentResolver
+        val safeOperation = descriptor.associationId.replace(Regex("[^A-Za-z0-9_-]"), "_").take(24).ifBlank { "unknown" }
+        val temporary = File.createTempFile("resource-$safeOperation-", ".partial", getApplication<Application>().cacheDir)
+        var destinationStarted = false
+        try {
+            temporary.outputStream().use { output -> conversationResources.download(resource, descriptor, output, onProgress) }
+            resolver.openOutputStream(destination, "w")?.use { output ->
+                destinationStarted = true
+                temporary.inputStream().use { input -> input.copyTo(output) }
+            } ?: error("resource_destination_unavailable")
+        } catch (failure: Throwable) {
+            if (destinationStarted) runCatching { resolver.delete(destination, null, null) }
+            throw failure
+        } finally {
+            temporary.delete()
         }
     }
 

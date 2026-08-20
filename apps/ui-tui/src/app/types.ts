@@ -64,6 +64,7 @@ export interface ArtifactContentPart {
   size?: number
   previewable?: boolean
   downloadable?: boolean
+  resourceRef?: import('../gatewayTypes.js').OaepResourceRef
 }
 
 export type ContentPart = TextContentPart | { kind: 'tool'; id: string; toolId: string } | ArtifactContentPart

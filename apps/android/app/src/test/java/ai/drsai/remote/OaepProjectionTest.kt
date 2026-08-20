@@ -70,9 +70,8 @@ class OaepProjectionTest {
             "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", source,
             OaepMessageContent(
                 "assistant", "commentary", "commentary",
-                parts = listOf(mapOf(
-                    "type" to "image", "name" to "diagram.png", "mime_type" to "image/png",
-                    "size" to 42L, "resource_ref" to mapOf("resource_id" to "image-1"),
+                parts = listOf(OaepLegacyMessagePart(
+                    type = "image", name = "diagram.png", mimeType = "image/png", resourceRef = resource,
                 )),
                 resourceRefs = listOf(resource),
             ),

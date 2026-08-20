@@ -78,6 +78,71 @@ def test_file_tree_search_preview_binary_and_large_chunking(local_workspace) -> 
     assert response["result"]["digest"] == digest(large) and response["result"]["eof"]
 
 
+def test_file_resource_register_resolve_move_change_delete_and_restart(local_workspace) -> None:
+    root, journal, _operations, call = local_workspace
+    original = b"stable resource"
+    source = root / "docs" / "方案.md"
+    source.parent.mkdir()
+    source.write_bytes(original)
+
+    registered = asyncio.run(call("files.register", {"path": "docs/方案.md", "expected_digest": digest(original)}))
+    assert registered["ok"]
+    resource = registered["result"]["resource"]
+    assert resource["file_id"].startswith("file-")
+    assert resource["path"] == "docs/方案.md"
+    assert resource["state"] == "available"
+    assert resource["capabilities"]["reveal"] is True
+    assert resource["capabilities"]["open_external"] is False
+
+    again = asyncio.run(call("files.register", {"path": "docs/方案.md"}))
+    assert again["result"]["resource"]["file_id"] == resource["file_id"]
+
+    destination = root / "docs" / "重命名.md"
+    source.rename(destination)
+    unresolved = asyncio.run(call("files.resolve", {"file_id": resource["file_id"], "expected_digest": digest(original)}))
+    assert unresolved["result"]["resource"]["state"] == "deleted"
+    repair = _operations.repair_relocations()
+    assert repair["repaired"] == 1 and repair["scanned"] <= 10_000
+    moved = asyncio.run(call("files.resolve", {"file_id": resource["file_id"], "expected_digest": digest(original)}))
+    assert moved["result"]["resource"]["state"] == "moved"
+    assert moved["result"]["resource"]["path"] == "docs/重命名.md"
+
+    destination.write_bytes(b"changed")
+    changed = asyncio.run(call("files.resolve", {"file_id": resource["file_id"], "expected_digest": digest(original)}))
+    assert changed["result"]["resource"]["state"] == "changed"
+
+    restarted = LocalWorkspaceOperations("workspace-one", root, journal)
+    try:
+        persisted = restarted.resolve_file({"file_id": resource["file_id"], "expected_digest": digest(original)})
+        assert persisted["resource"]["path"] == "docs/重命名.md"
+        assert persisted["resource"]["state"] == "changed"
+    finally:
+        restarted.close()
+
+    destination.unlink()
+    deleted = asyncio.run(call("files.resolve", {"file_id": resource["file_id"]}))
+    assert deleted["result"]["resource"]["state"] == "deleted"
+    assert not any(deleted["result"]["resource"]["capabilities"].values())
+
+    missing = asyncio.run(call("files.resolve", {"file_id": "file-does-not-exist"}))
+    assert missing["error"]["code"] == "resource_not_found"
+
+
+def test_foreground_resolve_never_scans_workspace(local_workspace, monkeypatch) -> None:
+    root, _journal, _operations, call = local_workspace
+    source = root / "source.txt"
+    source.write_bytes(b"content")
+    registered = asyncio.run(call("files.register", {"path": "source.txt"}))["result"]["resource"]
+    source.rename(root / "renamed.txt")
+
+    def forbidden_walk(*_args, **_kwargs):
+        raise AssertionError("foreground resolve attempted a Workspace scan")
+
+    monkeypatch.setattr(os, "walk", forbidden_walk)
+    resolved = asyncio.run(call("files.resolve", {"file_id": registered["file_id"]}))
+    assert resolved["result"]["resource"]["state"] == "deleted"
+
+
 def test_atomic_write_digest_conflict_move_remove_and_no_temp_residue(local_workspace) -> None:
     root, _journal, _operations, call = local_workspace
     original = b"original"

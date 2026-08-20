@@ -7,7 +7,7 @@ import org.json.JSONObject
 object RelayContractGenerated {
     const val SCHEMA_VERSION: String = "2.0.0"
     const val PROTOCOL_VERSION: String = "owop/1"
-    const val SOURCE_SCHEMA_SHA256: String = "944e6302e5a71341a839f0da8b046350584716556636b8b6280657fd4f17d0e3"
+    const val SOURCE_SCHEMA_SHA256: String = "747c5c9fc36218081ebff1680322df09b2a682e4edba15eb10d8f3cb6b87c7d1"
     val ENDPOINTS: Map<String, String> = mapOf(
         "access_grant_create" to "POST /v1/runtimes/{runtime_id}/access-grants",
         "access_grant_read" to "GET /v1/runtimes/{runtime_id}/access-grants/{grant_id}",

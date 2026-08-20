@@ -199,6 +199,18 @@ export interface ArtifactCreatedPayload {
   size?: number
   previewable?: boolean
   downloadable?: boolean
+  resource_ref?: OaepResourceRef
+}
+
+export interface OaepResourceRef {
+  protocol: 'owop/1'
+  workspace_id: string
+  resource_type: 'workspace' | 'worktree' | 'file' | 'git' | 'process' | 'pty' | 'checkpoint' | 'artifact'
+  resource_id: string
+  label?: string
+  digest?: string
+  relation?: 'input_reference' | 'input_attachment' | 'output_artifact' | 'citation_source' | 'file_change_target' | 'derived_from' | 'related'
+  presentation?: 'inline' | 'card' | 'activity'
 }
 
 // ── Approval / clarify / secret ──────────────────────────────────────

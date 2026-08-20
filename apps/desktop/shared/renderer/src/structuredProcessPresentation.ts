@@ -1,4 +1,7 @@
 import type {
+  OaepResourceRef,
+} from "@shared/oaep.generated";
+import type {
   ProgressPart,
   StructuredActivityEvent,
   StructuredTurnState,
@@ -22,6 +25,7 @@ export interface ProcessActivityGroup {
   count: number;
   durationMs?: number;
   fileNames: string[];
+  fileResources: Array<{ name: string; resourceRef: OaepResourceRef }>;
   itemIds: string[];
 }
 
@@ -120,7 +124,11 @@ function aggregateActivities(
     if (previous && previousKey === key && previous.status === activity.status) {
       previous.count += 1;
       if (durationMs !== undefined) previous.durationMs = (previous.durationMs ?? 0) + durationMs;
-      if (activity.kind === "file_change") previous.fileNames.push(fileName(activity.path));
+      if (activity.kind === "file_change") {
+        const name = fileName(activity.path);
+        previous.fileNames.push(name);
+        if (activity.resourceRef) previous.fileResources.push({ name, resourceRef: activity.resourceRef });
+      }
       if (activity.oaepItemId) previous.itemIds.push(activity.oaepItemId);
       continue;
     }
@@ -133,6 +141,9 @@ function aggregateActivities(
       count: 1,
       ...(durationMs !== undefined ? { durationMs } : {}),
       fileNames: activity.kind === "file_change" ? [fileName(activity.path)] : [],
+      fileResources: activity.kind === "file_change" && activity.resourceRef
+        ? [{ name: fileName(activity.path), resourceRef: activity.resourceRef }]
+        : [],
       itemIds: activity.oaepItemId ? [activity.oaepItemId] : [],
     });
   }

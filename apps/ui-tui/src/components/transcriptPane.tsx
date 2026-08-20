@@ -37,6 +37,7 @@ import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
 import { getPartText, type AssistantTurn, type Turn } from '../app/types.js'
 import { $transcript, $transcriptGeneration } from '../app/turnStore.js'
 import { theme } from '../theme.js'
+import { resourceCommand } from '../resourcePresentation.js'
 
 import { MarkdownRenderer } from './markdownRenderer.js'
 import { StreamingAssistant } from './streamingAssistant.js'
@@ -124,7 +125,10 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
 function formatArtifactLine(part: import('../app/types.js').ArtifactContentPart): string {
   const location = part.path || part.name
   const size = typeof part.size === 'number' ? ` · ${part.size} bytes` : ''
-  return `  📄 ${part.name} · ${location}${size} · /artifact ${part.artifactId}`
+  const command = part.resourceRef
+    ? resourceCommand(part.resourceRef, part.artifactId)
+    : `/artifact ${part.artifactId}`
+  return `  📄 ${part.name} · ${location}${size} · ${command}`
 }
 
 /**

@@ -272,6 +272,7 @@ export function createGatewayEventHandler(
             ...(typeof p.size === 'number' ? { size: p.size } : {}),
             ...(typeof p.previewable === 'boolean' ? { previewable: p.previewable } : {}),
             ...(typeof p.downloadable === 'boolean' ? { downloadable: p.downloadable } : {}),
+            ...(p.resource_ref ? { resourceRef: p.resource_ref } : {}),
           }],
         }))
         return

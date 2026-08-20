@@ -1,3 +1,5 @@
+import type { OaepResourceRef } from "./oaep.generated";
+
 export const STRUCTURED_CONVERSATION_VERSION = 2 as const;
 
 export type StructuredPartStatus = "pending" | "running" | "completed" | "error" | "cancelled";
@@ -12,6 +14,9 @@ export interface MarkdownPart extends StructuredPartBase {
   kind: "markdown";
   markdown: string;
   citationIds?: string[];
+  resourceRef?: OaepResourceRef;
+  associationId?: string;
+  sessionId?: string;
 }
 
 export interface ReasoningSegment {
@@ -53,6 +58,9 @@ export interface ArtifactPart extends StructuredPartBase {
   previewable?: boolean;
   downloadable?: boolean;
   citationIds?: string[];
+  resourceRef?: OaepResourceRef;
+  associationId?: string;
+  sessionId?: string;
 }
 
 export interface CitationPart extends StructuredPartBase {
@@ -78,6 +86,9 @@ export interface CitationPart extends StructuredPartBase {
    */
   lineStart?: number;
   lineEnd?: number;
+  resourceRef?: OaepResourceRef;
+  associationId?: string;
+  sessionId?: string;
 }
 
 export interface InteractionOption {
@@ -166,6 +177,9 @@ export type StructuredActivityEvent =
       kind: "file_change";
       path: string;
       action: "create" | "modify" | "delete" | "rename" | "patch";
+      resourceRef?: OaepResourceRef;
+      associationId?: string;
+      sessionId?: string;
     })
   | (ActivityEventBase & {
       kind: "subtask";

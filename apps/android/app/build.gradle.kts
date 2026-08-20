@@ -412,21 +412,32 @@ fun renderAndroidOwopBindings(): String {
     val version = schema["version"] as String
     val operations = (schema["x-owop-operations"] as Map<*, *>).keys.map(Any?::toString).sorted()
     val bindings = (schema["x-owop-bindings"] as List<*>).map(Any?::toString).sorted()
+    val capabilities = (schema["x-owop-capabilities"] as List<*>).map(Any?::toString).sorted()
+    val digest = MessageDigest.getInstance("SHA-256").digest(owopSchemaFile.readBytes())
+        .joinToString("") { "%02x".format(it) }
     fun quoted(values: List<String>) = values.joinToString(",\n") { "        \"$it\"" }
-    return """
-        // Generated from cores/protocol/owop/owop.schema.json. Do not edit.
-        package ai.drsai.remote.remote.generated
+    return """// Generated from cores/protocol/owop/owop.schema.json. Do not edit.
+package ai.drsai.remote.remote.generated
 
-        object OwopSchemaGenerated {
-            const val VERSION: String = "$version"
-            val OPERATIONS: Set<String> = setOf(
-        ${quoted(operations)}
-            )
-            val BINDINGS: Set<String> = setOf(
-        ${quoted(bindings)}
-            )
-        }
-    """.trimIndent() + "\n"
+object OwopSchemaGenerated {
+    const val VERSION: String = "$version"
+    const val SCHEMA_SHA256: String = "$digest"
+    val OPERATIONS: Set<String> = setOf(
+${quoted(operations)}
+    )
+    val BINDINGS: Set<String> = setOf(
+${quoted(bindings)}
+    )
+    val CAPABILITIES: Set<String> = setOf(
+${quoted(capabilities)}
+    )
+}
+
+data class OwopResourceKey(val protocol: String = "owop/1", val authorityId: String, val workspaceId: String, val resourceType: String, val resourceId: String, val generation: Long)
+data class OwopResourceVersion(val versionId: String, val digest: String, val size: Long, val mimeType: String?, val modifiedAt: String)
+data class OwopResourceCapabilities(val readCurrent: Boolean, val readSnapshot: Boolean, val preview: Boolean, val download: Boolean, val reveal: Boolean, val openExternal: Boolean, val copyLogicalPath: Boolean)
+data class OwopResourceDescriptor(val resource: OwopResourceKey, val resolutionId: String, val state: String, val displayName: String, val logicalPath: String?, val kind: String, val currentVersion: OwopResourceVersion, val observedVersion: OwopResourceVersion?, val capabilities: OwopResourceCapabilities)
+"""
 }
 
 tasks.register("generateAndroidOwopBindings") {

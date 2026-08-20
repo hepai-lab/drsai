@@ -7,6 +7,7 @@ import ai.drsai.remote.ui.localizedBytes
 import ai.drsai.remote.ui.localizedDateTime
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -19,6 +20,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,9 +40,15 @@ import ai.drsai.remote.remote.data.RemoteSessionUiAuthorityState
 import ai.drsai.remote.remote.data.reduceRemoteTimelineUpdate
 import ai.drsai.remote.remote.data.remoteActionableState
 import ai.drsai.remote.remote.data.labelResource
+import ai.drsai.remote.remote.data.AndroidResourceDescriptor
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import androidx.core.text.BidiFormatter
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 data class RemoteCapabilityUi(val name: String, val available: Boolean)
 data class RemoteSessionUi(val reference: RemoteSessionRef, val lastRunStatus: String?, val updatedAtLabel: String,
@@ -348,14 +361,99 @@ data class RemoteChatUiState(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (String) -> Unit,
                      onCancelRun: () -> Unit, onApproval: (String, String) -> Unit, onOpenAudit: () -> Unit,
                       onOpenArtifact: (String) -> Unit = {}, onDraftChange: (String) -> Unit = {},
                       onRetryRun: () -> Unit = {}, onConfirmArtifact: (Boolean) -> Unit = {},
                       onLoadOlderHistory: () -> Unit = {}, onSearchTranscript: (String) -> Unit = {},
                       focusItemId: String? = null, onFocusResolved: () -> Unit = {},
-                      onSignIn: () -> Unit = {}, onRendered: () -> Unit = {}) {
+                      onSignIn: () -> Unit = {}, onRendered: () -> Unit = {},
+                      onResolveResource: suspend (RemoteTranscriptResource) -> AndroidResourceDescriptor = { error("resource_host_unavailable") },
+                      onPreviewResource: suspend (RemoteTranscriptResource, AndroidResourceDescriptor, Boolean) -> AndroidResourceDescriptor = { _, _, _ -> error("resource_preview_unavailable") },
+                      onDownloadResource: suspend (RemoteTranscriptResource, AndroidResourceDescriptor, Uri, (Long, Long) -> Unit) -> Unit = { _, _, _, _ -> error("resource_download_unavailable") }) {
     var input by remember(state.scopeKey) { mutableStateOf(state.draft) }
+    val resourceScope = rememberCoroutineScope()
+    var selectedResource by remember(state.scopeKey) { mutableStateOf<RemoteTranscriptResource?>(null) }
+    var resourceDescriptor by remember(state.scopeKey) { mutableStateOf<AndroidResourceDescriptor?>(null) }
+    var resourceLoading by remember(state.scopeKey) { mutableStateOf(false) }
+    var resourceError by remember(state.scopeKey) { mutableStateOf<String?>(null) }
+    var resourceProgress by remember(state.scopeKey) { mutableStateOf<Pair<Long, Long>?>(null) }
+    var resourceDownloadJob by remember(state.scopeKey) { mutableStateOf<Job?>(null) }
+    val createResourceDocument = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val resource = selectedResource
+        val descriptor = resourceDescriptor
+        if (uri == null) {
+            // Returning from the system document picker without a destination is
+            // a normal cancellation, not a zero-byte download in progress.
+            resourceProgress = null
+            return@rememberLauncherForActivityResult
+        }
+        if (resource == null || descriptor == null) {
+            resourceProgress = null
+            return@rememberLauncherForActivityResult
+        }
+        resourceDownloadJob = resourceScope.launch {
+            resourceError = null
+            runCatching { onDownloadResource(resource, descriptor, uri) { done, total -> resourceProgress = done to total } }
+                .onFailure { resourceError = it.message ?: "resource_download_failed" }
+            resourceDownloadJob = null
+        }
+    }
+    fun openResource(resource: RemoteTranscriptResource) {
+        selectedResource = resource
+        resourceDescriptor = null
+        resourceError = null
+        resourceLoading = true
+        resourceScope.launch {
+            runCatching { onResolveResource(resource) }
+                .onSuccess { resourceDescriptor = it }
+                .onFailure { resourceError = it.message ?: "resource_resolve_failed" }
+            resourceLoading = false
+        }
+    }
+    selectedResource?.let { resource ->
+        val safeResourceLabel = BidiFormatter.getInstance().unicodeWrap(resource.label)
+        val actionFailed = stringResource(R.string.conversation_resource_action_failed)
+        ModalBottomSheet(onDismissRequest = { if (resourceDownloadJob == null) selectedResource = null }, modifier = Modifier.testTag("conversation-resource-sheet")) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(safeResourceLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(listOfNotNull(resource.kind, resource.mimeType, resource.size?.let { "$it B" }).joinToString(" · "))
+                if (!state.online) Text(stringResource(R.string.conversation_resource_runtime_offline), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("conversation-resource-offline").semantics { liveRegion = LiveRegionMode.Polite })
+                if (resourceLoading) CircularProgressIndicator(Modifier.testTag("conversation-resource-loading"))
+                resourceDescriptor?.let { descriptor ->
+                    val stateLabel = conversationResourceStateLabel(descriptor.state)
+                    Text(stringResource(R.string.conversation_resource_state, stateLabel), modifier = Modifier.testTag("conversation-resource-state"))
+                    descriptor.previewText?.let { Text(it, modifier = Modifier.testTag("conversation-resource-preview")) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (descriptor.capabilities.preview && descriptor.state !in setOf("deleted", "offline", "unsupported")) Button(onClick = {
+                            resourceScope.launch {
+                                runCatching { onPreviewResource(resource, descriptor, false) }
+                                    .onSuccess { resourceDescriptor = it }.onFailure { resourceError = actionFailed }
+                            }
+                        }, modifier = Modifier.testTag("conversation-resource-preview-current")) { Text(stringResource(R.string.conversation_resource_preview)) }
+                        if (descriptor.observedVersionId != null) OutlinedButton(onClick = {
+                            resourceScope.launch {
+                                runCatching { onPreviewResource(resource, descriptor, true) }
+                                    .onSuccess { resourceDescriptor = it }.onFailure { resourceError = actionFailed }
+                            }
+                        }, modifier = Modifier.testTag("conversation-resource-preview-observed")) { Text(stringResource(R.string.conversation_resource_cited_version)) }
+                        if (descriptor.capabilities.download && state.online && descriptor.state !in setOf("deleted", "offline", "unsupported")) Button(
+                            onClick = { resourceProgress = 0L to descriptor.size; createResourceDocument.launch(descriptor.name) },
+                            modifier = Modifier.testTag("conversation-resource-save"),
+                        ) { Text(stringResource(R.string.conversation_resource_save)) }
+                    }
+                }
+                resourceProgress?.let { (done, total) ->
+                    LinearProgressIndicator(progress = { if (total <= 0) 0f else done.toFloat() / total }, Modifier.fillMaxWidth().testTag("conversation-resource-progress"))
+                    Text("$done / $total B")
+                }
+                resourceDownloadJob?.let { job -> OutlinedButton(onClick = { job.cancel(); resourceDownloadJob = null }, modifier = Modifier.testTag("conversation-resource-cancel")) { Text(stringResource(R.string.cancel)) } }
+                resourceError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("conversation-resource-error").semantics { liveRegion = LiveRegionMode.Polite }) }
+                if (!state.online) OutlinedButton(onClick = { openResource(resource) }, modifier = Modifier.testTag("conversation-resource-retry")) { Text(stringResource(R.string.retry)) }
+            }
+        }
+    }
     LaunchedEffect(state.scopeKey, state.draft) {
         if (input != state.draft) input = state.draft
     }
@@ -522,7 +620,7 @@ fun RemoteChatScreen(state: RemoteChatUiState, onBack: () -> Unit, onSend: (Stri
                 }
                 OaepSemanticItem(
                     message.role, message.localizedText?.resolve() ?: message.text, message.progress, message.kind, message.title,
-                    message.detail, message.phase, message.resources,
+                    message.detail, message.phase, message.resources, onOpenResource = ::openResource,
                 )
                 message.deliveryState?.let { Text(stringResource(it.labelResource()), style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary) }
@@ -599,6 +697,7 @@ fun OaepSemanticItem(
     detail: String?,
     phase: String?,
     resources: List<RemoteTranscriptResource>,
+    onOpenResource: (RemoteTranscriptResource) -> Unit = {},
 ) {
     val isUser = role == "user"
     Box(
@@ -618,9 +717,21 @@ fun OaepSemanticItem(
                         Text(it, style = MaterialTheme.typography.labelSmall)
                     }
                 resources.forEach { resource ->
-                    Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    val safeResourceLabel = BidiFormatter.getInstance().unicodeWrap(resource.label)
+                    val resourceDescription = stringResource(
+                        R.string.conversation_resource_open_a11y,
+                        safeResourceLabel,
+                        resource.kind,
+                    )
+                    Surface(
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable { onOpenResource(resource) }
+                            .semantics { this.role = Role.Button; contentDescription = resourceDescription }
+                            .testTag("conversation-resource-chip-${resource.id}"),
+                        shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
                         Column(Modifier.fillMaxWidth().padding(8.dp)) {
-                            Text(resource.label, fontWeight = FontWeight.Medium)
+                            Text(safeResourceLabel, fontWeight = FontWeight.Medium)
                             Text(
                                 listOfNotNull(resource.kind, resource.mimeType, resource.size?.let { "$it B" })
                                     .joinToString(" · "),
@@ -635,6 +746,16 @@ fun OaepSemanticItem(
         }
     }
 }
+
+@Composable
+private fun conversationResourceStateLabel(state: String): String = stringResource(when (state) {
+    "available" -> R.string.conversation_resource_state_available
+    "moved" -> R.string.conversation_resource_state_moved
+    "changed" -> R.string.conversation_resource_state_changed
+    "deleted" -> R.string.conversation_resource_state_deleted
+    "offline" -> R.string.conversation_resource_state_offline
+    else -> R.string.conversation_resource_state_unsupported
+})
 
 @Composable
 private fun ApprovalCard(card: RemoteApprovalCard, enabled: Boolean, decisionState: RemoteApprovalDecisionState,

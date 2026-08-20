@@ -325,4 +325,17 @@
     <string name="local_tool_approval_required">Tool %1$s requires user approval</string><string name="local_tool_rejected">Tool %1$s was rejected: %2$s</string><string name="local_tool_approval_state_invalid">Tool approval state is invalid</string><string name="local_tool_approval_declined">The user declined tool %1$s</string>
     <string name="remote_conversation_completed">Task completed</string><string name="remote_conversation_failed">Task execution failed</string><string name="remote_conversation_cancelled">Task cancelled</string><string name="remote_conversation_unknown_event">Unknown event: %1$s</string>
     <string name="update_manifest_sources_failed">Could not fetch the update from CDN or GitHub. Check the network and try again (%1$s)</string><string name="update_download_timeout">Download timed out. The downloaded portion was preserved; retry to continue</string><string name="update_download_sources_failed">Neither CDN nor GitHub could complete the download and verification (%1$s)</string><string name="model_switch_next_message">The model will apply to the next message; history remains unchanged</string>
+    <string name="conversation_resource_runtime_offline">Runtime is offline. Reconnect and retry; the resource was not deleted.</string>
+    <string name="conversation_resource_state">State: %1$s</string>
+    <string name="conversation_resource_state_available">Available</string>
+    <string name="conversation_resource_state_moved">Moved</string>
+    <string name="conversation_resource_state_changed">Changed</string>
+    <string name="conversation_resource_state_deleted">Deleted</string>
+    <string name="conversation_resource_state_offline">Runtime offline</string>
+    <string name="conversation_resource_state_unsupported">Unsupported</string>
+    <string name="conversation_resource_preview">Preview</string>
+    <string name="conversation_resource_cited_version">Cited version</string>
+    <string name="conversation_resource_save">Save</string>
+    <string name="conversation_resource_action_failed">Resource action failed. Reconnect or switch Workspace, then retry.</string>
+    <string name="conversation_resource_open_a11y">Open resource: %1$s, type: %2$s</string>
 </resources>

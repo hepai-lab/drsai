@@ -14,6 +14,7 @@ import ai.drsai.remote.remote.generated.OaepInteractionContent
 import ai.drsai.remote.remote.generated.OaepMessageContent
 import ai.drsai.remote.remote.generated.OaepNoticeContent
 import ai.drsai.remote.remote.generated.OaepResourceRef
+import ai.drsai.remote.remote.data.OaepJsonCodec
 import java.security.MessageDigest
 import java.time.Instant
 
@@ -254,7 +255,7 @@ class LegacyOaepBackfill(
                 digest = attachment.sha256.lowercase().takeIf { it.matches(SHA256) },
             )
         }
-        val parts = listOfNotNull(message.content.takeIf(String::isNotEmpty)?.let { mapOf("type" to "text", "text" to it) }) +
+        val parts = (listOfNotNull(message.content.takeIf(String::isNotEmpty)?.let { mapOf("type" to "text", "text" to it) }) +
             attachments.zip(resources).map { (attachment, resource) ->
                 mapOf(
                     "type" to when {
@@ -273,7 +274,7 @@ class LegacyOaepBackfill(
                         "digest" to resource.digest,
                     ).filterValues { it != null },
                 )
-            }
+            }).map(OaepJsonCodec::messagePart)
         return NormalizedAgentEvent.ItemCompleted(
             message.id, "message", OaepMessageContent(
                 message.role, message.content, message.status, parts = parts, resourceRefs = resources,

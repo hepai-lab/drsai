@@ -1,0 +1,102 @@
+{
+  "fixture_version": "conversation-resources-p2/1",
+  "snapshot": {
+    "version": "1.0",
+    "session": {
+      "id": "session-resource-p2",
+      "workspace_id": "workspace-resource-p2",
+      "title": "Conversation resource P2",
+      "status": "active",
+      "backend": "opendrsai",
+      "created_at": "2026-08-16T00:00:00Z",
+      "updated_at": "2026-08-16T00:00:02Z"
+    },
+    "runs": [{
+      "id": "run-resource-p2",
+      "session_id": "session-resource-p2",
+      "sequence": 1,
+      "source": {"backend": "opendrsai", "mapping_version": "oaep-resource-association-p2/1"},
+      "status": "completed",
+      "created_at": "2026-08-16T00:00:00Z",
+      "updated_at": "2026-08-16T00:00:02Z",
+      "completed_at": "2026-08-16T00:00:02Z"
+    }],
+    "items": [{
+      "id": "message-resource-p2",
+      "session_id": "session-resource-p2",
+      "run_id": "run-resource-p2",
+      "type": "message",
+      "status": "completed",
+      "sequence": 1,
+      "created_at": "2026-08-16T00:00:00Z",
+      "updated_at": "2026-08-16T00:00:00Z",
+      "source": {"backend": "opendrsai", "mapping_version": "oaep-resource-association-p2/1"},
+      "associations": [
+        {
+          "association_id": "assoc-plan-first",
+          "resource": {"protocol": "owop/1", "authority_id": "runtime-local-1", "workspace_id": "workspace-resource-p2", "resource_type": "file", "resource_id": "file-plan", "generation": 2},
+          "relation": "input_reference",
+          "label_snapshot": "Plan.md",
+          "version_snapshot": {"version_id": "version-plan-7", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 42, "mime_type": "text/markdown", "captured_at": "2026-08-16T00:00:00Z"},
+          "locator": {"kind": "text_range", "line": 1, "column": 1, "end_line": 3, "end_column": 8},
+          "presentation": "inline"
+        },
+        {
+          "association_id": "assoc-plan-second",
+          "resource": {"protocol": "owop/1", "authority_id": "runtime-local-1", "workspace_id": "workspace-resource-p2", "resource_type": "file", "resource_id": "file-plan", "generation": 2},
+          "relation": "citation_source",
+          "label_snapshot": "Plan.md",
+          "locator": {"kind": "page", "page": 2},
+          "presentation": "inline"
+        }
+      ],
+      "content": {
+        "role": "user",
+        "phase": "final",
+        "text": "Compare two locations",
+        "citations": [],
+        "parts": [
+          {"part_id": "part-1", "type": "text", "text": "First "},
+          {"part_id": "part-2", "type": "resource", "association_id": "assoc-plan-first"},
+          {"part_id": "part-3", "type": "text", "text": " then "},
+          {"part_id": "part-4", "type": "resource", "association_id": "assoc-plan-second"}
+        ]
+      }
+    }, {
+      "id": "artifact-resource-p2",
+      "session_id": "session-resource-p2",
+      "run_id": "run-resource-p2",
+      "type": "artifact",
+      "status": "completed",
+      "sequence": 2,
+      "created_at": "2026-08-16T00:00:01Z",
+      "updated_at": "2026-08-16T00:00:01Z",
+      "source": {"backend": "opendrsai", "mapping_version": "oaep-resource-association-p2/1"},
+      "associations": [{
+        "association_id": "assoc-report",
+        "resource": {"protocol": "owop/1", "authority_id": "runtime-local-1", "workspace_id": "workspace-resource-p2", "resource_type": "artifact", "resource_id": "artifact-report", "generation": 1},
+        "relation": "output_artifact",
+        "label_snapshot": "Report.docx",
+        "version_snapshot": {"version_id": "version-report-1", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 1024, "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+        "presentation": "card",
+        "operation_id": "operation-publish-report"
+      }],
+      "content": {
+        "artifact_id": "artifact-report",
+        "artifact_type": "file",
+        "name": "Report.docx",
+        "summary": "P2 report",
+        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "size": 1024,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "previewable": true,
+        "downloadable": true,
+        "association_id": "assoc-report"
+      }
+    }],
+    "mapping_version": "oaep-resource-association-p2/1",
+    "snapshot_sequence": 2
+  },
+  "expected_association_ids": ["assoc-plan-first", "assoc-plan-second", "assoc-report"],
+  "expected_message_part_types": ["text", "resource", "text", "resource"]
+}

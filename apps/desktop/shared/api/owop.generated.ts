@@ -1,9 +1,9 @@
 // Generated from cores/protocol/owop/owop.schema.json; do not edit.
-export const OWOP_SCHEMA_SHA256 = "a28d3495df280792eef80ce3c932525cc98f9d09601342b0f400009bb137fe9f" as const;
+export const OWOP_SCHEMA_SHA256 = "ebdbf06e783d100a8c49bcfc913469e102251a9e13082fba7385de13b5f0bec7" as const;
 export const OWOP_VERSION = "1.0" as const;
-export type OWOPCapability = "workspace" | "worktree" | "files" | "search" | "watch" | "git" | "process" | "pty" | "checkpoint" | "artifact";
+export type OWOPCapability = "workspace" | "worktree" | "files" | "search" | "watch" | "git" | "process" | "pty" | "checkpoint" | "artifact" | "resources.v2";
 export type OWOPBindingKind = "in_process" | "local_ipc" | "ssh" | "hepai_if" | "mcp" | "ddf" | "relay";
-export type OWOPOperation = "workspace.describe" | "files.list" | "files.stat" | "files.read" | "files.write" | "files.move" | "files.remove" | "search.query" | "watch.subscribe" | "git.status" | "git.diff" | "git.file_at_ref" | "git.stage" | "git.unstage" | "git.revert" | "git.commit" | "git.worktree.list" | "git.worktree.create" | "git.worktree.describe" | "git.worktree.merge" | "git.worktree.archive" | "git.worktree.remove" | "git.worktree.prune" | "process.start" | "process.write" | "process.attach" | "process.kill" | "pty.list" | "pty.describe" | "pty.create" | "pty.write" | "pty.resize" | "pty.attach" | "pty.detach" | "pty.kill" | "checkpoint.create" | "checkpoint.preview" | "checkpoint.restore" | "checkpoint.accept" | "artifact.metadata" | "artifact.chunk";
+export type OWOPOperation = "workspace.describe" | "files.list" | "files.register" | "files.resolve" | "files.stat" | "files.read" | "files.write" | "files.move" | "files.remove" | "search.query" | "watch.subscribe" | "git.status" | "git.diff" | "git.file_at_ref" | "git.stage" | "git.unstage" | "git.revert" | "git.commit" | "git.worktree.list" | "git.worktree.create" | "git.worktree.describe" | "git.worktree.merge" | "git.worktree.archive" | "git.worktree.remove" | "git.worktree.prune" | "process.start" | "process.write" | "process.attach" | "process.kill" | "pty.list" | "pty.describe" | "pty.create" | "pty.write" | "pty.resize" | "pty.attach" | "pty.detach" | "pty.kill" | "checkpoint.create" | "checkpoint.preview" | "checkpoint.restore" | "checkpoint.accept" | "artifact.metadata" | "artifact.chunk" | "resources.register" | "resources.resolve_batch" | "resources.read" | "resources.preview" | "resources.download.prepare" | "resources.download.chunk" | "resources.download.cancel" | "resources.subscribe";
 
 export interface OWOPWorktreeResource {
   worktree_id: string;
@@ -63,6 +63,87 @@ export interface OWOPTerminalOutputEvent {
   content_base64: string;
 }
 
+export interface OWOPFileResource {
+  file_id: string;
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+  mime_type: string | null;
+  size: number;
+  modified_ns: number;
+  digest: unknown;
+  state: "available" | "moved" | "changed" | "deleted";
+  capabilities: Record<string, unknown>;
+}
+
+export interface OWOPResourceKey {
+  protocol: "owop/1";
+  authority_id: string;
+  workspace_id: string;
+  resource_type: "workspace" | "worktree" | "file" | "git" | "process" | "pty" | "checkpoint" | "artifact";
+  resource_id: string;
+  generation: number;
+}
+
+export interface OWOPResourceVersion {
+  version_id: string;
+  digest: string;
+  size: number;
+  mime_type: string | null;
+  modified_at: string;
+}
+
+export interface OWOPResourceCapabilities {
+  read_current: boolean;
+  read_snapshot: boolean;
+  preview: boolean;
+  download: boolean;
+  reveal: boolean;
+  open_external: boolean;
+  copy_logical_path: boolean;
+}
+
+export interface OWOPResourceDescriptor {
+  resource: OWOPResourceKey;
+  resolution_id: string;
+  state: "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported";
+  display_name: string;
+  logical_path?: string;
+  kind: "file" | "directory" | "artifact" | "unknown";
+  current_version: OWOPResourceVersion;
+  observed_version?: OWOPResourceVersion;
+  capabilities: OWOPResourceCapabilities;
+  preview?: Record<string, unknown>;
+}
+
+export interface OWOPResourceObservation {
+  association_id?: string;
+  resource: OWOPResourceKey;
+  observed_version_id?: string;
+  requested_action?: "resolve" | "reveal" | "open_external" | "copy_logical_path" | "open_snapshot";
+}
+
+export interface OWOPResourceSafeError {
+  code: "resource_not_found" | "workspace_mismatch" | "resource_version_conflict" | "preview_unsupported" | "resource_too_large" | "integrity_mismatch" | "rate_limited" | "action_cancelled" | "offline" | "unsupported";
+  retryable: boolean;
+  retry_after_ms?: number;
+}
+
+export interface OWOPResourceResolveResult {
+  association_id?: string;
+  resource: OWOPResourceKey;
+  descriptor?: OWOPResourceDescriptor;
+  error?: OWOPResourceSafeError;
+}
+
+export interface OWOPResourceEvent {
+  sequence: number;
+  event_id: string;
+  dedupe_key: string;
+  type: string;
+  data: Record<string, unknown>;
+}
+
 export interface OWOPTerminalScreenRun {
   text: string;
   style: Record<string, unknown>;
@@ -89,6 +170,16 @@ export interface FilesListParams {
   cursor?: string;
   depth?: number;
   limit: number;
+}
+
+export interface FilesRegisterParams {
+  path: string;
+  expected_digest?: string;
+}
+
+export interface FilesResolveParams {
+  file_id: string;
+  expected_digest?: string;
 }
 
 export interface FilesStatParams {
@@ -299,9 +390,62 @@ export interface ArtifactChunkParams {
   length: number;
 }
 
+export interface ResourcesRegisterParams {
+  authority_id: string;
+  resource_type: "file" | "artifact";
+  host_handle?: string;
+  logical_path?: string;
+  expected_digest?: string;
+  idempotency_key: string;
+}
+
+export interface ResourcesResolveBatchParams {
+  observations: Array<OWOPResourceObservation>;
+}
+
+export interface ResourcesReadParams {
+  resource: OWOPResourceKey;
+  version_id: string;
+  offset: number;
+  length: number;
+  purpose: "preview" | "download" | "open_snapshot";
+}
+
+export interface ResourcesPreviewParams {
+  resource: OWOPResourceKey;
+  version_id: string;
+  accept_kinds: Array<string>;
+  max_bytes: number;
+}
+
+export interface ResourcesDownloadPrepareParams {
+  resource: OWOPResourceKey;
+  version_id: string;
+  suggested_name?: string;
+  resume_offset?: number;
+}
+
+export interface ResourcesDownloadChunkParams {
+  download_id: string;
+  offset: number;
+  length: number;
+}
+
+export interface ResourcesDownloadCancelParams {
+  download_id: string;
+}
+
+export interface ResourcesSubscribeParams {
+  after_sequence: number;
+  resource_ids?: Array<string>;
+  limit?: number;
+}
+
 export interface OWOPParamsByOperation {
   "workspace.describe": WorkspaceDescribeParams;
   "files.list": FilesListParams;
+  "files.register": FilesRegisterParams;
+  "files.resolve": FilesResolveParams;
   "files.stat": FilesStatParams;
   "files.read": FilesReadParams;
   "files.write": FilesWriteParams;
@@ -341,6 +485,79 @@ export interface OWOPParamsByOperation {
   "checkpoint.accept": CheckpointAcceptParams;
   "artifact.metadata": ArtifactMetadataParams;
   "artifact.chunk": ArtifactChunkParams;
+  "resources.register": ResourcesRegisterParams;
+  "resources.resolve_batch": ResourcesResolveBatchParams;
+  "resources.read": ResourcesReadParams;
+  "resources.preview": ResourcesPreviewParams;
+  "resources.download.prepare": ResourcesDownloadPrepareParams;
+  "resources.download.chunk": ResourcesDownloadChunkParams;
+  "resources.download.cancel": ResourcesDownloadCancelParams;
+  "resources.subscribe": ResourcesSubscribeParams;
+}
+
+export interface FilesRegisterResult {
+  resource: OWOPFileResource;
+}
+
+export interface FilesResolveResult {
+  resource: OWOPFileResource;
+}
+
+export interface ResourcesRegisterResult {
+  resource: OWOPResourceKey;
+  version: OWOPResourceVersion;
+}
+
+export interface ResourcesResolveBatchResult {
+  results: Array<OWOPResourceResolveResult>;
+}
+
+export interface ResourcesReadResult {
+  content_base64: string;
+  offset: number;
+  length: number;
+  eof: boolean;
+  version_id: string;
+  chunk_digest: string;
+}
+
+export interface ResourcesPreviewResult {
+  kind: string;
+  version_id: string;
+  mime_type?: string;
+  content_base64?: string;
+  preview_handle?: string;
+  digest?: string;
+  expires_at?: string;
+}
+
+export interface ResourcesDownloadPrepareResult {
+  download_id: string;
+  version_id: string;
+  size: number;
+  digest: string;
+  transport: "owop_chunks" | "https";
+  url?: string;
+  expires_at: string;
+}
+
+export interface ResourcesDownloadChunkResult {
+  download_id: string;
+  content_base64: string;
+  offset: number;
+  length: number;
+  eof: boolean;
+  chunk_digest: string;
+}
+
+export interface ResourcesDownloadCancelResult {
+  cancelled: boolean;
+}
+
+export interface ResourcesSubscribeResult {
+  subscription_id: string;
+  cursor: string;
+  events?: Array<OWOPResourceEvent>;
 }
 
 export interface GitWorktreeListResult {
@@ -413,6 +630,16 @@ export interface PtyKillResult {
 }
 
 export interface OWOPResultsByOperation {
+  "files.register": FilesRegisterResult;
+  "files.resolve": FilesResolveResult;
+  "resources.register": ResourcesRegisterResult;
+  "resources.resolve_batch": ResourcesResolveBatchResult;
+  "resources.read": ResourcesReadResult;
+  "resources.preview": ResourcesPreviewResult;
+  "resources.download.prepare": ResourcesDownloadPrepareResult;
+  "resources.download.chunk": ResourcesDownloadChunkResult;
+  "resources.download.cancel": ResourcesDownloadCancelResult;
+  "resources.subscribe": ResourcesSubscribeResult;
   "git.worktree.list": GitWorktreeListResult;
   "git.worktree.create": GitWorktreeCreateResult;
   "git.worktree.describe": GitWorktreeDescribeResult;

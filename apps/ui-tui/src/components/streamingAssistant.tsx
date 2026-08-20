@@ -54,6 +54,7 @@ import { $current } from '../app/turnStore.js'
 import { $showReasoning, $terminalFocused, $toolDetail } from '../app/uiStore.js'
 import { useTerminalSize } from '../hooks/terminalSizeStore.js'
 import { theme } from '../theme.js'
+import { resourceCommand } from '../resourcePresentation.js'
 
 import { stripThinkBlocks } from './markdownRenderer.js'
 import { ToolCallLine } from './toolCallLine.js'
@@ -378,7 +379,10 @@ export function StreamingAssistant() {
         }
         if (part.kind === 'artifact') {
           const location = part.path || part.name
-          return <Text key={part.id} color={theme.primary}>{`📄 ${part.name} · ${location} · /artifact ${part.artifactId}`}</Text>
+          const command = part.resourceRef
+            ? resourceCommand(part.resourceRef, part.artifactId)
+            : `/artifact ${part.artifactId}`
+          return <Text key={part.id} color={theme.primary}>{`📄 ${part.name} · ${location} · ${command}`}</Text>
         }
         // Text part — clean and render as plain <Text> (no Markdown
         // during streaming, for performance).

@@ -7,6 +7,7 @@ import ai.drsai.remote.data.ConversationEntity
 import ai.drsai.remote.data.MessageAttachment
 import ai.drsai.remote.data.OaepDiagnosticEventUi
 import ai.drsai.remote.remote.generated.OaepMessageContent
+import ai.drsai.remote.remote.generated.OaepLegacyMessagePart
 import ai.drsai.remote.remote.data.OaepJsonCodec
 import ai.drsai.remote.remote.model.RemoteTranscriptMessage
 import ai.drsai.remote.remote.model.projectOaepMessages
@@ -198,8 +199,8 @@ class LocalOaepLegacyProjection(
                 val content = item.content as OaepMessageContent
                 val messageId = item.source.backendItemId ?: item.id
                 val partsByResource = content.parts.mapNotNull { part ->
-                    val ref = part["resource_ref"] as? Map<*, *> ?: return@mapNotNull null
-                    (ref["resource_id"] as? String)?.let { it to part }
+                    val legacy = part as? OaepLegacyMessagePart ?: return@mapNotNull null
+                    legacy.resourceRef?.resourceId?.let { it to legacy }
                 }.toMap()
                 ChatMessage(
                     id = messageId,
@@ -217,10 +218,10 @@ class LocalOaepLegacyProjection(
                             id = ref.resourceId,
                             messageId = messageId,
                             conversationId = sessionId,
-                            name = (part?.get("name") as? String) ?: ref.label ?: ref.resourceId,
-                            mimeType = (part?.get("mime_type") as? String) ?: "application/octet-stream",
-                            size = (part?.get("size") as? Number)?.toLong() ?: 0,
-                            kind = (part?.get("type") as? String) ?: "file",
+                            name = part?.name ?: ref.label ?: ref.resourceId,
+                            mimeType = part?.mimeType ?: "application/octet-stream",
+                            size = 0,
+                            kind = part?.type ?: "file",
                             sha256 = ref.digest.orEmpty(),
                             status = "sent",
                             createdAt = instantMillis(item.createdAt),

@@ -113,12 +113,16 @@ class RemoteWorkspaceContainer private constructor(private val app: Application)
         session = RemoteSessionBoundary(repository, stream, oaepSessions, legacyConversations),
         run = RemoteRunBoundary(repository, stream, runControls),
         approval = RemoteApprovalBoundary(repository, approvalDecisions),
-        file = RemoteFileBoundary(::workspace),
+        file = RemoteFileBoundary(::workspace, ::conversationResources),
         push = RemotePushBoundary(relayDiscovery, repository, repository),
     )
 
     private fun workspace(runtimeId: RuntimeId): RelayWorkspaceOperationsClient = RelayWorkspaceOperationsClient(
         HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current, http, deviceProof),
+    )
+
+    private fun conversationResources(runtimeId: RuntimeId): ConversationResourceClient = ConversationResourceClient(
+        RelayResourceOperationsClient(HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current, http, deviceProof)),
     )
 
     companion object {

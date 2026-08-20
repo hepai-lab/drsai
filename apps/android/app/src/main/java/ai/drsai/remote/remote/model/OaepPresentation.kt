@@ -124,7 +124,7 @@ fun projectOaepPresentation(
             val items = itemsByRun[run.id].orEmpty().sortedWith(compareBy<OaepItem> { it.sequence }.thenBy { it.id })
             items.filter { (it.content as? OaepMessageContent)?.role == "user" }.forEach { item ->
                 val content = item.content as OaepMessageContent
-                add(OaepTimelineEntry.UserMessage(item.id, sanitizeRemoteTranscriptText(content.text), content.toResources()))
+                add(OaepTimelineEntry.UserMessage(item.id, sanitizeRemoteTranscriptText(content.text), content.toTranscriptResources(item.associations)))
             }
             val process = mutableListOf<OaepProcessItem>()
             val interactions = mutableListOf<OaepInteractionItem>()
@@ -225,11 +225,6 @@ private fun safeTaskStep(value: Map<String, Any?>): OaepTaskStep? {
         if (it in setOf("pending", "running", "waiting", "completed", "failed", "cancelled")) it else "pending"
     }
     return OaepTaskStep(title, status)
-}
-
-private fun OaepMessageContent.toResources(): List<RemoteTranscriptResource> = resourceRefs.map { ref ->
-    val part = parts.firstOrNull { ((it["resource_ref"] as? Map<*, *>)?.get("resource_id") as? String) == ref.resourceId }
-    RemoteTranscriptResource(ref.resourceId, ref.label ?: (part?.get("name") as? String) ?: ref.resourceId, (part?.get("type") as? String) ?: ref.resourceType, (part?.get("mime_type") as? String) ?: "application/octet-stream", (part?.get("size") as? Number)?.toLong(), ref.digest)
 }
 
 private fun safePresentationResult(result: Any?, status: String): String = when (result) {

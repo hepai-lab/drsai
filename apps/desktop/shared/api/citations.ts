@@ -1,4 +1,5 @@
 import type { CitationPart, StructuredPartStatus } from "./structuredConversation";
+import type { OaepResourceRef } from "./oaep.generated";
 
 /**
  * Citation payloads carried on an OAEP assistant message.
@@ -25,6 +26,7 @@ export interface OaepCitationPayload {
   url?: string;
   path?: string;
   relation?: string;
+  resource_ref?: OaepResourceRef;
   locator?: {
     kind?: string;
     label?: string;
@@ -153,6 +155,7 @@ export function projectCitationParts(
       ...(knowledgeBaseId ? { knowledgeBaseId } : {}),
       ...(documentPath ? { documentPath } : {}),
       ...(lines ? { lineStart: lines.start, lineEnd: lines.end } : {}),
+      ...(payload.resource_ref?.protocol === "owop/1" ? { resourceRef: payload.resource_ref } : {}),
       markdownPartId,
     });
   });

@@ -1,10 +1,10 @@
 """Generated from cores/protocol/oaep/oaep.schema.json; do not edit."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 from typing_extensions import NotRequired, Required, TypedDict
 
-OAEP_SCHEMA_SHA256 = '1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09'
+OAEP_SCHEMA_SHA256 = 'e207c75c2f37e121dc613aec040c24fd5bd2c6f4f005826c8996a6bb848770b7'
 OAEP_VERSION = '1.0'
 OAEP_PROFILE = "oaep.session-stream/1"
 OaepItemType = Literal["message", "reasoning", "plan", "command_execution", "file_change", "tool_call", "artifact", "interaction", "subtask", "notice"]
@@ -42,6 +42,20 @@ class OaepOperationRef(TypedDict):
     correlation_id: str
 
 
+class OaepResourceLocator(TypedDict, total=False):
+    kind: Required[Literal["text_range", "page", "slide", "sheet_cell", "time_range"]]
+    line: int
+    column: int
+    end_line: int
+    end_column: int
+    page: int
+    slide: int
+    sheet: str
+    cell: str
+    start_ms: int
+    end_ms: int
+
+
 class OaepResourceRef(TypedDict, total=False):
     protocol: Required[Literal["owop/1"]]
     workspace_id: Required[str]
@@ -50,6 +64,61 @@ class OaepResourceRef(TypedDict, total=False):
     operation_id: str
     label: str
     digest: str
+    relation: Literal["input_reference", "input_attachment", "output_artifact", "citation_source", "file_change_target", "derived_from", "related"]
+    locator: OaepResourceLocator
+    presentation: Literal["inline", "card", "activity"]
+
+
+class OaepResourceKey(TypedDict):
+    protocol: Literal["owop/1"]
+    authority_id: str
+    workspace_id: str
+    resource_type: Literal["workspace", "worktree", "file", "git", "process", "pty", "checkpoint", "artifact"]
+    resource_id: str
+    generation: int
+
+
+class OaepResourceVersionSnapshot(TypedDict, total=False):
+    version_id: Required[str]
+    digest: str
+    size: int
+    mime_type: str
+    captured_at: str
+
+
+class OaepResourceAssociation(TypedDict, total=False):
+    association_id: Required[str]
+    resource: Required[OaepResourceKey]
+    relation: Required[Literal["input_reference", "input_attachment", "output_artifact", "citation_source", "file_change_target", "derived_from", "related"]]
+    label_snapshot: Required[str]
+    version_snapshot: OaepResourceVersionSnapshot
+    locator: OaepResourceLocator
+    presentation: Required[Literal["inline", "card", "activity"]]
+    operation_id: str
+
+
+class OaepLegacyMessagePart(TypedDict, total=False):
+    type: Required[Literal["text", "image", "audio", "file", "resource_ref"]]
+    text: str
+    url: str
+    name: str
+    mime_type: str
+    resource_ref: OaepResourceRef
+
+
+class OaepTextMessagePart(TypedDict):
+    part_id: str
+    type: Literal["text"]
+    text: str
+
+
+class OaepResourceMessagePart(TypedDict):
+    part_id: str
+    type: Literal["resource"]
+    association_id: str
+
+
+OaepMessagePart: TypeAlias = OaepLegacyMessagePart | OaepTextMessagePart | OaepResourceMessagePart
 
 
 class OaepMessageContent(TypedDict, total=False):
@@ -57,7 +126,7 @@ class OaepMessageContent(TypedDict, total=False):
     text: Required[str]
     phase: Literal["commentary", "final"]
     citations: list[dict[str, Any]]
-    parts: list[dict[str, Any]]
+    parts: list[OaepMessagePart]
     operation_ref: OaepOperationRef
     resource_refs: list[OaepResourceRef]
 
@@ -205,6 +274,7 @@ class OaepItem(TypedDict, total=False):
     created_at: Required[str]
     updated_at: Required[str]
     source: Required[OaepSource]
+    associations: list[OaepResourceAssociation]
     content: Required[OaepItemContent]
 
 
@@ -256,6 +326,7 @@ class OaepSnapshot(TypedDict, total=False):
     runs: Required[list[OaepRun]]
     items: Required[list[OaepItem]]
     snapshot_sequence: Required[int]
+    mapping_version: str
     checkpoint: OaepSnapshotCheckpoint
     window: OaepSnapshotWindow
 

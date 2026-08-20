@@ -210,8 +210,8 @@ class P5LongSessionPerformanceTest {
         listOf(OaepRun(RUN, SESSION, null, status = "completed", createdAt = "now",
             updatedAt = "now", completedAt = "now")),
         items, TOTAL_ITEMS.toLong(),
-        OaepSnapshotCheckpoint(TOTAL_ITEMS.toLong(), "a".repeat(64), TOTAL_ITEMS.toLong()),
-        OaepSnapshotWindow(WINDOW_SIZE, hasMore, if (hasMore) "opaque-synthetic-cursor" else null),
+        checkpoint = OaepSnapshotCheckpoint(TOTAL_ITEMS.toLong(), "a".repeat(64), TOTAL_ITEMS.toLong()),
+        window = OaepSnapshotWindow(WINDOW_SIZE, hasMore, if (hasMore) "opaque-synthetic-cursor" else null),
     )
 
     private fun items(range: LongRange) = range.map { sequence ->

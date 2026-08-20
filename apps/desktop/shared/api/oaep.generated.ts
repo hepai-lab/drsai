@@ -1,5 +1,5 @@
 // Generated from cores/protocol/oaep/oaep.schema.json; do not edit.
-export const OAEP_SCHEMA_SHA256 = "1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09" as const;
+export const OAEP_SCHEMA_SHA256 = "e207c75c2f37e121dc613aec040c24fd5bd2c6f4f005826c8996a6bb848770b7" as const;
 export const OAEP_VERSION = "1.0" as const;
 export const OAEP_PROFILE = "oaep.session-stream/1" as const;
 export type OaepItemType = "message" | "reasoning" | "plan" | "command_execution" | "file_change" | "tool_call" | "artifact" | "interaction" | "subtask" | "notice";
@@ -8,9 +8,16 @@ export type OaepEventType = "event.session.created" | "event.session.updated" | 
 export interface OaepSource { backend: string; backend_item_id?: string; backend_event_id?: string; client?: string; message_id?: string; runtime_id?: string; backend_version?: string; adapter?: string; adapter_version?: string; mapping_version?: string; backend_run_id?: string; backend_run_index?: number; }
 export interface OaepError { code: string; message: string; retryable: boolean; details?: Record<string, unknown>; }
 export interface OaepOperationRef { protocol: "owop/1"; operation_id: string; workspace_id: string; operation: string; correlation_id: string; }
-export interface OaepResourceRef { protocol: "owop/1"; workspace_id: string; resource_type: "workspace" | "worktree" | "file" | "git" | "process" | "pty" | "checkpoint" | "artifact"; resource_id: string; operation_id?: string; label?: string; digest?: string; }
+export interface OaepResourceLocator { kind: "text_range" | "page" | "slide" | "sheet_cell" | "time_range"; line?: number; column?: number; end_line?: number; end_column?: number; page?: number; slide?: number; sheet?: string; cell?: string; start_ms?: number; end_ms?: number; }
+export interface OaepResourceRef { protocol: "owop/1"; workspace_id: string; resource_type: "workspace" | "worktree" | "file" | "git" | "process" | "pty" | "checkpoint" | "artifact"; resource_id: string; operation_id?: string; label?: string; digest?: string; relation?: "input_reference" | "input_attachment" | "output_artifact" | "citation_source" | "file_change_target" | "derived_from" | "related"; locator?: OaepResourceLocator; presentation?: "inline" | "card" | "activity"; }
+export interface OaepResourceKey { protocol: "owop/1"; authority_id: string; workspace_id: string; resource_type: "workspace" | "worktree" | "file" | "git" | "process" | "pty" | "checkpoint" | "artifact"; resource_id: string; generation: number; }
+export interface OaepResourceVersionSnapshot { version_id: string; digest?: string; size?: number; mime_type?: string; captured_at?: string; }
+export interface OaepResourceAssociation { association_id: string; resource: OaepResourceKey; relation: "input_reference" | "input_attachment" | "output_artifact" | "citation_source" | "file_change_target" | "derived_from" | "related"; label_snapshot: string; version_snapshot?: OaepResourceVersionSnapshot; locator?: OaepResourceLocator; presentation: "inline" | "card" | "activity"; operation_id?: string; }
 export interface OaepContentReferences { operation_ref?: OaepOperationRef; resource_refs?: OaepResourceRef[]; }
-export interface OaepMessagePart { type: "text" | "image" | "audio" | "file" | "resource_ref"; text?: string; url?: string; name?: string; mime_type?: string; resource_ref?: OaepResourceRef; }
+export type OaepMessagePart =
+  | { part_id: string; type: "text"; text: string }
+  | { part_id: string; type: "resource"; association_id: string }
+  | { type: "text" | "image" | "audio" | "file" | "resource_ref"; part_id?: never; text?: string; url?: string; name?: string; mime_type?: string; resource_ref?: OaepResourceRef };
 export interface OaepMessageContent extends OaepContentReferences { role: "user" | "assistant" | "system"; text: string; phase?: "commentary" | "final"; citations?: Record<string, unknown>[]; parts?: OaepMessagePart[]; }
 export interface OaepReasoningContent extends OaepContentReferences { segments: Array<{id: string; text: string; kind?: "summary" | "commentary" | "analysis"; visibility?: "user" | "diagnostic" | "hidden"; source?: "backend" | "adapter" | "runtime"}>; }
 export interface OaepPlanContent extends OaepContentReferences { text: string; steps: Array<{id: string; title: string; status: string}>; explanation?: string; }
@@ -25,7 +32,7 @@ export interface OaepNoticeContent extends OaepContentReferences { level: "info"
 export type OaepItemContent = OaepMessageContent | OaepReasoningContent | OaepPlanContent | OaepCommandExecutionContent | OaepToolCallContent | OaepFileChangeContent | OaepArtifactContent | OaepInteractionContent | OaepSubtaskContent | OaepNoticeContent;
 export interface OaepSession { id: string; workspace_id: string; title?: string; status: "active" | "archived" | "deleted"; backend?: string; created_at: string; updated_at: string; }
 export interface OaepRun { id: string; session_id: string; parent_run_id?: string | null; sequence?: number; source?: OaepSource; status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled"; created_at: string; updated_at: string; completed_at?: string | null; }
-export interface OaepItemBase { id: string; session_id: string; run_id: string; status: OaepItemStatus; sequence: number; created_at: string; updated_at: string; source: OaepSource; }
+export interface OaepItemBase { id: string; session_id: string; run_id: string; status: OaepItemStatus; sequence: number; created_at: string; updated_at: string; source: OaepSource; associations?: OaepResourceAssociation[]; }
 export type OaepItem =
   | (OaepItemBase & { type: "message"; content: OaepMessageContent })
   | (OaepItemBase & { type: "reasoning"; content: OaepReasoningContent })
@@ -42,5 +49,5 @@ export interface OaepEventData { item?: OaepItem; delta?: OaepDelta; error?: Oae
 export interface OaepEvent { version: typeof OAEP_VERSION; event_id: string; session_id: string; run_id?: string; item_id?: string; sequence: number; type: OaepEventType; timestamp: string; dedupe_key: string; source: OaepSource; data: OaepEventData; }
 export interface OaepSnapshotCheckpoint { sequence: number; snapshot_hash: string; item_count: number; }
 export interface OaepSnapshotWindow { limit: number; has_more: boolean; next_cursor: string | null; }
-export interface OaepSnapshot { version: typeof OAEP_VERSION; session: OaepSession; runs: OaepRun[]; items: OaepItem[]; snapshot_sequence: number; checkpoint?: OaepSnapshotCheckpoint; window?: OaepSnapshotWindow; }
+export interface OaepSnapshot { version: typeof OAEP_VERSION; session: OaepSession; runs: OaepRun[]; items: OaepItem[]; snapshot_sequence: number; mapping_version?: string; checkpoint?: OaepSnapshotCheckpoint; window?: OaepSnapshotWindow; }
 export interface OaepEventPage { version: typeof OAEP_VERSION; object: "list"; data: OaepEvent[]; next_sequence: number; has_more: boolean; }

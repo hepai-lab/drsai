@@ -11,6 +11,7 @@ import ai.drsai.remote.data.MessageEntity
 import ai.drsai.remote.data.ToolArtifactEntity
 import ai.drsai.remote.remote.generated.OaepArtifactContent
 import ai.drsai.remote.remote.generated.OaepMessageContent
+import ai.drsai.remote.remote.generated.OaepLegacyMessagePart
 import ai.drsai.remote.runtime.oaep.AndroidOaepOwner
 import ai.drsai.remote.runtime.oaep.LegacyOaepBackfill
 import ai.drsai.remote.runtime.oaep.LegacyOaepShadowAuditor
@@ -96,7 +97,7 @@ class LegacyOaepBackfillTest {
             .map { (it.content as OaepMessageContent).text })
         val user = snapshot.items.single { it.source.backendItemId == "message-a1" }.content as OaepMessageContent
         assertEquals("attachment-a", user.resourceRefs.single().resourceId)
-        assertEquals("image", user.parts.last()["type"])
+        assertEquals("image", (user.parts.last() as OaepLegacyMessagePart).type)
         assertTrue(user.parts.toString().contains("/legacy/private/path.png").not())
         assertEquals("tool receipt", (snapshot.items.single { it.type == "artifact" }.content as OaepArtifactContent).summary)
         val migratedEvent = snapshot.items.single {

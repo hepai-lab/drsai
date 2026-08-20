@@ -4,7 +4,7 @@
   "title": "OpenDrSai Runtime Relay Protocol",
   "version": "2.0.0",
   "protocol_version": "owop/1",
-  "x-oaep-schema-sha256": "1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09",
+  "x-oaep-schema-sha256": "e207c75c2f37e121dc613aec040c24fd5bd2c6f4f005826c8996a6bb848770b7",
   "x-relay-latency-observability": {
     "schema_version": "p6-relay-latency/1",
     "stages": [
@@ -19,11 +19,22 @@
     "sample_limit": 100000,
     "minimum_complete_correlations": 20,
     "minimum_worker_count": 2,
-    "multi_worker_ready_requires": ["complete_correlations", "worker_count"],
-    "failure_modes": ["missing_stage", "single_worker", "duplicate_conflict", "out_of_order"],
+    "multi_worker_ready_requires": [
+      "complete_correlations",
+      "worker_count"
+    ],
+    "failure_modes": [
+      "missing_stage",
+      "single_worker",
+      "duplicate_conflict",
+      "out_of_order"
+    ],
     "worker_identity": "internal_sha256_only",
     "public_worker_dimension": "worker_count",
-    "persistent_layers": ["redis", "postgresql"],
+    "persistent_layers": [
+      "redis",
+      "postgresql"
+    ],
     "authorization_precedes_body_and_storage": true,
     "content_free": true
   },
@@ -32,19 +43,37 @@
     "minimum_complete_samples": 20,
     "journeys": {
       "first_screen": {
-        "stages": ["cache_load", "authority_refresh", "first_render"],
+        "stages": [
+          "cache_load",
+          "authority_refresh",
+          "first_render"
+        ],
         "threshold_ms": 2000
       },
       "event_to_render": {
-        "stages": ["runtime_receive", "runtime_commit", "relay_fanout", "android_receive", "android_render"],
+        "stages": [
+          "runtime_receive",
+          "runtime_commit",
+          "relay_fanout",
+          "android_receive",
+          "android_render"
+        ],
         "threshold_ms": 1000
       },
       "operation_confirmation": {
-        "stages": ["request_dispatch", "runtime_commit", "confirmation_render"],
+        "stages": [
+          "request_dispatch",
+          "runtime_commit",
+          "confirmation_render"
+        ],
         "threshold_ms": 2000
       },
       "reconnect": {
-        "stages": ["disconnect_detect", "transport_restore", "replay_catchup"],
+        "stages": [
+          "disconnect_detect",
+          "transport_restore",
+          "replay_catchup"
+        ],
         "threshold_ms": 30000
       }
     },
@@ -590,8 +619,8 @@
           "enum": [
             "windows",
             "android",
-              "runtime",
-              "wechat"
+            "runtime",
+            "wechat"
           ]
         },
         "source_message_id": {
@@ -868,9 +897,18 @@
         "first_render_at_ms"
       ],
       "properties": {
-        "cache_load_at_ms": { "type": "integer", "minimum": 0 },
-        "authority_refresh_at_ms": { "type": "integer", "minimum": 0 },
-        "first_render_at_ms": { "type": "integer", "minimum": 0 }
+        "cache_load_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "authority_refresh_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "first_render_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": false
     },
@@ -882,9 +920,18 @@
         "confirmation_render_at_ms"
       ],
       "properties": {
-        "request_dispatch_at_ms": { "type": "integer", "minimum": 0 },
-        "runtime_commit_at_ms": { "type": "integer", "minimum": 0 },
-        "confirmation_render_at_ms": { "type": "integer", "minimum": 0 }
+        "request_dispatch_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runtime_commit_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confirmation_render_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": false
     },
@@ -896,9 +943,18 @@
         "replay_catchup_at_ms"
       ],
       "properties": {
-        "disconnect_detect_at_ms": { "type": "integer", "minimum": 0 },
-        "transport_restore_at_ms": { "type": "integer", "minimum": 0 },
-        "replay_catchup_at_ms": { "type": "integer", "minimum": 0 }
+        "disconnect_detect_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transport_restore_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "replay_catchup_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": false
     },
@@ -1121,18 +1177,27 @@
         "latencies_ms"
       ],
       "properties": {
-        "ready": { "type": "boolean" },
+        "ready": {
+          "type": "boolean"
+        },
         "stages_present": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "latencies_ms": {
           "oneOf": [
             {
               "type": "object",
-              "additionalProperties": { "type": "integer", "minimum": 0 }
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
             },
-            { "type": "null" }
+            {
+              "type": "null"
+            }
           ]
         }
       },

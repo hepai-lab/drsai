@@ -8,11 +8,11 @@ try:
 except ImportError:  # Python 3.9 compatibility for tooling hosts
     from typing_extensions import NotRequired, Required, TypeAlias
 
-SCHEMA_SHA256 = "a28d3495df280792eef80ce3c932525cc98f9d09601342b0f400009bb137fe9f"
+SCHEMA_SHA256 = "ebdbf06e783d100a8c49bcfc913469e102251a9e13082fba7385de13b5f0bec7"
 OWOP_VERSION = '1.0'
-OWOPCapability: TypeAlias = Literal['workspace', 'worktree', 'files', 'search', 'watch', 'git', 'process', 'pty', 'checkpoint', 'artifact']
+OWOPCapability: TypeAlias = Literal['workspace', 'worktree', 'files', 'search', 'watch', 'git', 'process', 'pty', 'checkpoint', 'artifact', 'resources.v2']
 OWOPBindingKind: TypeAlias = Literal['in_process', 'local_ipc', 'ssh', 'hepai_if', 'mcp', 'ddf', 'relay']
-OWOPOperation: TypeAlias = Literal['workspace.describe', 'files.list', 'files.stat', 'files.read', 'files.write', 'files.move', 'files.remove', 'search.query', 'watch.subscribe', 'git.status', 'git.diff', 'git.file_at_ref', 'git.stage', 'git.unstage', 'git.revert', 'git.commit', 'git.worktree.list', 'git.worktree.create', 'git.worktree.describe', 'git.worktree.merge', 'git.worktree.archive', 'git.worktree.remove', 'git.worktree.prune', 'process.start', 'process.write', 'process.attach', 'process.kill', 'pty.list', 'pty.describe', 'pty.create', 'pty.write', 'pty.resize', 'pty.attach', 'pty.detach', 'pty.kill', 'checkpoint.create', 'checkpoint.preview', 'checkpoint.restore', 'checkpoint.accept', 'artifact.metadata', 'artifact.chunk']
+OWOPOperation: TypeAlias = Literal['workspace.describe', 'files.list', 'files.register', 'files.resolve', 'files.stat', 'files.read', 'files.write', 'files.move', 'files.remove', 'search.query', 'watch.subscribe', 'git.status', 'git.diff', 'git.file_at_ref', 'git.stage', 'git.unstage', 'git.revert', 'git.commit', 'git.worktree.list', 'git.worktree.create', 'git.worktree.describe', 'git.worktree.merge', 'git.worktree.archive', 'git.worktree.remove', 'git.worktree.prune', 'process.start', 'process.write', 'process.attach', 'process.kill', 'pty.list', 'pty.describe', 'pty.create', 'pty.write', 'pty.resize', 'pty.attach', 'pty.detach', 'pty.kill', 'checkpoint.create', 'checkpoint.preview', 'checkpoint.restore', 'checkpoint.accept', 'artifact.metadata', 'artifact.chunk', 'resources.register', 'resources.resolve_batch', 'resources.read', 'resources.preview', 'resources.download.prepare', 'resources.download.chunk', 'resources.download.cancel', 'resources.subscribe']
 
 class OWOPWorktreeResource(TypedDict, total=False):
     worktree_id: Required[str]
@@ -69,6 +69,78 @@ class OWOPTerminalOutputEvent(TypedDict, total=False):
     created_at: Required[float]
     content_base64: Required[str]
 
+class OWOPFileResource(TypedDict, total=False):
+    file_id: Required[str]
+    path: Required[str]
+    name: Required[str]
+    kind: Required[str]
+    mime_type: Required[str | None]
+    size: Required[int]
+    modified_ns: Required[int]
+    digest: Required[Any]
+    state: Required[str]
+    capabilities: Required[dict[str, Any]]
+
+class OWOPResourceKey(TypedDict, total=False):
+    protocol: Required[str]
+    authority_id: Required[str]
+    workspace_id: Required[str]
+    resource_type: Required[str]
+    resource_id: Required[str]
+    generation: Required[int]
+
+class OWOPResourceVersion(TypedDict, total=False):
+    version_id: Required[str]
+    digest: Required[str]
+    size: Required[int]
+    mime_type: Required[str | None]
+    modified_at: Required[str]
+
+class OWOPResourceCapabilities(TypedDict, total=False):
+    read_current: Required[bool]
+    read_snapshot: Required[bool]
+    preview: Required[bool]
+    download: Required[bool]
+    reveal: Required[bool]
+    open_external: Required[bool]
+    copy_logical_path: Required[bool]
+
+class OWOPResourceDescriptor(TypedDict, total=False):
+    resource: Required[OWOPResourceKey]
+    resolution_id: Required[str]
+    state: Required[str]
+    display_name: Required[str]
+    logical_path: NotRequired[str]
+    kind: Required[str]
+    current_version: Required[OWOPResourceVersion]
+    observed_version: NotRequired[OWOPResourceVersion]
+    capabilities: Required[OWOPResourceCapabilities]
+    preview: NotRequired[dict[str, Any]]
+
+class OWOPResourceObservation(TypedDict, total=False):
+    association_id: NotRequired[str]
+    resource: Required[OWOPResourceKey]
+    observed_version_id: NotRequired[str]
+    requested_action: NotRequired[str]
+
+class OWOPResourceSafeError(TypedDict, total=False):
+    code: Required[str]
+    retryable: Required[bool]
+    retry_after_ms: NotRequired[int]
+
+class OWOPResourceResolveResult(TypedDict, total=False):
+    association_id: NotRequired[str]
+    resource: Required[OWOPResourceKey]
+    descriptor: NotRequired[OWOPResourceDescriptor]
+    error: NotRequired[OWOPResourceSafeError]
+
+class OWOPResourceEvent(TypedDict, total=False):
+    sequence: Required[int]
+    event_id: Required[str]
+    dedupe_key: Required[str]
+    type: Required[str]
+    data: Required[dict[str, Any]]
+
 class OWOPTerminalScreenRun(TypedDict, total=False):
     text: Required[str]
     style: Required[dict[str, Any]]
@@ -93,6 +165,14 @@ class FilesListParams(TypedDict, total=False):
     cursor: NotRequired[str]
     depth: NotRequired[int]
     limit: Required[int]
+
+class FilesRegisterParams(TypedDict, total=False):
+    path: Required[str]
+    expected_digest: NotRequired[str]
+
+class FilesResolveParams(TypedDict, total=False):
+    file_id: Required[str]
+    expected_digest: NotRequired[str]
 
 class FilesStatParams(TypedDict, total=False):
     path: Required[str]
@@ -265,9 +345,54 @@ class ArtifactChunkParams(TypedDict, total=False):
     offset: Required[int]
     length: Required[int]
 
+class ResourcesRegisterParams(TypedDict, total=False):
+    authority_id: Required[str]
+    resource_type: Required[str]
+    host_handle: NotRequired[str]
+    logical_path: NotRequired[str]
+    expected_digest: NotRequired[str]
+    idempotency_key: Required[str]
+
+class ResourcesResolveBatchParams(TypedDict, total=False):
+    observations: Required[list[OWOPResourceObservation]]
+
+class ResourcesReadParams(TypedDict, total=False):
+    resource: Required[OWOPResourceKey]
+    version_id: Required[str]
+    offset: Required[int]
+    length: Required[int]
+    purpose: Required[str]
+
+class ResourcesPreviewParams(TypedDict, total=False):
+    resource: Required[OWOPResourceKey]
+    version_id: Required[str]
+    accept_kinds: Required[list[str]]
+    max_bytes: Required[int]
+
+class ResourcesDownloadPrepareParams(TypedDict, total=False):
+    resource: Required[OWOPResourceKey]
+    version_id: Required[str]
+    suggested_name: NotRequired[str]
+    resume_offset: NotRequired[int]
+
+class ResourcesDownloadChunkParams(TypedDict, total=False):
+    download_id: Required[str]
+    offset: Required[int]
+    length: Required[int]
+
+class ResourcesDownloadCancelParams(TypedDict, total=False):
+    download_id: Required[str]
+
+class ResourcesSubscribeParams(TypedDict, total=False):
+    after_sequence: Required[int]
+    resource_ids: NotRequired[list[str]]
+    limit: NotRequired[int]
+
 OWOP_PARAMS_BY_OPERATION: dict[str, type[TypedDict]] = {
     'workspace.describe': WorkspaceDescribeParams,
     'files.list': FilesListParams,
+    'files.register': FilesRegisterParams,
+    'files.resolve': FilesResolveParams,
     'files.stat': FilesStatParams,
     'files.read': FilesReadParams,
     'files.write': FilesWriteParams,
@@ -307,7 +432,70 @@ OWOP_PARAMS_BY_OPERATION: dict[str, type[TypedDict]] = {
     'checkpoint.accept': CheckpointAcceptParams,
     'artifact.metadata': ArtifactMetadataParams,
     'artifact.chunk': ArtifactChunkParams,
+    'resources.register': ResourcesRegisterParams,
+    'resources.resolve_batch': ResourcesResolveBatchParams,
+    'resources.read': ResourcesReadParams,
+    'resources.preview': ResourcesPreviewParams,
+    'resources.download.prepare': ResourcesDownloadPrepareParams,
+    'resources.download.chunk': ResourcesDownloadChunkParams,
+    'resources.download.cancel': ResourcesDownloadCancelParams,
+    'resources.subscribe': ResourcesSubscribeParams,
 }
+
+class FilesRegisterResult(TypedDict, total=False):
+    resource: Required[OWOPFileResource]
+
+class FilesResolveResult(TypedDict, total=False):
+    resource: Required[OWOPFileResource]
+
+class ResourcesRegisterResult(TypedDict, total=False):
+    resource: Required[OWOPResourceKey]
+    version: Required[OWOPResourceVersion]
+
+class ResourcesResolveBatchResult(TypedDict, total=False):
+    results: Required[list[OWOPResourceResolveResult]]
+
+class ResourcesReadResult(TypedDict, total=False):
+    content_base64: Required[str]
+    offset: Required[int]
+    length: Required[int]
+    eof: Required[bool]
+    version_id: Required[str]
+    chunk_digest: Required[str]
+
+class ResourcesPreviewResult(TypedDict, total=False):
+    kind: Required[str]
+    version_id: Required[str]
+    mime_type: NotRequired[str]
+    content_base64: NotRequired[str]
+    preview_handle: NotRequired[str]
+    digest: NotRequired[str]
+    expires_at: NotRequired[str]
+
+class ResourcesDownloadPrepareResult(TypedDict, total=False):
+    download_id: Required[str]
+    version_id: Required[str]
+    size: Required[int]
+    digest: Required[str]
+    transport: Required[str]
+    url: NotRequired[str]
+    expires_at: Required[str]
+
+class ResourcesDownloadChunkResult(TypedDict, total=False):
+    download_id: Required[str]
+    content_base64: Required[str]
+    offset: Required[int]
+    length: Required[int]
+    eof: Required[bool]
+    chunk_digest: Required[str]
+
+class ResourcesDownloadCancelResult(TypedDict, total=False):
+    cancelled: Required[bool]
+
+class ResourcesSubscribeResult(TypedDict, total=False):
+    subscription_id: Required[str]
+    cursor: Required[str]
+    events: NotRequired[list[OWOPResourceEvent]]
 
 class GitWorktreeListResult(TypedDict, total=False):
     worktrees: Required[list[OWOPWorktreeResource]]
@@ -364,6 +552,16 @@ class PtyKillResult(TypedDict, total=False):
     terminal: Required[OWOPTerminalResource]
 
 OWOP_RESULTS_BY_OPERATION: dict[str, type[TypedDict]] = {
+    'files.register': FilesRegisterResult,
+    'files.resolve': FilesResolveResult,
+    'resources.register': ResourcesRegisterResult,
+    'resources.resolve_batch': ResourcesResolveBatchResult,
+    'resources.read': ResourcesReadResult,
+    'resources.preview': ResourcesPreviewResult,
+    'resources.download.prepare': ResourcesDownloadPrepareResult,
+    'resources.download.chunk': ResourcesDownloadChunkResult,
+    'resources.download.cancel': ResourcesDownloadCancelResult,
+    'resources.subscribe': ResourcesSubscribeResult,
     'git.worktree.list': GitWorktreeListResult,
     'git.worktree.create': GitWorktreeCreateResult,
     'git.worktree.describe': GitWorktreeDescribeResult,

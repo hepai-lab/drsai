@@ -12,6 +12,26 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCHEMA = ROOT / "cores" / "protocol" / "owop" / "owop.schema.json"
 DEFAULT_PYTHON = ROOT / "cores" / "python" / "packages" / "drsai" / "src" / "drsai" / "owop" / "generated.py"
 DEFAULT_TYPESCRIPT = ROOT / "apps" / "desktop" / "shared" / "api" / "owop.generated.ts"
+DEFAULT_KOTLIN = ROOT / "apps" / "android" / "app" / "src" / "main" / "java" / "ai" / "drsai" / "remote" / "remote" / "generated" / "OwopSchemaGenerated.kt"
+
+PYTHON_REFS = {
+    "worktreeResource": "OWOPWorktreeResource",
+    "terminalResource": "OWOPTerminalResource",
+    "terminalOutputEvent": "OWOPTerminalOutputEvent",
+    "terminalScreenRun": "OWOPTerminalScreenRun",
+    "terminalScreenSnapshot": "OWOPTerminalScreenSnapshot",
+    "fileResource": "OWOPFileResource",
+    "resourceKey": "OWOPResourceKey",
+    "resourceVersion": "OWOPResourceVersion",
+    "resourceCapabilities": "OWOPResourceCapabilities",
+    "resourceDescriptor": "OWOPResourceDescriptor",
+    "resourceObservation": "OWOPResourceObservation",
+    "resourceSafeError": "OWOPResourceSafeError",
+    "resourceResolveResult": "OWOPResourceResolveResult",
+    "resourceEvent": "OWOPResourceEvent",
+}
+
+TYPESCRIPT_REFS = {name: generated.replace("OWOP", "OWOP", 1) for name, generated in PYTHON_REFS.items()}
 
 
 def class_name(operation: str) -> str:
@@ -25,16 +45,9 @@ def result_class_name(operation: str) -> str:
 def python_type(schema: Mapping[str, Any]) -> str:
     reference = schema.get("$ref")
     if reference:
-        if str(reference).endswith("/worktreeResource"):
-            return "OWOPWorktreeResource"
-        if str(reference).endswith("/terminalResource"):
-            return "OWOPTerminalResource"
-        if str(reference).endswith("/terminalOutputEvent"):
-            return "OWOPTerminalOutputEvent"
-        if str(reference).endswith("/terminalScreenRun"):
-            return "OWOPTerminalScreenRun"
-        if str(reference).endswith("/terminalScreenSnapshot"):
-            return "OWOPTerminalScreenSnapshot"
+        name = str(reference).rsplit("/", 1)[-1]
+        if name in PYTHON_REFS:
+            return PYTHON_REFS[name]
         return "str"
     schema_type = schema.get("type")
     if isinstance(schema_type, list):
@@ -58,16 +71,9 @@ def python_type(schema: Mapping[str, Any]) -> str:
 
 def typescript_type(schema: Mapping[str, Any]) -> str:
     if schema.get("$ref"):
-        if str(schema["$ref"]).endswith("/worktreeResource"):
-            return "OWOPWorktreeResource"
-        if str(schema["$ref"]).endswith("/terminalResource"):
-            return "OWOPTerminalResource"
-        if str(schema["$ref"]).endswith("/terminalOutputEvent"):
-            return "OWOPTerminalOutputEvent"
-        if str(schema["$ref"]).endswith("/terminalScreenRun"):
-            return "OWOPTerminalScreenRun"
-        if str(schema["$ref"]).endswith("/terminalScreenSnapshot"):
-            return "OWOPTerminalScreenSnapshot"
+        name = str(schema["$ref"]).rsplit("/", 1)[-1]
+        if name in TYPESCRIPT_REFS:
+            return TYPESCRIPT_REFS[name]
         return "string"
     if "enum" in schema:
         return " | ".join(json.dumps(item) for item in schema["enum"])
@@ -141,6 +147,15 @@ def generate_python(schema: Mapping[str, Any], digest: str) -> str:
             lines.append(f"    {name}: {wrapper}[{python_type(property_schema)}]")
         lines.append("")
     for definition, generated_name in (
+        ("fileResource", "OWOPFileResource"),
+        ("resourceKey", "OWOPResourceKey"),
+        ("resourceVersion", "OWOPResourceVersion"),
+        ("resourceCapabilities", "OWOPResourceCapabilities"),
+        ("resourceDescriptor", "OWOPResourceDescriptor"),
+        ("resourceObservation", "OWOPResourceObservation"),
+        ("resourceSafeError", "OWOPResourceSafeError"),
+        ("resourceResolveResult", "OWOPResourceResolveResult"),
+        ("resourceEvent", "OWOPResourceEvent"),
         ("terminalScreenRun", "OWOPTerminalScreenRun"),
         ("terminalScreenSnapshot", "OWOPTerminalScreenSnapshot"),
     ):
@@ -227,6 +242,15 @@ def generate_typescript(schema: Mapping[str, Any], digest: str) -> str:
         lines.append("}")
         lines.append("")
     for definition, generated_name in (
+        ("fileResource", "OWOPFileResource"),
+        ("resourceKey", "OWOPResourceKey"),
+        ("resourceVersion", "OWOPResourceVersion"),
+        ("resourceCapabilities", "OWOPResourceCapabilities"),
+        ("resourceDescriptor", "OWOPResourceDescriptor"),
+        ("resourceObservation", "OWOPResourceObservation"),
+        ("resourceSafeError", "OWOPResourceSafeError"),
+        ("resourceResolveResult", "OWOPResourceResolveResult"),
+        ("resourceEvent", "OWOPResourceEvent"),
         ("terminalScreenRun", "OWOPTerminalScreenRun"),
         ("terminalScreenSnapshot", "OWOPTerminalScreenSnapshot"),
     ):
@@ -295,11 +319,40 @@ def write_or_check(path: Path, content: str, check: bool) -> bool:
     return True
 
 
+def generate_kotlin(schema: Mapping[str, Any], digest: str) -> str:
+    quoted_operations = ",\n".join(f'        {json.dumps(value)}' for value in sorted(schema["x-owop-operations"]))
+    quoted_bindings = ",\n".join(f'        {json.dumps(value)}' for value in sorted(schema["x-owop-bindings"]))
+    quoted_capabilities = ",\n".join(f'        {json.dumps(value)}' for value in sorted(schema["x-owop-capabilities"]))
+    return f'''// Generated from cores/protocol/owop/owop.schema.json. Do not edit.
+package ai.drsai.remote.remote.generated
+
+object OwopSchemaGenerated {{
+    const val VERSION: String = {json.dumps(schema["version"])}
+    const val SCHEMA_SHA256: String = {json.dumps(digest)}
+    val OPERATIONS: Set<String> = setOf(
+{quoted_operations}
+    )
+    val BINDINGS: Set<String> = setOf(
+{quoted_bindings}
+    )
+    val CAPABILITIES: Set<String> = setOf(
+{quoted_capabilities}
+    )
+}}
+
+data class OwopResourceKey(val protocol: String = "owop/1", val authorityId: String, val workspaceId: String, val resourceType: String, val resourceId: String, val generation: Long)
+data class OwopResourceVersion(val versionId: String, val digest: String, val size: Long, val mimeType: String?, val modifiedAt: String)
+data class OwopResourceCapabilities(val readCurrent: Boolean, val readSnapshot: Boolean, val preview: Boolean, val download: Boolean, val reveal: Boolean, val openExternal: Boolean, val copyLogicalPath: Boolean)
+data class OwopResourceDescriptor(val resource: OwopResourceKey, val resolutionId: String, val state: String, val displayName: String, val logicalPath: String?, val kind: String, val currentVersion: OwopResourceVersion, val observedVersion: OwopResourceVersion?, val capabilities: OwopResourceCapabilities)
+'''
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA)
     parser.add_argument("--python-out", type=Path, default=DEFAULT_PYTHON)
     parser.add_argument("--typescript-out", type=Path, default=DEFAULT_TYPESCRIPT)
+    parser.add_argument("--kotlin-out", type=Path, default=DEFAULT_KOTLIN)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     raw = args.schema.read_bytes()
@@ -308,6 +361,7 @@ def main() -> int:
     results = [
         write_or_check(args.python_out, generate_python(schema, digest), args.check),
         write_or_check(args.typescript_out, generate_typescript(schema, digest), args.check),
+        write_or_check(args.kotlin_out, generate_kotlin(schema, digest), args.check),
     ]
     if not all(results):
         print("OWOP generated types drift from owop.schema.json")

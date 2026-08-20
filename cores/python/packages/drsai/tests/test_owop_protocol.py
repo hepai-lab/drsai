@@ -68,6 +68,8 @@ class OWOPProtocolTests(unittest.TestCase):
         fixtures = {
             "workspace.describe": {},
             "files.list": {"path": ".", "limit": 100},
+            "files.register": {"path": "src/main.py", "expected_digest": DIGEST},
+            "files.resolve": {"file_id": "file-1", "expected_digest": DIGEST},
             "files.stat": {"path": "src/main.py"},
             "files.read": {"path": "src/main.py", "offset": 0, "length": 1024},
             "files.write": {"path": "src/main.py", "content_base64": "aGVsbG8=", "expected_digest": DIGEST},
@@ -107,6 +109,55 @@ class OWOPProtocolTests(unittest.TestCase):
             "checkpoint.accept": {"checkpoint_id": "checkpoint-1"},
             "artifact.metadata": {"artifact_id": "artifact-1"},
             "artifact.chunk": {"artifact_id": "artifact-1", "offset": 0, "length": 4096},
+            "resources.register": {
+                "authority_id": "runtime-local-1",
+                "resource_type": "file",
+                "logical_path": "src/main.py",
+                "expected_digest": DIGEST,
+                "idempotency_key": "register-1",
+            },
+            "resources.resolve_batch": {
+                "observations": [{
+                    "association_id": "assoc-1",
+                    "resource": {
+                        "protocol": "owop/1",
+                        "authority_id": "runtime-local-1",
+                        "workspace_id": "workspace-1",
+                        "resource_type": "file",
+                        "resource_id": "file-1",
+                        "generation": 1,
+                    },
+                    "observed_version_id": "version-1",
+                }],
+            },
+            "resources.read": {
+                "resource": {
+                    "protocol": "owop/1", "authority_id": "runtime-local-1",
+                    "workspace_id": "workspace-1", "resource_type": "file",
+                    "resource_id": "file-1", "generation": 1,
+                },
+                "version_id": "version-1", "offset": 0, "length": 4096,
+                "purpose": "preview",
+            },
+            "resources.preview": {
+                "resource": {
+                    "protocol": "owop/1", "authority_id": "runtime-local-1",
+                    "workspace_id": "workspace-1", "resource_type": "file",
+                    "resource_id": "file-1", "generation": 1,
+                },
+                "version_id": "version-1", "accept_kinds": ["text"], "max_bytes": 1048576,
+            },
+            "resources.download.prepare": {
+                "resource": {
+                    "protocol": "owop/1", "authority_id": "runtime-local-1",
+                    "workspace_id": "workspace-1", "resource_type": "file",
+                    "resource_id": "file-1", "generation": 1,
+                },
+                "version_id": "version-1", "suggested_name": "main.py",
+            },
+            "resources.download.chunk": {"download_id": "download-1", "offset": 0, "length": 1048576},
+            "resources.download.cancel": {"download_id": "download-1"},
+            "resources.subscribe": {"after_sequence": 0, "resource_ids": ["file-1"], "limit": 100},
         }
         self.assertEqual(set(fixtures), set(self.protocol.operations))
         for operation, params in fixtures.items():

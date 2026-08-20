@@ -49,8 +49,12 @@ def sample_params(schema: dict) -> dict:
 
 def sample_result(schema: dict, definitions: dict) -> dict:
     def value(field: dict):
+        if isinstance(field.get("oneOf"), list) and field["oneOf"]:
+            return value(field["oneOf"][0])
         reference = field.get("$ref")
         if reference:
+            if reference.endswith("/digest"):
+                return DIGEST
             return value(definitions[reference.rsplit("/", 1)[-1]])
         if "enum" in field:
             return field["enum"][0]
