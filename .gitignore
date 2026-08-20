@@ -362,6 +362,14 @@ docs/android/reports/evidence/p9/pending/
 docs/android/reports/evidence/p10/pending/
 docs/android/reports/evidence/round*.*
 docs/android/reports/evidence/samsung-model-provider-*/
+# Android P9 emulator preflight keeps curated checkpoint/manifest JSON in Git.
+# Raw instrumentation logs, JUnit output, screenshots, and retry rounds are
+# machine-specific and reproducible, so keep them outside repository history.
+docs/android/reports/preflight/p9-emulator/**/instrumentation-*.txt
+docs/android/reports/preflight/p9-emulator/lifecycle-*.txt
+docs/android/reports/preflight/p9-emulator/**/*.xml
+docs/android/reports/preflight/p9-emulator/*.png
+docs/android/reports/preflight/p9-emulator/round*/
 docs/desktop/evidence/**/*.png
 docs/desktop/evidence/**/accessibility-tree.json
 docs/desktop/evidence/round*/
