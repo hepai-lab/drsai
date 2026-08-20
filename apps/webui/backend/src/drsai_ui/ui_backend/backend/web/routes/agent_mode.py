@@ -1,11 +1,12 @@
 # api/routes/settings.py
 from typing import Dict
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
 from drsai_ui.ui_backend.backend.database import DatabaseManager
 from ..deps import get_db
 from ..auth_source import get_user_source
+from .....drsai_adapter.sso.jwt import get_current_user_id
 from .....agent_factory.agent_mode_cofigs import (
     get_agent_mode_config, 
     get_default_agent_mode_config,
@@ -17,7 +18,13 @@ import uuid
 router = APIRouter()
 
 @router.get("/")
-async def get_agents_mode_route(user_id: str, db=Depends(get_db)) -> Dict:
+async def get_agents_mode_route(
+    user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     try:
         user_source = get_user_source(db, user_id)
         return await get_agents_mode(user_id, db, user_source=user_source)
@@ -26,10 +33,16 @@ async def get_agents_mode_route(user_id: str, db=Depends(get_db)) -> Dict:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.put("/")
-async def update_agents_mode(user_id: str, id: str, db=Depends(get_db)) -> Dict:
+async def update_agents_mode(
+    user_id: str, id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     '''
     插入用户新的 agent mode 配置
     '''
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     try:
         response = db.get(UserAgents, filters={"user_id": user_id})
         if response.status and response.data:
@@ -59,7 +72,13 @@ async def update_agents_mode(user_id: str, id: str, db=Depends(get_db)) -> Dict:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.delete("/")
-async def delete_agents_mode(user_id: str, id: str, db=Depends(get_db)) -> Dict:
+async def delete_agents_mode(
+    user_id: str, id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     try:
         response = db.get(AgentModeSettings, filters={"user_id": user_id}, return_json = False)
         if not response.status or not response.data:
@@ -77,10 +96,16 @@ async def delete_agents_mode(user_id: str, id: str, db=Depends(get_db)) -> Dict:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.get("/config")
-async def get_agent_mode_config_route(user_id: str, mode: str, db=Depends(get_db)) -> Dict:
+async def get_agent_mode_config_route(
+    user_id: str, mode: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     '''
     获取用户的 agent mode 配置
     '''
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     try:
         response = db.get(AgentModeConfig, filters={"user_id": user_id, "mode": mode})
         if not response.status or not response.data:

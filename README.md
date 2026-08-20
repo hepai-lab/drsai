@@ -41,8 +41,8 @@ Claude Code、OpenAI Codex UI 和 Orca 等还被部分设计文档用于交互�
 - 1.可基于[HepAI平台](https://aiapi.ihep.ac.cn/)进行智能体基座模型的灵活切换，以及工具、知识库等智能体组件的灵活配置。同时兼容OpenAI ChatCompletions，Ollama等模型格式接入。
 - 2.为智能体和多智能体系统设计了感知、思考、记忆、执行、状态管理等预定义组件，并进行了插件化设计，可灵活扩展，满足多种专业智能体设计应用场景。
 - 3.提供了一键启动的人机交互前后端，实现了开发即应用。并为智能体和多智能体协作系统交互提供了兼容OpenAI ChatCompletions、OpenWebui-Pipeline的标准后端接口，可将智能体和多智能体协作系统作为第三方的模型或智能体API服务。
-- 4.提供了基于React/Ink的全新**终端用户界面（TUI）**，支持直接在终端中与智能体进行交互。通过 `drsai` 或 `drsai chat` 一键启动，支持会话管理、模型切换、斜杠命令、推理过程可视化等功能，打造类似Claude Code的沉浸式开发体验。
-- 5.提供**桌面客户端（Desktop App）**，支持Electron桌面应用一键启动（`drsai desktop`），具备系统托盘驻留、远程网关连接等特性。
+- 4.提供了基于React/Ink的全新**终端用户界面（TUI）**，支持直接在终端中与智能体进行交互。通过 `opendrsai` 或 `opendrsai chat` 一键启动，支持会话管理、模型切换、斜杠命令、推理过程可视化等功能，打造类似Claude Code的沉浸式开发体验。
+- 5.提供**桌面客户端（Desktop App）**，支持Electron桌面应用一键启动（`opendrsai desktop`），具备系统托盘驻留、远程网关连接等特性。
 
 ### &#x1F4E2; 功能比较
 
@@ -233,7 +233,7 @@ cp .env.example .env # 复制.env.example文件为.env, 可用于高能所部署
 drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
 ```
 
-后端和静态前端默认启动在8081端口，``drsai --help``获取更多的启动参数，连接2.2启动的R1_test智能体并在前端进行交互的视频如下：
+后端和静态前端默认启动在8081端口，``opendrsai --help``获取更多的启动参数，连接2.2启动的R1_test智能体并在前端进行交互的视频如下：
 
 <video width="80%" controls>
   <source src="assets/video/drsai_ui.mp4" type="video/mp4">
@@ -373,7 +373,7 @@ drsai gateway    # 启动 SSE 网关（供桌面客户端连接）
 - [X] ✅ 基于 React/Ink 的新一代 TUI 终端交互界面（已完成）
 - [X] ✅ Electron 桌面客户端（已完成）
 - [X] ✅ 30+ 斜杠命令系统，支持会话管理、模型切换、推理可视化（已完成）
-- [X] ✅ DrSai CLI 配置管理（`drsai config`）（已完成）
+- [X] ✅ DrSai CLI 配置管理（`opendrsai config`）（已完成）
 - [X] ✅ 首次启动配置向导（已完成）
 - [X] ✅ 前端UI的任务管理系统展示交互（已完成）
 - [X] ✅ 前端UI的执行文件、log等信息的展示交互（已完成）

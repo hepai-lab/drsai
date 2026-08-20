@@ -68,7 +68,12 @@ def resolve_tui_resource(
     if expected_digest:
         params["expected_digest"] = expected_digest
     with tui_workspace_operations(user_id, root) as operations:
-        return operations.resolve_file(params)["resource"]
+        resource = operations.resolve_file(params)["resource"]
+        if resource.get("state") == "deleted":
+            repair = operations.repair_relocations()
+            if repair["repaired"]:
+                resource = operations.resolve_file(params)["resource"]
+        return resource
 
 
 def read_tui_resource(

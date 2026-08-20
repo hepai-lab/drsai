@@ -17,7 +17,12 @@ from typing import (
 )
 from typing_extensions import Required
 from pydantic import BaseModel
-from drsai.platform_auth import OidcModelCredentialProvider, get_model_credential_provider, static_model_credentials_allowed
+from drsai.platform_auth import (
+    DelegatedModelCredentialProvider,
+    OidcModelCredentialProvider,
+    get_model_credential_provider,
+    static_model_credentials_allowed,
+)
 
 from openai.types.chat import ChatCompletionChunk
 from tiktoken.model import MODEL_TO_ENCODING
@@ -134,7 +139,11 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
         if credential:
             kwargs["api_key"] = credential.access_token
             kwargs["base_url"] = credential.openai_base_url
-            self._uses_platform_auth = isinstance(credential, OidcModelCredentialProvider)
+            self._uses_platform_auth = isinstance(
+                credential, (OidcModelCredentialProvider, DelegatedModelCredentialProvider)
+            )
+            if credential.delegation_headers:
+                kwargs["default_headers"] = credential.delegation_headers
         else:
             if not static_model_credentials_allowed():
                 kwargs["api_key"] = None
@@ -303,6 +312,8 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             return
         self._client.api_key = credential.access_token
         self._client.base_url = credential.openai_base_url
+        if credential.delegation_headers:
+            self._client._custom_headers = credential.delegation_headers
         self._oidc_credential_pending = False
 
     async def create(self, *args: Any, **kwargs: Any):

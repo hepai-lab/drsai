@@ -4,7 +4,7 @@
   "title": "OpenDrSai Runtime Relay Protocol",
   "version": "2.0.0",
   "protocol_version": "owop/1",
-  "x-oaep-schema-sha256": "e207c75c2f37e121dc613aec040c24fd5bd2c6f4f005826c8996a6bb848770b7",
+  "x-oaep-schema-sha256": "154cac089e8d0f243e3f42a56187061cd821b648416df2ccf4224cd47003e184",
   "x-relay-latency-observability": {
     "schema_version": "p6-relay-latency/1",
     "stages": [

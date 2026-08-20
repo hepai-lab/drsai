@@ -499,6 +499,62 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
 
             assert model_result is not None, "No model result was produced."
 
+            # ``[Continuing]`` is an internal acknowledgement inserted by
+            # ``_sanitize_api_messages`` to preserve user/assistant role
+            # alternation for providers such as Anthropic.  It must never be
+            # exposed as the agent's final answer.  Treat it like an empty
+            # completion and give the model one bounded retry.
+            if (
+                isinstance(model_result.content, str)
+                and model_result.content.strip() in {"", "[Continuing]"}
+            ):
+                logger.warning(
+                    "Model returned an empty/internal continuation response; retrying once"
+                )
+                await model_context.add_message(
+                    AssistantMessage(content="[Continuing]", source=agent_name)
+                )
+                await model_context.add_message(
+                    UserMessage(
+                        content=(
+                            "Your previous reply was empty or contained only an internal "
+                            "continuation marker. Please provide the complete answer to the "
+                            "user's request."
+                        ),
+                        source="user",
+                    )
+                )
+
+                retry_result = None
+                async for inference_output in self._call_llm(
+                    model_client=model_client,
+                    model_client_stream=model_client_stream,
+                    system_messages=system_messages,
+                    model_context=model_context,
+                    workbench=workbench,
+                    handoff_tools=handoff_tools,
+                    agent_name=agent_name,
+                    cancellation_token=cancellation_token,
+                    output_content_type=output_content_type,
+                ):
+                    if self.is_paused:
+                        raise asyncio.CancelledError()
+                    if isinstance(inference_output, CreateResult):
+                        retry_result = inference_output
+                    else:
+                        yield inference_output
+
+                if retry_result is None:
+                    raise RuntimeError("No model result was produced by the retry.")
+                if (
+                    isinstance(retry_result.content, str)
+                    and retry_result.content.strip() in {"", "[Continuing]"}
+                ):
+                    raise RuntimeError(
+                        "Model returned an empty/internal continuation response after retry."
+                    )
+                model_result = retry_result
+
             # --- NEW: If the model produced a hidden "thought," yield it as an event ---
             if model_result.thought:
                 thought_event = ThoughtEvent(content=model_result.thought, source=agent_name)

@@ -292,7 +292,7 @@ Then add markers to document.xml (see Comments in XML Reference).
 
 #### Direct XML Step 3: Pack
 ```
-pack_docx_tool(input_dir="unpacked/", output_file="output.docx", original_file="document.docx", validate=True)
+pack_docx_tool(input_dir="unpacked/", output_file="output.docx", original_file="document.docx", run_validation=True)
 ```
 Validates with auto-repair, condenses XML, and creates DOCX.
 

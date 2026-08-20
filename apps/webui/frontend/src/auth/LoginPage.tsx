@@ -79,7 +79,22 @@ const LoginPage: React.FC = () => {
                 saveAuthSession(response.data.access_token, userId);
                 setUser({ name: userId, email: userId });
                 localStorage.removeItem("drsai-mode-config");
-                window.location.href = "/?menu=current_session&view=chat";
+                const pending = (() => {
+                    const m = document.cookie.match(/(?:^|;\s*)drsai_pending_search=([^;]*)/);
+                    const v = m ? decodeURIComponent(m[1]) : null;
+                    if (v) { document.cookie = "drsai_pending_search=; path=/; max-age=0; SameSite=Lax"; }
+                    return v;
+                })();
+                let extra = "";
+                if (pending) {
+                    const p = new URLSearchParams(pending);
+                    // 保持 share_agent=true 门控标志
+                    for (const key of ["share_agent", "agentId", "agentName"]) {
+                        const v = p.get(key);
+                        if (v) extra += `&${key}=${encodeURIComponent(v)}`;
+                    }
+                }
+                window.location.href = `/?menu=current_session&view=chat${extra}`;
             }
         } catch (err: any) {
             setError(err.message || t("login.error.loginFailed"));

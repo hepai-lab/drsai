@@ -17,73 +17,6 @@ function normalizeRun(raw: Run, sessionId: number): Run {
   };
 }
 
-function runFromShareSnapshot(session: Session): Run | null {
-  const raw = (session.agent_mode_config as { _share_messages?: unknown } | null | undefined)
-    ?._share_messages;
-  if (!Array.isArray(raw) || raw.length === 0) return null;
-
-  const messages = raw
-    .map((item, index) => {
-      if (!item || typeof item !== "object") return null;
-      const row = item as { source?: unknown; content?: unknown; message_type?: unknown; id?: unknown };
-      const content = typeof row.content === "string" ? row.content : "";
-      if (!content.trim()) return null;
-      const source =
-        typeof row.source === "string" && row.source.trim() ? row.source.trim() : "assistant";
-      return {
-        id: typeof row.id === "string" ? row.id : `share-msg-${index}`,
-        created_at: session.created_at,
-        updated_at: session.updated_at,
-        session_id: session.id,
-        config: {
-          source,
-          content,
-          message_type:
-            typeof row.message_type === "string" && row.message_type.trim()
-              ? row.message_type
-              : "text",
-        },
-      };
-    })
-    .filter(Boolean) as Run["messages"];
-
-  if (!messages.length) return null;
-  // Use "stopped" so RunView does not show the forever "Processing" spinner
-  // (created/active) or the mistaken error icon for "complete".
-  return normalizeRun(
-    {
-      id: `share-${session.id ?? "snapshot"}`,
-      session_id: session.id,
-      status: "stopped",
-      task: messages[0]?.config,
-      team_result: null,
-      messages,
-    } as Run,
-    session.id!,
-  );
-}
-
-function runForShareView(session: Session, runs: Run[]): Run | null {
-  const snapshot = runFromShareSnapshot(session);
-  if (snapshot) return snapshot;
-
-  const latest = runs.length > 0 ? runs[runs.length - 1] : null;
-  if (!latest?.messages?.length || !session.id) return null;
-  return normalizeRun(
-    {
-      ...latest,
-      // Share pages are read-only; never leave viewers on an in-progress status.
-      status:
-        latest.status === "created" ||
-        latest.status === "active" ||
-        latest.status === "connected"
-          ? "stopped"
-          : latest.status,
-    } as Run,
-    session.id,
-  );
-}
-
 const ShareSessionPage: React.FC = () => {
   const { t } = useLang();
   const [loading, setLoading] = useState(true);
@@ -115,7 +48,13 @@ const ShareSessionPage: React.FC = () => {
 
         const sess = data.session as Session;
         setSession(sess);
-        setRun(runForShareView(sess, (data.runs ?? []) as Run[]));
+        const runs = data.runs ?? [];
+        const latest = runs.length > 0 ? runs[runs.length - 1] : null;
+        if (latest) {
+          setRun(normalizeRun(latest as Run, sess.id!));
+        } else {
+          setRun(null);
+        }
 
         const mode = sess.agent_mode_config?.mode;
         setShowPanel(shouldShowPanel(mode));

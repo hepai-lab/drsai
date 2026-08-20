@@ -121,6 +121,15 @@ def ui(
     env_vars["EXTERNAL_WORKSPACE_ROOT"] = appdir
     env_vars["INTERNAL_WORKSPACE_ROOT"] = appdir
 
+    # Forward GFS env vars so uvicorn workers inherit them even when
+    # launched by process managers (PM2, systemd, etc.) that don't
+    # source the user's shell profile.
+    for _gfs_var in ("GFS_API_KEY", "GFS_OPENAPI_URL", "GFS_ENDPOINT",
+                      "GFS_AK", "GFS_SK", "GFS_BUCKET"):
+        _val = os.getenv(_gfs_var)
+        if _val:
+            env_vars[_gfs_var] = _val
+
     # If the config file is not provided, check for the default config file
     if not config:
         if os.path.isfile("config.yaml"):

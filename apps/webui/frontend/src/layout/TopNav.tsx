@@ -2,32 +2,90 @@ import { Dropdown, Input, Tooltip } from "antd";
 import { MoonIcon, SunIcon } from "@heroicons/react/24/outline";
 import {
   BookOpen,
+  ChevronDown,
   Github,
   LogOut,
   Menu,
   Search,
   User,
 } from "lucide-react";
-import React, { useContext, useState } from "react";
+import React, { useContext, useMemo, useState } from "react";
 import { appContext } from "../hooks/provider";
+import { useLocation, useNavigate } from "../hooks/useRouter";
 import { useLang } from "../i18n/useLang";
 import UserProfileModal from "../components/userProfile";
 import { clearAuthSession } from "../utils/authSession";
+
+const DOCS_URL = "https://docs-drsai.ihep.ac.cn/";
+const GITHUB_URL = "https://github.com/hepai-lab/drsai";
+const LOGO_URL =
+  "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview";
 
 interface TopNavProps {
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
 }
 
+const normalizePath = (path: string) => path.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
+
 const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
   const { user, darkMode, setDarkMode } = useContext(appContext);
   const { lang, toggleLang, t } = useLang();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
+  const isProductPage = normalizePath(location.pathname) === "/welcome";
+
+  const navLinkClass = (active: boolean) =>
+    `text-sm font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg transition-colors ${
+      active
+        ? darkMode === "dark"
+          ? "text-accent cursor-default"
+          : "text-violet-700 cursor-default"
+        : darkMode === "dark"
+          ? "text-secondary hover:text-primary hover:bg-white/5"
+          : "text-secondary hover:text-violet-700 hover:bg-violet-50"
+    }`;
+
+  const resourcesMenuItems = useMemo(
+    () => [
+      {
+        key: "docs",
+        label: (
+          <a
+            href={DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center"
+          >
+            {t("topnav.docs")}
+          </a>
+        ),
+        icon: <BookOpen className="w-4 h-4" />,
+      },
+      {
+        key: "github",
+        label: (
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center"
+          >
+            GitHub
+          </a>
+        ),
+        icon: <Github className="w-4 h-4" />,
+      },
+    ],
+    [t]
+  );
 
   const handleLogout = () => {
     clearAuthSession();
     if (process.env.GATSBY_SERVICE_MODE === "DEV") {
-      window.location.href = "/login";
+      window.location.href = "/login?logout=1";
     } else {
       window.location.href = "/umt/logout";
     }
@@ -42,8 +100,8 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
             : "bg-white/70 border-b border-gray-200/80 backdrop-blur-md"
         } z-[70]`}
       >
-        {/* Left: menu + logo */}
-        <div className="flex items-center gap-1 flex-shrink-0 min-w-0">
+        {/* Left: mobile menu */}
+        <div className="flex w-9 flex-shrink-0 items-center lg:w-0 lg:overflow-hidden">
           <button
             type="button"
             onClick={onToggleSidebar}
@@ -52,23 +110,55 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
           >
             <Menu className="w-5 h-5" />
           </button>
+        </div>
 
-          <div className="flex items-center gap-2 px-1 lg:px-2.5 py-1 min-w-0">
-            <img
-              src="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview"
-              alt="Dr.Sai Logo"
-              className="w-6 h-6 rounded-md object-cover flex-shrink-0"
-            />
-            <span className="text-sm font-semibold tracking-wide text-primary whitespace-nowrap hidden sm:inline">
-              OpenDrSai
-            </span>
+        {/* Center: Logo · Product · Resources (left-aligned in main area) */}
+        <div className="flex flex-1 items-center min-w-0 px-1 sm:px-2">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+              <img
+                src={LOGO_URL}
+                alt=""
+                className="w-5 h-5 sm:w-6 sm:h-6 rounded-md object-cover flex-shrink-0"
+              />
+              <span className="text-xs sm:text-sm font-semibold tracking-wide text-primary whitespace-nowrap">
+                OpenDrSai
+              </span>
+            </div>
+
+            {isProductPage ? (
+              <span className={`${navLinkClass(true)} inline-flex text-xs sm:text-sm flex-shrink-0`} aria-current="page">
+                {t("topnav.product")}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => navigate("/welcome")}
+                className={`${navLinkClass(false)} inline-flex text-xs sm:text-sm flex-shrink-0`}
+              >
+                {t("topnav.product")}
+              </button>
+            )}
+
+            <Dropdown
+              trigger={["click"]}
+              menu={{ items: resourcesMenuItems }}
+              placement="bottomLeft"
+            >
+              <button
+                type="button"
+                className={`inline-flex items-center gap-0.5 sm:gap-1 text-xs sm:text-sm flex-shrink-0 ${navLinkClass(false)}`}
+                aria-haspopup="menu"
+              >
+                <span>{t("topnav.resources")}</span>
+                <ChevronDown className="w-3.5 h-3.5 opacity-70" />
+              </button>
+            </Dropdown>
           </div>
         </div>
 
-        <div className="flex-1 min-w-0" />
-
-        {/* Right: search + theme + lang + github + docs + user */}
-        <div className="flex items-center gap-0.5 lg:gap-1 flex-shrink-0">
+        {/* Right: search + theme + lang + user */}
+        <div className="ml-auto flex items-center gap-0.5 lg:gap-1 flex-shrink-0">
           <Input
             prefix={<Search className="w-4 h-4 text-secondary" />}
             placeholder={t("topnav.search.placeholder")}
@@ -102,28 +192,6 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
             >
               {lang === "zh" ? "EN" : "中"}
             </button>
-          </Tooltip>
-
-          <Tooltip title="GitHub">
-            <a
-              href="https://github.com/hepai-lab/drsai"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hidden sm:flex items-center justify-center w-9 h-9 rounded-xl text-primary hover:text-accent hover:bg-tertiary/30 transition-all"
-            >
-              <Github className="w-5 h-5 stroke-[2]" />
-            </a>
-          </Tooltip>
-
-          <Tooltip title={t("topnav.docs")}>
-            <a
-              href="https://docs-drsai.ihep.ac.cn/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hidden sm:flex items-center justify-center w-9 h-9 rounded-xl text-primary hover:text-accent hover:bg-tertiary/30 transition-all"
-            >
-              <BookOpen className="w-5 h-5 stroke-[2]" />
-            </a>
           </Tooltip>
 
           {user && (

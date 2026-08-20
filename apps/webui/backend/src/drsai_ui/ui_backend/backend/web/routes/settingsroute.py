@@ -1,10 +1,11 @@
 # api/routes/settings.py
 from typing import Dict
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 import re
 
 from ...datamodel import Settings
 from ..deps import get_db
+from .....drsai_adapter.sso.jwt import get_current_user_id
 from ..auth_source import get_user_source
 
 from .....drsai_adapter.singleton import personal_key_config_fetcher as fetcher
@@ -13,7 +14,17 @@ router = APIRouter()
 
 
 @router.get("/")
-async def get_settings(user_id: str, db=Depends(get_db)) -> Dict:
+async def get_settings(
+    user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
+    # 越权校验：当前登录用户只能访问自己的 settings
+    if current_user != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
     try:
         user_source = get_user_source(db, user_id)
         response = db.get(Settings, filters={"user_id": user_id})
@@ -48,7 +59,17 @@ async def get_settings(user_id: str, db=Depends(get_db)) -> Dict:
 
 
 @router.put("/")
-async def update_settings(settings: Settings, db=Depends(get_db)) -> Dict:
+async def update_settings(
+    settings: Settings,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
+    # 越权校验：当前登录用户只能更新自己的 settings
+    if current_user != settings.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
     
     if settings.config:
         user_source = get_user_source(db, settings.user_id)

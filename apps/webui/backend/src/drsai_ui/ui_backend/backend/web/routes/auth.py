@@ -16,17 +16,23 @@ from .....drsai_adapter.sso.jwt import (
     get_current_user_id,
 )
 from ..auth_cookies import REFRESH_COOKIE_NAME, set_refresh_cookie
+from ..auth_source import get_cooper_info, get_display_name
+from ..deps import get_db
 
 router = APIRouter()
 
 
 @router.get("/me")
-async def auth_me(user_id: str = Depends(get_current_user_id)) -> Dict:
-    """Verify Bearer access token and return the authenticated user id."""
+async def auth_me(user_id: str = Depends(get_current_user_id), db=Depends(get_db)) -> Dict:
+    """Verify Bearer access token and return the authenticated user id, cooper_info and display_name."""
+    cooper_info = get_cooper_info(db, user_id)
+    display_name = get_display_name(db, user_id)
     return {
         "status": True,
         "data": {
             "user_id": user_id,
+            "cooper_info": cooper_info,
+            "display_name": display_name,
         },
     }
 

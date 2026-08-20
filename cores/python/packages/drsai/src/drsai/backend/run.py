@@ -1,6 +1,7 @@
 from .app_worker import DrSaiAPP
 
 import os
+import copy
 from typing import (
     Union,
     List,
@@ -403,6 +404,83 @@ class DrSaiWorkerConfig(HWorkerConfig):
     type: str = field(default="agent", metadata={"help": "Worker's type"})
     debug: bool = field(default=False, metadata={"help": "Debug mode"})
     _metadata: dict = field(default_factory=dict, metadata={"help": "Additional metadata for worker/model"})
+
+
+_PRIVATE_METADATA_KEYS = {
+    "api_key", "apikey", "authorization", "controller_key", "owner_key",
+    "password", "registration_principal", "secret", "secret_key", "token",
+}
+_UNTRUSTED_IDENTITY_KEYS = {"authenticated_owner", "owner", "owned_by", "principal"}
+
+
+def _sanitize_public_metadata(value: Any) -> Any:
+    """Return JSON-like metadata without credentials or asserted identities."""
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_public_metadata(item)
+            for key, item in value.items()
+            if str(key).strip().lower() not in _PRIVATE_METADATA_KEYS | _UNTRUSTED_IDENTITY_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_public_metadata(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_public_metadata(item) for item in value]
+    return copy.deepcopy(value)
+
+
+def _localized_description(value: Any) -> dict[str, str] | str:
+    if isinstance(value, dict):
+        localized = {
+            language: str(value[language]).strip()
+            for language in ("zh", "en")
+            if value.get(language) not in (None, "")
+        }
+        return localized or str(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, dict):
+                return _localized_description(parsed)
+        return text
+    return str(value or "")
+
+
+def build_public_agent_metadata(worker_info: dict[str, Any]) -> dict[str, Any]:
+    """Project a worker's allowlisted presentation fields into schema v1."""
+    name = str(worker_info.get("name") or "").strip()
+    version = str(worker_info.get("version") or "").strip()
+    agent: dict[str, Any] = {
+        "display_name": name,
+        "name": name,
+        "description": _localized_description(worker_info.get("description")),
+        "author": str(worker_info.get("author") or "").strip(),
+        "app_version": version,
+        "version": version,
+        "capabilities": _sanitize_public_metadata(worker_info.get("capabilities") or []),
+        "examples": _sanitize_public_metadata(worker_info.get("examples") or []),
+    }
+    logo = worker_info.get("logo")
+    if logo:
+        agent["logo"] = str(logo)
+        agent["logo_url"] = str(logo)
+    logo_asset_id = worker_info.get("logo_asset_id")
+    if logo_asset_id:
+        agent["logo_asset_id"] = str(logo_asset_id)
+    return {"schema_version": 1, "agent": _sanitize_public_metadata(agent)}
+
+
+def configure_worker_registration_metadata(
+    worker_info: dict[str, Any], worker_args: Any
+) -> None:
+    """Apply public catalog metadata and app-version semantics generically."""
+    if worker_info.get("version") is not None:
+        setattr(worker_args, "model_version", str(worker_info["version"]))
+    worker_args._metadata = _sanitize_public_metadata(worker_args._metadata)
+    worker_args._metadata.update(build_public_agent_metadata(worker_info))
 
 
 class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from HRModel.
@@ -830,8 +908,20 @@ async def run_worker(
     if logo_val and os.path.exists(str(logo_val)):
         logo_path = Path(logo_val)
         if logo_path.is_file():
-            file_obj = upload_to_hepai_filesystem(str(logo_path))
+            active_controller_address = str(controller_address).rstrip("/")
+            controller_prefix = f"/{str(worker_args.controller_prefix).strip('/')}"
+            upload_base_url = (
+                active_controller_address
+                if active_controller_address.endswith(controller_prefix)
+                else f"{active_controller_address}{controller_prefix}"
+            )
+            file_obj = upload_to_hepai_filesystem(
+                str(logo_path),
+                base_url=upload_base_url,
+            )
             worker_info["logo"] = file_obj["url"]
+            if file_obj.get("id"):
+                worker_info["logo_asset_id"] = file_obj["id"]
 
     # ════════════════════════════════════════════════════════════════════
     # 3. 服务配置
@@ -866,10 +956,15 @@ async def run_worker(
     # 5. metadata / join_topics
     # ════════════════════════════════════════════════════════════════════
     if metadata is not None:
-        worker_args._metadata.update(metadata)
+        worker_args._metadata.update(_sanitize_public_metadata(metadata))
 
     if join_topics is not None:
         worker_args._metadata.update({"join_topics": join_topics})
+
+    # Resource model_version describes the application exposed by this worker;
+    # WorkerInfo.version remains HepAI's protocol version. Only public catalog
+    # data is projected into metadata.agent.
+    configure_worker_registration_metadata(worker_info, worker_args)
 
     if close_kwargs is None:
         close_kwargs = {}
@@ -1236,5 +1331,3 @@ async def run_worker(
         for agent in model.drsai.agent_instance:
             if hasattr(agent, "close"):
                 await agent.close(**close_kwargs)
-
-

@@ -168,7 +168,7 @@ def test_desktop_production_model_request_freezes_exact_visible_tool_set() -> No
     assert records["web.search"]["risk"] == "external_write"
 
 
-def test_desktop_required_approval_tool_fails_closed_before_executor_dispatch() -> None:
+def test_required_approval_tool_runs_in_compatibility_mode_without_handler() -> None:
     assistant = object.__new__(DrSaiAssistant)
     assistant.is_paused = False
     assistant._tool_approval_handler = None
@@ -195,22 +195,29 @@ def test_desktop_required_approval_tool_fails_closed_before_executor_dispatch() 
         async def add_message(self, message):
             self.added.append(message)
 
-    class Workbench:
-        async def call_tool(self, *_args, **_kwargs):
-            raise AssertionError("executor must not run without approval")
+    calls = []
+
+    async def execute_tool_call(**kwargs):
+        calls.append(kwargs)
+        return None, FunctionExecutionResult(
+            content="published", name="external.publish", call_id="external-1", is_error=False,
+        )
+
+    assistant._execute_tool_call = execute_tool_call
 
     context = Context()
 
     async def consume() -> list:
         return [item async for item in assistant._process_model_result(
-            result, [], CancellationToken(), "OpenDrSai", [], context, Workbench(), [], {}, None, True,
+            result, [], CancellationToken(), "OpenDrSai", [], context, None, [], {}, None, True,
             False, "{result}", None, None,
         )]
 
     output = asyncio.run(consume())
     execution_result = context.added[0].content[0]
-    assert execution_result.is_error is True
-    assert "approval channel is unavailable" in execution_result.content
+    assert len(calls) == 1
+    assert execution_result.is_error is False
+    assert execution_result.content == "published"
     assert output[-1].chat_message.content.startswith("The results of execution:")
 
 

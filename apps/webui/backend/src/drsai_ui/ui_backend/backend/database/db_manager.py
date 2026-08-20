@@ -24,9 +24,14 @@ class DatabaseManager:
             engine_uri (str): Database connection URI (e.g. sqlite:///db.sqlite3)
             base_dir (Path, optional): Base directory for migration files. If None, uses current directory. Default: None.
         """
-        connection_args = {"check_same_thread": True} if "sqlite" in engine_uri else {}
+        connection_args = {"check_same_thread": False} if "sqlite" in engine_uri else {}
 
-        self.engine = create_engine(engine_uri, connect_args=connection_args)
+        self.engine = create_engine(
+            engine_uri,
+            connect_args=connection_args,
+            pool_size=1,
+            max_overflow=0,
+        )
         self.schema_manager = SchemaManager(
             engine=self.engine,
             base_dir=base_dir,
@@ -169,7 +174,8 @@ class DatabaseManager:
                     select(model_class).where(model_class.id == model.id)
                 ).first()
                 if existing_model:
-                    model.updated_at = datetime.now()
+                    if hasattr(model, "updated_at"):
+                        model.updated_at = datetime.now()
                     for key, value in model.model_dump().items():
                         setattr(existing_model, key, value)
                     model = existing_model  # Use the updated existing model
@@ -188,12 +194,20 @@ class DatabaseManager:
                 )
                 status = False
 
-        return Response(
-            message=(
+        if status:
+            msg = (
                 f"{model_class.__name__} Updated Successfully"
                 if existing_model
                 else f"{model_class.__name__} Created Successfully"
-            ),
+            )
+        else:
+            msg = (
+                f"{model_class.__name__} Update Failed"
+                if existing_model
+                else f"{model_class.__name__} Create Failed"
+            )
+        return Response(
+            message=msg,
             status=status,
             data=model.model_dump() if return_json else model,
         )

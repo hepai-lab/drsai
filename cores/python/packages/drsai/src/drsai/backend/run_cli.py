@@ -201,8 +201,20 @@ def _which_any(name: str) -> Optional[str]:
 
 
 @app.callback(invoke_without_command=True)
-def cli_default(ctx: typer.Context) -> None:
+def cli_default(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        None,
+        "--version",
+        "-V",
+        help="Print OpenDrSai version and exit.",
+        is_eager=True,
+    ),
+) -> None:
     """Default: launch the new TUI when no subcommand is given."""
+    if version:
+        typer.echo(f"version: {VERSION}")
+        raise typer.Exit()
     if ctx.invoked_subcommand is not None:
         return
     _launch_tui()
@@ -1200,8 +1212,15 @@ def daemon_send(
 
 def run() -> None:
     """Main entry point used by the ``drsai`` console script."""
-    # `drsai` (no args) or `drsai -u http://...` → implicit `chat` subcommand
-    if len(sys.argv) == 1 or (len(sys.argv) >= 2 and sys.argv[1].startswith("-")):
+    # `drsai` (no args) → implicit `chat` subcommand
+    # `drsai --version` / `drsai -V` → handled by callback (don't insert chat)
+    if len(sys.argv) == 1:
+        sys.argv.insert(1, "chat")
+    elif (
+        len(sys.argv) >= 2
+        and sys.argv[1].startswith("-")
+        and sys.argv[1] not in ("--version", "-V")
+    ):
         sys.argv.insert(1, "chat")
     try:
         app()

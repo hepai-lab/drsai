@@ -11,21 +11,49 @@ import zlib
 from openai import OpenAI
 import requests
 import re
+import mimetypes
+from pathlib import Path
+from urllib.parse import urlparse
 
-def upload_to_hepai_filesystem(file_path: str, api_key: str|None = None) -> Dict[str, Any]:
- 
+def normalize_hepai_base_url(base_url: str | None = None) -> str:
+    """Normalize a controller/file-service URL to one canonical API base."""
+    normalized = (base_url or "https://aiapi.ihep.ac.cn/apiv2").strip().rstrip("/")
+    return normalized if normalized.endswith("/apiv2") else f"{normalized}/apiv2"
+
+
+def environment_scoped_upload_filename(file_path: str, base_url: str) -> str:
+    """Avoid stale cross-environment file deduplication by namespacing names."""
+    path = Path(file_path)
+    environment = re.sub(r"[^a-zA-Z0-9.-]+", "-", urlparse(base_url).netloc).strip("-")
+    return f"{path.stem}.{environment}{path.suffix}" if environment else path.name
+
+
+def upload_to_hepai_filesystem(
+    file_path: str,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> Dict[str, Any]:
+    api_base_url = normalize_hepai_base_url(base_url)
     client = OpenAI(
-        base_url="https://aiapi.ihep.ac.cn/apiv2",
+        base_url=api_base_url,
         api_key= api_key or os.environ.get("HEPAI_API_KEY")
     )
 
-    file_obj = client.files.create(
-        file=open(file_path, "rb"),
-        purpose="user_data"
+    upload_name = (
+        environment_scoped_upload_filename(file_path, api_base_url)
+        if base_url is not None
+        else Path(file_path).name
     )
-    url = f"https://aiapi.ihep.ac.cn/apiv2/files/{file_obj.id}/preview"
+    content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    with open(file_path, "rb") as file_handle:
+        file_obj = client.files.create(
+            file=(upload_name, file_handle, content_type),
+            purpose="user_data",
+        )
+    url = f"{api_base_url}/files/{file_obj.id}/preview"
     file_obj = file_obj.model_dump()
     file_obj["url"] = url
+    file_obj["base_url"] = api_base_url
     return file_obj
 
 def construct_task(

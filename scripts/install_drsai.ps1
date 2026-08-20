@@ -200,48 +200,6 @@ function Select-InstallDir {
 }
 
 # ==============================================================================
-#  2b. CHECK FOR RUNNING DRSAI PROCESSES
-# ==============================================================================
-function Check-Running {
-    Write-Section "Checking for Running DrSai Processes"
-
-    $found = $false
-    try {
-        $procs = Get-CimInstance Win32_Process -ErrorAction Stop |
-            Where-Object {
-                $_.CommandLine -and
-                ($_.CommandLine -match 'opendrsai|drsai\.backend|entry\.mjs') -and
-                $_.ProcessId -ne $PID
-            }
-
-        if ($procs) {
-            $found = $true
-            Write-Warn "DrSai is currently running. Please stop ALL instances before updating:"
-            foreach ($p in @($procs)) {
-                Write-Warn "  PID $($p.ProcessId): $($p.Name)"
-            }
-        }
-    } catch {
-        # WMI not available - try Get-Process by name
-        $procs = Get-Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.ProcessName -match 'opendrsai|drsai' -and $_.Id -ne $PID }
-        if ($procs) {
-            $found = $true
-            Write-Warn "DrSai is currently running. Please stop ALL instances before updating:"
-            foreach ($p in @($procs)) {
-                Write-Warn "  PID $($p.Id): $($p.ProcessName)"
-            }
-        }
-    }
-
-    if ($found) {
-        Die "Please close all running DrSai terminals/processes, then re-run this installer."
-    } else {
-        Write-Ok "No running DrSai processes found"
-    }
-}
-
-# ==============================================================================
 #  3. EXISTING INSTALLATION CHECK
 # ==============================================================================
 function Check-Existing {
@@ -573,7 +531,12 @@ function Build-Tui {
         return
     }
 
-    if (-not $script:UseSystemNode) {
+    # Ensure the resolved Node directory is on PATH for child processes.
+    # Required when reusing a DrSai portable Node: UseSystemNode is $true but
+    # the portable dir (packages\node) is NOT on the system PATH, so `pnpm build`
+    # must be able to spawn `node scripts/build.mjs`. Idempotent and harmless
+    # when NodeDir is already on PATH (true system-node case).
+    if ($script:NodeDir -and ($env:PATH -notlike "*$($script:NodeDir)*")) {
         $env:PATH = "$($script:NodeDir);$env:PATH"
     }
 
@@ -635,6 +598,110 @@ function Build-Tui {
     Write-Ok "TUI build successful: ${size}KB"
 
     Pop-Location
+}
+
+# ==============================================================================
+#  8b. INSTALL PRE-BUILT SKILLS (multi-select)
+# ==============================================================================
+function Install-Skills {
+    Write-Section "Skill Selection"
+
+    $skillsSrc = Join-Path $script:SrcRoot "skills\skills"
+    if (!(Test-Path $skillsSrc)) {
+        Write-Info "No pre-built skills directory found (skills\skills\), skipping"
+        return
+    }
+
+    # Discover available skills (directories with SKILL.md)
+    $skillDirs = Get-ChildItem -Path $skillsSrc -Directory | Sort-Object Name
+    if ($skillDirs.Count -eq 0) {
+        Write-Info "No skills found in $skillsSrc, skipping"
+        return
+    }
+
+    # Build skill list with descriptions
+    $skills = @()
+    foreach ($d in $skillDirs) {
+        $md = Join-Path $d.FullName "SKILL.md"
+        $desc = "(no SKILL.md)"
+        if (Test-Path $md) {
+            $firstLines = Get-Content $md -TotalCount 5 -ErrorAction SilentlyContinue
+            $descLine = $firstLines | Where-Object { $_ -match '^description:' } | Select-Object -First 1
+            if ($descLine) {
+                $desc = ($descLine -replace '^description:\s*', '')
+            }
+        }
+        $skills += [PSCustomObject]@{
+            Name = $d.Name
+            Desc = $desc
+            Path = $d.FullName
+        }
+    }
+
+    # Display the menu
+    Write-Host ""
+    Write-Host "  Available pre-built skills — select which to install:" -ForegroundColor White
+    Write-Host "  (Enter numbers separated by spaces, 'all' for all, or Enter to skip)"
+    Write-Host ""
+    for ($i = 0; $i -lt $skills.Count; $i++) {
+        $num = "{0,3}" -f ($i + 1)
+        $name = $skills[$i].Name.PadRight(22)
+        Write-Host "  [$($i + 1)] $name $($skills[$i].Desc)" -ForegroundColor Gray
+    }
+    Write-Host ""
+
+    # Read selection
+    $selection = Read-Host "  Select skills"
+
+    if ([string]::IsNullOrWhiteSpace($selection)) {
+        Write-Info "No skills selected, skipping"
+        return
+    }
+
+    # Parse selection
+    $selectedNames = @()
+    if ($selection.Trim().ToLower() -eq "all") {
+        foreach ($s in $skills) { $selectedNames += $s.Name }
+    } else {
+        $tokens = $selection.Trim() -split '\s+'
+        foreach ($tok in $tokens) {
+            $idx = 0
+            if ([int]::TryParse($tok, [ref]$idx) -and $idx -ge 1 -and $idx -le $skills.Count) {
+                $selectedNames += $skills[$idx - 1].Name
+            } else {
+                Write-Warn "Invalid selection: $tok (ignored)"
+            }
+        }
+    }
+
+    if ($selectedNames.Count -eq 0) {
+        Write-Info "No skills selected"
+        return
+    }
+
+    # Determine user skills directory
+    # Default: $InstallDir\workspace\runs\<user_id>\configs\skills\
+    $userId = $env:USERNAME
+    if (!$userId) { $userId = "default" }
+    $userSkillsDir = Join-Path $script:InstallDir "workspace\runs\$userId\configs\skills"
+    New-Item -ItemType Directory -Path $userSkillsDir -Force | Out-Null
+
+    # Copy selected skills
+    $installed = 0
+    foreach ($sname in $selectedNames) {
+        $srcSkill = Join-Path $skillsSrc $sname
+        $dstSkill = Join-Path $userSkillsDir $sname
+        if (Test-Path $srcSkill) {
+            if (Test-Path $dstSkill) { Remove-Item -Path $dstSkill -Recurse -Force }
+            Copy-Item -Path $srcSkill -Destination $dstSkill -Recurse -Force
+            Write-Ok "Installed skill: $sname -> $userSkillsDir\"
+            $installed++
+        } else {
+            Write-Warn "Skill not found: $sname"
+        }
+    }
+
+    Write-Ok "Total skills installed: $installed -> $userSkillsDir\"
 }
 
 # ==============================================================================
@@ -747,7 +814,6 @@ Write-Host ""
 try {
     Detect-Platform
     Select-InstallDir
-    Check-Running
     Detect-SystemDeps
     Check-Existing
     Download-Files
@@ -755,6 +821,7 @@ try {
     Setup-Python
     Setup-Node
     Build-Tui
+    Install-Skills
     Create-Launcher
     Verify-Install
 } catch {

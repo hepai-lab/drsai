@@ -616,6 +616,110 @@ build_tui() {
 }
 
 # ==============================================================================
+#  8b. INSTALL PRE-BUILT SKILLS (multi-select)
+# ==============================================================================
+install_skills() {
+    section "Skill Selection"
+
+    local skills_src="$SRC_ROOT/skills/skills"
+    if [ ! -d "$skills_src" ]; then
+        info "No pre-built skills directory found (skills/skills/), skipping"
+        return 0
+    fi
+
+    # Discover available skills (directories with SKILL.md)
+    local skill_names=()
+    local skill_descs=()
+    local skill_dir
+
+    while IFS= read -r skill_dir; do
+        local sname sdesc
+        sname="$(basename "$skill_dir")"
+        local md="$skill_dir/SKILL.md"
+        if [ -f "$md" ]; then
+            sdesc=$(grep -m1 '^description:' "$md" | sed 's/^description:[[:space:]]*//')
+            [ -z "$sdesc" ] && sdesc="(no description)"
+        else
+            sdesc="(no SKILL.md)"
+        fi
+        skill_names+=("$sname")
+        skill_descs+=("$sdesc")
+    done < <(find "$skills_src" -maxdepth 1 -mindepth 1 -type d | sort)
+
+    local count=${#skill_names[@]}
+    if [ "$count" -eq 0 ]; then
+        info "No skills found in $skills_src, skipping"
+        return 0
+    fi
+
+    # Display the menu
+    echo
+    printf "  ${C_B}Available pre-built skills${C_RST} — select which to install:\n"
+    echo  "  (Enter numbers separated by spaces, 'all' for all, or Enter to skip)"
+    echo
+    for i in $(seq 0 $((count - 1))); do
+        printf "  ${C_C}[%d]${C_RST} %-20s ${C_GRAY}%s${C_RST}\n" \
+            "$((i + 1))" "${skill_names[$i]}" "${skill_descs[$i]}"
+    done
+    echo
+
+    # Read selection
+    printf "  Select skills: " >&2
+    if [ -e /dev/tty ]; then
+        read -r selection < /dev/tty
+    else
+        read -r selection
+    fi
+
+    # Parse selection
+    local selected=()
+    if [ -z "$selection" ]; then
+        info "No skills selected, skipping"
+        return 0
+    fi
+
+    if [ "$(echo "$selection" | tr '[:upper:]' '[:lower:]')" = "all" ]; then
+        selected=("${skill_names[@]}")
+    else
+        for tok in $selection; do
+            if [[ "$tok" =~ ^[0-9]+$ ]] && [ "$tok" -ge 1 ] && [ "$tok" -le "$count" ]; then
+                selected+=("${skill_names[$((tok - 1))]}")
+            else
+                warn "Invalid selection: $tok (ignored)"
+            fi
+        done
+    fi
+
+    if [ ${#selected[@]} -eq 0 ]; then
+        info "No skills selected"
+        return 0
+    fi
+
+    # Determine user skills directory
+    # Default: $INSTALL_DIR/workspace/runs/<user_id>/configs/skills/
+    local user_id="${USER:-$(whoami 2>/dev/null || echo 'default')}"
+    local user_skills_dir="$INSTALL_DIR/workspace/runs/$user_id/configs/skills"
+    mkdir -p "$user_skills_dir"
+
+    # Copy selected skills
+    local installed=0
+    for sname in "${selected[@]}"; do
+        local src_skill="$skills_src/$sname"
+        local dst_skill="$user_skills_dir/$sname"
+        if [ -d "$src_skill" ]; then
+            rm -rf "$dst_skill" 2>/dev/null || true
+            cp -r "$src_skill" "$dst_skill"
+            ok "Installed skill: $sname → $user_skills_dir/"
+            installed=$((installed + 1))
+        else
+            warn "Skill not found: $sname"
+        fi
+    done
+
+    ok "Total skills installed: $installed → $user_skills_dir/"
+}
+
+# ==============================================================================
 #  9. CREATE LAUNCHER
 # ==============================================================================
 create_launcher() {
@@ -748,6 +852,7 @@ main() {
     setup_python
     setup_node
     build_tui
+    install_skills
     create_launcher
     add_to_shell_rc
     verify

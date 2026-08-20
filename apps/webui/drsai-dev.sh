@@ -128,7 +128,7 @@ start_frontend() {
   pm2_up "$PM2_FRONTEND" \
     pm2 start -n "$PM2_FRONTEND" --cwd "$FRONTEND_DIR" \
       --env GATSBY_DEV_PORT="$FRONTEND_PORT" \
-      yarn -- develop
+      yarn -- dev
   pm2 set "$PM2_FRONTEND:GATSBY_DEV_PORT" "$FRONTEND_PORT" >/dev/null 2>&1 || true
   ok "前端已启动"
 }

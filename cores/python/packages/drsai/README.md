@@ -210,7 +210,7 @@ pnpm install
 pnpm dev          # runs tsx src/entry.tsx with hot reload
 ```
 
-This spawns the Python gateway as a subprocess; the gateway picks up the `drsai` install (editable or otherwise).
+This spawns the Python gateway as a subprocess; the gateway picks up the `opendrsai` install (editable or otherwise).
 
 ### Run gateway standalone (for WebSocket attach)
 
@@ -274,7 +274,7 @@ drsai/
 ├── cores/python/packages/drsai/                   # Python package
 │   ├── src/drsai/
 │   │   ├── backend/
-│   │   │   ├── run_cli.py                   # `drsai` CLI entry (thin launcher)
+│   │   │   ├── run_cli.py                   # `opendrsai` CLI entry (thin launcher)
 │   │   │   ├── tui_gateway/                 # JSON-RPC gateway
 │   │   │   │   ├── entry.py                 # `drsai-gateway` entry point
 │   │   │   │   ├── server.py                # RPC dispatcher
@@ -313,7 +313,7 @@ Console scripts installed by pip:
 
 | Command | Module |
 |---------|--------|
-| `drsai` | `drsai.backend.run_cli:run` |
+| `opendrsai` | `drsai.backend.run_cli:run` |
 | `drsai-tui` | `drsai.backend.run_cli:run` (alias) |
 | `drsai-gateway` | `drsai.backend.tui_gateway.entry:main` |
 
@@ -344,7 +344,7 @@ Console scripts installed by pip:
 
 ## Troubleshooting
 
-### `pip install` succeeded but `drsai chat` errors out on Node download
+### `pip install` succeeded but `opendrsai chat` errors out on Node download
 
 DrSai auto-downloads a portable Node.js runtime (~25 MB) on first launch from
 `https://nodejs.org/dist`. The downloader automatically honors `HTTP_PROXY` /
@@ -417,9 +417,9 @@ pip install --upgrade build hatchling twine
 
 ### Tests fail with "session not found"
 
-The test suite resolves sessions for the current user; sessions are stored in `~/.drsai/`. If you've never run `drsai` before, `session.create` will be exercised first.
+The test suite resolves sessions for the current user; sessions are stored in `~/.drsai/`. If you've never run `opendrsai` before, `session.create` will be exercised first.
 
-### `drsai gateway` prints a deprecation warning
+### `opendrsai gateway` prints a deprecation warning
 
 That's intentional. The old SSE `gateway.py` is preserved only for the Electron desktop client. The new TUI uses `drsai-gateway` (JSON-RPC).
 

@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import {
   ChevronDown,
   ChevronLeft,
@@ -16,11 +16,14 @@ import {
 import { useLang } from '../i18n/useLang';
 import { useRightPanelStore, type UnifiedRightTab } from '../store/rightPanel';
 import { useCloudFilesStore } from '../store/cloudFiles';
+import { MENU_IDS } from '../components/views/menuRoutes';
 
 interface UnifiedRightPanelProps {
   isCompact?: boolean;
   /** Whether the active agent is DocMaster — controls visibility of the DocMaster tab. */
   isDocMasterAgent?: boolean;
+  /** The currently active menu item id — tabs only show on the chat tab. */
+  activeSubMenuItem?: string;
   templatesContent?: React.ReactNode;
   guanlianyewuContent?: React.ReactNode;
   zongheCailiaoContent?: React.ReactNode;
@@ -46,15 +49,15 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({ id, icon, label
       <button
         type="button"
         onClick={() => toggle(id)}
-        className="flex items-center gap-1.5 w-full px-2 py-1.5 text-[11px] font-medium text-secondary hover:text-primary transition-colors"
+        className="flex items-center gap-1.5 w-full px-2.5 py-2 text-[1em] font-medium text-secondary hover:text-primary transition-colors"
       >
         <span className="flex-shrink-0">
-          {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </span>
         <span className="flex-shrink-0 opacity-70">{icon}</span>
         <span>{label}</span>
       </button>
-      {expanded && <div className="px-2 pb-2">{children}</div>}
+      {expanded && <div className="px-2.5 pb-2.5">{children}</div>}
     </div>
   );
 };
@@ -84,19 +87,19 @@ const SubCollapsible: React.FC<SubCollapsibleProps> = ({
 
   return (
     <div className="rounded-md border border-border-primary/15 bg-tertiary/[0.03]">
-      <div className="flex items-center w-full px-2 py-1.5 text-[11px] font-medium text-secondary">
+      <div className="flex items-center w-full px-2.5 py-2 text-[1em] font-medium text-secondary">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
           className="flex items-center gap-1.5 flex-1 min-w-0 text-left hover:text-primary transition-colors"
         >
           <span className="flex-shrink-0">
-            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           </span>
           <span className="flex-shrink-0 opacity-70">{icon}</span>
           <span className="flex-1 text-left">{label}</span>
           {comingSoon && (
-            <span className="flex-shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+            <span className="flex-shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[0.85em] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
               即将上线
             </span>
           )}
@@ -106,9 +109,9 @@ const SubCollapsible: React.FC<SubCollapsibleProps> = ({
         )}
       </div>
       {expanded && (
-        <div className="px-2 pb-2">
+        <div className="px-2.5 pb-2.5">
           {comingSoon ? (
-            <div className="text-center py-3 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+            <div className="text-center py-3 text-[0.92em] font-medium text-amber-700 dark:text-amber-300">
               功能开发中，敬请期待
             </div>
           ) : (
@@ -128,6 +131,7 @@ const SubCollapsible: React.FC<SubCollapsibleProps> = ({
 const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
   isCompact = false,
   isDocMasterAgent = false,
+  activeSubMenuItem,
   templatesContent,
   guanlianyewuContent,
   zongheCailiaoContent,
@@ -145,13 +149,27 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
   const isDark = darkMode === 'dark';
   const panelWidth = isCompact ? '100%' : isOpen ? width : 36;
 
+  // Scale text with viewport height: 1.2vh = 13px at 1080p (original design),
+  // 17px at 1440p, 20px at 4K. Clamped to [11, 20] to stay readable.
+  const [panelFontSize, setPanelFontSize] = useState(() =>
+    typeof window === 'undefined' ? 13 : Math.round(Math.min(Math.max(window.innerHeight * 0.012, 11), 20))
+  );
+  useEffect(() => {
+    const update = () =>
+      setPanelFontSize(Math.round(Math.min(Math.max(window.innerHeight * 0.012, 11), 20)));
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
   if (isCompact && !isOpen) {
     return null;
   }
 
+  const isChatTab = activeSubMenuItem === MENU_IDS.currentSession;
+
   const tabs: { id: UnifiedRightTab; label: string; icon: React.ReactNode }[] = [
-    ...(isDocMasterAgent
-      ? [{ id: 'docmaster' as const, label: '专属功能', icon: <FileText className="w-3 h-3" /> }]
+    ...(isDocMasterAgent && isChatTab
+      ? [{ id: 'docmaster' as const, label: '专属功能', icon: <FileText className="w-4 h-4" /> }]
       : []),
   ];
 
@@ -162,7 +180,7 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
           ? 'bg-[#0d1117]/70 backdrop-blur-md shadow-modern-lg'
           : 'bg-white/90 border border-gray-200/70 backdrop-blur-md'
         }`}
-      style={{ width: panelWidth }}
+      style={{ width: panelWidth, fontSize: panelFontSize }}
     >
       {isOpen ? (
         <>
@@ -182,7 +200,7 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
                     key={tab.id}
                     type="button"
                     onClick={() => setActiveTab(tab.id)}
-                    className={`relative flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium transition-all select-none shrink-0 ${isActive
+                    className={`relative flex items-center gap-1.5 px-3 py-2 text-[1em] font-medium transition-all select-none shrink-0 ${isActive
                       ? 'text-accent bg-accent/[0.11]'
                       : 'text-secondary hover:text-primary hover:bg-tertiary/25'
                       }`}
@@ -203,28 +221,28 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
               type="button"
               onClick={() => setIsOpen(false)}
               title={t('rightpanel.collapse')}
-              className={`flex-shrink-0 flex min-h-[32px] min-w-[28px] items-center justify-center transition-colors ${isDark
+              className={`flex-shrink-0 flex min-h-[3.5vh] min-w-[34px] items-center justify-center transition-colors ${isDark
                 ? 'text-secondary hover:text-primary hover:bg-white/5'
                 : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100/60'
                 }`}
             >
-              <ChevronRight className="w-3 h-3" />
+              <ChevronRight className="w-4 h-4" />
             </button>
           </div>
 
           {/* Tab content */}
           <div className="flex-1 min-h-0 overflow-hidden">
-            {isDocMasterAgent && (
+            {isDocMasterAgent && isChatTab && (
               <div className={activeTab === 'docmaster' ? 'h-full flex flex-col overflow-y-auto' : 'hidden'}>
                 <div className="space-y-1.5 p-2">
                   <CollapsibleSection
                     id="templates"
-                    icon={<Library className="w-3.5 h-3.5" />}
+                    icon={<Library className="w-[18px] h-[18px]" />}
                     label={t('rightpanel.tab.templates')}
                   >
-                    <div className="max-h-[420px] overflow-y-auto -mx-3 -mb-3">
+                    <div className="max-h-[38vh] overflow-y-auto -mx-3 -mb-3">
                       {templatesContent ?? (
-                        <div className="text-center py-4 text-[11px] text-tertiary">
+                        <div className="text-center py-4 text-[1em] text-tertiary">
                           {t('rightpanel.empty.templates')}
                         </div>
                       )}
@@ -233,12 +251,12 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
 
                   <CollapsibleSection
                     id="guanlianyewu"
-                    icon={<Scale className="w-3.5 h-3.5" />}
+                    icon={<Scale className="w-[18px] h-[18px]" />}
                     label="科研计划任务"
                   >
                     <div className="space-y-1.5">
                       <SubCollapsible
-                        icon={<ClipboardCheck className="w-3 h-3" />}
+                        icon={<ClipboardCheck className="w-4 h-4" />}
                         label="申请资料审查"
                         headerAction={onTryGuanlianyewu ? (
                           <button
@@ -247,7 +265,7 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
                               e.stopPropagation();
                               onTryGuanlianyewu();
                             }}
-                            className="text-[10px] rounded px-1.5 py-0.5 font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+                            className="text-[0.92em] rounded px-2 py-1 font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
                             title="加载演示文件并自动开始审核"
                           >
                             试用
@@ -255,16 +273,16 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
                         ) : undefined}
                       >
                         {guanlianyewuContent ? (
-                          <div className="max-h-[420px] overflow-y-auto">{guanlianyewuContent}</div>
+                          <div className="max-h-[38vh] overflow-y-auto">{guanlianyewuContent}</div>
                         ) : (
-                          <div className="text-center py-3 text-[10px] text-tertiary">
+                          <div className="text-center py-3 text-[0.92em] text-tertiary">
                             暂无审查内容
                           </div>
                         )}
                       </SubCollapsible>
 
                       <SubCollapsible
-                        icon={<FileEdit className="w-3 h-3" />}
+                        icon={<FileEdit className="w-4 h-4" />}
                         label="综合材料撰写"
                         headerAction={onTryZonghe ? (
                           <button
@@ -273,7 +291,7 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
                               e.stopPropagation();
                               onTryZonghe();
                             }}
-                            className="text-[10px] rounded px-1.5 py-0.5 font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+                            className="text-[0.92em] rounded px-2 py-1 font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
                             title="加载演示文件并自动生成专家意见表"
                           >
                             试用
@@ -281,25 +299,25 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
                         ) : undefined}
                       >
                         {zongheCailiaoContent ? (
-                          <div className="max-h-[420px] overflow-y-auto">{zongheCailiaoContent}</div>
+                          <div className="max-h-[38vh] overflow-y-auto">{zongheCailiaoContent}</div>
                         ) : (
-                          <div className="text-center py-3 text-[10px] text-tertiary">
+                          <div className="text-center py-3 text-[0.92em] text-tertiary">
                             暂未启用
                           </div>
                         )}
                       </SubCollapsible>
 
                       <SubCollapsible
-                        icon={<Megaphone className="w-3 h-3" />}
+                        icon={<Megaphone className="w-4 h-4" />}
                         label="公示信息生成"
                         comingSoon
                       />
                     </div>
                   </CollapsibleSection>
 
-                  <div className="rounded-lg border border-border-primary/20 bg-tertiary/5 flex items-center px-2 py-1.5 text-[11px] font-medium text-secondary">
+                  <div className="rounded-lg border border-border-primary/20 bg-tertiary/5 flex items-center px-2.5 py-2 text-[1em] font-medium text-secondary">
                     <span className="flex items-center gap-1.5 flex-1 min-w-0">
-                      <Presentation className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+                      <Presentation className="w-[18px] h-[18px] flex-shrink-0 opacity-70" />
                       <span>ppt生成</span>
                     </span>
                     <button
@@ -313,16 +331,16 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
                           })
                         )
                       }
-                      className="text-[10px] rounded px-1.5 py-0.5 font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex-shrink-0 ml-1"
+                      className="text-[0.92em] rounded px-2 py-1 font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex-shrink-0 ml-1"
                       title="把生成 ppt 的提示语写入聊天输入框"
                     >
                       试用
                     </button>
                   </div>
 
-                  <div className="rounded-lg border border-border-primary/20 bg-tertiary/5 flex items-center px-2 py-1.5 text-[11px] font-medium text-secondary">
+                  <div className="rounded-lg border border-border-primary/20 bg-tertiary/5 flex items-center px-2.5 py-2 text-[1em] font-medium text-secondary">
                     <span className="flex items-center gap-1.5 flex-1 min-w-0">
-                      <FilePlus className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+                      <FilePlus className="w-[18px] h-[18px] flex-shrink-0 opacity-70" />
                       <span>docx生成</span>
                     </span>
                     <button
@@ -336,7 +354,7 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
                           })
                         )
                       }
-                      className="text-[10px] rounded px-1.5 py-0.5 font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex-shrink-0 ml-1"
+                      className="text-[0.92em] rounded px-2 py-1 font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex-shrink-0 ml-1"
                       title="把生成 docx 的提示语写入聊天输入框"
                     >
                       试用
@@ -354,12 +372,12 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
             type="button"
             onClick={() => setIsOpen(true)}
             title={t('rightpanel.expand')}
-            className={`flex items-center justify-center w-full h-8 transition-colors ${isDark
+            className={`flex items-center justify-center w-full h-10 transition-colors ${isDark
               ? 'text-secondary hover:text-primary hover:bg-white/5'
               : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100/60'
               }`}
           >
-            <ChevronLeft className="w-3 h-3" />
+            <ChevronLeft className="w-4 h-4" />
           </button>
 
           <div className="flex flex-col items-center gap-1 mt-1.5">
@@ -372,7 +390,7 @@ const UnifiedRightPanel: React.FC<UnifiedRightPanelProps> = ({
                   setActiveTab(tab.id);
                 }}
                 title={tab.label}
-                className={`flex items-center justify-center w-6 h-6 rounded-md transition-colors ${activeTab === tab.id
+                className={`flex items-center justify-center w-8 h-8 rounded-md transition-colors ${activeTab === tab.id
                   ? 'text-accent bg-accent/10'
                   : isDark
                     ? 'text-secondary hover:text-primary hover:bg-white/5'

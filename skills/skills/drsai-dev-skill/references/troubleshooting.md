@@ -173,7 +173,7 @@ Gatsby 首次编译需要 1-5 分钟，属于正常现象。如果超过 10 分�
 # 清理缓存后重试
 cd /path/to/drsai/frontend
 yarn clean
-yarn develop
+yarn dev
 ```
 
 ---
@@ -182,9 +182,9 @@ yarn develop
 
 ```bash
 # 换端口启动
-GATSBY_DEV_PORT=8001 yarn develop
+GATSBY_DEV_PORT=8001 yarn dev
 # 或
-yarn develop:8001
+yarn dev:8001
 ```
 
 ---

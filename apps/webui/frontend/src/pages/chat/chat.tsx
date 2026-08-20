@@ -90,6 +90,8 @@ export default function ChatView({
   const [noMessagesYet, setNoMessagesYet] = React.useState(true);
   const chatContainerRef = React.useRef<HTMLDivElement | null>(null);
   const pendingMessageSentRef = React.useRef(false);
+  // Tracks whether the WS is actively streaming so initializeSession skips DB reload
+  const wsActiveRef = React.useRef(false);
 
   // TODO: 根据当前run的task的metadata或session的agent_mode_config来确定agent类型
   // Panel state - initialized based on agent configuration
@@ -240,6 +242,16 @@ export default function ChatView({
     onSessionNameChange,
   });
 
+  // Wrap runTask to synchronously mark WS as active before sending, so that
+  // any concurrent initializeSession re-run skips the DB reload immediately.
+  const runTaskWithActiveFlag = React.useCallback(
+    (...args: Parameters<typeof runTask>) => {
+      wsActiveRef.current = true;
+      return runTask(...args);
+    },
+    [runTask]
+  );
+
   // 从 messages 中提取 FilesEvent 类型的消息
   const extractFileEventsFromMessages = React.useCallback((run: Run | null): any[] => {
     if (!run || !run.messages || !Array.isArray(run.messages)) {
@@ -389,7 +401,6 @@ export default function ChatView({
       return latestRun;
     } catch (error) {
       console.error("Error loading session runs:", error);
-      messageApi.error("Failed to load chat history");
       return null;
     }
   }, [session?.id, user?.email, messageApi, extractFileEventsFromMessages, extractLogEventsFromMessages]);
@@ -401,7 +412,7 @@ export default function ChatView({
         // When not visible, skip load to avoid overwriting streamed messages in currentRun
         if (!visible) return;
 
-        // When returning to the same session: keep currentRun (streamed state) and only
+// When returning to the same session: keep currentRun (streamed state) and only
         // ensure the WebSocket is connected. If session changed, prev may be another
         // session's run — must load that session's run or agent/message attribution "crosses".
         let skipLoad = false;
@@ -423,21 +434,50 @@ export default function ChatView({
         setLocalPlan(null);
         setPlanProcessed(false);
 
-        const latestRun = await loadSessionRun();
+        // Don't reload from DB while WS is streaming — it would overwrite live messages.
+        if (wsActiveRef.current) return;
+
+        let latestRun = await loadSessionRun();
+
+        // Check again after the await — streaming may have started while we waited.
+        if (wsActiveRef.current) return;
 
         if (latestRun) {
-          setCurrentRun(latestRun);
+          // After page reload, if the run is in a non-terminal state
+          // (active/pausing/paused/awaiting_input/error) but the WebSocket
+          // was already lost, force it to "stopped" so the user can send a
+          // fresh message instead of a stale input_response.
+          const nonTerminal = new Set(["active", "awaiting_input", "pausing", "paused", "error"]);
+          if (
+            nonTerminal.has(latestRun.status) &&
+            !setupWebSocket(latestRun.id, false, true)
+          ) {
+            latestRun = { ...latestRun, status: "stopped" as const };
+          }
+          // Use a functional updater so we read the current value at commit
+          // time, not the stale closure value. If the WS handler has already
+          // populated currentRun with live-streamed messages for this same
+          // session while loadSessionRun() was awaiting, keep the live data
+          // instead of overwriting it with the potentially-stale DB snapshot.
+          setCurrentRun((prev) => {
+            if (prev && prev.session_id === latestRun!.session_id) {
+              // Keep prev if it has more messages (live WS data is ahead of DB snapshot)
+              // or if the run is still active (streaming in progress).
+              const liveIsAhead = prev.messages.length > latestRun!.messages.length;
+              const liveIsActive = new Set(["active", "awaiting_input", "pausing", "paused"]).has(prev.status);
+              if (liveIsAhead || liveIsActive) {
+                return prev;
+              }
+            }
+            return latestRun!;
+          });
           setNoMessagesYet(latestRun.messages.length === 0);
 
           if (latestRun.id) {
             setupWebSocket(latestRun.id, false, true);
           }
-        } else {
-          setError({
-            status: false,
-            message: "No run found",
-          });
         }
+        // else: no run yet — stay silent
       } else {
         setCurrentRun(null);
       }
@@ -446,6 +486,38 @@ export default function ChatView({
     initializeSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, visible, loadSessionRun]);
+
+  // Keep wsActiveRef in sync with run status so initializeSession skips DB
+  // reload while streaming is in progress.
+  React.useEffect(() => {
+    const activeStatuses = new Set(["active", "awaiting_input", "pausing", "paused"]);
+    wsActiveRef.current = !!currentRun && activeStatuses.has(currentRun.status);
+  }, [currentRun?.status]);
+
+  // When the run transitions to awaiting_input, the backend may have saved
+  // messages (e.g. the DocMaster final TextMessage inside a Response object)
+  // that were never sent over WS. Do a one-time DB merge to pick them up.
+  const prevStatusRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const status = currentRun?.status ?? null;
+    if (status === "awaiting_input" && prevStatusRef.current !== "awaiting_input") {
+      loadSessionRun().then((latestRun) => {
+        if (!latestRun) return;
+        setCurrentRun((prev) => {
+          if (!prev || prev.id !== latestRun.id) return prev;
+          // Always replace with DB messages — DB is authoritative at awaiting_input
+          // and contains messages (e.g. final TextMessage) that WS never sent.
+          return {
+            ...prev,
+            messages: latestRun.messages,
+            file_events: latestRun.file_events ?? prev.file_events,
+            logs: latestRun.logs ?? prev.logs,
+          };
+        });
+      });
+    }
+    prevStatusRef.current = status;
+  }, [currentRun?.status, loadSessionRun]);
 
   // Update noMessagesYet when messages change
   React.useEffect(() => {
@@ -516,7 +588,7 @@ export default function ChatView({
     pendingMessageSentRef.current = true;
 
     const { query, files, plan, llm } = pendingFirstMessage;
-    runTask(query, files as any[], plan, true, llm);
+    runTaskWithActiveFlag(query, files as any[], plan, true, llm);
 
     if (onPendingMessageSent) {
       onPendingMessageSent();
@@ -526,7 +598,7 @@ export default function ChatView({
     currentRun,
     noMessagesYet,
     currentRun?.status,
-    runTask,
+    runTaskWithActiveFlag,
     onPendingMessageSent,
   ]);
 
@@ -647,7 +719,7 @@ export default function ChatView({
                     onDeny={handleDeny}
                     onAcceptPlan={handleAcceptPlan}
                     onInputResponse={handleInputResponse}
-                    onRunTask={runTask}
+                    onRunTask={runTaskWithActiveFlag}
                     onCancel={handleCancel}
                     error={error}
                     chatInputRef={chatInputRef}
@@ -689,10 +761,14 @@ export default function ChatView({
                 plan?: IPlan,
                 llm?: { label: string; value: string }
               ) => {
+                if (!currentRun) {
+                  console.warn("No active run — skipping submit");
+                  return;
+                }
                 if (currentRun?.status === "awaiting_input" && activeSocketRef?.current?.readyState === WebSocket.OPEN) {
                   handleInputResponse(query, accepted, plan, files, llm);
                 } else {
-                  runTask(query, files, plan, true, llm);
+                  runTaskWithActiveFlag(query, files, plan, true, llm);
                 }
               }}
               onCancel={handleCancel}

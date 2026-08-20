@@ -1,5 +1,5 @@
-
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false, reportMissingModuleSource=false
 """
 Word文档编辑智能体 - 主启动脚本
 
@@ -7,12 +7,40 @@ Word文档编辑智能体 - 主启动脚本
 """
 
 import asyncio
+import functools
 import json
 import os
 import sys
 from pathlib import Path
-from loguru import logger
+from typing import Any, Callable
+
 from dotenv import load_dotenv
+
+load_dotenv()
+
+# Install before importing DrSai/HepAI. Both dependencies print configuration
+# and generated credentials during initialization; authentication retains the
+# original values while all process console/log output is sanitized.
+from secret_redaction import install_secret_redaction
+
+install_secret_redaction()
+
+# Import Loguru only after stderr is wrapped; its default sink captures the
+# stream object at import time.
+from loguru import logger
+
+# Resolve imports before importing anything from ``drsai``.  This repository
+# can coexist with other DrSai checkouts/installations, and importing drsai
+# first would pin whichever copy happened to be earlier on sys.path (whose
+# worker model name may remain at the legacy default ``drsai/besiii``).
+_THIS_FILE = Path(__file__).resolve()
+_REPO_ROOT = _THIS_FILE.parents[3]
+_DRSAI_SRC = _REPO_ROOT / "cores" / "python" / "packages" / "drsai" / "src"
+_AGENT_GROUPCHAT_DIR = _THIS_FILE.parents[1]
+
+sys.path.insert(0, str(_DRSAI_SRC))
+sys.path.insert(0, str(_AGENT_GROUPCHAT_DIR))
+
 from drsai.modules.managers.database import DatabaseManager
 
 
@@ -24,10 +52,6 @@ def _gfs_log(level: str, step: str, user_id: str = "", **fields) -> None:
     record.update(fields)
     getattr(logger, level)(json.dumps(record, ensure_ascii=False))
 
-# 添加父目录到路径，以便导入DrSai模块
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))  # repo root (for drsai)
-sys.path.insert(0, str(Path(__file__).parent.parent))                        # examples/agent_groupchat (for docmaster.*)
-
 from docmaster.constants import HERE, WORKDIR, LLM_MODE_CONFIG
 from docmaster.model_config import create_model_client
 from docmaster.agent import DocMasterAgent
@@ -35,8 +59,6 @@ from docmaster.tools import get_all_tools
 from docmaster.system_prompt import SYSTEM_PROMPT
 from docmaster.utils.deps import ensure_python_deps
 from docmaster.utils.ocr import warmup_rapidocr_at_boot
-
-load_dotenv()
 
 # ── Auto-install missing Python dependencies ──────────────────────────────
 def _ensure_python_deps():
@@ -138,17 +160,80 @@ def _install_stable_worker_id():
     worker_config before the base worker reads it."""
     from hepai.components.haiddf.worker.worker_app import HWorkerAPP
 
-    _original_init = HWorkerAPP.__init__
+    # HWorkerConfig is a dataclass, but HepAI intentionally builds the
+    # CommonWorker configuration from its ``__dict__`` and reads the optional
+    # ``worker_id`` key from there. The field is not declared on HWorkerConfig,
+    # so this boundary must remain dynamic.
+    if getattr(HWorkerAPP, "_docmaster_stable_id_patch", False):
+        return
 
-    def _patched_init(self, models, worker_config=None, *args, **kwargs):
+    original_init: Callable[..., None] = HWorkerAPP.__init__
+
+    @functools.wraps(original_init)
+    def _patched_init(
+        self: Any,
+        models: Any,
+        worker_config: Any | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         if worker_config is not None and not getattr(worker_config, "worker_id", None):
             setattr(worker_config, "worker_id", _DOCMASTER_WORKER_ID)
-        return _original_init(self, models, worker_config=worker_config, *args, **kwargs)
+        original_init(self, models, worker_config=worker_config, *args, **kwargs)
 
-    HWorkerAPP.__init__ = _patched_init
+    # setattr is deliberate: assigning to HWorkerAPP.__init__ directly makes
+    # static checkers compare this compatibility wrapper against HepAI's
+    # incomplete third-party annotation.
+    setattr(HWorkerAPP, "__init__", _patched_init)
+    setattr(HWorkerAPP, "_docmaster_stable_id_patch", True)
 
 
 _install_stable_worker_id()
+
+
+def _install_desktop_session_mapping() -> None:
+    """Map Desktop/OAEP session identity to DrSai's legacy ``chat_id``.
+
+    The OpenAI-compatible Desktop request uses ``thread_id`` (the OAEP Runtime
+    session id), while DrSai historically looked only at OpenWebUI's
+    ``chat_id``.  Normalize the aliases before UserInput persistence so both
+    clients share the same downstream conversation isolation behavior.
+    """
+    from drsai.dr_sai import DrSai
+
+    if getattr(DrSai, "_docmaster_session_mapping_patch", False):
+        return
+
+    original_handle_input_info = DrSai.handle_input_info
+
+    @functools.wraps(original_handle_input_info)
+    async def _mapped_handle_input_info(self: Any, **kwargs: Any):
+        if not kwargs.get("chat_id"):
+            metadata = kwargs.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            extra_body = kwargs.get("extra_body")
+            extra_body = extra_body if isinstance(extra_body, dict) else {}
+            extra_metadata = extra_body.get("metadata")
+            extra_metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
+            session_id = (
+                kwargs.get("thread_id")
+                or kwargs.get("session_id")
+                or metadata.get("session_id")
+                or metadata.get("thread_id")
+                or extra_body.get("thread_id")
+                or extra_body.get("session_id")
+                or extra_metadata.get("session_id")
+                or extra_metadata.get("thread_id")
+            )
+            if session_id:
+                kwargs["chat_id"] = str(session_id)
+        return await original_handle_input_info(self, **kwargs)
+
+    setattr(DrSai, "handle_input_info", _mapped_handle_input_info)
+    setattr(DrSai, "_docmaster_session_mapping_patch", True)
+
+
+_install_desktop_session_mapping()
 
 
 WORKSPACE = HERE / "workspace"
@@ -345,48 +430,126 @@ def main():
     from drsai.backend import run_worker
 
     warmup_rapidocr_at_boot()
+    
     asyncio.run(
         run_worker(
-            agent_name="DocMaster",
-            author="haiuser01@ihep.ac.cn",
-            description="V1.0: 专业的Word文档处理大师，支持上传、分析、编辑、格式化Word文档，支持添加和删除批注和评论",
-            version="1.0.0",
-            logo="docmaster_logo.png",
-            permission='groups: drsai; users: admin, haiuser01@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: haiuser01@ihep.ac.cn',
-            examples=[
-                "DocMaster，请帮我分析这份文档的主要内容",
-                "先读取这份 DOCX 的内容，再帮我润色引言部分",
-                "把文档中的技术术语替换为更通俗的表达",
-                "在这份 DOCX 末尾新增一个总结段落",
-                "新建一份 DOCX，包含标题、正文和一个简单表格",
-                "把这份 DOCX 的中文设为宋体、英文设为 Times New Roman",
-                "这是一份合同模板，请按以下信息填充并生成新文档：甲方=张三，乙方=李四，日期=2026-05-13",
-                "我上传了一份带 {{ name }}、{{ date }} 占位符的模板，请帮我填充",
-                "帮我做一份 6 页的 PPT，主题是『2026 Q2 安全合规季报』，目标读者是所领导",
-                "做一份 4 页的产品周报 deck，包含一页趋势图、一页方案对比矩阵、一页结论页",
-                "我有一份参考 pptx 模板，请按它的页面系统做一份汇报",
-            ],
-            agent_config=LLM_MODE_CONFIG,
-            defult_config_name="deepseek-v4-pro",
+            # ── Worker 展示信息（→ _info）──
+            worker_info={
+                "name": "DocMaster",
+                "description": 
+                    '{"en":"V1.0: A professional Word document processing tool, supporting the uploading, analyzing, editing, and formatting of Word documents, as well as the addition and deletion of annotations and comments","zh":"V1.0: 专业的Word文档处理大师，支持上传、分析、编辑、格式化Word文档，支持添加和删除批注和评论"}',
+                "version": "0.1.0",
+                "author": "juzy@ihep.ac.cn",
+                # A local, version-controlled asset is uploaded through DrSai's
+                # platform file flow before the worker registers.
+                "logo": str(HERE / "docmaster_logo.png"),
+                "capabilities": [
+                    "chat",
+                    "streaming",
+                    "file-input",
+                    "document-analysis",
+                    "document-editing",
+                    "document-formatting",
+                    "docx",
+                    "pptx",
+                ],
+                "examples": [
+                    {
+                        "en": "Create a DOCX file with a short poem on any topic, using SimSun as the font.",
+                        "zh": "创建一个docx文件，内容为一首短诗，题材不限，使用宋体字体。"
+                    },
+                    {
+                        "en": "Create a 5-slide PPT introducing IHEP.",
+                        "zh": "制作一份5页的PPT，介绍高能所。"
+                    },
+                    {"en": "please help me analyze the main content of this document", "zh": "请帮我分析这份文档的主要内容"},
+                    {"en": "First read the content of this DOCX, then help me polish the introduction", "zh": "先读取这份 DOCX 的内容，再帮我润色引言部分"},
+                    {"en": "Replace technical terms in the document with more accessible expressions", "zh": "把文档中的技术术语替换为更通俗的表达"},
+                    {"en": "Add a summary paragraph at the end of this DOCX", "zh": "在这份 DOCX 末尾新增一个总结段落"},
+                    {"en": "Create a new DOCX with a title, body text, and a simple table", "zh": "新建一份 DOCX，包含标题、正文和一个简单表格"},
+                    {"en": "Set Chinese font to SimSun and English font to Times New Roman in this DOCX", "zh": "把这份 DOCX 的中文设为宋体、英文设为 Times New Roman"},
+                    {"en": "This is a contract template, please fill in the following info and generate a new document: Party A=Zhang San, Party B=Li Si, Date=2026-05-13", "zh": "这是一份合同模板，请按以下信息填充并生成新文档：甲方=张三，乙方=李四，日期=2026-05-13"},
+                    {"en": "I uploaded a template with {{ name }}, {{ date }} placeholders, please help me fill it in", "zh": "我上传了一份带 {{ name }}、{{ date }} 占位符的模板，请帮我填充"},
+                    {"en": "Help me create a 6-page PPT on the topic '2026 Q2 Security Compliance Quarterly Report', targeting institute leadership", "zh": "帮我做一份 6 页的 PPT，主题是『2026 Q2 安全合规季报』，目标读者是所领导"},
+                    {"en": "Create a 4-page product weekly report deck, with a trend chart page, a solution comparison matrix page, and a conclusion page", "zh": "做一份 4 页的产品周报 deck，包含一页趋势图、一页方案对比矩阵、一页结论页"},
+                    {"en": "I have a reference pptx template, please create a report following its page system", "zh": "我有一份参考 pptx 模板，请按它的页面系统做一份汇报"},
+                ],
+                "agent_config": LLM_MODE_CONFIG,
+                "defult_config_name": "deepseek-v4-flash",
+                "announcements": [
+                    {"en": "OpenDrSai is ready to serve you!", "zh": "OpenDrSai 已准备好为您服务！"},
+                    {"en": "reasoning is coming!", "zh": "推理功能即将上线！"},
+                    {"en": "try the latest Dr.Sai features today!", "zh": "尝试今天最新的Dr.Sai功能！"},
+                ],
+            },
+            # ── 权限配置 ──
+            permission="groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, juzy@ihep.ac.cn, ddf_free; owner: juzy@ihep.ac.cn",
+            # ── 智能体实体 ──
             agent_factory=create_word_editor_agent,
+            # ── 后端服务配置 ──
+            controller_address = "https://ai-dev.ihep.ac.cn",
             port=42819,
             no_register=False,
-            enable_openwebui_pipeline=True,
+            # drsai_dir=DATASET,
+            enable_openwebui_pipeline=False,
             history_mode="backend",
-            join_topics=["document-processing", "office-tools"],
+            use_api_key_mode = "frontend",
+            # join_topics = ["drsai-agent"],
             metadata={
-                "category": "文档处理大师",
-                "tags": ["docmaster", "word", "文档编辑", "办公自动化", "专业文档"],
-                "capabilities": ["文档分析", "内容编辑", "格式优化", "结构重组", "专业排版"],
-                "dependencies": {
-                    "python": ["python-docx", "PyPDF2", "python-pptx", "pandas", "openpyxl"],
-                    "system": ["pandoc", "libreoffice", "poppler-utils (pdftoppm)"],
-                    "npm": ["docx"],
-                    "install_system": "sudo apt install pandoc libreoffice poppler-utils && npm install -g docx",
-                }
+                "delegated_model_auth": {
+                    "version": 1,
+                    "supported": True,
+                    "accepted_audience": "hai-model-gateway",
+                    "request_scope_only": True,
+                    "allowed_models": ["deepseek-v4-flash"],
+                    "allowed_operations": ["chat.completions"],
+                },
             },
+            link_wechat=False,
         )
     )
+    # asyncio.run(
+    #     run_worker(
+    #         agent_name="DocMaster",
+    #         author="haiuser03@ihep.ac.cn",
+    #         description="V1.0: 专业的Word文档处理大师，支持上传、分析、编辑、格式化Word文档，支持添加和删除批注和评论",
+    #         version="1.0.0",
+    #         logo="docmaster_logo.png",
+    #         permission='groups: drsai; users: admin, haiuser01@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: haiuser01@ihep.ac.cn',
+    #         examples=[
+    #             "DocMaster，请帮我分析这份文档的主要内容",
+    #             "先读取这份 DOCX 的内容，再帮我润色引言部分",
+    #             "把文档中的技术术语替换为更通俗的表达",
+    #             "在这份 DOCX 末尾新增一个总结段落",
+    #             "新建一份 DOCX，包含标题、正文和一个简单表格",
+    #             "把这份 DOCX 的中文设为宋体、英文设为 Times New Roman",
+    #             "这是一份合同模板，请按以下信息填充并生成新文档：甲方=张三，乙方=李四，日期=2026-05-13",
+    #             "我上传了一份带 {{ name }}、{{ date }} 占位符的模板，请帮我填充",
+    #             "帮我做一份 6 页的 PPT，主题是『2026 Q2 安全合规季报』，目标读者是所领导",
+    #             "做一份 4 页的产品周报 deck，包含一页趋势图、一页方案对比矩阵、一页结论页",
+    #             "我有一份参考 pptx 模板，请按它的页面系统做一份汇报",
+    #         ],
+    #         agent_config=LLM_MODE_CONFIG,
+    #         defult_config_name="deepseek-v4-pro",
+    #         agent_factory=create_word_editor_agent,
+    #         port=42819,
+    #         no_register=False,
+    #         enable_openwebui_pipeline=True,
+    #         history_mode="backend",
+    #         join_topics=["document-processing", "office-tools"],
+    #         metadata={
+    #             "category": "文档处理大师",
+    #             "tags": ["docmaster", "word", "文档编辑", "办公自动化", "专业文档"],
+    #             "capabilities": ["文档分析", "内容编辑", "格式优化", "结构重组", "专业排版"],
+    #             "dependencies": {
+    #                 "python": ["python-docx", "PyPDF2", "python-pptx", "pandas", "openpyxl"],
+    #                 "system": ["pandoc", "libreoffice", "poppler-utils (pdftoppm)"],
+    #                 "npm": ["docx"],
+    #                 "install_system": "sudo apt install pandoc libreoffice poppler-utils && npm install -g docx",
+    #             }
+    #         },
+    #     )
+    # )
 
 
 if __name__ == "__main__":

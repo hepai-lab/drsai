@@ -3,7 +3,7 @@ package ai.drsai.remote.remote.generated
 
 object OwopSchemaGenerated {
     const val VERSION: String = "1.0"
-    const val SCHEMA_SHA256: String = "ebdbf06e783d100a8c49bcfc913469e102251a9e13082fba7385de13b5f0bec7"
+    const val SCHEMA_SHA256: String = "f2b57650032e7a19e1c0d788b28436607728361f10ab2c41617cac2117af56b5"
     val OPERATIONS: Set<String> = setOf(
         "artifact.chunk",
         "artifact.metadata",

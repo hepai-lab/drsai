@@ -2,7 +2,7 @@ import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { appContext } from "@/hooks/provider";
 import { useLang } from "../../i18n/useLang";
 import { parseAgentText } from "@/utils/agentLocalizedText";
-import { FileText } from "lucide-react";
+import { FileText, Rocket } from "lucide-react";
 import { RcFile } from "antd/es/upload";
 import * as React from "react";
 import { Agent } from "../../types/common";
@@ -153,12 +153,16 @@ export default function NewChatView({
             </div>
 
             {showAnnouncement && announcements && announcements.length > 0 && (
-                <div className="mb-3 mt-4 flex w-full items-center gap-2 overflow-hidden">
+                <div className="group mb-3 mt-4 flex w-full items-center gap-2 overflow-hidden">
                     <div className="flex flex-1 overflow-hidden">
                         <p
-                            className="font-agent-mono animate-marquee-x ml-auto whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.22em] text-accent"
+                            className="font-agent-mono animate-marquee-x ml-auto whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.22em] text-accent group-hover:[animation-play-state:paused]"
                             style={{ '--marquee-duration': '16s' } as React.CSSProperties}
                         >
+                            <Rocket className="inline h-3 w-3 text-rose-400" />{" "}
+                            {announcements.map((a) => parseAgentText(a, lang)).join('  ·  ')}
+                            <span className="inline-block w-12" aria-hidden="true" />
+                            <Rocket className="inline h-3 w-3 text-rose-400" />{" "}
                             {announcements.map((a) => parseAgentText(a, lang)).join('  ·  ')}
                         </p>
                     </div>

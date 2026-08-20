@@ -640,6 +640,34 @@ class HepAIWorkerAgent(DrSaiAgent):
                             message_type
                         ].model_validate(chunk)
                         final_message = msg
+                        meta = getattr(msg, "metadata", None) or {}
+                        content = getattr(msg, "content", None)
+                        content_len = len(content) if isinstance(content, str) else 0
+                        if message_type == "ModelClientStreamingChunkEvent" and (
+                            meta.get("start_flag") or content_len >= 40
+                        ):
+                            logger.info(
+                                "[WORKER_CHUNK] model=%s source=%s start_flag=%s len=%s preview=%r",
+                                self.model_name,
+                                getattr(msg, "source", None),
+                                meta.get("start_flag"),
+                                content_len,
+                                (content or "")[:80] if isinstance(content, str) else content,
+                            )
+                        elif message_type in {
+                            "ThoughtEvent",
+                            "AgentLogEvent",
+                            "TextMessage",
+                            "ToolCallRequestEvent",
+                        }:
+                            logger.info(
+                                "[WORKER_EVT] model=%s type=%s source=%s len=%s start_flag=%s",
+                                self.model_name,
+                                message_type,
+                                getattr(msg, "source", None),
+                                content_len,
+                                meta.get("start_flag"),
+                            )
                         yield msg
                     if "stop_reason" in chunk:
                         break

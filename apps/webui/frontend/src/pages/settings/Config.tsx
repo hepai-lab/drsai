@@ -40,8 +40,8 @@ const ProfileSection: React.FC<{ user: UserLike }> = ({ user }) => {
     <div className="flex justify-center pt-6">
       <div
         className={`w-full max-w-sm rounded-2xl border shadow-modern overflow-hidden ${darkMode === "dark"
-            ? "bg-[#0f0f0f]/60 border-border-primary/40"
-            : "bg-white/90 border-gray-200/70"
+          ? "bg-[#0f0f0f]/60 border-border-primary/40"
+          : "bg-white/90 border-gray-200/70"
           }`}
       >
         <div className="h-20 bg-gradient-to-br from-violet-500/30 via-purple-500/20 to-blue-500/10" />
@@ -70,8 +70,8 @@ const ProfileSection: React.FC<{ user: UserLike }> = ({ user }) => {
           </p>
           <div
             className={`mt-5 rounded-xl border p-4 text-left space-y-3 ${darkMode === "dark"
-                ? "border-border-primary/30 bg-white/[0.03]"
-                : "border-gray-100 bg-gray-50/80"
+              ? "border-border-primary/30 bg-white/[0.03]"
+              : "border-gray-100 bg-gray-50/80"
               }`}
           >
             <ConfigRow label={t("settings.username")} value={user.name || "—"} />

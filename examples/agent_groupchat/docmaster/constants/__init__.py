@@ -178,12 +178,12 @@ LLM_MODE_CONFIG = {
     "minimax-m2.7": "hepai/minimax-m2.7",
     "minimax-m2.7-highspeed": "hepai/minimax-m2.7-highspeed",
     "deepseek-v4-pro": "hepai/deepseek-v4-pro",
-    "deepseek-v4-flash(Fast)": "hepai/deepseek-v4-flash",
+    "deepseek-v4-flash": "deepseek-v4-flash",
     "qwen3_30b": "hepai/qwen3_30b",
 }
 """
-Supported LLM models and their HepAI identifiers.
-deepseek-v4-pro is the default choice (highest context window).
+Supported LLM models and their API identifiers.
+deepseek-v4-flash is the default choice.
 """
 
 MODEL_CLIENT_PARAMS = {

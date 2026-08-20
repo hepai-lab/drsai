@@ -2066,7 +2066,7 @@ function AuthenticatedApp({
 
   async function selectChatAgent(
     agentId: string,
-    options: { persistInBackground?: boolean; agent?: DesktopAgent } = {},
+    options: { persistInBackground?: boolean; agent?: DesktopAgent; forceNewConversation?: boolean } = {},
   ): Promise<boolean> {
     const agent = options.agent ?? availableChatAgents.find((item) => item.id === agentId);
     if (!agent) return false;
@@ -2076,11 +2076,25 @@ function AuthenticatedApp({
         ...current.filter((item) => item.id !== agent.id),
       ]);
     }
+    if (options.forceNewConversation) {
+      applyChatAgent(agent);
+      const thread = await desktopApi.createThread({
+        kind: "chat",
+        title: language === "zh" ? `与 ${agent.name} 的新会话` : `New chat with ${agent.name}`,
+        workspacePath: effectiveWorkspacePath,
+        boundAgentId: agent.id,
+        boundAgentName: agent.name,
+      });
+      setActiveThreadId(thread.id);
+      setThreads((current) => sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]));
+      return true;
+    }
     const activeThread = threads.find((thread) => thread.id === activeThreadId);
     const snapshotCount = activeThreadSnapshot?.messageCount ?? 0;
     const hasConversation = (activeThread?.messageCount ?? 0) > 0 || snapshotCount > 0;
+    const hasRuntimeBinding = Boolean(activeThread?.runtimeSessionId);
     const changesBoundAgent = Boolean(activeThread?.boundAgentId && activeThread.boundAgentId !== agent.id);
-    if (hasConversation && changesBoundAgent) {
+    if ((hasConversation || hasRuntimeBinding) && changesBoundAgent) {
       const createNew = await requestAppDecision({
         id: "switch-bound-agent",
         title: language === "zh" ? "新建会话并切换智能体？" : "Start a new conversation?",
@@ -3014,11 +3028,13 @@ function AuthenticatedApp({
           selectedAgentId={selectedChatAgentId}
           onStartChat={(agent) => {
             void selectChatAgent(agent.id, {
-              persistInBackground: true,
               agent,
+              forceNewConversation: true,
             }).then((selected) => {
               if (!selected) return;
-              void handleNewChat();
+              setRightPanelCollapsed(true);
+              setComposerFocusRequest((current) => current + 1);
+              navigateTo(MENU_IDS.currentSession);
             });
           }}
         />

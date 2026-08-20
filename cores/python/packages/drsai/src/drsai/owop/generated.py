@@ -8,7 +8,7 @@ try:
 except ImportError:  # Python 3.9 compatibility for tooling hosts
     from typing_extensions import NotRequired, Required, TypeAlias
 
-SCHEMA_SHA256 = "ebdbf06e783d100a8c49bcfc913469e102251a9e13082fba7385de13b5f0bec7"
+SCHEMA_SHA256 = "f2b57650032e7a19e1c0d788b28436607728361f10ab2c41617cac2117af56b5"
 OWOP_VERSION = '1.0'
 OWOPCapability: TypeAlias = Literal['workspace', 'worktree', 'files', 'search', 'watch', 'git', 'process', 'pty', 'checkpoint', 'artifact', 'resources.v2']
 OWOPBindingKind: TypeAlias = Literal['in_process', 'local_ipc', 'ssh', 'hepai_if', 'mcp', 'ddf', 'relay']

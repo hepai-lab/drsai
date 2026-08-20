@@ -48,7 +48,7 @@ assert(
 );
 assert(
   app.includes("const agent = options.agent ?? availableChatAgents.find")
-  && /selectChatAgent\(agent\.id,\s*\{\s*persistInBackground:\s*true,\s*agent,\s*\}\)\.then/.test(app)
+  && /selectChatAgent\(agent\.id,\s*\{\s*agent,\s*forceNewConversation:\s*true,\s*\}\)\.then/.test(app)
   && app.includes("samplePrompts={selectedChatAgent?.examples ?? selectedChatExamples}"),
   "Agent Square must carry its freshly fetched remote-agent examples into the empty chat view",
 );

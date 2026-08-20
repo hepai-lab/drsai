@@ -7,7 +7,7 @@ import uuid
 
 from autogen_core import ComponentModel
 from pydantic import field_serializer
-from sqlalchemy import ForeignKey, Integer, UniqueConstraint, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, UniqueConstraint, Text, text
 from sqlmodel import JSON, Column, DateTime, Field, SQLModel, String, func
 
 from .types import (
@@ -582,6 +582,107 @@ class AgentAccessRequest(SQLModel, table=True):
     )
 
 
+class SkillMeta(SQLModel, table=True):
+    """Public skill metadata — truth source for the skills square listing.
+
+    GFS stores the ZIP package + SKILL.md body; this table holds the
+    display/search/sort fields and the atomic downloads counter.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_skillmeta_slug"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )  # pylint: disable=not-callable
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )  # pylint: disable=not-callable
+    slug: str = Field(index=True)
+    name: str = Field(default="")
+    description: str = Field(default="", sa_column=Column(Text))
+    icon: str = Field(default="package")
+    version: str = Field(default="0.0.0")
+    compatibility: Optional[str] = Field(default=None)
+    owner: str = Field(default="", index=True)
+    downloads: int = Field(default=0)
+    profile: Optional[str] = Field(default=None)
+    changelog: str = Field(default="", sa_column=Column(Text))
+    category: Optional[str] = Field(default=None, index=True)
+
+
+class UserSkillMeta(SQLModel, table=True):
+    """Private user skill metadata — mirrors SkillMeta but scoped to user_id.
+
+    GFS stores the ZIP package under user/{user_id}/{source}/{slug}.zip;
+    this table is the fast lookup index (same role SkillMeta plays for public skills).
+    """
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "slug", "source", name="uq_userskillmeta_user_slug_source"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )  # pylint: disable=not-callable
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )  # pylint: disable=not-callable
+    user_id: str = Field(index=True)
+    slug: str = Field(index=True)
+    name: str = Field(default="")
+    description: str = Field(default="", sa_column=Column(Text))
+    icon: str = Field(default="package")
+    version: str = Field(default="0.0.0")
+    compatibility: Optional[str] = Field(default=None)
+    owner: str = Field(default="")
+    source: str = Field(default="created")  # "created" or "imported"
+    profile: Optional[str] = Field(default=None)
+    changelog: str = Field(default="", sa_column=Column(Text))
+    unlisted: bool = Field(default=False, sa_column=Column(Boolean, server_default=text("0")))
+    category: Optional[str] = Field(default=None, index=True)
+
+
+class SkillShare(SQLModel, table=True):
+    """A time-limited, optionally password-protected share link for a private skill.
+
+    Created by the skill owner; accessed by anyone with the link (+ password).
+    """
+
+    __table_args__ = (
+        UniqueConstraint("share_id", name="uq_skillshare_share_id"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    share_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False, index=True),
+    )
+    skill_slug: str = Field(index=True)
+    owner_user_id: str = Field(index=True)
+    password_hash: Optional[str] = Field(default=None)
+    expires_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )  # pylint: disable=not-callable
+    access_count: int = Field(default=0)
+
+
 class DesktopAuthTicket(SQLModel, table=True):
     """Short-lived device-code ticket for Windows desktop SSO."""
 
@@ -611,6 +712,26 @@ class DesktopAuthTicket(SQLModel, table=True):
     claimed: bool = Field(default=False)
 
 
+class SkillTag(SQLModel, table=True):
+    """Tag/category label for skills — admin-managed CRUD."""
+
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )  # pylint: disable=not-callable
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )  # pylint: disable=not-callable
+    name: str = Field(sa_column=Column(String, unique=True, nullable=False, index=True))
+    sort_order: int = Field(default=0)
+
+
 ##
 
 # DatabaseModel = Team | Message | Session | Run | Gallery | Settings | Plan | AgentModeSettings | AgentModeConfig | UserAgents | UserDDFAgents| Userinfo
@@ -634,6 +755,10 @@ DatabaseModel = (
     | OrganizationMember
     | OrganizationAgent
     | AgentAccessRequest
+| SkillMeta
+    | UserSkillMeta
+    | SkillShare
     | DesktopAuthTicket
+    | SkillTag
 )
 

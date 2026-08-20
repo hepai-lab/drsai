@@ -62,7 +62,7 @@ module.exports = {
         },
         'marquee-x': {
           '0%':   { transform: 'translateX(0%)' },
-          '100%': { transform: 'translateX(-300%)' },
+          '100%': { transform: 'translateX(-50%)' },
         },
       },
       animation: {

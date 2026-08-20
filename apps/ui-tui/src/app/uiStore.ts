@@ -7,10 +7,12 @@ import { atom } from 'nanostores'
 
 import type { GatewaySkin, SessionMetadata } from '../gatewayTypes.js'
 
-export type ConnectionStatus = 'connecting' | 'ready' | 'error' | 'exited'
+export type ConnectionStatus = 'connecting' | 'ready' | 'error' | 'exited' | 'remote_lost'
 
 export const $connectionStatus = atom<ConnectionStatus>('connecting')
 export const $connectionError = atom<string>('')
+/** Remote SSH host name when connected via /remote panel; empty in local mode. */
+export const $remoteHost = atom<string>('')
 export const $skin = atom<GatewaySkin | null>(null)
 export const $sessionMeta = atom<SessionMetadata | null>(null)
 export const $statusLine = atom<string>('')

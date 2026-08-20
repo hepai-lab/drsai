@@ -38,8 +38,8 @@ Some design documents also draw interaction, subagent, or remote-workspace ideas
 - 1. Supports flexible switching of agent foundation models via the [HepAI platform](https://aiapi.ihep.ac.cn/), along with flexible configuration of tools, knowledge bases, and other agent components. Also compatible with OpenAI ChatCompletions, Ollama, and other model formats.
 - 2. Provides predefined modular components for perception, reasoning, memory, execution, and state management for agents and multi-agent systems. These are plugin-based and highly extensible, supporting a wide range of professional agent applications.
 - 3. Includes a one-click startup frontend and backend for human-computer interaction, enabling "development-as-application". It also provides backend interfaces compatible with OpenAI ChatCompletions and OpenWebui-Pipeline, allowing agents and multi-agent systems to be used as third-party API services.
-- 4. Features a brand-new **Terminal User Interface (TUI)** based on React/Ink, enabling direct interaction with agents in the terminal. Launch with `drsai` or `drsai chat`. Supports session management, model switching, slash commands, reasoning visualization, and more — delivering a Claude Code-like immersive development experience.
-- 5. Includes a **Desktop App** (Electron) launchable via `drsai desktop`, with system tray support and remote gateway connectivity.
+- 4. Features a brand-new **Terminal User Interface (TUI)** based on React/Ink, enabling direct interaction with agents in the terminal. Launch with `opendrsai` or `opendrsai chat`. Supports session management, model switching, slash commands, reasoning visualization, and more — delivering a Claude Code-like immersive development experience.
+- 5. Includes a **Desktop App** (Electron) launchable via `opendrsai desktop`, with system tray support and remote gateway connectivity.
 
 ### 📢 Feature Comparison
 

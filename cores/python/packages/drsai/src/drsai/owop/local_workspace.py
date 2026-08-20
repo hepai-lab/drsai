@@ -575,7 +575,7 @@ class LocalWorkspaceOperations:
             return {"resource": self._file_resource_descriptor(file_id, relative, None, state="deleted", digest=record.get("digest"))}
         descriptor = self._file_resource_descriptor(file_id, relative, path, state=state)
         expected_digest = params.get("expected_digest") or record.get("digest")
-        if expected_digest and descriptor["digest"] != expected_digest:
+        if expected_digest and descriptor["digest"] != expected_digest and descriptor["state"] != "moved":
             descriptor["state"] = "changed"
         return {"resource": descriptor}
 

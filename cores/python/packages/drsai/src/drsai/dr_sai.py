@@ -648,7 +648,7 @@ class DrSai:
             )
             if response.status and response.data:
                 thread: Thread = response.data[0]
-                thread.user_input = user_input.model_dump(mode="json"),
+                thread.user_input = user_input.model_dump(mode="json")
                 thread.status = RunStatus.ACTIVE
                 # thread.messages.append(task[-1]) # 已经存在的Thread只添加最后一条消息
             else:

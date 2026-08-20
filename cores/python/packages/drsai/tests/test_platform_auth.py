@@ -15,8 +15,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from drsai.platform_auth import (
+    DelegatedCredentialContext,
+    DelegatedModelCredentialProvider,
     classify_model_error,
     context_from_bearer,
+    delegated_credential_scope,
+    get_delegated_credential,
     get_platform_auth,
     get_model_credential_provider,
     platform_auth_scope,
@@ -43,6 +47,32 @@ def jwt(claims: dict[str, object]) -> str:
 
 
 class PlatformAuthTests(unittest.TestCase):
+    def test_delegated_credential_has_priority_and_is_request_scoped(self) -> None:
+        delegated = DelegatedCredentialContext(
+            access_token="delegated-secret", expires_at=int(time.time()) + 60,
+            invocation_id="inv-1", subject=USER_ID, worker_id="wk-docmaster-stable",
+            allowed_models=frozenset({"deepseek-v4-flash"}),
+            allowed_operations=frozenset({"chat.completions"}),
+        )
+        self.assertNotIn("delegated-secret", repr(delegated))
+        with self.assertRaises(TypeError):
+            __import__("pickle").dumps(delegated)
+        serialized = __import__("dataclasses").asdict(delegated)
+        self.assertNotIn("delegated-secret", repr(serialized))
+        with delegated_credential_scope(delegated):
+            provider = get_model_credential_provider("static", "https://other.example/v1")
+            self.assertIsInstance(provider, DelegatedModelCredentialProvider)
+            self.assertEqual(provider.access_token, "delegated-secret")
+            self.assertIs(get_delegated_credential(), delegated)
+        self.assertIsNone(get_delegated_credential())
+
+    def test_delegated_credential_rejects_expiry_and_ssrf_host(self) -> None:
+        with self.assertRaisesRegex(ValueError, "delegation_expired"):
+            DelegatedCredentialContext(access_token="x", expires_at=int(time.time()) - 1)
+        with self.assertRaisesRegex(ValueError, "delegation_host_not_allowed"):
+            DelegatedCredentialContext(access_token="x", expires_at=int(time.time()) + 60,
+                                       model_base_url="https://attacker.example/v1")
+
     @classmethod
     def setUpClass(cls) -> None:
         cls._previous_oidc_secret = os.environ.get("OPENDRSAI_OIDC_HS256_SECRET")

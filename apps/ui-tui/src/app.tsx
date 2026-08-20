@@ -18,7 +18,7 @@ import { parseHistory } from './app/historyParser.js'
 import { disableMouseTracking, enableMouseTracking } from './app/terminalControl.js'
 import { TurnController } from './app/turnController.js'
 import { $current, $isStreaming, $transcript, setTranscript } from './app/turnStore.js'
-import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $memoryPreview, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
+import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $memoryPreview, $remoteHost, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
 import { SetupScreen } from './components/setupScreen.js'
 import type { GatewayClient } from './gatewayClient.js'
@@ -67,6 +67,7 @@ type Bootstrap =
   | { phase: 'resuming'; session: SessionInfo }
   | { phase: 'ready'; sessionId: string; controller: TurnController }
   | { phase: 'error'; message: string }
+  | { phase: 'remote_lost'; reason: string }
 
 export function App({ gw }: AppProps) {
   const { exit } = useApp()
@@ -334,6 +335,25 @@ export function App({ gw }: AppProps) {
       if (p?.setup) setupStatus = p.setup
     })
 
+    // Listen for unexpected remote SSH disconnection.
+    // When the user is connected via /remote and the WebSocket drops,
+    // we show a reconnect prompt instead of exiting the TUI.
+    const unsubRemoteLost = gw.onEvent('remote.lost', ev => {
+      if (cancelled) return
+      const p = ev.payload as { reason?: string } | undefined
+      $connectionStatus.set('remote_lost')
+      $connectionError.set(p?.reason || 'Remote connection lost')
+      setBoot(prev => {
+        // Transition to remote_lost from ready or connecting phases.
+        // Don't interrupt setup or error phases — the user needs to
+        // resolve those first.
+        if (prev.phase === 'ready' || prev.phase === 'connecting' || prev.phase === 'resuming') {
+          return { phase: 'remote_lost', reason: p?.reason || 'Connection lost' }
+        }
+        return prev
+      })
+    })
+
     // Resolve session + ready phase. Reusable so SetupScreen.onComplete can
     // re-run it after the user enters credentials.
     async function resolveSession() {
@@ -439,6 +459,7 @@ export function App({ gw }: AppProps) {
     return () => {
       cancelled = true
       unsub()
+      unsubRemoteLost()
     }
   }, [gw])
 
@@ -472,6 +493,60 @@ export function App({ gw }: AppProps) {
       </Box>
     )
   }
+  if (boot.phase === 'remote_lost') {
+    return (
+      <RemoteLostScreen
+        reason={boot.reason}
+        gw={gw}
+        onReconnect={() => {
+          setBoot({ phase: 'connecting' })
+          // Reconnect is handled by the /remote panel — user opens it manually
+        }}
+        onSwitchToLocal={() => {
+          setBoot({ phase: 'connecting' })
+          // Switch back to local subprocess and re-boot
+          void (async () => {
+            try {
+              await gw.switchToSubprocess()
+              $remoteHost.set('')
+              await gw.ready_()
+              // Re-resolve session
+              const recent = await gw.request<{ session: SessionInfo | null; user_id?: string }>(
+                'session.most_recent',
+                {},
+              )
+              if (recent.user_id) $userId.set(recent.user_id)
+              let session: SessionInfo | null = recent.session || null
+              if (!session) {
+                const created = await gw.request<SessionCreateResult>('session.create', {})
+                session = created.session
+                if (created.user_id) $userId.set(created.user_id)
+              }
+              if (!session) throw new Error('Failed to create session')
+              setBoot({ phase: 'resuming', session })
+              const result = await gw.request<SessionResumeResult>('session.resume', {
+                session_id: session.session_id,
+              })
+              if (result.history && result.history.length > 0) {
+                const turns = parseHistory(result.history)
+                setTranscript(turns)
+              }
+              const userId = (result as { user_id?: string }).user_id || $userId.get()
+              if (userId) $userId.set(userId)
+              setBoot(prev =>
+                prev.phase === 'resuming'
+                  ? { phase: 'ready', sessionId: result.session.session_id, controller: new TurnController(gw) }
+                  : prev,
+              )
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err)
+              setBoot({ phase: 'error', message: msg })
+            }
+          })()
+        }}
+      />
+    )
+  }
 
   return <AppLayout gw={gw} controller={boot.controller} sessionId={boot.sessionId} switchSession={switchSession} />
 }
@@ -496,6 +571,61 @@ function BootScreen({ text }: { text: string }) {
       )}
       <Box marginTop={1}>
         <Text color={theme.muted} dimColor>status: {conn}</Text>
+      </Box>
+    </Box>
+  )
+}
+
+/**
+ * Shown when the remote SSH WebSocket connection drops unexpectedly.
+ * Gives the user three options: reconnect via /remote panel, switch back
+ * to local mode, or exit.
+ */
+function RemoteLostScreen({
+  reason,
+  gw,
+  onReconnect,
+  onSwitchToLocal,
+}: {
+  reason: string
+  gw: GatewayClient
+  onReconnect: () => void
+  onSwitchToLocal: () => void
+}) {
+  const { exit } = useApp()
+
+  useInput((input, key) => {
+    if (input === 'r' || input === 'R') {
+      // Open /remote panel for reconnection — but we need to switch to
+      // local mode first so the user can interact with the local gateway
+      // to issue remote.connect again.
+      onReconnect()
+      return
+    }
+    if (input === 'l' || input === 'L') {
+      onSwitchToLocal()
+      return
+    }
+    if (key.ctrl && input === 'd') {
+      gw.kill()
+      exit()
+      return
+    }
+  })
+
+  return (
+    <Box flexDirection="column" paddingX={1}>
+      <Box marginTop={1}>
+        <Text color={theme.error} bold>⚠  Remote connection lost</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color={theme.text}>{reason}</Text>
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        <Text color={theme.muted}>Choose an action:</Text>
+        <Text color={theme.warn}>  [R] — Reconnect (switch to local, then open /remote panel)</Text>
+        <Text color={theme.good}>  [L] — Switch to local mode</Text>
+        <Text color={theme.muted}>  [Ctrl+D] — Exit</Text>
       </Box>
     </Box>
   )

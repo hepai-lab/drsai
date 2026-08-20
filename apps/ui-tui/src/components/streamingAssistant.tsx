@@ -64,11 +64,24 @@ const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 const SPINNER_TICK_MS = 100
 const ELAPSED_TICK_MS = 1000
 
-// Rows we reserve for non-streaming UI: banner (1) + transcript margins
-// (2) + status bar divider+row (2) + statusLine (1) + composer prompt (1-2)
-// + safety margin (1). 8 is a conservative budget that holds even when
-// the status bar is in its multi-row narrow layout.
-const RESERVED_ROWS = 8
+// Rows we reserve for non-streaming UI OUTSIDE StreamingAssistant's own
+// marginTop + header. This must account for the WORST CASE (narrow
+// terminal layout) where StatusBar and ComposerPane each take:
+//   marginTop(1) + divider(1) + content(1-3) = 3-5 rows each
+// So: StatusBar(5) + ComposerPane(5) + StreamingAssistant marginTop(1)
+//   + header(1) + reasoning(4) + marker(1) + safety(1) = 18
+// We set RESERVED_ROWS = 12 so that the budget formula
+//   budget = rows - RESERVED_ROWS - 1(header) - reasoningRows - 1(marker)
+// keeps the TOTAL dynamic frame (StreamingAssistant + StatusBar + Composer)
+// strictly below stdout.rows, preventing Ink's fullscreen branch
+// (ink.js: lastOutputHeight >= stdout.rows → clearTerminal + fullStaticOutput)
+// from firing. Once fullscreen fires, log.sync() replaces log(), which
+// sets previousLineCount WITHOUT writing to the terminal — corrupting
+// line tracking. At finalize, log.clear() then erases the wrong number
+// of lines, leaving stale content + blank space (the "bottom blank gap"
+// bug introduced when contentParts moved tools into the clip budget
+// without compensating RESERVED_ROWS).
+const RESERVED_ROWS = 12
 const MIN_STREAM_ROWS = 3
 
 /**
@@ -286,18 +299,29 @@ export function StreamingAssistant() {
     : ''
 
   // Compute the row budget for streaming content. Subtract:
-  //   - RESERVED_ROWS for the rest of the dynamic frame
+  //   - RESERVED_ROWS for StatusBar + ComposerPane + this component's
+  //     own marginTop (see RESERVED_ROWS comment for the full breakdown)
   //   - 1 row for the "● assistant" header
   //   - reasoning block height (if shown)
   //   - 1 row for the "↑ N earlier lines" marker (if we end up clipping)
-  const reasoningRows = showReasoning && cur?.reasoning?.trim() ? 4 : 0
+  //   - 1 row SAFETY MARGIN to guarantee the total dynamic frame stays
+  //     STRICTLY below stdout.rows. If the frame ever reaches >= rows,
+  //     Ink's fullscreen branch fires (ink.js): it calls log.sync()
+  //     instead of log(), which sets previousLineCount WITHOUT writing
+  //     to the terminal. At finalize, log.clear() then erases the wrong
+  //     number of lines → stale content + bottom blank space.
+  const effectiveCols = Math.max(20, cols - 4)
   // Guard: if rows is still 0 or impossibly small (terminal size not yet
   // reported), use a generous default so we don't trigger clipping on
   // the very first render.
   const effectiveRows = rows > 0 ? rows : 24
+  const reasoningText = showReasoning && cur?.reasoning?.trim() ? cur.reasoning.trim() : ''
+  const reasoningRows = reasoningText
+    ? 1 /* marginTop */ + 1 /* header */ + countVisualRows(reasoningText, Math.max(10, effectiveCols - 2)) + 1 /* footer */
+    : 0
   const budget = Math.max(
     MIN_STREAM_ROWS,
-    effectiveRows - RESERVED_ROWS - 1 /* header */ - reasoningRows - 1 /* marker */,
+    effectiveRows - RESERVED_ROWS - 1 /* header */ - reasoningRows - 1 /* marker */ - 1 /* safety */,
   )
 
   // "Thinking" pulse runs only:
@@ -315,8 +339,6 @@ export function StreamingAssistant() {
   // Build ordered render items from contentParts. Fall back to legacy
   // rendering (all tools → text) if contentParts is empty (e.g. turns
   // loaded from history that haven't been migrated yet).
-  const effectiveCols = Math.max(20, cols - 4)
-
   let visibleParts: ContentPart[] = []
   let hiddenRows = 0
   let firstPartMaxRows = 0

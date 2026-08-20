@@ -24,8 +24,27 @@ const CallbackPage = () => {
         saveAuthSession(token, userEmail);
         localStorage.removeItem("drsai-mode-config");
 
+        const pending = (() => {
+            const m = document.cookie.match(/(?:^|;\s*)drsai_pending_search=([^;]*)/);
+            const v = m ? decodeURIComponent(m[1]) : null;
+            // 立即清除 cookie
+            if (v) { document.cookie = "drsai_pending_search=; path=/; max-age=0; SameSite=Lax"; }
+            console.log("[agentLink] CallbackPage: pending_search =", v);
+            return v;
+        })();
+        let extra = "";
+        if (pending) {
+            const p = new URLSearchParams(pending);
+            // 保持 share_agent=true 门控标志
+            for (const key of ["share_agent", "agentId", "agentName"]) {
+                const v = p.get(key);
+                if (v) extra += `&${key}=${encodeURIComponent(v)}`;
+            }
+        }
+        console.log("[agentLink] CallbackPage: extra =", extra, "→ URL =", `/?menu=current_session&view=chat${extra}`);
+
         setUser({ name: userEmail, email: userEmail });
-        navigate("/?menu=current_session&view=chat", { replace: true });
+        navigate(`/?menu=current_session&view=chat${extra}`, { replace: true });
     }, [setUser]);
 
     if (error) {

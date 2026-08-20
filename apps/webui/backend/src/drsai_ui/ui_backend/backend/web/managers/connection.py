@@ -28,6 +28,7 @@ from ....input_func import InputFuncType, InputRequestType
 from autogen_core import CancellationToken
 from fastapi import WebSocket, WebSocketDisconnect
 from pathlib import Path
+from .content_plane import split_agent_visible_content
 from ....types import CheckpointEvent
 from ...database import DatabaseManager
 from ...datamodel import (
@@ -44,7 +45,7 @@ from ...datamodel import (
 from ...teammanager import TeamManager
 from ...utils.utils import compress_state, decompress_state
 from ..model_resolve import settings_config_from_input_response
-from autogen_agentchat.messages import ThoughtEvent
+from autogen_agentchat.messages import ThoughtEvent, UserInputRequestedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,8 @@ class WebSocketManager:
         self._team_managers: Dict[int, TeamManager] = {}
         # Accumulated streaming chunk content per run_id per source
         self._chunk_buffers: Dict[int, Dict[str, str]] = {}
+        # Buffer for streaming content that should be discarded on restart
+        self._streaming_buffers: Dict[int, Any] = {}
         # Track run states and state locks for atomic state transitions
         self._run_states: Dict[int, RunStatus] = {}
         self._state_locks: Dict[int, asyncio.Lock] = {}
@@ -150,18 +153,10 @@ class WebSocketManager:
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             },
                         )
-                        await self._send_message(
+                        await self._send_input_request(
                             run_id,
-                            {
-                                "type": "input_request",
-                                "input_type": pending.get("input_type") or "text_input",
-                                "prompt": pending.get("prompt") or "",
-                                "data": {
-                                    "source": "system",
-                                    "content": pending.get("prompt") or "",
-                                },
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
+                            prompt=pending.get("prompt") or "",
+                            input_type=pending.get("input_type") or "text_input",
                         )
             except Exception as e:
                 logger.warning(f"Failed to replay input_request for run {run_id}: {e}")
@@ -191,6 +186,9 @@ class WebSocketManager:
         """
         if run_id not in self._connections:
             raise ValueError(f"No active connection for run {run_id}")
+# Clear stale closed flag (race: old WS disconnect re-added it after connect)
+        self._closed_connections.discard(run_id)
+
         # Starting a new stream explicitly re-opens the run even if a previous attempt stopped.
         # This matches UI expectation: user can send a new prompt after stopping.
         self._closed_connections.discard(run_id)
@@ -244,7 +242,16 @@ class WebSocketManager:
             settings_config["memory_controller_key"] = run.user_id
 
             run.task = MessageConfig(content=task, source="user").model_dump()
+
+            # When restarting a terminal run (stopped/complete/error), discard
+            # the previous execution state.  Otherwise load_state restores the
+            # completed plan / termination flag and the orchestrator exits
+            # immediately without producing any agent messages.
+            terminal = {RunStatus.STOPPED, RunStatus.COMPLETE, RunStatus.ERROR}
+            if run.status in terminal:
+                run.state = None
             state = run.state
+
             self.db_manager.upsert(run)
             await self._update_run_status(run_id, RunStatus.ACTIVE)
 
@@ -314,6 +321,10 @@ class WebSocketManager:
             input_func: InputFuncType = self.create_input_func(run_id)
 
             message: ChatMessage | AgentEvent | TeamResult | LLMCallEventMessage
+            stream_event_count = 0
+            logger.info(
+                f"[STREAM_LOOP] run={run_id} starting message stream loop"
+            )
             async for message in team_manager.run_stream(
                 task=task,
                 team_config=team_config,
@@ -325,14 +336,20 @@ class WebSocketManager:
                 run=run,
                 files=files,
             ):
+                stream_event_count += 1
                 if (
                     cancellation_token.is_cancelled()
                     or run_id in self._closed_connections
                 ):
-                    logger.info(
-                        f"Stream cancelled or connection closed for run {run_id}"
+                    logger.warning(
+                        f"[STREAM_BREAK] run={run_id} event_count={stream_event_count} "
+                        f"token_cancelled={cancellation_token.is_cancelled()} "
+                        f"closed_conn={run_id in self._closed_connections}"
                     )
                     break
+
+                if isinstance(message, UserInputRequestedEvent):
+                    continue
 
                 if isinstance(message, CheckpointEvent):
                     run = await self._get_run(run_id)
@@ -352,8 +369,11 @@ class WebSocketManager:
                 # Must run BEFORE the internal-message skip, because internal
                 # TextMessages (which is all non-user ones from round-robin)
                 # get `continue`-d and would never reach the clear below.
+                streamed_source = False
                 if isinstance(message, TextMessage) and run_id in self._chunk_buffers:
-                    self._chunk_buffers[run_id].pop(message.source or "assistant", None)
+                    src = message.source or "assistant"
+                    streamed_source = bool(self._chunk_buffers[run_id].get(src))
+                    self._chunk_buffers[run_id].pop(src, None)
 
                 # Skip internal messages not meant for client display
                 if (
@@ -362,29 +382,118 @@ class WebSocketManager:
                 ):
                     if message.metadata.get("is_save") == "yes":
                         await self._save_message(run_id, message)
+                        # Reasoning models (glm-5.2 / YuanYuan) stream `<think>...`
+                        # so the live draft's visible reply is empty or truncated.
+                        # The canonical TextMessage is the clean answer — forward it
+                        # so the client can replace the think-tagged draft.
+                        if (
+                            streamed_source
+                            and isinstance(message, TextMessage)
+                            and isinstance(message.content, str)
+                            and message.content.strip()
+                        ):
+                            formatted_final = self._format_message(message)
+                            if formatted_final:
+                                await self._send_message(run_id, formatted_final)
+                                logger.info(
+                                    "[CHUNK_SEAL_SEND] run=%s source=%s chars=%s "
+                                    "(internal is_save reply after stream)",
+                                    run_id,
+                                    message.source,
+                                    len(message.content),
+                                )
                     continue
 
-                # ── Accumulate streaming chunks ──
+                # ── Accumulate streaming chunks (+ ensure start_flag on first) ──
                 if isinstance(message, ModelClientStreamingChunkEvent):
                     chunk_source = message.source or "assistant"
                     chunk_content = message.content or ""
                     if run_id not in self._chunk_buffers:
                         self._chunk_buffers[run_id] = {}
                     prev = self._chunk_buffers[run_id].get(chunk_source, "")
+                    incoming_flag = bool(
+                        message.metadata and message.metadata.get("start_flag")
+                    )
+                    # First token of a new burst: mark start_flag so the client can
+                    # replace the draft when a TextMessage later arrives.
+                    if not prev:
+                        if message.metadata is None:
+                            message.metadata = {}
+                        if not message.metadata.get("start_flag"):
+                            message.metadata["start_flag"] = "yes"
+                        logger.info(
+                            "[CHUNK_START] run=%s source=%s incoming_flag=%s delta=%s "
+                            "preview=%r",
+                            run_id,
+                            chunk_source,
+                            incoming_flag,
+                            len(chunk_content),
+                            (chunk_content or "")[:80],
+                        )
+                    elif message.metadata and message.metadata.get("start_flag"):
+                        # Later tokens of the same burst must not reset the client
+                        # draft — the UI treats start_flag as "replace with this delta".
+                        message.metadata.pop("start_flag", None)
+                        logger.info(
+                            "[CHUNK_FLAG_STRIP] run=%s source=%s delta=%s buf=%s "
+                            "preview=%r",
+                            run_id,
+                            chunk_source,
+                            len(chunk_content),
+                            len(prev),
+                            (chunk_content or "")[:80],
+                        )
                     self._chunk_buffers[run_id][chunk_source] = prev + chunk_content
 
-                # ── Flush chunks BEFORE tool events for correct ordering ──
-                if isinstance(message, (ToolCallRequestEvent, AgentLogEvent)):
+                # ── Flush chunk buffer before tool/thought events ──
+                # Tool / log events interrupt the stream → SAVE + SEND so the UI
+                # keeps narration even if it drops the live draft.
+                # ThoughtEvent usually arrives AFTER the full answer was already
+                # streamed → SAVE only (sending again duplicates the answer live).
+                if isinstance(
+                    message,
+                    (
+                        ToolCallRequestEvent,
+                        AgentLogEvent,
+                        ThoughtEvent,
+                        ToolCallExecutionEvent,
+                        ToolCallSummaryMessage,
+                    ),
+                ):
                     buf = self._chunk_buffers.get(run_id, {})
+                    send_flush = not isinstance(message, ThoughtEvent)
+                    # ThoughtEvent is often emitted by reasoning models (e.g. glm-5.2)
+                    # in the middle of / right after the answer stream. Clearing the
+                    # buffer would re-apply start_flag on the next token and the UI
+                    # would replace the draft with only the trailing lines.
+                    clear_buf = send_flush
                     for source in list(buf.keys()):
                         text = buf[source].strip()
                         if text and len(text) > 10:
+                            split = split_agent_visible_content(text)
+                            # Persist reply plane only; peel monologue/control tokens.
+                            persist_text = split.reply or text
                             flush_msg = TextMessage(
-                                source=source, content=text,
-                                metadata={"internal": "yes", "is_save": "yes"},
+                                source=source,
+                                content=persist_text,
+                                metadata={
+                                    "internal": "no" if send_flush else "yes",
+                                    "is_save": "yes",
+                                    "flushed_before_tool": "yes",
+                                    **(
+                                        {"_peeled_thought": split.thought[:2000]}
+                                        if split.thought
+                                        else {}
+                                    ),
+                                },
                             )
                             await self._save_message(run_id, flush_msg)
-                        buf[source] = ""
+                            if send_flush:
+                                formatted_flush = self._format_message(flush_msg)
+                                if formatted_flush:
+                                    await self._send_message(run_id, formatted_flush)
+                        if clear_buf:
+                            buf[source] = ""
 
                 formatted_message = self._format_message(message)
                 if formatted_message:
@@ -409,43 +518,13 @@ class WebSocketManager:
 
                     await self._send_message(run_id, formatted_message)
 
-                    # For FilesEvent, also emit a "message" type so images render in chat
-                    if isinstance(message, FilesEvent):
-                        try:
-                            msg_dump = message.model_dump()
-                            files_list = msg_dump.get("content", msg_dump).get("files", [])
-                            if files_list:
-                                image_text_parts = []
-                                for f in files_list:
-                                    b64 = f.get("base64_content")
-                                    name = f.get("name", "file")
-                                    desc = f.get("description", "")
-                                    if b64:
-                                        ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
-                                        if ext in ("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"):
-                                            mime = f"image/{'svg+xml' if ext == 'svg' else ext}"
-                                            data_uri = f"data:{mime};base64,{b64}"
-                                            image_text_parts.append(f"![{name}]({data_uri})")
-                                if image_text_parts:
-                                    chat_content = "\n\n".join(image_text_parts)
-                                    image_msg = TextMessage(
-                                        source=message.source or "system",
-                                        content=chat_content,
-                                        metadata={"internal": "no"},
-                                    )
-                                    # SAVE image message BEFORE sending
-                                    await self._save_message(run_id, image_msg)
-                                    image_formatted = self._format_message(image_msg)
-                                    if image_formatted:
-                                        await self._send_message(run_id, image_formatted)
-                        except Exception as e:
-                            pass
-
-                    elif isinstance(message, TeamResult):
+                    if isinstance(message, TeamResult):
                         final_result = message.model_dump()
-                    else:
-                        pass
 
+            logger.info(
+                f"[STREAM_LOOP] run={run_id} EXITED event_count={stream_event_count} "
+                f"final_result_exists={final_result is not None}"
+            )
 
             # ── Post-stream: try to fetch & emit any companion images ──
             # Remote workers (non-magentic-one) may generate .png files during
@@ -602,6 +681,26 @@ class WebSocketManager:
             # Dedup: skip if same source + content already saved for this run
             should_save = True
             if isinstance(message, TextMessage):
+                # Persist reply plane only — never store control tokens / monologue
+                # as the canonical TextMessage body.
+                if isinstance(message.content, str) and message.content.strip():
+                    split = split_agent_visible_content(message.content)
+                    if split.reply != message.content:
+                        if not split.reply.strip():
+                            return
+                        message = message.model_copy(
+                            update={
+                                "content": split.reply,
+                                "metadata": {
+                                    **(message.metadata or {}),
+                                    **(
+                                        {"_peeled_thought": split.thought[:2000]}
+                                        if split.thought
+                                        else {}
+                                    ),
+                                },
+                            }
+                        )
                 new_content = getattr(message, "content", None)
                 new_source = getattr(message, "source", "")
                 if new_content and isinstance(new_content, str) and len(new_content) > 20:
@@ -677,26 +776,15 @@ class WebSocketManager:
                 # can be delivered to the user (they will naturally respond).
                 # resume_run is a no-op if not paused.
                 if self._is_paused(run_id):
-                    logger.info(
-                        f"Run {run_id} paused but needs input, auto-resuming"
-                    )
                     await self.resume_run(run_id)
 
+                await self._send_input_request(
+                    run_id,
+                    prompt=prompt,
+                    input_type=input_type,
+                )
                 # Transition to AWAITING_INPUT
                 await self._update_run_status(run_id, RunStatus.AWAITING_INPUT)
-                logger.info(
-                    f"Sending input request for run {run_id}: ({input_type}) {prompt}"
-                )
-                await self._send_message(
-                    run_id,
-                    {
-                        "type": "input_request",
-                        "input_type": input_type,
-                        "prompt": prompt,
-                        "data": {"source": "system", "content": prompt},
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    },
-                )
 
                 # Store input_request in the Run object
                 run = await self._get_run(run_id)
@@ -759,8 +847,25 @@ class WebSocketManager:
         """Handle input response from client"""
         if run_id in self._input_responses and run_id in self._connections:
             team_manager = self._team_managers.get(run_id)
+            if team_manager is None:
+                # The team was cleaned up during a prior disconnect but the DB
+                # still shows "awaiting_input" — tell the frontend to restart.
+                logger.warning(
+                    f"input_response for run {run_id} but no team_manager — "
+                    "session was lost. Telling frontend to restart."
+                )
+                await self._send_message(
+                    run_id,
+                    {
+                        "type": "error",
+                        "error": "Session was interrupted. Please send a new message to restart.",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                await self._update_run(run_id, status=RunStatus.STOPPED)
+                return
             settings_config = settings_config_from_input_response(response)
-            if team_manager is not None and settings_config is not None:
+            if settings_config is not None:
                 switch_results = await team_manager._switch_remote_model_if_requested(
                     settings_config
                 )
@@ -784,7 +889,9 @@ class WebSocketManager:
 
     async def stop_run(self, run_id: int, reason: str, *, mark_closed: bool = True) -> None:
         if run_id in self._cancellation_tokens:
-            logger.info(f"Stopping run {run_id}")
+            import traceback as _tb
+            caller = "".join(_tb.format_stack()[-4:-1])
+            logger.warning(f"[STOP_RUN] run={run_id} reason='{reason}' caller:\n{caller}")
 
             # ── FLUSH accumulated chunks ──
             chunk_buf = self._chunk_buffers.pop(run_id, None)
@@ -799,9 +906,6 @@ class WebSocketManager:
                                 metadata={"internal": "yes", "is_save": "yes"},
                             )
                             await self._save_message(run_id, flush_msg)
-                            logger.warning(
-                                f"[CHUNK_FLUSH_STOP] Saved {len(text)} chars from {source} for run {run_id}"
-                            )
                         except Exception as e:
                             pass
 
@@ -874,6 +978,16 @@ class WebSocketManager:
             return
         logger.info(f"Disconnecting run {run_id}")
 
+        # If a newer WebSocket has already reconnected for this run, do NOT cancel
+        # the run — the client is re-establishing the connection (e.g. to send
+        # input_response after an input_request pause).  Only stop & clean up
+        # when there really is no active connection left.
+        if run_id in self._connections:
+            logger.info(
+                f"Disconnect for run {run_id} skipped: newer WebSocket already connected"
+            )
+            return
+
         # ── FLUSH accumulated chunks on disconnect ──
         chunk_buf = self._chunk_buffers.pop(run_id, None)
         if chunk_buf:
@@ -887,11 +1001,9 @@ class WebSocketManager:
                             metadata={"internal": "yes", "is_save": "yes"},
                         )
                         await self._save_message(run_id, flush_msg)
-                        logger.warning(
-                            f"[CHUNK_FLUSH_DISCONNECT] Saved {len(text)} chars from {source} for run {run_id}"
-                        )
                     except Exception as e:
                         pass
+
         self._closed_connections.add(run_id)
 
         # IMPORTANT: a websocket disconnect may be transient (tab refresh, network blip).
@@ -907,6 +1019,23 @@ class WebSocketManager:
         self._state_locks.pop(run_id, None)
         self._team_op_locks.pop(run_id, None)
 
+    async def _send_input_request(
+        self,
+        run_id: int,
+        *,
+        prompt: str,
+        input_type: str,
+    ) -> None:
+        """Emit input_request to the frontend."""
+        payload = {
+            "type": "input_request",
+            "input_type": input_type,
+            "prompt": prompt,
+            "data": {"source": "system", "content": prompt},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._send_message(run_id, payload)
+
     async def _send_message(self, run_id: int, message: Dict[str, Any]) -> None:
         """Send a message through the WebSocket with connection state checking
 
@@ -917,7 +1046,6 @@ class WebSocketManager:
         try:
             if run_id in self._connections:
                 websocket = self._connections[run_id]
-                # print(message)
                 await websocket.send_json(message)
             else:
                 logger.warning(
@@ -925,11 +1053,11 @@ class WebSocketManager:
                 )
         except WebSocketDisconnect:
             logger.warning(
-                f"WebSocket disconnected while sending message for run {run_id}"
+                f"[WS_SEND] run={run_id} WebSocketDisconnect while sending, message type={message.get('type', 'unknown')}"
             )
             await self.disconnect(run_id, conn_gen=self._conn_gen.get(run_id), stop_run=False)
         except Exception as e:
-            logger.error(f"Error sending message for run {run_id}: {e}, {message}")
+            logger.error(f"[WS_SEND] run={run_id} Error: {e}, message type={message.get('type', 'unknown')}")
             # Don't try to send error message here to avoid potential recursive loop
             await self._update_run_status(run_id, RunStatus.ERROR, str(e))
             await self.disconnect(run_id, conn_gen=self._conn_gen.get(run_id), stop_run=False)
@@ -1017,6 +1145,27 @@ class WebSocketManager:
                 md = getattr(message, "metadata", None) or {}
                 if isinstance(md, dict) and ("error_message" in md):
                     return None
+                # Project mixed agent text onto the reply plane before live/history send.
+                if isinstance(message.content, str) and message.content.strip():
+                    split = split_agent_visible_content(message.content)
+                    if split.reply != message.content:
+                        if not split.reply.strip():
+                            # Control/monologue-only — do not emit an empty bubble.
+                            return None
+                        message = message.model_copy(
+                            update={
+                                "content": split.reply,
+                                "metadata": {
+                                    **(message.metadata or {}),
+                                    **(
+                                        {"_peeled_thought": split.thought[:2000]}
+                                        if split.thought
+                                        else {}
+                                    ),
+                                },
+                            }
+                        )
+                return {"type": "message", "data": message.model_dump()}
             if isinstance(message, MultiModalMessage):
                 message_dump = message.model_dump()
 
@@ -1279,6 +1428,10 @@ class WebSocketManager:
         """Get set of runs with active cancellation tokens"""
         return set(self._cancellation_tokens.keys())
 
+    def has_active_run(self, run_id: int) -> bool:
+        """Return True if this run has a live team manager (agent is still executing)."""
+        return run_id in self._team_managers and run_id in self._cancellation_tokens
+
     def _is_run_manageable(self, run_id: int) -> bool:
         """Check if run has an active connection and team manager for pause/resume ops."""
         return (
@@ -1299,6 +1452,25 @@ class WebSocketManager:
         team_manager = self._team_managers.get(run_id)
         if not team_manager:
             return
+
+        # ── FLUSH accumulated streaming chunks before pausing ──
+        # Without this, chunk content buffered in memory is lost if the user
+        # pauses mid-stream and never resumes (or resumes and the buffer is
+        # overwritten by subsequent full TextMessage arrivals).
+        chunk_buf = self._chunk_buffers.pop(run_id, None)
+        if chunk_buf:
+            for source, text in chunk_buf.items():
+                text = text.strip()
+                if text and len(text) > 10:
+                    try:
+                        flush_msg = TextMessage(
+                            source=source,
+                            content=text,
+                            metadata={"internal": "yes", "is_save": "yes"},
+                        )
+                        await self._save_message(run_id, flush_msg)
+                    except Exception:
+                        pass
 
         # Update state first (dedup inside) so clients see "paused" immediately
         # and input_handler can detect PAUSED. If already paused, this is a no-op.

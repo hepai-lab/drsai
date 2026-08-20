@@ -1,58 +1,125 @@
-import { Bot, ChevronRight, FileText, Grid2X2, PanelLeftOpen, Plus } from "lucide-react";
-import React, { useContext, useMemo } from "react";
+import { Bot, ChevronRight, Files, PanelLeftOpen, Plus } from "lucide-react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CanvasViewId,
   MENU_IDS,
   type MenuId,
-  createSearchWithMenu,
-  createSearchWithView,
 } from "../components/views/menuRoutes";
 import { appContext } from "../hooks/provider";
 import { useLang } from "../i18n/useLang";
 import { useConfigStore } from "../hooks/store";
-import { useLocation, useNavigate } from "../hooks/useRouter";
+import { useLocation } from "../hooks/useRouter";
 import { useModeConfigStore } from "../store/modeConfig";
-
-// const VIEWS: { id: CanvasViewId; label: string; icon: React.ReactNode }[] = [
-//   { id: "chat", label: "对话", icon: <MessageSquare className="w-3.5 h-3.5" /> },
-//   { id: "file_preview", label: "文件预览", icon: <FileText className="w-3.5 h-3.5" /> },
-// ];
+import { useRightPanelStore } from "../store/rightPanel";
+import CanvasFilePreviewPane from "./CanvasFilePreviewPane";
+const CANVAS_SPLIT_KEY = 'drsai:layout:canvasSplitPct';
+const DEFAULT_SPLIT_PCT = 50;
 
 interface CanvasProps {
   children: React.ReactNode;
-  filePreviewContent?: React.ReactNode;
-  activeView: CanvasViewId;
-  /** 与侧栏一致的有效菜单（含乐观 pending），勿仅用 URL */
   activeMenuId: MenuId;
   activeMenuLabel: string;
-  onViewChange: (view: CanvasViewId) => void;
   onNewSession?: () => void;
   showNewSessionButton?: boolean;
   showRightPanelToggle?: boolean;
   onOpenRightPanel?: () => void;
+  generatedFilesCount?: number;
+  generatedFilesContent?: React.ReactNode;
 }
 
 const Canvas: React.FC<CanvasProps> = ({
   children,
-  filePreviewContent,
-  activeView,
   activeMenuId,
   activeMenuLabel,
-  onViewChange,
   onNewSession,
   showNewSessionButton = false,
   showRightPanelToggle = false,
   onOpenRightPanel,
+  generatedFilesCount = 0,
+  generatedFilesContent,
 }) => {
   const { darkMode } = useContext(appContext);
   const { t } = useLang();
   const location = useLocation();
-  const navigate = useNavigate();
   const session = useConfigStore((s) => s.session);
   const agentInfo = useModeConfigStore((s) => s.agentInfo);
   const selectedAgent = useModeConfigStore((s) => s.selectedAgent);
   const agentOfflineSnapshot = useModeConfigStore((s) => s.agentOfflineSnapshot);
   const hasActiveSession = Boolean(session?.id);
+
+  const previewFile = useRightPanelStore((s) => s.previewFile);
+  const setPreviewFile = useRightPanelStore((s) => s.setPreviewFile);
+
+  const [filesOpen, setFilesOpen] = useState(false);
+  const filesButtonRef = useRef<HTMLButtonElement | null>(null);
+  const filesPopoverRef = useRef<HTMLDivElement | null>(null);
+
+  // Close popover when a file preview opens
+  useEffect(() => {
+    if (previewFile) setFilesOpen(false);
+  }, [previewFile]);
+
+  // Auto-close file preview when switching routes or sessions
+  useEffect(() => {
+    setPreviewFile(null);
+  }, [activeMenuId, session?.id]);
+
+  // Close popover on outside click
+  useEffect(() => {
+    if (!filesOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (
+        filesButtonRef.current?.contains(e.target as Node) ||
+        filesPopoverRef.current?.contains(e.target as Node)
+      ) return;
+      setFilesOpen(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [filesOpen]);
+
+  // Canvas split percentage (left side width as % of total)
+  const [splitPct, setSplitPct] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(CANVAS_SPLIT_KEY);
+      if (raw) {
+        const v = Number(raw);
+        if (Number.isFinite(v) && v > 10 && v < 90) return v;
+      }
+    } catch { /* ignore */ }
+    return DEFAULT_SPLIT_PCT;
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(CANVAS_SPLIT_KEY, String(splitPct)); } catch { /* ignore */ }
+  }, [splitPct]);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const beginSplitDrag = useCallback((e: React.PointerEvent) => {
+    const el = containerRef.current;
+    if (!el) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    const rect = el.getBoundingClientRect();
+    const origCursor = document.body.style.cursor;
+    const origUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: PointerEvent) => {
+      const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      setSplitPct(Math.max(20, Math.min(80, pct)));
+    };
+    const onUp = () => {
+      document.body.style.cursor = origCursor;
+      document.body.style.userSelect = origUserSelect;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }, []);
 
   const { agentDisplayName, defaultConfigLabel } = useMemo(() => {
     const sessionAgentModeConfig = (session?.agent_mode_config || null) as
@@ -70,9 +137,9 @@ const Canvas: React.FC<CanvasProps> = ({
     const cfgRaw = hasActiveSession
       ? sessionAgentModeConfig?.defult_config_name ?? ""
       : sessionAgentModeConfig?.defult_config_name ??
-        agentInfo?.defult_config_name ??
-        (selectedAgent as { defult_config_name?: unknown } | null)?.defult_config_name ??
-        "";
+      agentInfo?.defult_config_name ??
+      (selectedAgent as { defult_config_name?: unknown } | null)?.defult_config_name ??
+      "";
     const cfg = typeof cfgRaw === "string" ? cfgRaw.trim() : String(cfgRaw || "").trim();
     const normalizedCfg = /^default$/i.test(cfg) ? "" : cfg;
     return { agentDisplayName: name, defaultConfigLabel: normalizedCfg };
@@ -88,8 +155,8 @@ const Canvas: React.FC<CanvasProps> = ({
       {/* Breadcrumb */}
       <div
         className={`relative flex-shrink-0 flex items-center gap-1 px-2 sm:px-4 h-11 text-sm ${darkMode === "dark"
-            ? "bg-white/[0.02]"
-            : "border-b border-gray-200/80 bg-white/60"
+          ? "bg-white/[0.02]"
+          : "border-b border-gray-200/80 bg-white/60"
           }`}
       >
         {/* Root */}
@@ -105,7 +172,7 @@ const Canvas: React.FC<CanvasProps> = ({
               : "bg-violet-100 text-violet-700"
               }`}
           >
-            {t(activeMenuLabel)}
+            {t(activeMenuLabel as Parameters<typeof t>[0])}
           </span>
         </div>
 
@@ -117,11 +184,11 @@ const Canvas: React.FC<CanvasProps> = ({
             <div className="flex max-w-[min(480px,52vw)] min-w-0 items-center gap-2.5 p-0">
               <Bot
                 className={`h-6 w-6 flex-shrink-0 motion-reduce:animate-none ${agentOfflineSnapshot
-                    ? `opacity-45 grayscale ${darkMode === "dark"
-                      ? "text-white/45"
-                      : "text-slate-400"
-                    }`
-                    : "text-accent opacity-90 animate-logo-hop"
+                  ? `opacity-45 grayscale ${darkMode === "dark"
+                    ? "text-white/45"
+                    : "text-slate-400"
+                  }`
+                  : "text-accent opacity-90 animate-logo-hop"
                   }`}
                 strokeWidth={2}
                 aria-hidden={!agentOfflineSnapshot}
@@ -136,7 +203,7 @@ const Canvas: React.FC<CanvasProps> = ({
                 {agentDisplayName ? (
                   <span
                     className={`min-w-0 truncate text-[1.0625rem] sm:text-lg font-bold leading-tight tracking-[-0.03em] antialiased ${defaultConfigLabel
-                      ? "flex-none max-w-[min(13rem,46%)]"
+                      ? "flex-none max-w-[clamp(13rem,46%,28rem)]"
                       : "max-w-full"
                       } ${darkMode === "dark"
                         ? "text-white [text-shadow:0_1px_24px_rgba(167,139,250,0.12)]"
@@ -182,74 +249,98 @@ const Canvas: React.FC<CanvasProps> = ({
           )}
 
           {showNewSessionButton && onNewSession && activeMenuId === MENU_IDS.currentSession && (
-            <button
-              type="button"
-              onClick={onNewSession}
-              className={`flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${darkMode === "dark"
-                ? "bg-white/[0.04] hover:bg-white/[0.07] text-secondary border border-border-primary/30"
-                : "bg-white/70 hover:bg-white text-gray-700 border border-gray-200/80"
-                }`}
-              aria-label={t("canvas.newSession")}
-              title={t("canvas.newSession")}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{t("canvas.newSession")}</span>
-            </button>
-          )}
+            <>
+              {generatedFilesCount > 0 && (
+                <div className="relative">
+                  <button
+                    ref={filesButtonRef}
+                    type="button"
+                    onClick={() => setFilesOpen((v) => !v)}
+                    className={`relative flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      filesOpen
+                        ? darkMode === "dark"
+                          ? "bg-accent/20 text-accent border border-accent/30"
+                          : "bg-accent/10 text-accent border border-accent/20"
+                        : darkMode === "dark"
+                          ? "bg-white/[0.04] hover:bg-white/[0.07] text-secondary border border-border-primary/30"
+                          : "bg-white/70 hover:bg-white text-gray-700 border border-gray-200/80"
+                    }`}
+                    title="查看本次会话生成的文件"
+                  >
+                    <Files className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">生成的文件</span>
+                    <span className="min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center bg-accent text-white leading-none">
+                      {generatedFilesCount}
+                    </span>
+                  </button>
 
-          {activeMenuId === MENU_IDS.currentSession && (
-            <button
-              type="button"
-              onClick={() => {
-                const withMenu = createSearchWithMenu(location.search, MENU_IDS.agentSquare);
-                navigate(createSearchWithView(withMenu, "chat"));
-              }}
-              className={`group relative inline-flex items-center gap-2 px-2 sm:px-3.5 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${darkMode === "dark"
-                ? "ring-offset-[#0b0f19]"
-                : "ring-offset-white"
-                }`}
-              aria-label={t("canvas.exploreMoreAria")}
-              title={t("canvas.exploreMoreTitle")}
-            >
-              <span
-                className={`absolute inset-0 rounded-lg opacity-100 transition-opacity ${darkMode === "dark"
-                  ? "bg-gradient-to-r from-fuchsia-500/90 via-violet-500/90 to-indigo-500/90"
-                  : "bg-gradient-to-r from-fuchsia-500 via-violet-500 to-indigo-500"
+                  {filesOpen && (
+                    <div
+                      ref={filesPopoverRef}
+                      className={`absolute right-0 top-full mt-1.5 z-50 w-72 sm:w-80 rounded-xl shadow-lg border overflow-hidden ${
+                        darkMode === "dark"
+                          ? "bg-[#0d1117]/95 border-white/10 backdrop-blur-md"
+                          : "bg-white border-gray-200/80 backdrop-blur-md"
+                      }`}
+                    >
+                      <div className={`px-3 py-2 text-[11px] font-semibold border-b ${
+                        darkMode === "dark" ? "text-secondary border-white/8" : "text-gray-500 border-gray-100"
+                      }`}>
+                        生成的文件
+                      </div>
+                      <div className="max-h-[60vh] overflow-y-auto p-2">
+                        {generatedFilesContent ?? (
+                          <div className="py-6 text-center text-xs text-secondary">暂无生成文件</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={onNewSession}
+                className={`flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${darkMode === "dark"
+                  ? "bg-white/[0.04] hover:bg-white/[0.07] text-secondary border border-border-primary/30"
+                  : "bg-white/70 hover:bg-white text-gray-700 border border-gray-200/80"
                   }`}
-              />
-              <span
-                className={`absolute -inset-0.5 rounded-xl blur opacity-40 transition-opacity group-hover:opacity-70 ${darkMode === "dark"
-                  ? "bg-gradient-to-r from-fuchsia-500 via-violet-500 to-indigo-500"
-                  : "bg-gradient-to-r from-fuchsia-400 via-violet-400 to-indigo-400"
-                  }`}
-              />
-              <span
-                className={`relative inline-flex items-center gap-2 ${darkMode === "dark" ? "text-white" : "text-white"
-                  }`}
+                aria-label={t("canvas.newSession")}
+                title={t("canvas.newSession")}
               >
-                <Grid2X2 className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{t("canvas.exploreMore")}</span>
-              </span>
-            </button>
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{t("canvas.newSession")}</span>
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 min-h-0 overflow-hidden rounded-b-2xl">
-        <div className={activeView === "chat" ? "h-full" : "hidden"}>
+      {/* Content — split when file preview is active */}
+      <div ref={containerRef} className="flex-1 min-h-0 overflow-hidden rounded-b-2xl flex">
+        {/* Left: chat */}
+        <div
+          className="min-w-0 h-full overflow-hidden"
+          style={previewFile ? { width: `${splitPct}%`, flexShrink: 0 } : { flex: 1 }}
+        >
           {children}
         </div>
-        <div className={activeView === "file_preview" ? "h-full" : "hidden"}>
-          {filePreviewContent ?? (
-            <div className="flex items-center justify-center h-full text-secondary">
-              <div className="text-center">
-                <FileText className="w-10 h-10 mx-auto mb-3 opacity-20" />
-                <p className="text-sm opacity-40">{t("canvas.noFile")}</p>
-              </div>
+
+        {/* Drag handle + right pane (only when preview active) */}
+        {previewFile && (
+          <>
+            <div
+              onPointerDown={beginSplitDrag}
+              className={`flex-shrink-0 w-1.5 h-full cursor-col-resize transition-colors ${darkMode === "dark"
+                ? "bg-white/5 hover:bg-white/20"
+                : "bg-gray-200/60 hover:bg-gray-300/80"
+                }`}
+              style={{ touchAction: 'none' }}
+            />
+            <div className="flex-1 min-w-0 h-full overflow-hidden">
+              <CanvasFilePreviewPane />
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

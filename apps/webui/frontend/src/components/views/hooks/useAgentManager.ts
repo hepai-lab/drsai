@@ -128,6 +128,40 @@ export const useAgentManager = (userEmail: string | undefined) => {
         return;
       }
 
+      // URL share_agent=true + agentId/agentName 直链展示指定智能体
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const shareAgent = urlParams.get("share_agent");
+        console.log("[agentLink] useAgentManager: location.search =", window.location.search, "share_agent =", shareAgent);
+        if (shareAgent === "true") {
+          const urlAgentId = urlParams.get("agentId");
+          const urlAgentName = urlParams.get("agentName");
+          console.log("[agentLink] useAgentManager: agentId =", urlAgentId, "agentName =", urlAgentName);
+          if (urlAgentId || urlAgentName) {
+            let matched: Agent | undefined;
+            if (urlAgentId) {
+              matched = res.find((a) => a.id === urlAgentId);
+            }
+            if (!matched && urlAgentName) {
+              const candidates = res.map((a) => a.name);
+              console.log("[agentLink] useAgentManager: looking for", urlAgentName, "in", candidates);
+              matched = res.find((a) => (a.name || "").trim() === urlAgentName.trim());
+            }
+            console.log("[agentLink] useAgentManager: matched =", matched?.name || matched?.id || "NONE");
+            if (matched) {
+              await applyAgent(matched);
+              // 清除 URL 参数避免刷新时重复命中
+              urlParams.delete("share_agent");
+              urlParams.delete("agentId");
+              urlParams.delete("agentName");
+              const newSearch = urlParams.toString();
+              window.history.replaceState(null, "", newSearch ? `?${newSearch}` : window.location.pathname);
+              return;
+            }
+          }
+        }
+      } catch { /* URL 解析失败不影响正常流程 */ }
+
       const policyDefault = pickAgentForSessionStart(res, userDefaultAgentId, platformPolicy);
       const fallbackAgent = policyDefault;
 

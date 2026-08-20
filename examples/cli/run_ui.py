@@ -13,7 +13,8 @@ if os.path.isdir(os.path.join(_drsai_src, "drsai")):
 from drsai_ui.run_ui import ui
 
 parent_path = _here
-appdir = os.path.join(parent_path, "tmp/drsai_ui")
+# appdir = os.path.join(parent_path, "tmp/drsai_ui")
+appdir = os.path.expanduser("~/.drsai_ui_8086")
 os.makedirs(appdir, exist_ok=True)
 
 from dotenv import load_dotenv

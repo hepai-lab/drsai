@@ -42,8 +42,24 @@ from ..server import (
     _sessions,
     method,
 )
+from ..transport import current_transport
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_workdir() -> str:
+    """Resolve the effective workdir for session operations.
+
+    Prefer DRSAI_USER_CWD (set by run_cli.py and ssh_tunnel.py) so that
+    the gateway treats the user's project directory as the workdir even
+    when the process cwd is different (e.g. the TUI launches the gateway
+    with cwd=apps/ui-tui/ locally, or the SSH tunnel starts the gateway
+    in the home directory when remote_workdir is not set).
+    """
+    user_cwd = os.environ.get("DRSAI_USER_CWD", "").strip()
+    if user_cwd:
+        return str(Path(user_cwd).resolve())
+    return str(Path.cwd().resolve())
 
 
 def _get_store(user_id: str):
@@ -75,6 +91,13 @@ def _ensure_agent_session(session_id: str, user_id: str) -> Any:
 
     existing = _sessions.get(session_id)
     if existing and existing.get("agent_session"):
+        # Update transport if a new one is bound (e.g. WebSocket reconnect
+        # or a different client resumed the same session). This ensures
+        # daemon threads spawned by prompt.submit route events to the
+        # currently-connected transport, not a stale one.
+        cur_t = current_transport()
+        if cur_t is not None:
+            existing["transport"] = cur_t
         return existing["agent_session"]
 
     cfg = cli_config.load_config()
@@ -96,15 +119,22 @@ def _ensure_agent_session(session_id: str, user_id: str) -> Any:
 
     # Preserve any transport that was already bound (e.g. via session.subscribe
     # from a WebSocket client) so events are routed to the correct peer.
+    # Also capture the transport from the current contextvar (set by dispatch
+    # for the lifetime of a request) so that daemon threads spawned by
+    # prompt.submit — which do NOT inherit contextvar bindings — can still
+    # route events to the WebSocket client via write_json()'s first precedence
+    # check: _sessions[sid]["transport"].
     old_transport = existing.get("transport") if existing else None
+    cur_transport = current_transport()
+    bound_transport = old_transport or cur_transport
     _sessions[session_id] = {
         "agent_session": sess,
         "user_id": user_id,
         "history_lock": __import__("threading").Lock(),
         "running": False,
     }
-    if old_transport is not None:
-        _sessions[session_id]["transport"] = old_transport
+    if bound_transport is not None:
+        _sessions[session_id]["transport"] = bound_transport
 
     # Emit session.info so the UI can show model/tools/workdir.
     try:
@@ -127,7 +157,7 @@ def _create(rid, params: dict) -> dict:
     """
     user_id = _resolve_user_id()
     name = (params.get("name") or "").strip() or None
-    workdir = params.get("workdir") or str(Path.cwd().resolve())
+    workdir = params.get("workdir") or _resolve_workdir()
 
     if not name:
         # Default to the workdir's basename (e.g. /home/user/drsai → "drsai")
@@ -355,7 +385,7 @@ def _workspace_map(rid, params: dict) -> dict:
         nearby_workdirs: sessions in parent/child directories
     """
     user_id = _resolve_user_id()
-    workdir = params.get("workdir") or str(Path.cwd().resolve())
+    workdir = params.get("workdir") or _resolve_workdir()
 
     store = _get_store(user_id)
 
@@ -432,7 +462,7 @@ def _quick_access(rid, params: dict) -> dict:
     Excludes archived sessions by default.
     """
     user_id = _resolve_user_id()
-    workdir = params.get("workdir") or str(Path.cwd().resolve())
+    workdir = params.get("workdir") or _resolve_workdir()
     limit = int(params.get("limit") or 10)
     include_archived = params.get("include_archived", False)
 
@@ -513,7 +543,7 @@ def _most_recent(rid, params: dict) -> dict:
     3. Of multiple matches, pick the most recently updated.
     """
     user_id = _resolve_user_id()
-    workdir = params.get("workdir") or str(Path.cwd().resolve())
+    workdir = params.get("workdir") or _resolve_workdir()
 
     session_id = None
     try:

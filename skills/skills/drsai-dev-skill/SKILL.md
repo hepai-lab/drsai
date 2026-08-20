@@ -23,7 +23,7 @@ cd /path/to/drsai
 ```
 
 - 后端：`drsai-ui ui --host 0.0.0.0 --port 4291 --reload`（pm2 进程 `drsai-dev-backend`）
-- 前端：`GATSBY_DEV_PORT=4290 yarn develop`（pm2 进程 `drsai-dev-frontend`）
+- 前端：`GATSBY_DEV_PORT=4290 yarn dev`（pm2 进程 `drsai-dev-frontend`）
 - 端口/环境名可用 env 覆盖：`DRSAI_BACKEND_PORT`、`DRSAI_FRONTEND_PORT`、`DRSAI_CONDA_ENV`
 
 > `run_drsai_ui.sh` 现已是转发到 `./drsai-dev.sh start all` 的薄壳，保留向后兼容。
@@ -117,7 +117,7 @@ drsai-ui ui --host 0.0.0.0 --port 4291 --reload
 # 前端（HMR）
 cd /path/to/drsai/frontend
 yarn install --legacy-peer-deps        # 首次
-GATSBY_DEV_PORT=4290 yarn develop
+GATSBY_DEV_PORT=4290 yarn dev
 ```
 
 | 后端参数 | 默认 | 说明 |
