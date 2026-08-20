@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
 from drsai.backend.runtime.sqlite_connection import ClosingConnection
+from drsai.backend.runtime.security_boundary.models import canonical_json
 
 
 class SecurityError(PermissionError):
@@ -136,7 +137,11 @@ class ApprovalRegistry:
 
     @staticmethod
     def _resource_hash(resource: Mapping[str, Any]) -> str:
-        return hashlib.sha256(json.dumps(redact_sensitive(resource, "", "audit"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        # Authorization identity must be derived from the real proposal.  The
+        # prior implementation hashed an audit-redacted representation, which
+        # made distinct commands or credentials share the same approval scope.
+        # Redaction remains mandatory for display and audit, never for binding.
+        return hashlib.sha256(canonical_json(resource).encode("utf-8")).hexdigest()
 
     def request(self, principal_id: str, workspace_id: str, action: str, resource: Mapping[str, Any]) -> str:
         approval_id = f"security-approval-{uuid.uuid4()}"
@@ -198,6 +203,34 @@ class AuditLog:
         with self._connect() as db:
             db.execute("INSERT INTO runtime_audit VALUES(?,?,?,?,?)", (audit_id, event, json.dumps(context_value, sort_keys=True), json.dumps(detail_value, sort_keys=True), created))
         return {"audit_id": audit_id, "event": event, "context": context_value, "detail": detail_value, "created_at": created}
+
+    def record_batch(
+        self,
+        records: list[tuple[str, OperationContext, Mapping[str, Any] | None]],
+    ) -> list[dict[str, Any]]:
+        """Append independent audit rows in one transaction.
+
+        Batch resolve still records one immutable row per resource; this only
+        removes 100 connection/commit cycles from a single OWOP request.
+        """
+        prepared: list[tuple[str, str, str, str, float]] = []
+        results: list[dict[str, Any]] = []
+        for event, context, detail in records:
+            audit_id, created = f"audit-{uuid.uuid4()}", time.time()
+            context_value = context.as_dict()
+            detail_value = redact_sensitive(dict(detail or {}), "", "audit")
+            prepared.append((
+                audit_id, event, json.dumps(context_value, sort_keys=True),
+                json.dumps(detail_value, sort_keys=True), created,
+            ))
+            results.append({
+                "audit_id": audit_id, "event": event, "context": context_value,
+                "detail": detail_value, "created_at": created,
+            })
+        if prepared:
+            with self._connect() as db:
+                db.executemany("INSERT INTO runtime_audit VALUES(?,?,?,?,?)", prepared)
+        return results
 
     def list(self) -> list[dict[str, Any]]:
         with self._connect() as db:

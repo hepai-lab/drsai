@@ -90,6 +90,7 @@ dependencies = [
 drsai = "drsai.backend.run_cli:run"
 drsai-tui = "drsai.backend.run_cli:run"
 drsai-gateway = "drsai.backend.tui_gateway.entry:main"
+drsai-security-observability-release = "drsai.backend.runtime.security_boundary.security_observability_release:main"
 # ── Optional dependency groups ───────────────────────────────────────────────
 # Install with: pip install drsai[pipeline]  /  pip install drsai[all]
 

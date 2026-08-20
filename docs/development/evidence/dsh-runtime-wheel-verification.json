@@ -1,0 +1,11 @@
+{
+  "control_schema_sha256": "450d0f1487ef847d4ffe096d3f4972d9f70e2c6094b48832aa583a37b982510f",
+  "files": 37,
+  "oaep_schema_sha256": "e207c75c2f37e121dc613aec040c24fd5bd2c6f4f005826c8996a6bb848770b7",
+  "profiles": {
+    "dsh-sdk/0.1.0-rc.5": "efce5ec38a8b530e90e41f8b40ff415ae0ab96910a03c8dea9b617fb9fc3a08c",
+    "dsh-sdk/0.1.0-rc.5+opendrsai.1": "f6357cd5d364064ac32c51b84b4b6027130ea3afeb1f84fd90ddee0cc5d30326"
+  },
+  "native_extension_contract_sha256": "70f0f05b1cca8a37f4dedc92150bd78832bee540c4ad7dbbdb3885d77d2d4909",
+  "wheel_sha256": "c3ae78bea93a028e423e543f8cf3d90ff081e988689f35aefa5a39d2a2aaa472"
+}

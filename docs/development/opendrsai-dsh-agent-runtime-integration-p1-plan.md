@@ -1,11 +1,15 @@
 # DSH 作为 OAEP Agent Runtime 的集成方案 P1
 
-> 状态：待实施方案
+> 状态：P1 实现与测试交付已验收；OpenDrSai rc.5 扩展 profile 已通过真实产品链验收；原生未扩展 rc.5 仍为 NO-GO
 > 日期：2026-08-15
 > 作用域：独立 DSH Runtime Bridge、协议适配、OpenDrSai Runtime/Relay 接口与版本兼容
 > 首个审计基线：DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a`（v0.1.0-rc.5）
 > 拆分来源：[原 DeepSeek Harness Inspired 混合方案](./opendrsai-deepseek-harness-inspired-runtime-evolution-plan.md)
 > 平行方案：[DSH 启发的 OpenDrSai 内核演进方案 P1](./opendrsai-dsh-inspired-kernel-evolution-p1-plan.md)
+> 验收台账：[50/50 功能点验收台账](./opendrsai-dsh-agent-runtime-p1-acceptance-ledger.json)
+> 实施记录：[P1 分轮进展与最终判定](./opendrsai-dsh-agent-runtime-p1-progress.md)
+> 发布证据：[真实 DSH / wheel / 压力 / 安全 / go-no-go 证据目录](./evidence/)
+> 扩展发布判定：[原生 profile 与 OpenDrSai 扩展 profile 分层报告](./evidence/dsh-runtime-p1-extension-release-report.json)
 
 ## 1. 结论
 
@@ -18,18 +22,27 @@ OpenDrSai Client / Runtime Relay
   → Runtime Control v1 + OAEP Stable 1.0
   → DSH OAEP Runtime Bridge
   → versioned DSH Native Driver
-  → official dsh-sdk-jsonrpc-server
+  → version-pinned OpenDrSai Cordis edge extension
+  → official DSH SDK/Cordis runtime spine
   → DeepSeek Harness Core / Session / Agent / Tools
 ```
 
 `DSH OAEP Runtime Bridge` 是相对独立的外围进程和发行包：
 
 - 对北向客户端提供 OpenDrSai Runtime Control 与 OAEP；
-- 对南向 Harness 只使用官方 SDK JSON-RPC 服务边界；
+- 对南向 Harness 只使用官方 SDK 边界，或随精确 DSH 版本发布并经过审计的 Cordis edge extension；
 - 自己维护 OAEP projection、event sequence、snapshot/page/live stream 和 Control operation ledger；
 - 通过版本化 Native Driver 隔离 Harness 私有协议变化；
 - 不导入 OpenDrSai Agent Kernel 私有类型，不修改 DSH Agent Loop；
 - 可以独立升级、回滚、测试和发布。
+
+截至第 8 轮，方案没有通过降低门禁来迁就原生 rc.5。OpenDrSai 为固定提交提供版本化 Cordis 边缘扩展 `dsh-sdk/0.1.0-rc.5+opendrsai.1`，补齐强 Turn 绑定、精确取消、审批反向 RPC、history/resume、工具副作用账本与沙箱证明；Bridge 仍只依赖该扩展公开的版本化 JSON-RPC 合同。未来 DSH 升级时新增一个 profile/extension/driver 组合并走 canary，不修改通用 Desktop、TUI 或 OpenDrSai Kernel。
+
+这里需要区分三个判定：
+
+- 原生、未扩展的 DSH rc.5：`probe_only`，生产 NO-GO；
+- OpenDrSai rc.5 扩展 profile：兼容性为 `production`，真实 DSH→Bridge→Desktop 链路已 ACCEPTED；
+- 正式分发：仍需用发布私钥生成签名、自包含 carrier，这属于发布操作，不是再修改产品协议或内核。
 
 P1 明确采用 **单一 Runtime 权威模式**：DSH OAEP Runtime Bridge 拥有其 Session、Run、Item 和 OAEP Event；OpenDrSai 只作为 Client/Relay/BFF，不为同一物理 Session 再写第二份 product Journal。
 
@@ -157,9 +170,9 @@ P1 Session 由 DSH OAEP Runtime Bridge 拥有。OpenDrSai Client、BFF 和 Relay
 
 Desktop、Android、TUI、Web 和 Relay 不接收 Harness `SessionEvent`、`messageId`、Cordis service 或 native JSON-RPC method。
 
-### DSH-INV-03：南向只使用官方服务边界
+### DSH-INV-03：南向只使用受版本约束的服务边界
 
-Native Driver 只调用 `dsh-sdk-jsonrpc-server` 或未来上游正式声明的兼容 Runtime API；禁止读取上游私有持久化文件。
+Native Driver 只调用 `dsh-sdk-jsonrpc-server`、与精确上游提交绑定并经过审计的 Cordis edge extension，或未来上游正式声明的兼容 Runtime API；禁止读取上游私有持久化文件，也禁止让通用 Bridge/客户端直接引用 Cordis 对象。
 
 ### DSH-INV-04：OAEP 与 Control 分离
 
@@ -341,6 +354,8 @@ Runtime run/start
 
 1. 向上游贡献向后兼容的 SDK Runtime v2 方法/notification；
 2. 在独立发行的、极薄的 DSH Runtime plugin 中补充这些服务，再由 Native Driver 调用。
+
+P1 最终采用第 2 条：`dsh-sdk/0.1.0-rc.5+opendrsai.1` 只扩展服务边缘，不替换 Harness Session/Agent/Tool 主干；其源码、配置和合同摘要随 Bridge wheel 一起固定。
 
 禁止在 OpenDrSai 内核中猜测 Turn，也禁止读取 DSH 私有 Session 文件完成关联。
 
@@ -631,6 +646,8 @@ Bridge Supervisor 负责：
 - Linux/macOS 上的受管本地或远程 Runtime；
 - Windows Desktop 通过 Runtime Relay、SSH/remote host 或明确的 WSL profile 连接；
 - 系统 Node 开发态只用于 probe，不作为生产安装证明。
+
+第 8 轮已经用系统 Node 完成真实功能矩阵和 Desktop 产品链验收；这证明 extension/profile 的兼容性，但仍不把 development Node 等同于签名生产载体。
 
 Windows 本机生产支持必须满足其一后另行放行：signed single executable、OpenDrSai 携带受信 Node/dependency closure，或上游正式 Windows carrier。
 

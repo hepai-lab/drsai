@@ -1,0 +1,44 @@
+{
+  "artifact_sha256": {
+    "pressure": "c65bb72f4e99421fd0b921b0efe788e1b8f1f028b529b033ad579224ce4908fb",
+    "real_matrix": "1c41e250f9cc6514da9a1c6306020a5bf6a364b66230ed7cfd0c50c06377fe65",
+    "security": "49cf0df6859a62a577bce848b6e849aac96be8cc5243cfbf8425202c613241f0",
+    "wheel": "65f2ec2e7bb4a478fb32e2860f7d64d97e954f0532213b6e59563a3bcb7be02d"
+  },
+  "delivery_checks": [
+    {
+      "name": "acceptance_complete",
+      "passed": true
+    },
+    {
+      "name": "wheel_verified",
+      "passed": true
+    },
+    {
+      "name": "security_scan_clean",
+      "passed": true
+    },
+    {
+      "name": "pressure_matrix_passed",
+      "passed": true
+    },
+    {
+      "name": "real_matrix_present",
+      "passed": true
+    }
+  ],
+  "delivery_verdict": "accepted",
+  "deployment_blockers": [
+    "approval.respond",
+    "run.cancel",
+    "run.terminal",
+    "run.turn-binding",
+    "session.history",
+    "session.resume",
+    "tool.side-effect-ledger",
+    "workspace.containment"
+  ],
+  "deployment_verdict": "no_go",
+  "generated_at": "2026-08-15T19:58:49.078073+00:00",
+  "schema_version": 1
+}

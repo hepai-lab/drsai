@@ -15,6 +15,58 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from drsai.backend.runtime.security import redact_sensitive
+from drsai.backend.runtime.security_boundary.models import (
+    ActionProposal,
+    ResolvedCapabilityProfile,
+    canonical_digest,
+)
+from drsai.backend.runtime.security_boundary.storage import SecurityBoundaryStore
+from drsai.backend.runtime.security_boundary.metrics import SecurityMetricsCollector
+from drsai.backend.runtime.authorization.approval_service import (
+    ApprovalDecision as AuthorizationApprovalDecision,
+    ApprovalRequest as AuthorizationApprovalRequest,
+    ApprovalService as AuthorizationApprovalService,
+)
+from drsai.backend.runtime.authorization.grant_service import GrantService as AuthorizationGrantService
+from drsai.backend.runtime.authorization.migration import (
+    LegacyApprovalMigrationReport,
+    LegacyApprovalMigrationService,
+    LegacyApprovalRetirementStatus,
+)
+from drsai.backend.runtime.security_boundary.grants import AuthorizationGrant, AuthorizationGrantStore
+from drsai.backend.runtime.security_boundary.filesystem_execution import AuthorizedFilesystemExecutionService
+from drsai.backend.runtime.security_boundary.isolation_leases import IsolationAttestationLeaseStore
+from drsai.backend.runtime.security_boundary.isolated_effect_execution import (
+    IsolatedEffectExecutionService,
+)
+from drsai.backend.runtime.security_boundary.isolated_worker_artifact import (
+    AuthenticodeEvidence,
+    IsolatedWorkerArtifactResolver,
+)
+from drsai.backend.runtime.security_boundary.windows_isolated_session import (
+    WindowsIsolatedExecutionSessionService,
+)
+from drsai.backend.runtime.permission_modes import (
+    AdministratorPolicy,
+    ModeSelection,
+    ModeTransitionResult,
+    PermissionModeService,
+    PlatformBoundary,
+    WorkspaceContext,
+    LegacyPermissionConfigMigrationService,
+    LegacyPermissionMigrationResult,
+    ChildPermissionInheritance,
+    ChildPermissionResolver,
+    EffectivePermissionProfile,
+    AutoReviewCoordinator,
+    AutoReviewRouteResult,
+    AutoReviewerConfig,
+    AutoReviewerService,
+    KillSwitchResult,
+    PermissionKillSwitchService,
+    mode_descriptors,
+    get_mode,
+)
 from drsai.backend.runtime.goals import normalize_goal
 from drsai.backend.runtime.journal import RuntimeConversationJournal
 from drsai.backend.runtime.experiments import RuntimeExperimentStore
@@ -284,6 +336,16 @@ class RuntimeEngine:
             "response_bytes_max": 0,
         }
         self._initialize()
+        self.security_boundary = SecurityBoundaryStore(self.database)
+        self.security_metrics = SecurityMetricsCollector(self.database)
+        self.authorization_approvals = AuthorizationApprovalService(self.database)
+        self.authorization_grants = AuthorizationGrantService(self.database)
+        self.authorization_migration = LegacyApprovalMigrationService(self.database)
+        self.permission_modes = PermissionModeService(self.database)
+        self.permission_config_migration = LegacyPermissionConfigMigrationService(self.database)
+        self.permission_kill_switches = PermissionKillSwitchService(self.database)
+        self.isolation_attestation_leases = IsolationAttestationLeaseStore(self.database)
+        self.child_permissions = ChildPermissionResolver(self.database)
         with self._connect() as metrics_db:
             metrics_row = metrics_db.execute("SELECT * FROM runtime_inspection_metrics WHERE metric_id=1").fetchone()
         if metrics_row is not None:
@@ -333,6 +395,13 @@ class RuntimeEngine:
         self._reconcile_conversation_journal()
         self.replay_executions.reconcile_interrupted()
         self.reconcile_terminal_run_manifests()
+
+    def authorized_filesystem_execution(self, workspace_root: Path) -> AuthorizedFilesystemExecutionService:
+        """Return the Runtime-owned file adapter without changing client protocols."""
+
+        return AuthorizedFilesystemExecutionService.for_windows(
+            Path(workspace_root), AuthorizationGrantStore(self.database),
+        )
 
     def mark_replay_execution_phase(self, run_id: str, phase: str) -> None:
         self.replay_executions.mark_phase(run_id, phase)
@@ -401,6 +470,7 @@ class RuntimeEngine:
                   agent_definition TEXT NOT NULL, backend_id TEXT NOT NULL, status TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
                   input_message TEXT NOT NULL DEFAULT '', attachment_refs_json TEXT NOT NULL DEFAULT '[]',
                   input_resources_json TEXT NOT NULL DEFAULT '[]',
+                  input_parts_json TEXT NOT NULL DEFAULT '[]',
                   correlation_id TEXT, parent_run_id TEXT REFERENCES runtime_runs(run_id),
                   backend_run_id TEXT, backend_run_index INTEGER,
                   created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, cancel_requested_at TEXT
@@ -538,6 +608,8 @@ class RuntimeEngine:
                 db.execute("ALTER TABLE runtime_runs ADD COLUMN attachment_refs_json TEXT NOT NULL DEFAULT '[]'")
             if "input_resources_json" not in columns:
                 db.execute("ALTER TABLE runtime_runs ADD COLUMN input_resources_json TEXT NOT NULL DEFAULT '[]'")
+            if "input_parts_json" not in columns:
+                db.execute("ALTER TABLE runtime_runs ADD COLUMN input_parts_json TEXT NOT NULL DEFAULT '[]'")
             if "correlation_id" not in columns:
                 db.execute("ALTER TABLE runtime_runs ADD COLUMN correlation_id TEXT")
             if "parent_run_id" not in columns:
@@ -1510,13 +1582,13 @@ class RuntimeEngine:
             db.execute(
                 """INSERT INTO runtime_runs(
                     run_id, session_id, workspace_id, worktree_id, runtime_id, instance_id, agent_definition,
-                    backend_id, status, idempotency_key, input_message, attachment_refs_json, input_resources_json, correlation_id,
+                    backend_id, status, idempotency_key, input_message, attachment_refs_json, input_resources_json, input_parts_json, correlation_id,
                     parent_run_id, created_at, started_at, completed_at, cancel_requested_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id, session_id, session["workspace_id"], session["worktree_id"], self.identity.runtime_id,
                     self.identity.instance_id, agent_definition, backend_id, "queued",
-                    idempotency_key, "", "[]", "[]", None, parent_run_id, now, None, None, None,
+                    idempotency_key, "", "[]", "[]", "[]", None, parent_run_id, now, None, None, None,
                 ),
             )
             manifest = initial_manifest(
@@ -1757,12 +1829,12 @@ class RuntimeEngine:
             agent_definition = str(session.get("agent_definition") or f"{backend_id}@1")
             db.execute(
                 "INSERT INTO runtime_runs(run_id,session_id,workspace_id,worktree_id,runtime_id,instance_id,"
-                "agent_definition,backend_id,status,idempotency_key,input_message,attachment_refs_json,input_resources_json,"
+                "agent_definition,backend_id,status,idempotency_key,input_message,attachment_refs_json,input_resources_json,input_parts_json,"
                 "correlation_id,parent_run_id,backend_run_id,backend_run_index,created_at,started_at,completed_at,cancel_requested_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (run_id, session_id, session["workspace_id"], session.get("worktree_id"),
                  self.identity.runtime_id, self.identity.instance_id, agent_definition, backend_id,
-                 runtime_status, idempotency_key, "", "[]", "[]", None, None, backend_run_id, backend_run_index,
+                 runtime_status, idempotency_key, "", "[]", "[]", "[]", None, None, backend_run_id, backend_run_index,
                  created, created, completed, None),
             )
             db.execute(
@@ -2235,6 +2307,7 @@ class RuntimeEngine:
         *,
         attachment_refs: list[str] | None = None,
         input_resources: list[Mapping[str, Any]] | None = None,
+        input_parts: list[Mapping[str, Any]] | None = None,
         correlation_id: str | None = None,
         source_client: str = "runtime",
         source_message_id: str | None = None,
@@ -2243,12 +2316,22 @@ class RuntimeEngine:
     ) -> dict[str, Any]:
         run = self.get_run(run_id)
         safe_message = str(redact_sensitive(redact_secrets(message), "", "content"))
-        from drsai.backend.runtime.input_resources import normalize_input_resources, serializable_input_resources
+        from drsai.backend.runtime.input_resources import (
+            normalize_input_parts, normalize_input_resources, serializable_input_resources,
+        )
         normalized_resources = normalize_input_resources(input_resources or [])
+        normalized_parts = normalize_input_parts(input_parts, normalized_resources, fallback_text=safe_message)
+        serializable_parts = [
+            {"type": "text", "text": str(redact_sensitive(redact_secrets(str(part["text"])), "", "content"))}
+            if part["type"] == "text"
+            else {"type": "resource", "resource_id": str(part["resource_id"])}
+            for part in normalized_parts
+        ]
         encoded = json.dumps(redact_sensitive(attachment_refs or [], "", "content"), separators=(",", ":"))
         encoded_resources = json.dumps(
             serializable_input_resources(normalized_resources), ensure_ascii=False, separators=(",", ":"),
         )
+        encoded_parts = json.dumps(serializable_parts, ensure_ascii=False, separators=(",", ":"))
         # A Run owns exactly one immutable user input. HTTP retries and
         # recoverable capability configuration may enter this method again,
         # but they must never revise the user Item or rebind request-scoped
@@ -2260,6 +2343,7 @@ class RuntimeEngine:
                 or json.dumps(
                     run.get("input_resources") or [], ensure_ascii=False, separators=(",", ":"),
                 ) != encoded_resources
+                or json.dumps(run.get("input_parts") or [], ensure_ascii=False, separators=(",", ":")) != encoded_parts
             ):
                 raise ValueError("Runtime Run input is immutable")
             return run
@@ -2283,23 +2367,35 @@ class RuntimeEngine:
             "attachments_recorded": True,
             **(dict(declarations) if isinstance(declarations, Mapping) else {}),
         }
-        parts: list[dict[str, Any]] = [{"type": "text", "text": safe_message}] if safe_message else []
+        parts: list[dict[str, Any]] = []
         image_attachments: list[dict[str, Any]] = []
-        for resource in normalized_resources:
-            mime = str(resource.get("mime") or "")
-            if resource.get("kind") != "file" or not mime.startswith("image/"):
+        resources_by_id = {str(resource["resource_id"]): resource for resource in normalized_resources}
+        for input_part in serializable_parts:
+            if input_part["type"] == "text":
+                parts.append({"type": "text", "text": input_part["text"]})
                 continue
+            resource = resources_by_id[str(input_part["resource_id"])]
+            mime = str(resource.get("mime") or "")
+            resource_ref = resource.get("resource_ref")
             part: dict[str, Any] = {
-                "type": "image",
-                "resource_id": resource["resource_id"],
-                "mime_type": mime,
+                "type": (
+                    "image" if resource.get("kind") == "file" and mime.startswith("image/")
+                    else "resource_ref" if isinstance(resource_ref, Mapping)
+                    else "file"
+                ),
                 "name": resource.get("name"),
             }
+            if isinstance(resource_ref, Mapping):
+                part["resource_ref"] = dict(resource_ref)
+            if resource.get("url"):
+                part["url"] = resource["url"]
+            if mime:
+                part["mime_type"] = mime
             if resource.get("sha256"):
                 part["sha256"] = resource["sha256"]
-            if resource.get("reference"):
-                part["reference"] = resource["reference"]
             parts.append(part)
+            if part["type"] != "image":
+                continue
             image_attachments.append({
                 "type": "image",
                 "mime_type": mime,
@@ -2331,7 +2427,7 @@ class RuntimeEngine:
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             current = db.execute(
-                "SELECT input_message,attachment_refs_json,input_resources_json FROM runtime_runs WHERE run_id=?",
+                "SELECT input_message,attachment_refs_json,input_resources_json,input_parts_json FROM runtime_runs WHERE run_id=?",
                 (run_id,),
             ).fetchone()
             if current is None:
@@ -2341,15 +2437,16 @@ class RuntimeEngine:
                     str(current["input_message"]) != safe_message
                     or str(current["attachment_refs_json"]) != encoded
                     or str(current["input_resources_json"]) != encoded_resources
+                    or str(current["input_parts_json"]) != encoded_parts
                 ):
                     raise ValueError("Runtime Run input is immutable")
                 already_bound = True
                 journal_created = False
             else:
                 db.execute(
-                    "UPDATE runtime_runs SET input_message=?, attachment_refs_json=?, input_resources_json=?, "
+                    "UPDATE runtime_runs SET input_message=?, attachment_refs_json=?, input_resources_json=?, input_parts_json=?, "
                     "correlation_id=COALESCE(correlation_id,?) WHERE run_id=?",
-                    (safe_message, encoded, encoded_resources, correlation_id, run_id),
+                    (safe_message, encoded, encoded_resources, encoded_parts, correlation_id, run_id),
                 )
                 self._merge_run_manifest_in_transaction(
                     db,
@@ -2379,6 +2476,7 @@ class RuntimeEngine:
                                 **({"mime": value["mime"]} if value.get("mime") else {}),
                                 **({"sha256": value["sha256"]} if value.get("sha256") else {}),
                                 **({"reference": value["reference"]} if value.get("reference") else {}),
+                                **({"resource_ref": dict(value["resource_ref"])} if isinstance(value.get("resource_ref"), Mapping) else {}),
                             }
                             for value in normalized_resources
                         ],
@@ -4098,11 +4196,35 @@ class RuntimeEngine:
                 json.dumps(safe_request, separators=(",", ":"), sort_keys=True),
                 None, deadline_at, created, None,
             ))
+            self.security_metrics.journal.append_in_transaction(
+                db, "approval.legacy_requested", approval_id,
+                {"status": "pending", "compatibility_version": "legacy-approval/1"},
+                now=time.time(),
+            )
             operation = str(safe_request.get("operation") or "").strip()
             if operation:
-                request_digest = "sha256:" + hashlib.sha256(
-                    json.dumps(safe_request, separators=(",", ":"), sort_keys=True).encode("utf-8")
-                ).hexdigest()
+                raw_capabilities = request.get("required_capabilities") or ()
+                if not isinstance(raw_capabilities, (list, tuple, set, frozenset)):
+                    db.rollback()
+                    raise ValueError("Approval required_capabilities must be a sequence")
+                raw_categories = request.get("effect_categories") or ()
+                if not isinstance(raw_categories, (list, tuple, set, frozenset)):
+                    db.rollback()
+                    raise ValueError("Approval effect_categories must be a sequence")
+                proposal = ActionProposal.create(
+                    proposal_id=approval_id,
+                    run_id=run_id,
+                    operation=operation,
+                    payload=request,
+                    risk=str(request.get("risk") or "sensitive"),
+                    required_capabilities=tuple(str(value) for value in raw_capabilities),
+                    effect_categories=tuple(str(value) for value in raw_categories),
+                )
+                self.security_boundary.save_proposal_in_transaction(db, proposal, now=time.time())
+                # Bind execution to the original request, never to its audit-
+                # redacted projection. Distinct commands/arguments must not
+                # collapse to the same approval identity.
+                request_digest = canonical_digest(request)
                 db.execute(
                     "INSERT INTO runtime_side_effects("
                     "effect_id,approval_id,run_id,idempotency_key,operation,request_digest,status,requested_at"
@@ -4186,6 +4308,362 @@ class RuntimeEngine:
         self.conversation_journal.notify_committed()
         return self.get_approval(approval_id)
 
+    def get_action_proposal(self, approval_id: str) -> ActionProposal:
+        """Return the immutable security proposal associated with an Approval."""
+
+        return self.security_boundary.get_proposal(approval_id)
+
+    def bind_run_security_profile(
+        self,
+        run_id: str,
+        profile: ResolvedCapabilityProfile,
+        *,
+        reason: str,
+    ) -> ResolvedCapabilityProfile:
+        """Bind a new, monotonically versioned capability profile to a Run."""
+
+        self.get_run(run_id)
+        self.security_boundary.bind_run_profile(run_id, profile, reason=reason)
+        return self.security_boundary.active_profile(run_id)
+
+    def get_run_security_profile(self, run_id: str) -> ResolvedCapabilityProfile:
+        self.get_run(run_id)
+        return self.security_boundary.active_profile(run_id)
+
+    def security_metrics_snapshot(self) -> list[dict[str, Any]]:
+        """Return low-cardinality internal security metrics without client identifiers."""
+
+        return [
+            {"name": metric.name, "labels": dict(metric.labels), "value": metric.value}
+            for metric in self.security_metrics.snapshot()
+        ]
+
+    @staticmethod
+    def permission_mode_descriptors() -> list[dict[str, object]]:
+        """Return the sole versioned descriptor set shared by future clients."""
+
+        return mode_descriptors()
+
+    def apply_permission_mode(
+        self,
+        run_id: str,
+        selection: ModeSelection,
+        *,
+        administrator: AdministratorPolicy,
+        platform: PlatformBoundary,
+        workspace: WorkspaceContext,
+        fault_after: str | None = None,
+    ) -> ModeTransitionResult:
+        """Resolve and bind a mode internally without changing client protocols."""
+
+        self.get_run(run_id)
+        def stage_authority(db, effective: EffectivePermissionProfile, changed_at: float) -> None:
+            if effective.mode.mode_id == "isolated_full_access":
+                if platform.isolation_attestation is None:
+                    raise ValueError("Isolated full access cannot commit without an attestation")
+                lease = self.isolation_attestation_leases.bind_in_transaction(
+                    db, run_id, workspace.workspace_root, effective.capability_profile,
+                    platform.isolation_attestation, now=changed_at,
+                )
+                self.isolation_attestation_leases.revoke_run_in_transaction(
+                    db, run_id, reason_code="permission_mode_rebound", now=changed_at,
+                    keep_lease_id=lease.lease_id,
+                )
+            else:
+                self.isolation_attestation_leases.revoke_run_in_transaction(
+                    db, run_id, reason_code="permission_mode_changed", now=changed_at,
+                )
+
+        return self.permission_modes.apply(
+            run_id, selection, administrator=administrator, platform=platform, workspace=workspace,
+            fault_after=fault_after, commit_hook=stage_authority,
+        )
+
+    def effective_permission_descriptor(self, run_id: str) -> dict[str, object] | None:
+        self.get_run(run_id)
+        return self.permission_modes.current_descriptor(run_id)
+
+    def effective_permission_profile(self, run_id: str) -> EffectivePermissionProfile:
+        """Rehydrate the durable mode descriptor without rerunning policy resolution."""
+
+        self.get_run(run_id)
+        descriptor = self.permission_modes.current_descriptor(run_id)
+        if not isinstance(descriptor, dict):
+            raise ValueError("Runtime Run has no effective Permission Mode")
+        profile = self.security_boundary.active_profile(run_id)
+        if str(descriptor.get("profile_digest")) != profile.digest:
+            raise ValueError("Permission Mode descriptor and active Profile disagree")
+        mode = get_mode(
+            str(descriptor.get("mode_id")),
+            schema_version=str(descriptor.get("mode_version")),
+        )
+        if str(descriptor.get("mode_digest")) != mode.digest:
+            raise ValueError("Permission Mode descriptor is not canonical")
+        effective = EffectivePermissionProfile(
+            schema_version=str(descriptor.get("schema_version")),
+            mode=mode,
+            capability_profile=profile,
+            reviewer_route=str(descriptor.get("reviewer_route")),
+            mandatory_human_categories=frozenset(
+                str(value) for value in descriptor.get("mandatory_human_categories", [])
+            ),
+            limitations=tuple(str(value) for value in descriptor.get("limitations", [])),
+            selection_source=str(descriptor.get("selection_source")),
+            administrator_policy=str(descriptor.get("administrator_policy")),
+            isolation_attestation_digest=(
+                str(descriptor["isolation_attestation_digest"])
+                if descriptor.get("isolation_attestation_digest") is not None else None
+            ),
+        )
+        if canonical_digest(effective.as_descriptor()) != canonical_digest(descriptor):
+            raise ValueError("Permission Mode descriptor cannot be reconstructed exactly")
+        return effective
+
+    def assert_isolated_full_access_authority(
+        self,
+        run_id: str,
+        *,
+        workspace_root: str,
+        profile_digest: str,
+        attestation_digest: str,
+    ):
+        """Recheck the live OS-isolation lease at an execution boundary."""
+
+        self.get_run(run_id)
+        return self.isolation_attestation_leases.assert_active(
+            run_id,
+            workspace_root=workspace_root,
+            profile_digest=profile_digest,
+            attestation_digest=attestation_digest,
+        )
+
+    def revoke_isolated_full_access_authority(
+        self,
+        run_id: str,
+        *,
+        reason_code: str,
+    ) -> int:
+        """Revoke a Run's isolation authority after worker or boundary loss."""
+
+        self.get_run(run_id)
+        if not reason_code.strip():
+            raise ValueError("Isolation authority revocation requires a reason code")
+        return self.isolation_attestation_leases.revoke_run(
+            run_id,
+            reason_code=reason_code,
+        )
+
+    def create_windows_isolated_execution_session_service(
+        self,
+        **options: Any,
+    ) -> WindowsIsolatedExecutionSessionService:
+        """Create the Runtime-owned worker service with automatic lease revocation."""
+
+        if "authority_revoker" in options:
+            raise ValueError("Runtime owns the isolation authority revoker")
+        return WindowsIsolatedExecutionSessionService(
+            self.database,
+            authority_revoker=lambda run_id, reason_code: (
+                self.revoke_isolated_full_access_authority(
+                    run_id,
+                    reason_code=reason_code,
+                )
+            ),
+            **options,
+        )
+
+    def create_isolated_effect_execution_service(
+        self,
+        *,
+        artifact_manifest: Path,
+        expected_manifest_digest: str,
+        trusted_publisher_subjects: tuple[str, ...],
+        signature_verifier: Callable[[Path], AuthenticodeEvidence] | None = None,
+        **session_options: Any,
+    ) -> IsolatedEffectExecutionService:
+        """Build the only executor allowed to consume isolated-full Effects."""
+
+        resolver_options: dict[str, Any] = {
+            "expected_manifest_digest": expected_manifest_digest,
+            "trusted_publisher_subjects": trusted_publisher_subjects,
+        }
+        if signature_verifier is not None:
+            resolver_options["signature_verifier"] = signature_verifier
+        artifact = IsolatedWorkerArtifactResolver(**resolver_options).resolve(artifact_manifest)
+        sessions = self.create_windows_isolated_execution_session_service(**session_options)
+        return IsolatedEffectExecutionService(
+            self.database,
+            self.isolation_attestation_leases,
+            sessions,
+            worker_argv_prefix=(str(artifact.executable_path),),
+            expected_worker_sha256=artifact.executable_digest,
+        )
+
+    def route_auto_authorization_review(
+        self,
+        proposal: ActionProposal,
+        profile: ResolvedCapabilityProfile,
+        *,
+        idempotency_key: str,
+        human_deadline_seconds: float = 300,
+    ) -> AutoReviewRouteResult:
+        """Create and apply an auto Decision; Grant issuance remains separate."""
+
+        effective = self.effective_permission_profile(proposal.run_id)
+        if effective.reviewer_route != "auto" or effective.capability_profile.digest != profile.digest:
+            raise ValueError("Runtime Run is not bound to this AutoReviewer profile")
+        request = self.request_authorization_review(
+            proposal, profile, reviewer_kind="auto",
+            reason_code="permission_mode_auto_review",
+            idempotency_key=f"auto-request:{idempotency_key}",
+        )
+        reviewer = AutoReviewerService(
+            self.database, AutoReviewerConfig(enabled=True), model=None,
+        )
+        return AutoReviewCoordinator(self.database, reviewer).process(
+            request.request_id, effective,
+            idempotency_key=f"auto-route:{idempotency_key}",
+            human_deadline_seconds=human_deadline_seconds,
+        )
+
+    def migrate_legacy_permission_config(
+        self,
+        migration_key: str,
+        values_by_source: Mapping[str, object],
+    ) -> LegacyPermissionMigrationResult:
+        """Conservatively map old settings without applying a mode to a Run."""
+
+        return self.permission_config_migration.migrate(migration_key, values_by_source)
+
+    def acknowledge_permission_config_migration(self, migration_key: str) -> LegacyPermissionMigrationResult:
+        return self.permission_config_migration.acknowledge(migration_key)
+
+    def set_permission_kill_switch(
+        self,
+        switch_name: str,
+        *,
+        active: bool,
+        reason_code: str,
+    ) -> KillSwitchResult:
+        result = self.permission_kill_switches.set(
+            switch_name, active=active, reason_code=reason_code,
+        )
+        if switch_name == "isolated_full_access" and active:
+            with self._connect() as db:
+                run_ids = [str(row[0]) for row in db.execute(
+                    "SELECT DISTINCT run_id FROM runtime_isolation_attestation_leases",
+                ).fetchall()]
+            for run_id in run_ids:
+                self.isolation_attestation_leases.revoke_run(
+                    run_id, reason_code="permission_kill_switch_active",
+                )
+        return result
+
+    def inherit_child_permissions(
+        self,
+        parent_run_id: str,
+        child_run_id: str,
+        parent: EffectivePermissionProfile,
+        child_selection: ModeSelection,
+        *,
+        administrator: AdministratorPolicy,
+        platform: PlatformBoundary,
+        workspace: WorkspaceContext,
+        profile_version: int = 1,
+    ) -> ChildPermissionInheritance:
+        self.get_run(parent_run_id)
+        self.get_run(child_run_id)
+        return self.child_permissions.derive_and_bind(
+            parent_run_id, child_run_id, parent, child_selection,
+            administrator=administrator, platform=platform, workspace=workspace,
+            profile_version=profile_version,
+        )
+
+    def request_authorization_review(
+        self,
+        proposal: ActionProposal,
+        profile: ResolvedCapabilityProfile,
+        *,
+        reviewer_kind: str,
+        reason_code: str,
+        idempotency_key: str,
+        deadline_at: float | None = None,
+    ) -> AuthorizationApprovalRequest:
+        """Create a P1 operation-level review without changing Run status."""
+
+        self.get_run(proposal.run_id)
+        return self.authorization_approvals.create_request(
+            proposal,
+            profile_digest=profile.digest,
+            policy_version="authorization-policy/1",
+            reviewer_kind=reviewer_kind,
+            reason_code=reason_code,
+            idempotency_key=idempotency_key,
+            deadline_at=deadline_at,
+        )
+
+    def decide_authorization_review(
+        self,
+        request_id: str,
+        decision: str,
+        *,
+        reviewer_kind: str,
+        reviewer_id: str,
+        reason_code: str,
+        idempotency_key: str,
+    ) -> AuthorizationApprovalDecision:
+        """Record a P1 Decision fact without cancelling/resuming its Run."""
+
+        return self.authorization_approvals.decide(
+            request_id,
+            decision,
+            reviewer_kind=reviewer_kind,
+            reviewer_id=reviewer_id,
+            reason_code=reason_code,
+            idempotency_key=idempotency_key,
+        )
+
+    def issue_authorization_grant(
+        self,
+        request_id: str,
+        profile: ResolvedCapabilityProfile,
+        *,
+        review_requirement: str,
+        ttl_seconds: float = 300,
+    ) -> AuthorizationGrant:
+        """Issue the sole Grant after revalidating an approved operation review.
+
+        This is an internal P1 compatibility path.  Existing client approval APIs
+        remain unchanged and cannot invoke the Grant store directly.
+        """
+
+        request = self.authorization_approvals.get_request(request_id)
+        self.get_run(request.run_id)
+        active_profile = self.security_boundary.active_profile(request.run_id)
+        if active_profile.digest != profile.digest:
+            raise ValueError("Active capability profile does not match the reviewed profile")
+        return self.authorization_grants.issue_for_approved_request(
+            request_id,
+            active_profile,
+            review_requirement=review_requirement,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def migrate_legacy_approvals(self, *, limit: int | None = None) -> LegacyApprovalMigrationReport:
+        """Incrementally project legacy approvals without changing legacy clients."""
+
+        return self.authorization_migration.migrate(limit=limit)
+
+    def approval_compatibility_rows(self) -> list[dict[str, object]]:
+        """Return the read-only dual-control-plane compatibility projection."""
+
+        return self.authorization_migration.compatibility_rows()
+
+    def legacy_approval_retirement_status(self, *, quiet_since: float) -> LegacyApprovalRetirementStatus:
+        """Return the explicit, fail-closed gate for deleting the legacy path."""
+
+        return self.authorization_migration.retirement_status(quiet_since=quiet_since)
+
     def get_approval(self, approval_id: str) -> dict[str, Any]:
         with self._connect() as db:
             row = db.execute("SELECT * FROM runtime_approvals WHERE approval_id=?", (approval_id,)).fetchone()
@@ -4226,7 +4704,15 @@ class RuntimeEngine:
             ).fetchall()
         return [self._side_effect(row) for row in rows]
 
-    def claim_side_effect(self, approval_id: str, run_id: str, operation: str, *, recovered: bool = False) -> dict[str, Any]:
+    def claim_side_effect(
+        self,
+        approval_id: str,
+        run_id: str,
+        operation: str,
+        *,
+        recovered: bool = False,
+        actual_request: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         claimed_at = _now()
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -4244,6 +4730,9 @@ class RuntimeEngine:
             if str(row["run_id"]) != run_id or str(row["operation"]) != operation:
                 db.rollback()
                 raise ValueError("Side effect approval does not match this operation")
+            if actual_request is not None and str(row["request_digest"]) != canonical_digest(actual_request):
+                db.rollback()
+                raise ValueError("Side effect request differs from the approved proposal")
             if str(row["status"]) == "completed":
                 db.rollback()
                 raise ValueError("Side effect idempotency key already completed")
@@ -4343,6 +4832,11 @@ class RuntimeEngine:
             if approval_update.rowcount != 1:
                 db.rollback()
                 raise ValueError("Approval decision is invalid")
+            self.security_metrics.journal.append_in_transaction(
+                db, "approval.legacy_resolved", approval_id,
+                {"status": decision, "compatibility_version": "legacy-approval/1"},
+                now=time.time(),
+            )
             db.execute(
                 "UPDATE runtime_side_effects SET status=?,approved_at=? "
                 "WHERE approval_id=? AND status='requested'",
@@ -4534,6 +5028,8 @@ class RuntimeEngine:
             result["attachment_refs"] = json.loads(str(row["attachment_refs_json"] or "[]"))
         if "input_resources_json" in row.keys():
             result["input_resources"] = json.loads(str(row["input_resources_json"] or "[]"))
+        if "input_parts_json" in row.keys():
+            result["input_parts"] = json.loads(str(row["input_parts_json"] or "[]"))
         return result
 
     @staticmethod
