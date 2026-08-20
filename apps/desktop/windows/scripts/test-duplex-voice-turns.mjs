@@ -3,6 +3,16 @@ import { initialDuplexTurnState, reduceDuplexTurn } from "../../shared/renderer/
 import { DuplexBargeInCandidate } from "../../shared/renderer/src/voice/duplex/bargeInCandidate.ts";
 import { classifyDuplexSpeechIntent, scoreDuplexSemanticGate, shouldCommitBargeIn } from "../../shared/renderer/src/voice/duplex/bargeInPolicy.ts";
 import { DuplexBargeInCoordinator } from "../../shared/renderer/src/voice/duplex/bargeInCoordinator.ts";
+import { claimWasGranted, initialDuplexSessionState, reduceDuplexSession } from "../../shared/renderer/src/voice/duplex/duplexSessionReducer.ts";
+
+let session = reduceDuplexSession(initialDuplexSessionState, { type: "start_requested", sessionId: "s-machine" });
+for (const stage of ["checking_readiness", "preparing_microphone", "preparing_playback", "connecting_provider", "activating_audio"]) session = reduceDuplexSession(session, { type: "startup_stage", sessionId: "s-machine", stage });
+session = reduceDuplexSession(session, { type: "started", sessionId: "s-machine" }); assert.equal(session.phase, "active");
+const wrongSession = reduceDuplexSession(session, { type: "terminal", sessionId: "other", terminal: "failed" }); assert.equal(wrongSession.phase, "active"); assert.equal(wrongSession.invalidTransitions, 1);
+session = reduceDuplexSession(session, { type: "end_requested", sessionId: "s-machine" }); session = reduceDuplexSession(session, { type: "terminal", sessionId: "s-machine", terminal: "completed" }); assert.equal(session.phase, "idle");
+let cleanupGrants = 0; let historyGrants = 0;
+for (let index = 0; index < 10_000; index += 1) { const cleanup = reduceDuplexSession(session, { type: "claim_cleanup", sessionId: "s-machine" }); if (claimWasGranted(session, cleanup, "cleanupClaimed")) cleanupGrants += 1; session = cleanup; const history = reduceDuplexSession(session, { type: "claim_history_flush", sessionId: "s-machine" }); if (claimWasGranted(session, history, "historyFlushClaimed")) historyGrants += 1; session = history; session = reduceDuplexSession(session, { type: "terminal", sessionId: "s-machine", terminal: index % 2 ? "cancelled" : "failed" }); }
+assert.equal(cleanupGrants, 1); assert.equal(historyGrants, 1); assert.equal(session.terminal, "completed", "the first terminal event owns the terminal outcome");
 
 let state = initialDuplexTurnState;
 for (const event of [
@@ -36,10 +46,12 @@ assert.equal(shouldCommitBargeIn({ intent: "stop", localSpeechMs: 0, providerSpe
 
 const signal = (speechCandidate, level = speechCandidate ? 0.12 : 0.01) => ({ level, threshold: 0.04, noiseFloor: 0.01, speechCandidate, changed: false });
 const echo = new DuplexBargeInCandidate(); echo.setPlayback(true, 0.5);
-for (let index = 0; index < 8; index += 1) echo.observeLocal(signal(true, 0.18), 40);
-assert.equal(echo.snapshot(0.18).action, "idle"); assert.ok(echo.snapshot(0.18).echoRisk >= 0.55);
+assert.equal(echo.observeLocal(signal(true, 0.18), 40).action, "duck", "possible speech ducks on the first 40 ms frame even under echo risk");
+for (let index = 1; index < 8; index += 1) echo.observeLocal(signal(true, 0.18), 40);
+assert.equal(echo.snapshot(0.18).action, "duck"); assert.ok(echo.snapshot(0.18).echoRisk >= 0.55);
+assert.equal(echo.observeLocal(signal(false), 40).action, "idle", "echo/noise candidate restores playback as soon as the local signal clears");
 const cough = new DuplexBargeInCandidate(); cough.setPlayback(true, 0.03); cough.observeLocal(signal(true), 40);
-assert.equal(cough.observeLocal(signal(true), 40).action, "idle");
+assert.equal(cough.observeLocal(signal(true), 40).action, "duck"); assert.equal(cough.observeLocal(signal(false), 40).action, "idle");
 const speech = new DuplexBargeInCandidate(); speech.setPlayback(true, 0.2); speech.setProviderSpeech(true);
 for (let index = 0; index < 3; index += 1) speech.observeLocal(signal(true), 40);
 assert.equal(speech.observeLocal(signal(true), 40).action, "duck");

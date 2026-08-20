@@ -23,6 +23,7 @@ export interface DuplexVoiceRuntimeOptions {
   connection: DuplexRealtimeConnection;
   adapter: DuplexRealtimeProviderAdapter;
   createSocket: (connection: DuplexRealtimeConnection) => DuplexProviderSocket;
+  prepareReconnect?: () => Promise<void>;
   emit: (event: DesktopDuplexVoiceEvent) => void;
   connectTimeoutMs?: number;
   schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
@@ -307,6 +308,11 @@ export class DuplexVoiceRuntime {
     else if (event.type === "response_audio_completed") this.#queueDownlink({ ...event, finalSequence: this.#audioSequence - 1 }, 0);
     else if (event.type === "response_transcript_delta") this.#emit({ type: "response_transcript_delta", delta: { responseId: event.responseId, itemId: event.itemId, contentIndex: event.contentIndex, text: event.text } });
     else if (event.type === "response_transcript_completed") { this.#emit(event); if (this.state === "stopping") this.#finish("completed"); }
+    else if (event.type === "response_completed" && event.status === "cancelled") {
+      // Server VAD may cancel the active response before the Renderer commits its
+      // local candidate. Remember it so a racing IPC cannot send another cancel.
+      this.#interruptedResponses.add(event.responseId);
+    }
     else if (event.type === "tool_call") this.#emit({ type: "tool_call", call: { callId: event.callId, itemId: event.itemId, name: event.name, argumentsJson: event.argumentsJson } });
     else if (event.type === "provider_error") { const pending = this.#pendingSessionUpdate; if (pending) { (this.options.cancelSchedule ?? clearTimeout)(pending.timer); this.#pendingSessionUpdate = null; try { this.#send(this.options.adapter.createSessionUpdate(pending.previous)); } catch { /* connection lifecycle remains authoritative */ } this.#emit({ type: "session_update_ack", updateId: pending.updateId, status: "rejected", changedFields: pending.changedFields, reason: event.error.message }); } else this.#fail(Object.assign(new Error(event.error.message), { providerError: event.error }), event.error.code); }
   }
@@ -403,7 +409,16 @@ export class DuplexVoiceRuntime {
     this.#emit({ type: "connection_state", state: "reconnecting", attempt: this.#reconnectAttempts, segmentId: this.#connectionSegment, lostAudioMs: this.#lostAudioMs, retryAfterMs });
     this.#emitCredit("reconnect");
     const schedule = this.options.schedule ?? setTimeout;
-    this.#reconnectTimer = schedule(() => { this.#reconnectTimer = null; if (this.state === "reconnecting" && !this.#terminalEmitted) this.#connect(); }, retryAfterMs);
+    this.#reconnectTimer = schedule(() => {
+      this.#reconnectTimer = null;
+      if (this.state !== "reconnecting" || this.#terminalEmitted) return;
+      if (!this.options.prepareReconnect) { this.#connect(); return; }
+      void this.options.prepareReconnect().then(() => {
+        if (this.state === "reconnecting" && !this.#terminalEmitted) this.#connect();
+      }, () => {
+        if (this.state === "reconnecting" && !this.#terminalEmitted) this.#reconnectOrFail();
+      });
+    }, retryAfterMs);
   }
 
   #scheduleMaintenance(): void {

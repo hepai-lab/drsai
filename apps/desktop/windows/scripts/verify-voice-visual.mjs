@@ -212,9 +212,24 @@ try {
   });
   if (await developerWorkspaceButton.isVisible().catch(() => false)) await developerWorkspaceButton.click();
   await page.locator('[data-testid="composer-input"]').waitFor({ state: "visible" });
-  const voiceMode = page.locator('[data-testid="composer-voice-mode"]');
-  assert.equal(await voiceMode.inputValue(), "serial", "serial voice must remain the default mode");
-  assert.equal(await voiceMode.locator('option[value="streaming"]').isDisabled(), false, "fixture streaming input must be selectable");
+  assert.equal(await page.locator('[data-testid="composer-voice-mode"]').count(), 0, "voice mode must live in Settings, not the composer");
+  assert.equal(await page.locator('[data-testid="composer-voice-mode-trigger"]').count(), 0, "voice mode trigger must live in Settings, not the composer");
+  assert.equal(await page.locator('[data-testid="duplex-voice-preflight"]').count(), 0, "Realtime preflight must not occupy the composer");
+  assert.equal(await page.locator('[data-testid="duplex-voice-recovery"]').count(), 0, "background Realtime readiness errors must not occupy the composer");
+  assert.equal(await page.locator(".composer-voice-device").count(), 0, "microphone selection must live in Settings, not the composer");
+  assert.equal(await page.locator(".composer-voice-language").count(), 0, "transcription language must live in Settings, not the composer");
+  const setVoiceMode = async (interactionMode) => page.evaluate((mode) => {
+    const key = "opendrsai.voicePreferences.v1";
+    const raw = window.localStorage.getItem(key);
+    const stored = raw ? JSON.parse(raw) : null;
+    const preferences = { ...(stored?.preferences || {}), interactionMode: mode };
+    window.localStorage.setItem(key, JSON.stringify({ version: 9, preferences }));
+    window.dispatchEvent(new CustomEvent("opendrsai:voice-preferences-changed", { detail: preferences }));
+  }, interactionMode);
+  const getVoiceMode = async () => page.evaluate(() => {
+    const raw = window.localStorage.getItem("opendrsai.voicePreferences.v1");
+    return raw ? JSON.parse(raw)?.preferences?.interactionMode : null;
+  });
   const setConfirmBeforeSend = async (confirmBeforeSend) => page.evaluate((enabled) => {
     const raw = window.localStorage.getItem("opendrsai.voicePreferences.v1");
     const stored = raw ? JSON.parse(raw) : null;
@@ -236,6 +251,13 @@ try {
     window.dispatchEvent(new CustomEvent("opendrsai:voice-preferences-changed", { detail: preferences }));
   }, confirmBeforeSend);
   await setConfirmBeforeSend(true);
+  assert.equal(await getVoiceMode(), "serial", "serial voice must remain the default mode");
+  await setVoiceMode("duplex");
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('[data-testid="duplex-voice-preflight"]').count(), 0, "Realtime preflight appeared before a voice attempt");
+  assert.equal(await page.locator('[data-testid="duplex-voice-recovery"]').count(), 0, "Realtime readiness failure appeared before a voice attempt");
+  assert.equal(await page.locator('[data-testid="composer-voice-mode-trigger"]').count(), 0, "voice mode settings returned to the composer");
+  await setVoiceMode("serial");
   await page.evaluate(() => {
     window.__voiceTurnPhases = [];
     const composer = document.querySelector("form.composer");
@@ -248,10 +270,22 @@ try {
   });
   const capture = page.locator(".composer-voice-capture");
   const composerInput = page.locator('[data-testid="composer-input"]');
+  await page.keyboard.down("Control");
+  await page.keyboard.down("Shift");
+  await page.keyboard.down("d");
+  await capture.waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.querySelector("form.composer")?.getAttribute("data-voice-turn-phase") === "recording");
+  assert.match(await page.locator(".composer-voice-button").getAttribute("title"), /松开 Ctrl\+Shift\+D|Release Ctrl\+Shift\+D/);
+  await page.keyboard.up("d");
+  await page.keyboard.up("Shift");
+  await page.keyboard.up("Control");
+  await page.waitForFunction(() => document.querySelector('[data-testid="composer-input"]')?.value === "Fixture voice transcript.");
+  await composerInput.fill("");
+  results.push({ name: "serial-push-to-talk", shortcut: "Ctrl+Shift+D", pressStarted: true, releaseStopped: true });
   await composerInput.fill("Verify microphone access while a reply is running.");
   await page.locator("form.composer").evaluate((form) => form.requestSubmit());
   await page.locator(".composer-submit.stop").waitFor({ state: "visible" });
-  const busyVoiceButton = page.getByRole("button", { name: "Start voice recording" });
+  const busyVoiceButton = page.locator(".composer-voice-button");
   assert.equal(await busyVoiceButton.isDisabled(), false, "voice capture must remain enabled while chat is active");
   await busyVoiceButton.click();
   await capture.waitFor({ state: "visible" });
@@ -275,7 +309,7 @@ try {
       return originalGetVoiceRuntimeStatus(...args);
     };
   });
-  await page.getByRole("button", { name: "Start voice recording" }).click();
+  await page.locator(".composer-voice-button").click();
   await capture.waitFor({ state: "visible" });
   await page.waitForFunction(() => document.querySelector("form.composer")?.getAttribute("data-voice-turn-phase") === "recording");
   assert.equal(
@@ -333,10 +367,10 @@ try {
   await assertAccessible(".composer", "serial transcript in composer");
   await serialComposer.fill("");
   await setConfirmBeforeSend(false);
-  await voiceMode.selectOption("streaming");
+  await setVoiceMode("streaming");
   await page.evaluate(() => { window.__voiceFixtureSlowNetwork = true; });
-  assert.equal(await voiceMode.inputValue(), "streaming", "streaming mode selection did not persist in the composer");
-  await page.getByRole("button", { name: "Start voice recording" }).click();
+  assert.equal(await getVoiceMode(), "streaming", "streaming fixture mode did not persist");
+  await page.locator(".composer-voice-button").click();
   const liveProjection = page.locator('[data-testid="streaming-composer-projection"]');
   await liveProjection.waitFor({ state: "visible" });
   const liveComposer = liveProjection.locator('[data-testid="composer-input"]');
@@ -345,7 +379,7 @@ try {
   await page.getByText(/连接较慢|Connection is slow/).waitFor({ state: "visible" });
   assert.equal(await liveProjection.locator(".provisional").getAttribute("aria-label"), "Interim transcript");
   assert.equal(await liveComposer.inputValue(), "", "provisional transcript must not mutate formal composer text");
-  assert.equal(await voiceMode.isDisabled(), true, "mode switch must be locked during streaming capture");
+  assert.equal(await page.locator('[data-testid="composer-voice-mode"]').count(), 0, "mode selector reappeared during streaming capture");
   await page.getByRole("button", { name: "Stop live transcription" }).click();
   await review.waitFor({ state: "visible" });
   assert.equal(await review.inputValue(), "Fixture streaming transcript.");
@@ -370,7 +404,7 @@ try {
   assert.ok(streamingOutputMetrics.pauseCount >= 1, "streaming reply pause did not reach the audio element");
   results.push({ name: "streaming-voice-output", ...streamingOutputMetrics });
   await page.evaluate(() => { window.__voiceFixtureTranscriptRepair = true; });
-  await page.getByRole("button", { name: "Start voice recording" }).click();
+  await page.locator(".composer-voice-button").click();
   await page.locator('[data-testid="streaming-composer-projection"]').waitFor({ state: "visible" });
   await page.getByRole("button", { name: "Stop live transcription" }).click();
   await review.waitFor({ state: "visible" });
@@ -390,7 +424,7 @@ try {
   await streamingComposer.fill("Manual draft must not send");
   await page.evaluate(() => { window.__voiceFixtureHoldPartial = true; });
   const usersBeforeBlockedSubmit = await page.locator("article.message.user").count();
-  await page.getByRole("button", { name: "Start voice recording" }).click();
+  await page.locator(".composer-voice-button").click();
   const guardedProjection = page.locator('[data-testid="streaming-composer-projection"]');
   await guardedProjection.waitFor({ state: "visible" });
   const guardedInput = guardedProjection.locator('[data-testid="composer-input"]');
@@ -411,11 +445,11 @@ try {
   results.push({ name: "streaming-submit-gate", programmaticSubmitBlocked: true, draftPreserved: true });
   await page.evaluate(() => { window.__voiceFixtureSlowNetwork = false; });
   await page.evaluate(() => { window.__voiceFixtureHoldPartial = false; });
-  await voiceMode.selectOption("serial");
-  assert.equal(await voiceMode.inputValue(), "serial", "serial mode must remain available after a streaming turn");
+  await setVoiceMode("serial");
+  assert.equal(await getVoiceMode(), "serial", "serial mode must remain available after a streaming turn");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1000, height: 820 });
-  await page.getByRole("button", { name: "Start voice recording" }).click();
+  await page.locator(".composer-voice-button").click();
   await capture.waitFor({ state: "visible" });
   await page.waitForTimeout(350);
   const narrow = await inspectCapture("narrow");
@@ -484,7 +518,7 @@ try {
   await page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
   });
-  await voiceMode.selectOption("streaming");
+  await setVoiceMode("streaming");
   await page.waitForTimeout(200);
   await page.evaluate(() => {
     window.__assistantSpeechEvents = [];
@@ -512,15 +546,16 @@ try {
   assert.equal(segmentMetrics.completed, "true");
   assert.ok(segmentMetrics.count > 0, "assistant SSE text did not produce a speech segment");
   results.push({ name: "streaming-assistant-segmentation", ...segmentMetrics });
-  await voiceMode.selectOption("serial");
-  assert.equal(await voiceMode.inputValue(), "serial", "serial mode did not recover after streaming verification");
+  await setVoiceMode("serial");
+  assert.equal(await getVoiceMode(), "serial", "serial mode did not recover after streaming verification");
   await page.evaluate(() => {
     window.__voiceForceCaptureError = true;
   });
   for (const zoom of [1.5, 2]) {
     await page.evaluate((value) => { document.body.style.zoom = String(value); }, zoom);
-    await page.getByRole("button", { name: "Start voice recording" }).click();
+    await page.locator(".composer-voice-button").click();
     const errorStatus = page.locator(".composer-voice-status.error");
+    await errorStatus.getByRole("button", { name: /打开语音设置|Open voice settings/ }).waitFor({ state: "visible" });
     const selectedDebugTab = page.locator('.debug-view-tabs button[aria-selected="true"]');
     await selectedDebugTab.waitFor({ state: "visible" });
     assert.match(await selectedDebugTab.innerText(), /App/, "voice capture failure did not open the App Errors debug view");
@@ -554,6 +589,10 @@ try {
     assert.ok(screenshot.length > 20_000, `${zoom * 100}%: error screenshot is unexpectedly blank.`);
     results.push({ name: `error-${Math.round(zoom * 100)}`, ...metrics, screenshotPath, screenshotBytes: screenshot.length });
   }
+  await page.locator('[data-testid="voice-use-error"]').getByRole("button", { name: /打开语音设置|Open voice settings/ }).click();
+  await page.locator('[data-testid="voice-interaction-mode"]').waitFor({ state: "visible" });
+  assert.equal(await page.locator('[data-testid="voice-use-error"]').count(), 0, "voice error remained in the composer after opening Settings");
+  results.push({ name: "voice-error-settings-route", opened: true, composerErrorCleared: true });
   await page.evaluate(() => { document.body.style.zoom = ""; });
   const invalidTransitions = await page.evaluate(async () => {
     const snapshot = await window.openDrSai.getDiagnosticSnapshot({ module: "voice", limit: 200 });

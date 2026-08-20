@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 
-const { DuplexCaptureController, createDuplexAudioConstraints } = await import("../../shared/renderer/src/voice/duplex/captureController.ts");
+const { DuplexCaptureController, classifyDuplexLocalFailure, createDuplexAudioConstraints } = await import("../../shared/renderer/src/voice/duplex/captureController.ts");
 const { DuplexLocalVad, pcm16Rms } = await import("../../shared/renderer/src/voice/duplex/localVad.ts");
 const { DuplexSincResampler, DuplexPcmBatcher, floatToPcm16, mixToMono } = await import("../../shared/renderer/src/voice/duplex/pcm.ts");
 const { DuplexCaptureQualityMonitor } = await import("../../shared/renderer/src/voice/duplex/captureQuality.ts");
-const { runDuplexStartupTransaction } = await import("../../shared/renderer/src/voice/duplex/startupTransaction.ts");
+const { runDuplexStartupStage, runDuplexStartupTransaction } = await import("../../shared/renderer/src/voice/duplex/startupTransaction.ts");
+const { classifyDuplexStartupFailure } = await import("../../shared/renderer/src/voice/duplex/startupFailure.ts");
 
 class FakeTrack {
   readyState = "live"; stopped = false; listeners = new Map();
@@ -41,6 +42,16 @@ class FakeMediaDevices {
 assert.deepEqual(createDuplexAudioConstraints("usb-mic", 24_000), { audio: { deviceId: { exact: "usb-mic" }, channelCount: { ideal: 1 }, sampleRate: { ideal: 24_000 }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
 assert.deepEqual(createDuplexAudioConstraints("", 24_000).audio.deviceId, undefined);
 
+for (const stage of ["microphone_permission", "microphone_device", "audio_context", "audio_worklet", "audio_graph", "output_device", "audio_processing", "audio_uplink"]) {
+  const failure = classifyDuplexLocalFailure(stage, new DOMException("injected failure", "AbortError"), `trace-${stage}`);
+  assert.deepEqual(
+    { domain: failure.domain, stage: failure.stage, code: failure.code, retryable: failure.retryable, traceId: failure.traceId },
+    { domain: "local_media", stage, code: "unknown", retryable: true, traceId: `trace-${stage}` },
+  );
+  assert.match(failure.message, /阶段失败/);
+  assert.equal(failure.technicalDetail, "injected failure");
+}
+
 const mono = mixToMono([new Float32Array([1, -1, 0.5]), new Float32Array([-1, 1, 0.5])]);
 assert.deepEqual([...mono], [0, 0, 0.5]);
 assert.deepEqual([...floatToPcm16(new Float32Array([-2, -1, 0, 1, 2, Number.NaN]))], [-32768, -32768, 0, 32767, 32767, 0]);
@@ -68,6 +79,36 @@ for (const failedStage of ["prepare", "provider", "activate"]) {
 }
 const successCalls = []; const startupResult = await runDuplexStartupTransaction({ prepareCapture: async () => { successCalls.push("prepare"); return true; }, startProvider: async () => { successCalls.push("provider"); return "session"; }, activateCapture: async () => { successCalls.push("activate"); return true; }, releaseCapture: async () => { successCalls.push("release"); }, cancelProvider: async () => { successCalls.push("cancel"); } });
 assert.equal(startupResult, "session"); assert.deepEqual(successCalls, ["prepare", "provider", "activate"]);
+
+const orderedStartup = []; await runDuplexStartupTransaction({ prepareCapture: async () => { orderedStartup.push("capture"); return true; }, preparePlayback: async () => { orderedStartup.push("playback"); return true; }, startProvider: async () => { orderedStartup.push("provider"); return "session"; }, activateCapture: async () => { orderedStartup.push("activate"); return true; }, releaseCapture: async () => { orderedStartup.push("release_capture"); }, releasePlayback: async () => { orderedStartup.push("release_playback"); }, cancelProvider: async () => { orderedStartup.push("cancel_provider"); }, onStage: (stage) => orderedStartup.push(stage) });
+assert.deepEqual(orderedStartup, ["preparing_microphone", "capture", "preparing_playback", "playback", "connecting_provider", "provider", "activating_audio", "activate"], "playback is proven before a billable Provider Session starts");
+
+const timeoutCalls = []; await assert.rejects(runDuplexStartupTransaction({ prepareCapture: async () => { timeoutCalls.push("capture"); return true; }, preparePlayback: async () => { timeoutCalls.push("playback"); await new Promise(() => {}); return true; }, startProvider: async () => { timeoutCalls.push("provider"); return "session"; }, activateCapture: async () => true, releaseCapture: async () => { timeoutCalls.push("release_capture"); }, releasePlayback: async () => { timeoutCalls.push("release_playback"); }, cancelProvider: async () => { timeoutCalls.push("cancel_provider"); }, timeoutMs: { preparing_playback: 5 } }), (error) => error.name === "DuplexStartupError" && error.stage === "preparing_playback" && error.code === "stage_timeout");
+assert.deepEqual(timeoutCalls, ["capture", "playback", "release_playback", "release_capture"], "a playback timeout rolls local resources back without starting Provider billing");
+
+await assert.rejects(runDuplexStartupStage("checking_readiness", async () => new Promise(() => {}), 2), (error) => error.name === "DuplexStartupError" && error.stage === "checking_readiness" && error.code === "stage_timeout");
+for (const timeoutStage of ["preparing_microphone", "preparing_playback", "connecting_provider", "activating_audio"]) {
+  const calls = [];
+  const never = () => new Promise(() => {});
+  await assert.rejects(runDuplexStartupTransaction({
+    prepareCapture: async () => { calls.push("capture"); return timeoutStage === "preparing_microphone" ? never() : true; },
+    preparePlayback: async () => { calls.push("playback"); return timeoutStage === "preparing_playback" ? never() : true; },
+    startProvider: async () => { calls.push("provider"); return timeoutStage === "connecting_provider" ? never() : "session"; },
+    activateCapture: async () => { calls.push("activate"); return timeoutStage === "activating_audio" ? never() : true; },
+    releaseCapture: async () => { calls.push("release_capture"); },
+    releasePlayback: async () => { calls.push("release_playback"); },
+    cancelProvider: async () => { calls.push("cancel_provider"); },
+    timeoutMs: { [timeoutStage]: 2 },
+  }), (error) => error.name === "DuplexStartupError" && error.stage === timeoutStage && error.code === "stage_timeout");
+  assert.equal(calls.filter((call) => call === "release_capture").length, 1, `${timeoutStage} releases capture exactly once`);
+  if (timeoutStage !== "preparing_microphone") assert.equal(calls.filter((call) => call === "release_playback").length, 1, `${timeoutStage} releases playback exactly once`);
+  assert.equal(calls.filter((call) => call === "cancel_provider").length, timeoutStage === "activating_audio" ? 1 : 0, `${timeoutStage} cancels Provider only after a Session exists`);
+}
+for (const stage of ["checking_readiness", "preparing_microphone", "preparing_playback", "connecting_provider", "activating_audio"]) {
+  const failure = classifyDuplexStartupFailure(stage, new Error("injected technical detail"), `trace-${stage}`);
+  assert.equal(failure.domain, "startup"); assert.equal(failure.stage, stage); assert.equal(failure.retryable, true); assert.equal(failure.traceId, `trace-${stage}`);
+  assert.doesNotMatch(failure.message, /injected technical detail/); assert.equal(failure.technicalDetail, "injected technical detail");
+}
 
 function rms(values) { return Math.sqrt(values.reduce((sum, value) => sum + value * value, 0) / Math.max(1, values.length)); }
 for (const inputRate of [44_100, 48_000, 96_000]) {
@@ -119,7 +160,8 @@ assert.equal(await controller.switchDevice("bt-mic"), true); assert.equal(track.
 track.endExternally(); await new Promise((resolve) => setTimeout(resolve, 0)); assert.equal(controller.state, "active", "ended event from the replaced generation is ignored");
 assert.equal(await controller.switchDevice("missing"), false); assert.equal(controller.state, "active"); assert.equal(btTrack.stopped, false, "a failed replacement preserves the current microphone");
 media.resolver = () => Promise.reject(new Error("no replacement")); media.devices = []; media.change(); await new Promise((resolve) => setTimeout(resolve, 0));
-assert.equal(recoveries.at(-1), "device_lost"); assert.equal(controller.state, "failed"); assert.equal(track.stopped, true); assert.match(errors.at(-1).message, /no longer available/);
+assert.equal(recoveries.at(-1), "device_lost"); assert.equal(controller.state, "failed"); assert.equal(track.stopped, true);
+assert.equal(errors.at(-1).domain, "local_media"); assert.equal(errors.at(-1).stage, "microphone_device"); assert.equal(errors.at(-1).code, "unknown"); assert.equal(errors.at(-1).traceId, "session-1"); assert.match(errors.at(-1).technicalDetail, /no longer available/);
 await controller.dispose(); assert.equal(media.listeners.size, 0);
 
 const rapidInitialTrack = new FakeTrack({ deviceId: "initial", sampleRate: 48_000 }); const rapidMedia = new FakeMediaDevices(new FakeStream(rapidInitialTrack)); rapidMedia.devices = [{ kind: "audioinput", deviceId: "initial", label: "Initial" }]; const rapidReports = [];
@@ -133,6 +175,10 @@ assert.equal(trackA.stopped, true, "late stream from an obsolete switch is relea
 const deniedMedia = new FakeMediaDevices(stream); deniedMedia.failure = Object.assign(new Error("denied"), { name: "NotAllowedError" }); const deniedStates = [];
 const denied = new DuplexCaptureController({ mediaDevices: deniedMedia, createAudioContext: () => new FakeContext(), createWorkletNode: () => new FakeWorklet(), now: () => 0, workletModuleUrl: "fixture" }, { sessionId: "denied", initialUplinkCredit: { frames: 1, bytes: 1_920, audioMs: 40, acknowledgedSequence: -1 }, onChunk: () => true, onState: (state) => deniedStates.push(state), onError: () => undefined });
 assert.equal(await denied.startFromUserGesture(), false); assert.deepEqual(deniedStates, ["requesting_permission", "failed"]); await denied.dispose();
+
+const invalidInvocationErrors = []; const invalidInvocationMedia = new FakeMediaDevices(stream); invalidInvocationMedia.failure = new TypeError("Illegal invocation");
+const invalidInvocation = new DuplexCaptureController({ mediaDevices: invalidInvocationMedia, createAudioContext: () => new FakeContext(), createWorkletNode: () => new FakeWorklet(), now: () => 0, workletModuleUrl: "fixture" }, { sessionId: "invalid-invocation", initialUplinkCredit: { frames: 1, bytes: 1_920, audioMs: 40, acknowledgedSequence: -1 }, onChunk: () => true, onState: () => undefined, onError: (error) => invalidInvocationErrors.push(error) });
+assert.equal(await invalidInvocation.startFromUserGesture(), false); assert.equal(invalidInvocationErrors[0].stage, "microphone_permission"); assert.equal(invalidInvocationErrors[0].code, "invalid_invocation"); assert.equal(invalidInvocationErrors[0].traceId, "invalid-invocation"); assert.doesNotMatch(invalidInvocationErrors[0].message, /Illegal invocation/); assert.match(invalidInvocationErrors[0].technicalDetail, /Illegal invocation/); await invalidInvocation.dispose();
 
 const sleepTrack = new FakeTrack({ deviceId: "auto", sampleRate: 48_000 }); const sleepMedia = new FakeMediaDevices(new FakeStream(sleepTrack)); sleepMedia.devices = [{ kind: "audioinput", deviceId: "auto", label: "Built-in" }]; const sleepRecoveries = [];
 const sleeping = new DuplexCaptureController({ mediaDevices: sleepMedia, createAudioContext: () => new FakeContext(), createWorkletNode: () => new FakeWorklet(), now: () => 0, workletModuleUrl: "fixture" }, { sessionId: "sleep", initialUplinkCredit: { frames: 1, bytes: 1_920, audioMs: 40, acknowledgedSequence: -1 }, onChunk: () => true, onState: () => undefined, onError: () => undefined, onRecoveryRequired: (reason) => sleepRecoveries.push(reason) });

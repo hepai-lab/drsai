@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { DuplexTextInputScheduler } from "../../shared/renderer/src/voice/duplex/textInputScheduler.ts";
+import { readFile } from "node:fs/promises";
 
 let active = true; let interrupts = 0; const sent = []; const changes = [];
 const scheduler = new DuplexTextInputScheduler({
@@ -30,5 +31,15 @@ assert.equal(await retry.flush(), true); assert.equal(retry.pending, null);
 let generatedItem;
 const productionIdentity = new DuplexTextInputScheduler({ isResponseActive: () => false, interrupt: async () => true, send: async (item) => { generatedItem = item; return true; } });
 assert.equal(await productionIdentity.submit("provider-bound", "after_response"), true); assert.match(generatedItem.id, /^t-[a-f0-9]{24}$/); assert.ok(generatedItem.id.length <= 32, "the default item ID must fit the live Provider limit while retaining 96 random bits");
+
+const workspace = await readFile(new URL("../../shared/renderer/src/components/ChatWorkspace.tsx", import.meta.url), "utf8");
+const submitStart = workspace.indexOf("async function submitDuplexText");
+const submitEnd = workspace.indexOf("function handleKeyDown", submitStart);
+const submitSource = workspace.slice(submitStart, submitEnd);
+assert.ok(submitStart >= 0 && submitEnd > submitStart);
+const attachmentGuard = submitSource.indexOf("attachments.length || externalAttachments.length || inlineMentionAttachments.length");
+const draftClear = submitSource.indexOf('onInputChange("")');
+assert.ok(attachmentGuard >= 0 && draftClear > attachmentGuard, "attachment guard must run before any draft clearing");
+assert.match(submitSource.slice(attachmentGuard, draftClear), /return;/, "attachment rejection must preserve the composer draft");
 
 console.log("Duplex text scheduler verified (default defer, explicit interruption, single-slot race control, cancellation restoration, and failed-send retry).");

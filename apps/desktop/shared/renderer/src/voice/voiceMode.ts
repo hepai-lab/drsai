@@ -1,12 +1,10 @@
-import type { DesktopDuplexVoiceCapabilities, DesktopStreamingVoiceCapabilities, DesktopVoiceInteractionMode, DesktopVoiceRuntimeStatus } from "@shared/desktopApi";
+import type { DesktopDuplexVoiceCapabilities, DesktopVoiceInteractionMode, DesktopVoiceRuntimeStatus } from "@shared/desktopApi";
 import type { VoiceTurnPhase } from "./voiceTurnReducer";
 
 export interface VoiceModeCapabilities {
   audioWorklet: boolean;
   serialStt: boolean;
   serialTts: boolean;
-  streamingStt: boolean;
-  streamingTts: boolean;
   duplex: boolean;
 }
 
@@ -26,20 +24,15 @@ export function deriveVoiceModeCapabilities(
   options: {
     audioWorklet?: boolean;
     serialTts?: boolean;
-    streamingTts?: boolean;
-    streamingCapabilities?: DesktopStreamingVoiceCapabilities | null;
     duplexCapabilities?: DesktopDuplexVoiceCapabilities | null;
     duplexEnabled?: boolean;
   } = {},
 ): VoiceModeCapabilities {
   const runtimeReady = runtime?.state === "ready" || runtime?.state === "degraded";
-  const negotiated = options.streamingCapabilities;
   return {
     audioWorklet: options.audioWorklet === true,
-    serialStt: negotiated?.serialStt ?? Boolean(runtimeReady),
-    serialTts: negotiated?.serialTts ?? options.serialTts !== false,
-    streamingStt: Boolean(options.audioWorklet && (negotiated?.streamingStt ?? (runtimeReady && runtime?.supportsPartial))),
-    streamingTts: negotiated?.streamingTts ?? options.streamingTts === true,
+    serialStt: Boolean(runtimeReady),
+    serialTts: options.serialTts !== false,
     duplex: Boolean(options.duplexEnabled && options.audioWorklet && options.duplexCapabilities),
   };
 }
@@ -59,19 +52,7 @@ export function getVoiceModeAvailability(
       ? { available: true, reason: null }
       : { available: false, reason: "Realtime voice is disabled or no compatible realtime model is configured." };
   }
-  if (!capabilities.audioWorklet) {
-    return { available: false, reason: "Streaming voice requires AudioWorklet support." };
-  }
-  if (!capabilities.streamingStt) {
-    return { available: false, reason: "The current transcription runtime does not support streaming results." };
-  }
-  return { available: true, reason: null };
-}
-
-export function getStreamingVoiceOutputAvailability(capabilities: VoiceModeCapabilities): VoiceModeAvailability {
-  return capabilities.streamingTts
-    ? { available: true, reason: null }
-    : { available: false, reason: "Replies use completed speech playback until streaming synthesis is available." };
+  return { available: false, reason: "Unsupported voice mode." };
 }
 
 export function canSwitchVoiceMode(phase: VoiceTurnPhase): boolean {

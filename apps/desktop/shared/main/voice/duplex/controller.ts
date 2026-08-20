@@ -44,13 +44,14 @@ const prepared = new Map<string, PreparedSession>();
 const ports = new Map<string, DuplexVoiceMessagePort>();
 const owners = new Map<string, { sender: DuplexVoiceSender; listener: () => void }>();
 const readySessions = new Set<string>();
+const readyWaiters = new Map<string, { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 let gatewayRecoveryPromise: Promise<boolean> | null = null;
 
-function recoverGatewayForDuplexReconnect(): void {
-  if (gatewayRecoveryPromise) return;
-  gatewayRecoveryPromise = startGateway()
-    .catch(() => false)
-    .finally(() => { gatewayRecoveryPromise = null; });
+function recoverGatewayForDuplexReconnect(): Promise<boolean> {
+  if (gatewayRecoveryPromise) return gatewayRecoveryPromise;
+  const recovery = startGateway().catch(() => false);
+  gatewayRecoveryPromise = recovery.finally(() => { gatewayRecoveryPromise = null; });
+  return gatewayRecoveryPromise;
 }
 
 const registry = new DuplexSessionRegistry({
@@ -63,10 +64,19 @@ const registry = new DuplexSessionRegistry({
       connection: { url: setup.connectionUrl, headers: {} },
       adapter: setup.adapter,
       createSocket: (connection) => createAuthenticatedSocket(connection.url, setup.startEvent),
+      prepareReconnect: async () => {
+        if (!await recoverGatewayForDuplexReconnect()) throw new Error("OpenDrSai Gateway recovery failed.");
+        await refreshPreparedConnection(setup, request);
+      },
       emit: (event) => {
-        if (event.type === "session_started") readySessions.add(request.sessionId);
+        if (event.type === "session_started") {
+          readySessions.add(request.sessionId);
+          settleReadyWaiter(request.sessionId, true);
+        } else if (event.type === "failed" || event.type === "cancelled") {
+          settleReadyWaiter(request.sessionId, false, event.type === "failed" ? event.error.message : "Realtime Session was cancelled before it became ready.");
+        }
         emit(event);
-        if (event.type === "connection_state" && event.state === "reconnecting") recoverGatewayForDuplexReconnect();
+        if (event.type === "connection_state" && event.state === "reconnecting") void recoverGatewayForDuplexReconnect();
       },
       idleTimeoutMs: 5 * 60_000,
       maxSessionMs: 30 * 60_000,
@@ -82,6 +92,7 @@ const registry = new DuplexSessionRegistry({
     owner.sender.send("desktop:voice-duplex-events", events);
   },
   onRemoved: (ownerId, sessionId) => {
+    settleReadyWaiter(sessionId, false, "Realtime Session ended before it became ready.");
     readySessions.delete(sessionId);
     ports.get(sessionId)?.close(); ports.delete(sessionId);
     prepared.delete(sessionId);
@@ -97,7 +108,9 @@ export function getDuplexVoiceCapabilities(): DesktopDuplexVoiceCapabilities {
 
 export async function getDuplexVoiceReadiness(): Promise<DesktopDuplexVoiceReadiness> {
   const checkedAt = new Date().toISOString();
-  const rolloutReady = process.env.OPENDRSAI_ENABLE_DUPLEX_VOICE === "1" || process.env.OPENDRSAI_VOICE_RUNTIME === "fixture";
+  const rolloutReady = process.env.OPENDRSAI_ENABLE_DUPLEX_VOICE === "1"
+    || process.env.OPENDRSAI_DESKTOP_DEV === "1"
+    || process.env.OPENDRSAI_VOICE_RUNTIME === "fixture";
 
   let gatewayReady = false;
   try {
@@ -183,10 +196,29 @@ async function startOrTakeOverDuplexVoiceSession(sender: DuplexVoiceSender, requ
     const result = expectedOccupiedSessionId
       ? registry.takeOver(ownerId, expectedOccupiedSessionId, request)
       : registry.start(ownerId, request);
+    await waitForSessionReady(request.sessionId);
     prepared.delete(request.sessionId);
     return result;
   }
-  catch (error) { prepared.delete(request.sessionId); owners.delete(ownerId); sender.removeListener("destroyed", listener); throw error; }
+  catch (error) { settleReadyWaiter(request.sessionId, false, "Realtime Session startup was aborted."); registry.disposeSession(request.sessionId, ownerId); prepared.delete(request.sessionId); owners.delete(ownerId); sender.removeListener("destroyed", listener); throw error; }
+}
+
+function waitForSessionReady(sessionId: string, timeoutMs = 9_000): Promise<void> {
+  if (readySessions.has(sessionId)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      readyWaiters.delete(sessionId);
+      reject(new Error(`Realtime Provider did not become ready within ${timeoutMs} ms.`));
+    }, timeoutMs);
+    readyWaiters.set(sessionId, { resolve, reject, timer });
+  });
+}
+
+function settleReadyWaiter(sessionId: string, ready: boolean, message = "Realtime Session is ready."): void {
+  const waiter = readyWaiters.get(sessionId);
+  if (!waiter) return;
+  readyWaiters.delete(sessionId); clearTimeout(waiter.timer);
+  if (ready) waiter.resolve(); else waiter.reject(new Error(message));
 }
 
 export function attachDuplexVoiceAudioPort(sender: DuplexVoiceSender, sessionId: string, port: DuplexVoiceMessagePort): boolean {
@@ -238,6 +270,22 @@ function createAuthenticatedSocket(url: string, startEvent: Record<string, unkno
     close(code, reason) { pending = null; socket.close(code, reason); },
   };
   return facade;
+}
+
+async function refreshPreparedConnection(setup: PreparedSession, request: DesktopDuplexVoiceSessionStartRequest): Promise<void> {
+  const gateway = await getGatewayStatus();
+  if (!gateway.ready || !gateway.baseUrl) throw new Error("OpenDrSai Gateway is unavailable after recovery.");
+  const url = new URL(gateway.baseUrl); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = `${url.pathname.replace(/\/$/, "")}/v1/audio/duplex`;
+  if (!isSafeGatewayUrl(url)) throw new Error("Recovered Realtime Gateway URL is invalid.");
+  const gatewayToken = getGatewayRequestHeaders()["X-OpenDrSai-Gateway-Token"];
+  if (!gatewayToken) throw new Error("Recovered Realtime Gateway authentication is unavailable.");
+  const authHeaders = await getAuthenticatedGatewayRequestHeaders();
+  setup.connectionUrl = url.toString();
+  setup.startEvent = {
+    type: "start", token: gatewayToken, protocolVersion: 2, sessionId: request.sessionId,
+    providerId: request.providerId, modelId: request.modelId,
+    ...(authHeaders.Authorization && authHeaders["X-OpenDrSai-Principal"] ? { authorization: authHeaders.Authorization, principalId: authHeaders["X-OpenDrSai-Principal"] } : {}),
+  };
 }
 
 function isSafeGatewayUrl(url: URL): boolean { return (url.protocol === "ws:" || url.protocol === "wss:") && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && !url.username && !url.password && !url.search && !url.hash; }

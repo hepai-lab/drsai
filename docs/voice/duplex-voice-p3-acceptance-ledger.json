@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "spec": "docs/voice/duplex-voice-p3-spec.md",
+  "scoringPolicy": {
+    "totalWeight": 100,
+    "earnedRule": "A feature earns its full weight only when implementation, every listed automated test, and every required acceptance evidence item pass. Partial implementation earns zero weight.",
+    "externalEvidenceRule": "Human usability, physical hardware, and stable release evidence cannot be inferred from automation.",
+    "regressionRule": "No feature can pass while a related existing regression suite is failing. Tests may not be deleted, skipped, weakened, or allowlisted to create a pass."
+  },
+  "summary": {
+    "round": 18,
+    "passedWeight": 61,
+    "progressPercent": 61,
+    "status": "blocked_on_required_external_evidence"
+  },
+  "features": [
+    {
+      "id": "P3-F1",
+      "title": "两模式单一真源",
+      "weight": 10,
+      "dependsOn": [],
+      "requirements": ["产品模式仅 serial/duplex", "新用户默认 serial 且 realtimeOptIn=false", "设置、输入栏和多窗口按 revision 同步", "活动会话切换需确认", "v1-v10 与 streaming 旧值迁移"],
+      "testCases": ["TC-F1-01", "TC-F1-02", "TC-F1-03", "TC-F1-04"],
+      "requiredEvidence": ["unit", "renderer_integration", "multi_window", "migration"],
+      "status": "passed",
+      "baselineFinding": "Rounds 4-5 introduced the canonical schema-v11 nested document, v1-v10/bare/streaming migration, Main-owned atomic persistence with revision CAS, all-window broadcast, renderer stale-revision rejection, and confirmation-before-persist for active duplex-to-serial switching. Round 11 removed the single-main-window IPC trust limitation and proved one-broadcast synchronization plus deterministic revision-conflict convergence in two real packaged Electron Renderer windows.",
+      "passedEvidence": ["test:voice-preferences", "test:voice-mode", "verify:voice:duplex-ui", "typecheck:node", "typecheck:web", "build:unpack", "verify:voice:preferences-multi-window", "release/duplex-voice/voice-preferences-multi-window-e2e.json"]
+    },
+    {
+      "id": "P3-F2",
+      "title": "渐进式设置页",
+      "weight": 8,
+      "dependsOn": ["P3-F1"],
+      "requirements": ["默认只显示模式、设备、声音", "高级项折叠", "本地设备测试不得连接 Provider", "权限与设备故障有明确反馈"],
+      "testCases": ["TC-F2-01", "TC-F2-02", "TC-F2-03", "TC-F2-04"],
+      "requiredEvidence": ["unit", "visual", "accessibility", "named_first_user_review"],
+      "status": "in_progress",
+      "baselineFinding": "Round 6 reduced the default Voice pane to mode, current microphone/voice and a local microphone test; all other controls are in an accessible Advanced settings and diagnostics disclosure. Round 12 re-audited TC-F2-01 through TC-F2-04: live-track validation, cleanup, permission/device classifications, unplug feedback and zero Provider starts pass. The SPEC-mandated named five-person first-user review remains missing, so F2 earns no weight."
+    },
+    {
+      "id": "P3-F3",
+      "title": "启动状态与结构化错误",
+      "weight": 12,
+      "dependsOn": ["P3-F1"],
+      "requirements": ["六阶段可观察启动", "本地媒体错误具有 domain/stage/code/retryable/traceId", "UI 不解析 message", "分阶段超时和逆序回滚", "不得仅显示 audio 或原始 Illegal invocation"],
+      "testCases": ["TC-F3-01", "TC-F3-02", "TC-F3-03", "TC-F3-04", "TC-F3-05", "TC-F3-06", "TC-F3-07", "TC-F3-08", "TC-F3-09", "TC-F3-10"],
+      "requiredEvidence": ["unit", "fault_injection", "electron_media_smoke"],
+      "status": "passed",
+      "baselineFinding": "Rounds 1-2 added structured local-media failures, visible startup stages, bounded stage timeouts, playback-before-Provider preflight, and reverse rollback tests. Rounds 12-13 fixed the CSP-blocked inline AudioWorklet, emitted it as a same-origin packaged asset, bounded readiness and every machine startup stage, unified startup failures as domain/stage/code/retryable/traceId, kept technical details out of user messages, and delayed Renderer activation until Main observes Provider session_ready. Packaged Electron media and live Provider runs prove first-frame closure, ready ordering, cancellation and cleanup.",
+      "passedEvidence": ["test:voice:duplex-capture", "test:voice:duplex-playback", "test:voice:duplex-fault-matrix", "verify:voice:duplex-ui", "verify:voice:duplex-privacy", "test:voice:duplex full suite", "typecheck:node", "typecheck:web", "build:unpack", "verify:voice:duplex-packaged-media", "release/duplex-voice/packaged-media-e2e.json", "scripts/verify-packaged-duplex-run.mjs", "release/duplex-voice/packaged-provider-run.json"]
+    },
+    {
+      "id": "P3-F4",
+      "title": "极简活动 HUD",
+      "weight": 10,
+      "dependsOn": ["P3-F3"],
+      "requirements": ["八种互斥用户状态", "常态只显示状态、音量、暂停/继续、结束", "诊断与立即取消折叠", "提示合并和节流", "320px/200% 缩放可用"],
+      "testCases": ["TC-F4-01", "TC-F4-02", "TC-F4-03"],
+      "requiredEvidence": ["unit", "visual", "keyboard", "screen_reader"],
+      "status": "passed",
+      "baselineFinding": "Round 7 reduced the main HUD to one of the eight specified user states, input level, pause/resume, and end conversation. Transcripts, transport, quality, network, usage, tools, conditional finish-turn, and immediate cancel are in a non-layout-shifting details popover. Manual interrupt was removed from the HUD and shortcut model.",
+      "passedEvidence": ["test-duplex-voice-ui-model.mjs", "verify-duplex-voice-ui.mjs", "verify-duplex-hud-visual.mjs:16 snapshots", "axe serious/critical=0", "keyboard details traversal", "320px at 100%/200% overflow=0", "typecheck:web", "windows build"]
+    },
+    {
+      "id": "P3-F5",
+      "title": "单一会话状态机",
+      "weight": 14,
+      "dependsOn": ["P3-F3"],
+      "requirements": ["Session 与 turn 具有唯一 reducer", "非法转换拒绝并诊断", "终态清理与历史 flush 幂等", "React refs 不再各自决定终态", "启动取消、恢复结束、审批接管无泄漏"],
+      "testCases": ["TC-F5-01", "TC-F5-02", "TC-F5-03"],
+      "requiredEvidence": ["model_based_test", "race_stress", "resource_counter"],
+      "status": "passed",
+      "baselineFinding": "Round 3 integrated the session reducer as the Hook authority for phase, startup stage, session ownership, first-terminal semantics, and one-time cleanup/history claims. terminalizingSessionRef and phaseRef were removed. Turn/runtime/fault tests cover 10,000 duplicate terminal races, lifecycle, bounded resources, isolation and cleanup.",
+      "passedEvidence": ["test:voice:duplex-turns", "test:voice:duplex-runtime", "test-duplex-voice-fault-properties.mjs", "test:voice:duplex-recovery", "test:voice:duplex-history", "test:voice:duplex-tools", "verify:voice:duplex-ui", "typecheck:web"]
+    },
+    {
+      "id": "P3-F6",
+      "title": "媒体兼容与设备恢复",
+      "weight": 14,
+      "dependsOn": ["P3-F3", "P3-F5"],
+      "requirements": ["真实 Electron 完成媒体与首帧闭环", "44.1/48/96kHz 输入", "内置/USB/蓝牙设备", "拔插/锁屏/睡眠恢复", "无孤儿 Provider Session"],
+      "testCases": ["TC-F6-01", "TC-F6-02", "TC-F6-03"],
+      "requiredEvidence": ["electron_media_smoke", "physical_hardware", "lifecycle"],
+      "status": "pending",
+      "baselineFinding": "Round 9 added a reconnect preparation barrier so retry attempts wait for managed Gateway recovery and refresh the trusted local WebSocket URL, Gateway token and authenticated principal binding before creating a new Provider socket. Rounds 12-14 add packaged Electron media first-frame closure, 44.1/48/96 kHz resampling coverage, permission denial/recovery with zero pre-permission Provider Sessions, and packaged lock/unlock/suspend/resume plus forced Gateway restart with a new segment and one clean terminal event. Round 18 regenerated the complete fail-closed physical workbook against the current unpacked candidate; it remains ok=false and unsigned as required. The SPEC-required physical built-in/USB/Bluetooth and Windows 10/11 matrix remains unexecuted, so F6 earns no weight.",
+      "partialEvidence": ["test:voice:duplex-capture (44.1/48/96 kHz)", "test:voice:duplex-recovery", "test:voice:duplex-runtime", "typecheck:node", "typecheck:web", "build:unpack", "verify:voice:duplex-packaged-media", "release/duplex-voice/packaged-media-e2e.json", "verify:voice:duplex-packaged-permission-recovery", "release/duplex-voice/packaged-permission-recovery-e2e.json", "verify:voice:duplex-packaged-process-recovery", "release/duplex-voice/packaged-process-recovery-e2e.json", "test:voice:duplex-hardware-review", "test:voice:duplex-hardware-finalizer", "release/duplex-voice/hardware-review-workbook.json (pending, ok=false)"]
+    },
+    {
+      "id": "P3-F7",
+      "title": "插话和轮次自然性",
+      "weight": 12,
+      "dependsOn": ["P3-F5", "P3-F6"],
+      "requirements": ["100ms 内 duck", "多信号后才永久中断", "附和/回声/噪声可恢复", "Provider 自动中断不重复 cancel", "正常抢话成功率和误中断率达标"],
+      "testCases": ["TC-F7-01", "TC-F7-02", "TC-F7-03", "TC-F7-04"],
+      "requiredEvidence": ["unit", "fault_injection", "named_live_listening"],
+      "status": "pending",
+      "baselineFinding": "Round 15 separated reversible ducking from permanent interruption: the first 40 ms local speech-candidate frame now ducks playback even under echo risk, a cleared candidate restores volume immediately, and only sustained Provider/ASR evidence can commit cancellation. Provider response.done(cancelled) is now remembered by the Main runtime, preventing a racing local request from sending a duplicate response.cancel/truncate pair. Unit, fault/race, full duplex regression and type checks pass. The SPEC-mandated named 50 normal-interruption plus 50 acknowledgement/noise live listening result is still missing, so F7 earns no weight.",
+      "partialEvidence": ["test:voice:duplex-turns (first-frame duck, false-candidate restore, acknowledgements, echo protection, 10,000 races)", "test:voice:duplex-runtime (Provider-auto/local-cancel idempotency)", "test:voice:duplex full suite", "typecheck:node", "typecheck:web"]
+    },
+    {
+      "id": "P3-F8",
+      "title": "可信历史、文字与工具",
+      "weight": 10,
+      "dependsOn": ["P3-F5"],
+      "requirements": ["稳定转录跨轮次有序", "无词级证据不生成 heardContent", "文字待发可取消恢复", "附件阻止但保留草稿", "工具审批、幂等、取消和崩溃恢复"],
+      "testCases": ["TC-F8-01", "TC-F8-02", "TC-F8-03", "TC-F8-04"],
+      "requiredEvidence": ["unit", "integration", "process_recovery"],
+      "status": "passed",
+      "baselineFinding": "Round 8 proved stable cross-turn/concurrent/interrupted transcript ordering, no inferred heardContent without word timing, revision-CAS history, queued-text cancellation/restoration/retry, attachment rejection before draft clearing, formal tool allow/reject/timeout/cancel and duplicate-call behavior, and packaged Main-process force-kill/restart recovery with stable user/assistant/tool history and no draft canary.",
+      "passedEvidence": ["test:voice:duplex-transcript", "test:voice:duplex-history", "test:voice:duplex-tools", "test-duplex-voice-desktop-approval.mjs", "test-duplex-voice-text-scheduler.mjs", "verify:voice:duplex-packaged-app-restart", "release/duplex-voice/packaged-app-restart-e2e.json"]
+    },
+    {
+      "id": "P3-F9",
+      "title": "Streaming 删除门禁",
+      "weight": 5,
+      "dependsOn": ["P3-F1", "P3-F2", "P3-F4", "P3-F8"],
+      "requirements": ["公开类型、UI、Main 注册无 streaming 运行时", "旧配置和 Thread 可迁移读取", "Serial 零回归", "仅 migration fixture、历史文档和白名单可保留 streaming"],
+      "testCases": ["TC-F9-01", "TC-F9-02", "TC-F9-03"],
+      "requiredEvidence": ["architecture_scan", "migration", "serial_regression", "build"],
+      "status": "passed",
+      "baselineFinding": "Round 10 removed the legacy streaming Voice public contracts, Preload and Main IPC, Renderer hooks and UI branches, mock runtime, packaged smoke path, obsolete styles, runtime directories and invalid P2-only script entries. Round 17 reconciled the stale pre-P3 rollback manifest without inventing telemetry: it now records the authoritative P3 section 11 removal decision, requires the retired runtime assets to remain absent, and retains explicit streaming-to-serial migration. The deletion scan, migration tests, complete Serial/Duplex/M10 release regression and a rebuilt unpacked candidate all pass.",
+      "passedEvidence": ["verify:voice:streaming-removal", "test:voice:duplex-legacy-gate", "test:voice-preferences v1-v10 and explicit streaming-to-serial migration", "test:voice:serial", "test:voice:duplex", "test:voice:duplex-m10", "test:voice:duplex-release", "typecheck:node", "typecheck:web", "build:unpack candidate packaging", "non-sourcemap out artifact scan: zero forbidden Voice streaming symbols"]
+    },
+    {
+      "id": "P3-F10",
+      "title": "非功能与发布门禁",
+      "weight": 5,
+      "dependsOn": ["P3-F1", "P3-F2", "P3-F3", "P3-F4", "P3-F5", "P3-F6", "P3-F7", "P3-F8", "P3-F9"],
+      "requirements": ["满足 SPEC 性能和资源指标", "弱网与长时可靠性", "凭据/原始音频/敏感参数不泄漏", "Windows 与设备矩阵", "28642/18642 数据域隔离", "完整相关回归通过"],
+      "testCases": ["TC-F10-01", "TC-F10-02", "TC-F10-03", "TC-F10-04"],
+      "requiredEvidence": ["soak", "security_scan", "physical_hardware", "environment_isolation", "full_regression"],
+      "status": "pending",
+      "baselineFinding": "Round 16 confirms the 10-minute acknowledged-uplink simulation, bounded timers/queues, fault matrix, privacy and opt-in diagnostics canary filtering, 17 development/production Gateway routing checks, and the complete duplex regression. F10 remains unscored because the SPEC requires a real 30-minute device soak, 10-minute physical weak-network run, current-candidate Windows/device matrix and signed tester/time evidence; the legacy audit-manifest conflict also prevents the complete release chain from passing.",
+      "partialEvidence": ["test:voice:duplex-runtime (10-minute simulated acknowledged uplink)", "test:voice:duplex-recovery", "test:voice:duplex-fault-matrix", "test-duplex-voice-observability.mjs", "verify:voice:duplex-privacy", "test:gateway-environment (17 checks)", "test:voice:duplex full suite", "test:voice:duplex-m10 blocked at legacy rollback manifest"]
+    }
+  ]
+}

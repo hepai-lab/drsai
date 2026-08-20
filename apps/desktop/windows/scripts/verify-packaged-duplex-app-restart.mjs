@@ -17,8 +17,17 @@ try {
   assert.equal(await waitForFile(beforePath, 120000), true, "The pre-kill packaged process did not reach a live Realtime Session.");
   const before = JSON.parse(readFileSync(beforePath, "utf8")); assert.equal(before.ok, true, JSON.stringify(before)); assert.ok(before.details?.sessionId, "The pre-kill Session ID is missing.");
   const mainProcessId = Number(before.details.mainProcessId); assert.ok(Number.isSafeInteger(mainProcessId) && mainProcessId > 0, "The authoritative packaged Main PID is missing.");
-  const killed = spawnSync("taskkill.exe", ["/PID", String(mainProcessId), "/T", "/F"], { windowsHide: true, encoding: "utf8" }); assert.equal(killed.status, 0, `Unable to terminate the owned packaged Main process tree: ${killed.stderr || killed.stdout}`);
+  const killed = spawnSync("taskkill.exe", ["/PID", String(mainProcessId), "/T", "/F"], { windowsHide: true, encoding: "utf8" });
+  if (killed.status !== 0) {
+    // Some Windows builds crash taskkill while decoding a packaged Electron tree.
+    // The PID comes from this test's authenticated Main process; terminate only that exact owned PID.
+    try { process.kill(mainProcessId, "SIGKILL"); } catch (error) {
+      assert.fail(`Unable to terminate the owned packaged Main process: ${killed.stderr || killed.stdout}; fallback=${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  let mainAlive = true; try { process.kill(mainProcessId, 0); } catch { mainAlive = false; }
+  assert.equal(mainAlive, false, `Owned packaged Main PID ${mainProcessId} survived the forced-kill injection.`);
   assert.ok(before.details?.historyThreadId, "The committed history probe Thread ID is missing.");
   const afterCode = await new Promise((resolveExit, reject) => { const child = spawn(executable, [], { cwd: root, env: { ...common, OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE: "after", OPENDRSAI_E2E_DUPLEX_PREVIOUS_SESSION_ID: before.details.sessionId, OPENDRSAI_E2E_DUPLEX_HISTORY_THREAD_ID: before.details.historyThreadId, OPENDRSAI_E2E_RESULT: afterPath }, stdio: "ignore", windowsHide: true }); child.once("error", reject); child.once("exit", resolveExit); });
   assert.ok(existsSync(afterPath), `The post-restart packaged process did not write a result (exit ${afterCode}).`); const after = JSON.parse(readFileSync(afterPath, "utf8")); const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");

@@ -5,6 +5,10 @@ const chatWorkspace = await readFile(
   new URL("../../shared/renderer/src/components/ChatWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const workspaceShell = await readFile(
+  new URL("../../shared/renderer/src/components/WorkspaceShell.tsx", import.meta.url),
+  "utf8",
+);
 
 const voiceButtonStart = chatWorkspace.indexOf("composer-voice-button");
 assert.notEqual(voiceButtonStart, -1, "voice button must exist in the composer");
@@ -26,6 +30,24 @@ assert.doesNotMatch(
   "voice capture must remain actionable when chat readiness is stale so runtime errors are visible",
 );
 
+for (const shortcutContract of [
+  'fallback: "Ctrl+Shift+D"',
+  'en: "Hold to record voice"',
+  'new CustomEvent("drsai:voice-recording-shortcut"',
+  'window.addEventListener("keyup", handleKeyUp)',
+  'event.repeat || voiceShortcutHeldRef.current',
+]) {
+  assert.ok(workspaceShell.includes(shortcutContract), `missing voice shortcut contract: ${shortcutContract}`);
+}
+for (const localizedEntryContract of [
+  'window.addEventListener("drsai:voice-recording-shortcut"',
+  '`Click to start, or hold ${voiceRecordingShortcut} to record`',
+  '`Release ${voiceRecordingShortcut} to stop recording`',
+  'aria-keyshortcuts={shortcutToAriaKeyShortcut(voiceRecordingShortcut)}',
+]) {
+  assert.ok(chatWorkspace.includes(localizedEntryContract), `missing localized voice entry contract: ${localizedEntryContract}`);
+}
+
 const capturePreflightStart = chatWorkspace.indexOf("beforeStart: async () => {");
 const capturePreflightEnd = chatWorkspace.indexOf("deviceId: voiceDeviceId", capturePreflightStart);
 assert.notEqual(capturePreflightStart, -1, "voice capture preflight must exist");
@@ -33,7 +55,7 @@ assert.notEqual(capturePreflightEnd, -1, "voice capture preflight boundary must 
 const capturePreflight = chatWorkspace.slice(capturePreflightStart, capturePreflightEnd);
 assert.doesNotMatch(
   capturePreflight,
-  /getVoiceRuntimeStatus|getStreamingVoiceCapabilities|remoteSttConsent/,
+  /getVoiceRuntimeStatus|remoteSttConsent/,
   "microphone capture must not wait for provider readiness or upload consent",
 );
 

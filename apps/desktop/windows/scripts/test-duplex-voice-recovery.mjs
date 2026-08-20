@@ -48,6 +48,31 @@ assert.equal(drainEvents.at(-1).type, "completed"); assert.equal(drainEvents.som
 const deadlineClock = new Clock(); const deadlineSocket = new Socket(); const deadlineEvents = []; const deadline = new DuplexVoiceRuntime({ request: { ...request, sessionId: "deadline" }, connection, adapter, createSocket: () => deadlineSocket, emit: (event) => deadlineEvents.push(event), now: () => deadlineClock.now, schedule: deadlineClock.schedule, cancelSchedule: deadlineClock.cancel, idleTimeoutMs: 60_000, maxSessionMs: 120_000 }); deadline.start(); deadlineSocket.open(); deadline.stop(); deadlineClock.advance(1_999); assert.equal(deadlineEvents.some((event) => event.type === "completed"), false); deadlineClock.advance(1); assert.equal(deadlineEvents.at(-1).type, "completed", "bounded drain completes when Provider sends no final transcript");
 assert.equal(deadlineSocket.sent.filter((value) => value.type === "input_audio_buffer.commit").length, 0, "stopping an empty Session never sends a Provider-invalid commit");
 
+const barrierClock = new Clock(); const barrierSockets = []; const barrierEvents = [];
+let releaseRecovery; let recoveryCalls = 0;
+const recoveryBarrier = new Promise((resolve) => { releaseRecovery = resolve; });
+const barrierRuntime = new DuplexVoiceRuntime({
+  request: { ...request, sessionId: "gateway-barrier" }, connection, adapter,
+  createSocket: () => { const socket = new Socket(); barrierSockets.push(socket); return socket; },
+  prepareReconnect: () => { recoveryCalls += 1; return recoveryBarrier; },
+  emit: (event) => barrierEvents.push(event), now: () => barrierClock.now,
+  schedule: barrierClock.schedule, cancelSchedule: barrierClock.cancel,
+  connectTimeoutMs: 1_000, idleTimeoutMs: 10_000, maxSessionMs: 60_000,
+  maxReconnectAttempts: 2, reconnectBaseDelayMs: 100,
+});
+barrierRuntime.start(); barrierSockets[0].open(); barrierSockets[0].close(); barrierClock.advance(100);
+assert.equal(recoveryCalls, 1, "the reconnect attempt invokes the Gateway recovery barrier exactly once");
+assert.equal(barrierSockets.length, 1, "no Provider socket is created while Gateway recovery is pending");
+barrierClock.advance(5_000);
+assert.equal(barrierSockets.length, 1, "pending Gateway recovery cannot race with retry or connect timers");
+assert.equal(barrierRuntime.state, "reconnecting");
+releaseRecovery(); await Promise.resolve(); await Promise.resolve();
+assert.equal(barrierSockets.length, 2, "a fresh Provider socket is created only after Gateway recovery completes");
+barrierSockets[1].open();
+assert.equal(barrierRuntime.state, "connected");
+assert.ok(barrierEvents.some((event) => event.type === "connection_state" && event.state === "reconnected"));
+barrierRuntime.stop(); barrierSockets[1].message({ type: "response.output_audio_transcript.done", response_id: "barrier-response", item_id: "barrier-item", transcript: "recovered" });
+
 const budget = new DuplexSessionBudget({ maxAudioMs: 1_000, maxEstimatedCostUsd: 1 }); assert.equal(budget.addInputAudio(800), true); assert.equal(budget.snapshot().warning, true); budget.observeProviderUsage({ inputTokens: 100, outputTokens: 20, estimatedCostUsd: 0.81 }); assert.equal(budget.snapshot().warning, true); assert.equal(budget.addInputAudio(201), false);
 const metrics = new DuplexRuntimeMetrics(100); metrics.connected(150); metrics.inputEvent(180); metrics.inputAudio(40, 120); metrics.outputAudio(220, 80); metrics.reconnected(); metrics.interrupted(); assert.deepEqual(metrics.snapshot(), { connectMs: 50, firstInputEventMs: 80, ttfaMs: 120, reconnects: 1, interrupts: 1, maxBufferedAudioMs: 120, inputAudioMs: 40, outputAudioMs: 80 });
 assert.deepEqual(summarizeDuplexMetric(Array.from({ length: 100 }, (_, index) => index + 1)), { count: 100, p50: 50, p95: 95, p99: 99 });
@@ -55,4 +80,4 @@ const redacted = JSON.stringify(redactDuplexDiagnostic({ token: "TOKEN-CANARY", 
 assert.deepEqual(duplexLifecyclePolicy(), { hidden: "keep_session", visible: "keep_session", pagehide: "dispose_session", offline: "mark_offline", online: "mark_online", suspend: "release_capture", resume: "recover_capture", lock: "release_capture", unlock: "recover_capture", window_close: "dispose_session" });
 assert.equal(duplexLifecycleAction("hidden"), "keep_session"); assert.equal(duplexLifecycleAction("window_close"), "dispose_session");
 
-console.log("Duplex Voice M9 recovery verified (watchdogs, bounded exponential reconnect, no unacked replay, redaction, segment metrics, percentiles, and budgets).")
+console.log("Duplex Voice M9 recovery verified (watchdogs, Gateway recovery barrier, bounded exponential reconnect, no unacked replay, redaction, segment metrics, percentiles, and budgets).")

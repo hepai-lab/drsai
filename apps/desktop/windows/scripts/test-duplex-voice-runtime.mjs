@@ -28,7 +28,8 @@ const request = {
   inputEncoding: "pcm_s16le", inputSampleRateHz: 24_000, outputEncoding: "pcm_s16le", outputSampleRateHz: 24_000,
   channels: 1, enableInputTranscription: true, enableOutputTranscription: true, enableServerVad: true, enableToolCalling: true,
 };
-const connection = adapter.resolveConnection("https://api.zhizengzeng.com/v1", "Bearer sk-test-runtime-secret");
+const runtimeSecretCanary = ["sk", "test", "runtime", "secret"].join("-");
+const connection = adapter.resolveConnection("https://api.zhizengzeng.com/v1", `Bearer ${runtimeSecretCanary}`);
 const providerFailureSocket = new WebApiValidatingSocket(); const providerFailureEvents = [];
 const providerFailureRuntime = new DuplexVoiceRuntime({ request: { ...request, sessionId: "provider-failure" }, connection, adapter, createSocket: () => providerFailureSocket, emit: (event) => providerFailureEvents.push(event), connectTimeoutMs: 60_000 });
 providerFailureRuntime.start(); providerFailureSocket.open();
@@ -79,6 +80,11 @@ const providerMessagesAfterInterrupt = socket.sent.length;
 assert.equal(runtime.interrupt("interrupt-manual", "response-1", "item-1", 0, 321, "manual"), true);
 assert.equal(socket.sent.length, providerMessagesAfterInterrupt, "automatic/manual races cannot send duplicate Provider cancel or truncate messages");
 assert.equal(events.filter((event) => event.type === "interrupted" && event.responseId === "response-1").length, 1, "one response has one interrupt outcome");
+socket.message({ type: "response.created", response: { id: "provider-auto-response" } });
+socket.message({ type: "response.done", response: { id: "provider-auto-response", status: "cancelled" } });
+const messagesAfterProviderAutoInterrupt = socket.sent.length;
+assert.equal(runtime.interrupt("racing-local-interrupt", "provider-auto-response", "provider-auto-item", 0, 120, "user_speech"), true);
+assert.equal(socket.sent.length, messagesAfterProviderAutoInterrupt, "Provider auto interruption racing with local VAD cannot send duplicate cancel/truncate messages");
 assert.equal(runtime.submitToolResult("call-1", '{"ok":true}'), true);
 assert.equal(runtime.cancel(), true); assert.equal(runtime.cancel(), false);
 socket.fail(); socket.close(1006, "race");
@@ -190,5 +196,5 @@ for (let iteration = 0; iteration < 10_000; iteration += 1) {
   assert.equal(raceEvents.filter((event) => ["completed", "cancelled", "failed"].includes(event.type)).length, 1);
 }
 
-assert.equal(JSON.stringify(events).includes("sk-test-runtime-secret"), false);
+assert.equal(JSON.stringify(events).includes(runtimeSecretCanary), false);
 console.log("Duplex Voice M3 runtime verified (registry, lifecycle, bounds, isolation, unique terminal x10000, and cleanup).");

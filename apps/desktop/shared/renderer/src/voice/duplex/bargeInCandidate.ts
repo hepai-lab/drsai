@@ -4,14 +4,14 @@ export type DuplexBargeInCandidateAction = "idle" | "duck" | "await_transcript" 
 export interface DuplexBargeInCandidateSnapshot { action: DuplexBargeInCandidateAction; confidence: number; echoRisk: number; localSpeechMs: number; stopDecisionLatencyMs: number | null; providerSpeech: boolean; asrPrefix: string; reasons: string[] }
 
 export class DuplexBargeInCandidate {
-  readonly #now: () => number; #localSpeechMs = 0; #localPeak = 0; #speechStartedAt: number | null = null; #providerSpeech = false; #asrPrefix = ""; #playbackActive = false; #playbackLevel = 0; #committedStop = false; #stopDecisionLatencyMs: number | null = null;
+  readonly #now: () => number; #localSpeechMs = 0; #localPeak = 0; #localActive = false; #speechStartedAt: number | null = null; #providerSpeech = false; #asrPrefix = ""; #playbackActive = false; #playbackLevel = 0; #committedStop = false; #stopDecisionLatencyMs: number | null = null;
   constructor(now: () => number = () => performance.now()) { this.#now = now; }
-  reset(): void { this.#localSpeechMs = 0; this.#localPeak = 0; this.#speechStartedAt = null; this.#providerSpeech = false; this.#asrPrefix = ""; this.#playbackActive = false; this.#playbackLevel = 0; this.#committedStop = false; this.#stopDecisionLatencyMs = null; }
-  completeUtterance(): void { this.#localSpeechMs = 0; this.#localPeak = 0; this.#speechStartedAt = null; this.#providerSpeech = false; this.#asrPrefix = ""; this.#committedStop = false; this.#stopDecisionLatencyMs = null; }
+  reset(): void { this.#localSpeechMs = 0; this.#localPeak = 0; this.#localActive = false; this.#speechStartedAt = null; this.#providerSpeech = false; this.#asrPrefix = ""; this.#playbackActive = false; this.#playbackLevel = 0; this.#committedStop = false; this.#stopDecisionLatencyMs = null; }
+  completeUtterance(): void { this.#localSpeechMs = 0; this.#localPeak = 0; this.#localActive = false; this.#speechStartedAt = null; this.#providerSpeech = false; this.#asrPrefix = ""; this.#committedStop = false; this.#stopDecisionLatencyMs = null; }
   setPlayback(active: boolean, referenceLevel = 0): DuplexBargeInCandidateSnapshot { this.#playbackActive = active; this.#playbackLevel = Math.max(0, Math.min(1, referenceLevel)); return this.snapshot(); }
   setProviderSpeech(active: boolean): DuplexBargeInCandidateSnapshot { if (active) this.#providerSpeech = true; return this.snapshot(); }
   observeAsrPrefix(prefix: string): DuplexBargeInCandidateSnapshot { this.#asrPrefix = normalize(prefix).slice(0, 160); return this.snapshot(); }
-  observeLocal(signal: DuplexVadSignal, durationMs: number): DuplexBargeInCandidateSnapshot { if (signal.speechCandidate) { if (this.#speechStartedAt === null) this.#speechStartedAt = this.#now(); this.#localSpeechMs += Math.max(0, durationMs); this.#localPeak = Math.max(this.#localPeak, signal.level); } return this.snapshot(signal.level); }
+  observeLocal(signal: DuplexVadSignal, durationMs: number): DuplexBargeInCandidateSnapshot { this.#localActive = signal.speechCandidate; if (signal.speechCandidate) { if (this.#speechStartedAt === null) this.#speechStartedAt = this.#now(); this.#localSpeechMs += Math.max(0, durationMs); this.#localPeak = Math.max(this.#localPeak, signal.level); } return this.snapshot(signal.level); }
   snapshot(localLevel = 0): DuplexBargeInCandidateSnapshot {
     const reasons: string[] = []; const meaningfulPrefix = hasMeaningfulSpeech(this.#asrPrefix); const stopPrefix = isFastStopPrefix(this.#asrPrefix);
     let confidence = 0;
@@ -25,8 +25,8 @@ export class DuplexBargeInCandidate {
     let action: DuplexBargeInCandidateAction = "idle";
     const protectedStop = this.#providerSpeech || !playbackDominates;
     if (this.#playbackActive && stopPrefix && this.#localSpeechMs >= 120 && protectedStop && !this.#committedStop) { action = "commit_stop"; this.#committedStop = true; this.#stopDecisionLatencyMs = this.#speechStartedAt === null ? null : Math.max(0, this.#now() - this.#speechStartedAt); reasons.push("fast_stop"); }
-    else if (this.#playbackActive && confidence - echoRisk >= 0.55) action = meaningfulPrefix ? "await_transcript" : "duck";
-    else if (this.#playbackActive && this.#localSpeechMs >= 160 && (this.#providerSpeech || meaningfulPrefix) && echoRisk < 0.5) action = "duck";
+    else if (this.#playbackActive && this.#localActive) action = confidence - echoRisk >= 0.55 && meaningfulPrefix ? "await_transcript" : "duck";
+    else if (this.#playbackActive && meaningfulPrefix && confidence - echoRisk >= 0.55) action = "await_transcript";
     return Object.freeze({ action, confidence: Math.max(0, Math.min(1, confidence)), echoRisk, localSpeechMs: this.#localSpeechMs, stopDecisionLatencyMs: this.#stopDecisionLatencyMs, providerSpeech: this.#providerSpeech, asrPrefix: this.#asrPrefix, reasons });
   }
 }

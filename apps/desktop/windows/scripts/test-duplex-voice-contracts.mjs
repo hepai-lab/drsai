@@ -8,7 +8,8 @@ const platformSource = readFileSync(new URL("../src/main/platform.ts", import.me
 const pcmSource = readFileSync(new URL("../../shared/renderer/src/voice/duplex/pcm.ts", import.meta.url), "utf8");
 const workspaceSource = readFileSync(new URL("../../shared/renderer/src/components/ChatWorkspace.tsx", import.meta.url), "utf8");
 
-assert.match(api, /DesktopVoiceInteractionMode = "serial" \| "streaming" \| "duplex"/);
+assert.match(api, /DesktopVoiceInteractionMode = "serial" \| "duplex"/);
+assert.doesNotMatch(api, /DesktopStreamingVoice|voice-streaming-/);
 assert.match(api, /DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION = 2/);
 assert.match(api, /type: "uplink_credit"/);
 assert.match(api, /frames: number;[\s\S]*bytes: number;[\s\S]*audioMs: number/);

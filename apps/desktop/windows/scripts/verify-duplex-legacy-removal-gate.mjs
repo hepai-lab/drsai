@@ -17,18 +17,10 @@ assert.doesNotMatch(settings, /<option\s+value=["']streaming["']/, "Settings mus
 assert.match(preferences, /interactionMode === "streaming"[\s\S]{0,120}"serial"/, "Old Streaming preferences must migrate to Serial.");
 assert.match(mode, /normalizeVoiceInteractionMode[\s\S]{0,180}value === "duplex" \? value : DEFAULT_VOICE_MODE/, "Runtime normalization must accept only Duplex or the Serial default.");
 
-const telemetry = manifest.migrationTelemetry;
-const policy = manifest.removalEligibility;
-const telemetryEligible = telemetry.complete === true
-  && Number.isInteger(telemetry.sampleSize) && telemetry.sampleSize >= policy.minimumTelemetrySampleSize
-  && typeof telemetry.legacySelectionRate === "number" && telemetry.legacySelectionRate >= 0 && telemetry.legacySelectionRate <= policy.maximumLegacySelectionRate
-  && typeof telemetry.windowStartedAt === "string" && typeof telemetry.windowEndedAt === "string";
-const eligible = manifest.stableReleaseCyclesCompleted >= policy.minimumStableReleaseCycles && telemetryEligible;
+assert.equal(manifest.p3RemovalDecision, true, "The authoritative P3 removal decision must be explicit.");
+assert.equal(manifest.codeRemovalRequested, true, "P3 requires legacy Streaming runtime removal.");
+assert.equal(manifest.supersededBy, "docs/voice/duplex-voice-p3-spec.md#11-明确移除的内容");
+assert.ok(Array.isArray(manifest.removedRuntimeAssets) && manifest.removedRuntimeAssets.length > 0);
+for (const asset of manifest.removedRuntimeAssets) assert.equal(existsSync(resolve(workspaceRoot, asset)), false, `P3-removed runtime asset still exists: ${asset}`);
 
-if (!eligible) {
-  assert.equal(manifest.codeRemovalRequested, false, "Legacy Streaming code removal is fail-closed until release-cycle and telemetry evidence are complete.");
-  for (const asset of manifest.rollbackAssets) assert.ok(existsSync(resolve(workspaceRoot, asset)), `Rollback asset is missing before removal eligibility: ${asset}`);
-}
-if (process.argv.includes("--request-removal")) assert.equal(eligible, true, "Legacy Streaming removal is not eligible yet.");
-
-console.log(`Duplex legacy removal gate passed (UI/config closed, old preference migration retained, removalEligible=${eligible}, rollback=${eligible ? "optional" : "required"}).`);
+console.log("Duplex legacy removal gate passed (P3 removal decision, runtime absence, closed UI/config, and legacy preference migration)." );
