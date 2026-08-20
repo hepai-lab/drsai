@@ -662,6 +662,56 @@ if ($LASTEXITCODE -ne 0) {
 
 }
 
+# pip can regard a distribution as installed even when an interrupted update or
+# endpoint-security scan has left individual package files missing. aiohttp is
+# imported during DrSai startup, so that condition otherwise survives ordinary
+# editable reinstalls and makes the Desktop Runtime crash on every retry.
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+
+    $aiohttpCheck = & $VenvPython -c "import aiohttp" 2>&1
+    $aiohttpExitCode = $LASTEXITCODE
+
+} finally {
+
+    $ErrorActionPreference = $previousErrorActionPreference
+
+}
+
+if ($aiohttpExitCode -ne 0) {
+
+    Write-Warning "aiohttp is installed but cannot be imported; repairing the package before Runtime startup."
+
+    & $VenvPython -m pip install --disable-pip-version-check --no-input --force-reinstall --no-deps aiohttp
+
+    if ($LASTEXITCODE -ne 0) {
+
+        throw "aiohttp repair failed after installation (exit code $LASTEXITCODE). Original import error:`n$aiohttpCheck"
+
+    }
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+
+        $aiohttpCheck = & $VenvPython -c "import aiohttp" 2>&1
+        $aiohttpExitCode = $LASTEXITCODE
+
+    } finally {
+
+        $ErrorActionPreference = $previousErrorActionPreference
+
+    }
+
+    if ($aiohttpExitCode -ne 0) {
+
+        throw "aiohttp still cannot be imported after repair:`n$aiohttpCheck"
+
+    }
+
+}
+
 #  Write wrappers
 
 Write-Host "[5/6] Writing wrappers..." -ForegroundColor Yellow
