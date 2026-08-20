@@ -1604,6 +1604,13 @@ async def run_agent_through_kernel(
     model_id = str(model_args.get("model") or getattr(agent, "_defult_config_name", None) or "desktop-model")
     system_messages = getattr(agent, "_system_messages", ())
     system_prompt = str(system_messages[0].content) if system_messages else "You are OpenDrSai."
+    system_prompt += (
+        "\n\nDesktop authorization contract: local command approval is handled by the Desktop "
+        "confirmation card for the exact tool call. Never instruct the user to enter `/dangerous on`; "
+        "that command belongs only to the TUI. Do not retry a rejected command through another shell "
+        "or command tool. If approval is rejected, explain that the operation was cancelled and offer "
+        "a non-executing alternative."
+    )
     control = _REGRESSION_CONTROL.get() or {}
     required_skills = [
         value for value in control.get("required_skills") or []

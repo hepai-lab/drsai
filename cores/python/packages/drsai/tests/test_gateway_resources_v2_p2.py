@@ -8,6 +8,8 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from drsai.oaep.digest import oaep_items_digest
+
 
 def _reset_gateway(gateway, home: Path) -> None:
     gateway._WORKSPACE = home / "workspace-state"
@@ -155,6 +157,7 @@ def test_gateway_exposes_resources_v2_with_session_binding(tmp_path: Path, monke
         }]
         gateway._runtime_engine().append_event(run["run_id"], "artifact.created", artifact)
         snapshot = client.get(f"/v1/sessions/{session_id}/oaep-snapshot", headers=headers).json()
+        assert oaep_items_digest(snapshot["items"]) == snapshot["checkpoint"]["snapshot_hash"]
         artifact_item = next(item for item in snapshot["items"] if item["type"] == "artifact")
         assert "resource_refs" not in artifact_item["content"]
         assert artifact_item["content"]["association_id"] == artifact_item["associations"][0]["association_id"]
@@ -203,6 +206,29 @@ def test_gateway_exposes_resources_v2_with_session_binding(tmp_path: Path, monke
             raise AssertionError("artifact_missing_from_oaep_stream")
 
         assert canonical_artifact(asyncio.run(streamed_artifact())) == snapshot_canonical
+
+        pages: list[dict] = []
+        cursor = None
+        while True:
+            params = {"limit": 1}
+            if cursor is not None:
+                params["cursor"] = cursor
+            page_response = client.get(
+                f"/v1/sessions/{session_id}/oaep-snapshot",
+                headers=headers,
+                params=params,
+            )
+            assert page_response.status_code == 200, page_response.text
+            page = page_response.json()
+            pages.append(page)
+            cursor = page["window"]["next_cursor"]
+            if cursor is None:
+                break
+        checkpoint_hashes = {page["checkpoint"]["snapshot_hash"] for page in pages}
+        assert len(checkpoint_hashes) == 1
+        paged_items = [item for page in pages for item in page["items"]]
+        assert len(paged_items) == pages[0]["checkpoint"]["item_count"]
+        assert oaep_items_digest(paged_items) == pages[0]["checkpoint"]["snapshot_hash"]
 
         # Runtime process reconstruction must not alter deterministic IDs,
         # locators, operation/version snapshots, ordering, or labels.

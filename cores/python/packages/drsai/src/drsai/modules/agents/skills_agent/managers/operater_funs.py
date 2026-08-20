@@ -11,12 +11,34 @@ import signal
 import uuid
 import asyncio
 import base64
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Union, List, Dict, Any, Optional
 from datetime import datetime
 
 import aiofiles
 
 from .bash_task_persistence import BashTaskPersistence
+
+
+# A Host-driven Runtime approval is deliberately scoped to one async tool
+# execution. It is not the same as the TUI's session-wide `/dangerous on`
+# switch and must never mutate that switch. ContextVar keeps concurrent runs
+# isolated while allowing the Workbench call stack to consume the proof.
+_RUNTIME_TOOL_APPROVAL_GRANTED: ContextVar[bool] = ContextVar(
+    "drsai_runtime_tool_approval_granted", default=False,
+)
+
+
+@contextmanager
+def runtime_tool_approval_scope(*, granted: bool):
+    """Carry a Host-verified, single-call approval through the Workbench."""
+
+    token = _RUNTIME_TOOL_APPROVAL_GRANTED.set(granted is True)
+    try:
+        yield
+    finally:
+        _RUNTIME_TOOL_APPROVAL_GRANTED.reset(token)
 
 # Dangerous command patterns (regex)
 _DANGEROUS_PATTERNS = [
@@ -644,7 +666,7 @@ def get_operator_funcs(
         # single-shot approval before falling back to a hard block.
         # (Was previously a hard "return Error" — that meant the agent
         # never even got the chance to ask the user.)
-        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
+        if not _dangerous_allowed[0] and not _RUNTIME_TOOL_APPROVAL_GRANTED.get() and _DANGEROUS_RE.search(cmd):
             if not await _request_dangerous_approval(cmd, "dangerous"):
                 return (
                     "Error: Dangerous command denied by user. "
@@ -652,7 +674,7 @@ def get_operator_funcs(
                 )
 
         # Same for script-execution patterns.
-        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
+        if not _dangerous_allowed[0] and not _RUNTIME_TOOL_APPROVAL_GRANTED.get() and _SCRIPT_EXEC_RE.search(cmd):
             if not await _request_dangerous_approval(cmd, "script"):
                 return (
                     "Error: Script execution denied by user. "
@@ -767,14 +789,14 @@ def get_operator_funcs(
         """
         # Check dangerous patterns. If matched, ask the user before falling
         # back to a hard block (see run_bash for context).
-        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
+        if not _dangerous_allowed[0] and not _RUNTIME_TOOL_APPROVAL_GRANTED.get() and _DANGEROUS_RE.search(cmd):
             if not await _request_dangerous_approval(cmd, "dangerous"):
                 return (
                     "Error: Dangerous command denied by user. "
                     "Use /dangerous on to authorize for the rest of the session."
                 )
 
-        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
+        if not _dangerous_allowed[0] and not _RUNTIME_TOOL_APPROVAL_GRANTED.get() and _SCRIPT_EXEC_RE.search(cmd):
             if not await _request_dangerous_approval(cmd, "script"):
                 return (
                     "Error: Script execution denied by user. "
@@ -1257,14 +1279,14 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             return "Error: PowerShell not found. Please install PowerShell Core (pwsh) or use run_bash for Unix commands."
 
         # Check dangerous patterns. Same approval flow as run_bash.
-        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(command):
+        if not _dangerous_allowed[0] and not _RUNTIME_TOOL_APPROVAL_GRANTED.get() and _DANGEROUS_RE.search(command):
             if not await _request_dangerous_approval(command, "dangerous"):
                 return (
                     "Error: Dangerous command denied by user. "
                     "Use /dangerous on to authorize for the rest of the session."
                 )
 
-        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(command):
+        if not _dangerous_allowed[0] and not _RUNTIME_TOOL_APPROVAL_GRANTED.get() and _SCRIPT_EXEC_RE.search(command):
             if not await _request_dangerous_approval(command, "script"):
                 return (
                     "Error: Script execution denied by user. "

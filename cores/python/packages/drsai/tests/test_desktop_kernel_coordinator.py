@@ -202,7 +202,58 @@ async def test_desktop_coordinator_keeps_write_tool_behind_kernel_approval(
 
     assert len(approval_calls) == 1
     assert len(tool_calls) == (1 if decision == "approved" else 0)
+    if decision == "approved":
+        assert tool_calls[0]["runtime_approval_granted"] is True
     assert events[-1].payload["kind"] == expected_terminal
+
+
+@pytest.mark.asyncio
+async def test_desktop_coordinator_splits_todo_and_artifact_delivery_batch() -> None:
+    model_calls = 0
+    tool_calls = []
+    approval_calls = []
+
+    async def model(_payload):
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls == 1:
+            return DesktopModelResult(tool_calls=(
+                {"call_id": "todo-1", "name": "TodoWrite", "arguments": {"items": []}},
+                {
+                    "call_id": "deliver-1", "name": "deliver_artifact",
+                    "arguments": {"path": "artifacts/result.docx"},
+                },
+            ))
+        if model_calls == 2:
+            return DesktopModelResult(tool_calls=({
+                "call_id": "deliver-2", "name": "deliver_artifact",
+                "arguments": {"path": "artifacts/result.docx"},
+            },))
+        return DesktopModelResult(content="delivered")
+
+    async def tool(payload):
+        tool_calls.append(dict(payload))
+        return DesktopToolResult(payload["call_id"], True, {"ok": True})
+
+    async def approval(payload):
+        approval_calls.append(dict(payload))
+        return DesktopApprovalResult(payload["approval_id"], payload["call_id"], "approved")
+
+    async def checkpoint(_payload):
+        return None
+
+    coordinator = DesktopKernelCoordinator(
+        create_agent_kernel(surface="desktop"), model=model, tool=tool,
+        checkpoint=checkpoint, approval=approval,
+    )
+    events = [event async for event in coordinator.execute(_start(tools=[
+        _tool("TodoWrite"), _write_tool("deliver_artifact"),
+    ]))]
+
+    assert [value["name"] for value in tool_calls] == ["TodoWrite", "deliver_artifact"]
+    assert [value["name"] for value in approval_calls] == ["deliver_artifact"]
+    assert tool_calls[-1]["runtime_approval_granted"] is True
+    assert events[-1].payload["kind"] == "run.completed"
 
 
 @pytest.mark.asyncio

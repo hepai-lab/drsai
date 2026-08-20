@@ -101,7 +101,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from typing import Annotated, Any, Iterable, Literal, Mapping, Optional
+from typing import Annotated, Any, Iterable, Literal, Mapping, Optional, Sequence
 
 from urllib.parse import unquote, urlparse
 
@@ -139,6 +139,7 @@ from drsai.backend.runtime.input_resources import (
     serializable_input_resources,
 )
 from drsai.oaep.generated import OAEP_PROFILE, OAEP_SCHEMA_SHA256, OAEP_VERSION
+from drsai.oaep.digest import oaep_items_digest
 from drsai.oaep.resource_associations import migrate_p1_snapshot
 from drsai.backend.runtime.image_operations import RuntimeImageOperationAdapter
 from drsai.backend.runtime.web_search import create_web_fetch_tool, create_web_search_tool, web_fetch, web_search
@@ -5309,6 +5310,42 @@ def _migrate_oaep_event(event: Mapping[str, Any]) -> dict[str, Any]:
     return projected
 
 
+def _migrate_oaep_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    checkpoint_items: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Migrate a snapshot without invalidating its content checkpoint.
+
+    The compatibility projection adds semantic fields such as ``part_id`` and
+    ``mapping_version``.  Those fields participate in the OAEP Item digest, so
+    the checkpoint must describe the final P2 projection rather than the raw
+    persisted P1 Items.  ``checkpoint_items`` is the complete Item set at the
+    snapshot waterline, even when ``snapshot`` contains only one page.
+    """
+
+    authority_id = _runtime_registry().identity.runtime_id
+    projected = migrate_p1_snapshot(snapshot, authority_id=authority_id)
+    checkpoint = projected.get("checkpoint")
+    if not isinstance(checkpoint, Mapping):
+        return projected
+    expected_count = int(checkpoint.get("item_count", -1))
+    if expected_count != len(checkpoint_items):
+        raise RuntimeError("OAEP Snapshot checkpoint Item count changed")
+    checkpoint_projection = migrate_p1_snapshot(
+        {
+            "session": snapshot["session"],
+            "items": list(checkpoint_items),
+        },
+        authority_id=authority_id,
+    )
+    projected["checkpoint"] = {
+        **dict(checkpoint),
+        "snapshot_hash": oaep_items_digest(checkpoint_projection["items"]),
+    }
+    return projected
+
+
 @app.get("/v1/sessions/{session_id}/oaep-snapshot")
 async def runtime_session_oaep_snapshot(
     session_id: str,
@@ -5317,8 +5354,17 @@ async def runtime_session_oaep_snapshot(
 ):
     """Return the OAEP v1 Session/Run/Item projection for one Runtime Session."""
     try:
-        snapshot = _runtime_engine().oaep_snapshot(session_id, cursor=cursor, limit=limit)
-        return migrate_p1_snapshot(snapshot, authority_id=_runtime_registry().identity.runtime_id)
+        engine = _runtime_engine()
+        snapshot = engine.oaep_snapshot(session_id, cursor=cursor, limit=limit)
+        window = snapshot.get("window") or {}
+        if cursor is None and window.get("has_more") is False:
+            checkpoint_items = snapshot["items"]
+        else:
+            checkpoint_items = engine.conversation_journal.oaep_items(
+                session_id,
+                through_sequence=int(snapshot["snapshot_sequence"]),
+            )
+        return _migrate_oaep_snapshot(snapshot, checkpoint_items=checkpoint_items)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

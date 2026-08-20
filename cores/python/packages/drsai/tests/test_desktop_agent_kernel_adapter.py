@@ -1276,6 +1276,8 @@ async def test_regression_skill_script_uses_current_runtime_python_without_shell
     assert agent._workbench.called == []
     assert (tmp_path / "artifacts" / "deck.pptx").read_text(encoding="utf-8") == "created"
     system_prompt = agent._agent_kernel_checkpoint["state"]["messages"][0]["content"]
+    assert "Desktop confirmation card" in system_prompt
+    assert "Never instruct the user to enter `/dangerous on`" in system_prompt
     assert "Relative scripts/ paths are intentional" in system_prompt
     assert "python scripts/create_deck.py tmp/spec.json artifacts/deck.pptx" in system_prompt
     tool_message = next(

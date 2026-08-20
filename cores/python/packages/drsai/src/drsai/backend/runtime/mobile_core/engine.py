@@ -1045,7 +1045,8 @@ class DrSaiAgentKernel:
                     allow_homogeneous_approval_batch=True,
                 )
             except ValueError as exc:
-                if str(exc) != "approval_tool_must_be_single" or len(tool_calls) <= 1:
+                error_code = str(exc).partition(":")[0]
+                if error_code != "approval_tool_must_be_single" or len(tool_calls) <= 1:
                     raise
                 # Models sometimes batch an approval-gated tool with others.
                 # Keep the first call; close the remainder with actionable errors
@@ -1576,6 +1577,10 @@ class DrSaiAgentKernel:
         call = state.pending_tool_calls.get(call_id)
         if call is None:
             raise ValueError("tool_call_not_pending")
+        # Kernel-owned proof: model-provided call metadata was removed when
+        # ``pending_tool_calls`` was normalized. Persist it before execution
+        # so recovery retains the exact approval decision as well.
+        call["runtime_approval_granted"] = True
         return (
             self._event(state, "approval.decided", {"decision": decision, "call_id": call_id}),
             self._checkpoint(state, "after_approval"),

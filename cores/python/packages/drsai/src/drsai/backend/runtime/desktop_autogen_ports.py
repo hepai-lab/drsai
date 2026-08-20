@@ -403,9 +403,18 @@ class AutogenDesktopToolPort:
             value = await tool.run_json(dict(arguments), self._cancellation_token)
             text = tool.return_value_as_string(value)
             return await self._artifactize(DesktopToolResult(call_id, True, {"content": text}), name)
-        result = await self._workbench.call_tool(
-            name=name, arguments=dict(arguments), cancellation_token=self._cancellation_token,
+        # The shared Kernel adds this proof only after the Host has approved
+        # the exact call_id. Scope it around the Workbench invocation so the
+        # legacy operator layer does not ask the TUI a second time.
+        from ...modules.agents.skills_agent.managers.operater_funs import (
+            runtime_tool_approval_scope,
         )
+        with runtime_tool_approval_scope(
+            granted=payload.get("runtime_approval_granted") is True,
+        ):
+            result = await self._workbench.call_tool(
+                name=name, arguments=dict(arguments), cancellation_token=self._cancellation_token,
+            )
         text = result.to_text()
         return await self._artifactize(DesktopToolResult(
             call_id, not bool(result.is_error), {"content": text},

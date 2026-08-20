@@ -643,7 +643,10 @@ def test_high_risk_tool_waits_for_approval_before_host_execution() -> None:
     assert [item.message_type for item in tool] == [
         MessageType.RUNTIME_EVENT, MessageType.CHECKPOINT_REQUEST, MessageType.TOOL_CALL_REQUEST,
     ]
-    assert core.snapshot("run-1")["phase"] == RunPhase.WAITING_TOOL.value
+    assert tool[-1].payload["runtime_approval_granted"] is True
+    approved_snapshot = core.snapshot("run-1")
+    assert approved_snapshot["phase"] == RunPhase.WAITING_TOOL.value
+    assert approved_snapshot["pending_tool_calls"]["write-1"]["runtime_approval_granted"] is True
 
 
 def test_parallel_host_tools_complete_out_of_order_then_return_once_to_model() -> None:
@@ -671,7 +674,7 @@ def test_parallel_host_tools_complete_out_of_order_then_return_once_to_model() -
     assert [item["tool_call_id"] for item in messages if item.get("role") == "tool"] == ["clock-b", "clock-a"]
 
 
-def test_mixed_approval_batch_is_rejected_without_partial_state_mutation() -> None:
+def test_mixed_approval_batch_is_split_without_terminating_the_run() -> None:
     core = create_mobile_agent_core()
     core.handle(command(MessageType.START_RUN, 0, {
         "input": "mixed", "model_id": "model-1", "tools": [
@@ -679,15 +682,23 @@ def test_mixed_approval_batch_is_rejected_without_partial_state_mutation() -> No
             tool_schema("publish", risk="external_write", requires_approval=True),
         ],
     }))
-    with pytest.raises(ValueError, match="approval_tool_must_be_single"):
-        core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
-            {"call_id": "read-1", "name": "clock", "arguments": {}},
-            {"call_id": "write-1", "name": "publish", "arguments": {}},
-        ]}))
+    replies = core.handle(command(MessageType.MODEL_COMPLETED, 1, {"tool_calls": [
+        {"call_id": "read-1", "name": "clock", "arguments": {}},
+        {"call_id": "write-1", "name": "publish", "arguments": {}},
+    ]}))
+
+    requests = [item for item in replies if item.message_type is MessageType.TOOL_CALL_REQUEST]
+    assert [item.payload["call_id"] for item in requests] == ["read-1"]
     snapshot = core.snapshot("run-1")
-    assert snapshot["phase"] == RunPhase.WAITING_MODEL.value
-    assert snapshot["pending_tool_calls"] == {}
-    assert snapshot["tool_round_count"] == 0
+    assert snapshot["phase"] == RunPhase.WAITING_TOOL.value
+    assert list(snapshot["pending_tool_calls"]) == ["read-1"]
+    deferred = next(
+        item for item in snapshot["messages"]
+        if item.get("role") == "tool" and item.get("tool_call_id") == "write-1"
+    )
+    assert deferred["succeeded"] is False
+    assert deferred["content"]["error"]["code"] == "invalid_request"
+    assert snapshot["tool_round_count"] == 1
 
 
 def test_tool_round_limit_is_checkpointed_and_requests_tool_free_finalization() -> None:
