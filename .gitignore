@@ -9,6 +9,9 @@
 ########################
 # 项目特定文件
 ########################
+/.release-worktrees/
+/.sessions/
+/.test-runtime/
 release
 .tmp_abort_audit.txt
 .tmp-runtime-inspect
@@ -273,6 +276,10 @@ data
 !apps/android/app/src/main/java/ai/drsai/remote/data/**
 !apps/android/app/src/main/java/ai/drsai/remote/remote/data/
 !apps/android/app/src/main/java/ai/drsai/remote/remote/data/**
+# Android instrumentation tests mirror the production package hierarchy.
+# This is test source code, not local runtime data.
+!apps/android/app/src/androidTest/java/ai/drsai/remote/remote/data/
+!apps/android/app/src/androidTest/java/ai/drsai/remote/remote/data/**
 runs
 node_modules
 database.sqlite
